@@ -2,6 +2,15 @@
 
 A compiler for TapLang - a simple, expressive language for creating Bitcoin Taproot scripts.
 
+## Language Features
+
+TapLang allows you to define Bitcoin Taproot contracts with:
+
+- Strong typing (pubkey, signature, bytes32, int, bool)
+- Multiple spending paths
+- High-level expressions that compile to Bitcoin Script
+- Automatic server-variant path generation for settlement
+
 ## Installation
 
 ```bash
@@ -16,14 +25,6 @@ tapc contract.tap
 
 This will compile your TapLang contract to a JSON file that can be used with Bitcoin Taproot libraries.
 
-## Language Features
-
-TapLang allows you to define Bitcoin Taproot contracts with:
-
-- Strong typing (pubkey, signature, bytes32, int, bool)
-- Multiple spending paths
-- High-level expressions that compile to Bitcoin Script
-- Automatic server-variant path generation for settlement
 
 ## Example HTLC Contract
 
