@@ -1,7 +1,0 @@
-contract Simple(
-  int timelock
-) {
-  function test(signature sig) {
-    require(tx.time >= timelock);
-  }
-} 

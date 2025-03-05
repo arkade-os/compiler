@@ -2,7 +2,7 @@ pub mod models;
 pub mod parser;
 pub mod compiler;
 
-pub use models::{Contract, Function, Parameter, Requirement, Expression, ContractJson, ScriptPath};
+pub use models::{Contract, Function, Parameter, Requirement, Expression, ContractJson};
 
 /// Compile TapLang source code to a JSON-serializable structure
 ///
@@ -12,13 +12,11 @@ pub use models::{Contract, Function, Parameter, Requirement, Expression, Contrac
 /// The output includes:
 /// - Contract name
 /// - Parameters
-/// - Server key placeholder
-/// - Script paths for each function
+/// - Functions with their inputs, requirements, and assembly code
 ///
-/// Each script path includes a serverVariant flag. When using the script:
-/// - If serverVariant is true, use the script as-is
-/// - If serverVariant is false, libraries should add an exit delay timelock
-///   (default 48 hours) for additional security
+/// Each function includes a serverVariant flag. When using the function:
+/// - If serverVariant is true, the function requires a server signature
+/// - If serverVariant is false, the function requires an exit timelock
 ///
 /// # Arguments
 ///
@@ -33,7 +31,17 @@ pub use models::{Contract, Function, Parameter, Requirement, Expression, Contrac
 /// ```
 /// use taplang::compile;
 ///
-/// let source_code = r#"contract Example(pubkey owner) {
+/// let source_code = r#"
+/// // Contract configuration options
+/// options {
+///   // Server key parameter from contract parameters
+///   server = server;
+///   
+///   // Exit timelock: 24 hours (144 blocks)
+///   exit = 144;
+/// }
+/// 
+/// contract Example(pubkey owner, pubkey server) {
 ///     function spend(signature ownerSig) {
 ///         require(checkSig(ownerSig, owner));
 ///     }

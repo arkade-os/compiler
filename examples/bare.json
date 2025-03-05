@@ -1,6 +1,6 @@
 {
-  "name": "BareVTXO",
-  "parameters": [
+  "contractName": "BareVTXO",
+  "constructorInputs": [
     {
       "name": "user",
       "type": "pubkey"
@@ -8,141 +8,67 @@
     {
       "name": "server",
       "type": "pubkey"
-    },
-    {
-      "name": "timelock",
-      "type": "int"
     }
   ],
-  "serverKey": "SERVER_KEY",
-  "scriptPaths": [
+  "functions": [
     {
-      "function": "cooperative",
+      "name": "spend",
+      "functionInputs": [
+        {
+          "name": "userSig",
+          "type": "signature"
+        }
+      ],
       "serverVariant": true,
-      "operations": [
+      "require": [
         {
-          "op": "OP_2",
-          "data": null
+          "type": "signature"
         },
         {
-          "op": "<user>",
-          "data": null
-        },
-        {
-          "op": "<server>",
-          "data": null
-        },
-        {
-          "op": "OP_2",
-          "data": null
-        },
-        {
-          "op": "<userSig>",
-          "data": null
-        },
-        {
-          "op": "<serverSig>",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKMULTISIG",
-          "data": null
+          "type": "serverSignature"
         }
+      ],
+      "asm": [
+        "<user>",
+        "<userSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
       ]
     },
     {
-      "function": "cooperative",
+      "name": "spend",
+      "functionInputs": [
+        {
+          "name": "userSig",
+          "type": "signature"
+        }
+      ],
       "serverVariant": false,
-      "operations": [
+      "require": [
         {
-          "op": "OP_2",
-          "data": null
+          "type": "signature"
         },
         {
-          "op": "<user>",
-          "data": null
-        },
-        {
-          "op": "<server>",
-          "data": null
-        },
-        {
-          "op": "OP_2",
-          "data": null
-        },
-        {
-          "op": "<userSig>",
-          "data": null
-        },
-        {
-          "op": "<serverSig>",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKMULTISIG",
-          "data": null
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
         }
-      ]
-    },
-    {
-      "function": "timeout",
-      "serverVariant": true,
-      "operations": [
-        {
-          "op": "<user>",
-          "data": null
-        },
-        {
-          "op": "<userSig>",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKSIG",
-          "data": null
-        },
-        {
-          "op": "0",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKLOCKTIMEVERIFY",
-          "data": null
-        },
-        {
-          "op": "OP_DROP",
-          "data": null
-        }
-      ]
-    },
-    {
-      "function": "timeout",
-      "serverVariant": false,
-      "operations": [
-        {
-          "op": "<user>",
-          "data": null
-        },
-        {
-          "op": "<userSig>",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKSIG",
-          "data": null
-        },
-        {
-          "op": "0",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKLOCKTIMEVERIFY",
-          "data": null
-        },
-        {
-          "op": "OP_DROP",
-          "data": null
-        }
+      ],
+      "asm": [
+        "<user>",
+        "<userSig>",
+        "OP_CHECKSIG",
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
       ]
     }
-  ]
+  ],
+  "source": "// Contract configuration options\noptions {\n  // Server key parameter from contract parameters\n  server = server;\n  \n  // Renewal timelock: 7 days (1008 blocks)\n  // The contract must be renewed with the Ark server within this period\n  renew = 1008;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  // Time required to exit unilaterally without server involvement\n  exit = 144;\n}\n\ncontract BareVTXO(\n  pubkey user,\n  pubkey server\n) {\n  // Single signature spend path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(user) && checkSig(server)\n  // 2. Exit path: checkSig(user) && after 24 hours\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n} ",
+  "compiler": {
+    "name": "taplang",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2025-03-05T23:28:28.330806+00:00"
 }

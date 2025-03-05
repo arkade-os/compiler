@@ -1,6 +1,6 @@
 {
-  "name": "HTLC",
-  "parameters": [
+  "contractName": "HTLC",
+  "constructorInputs": [
     {
       "name": "sender",
       "type": "pubkey"
@@ -16,205 +16,229 @@
     {
       "name": "timelock",
       "type": "int"
+    },
+    {
+      "name": "server",
+      "type": "pubkey"
     }
   ],
-  "serverKey": "SERVER_KEY",
-  "scriptPaths": [
+  "functions": [
     {
-      "function": "together",
+      "name": "together",
+      "functionInputs": [
+        {
+          "name": "senderSig",
+          "type": "signature"
+        },
+        {
+          "name": "receiverSig",
+          "type": "signature"
+        }
+      ],
       "serverVariant": true,
-      "operations": [
+      "require": [
         {
-          "op": "OP_2",
-          "data": null
+          "type": "multisig"
         },
         {
-          "op": "<sender>",
-          "data": null
-        },
-        {
-          "op": "<receiver>",
-          "data": null
-        },
-        {
-          "op": "OP_2",
-          "data": null
-        },
-        {
-          "op": "<senderSig>",
-          "data": null
-        },
-        {
-          "op": "<receiverSig>",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKMULTISIG",
-          "data": null
+          "type": "serverSignature"
         }
+      ],
+      "asm": [
+        "OP_2",
+        "<sender>",
+        "<receiver>",
+        "OP_2",
+        "<senderSig>",
+        "<receiverSig>",
+        "OP_CHECKMULTISIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
       ]
     },
     {
-      "function": "together",
+      "name": "together",
+      "functionInputs": [
+        {
+          "name": "senderSig",
+          "type": "signature"
+        },
+        {
+          "name": "receiverSig",
+          "type": "signature"
+        }
+      ],
       "serverVariant": false,
-      "operations": [
+      "require": [
         {
-          "op": "OP_2",
-          "data": null
+          "type": "multisig"
         },
         {
-          "op": "<sender>",
-          "data": null
-        },
-        {
-          "op": "<receiver>",
-          "data": null
-        },
-        {
-          "op": "OP_2",
-          "data": null
-        },
-        {
-          "op": "<senderSig>",
-          "data": null
-        },
-        {
-          "op": "<receiverSig>",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKMULTISIG",
-          "data": null
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
         }
+      ],
+      "asm": [
+        "OP_2",
+        "<sender>",
+        "<receiver>",
+        "OP_2",
+        "<senderSig>",
+        "<receiverSig>",
+        "OP_CHECKMULTISIG",
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
       ]
     },
     {
-      "function": "refund",
+      "name": "refund",
+      "functionInputs": [
+        {
+          "name": "senderSig",
+          "type": "signature"
+        }
+      ],
       "serverVariant": true,
-      "operations": [
+      "require": [
         {
-          "op": "<sender>",
-          "data": null
+          "type": "signature"
         },
         {
-          "op": "<senderSig>",
-          "data": null
+          "type": "older",
+          "message": "Timelock of 0 blocks"
         },
         {
-          "op": "OP_CHECKSIG",
-          "data": null
-        },
-        {
-          "op": "0",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKLOCKTIMEVERIFY",
-          "data": null
-        },
-        {
-          "op": "OP_DROP",
-          "data": null
+          "type": "serverSignature"
         }
+      ],
+      "asm": [
+        "<sender>",
+        "<senderSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
       ]
     },
     {
-      "function": "refund",
+      "name": "refund",
+      "functionInputs": [
+        {
+          "name": "senderSig",
+          "type": "signature"
+        }
+      ],
       "serverVariant": false,
-      "operations": [
+      "require": [
         {
-          "op": "<sender>",
-          "data": null
+          "type": "signature"
         },
         {
-          "op": "<senderSig>",
-          "data": null
+          "type": "older",
+          "message": "Timelock of 0 blocks"
         },
         {
-          "op": "OP_CHECKSIG",
-          "data": null
-        },
-        {
-          "op": "0",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKLOCKTIMEVERIFY",
-          "data": null
-        },
-        {
-          "op": "OP_DROP",
-          "data": null
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
         }
+      ],
+      "asm": [
+        "<sender>",
+        "<senderSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
       ]
     },
     {
-      "function": "claim",
+      "name": "claim",
+      "functionInputs": [
+        {
+          "name": "receiverSig",
+          "type": "signature"
+        },
+        {
+          "name": "preimage",
+          "type": "bytes32"
+        }
+      ],
       "serverVariant": true,
-      "operations": [
+      "require": [
         {
-          "op": "<receiver>",
-          "data": null
+          "type": "signature"
         },
         {
-          "op": "<receiverSig>",
-          "data": null
+          "type": "hash"
         },
         {
-          "op": "OP_CHECKSIG",
-          "data": null
-        },
-        {
-          "op": "<preimage>",
-          "data": null
-        },
-        {
-          "op": "OP_SHA256",
-          "data": null
-        },
-        {
-          "op": "<hash>",
-          "data": null
-        },
-        {
-          "op": "OP_EQUAL",
-          "data": null
+          "type": "serverSignature"
         }
+      ],
+      "asm": [
+        "<receiver>",
+        "<receiverSig>",
+        "OP_CHECKSIG",
+        "<preimage>",
+        "OP_SHA256",
+        "<hash>",
+        "OP_EQUAL",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
       ]
     },
     {
-      "function": "claim",
-      "serverVariant": false,
-      "operations": [
+      "name": "claim",
+      "functionInputs": [
         {
-          "op": "<receiver>",
-          "data": null
+          "name": "receiverSig",
+          "type": "signature"
         },
         {
-          "op": "<receiverSig>",
-          "data": null
-        },
-        {
-          "op": "OP_CHECKSIG",
-          "data": null
-        },
-        {
-          "op": "<preimage>",
-          "data": null
-        },
-        {
-          "op": "OP_SHA256",
-          "data": null
-        },
-        {
-          "op": "<hash>",
-          "data": null
-        },
-        {
-          "op": "OP_EQUAL",
-          "data": null
+          "name": "preimage",
+          "type": "bytes32"
         }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "hash"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<receiver>",
+        "<receiverSig>",
+        "OP_CHECKSIG",
+        "<preimage>",
+        "OP_SHA256",
+        "<hash>",
+        "OP_EQUAL",
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
       ]
     }
-  ]
+  ],
+  "source": "// Contract configuration options\noptions {\n  // Server key parameter from contract parameters\n  server = server;\n  \n  // Renewal timelock: 7 days (1008 blocks)\n  // The contract must be renewed with the Ark server within this period\n  renew = 1008;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  // Time required to exit unilaterally without server involvement\n  exit = 144;\n}\n\ncontract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes32 hash,\n  int timelock,\n  pubkey server\n) {\n  // Cooperative close path\n  function together(signature senderSig, signature receiverSig) {\n    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));\n  }\n  \n  // Refund path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(sender) && after timelock && checkSig(server)\n  // 2. Exit path: checkSig(sender) && after timelock && after 24 hours\n  function refund(signature senderSig) {\n    require(checkSig(senderSig, sender));\n    require(tx.time >= timelock);\n  }\n  \n  // Claim path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(receiver) && sha256(preimage) == hash && checkSig(server)\n  // 2. Exit path: checkSig(receiver) && sha256(preimage) == hash && after 24 hours\n  function claim(signature receiverSig, bytes32 preimage) {\n    require(checkSig(receiverSig, receiver));\n    require(sha256(preimage) == hash);\n  }\n} ",
+  "compiler": {
+    "name": "taplang",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2025-03-05T23:28:28.331335+00:00"
 }

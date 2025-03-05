@@ -1,5 +1,6 @@
-use crate::models::{Requirement, Expression, ContractJson, ScriptPath, Operation};
+use crate::models::{Requirement, Expression, ContractJson, AbiFunction, FunctionInput, RequireStatement, CompilerInfo};
 use crate::parser;
+use chrono::Utc;
 
 /// Compiles a TapLang contract AST into a JSON-serializable structure.
 /// 
@@ -7,14 +8,40 @@ use crate::parser;
 /// structure that can be serialized to JSON. The output includes:
 /// 
 /// - Contract name
-/// - Parameters
-/// - Server key placeholder
-/// - Script paths for each function
+/// - Constructor inputs (parameters)
+/// - Functions with their inputs, requirements, and assembly code
+/// 
+/// Contracts can include an options block to specify additional behaviors:
+/// 
+/// Example:
+/// 
+/// ```text
+/// // Contract configuration options
+/// options {
+///   // Server key parameter from contract parameters
+///   server = server;
+///   
+///   // Renewal timelock: 7 days (1008 blocks)
+///   renew = 1008;
+///   
+///   // Exit timelock: 24 hours (144 blocks)
+///   exit = 144;
+/// }
+/// 
+/// contract MyContract(pubkey user, pubkey server) {
+///   // functions...
+/// }
+/// ```
+/// 
+/// The `server` option specifies which parameter contains the server public key.
+/// The `renew` option specifies the renewal timelock in blocks.
+/// The `exit` option specifies the exit timelock in blocks.
+/// 
+/// If these options are not specified, default values will be used.
 /// 
 /// Each script path includes a serverVariant flag. When using the script:
-/// - If serverVariant is true, use the script as-is
-/// - If serverVariant is false, libraries should add an exit delay timelock
-///   (default 48 hours) for additional security
+/// - If serverVariant is true, use the script as-is (cooperative path with server)
+/// - If serverVariant is false, use the exit path (unilateral exit after timelock)
 /// 
 /// # Arguments
 /// 
@@ -24,208 +51,218 @@ use crate::parser;
 /// 
 /// A Result containing a ContractJson structure that can be serialized to JSON or an error message
 pub fn compile(source_code: &str) -> Result<ContractJson, String> {
+    // Parse the contract
     let contract = match parser::parse(source_code) {
         Ok(contract) => contract,
-        Err(err) => return Err(format!("Parse error: {}", err)),
+        Err(e) => return Err(format!("Parse error: {}", e)),
     };
-
-    // Create output structure
-    let mut output = ContractJson {
+    
+    // Create the JSON output
+    let mut json = ContractJson {
         name: contract.name.clone(),
         parameters: contract.parameters.clone(),
-        server_key: "SERVER_KEY".to_string(),
-        script_paths: Vec::new(),
+        functions: Vec::new(),
+        source: Some(source_code.to_string()),
+        compiler: Some(CompilerInfo {
+            name: "taplang".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }),
+        updated_at: Some(Utc::now().to_rfc3339()),
     };
-
-    // Create script paths for each function
-    let mut script_paths = Vec::new();
+    
+    // Process each function
     for function in &contract.functions {
-        // Generate server variant
-        let mut operations = Vec::new();
+        // Generate collaborative path (with server signature)
+        let collaborative_function = generate_function(function, &contract, true);
+        json.functions.push(collaborative_function);
         
-        // Process requirements
-        for req in &function.requirements {
-            match req {
-                &Requirement::CheckSig { ref pubkey, ref signature } => {
-                    // Push pubkey
-                    operations.push(Operation {
-                        op: format!("<{}>", pubkey),
-                        data: None,
-                    });
-                    
-                    // Push signature
-                    operations.push(Operation {
-                        op: format!("<{}>", signature),
-                        data: None,
-                    });
-                    
-                    // Check signature
-                    operations.push(Operation {
-                        op: "OP_CHECKSIG".to_string(),
-                        data: None,
-                    });
-                }
-                &Requirement::CheckMultisig { ref pubkeys, ref signatures } => {
-                    // Push number of signatures
-                    operations.push(Operation {
-                        op: format!("OP_{}", signatures.len()),
-                        data: None,
-                    });
-                    
-                    // Push each pubkey
-                    for pubkey in pubkeys {
-                        operations.push(Operation {
-                            op: format!("<{}>", pubkey),
-                            data: None,
-                        });
-                    }
-                    
-                    // Push number of pubkeys
-                    operations.push(Operation {
-                        op: format!("OP_{}", pubkeys.len()),
-                        data: None,
-                    });
-                    
-                    // Push each signature
-                    for sig in signatures {
-                        operations.push(Operation {
-                            op: format!("<{}>", sig),
-                            data: None,
-                        });
-                    }
-                    
-                    // Check multisig
-                    operations.push(Operation {
-                        op: "OP_CHECKMULTISIG".to_string(),
-                        data: None,
-                    });
-                }
-                &Requirement::After { blocks } => {
-                    // Push blocks
-                    operations.push(Operation {
-                        op: blocks.to_string(),
-                        data: None,
-                    });
-                    
-                    // Check timelock
-                    operations.push(Operation {
-                        op: "OP_CHECKLOCKTIMEVERIFY".to_string(),
-                        data: None,
-                    });
-                    
-                    // Drop the value
-                    operations.push(Operation {
-                        op: "OP_DROP".to_string(),
-                        data: None,
-                    });
-                }
-                &Requirement::HashEqual { ref preimage, ref hash } => {
-                    // Push preimage
-                    operations.push(Operation {
-                        op: format!("<{}>", preimage),
-                        data: None,
-                    });
-                    
-                    // Hash it
-                    operations.push(Operation {
-                        op: "OP_SHA256".to_string(),
-                        data: None,
-                    });
-                    
-                    // Push hash
-                    operations.push(Operation {
-                        op: format!("<{}>", hash),
-                        data: None,
-                    });
-                    
-                    // Check equality
-                    operations.push(Operation {
-                        op: "OP_EQUAL".to_string(),
-                        data: None,
-                    });
-                }
-                &Requirement::Comparison { ref left, op: _, ref right } => {
-                    match left {
-                        Expression::Sha256(preimage) => {
-                            // Push preimage
-                            operations.push(Operation {
-                                op: format!("<{}>", preimage),
-                                data: None,
-                            });
-                            
-                            // Hash it
-                            operations.push(Operation {
-                                op: "OP_SHA256".to_string(),
-                                data: None,
-                            });
-                            
-                            // Push hash value from right
-                            if let Expression::Variable(hash) = right {
-                                operations.push(Operation {
-                                    op: format!("<{}>", hash),
-                                    data: None,
-                                });
-                            }
-                            
-                            // Check equality
-                            operations.push(Operation {
-                                op: "OP_EQUAL".to_string(),
-                                data: None,
-                            });
-                        }
-                        Expression::Property(prop) if prop == "tx.time" => {
-                            // Handle timelock comparison
-                            if let Expression::Variable(timelock) = right {
-                                // Push timelock value
-                                if let Ok(blocks) = timelock.parse::<u64>() {
-                                    operations.push(Operation {
-                                        op: blocks.to_string(),
-                                        data: None,
-                                    });
-                                } else {
-                                    operations.push(Operation {
-                                        op: format!("<{}>", timelock),
-                                        data: None,
-                                    });
-                                }
-                                
-                                // Check timelock
-                                operations.push(Operation {
-                                    op: "OP_CHECKLOCKTIMEVERIFY".to_string(),
-                                    data: None,
-                                });
-                                
-                                // Drop the value
-                                operations.push(Operation {
-                                    op: "OP_DROP".to_string(),
-                                    data: None,
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Add script path for this function
-        script_paths.push(ScriptPath {
-            function: function.name.clone(),
-            server_variant: true,
-            operations: operations.clone(),
-        });
-        
-        // Also add a non-server variant with server_variant flag set to false
-        // Libraries will need to add the exit delay timelock when using this variant
-        let non_server_operations = operations.clone();
-        script_paths.push(ScriptPath {
-            function: function.name.clone(),
-            server_variant: false,
-            operations: non_server_operations,
-        });
+        // Generate exit path (with timelock)
+        let exit_function = generate_function(function, &contract, false);
+        json.functions.push(exit_function);
     }
+    
+    Ok(json)
+}
 
-    output.script_paths = script_paths;
-    Ok(output)
+/// Generate a function with server variant flag
+fn generate_function(function: &crate::models::Function, contract: &crate::models::Contract, server_variant: bool) -> AbiFunction {
+    // Convert function parameters to function inputs
+    let function_inputs = function.parameters.iter()
+        .map(|param| FunctionInput {
+            name: param.name.clone(),
+            param_type: param.param_type.clone(),
+        })
+        .collect();
+    
+    // Generate requirements
+    let mut require = generate_requirements(function);
+    
+    // Add server signature or exit timelock requirement
+    if server_variant {
+        // Add server signature requirement
+        if let Some(_server_key) = &contract.server_key_param {
+            require.push(RequireStatement {
+                req_type: "serverSignature".to_string(),
+                message: None,
+            });
+        }
+    } else {
+        // Add exit timelock requirement
+        if let Some(exit_timelock) = contract.exit_timelock {
+            require.push(RequireStatement {
+                req_type: "older".to_string(),
+                message: Some(format!("Exit timelock of {} blocks", exit_timelock)),
+            });
+        }
+    }
+    
+    // Generate assembly instructions
+    let mut asm = generate_base_asm_instructions(function);
+    
+    // Add server signature or exit timelock check
+    if server_variant {
+        // Add server signature check
+        if let Some(_server_key) = &contract.server_key_param {
+            asm.push("<SERVER_KEY>".to_string());
+            asm.push("<serverSig>".to_string());
+            asm.push("OP_CHECKSIG".to_string());
+        }
+    } else {
+        // Add exit timelock check
+        if let Some(exit_timelock) = contract.exit_timelock {
+            asm.push(format!("{}", exit_timelock));
+            asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
+            asm.push("OP_DROP".to_string());
+        }
+    }
+    
+    AbiFunction {
+        name: function.name.clone(),
+        function_inputs,
+        server_variant,
+        require,
+        asm,
+    }
+}
+
+/// Generate requirements from function requirements
+fn generate_requirements(function: &crate::models::Function) -> Vec<RequireStatement> {
+    let mut requirements = Vec::new();
+    
+    for req in &function.requirements {
+        match req {
+            Requirement::CheckSig { signature: _, pubkey: _ } => {
+                requirements.push(RequireStatement {
+                    req_type: "signature".to_string(),
+                    message: None,
+                });
+            },
+            Requirement::CheckMultisig { signatures: _, pubkeys: _ } => {
+                requirements.push(RequireStatement {
+                    req_type: "multisig".to_string(),
+                    message: None,
+                });
+            },
+            Requirement::After { blocks } => {
+                requirements.push(RequireStatement {
+                    req_type: "older".to_string(),
+                    message: Some(format!("Timelock of {} blocks", blocks)),
+                });
+            },
+            Requirement::HashEqual { preimage: _, hash: _ } => {
+                requirements.push(RequireStatement {
+                    req_type: "hash".to_string(),
+                    message: None,
+                });
+            },
+            Requirement::Comparison { left: _, op: _, right: _ } => {
+                requirements.push(RequireStatement {
+                    req_type: "comparison".to_string(),
+                    message: None,
+                });
+            },
+        }
+    }
+    
+    requirements
+}
+
+/// Generate base assembly instructions from function requirements
+fn generate_base_asm_instructions(function: &crate::models::Function) -> Vec<String> {
+    let mut asm = Vec::new();
+    
+    // Process each requirement
+    for req in &function.requirements {
+        match req {
+            Requirement::CheckSig { signature, pubkey } => {
+                asm.push(format!("<{}>", pubkey));
+                asm.push(format!("<{}>", signature));
+                asm.push("OP_CHECKSIG".to_string());
+            },
+            Requirement::CheckMultisig { signatures, pubkeys } => {
+                // Number of pubkeys
+                asm.push(format!("OP_{}", pubkeys.len()));
+                
+                // Pubkeys
+                for pubkey in pubkeys {
+                    asm.push(format!("<{}>", pubkey));
+                }
+                
+                // Number of signatures
+                asm.push(format!("OP_{}", signatures.len()));
+                
+                // Signatures
+                for signature in signatures {
+                    asm.push(format!("<{}>", signature));
+                }
+                
+                asm.push("OP_CHECKMULTISIG".to_string());
+            },
+            Requirement::After { blocks } => {
+                asm.push(format!("{}", blocks));
+                asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
+                asm.push("OP_DROP".to_string());
+            },
+            Requirement::HashEqual { preimage, hash } => {
+                asm.push(format!("<{}>", preimage));
+                asm.push("OP_SHA256".to_string());
+                asm.push(format!("<{}>", hash));
+                asm.push("OP_EQUAL".to_string());
+            },
+            Requirement::Comparison { left, op, right } => {
+                // Left expression
+                match left {
+                    Expression::Variable(var) => asm.push(format!("<{}>", var)),
+                    Expression::Literal(lit) => asm.push(lit.clone()),
+                    Expression::Property(prop) => {
+                        if prop == "tx.time" {
+                            asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
+                            asm.push("OP_DROP".to_string());
+                        }
+                    },
+                    Expression::Sha256(var) => {
+                        asm.push(format!("<{}>", var));
+                        asm.push("OP_SHA256".to_string());
+                    },
+                }
+                
+                // Right expression
+                match right {
+                    Expression::Variable(var) => asm.push(format!("<{}>", var)),
+                    Expression::Literal(lit) => asm.push(lit.clone()),
+                    Expression::Property(_) => {},
+                    Expression::Sha256(_) => {},
+                }
+                
+                // Operator
+                match op.as_str() {
+                    "==" => asm.push("OP_EQUAL".to_string()),
+                    ">=" => asm.push("OP_GREATERTHANOREQUAL".to_string()),
+                    _ => {},
+                }
+            },
+        }
+    }
+    
+    asm
 } 

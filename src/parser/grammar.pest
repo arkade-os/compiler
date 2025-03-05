@@ -5,11 +5,22 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
 // Main entry point - must consume the entire input
 main = { SOI ~ contract ~ EOI }
 
-// Contract definition with strict structure
+// Contract definition with strict structure and optional options block
 contract = { 
+    options_block? ~
     "contract" ~ identifier ~ 
     "(" ~ param_list ~ ")" ~ 
     "{" ~ function* ~ "}" 
+}
+
+// Options block for contract configuration
+options_block = {
+    "options" ~ "{" ~ (option_setting ~ ";")* ~ "}"
+}
+
+// Option setting with assignment
+option_setting = {
+    identifier ~ "=" ~ (number_literal | identifier | string_literal)
 }
 
 // Parameter list with proper comma separation
@@ -87,4 +98,9 @@ identifier = @{
 // Number literals are sequences of digits
 number_literal = @{ 
     ASCII_DIGIT+ 
+}
+
+// String literals are sequences of characters enclosed in double quotes
+string_literal = @{
+    "\"" ~ (!"\"" ~ ANY)* ~ "\""
 }

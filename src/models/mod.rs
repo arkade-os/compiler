@@ -15,6 +15,44 @@ pub struct Parameter {
     pub param_type: String,
 }
 
+/// Function input parameter
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FunctionInput {
+    /// Parameter name
+    pub name: String,
+    /// Parameter type
+    #[serde(rename = "type")]
+    pub param_type: String,
+}
+
+/// Requirement for a function
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RequireStatement {
+    /// Requirement type
+    #[serde(rename = "type")]
+    pub req_type: String,
+    /// Custom message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Function definition in the ABI
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AbiFunction {
+    /// Function name
+    pub name: String,
+    /// Function inputs
+    #[serde(rename = "functionInputs")]
+    pub function_inputs: Vec<FunctionInput>,
+    /// Whether this is a server variant
+    #[serde(rename = "serverVariant")]
+    pub server_variant: bool,
+    /// Requirements
+    pub require: Vec<RequireStatement>,
+    /// Assembly instructions
+    pub asm: Vec<String>,
+}
+
 /// Script path for a function
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Operation {
@@ -22,6 +60,7 @@ pub struct Operation {
     pub data: Option<String>,
 }
 
+/// Script path for a function
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScriptPath {
     /// Function name
@@ -33,15 +72,27 @@ pub struct ScriptPath {
     pub operations: Vec<Operation>,
 }
 
-/// Main JSON output structure
-#[derive(Debug, Serialize, Deserialize)]
+/// JSON output for a contract
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContractJson {
+    #[serde(rename = "contractName")]
     pub name: String,
+    #[serde(rename = "constructorInputs")]
     pub parameters: Vec<Parameter>,
-    #[serde(rename = "serverKey")]
-    pub server_key: String,
-    #[serde(rename = "scriptPaths")]
-    pub script_paths: Vec<ScriptPath>,
+    pub functions: Vec<AbiFunction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compiler: Option<CompilerInfo>,
+    #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+/// Compiler information
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CompilerInfo {
+    pub name: String,
+    pub version: String,
 }
 
 /// AST structures
@@ -50,12 +101,18 @@ pub struct ContractJson {
 /// of a TapLang contract.
 
 /// Contract AST
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Contract {
     /// Contract name
     pub name: String,
     /// Contract parameters
     pub parameters: Vec<Parameter>,
+    /// Ark-specific renewal timelock (in blocks)
+    pub renewal_timelock: Option<u64>,
+    /// Ark-specific exit timelock (in blocks, typically 48 hours worth of blocks)
+    pub exit_timelock: Option<u64>,
+    /// Ark-specific server key parameter name
+    pub server_key_param: Option<String>,
     /// Contract functions
     pub functions: Vec<Function>,
 }

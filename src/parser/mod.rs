@@ -19,6 +19,9 @@ fn build_ast(pairs: Pairs<Rule>) -> Contract {
     let mut contract = Contract {
         name: String::new(),
         parameters: Vec::new(),
+        renewal_timelock: None,
+        exit_timelock: None,
+        server_key_param: None,
         functions: Vec::new(),
     };
     
@@ -47,7 +50,13 @@ fn build_ast(pairs: Pairs<Rule>) -> Contract {
 
 // Helper function to parse contract details
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) {
-    let mut inner_pairs = pair.into_inner();
+    let mut inner_pairs = pair.into_inner().peekable();
+    
+    // Check for options block before the contract keyword
+    if inner_pairs.peek().map_or(false, |p| p.as_rule() == Rule::options_block) {
+        let options_block = inner_pairs.next().unwrap();
+        parse_options_block(contract, options_block);
+    }
     
     // Contract name
     contract.name = inner_pairs.next().unwrap().as_str().to_string();
@@ -72,6 +81,36 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) {
         if func_pair.as_rule() == Rule::function {
             let func = parse_function(func_pair);
             contract.functions.push(func);
+        }
+    }
+}
+
+// Parse options block
+fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) {
+    for option_pair in pair.into_inner() {
+        if option_pair.as_rule() == Rule::option_setting {
+            let mut inner = option_pair.into_inner();
+            let option_name = inner.next().unwrap().as_str();
+            let option_value = inner.next().unwrap().as_str();
+            
+            match option_name {
+                "server" => {
+                    contract.server_key_param = Some(option_value.to_string());
+                },
+                "renew" => {
+                    if let Ok(value) = option_value.parse::<u64>() {
+                        contract.renewal_timelock = Some(value);
+                    }
+                },
+                "exit" => {
+                    if let Ok(value) = option_value.parse::<u64>() {
+                        contract.exit_timelock = Some(value);
+                    }
+                },
+                _ => {
+                    // Ignore unknown options
+                }
+            }
         }
     }
 }

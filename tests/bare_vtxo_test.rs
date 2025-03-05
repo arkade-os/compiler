@@ -3,10 +3,18 @@ use taplang::compile;
 #[test]
 fn test_bare_vtxo_contract() {
     // Bare VTXO contract source code
-    let vtxo_code = r#"contract BareVTXO(
+    let vtxo_code = r#"// Contract configuration options
+options {
+  // Server key parameter from contract parameters
+  server = server;
+  
+  // Exit timelock: 24 hours (144 blocks)
+  exit = 144;
+}
+
+contract BareVTXO(
   pubkey user,
-  pubkey server,
-  int timelock
+  pubkey server
 ) {
   // Cooperative spend path (user + server)
   function cooperative(signature userSig, signature serverSig) {
@@ -30,37 +38,54 @@ fn test_bare_vtxo_contract() {
     assert_eq!(output.name, "BareVTXO");
     
     // Verify parameters
-    assert_eq!(output.parameters.len(), 3);
+    assert_eq!(output.parameters.len(), 2);
     assert_eq!(output.parameters[0].name, "user");
     assert_eq!(output.parameters[0].param_type, "pubkey");
     assert_eq!(output.parameters[1].name, "server");
     assert_eq!(output.parameters[1].param_type, "pubkey");
-    assert_eq!(output.parameters[2].name, "timelock");
-    assert_eq!(output.parameters[2].param_type, "int");
     
-    // Verify script paths - we have 4 paths (2 functions x 2 variants)
-    assert_eq!(output.script_paths.len(), 4);
+    // Verify functions - we have 4 functions (2 functions x 2 variants)
+    assert_eq!(output.functions.len(), 4);
     
-    // Verify cooperative path
-    let cooperative_path = output.script_paths.iter()
-        .find(|p| p.function == "cooperative" && p.server_variant)
+    // Verify cooperative function with server variant
+    let cooperative_function = output.functions.iter()
+        .find(|f| f.name == "cooperative" && f.server_variant)
         .unwrap();
     
-    // Check operations
-    assert_eq!(cooperative_path.operations.len(), 7);
-    assert_eq!(cooperative_path.operations[0].op, "OP_2");
-    assert_eq!(cooperative_path.operations[1].op, "<user>");
-    assert_eq!(cooperative_path.operations[2].op, "<server>");
-    assert_eq!(cooperative_path.operations[3].op, "OP_2");
+    // Check function inputs
+    assert_eq!(cooperative_function.function_inputs.len(), 2);
+    assert_eq!(cooperative_function.function_inputs[0].name, "userSig");
+    assert_eq!(cooperative_function.function_inputs[0].param_type, "signature");
+    assert_eq!(cooperative_function.function_inputs[1].name, "serverSig");
+    assert_eq!(cooperative_function.function_inputs[1].param_type, "signature");
     
-    // Verify timeout path
-    let timeout_path = output.script_paths.iter()
-        .find(|p| p.function == "timeout" && p.server_variant)
+    // Check assembly instructions
+    assert_eq!(cooperative_function.asm.len(), 10);
+    assert_eq!(cooperative_function.asm[0], "OP_2");
+    assert_eq!(cooperative_function.asm[1], "<user>");
+    assert_eq!(cooperative_function.asm[2], "<server>");
+    assert_eq!(cooperative_function.asm[3], "OP_2");
+    assert_eq!(cooperative_function.asm[4], "<userSig>");
+    assert_eq!(cooperative_function.asm[5], "<serverSig>");
+    assert_eq!(cooperative_function.asm[6], "OP_CHECKMULTISIG");
+    assert_eq!(cooperative_function.asm[7], "<SERVER_KEY>");
+    assert_eq!(cooperative_function.asm[8], "<serverSig>");
+    assert_eq!(cooperative_function.asm[9], "OP_CHECKSIG");
+    
+    // Verify timeout function with server variant
+    let timeout_function = output.functions.iter()
+        .find(|f| f.name == "timeout" && f.server_variant)
         .unwrap();
     
-    // Check operations
-    assert_eq!(timeout_path.operations.len(), 6);
-    assert_eq!(timeout_path.operations[0].op, "<user>");
-    assert_eq!(timeout_path.operations[1].op, "<userSig>");
-    assert_eq!(timeout_path.operations[2].op, "OP_CHECKSIG");
+    // Check assembly instructions
+    assert_eq!(timeout_function.asm.len(), 9);
+    assert_eq!(timeout_function.asm[0], "<user>");
+    assert_eq!(timeout_function.asm[1], "<userSig>");
+    assert_eq!(timeout_function.asm[2], "OP_CHECKSIG");
+    assert_eq!(timeout_function.asm[3], "0");
+    assert_eq!(timeout_function.asm[4], "OP_CHECKLOCKTIMEVERIFY");
+    assert_eq!(timeout_function.asm[5], "OP_DROP");
+    assert_eq!(timeout_function.asm[6], "<SERVER_KEY>");
+    assert_eq!(timeout_function.asm[7], "<serverSig>");
+    assert_eq!(timeout_function.asm[8], "OP_CHECKSIG");
 } 
