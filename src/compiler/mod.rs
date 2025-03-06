@@ -2,6 +2,9 @@ use crate::models::{Requirement, Expression, ContractJson, AbiFunction, Function
 use crate::parser;
 use chrono::Utc;
 
+// Include the opcodes module
+pub mod opcodes;
+
 /// Compiles a TapLang contract AST into a JSON-serializable structure.
 /// 
 /// This function takes a parsed Contract AST and transforms it into a ContractJson
@@ -315,74 +318,272 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                         asm.push("OP_SHA256".to_string());
                     },
                     (Expression::Property(prop), "==", Expression::Variable(var)) => {
-                        asm.push(format!("<{}>", prop));
+                        // Handle different property types based on their prefix
+                        if prop.starts_with("tx.input[") {
+                            // Extract the input index and property
+                            let parts: Vec<&str> = prop.split(']').collect();
+                            if parts.len() >= 2 {
+                                let index_part = parts[0].trim_start_matches("tx.input[");
+                                let property_part = parts[1].trim_start_matches('.');
+                                
+                                // Push the index
+                                asm.push(format!("{}", index_part));
+                                
+                                // Add the appropriate opcode based on the property
+                                match property_part {
+                                    "outpoint" => asm.push("OP_INSPECTINPUTOUTPOINT".to_string()),
+                                    "asset" => asm.push("OP_INSPECTINPUTASSET".to_string()),
+                                    "value" => asm.push("OP_INSPECTINPUTVALUE".to_string()),
+                                    "scriptPubKey" => asm.push("OP_INSPECTINPUTSCRIPTPUBKEY".to_string()),
+                                    "sequence" => asm.push("OP_INSPECTINPUTSEQUENCE".to_string()),
+                                    "issuance" => asm.push("OP_INSPECTINPUTISSUANCE".to_string()),
+                                    _ => asm.push("OP_FALSE".to_string()), // Unsupported property
+                                }
+                            }
+                        } else if prop.starts_with("tx.output[") {
+                            // Extract the output index and property
+                            let parts: Vec<&str> = prop.split(']').collect();
+                            if parts.len() >= 2 {
+                                let index_part = parts[0].trim_start_matches("tx.output[");
+                                let property_part = parts[1].trim_start_matches('.');
+                                
+                                // Push the index
+                                asm.push(format!("{}", index_part));
+                                
+                                // Add the appropriate opcode based on the property
+                                match property_part {
+                                    "asset" => asm.push("OP_INSPECTOUTPUTASSET".to_string()),
+                                    "value" => asm.push("OP_INSPECTOUTPUTVALUE".to_string()),
+                                    "nonce" => asm.push("OP_INSPECTOUTPUTNONCE".to_string()),
+                                    "scriptPubKey" => asm.push("OP_INSPECTOUTPUTSCRIPTPUBKEY".to_string()),
+                                    _ => asm.push("OP_FALSE".to_string()), // Unsupported property
+                                }
+                            }
+                        } else if prop == "tx.currentInputIndex" {
+                            // Push the current input index
+                            asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
+                        } else if prop == "tx.version" {
+                            // Push the transaction version
+                            asm.push("OP_INSPECTVERSION".to_string());
+                        } else if prop == "tx.locktime" {
+                            // Push the transaction locktime
+                            asm.push("OP_INSPECTLOCKTIME".to_string());
+                        } else if prop == "tx.numInputs" {
+                            // Push the number of inputs
+                            asm.push("OP_INSPECTNUMINPUTS".to_string());
+                        } else if prop == "tx.numOutputs" {
+                            // Push the number of outputs
+                            asm.push("OP_INSPECTNUMOUTPUTS".to_string());
+                        } else if prop == "tx.weight" {
+                            // Push the transaction weight
+                            asm.push("OP_TXWEIGHT".to_string());
+                        } else if prop.contains('+') {
+                            // Handle addition
+                            let parts: Vec<&str> = prop.split('+').collect();
+                            if parts.len() == 2 {
+                                let left = parts[0].trim();
+                                let right = parts[1].trim();
+                                
+                                // Push the operands
+                                asm.push(format!("<{}>", left));
+                                asm.push(format!("<{}>", right));
+                                
+                                // Add the ADD64 opcode
+                                asm.push("OP_ADD64".to_string());
+                            }
+                        } else if prop.contains('-') {
+                            // Handle subtraction
+                            let parts: Vec<&str> = prop.split('-').collect();
+                            if parts.len() == 2 {
+                                let left = parts[0].trim();
+                                let right = parts[1].trim();
+                                
+                                // Push the operands
+                                asm.push(format!("<{}>", left));
+                                asm.push(format!("<{}>", right));
+                                
+                                // Add the SUB64 opcode
+                                asm.push("OP_SUB64".to_string());
+                            }
+                        } else if prop.contains('*') {
+                            // Handle multiplication
+                            let parts: Vec<&str> = prop.split('*').collect();
+                            if parts.len() == 2 {
+                                let left = parts[0].trim();
+                                let right = parts[1].trim();
+                                
+                                // Push the operands
+                                asm.push(format!("<{}>", left));
+                                asm.push(format!("<{}>", right));
+                                
+                                // Add the MUL64 opcode
+                                asm.push("OP_MUL64".to_string());
+                            }
+                        } else if prop.contains('/') {
+                            // Handle division
+                            let parts: Vec<&str> = prop.split('/').collect();
+                            if parts.len() == 2 {
+                                let left = parts[0].trim();
+                                let right = parts[1].trim();
+                                
+                                // Push the operands
+                                asm.push(format!("<{}>", left));
+                                asm.push(format!("<{}>", right));
+                                
+                                // Add the DIV64 opcode
+                                asm.push("OP_DIV64".to_string());
+                            }
+                        } else if prop.starts_with('-') {
+                            // Handle negation
+                            let value = prop.trim_start_matches('-');
+                            
+                            // Push the operand
+                            asm.push(format!("<{}>", value));
+                            
+                            // Add the NEG64 opcode
+                            asm.push("OP_NEG64".to_string());
+                        } else if prop.starts_with("sha256Initialize") {
+                            // Handle SHA256 initialization
+                            let data = prop.trim_start_matches("sha256Initialize(").trim_end_matches(')');
+                            
+                            // Push the data
+                            asm.push(format!("<{}>", data));
+                            
+                            // Add the SHA256INITIALIZE opcode
+                            asm.push("OP_SHA256INITIALIZE".to_string());
+                        } else if prop.starts_with("sha256Update") {
+                            // Handle SHA256 update
+                            let args = prop.trim_start_matches("sha256Update(").trim_end_matches(')');
+                            let parts: Vec<&str> = args.split(',').collect();
+                            if parts.len() == 2 {
+                                let context = parts[0].trim();
+                                let data = parts[1].trim();
+                                
+                                // Push the context and data
+                                asm.push(format!("<{}>", context));
+                                asm.push(format!("<{}>", data));
+                                
+                                // Add the SHA256UPDATE opcode
+                                asm.push("OP_SHA256UPDATE".to_string());
+                            }
+                        } else if prop.starts_with("sha256Finalize") {
+                            // Handle SHA256 finalization
+                            let args = prop.trim_start_matches("sha256Finalize(").trim_end_matches(')');
+                            let parts: Vec<&str> = args.split(',').collect();
+                            if parts.len() == 2 {
+                                let context = parts[0].trim();
+                                let data = parts[1].trim();
+                                
+                                // Push the context and data
+                                asm.push(format!("<{}>", context));
+                                asm.push(format!("<{}>", data));
+                                
+                                // Add the SHA256FINALIZE opcode
+                                asm.push("OP_SHA256FINALIZE".to_string());
+                            }
+                        } else if prop.starts_with("checkSigFromStack") && var == "true" {
+                            // Handle checkSigFromStack
+                            let args = prop.trim_start_matches("checkSigFromStack(").trim_end_matches(')');
+                            let parts: Vec<&str> = args.split(',').collect();
+                            if parts.len() == 3 {
+                                let signature = parts[0].trim();
+                                let message = parts[1].trim();
+                                let pubkey = parts[2].trim();
+                                
+                                // Push the signature, message, and pubkey
+                                asm.push(format!("<{}>", signature));
+                                asm.push(format!("<{}>", message));
+                                asm.push(format!("<{}>", pubkey));
+                                
+                                // Add the CHECKSIGFROMSTACK opcode
+                                asm.push("OP_CHECKSIGFROMSTACK".to_string());
+                            }
+                        } else if prop.starts_with("ecmulscalarVerify") && var == "true" {
+                            // Handle ecmulscalarVerify
+                            let args = prop.trim_start_matches("ecmulscalarVerify(").trim_end_matches(')');
+                            let parts: Vec<&str> = args.split(',').collect();
+                            if parts.len() == 3 {
+                                let scalar = parts[0].trim();
+                                let point_p = parts[1].trim();
+                                let point_q = parts[2].trim();
+                                
+                                // Push the scalar, point_p, and point_q
+                                asm.push(format!("<{}>", scalar));
+                                asm.push(format!("<{}>", point_p));
+                                asm.push(format!("<{}>", point_q));
+                                
+                                // Add the ECMULSCALARVERIFY opcode
+                                asm.push("OP_ECMULSCALARVERIFY".to_string());
+                            }
+                        } else if prop.starts_with("tweakVerify") && var == "true" {
+                            // Handle tweakVerify
+                            let args = prop.trim_start_matches("tweakVerify(").trim_end_matches(')');
+                            let parts: Vec<&str> = args.split(',').collect();
+                            if parts.len() == 3 {
+                                let internal_key = parts[0].trim();
+                                let tweak = parts[1].trim();
+                                let output_key = parts[2].trim();
+                                
+                                // Push the internal_key, tweak, and output_key
+                                asm.push(format!("<{}>", internal_key));
+                                asm.push(format!("<{}>", tweak));
+                                asm.push(format!("<{}>", output_key));
+                                
+                                // Add the TWEAKVERIFY opcode
+                                asm.push("OP_TWEAKVERIFY".to_string());
+                            }
+                        } else {
+                            // Default case for other properties
+                            asm.push(format!("<{}>", prop));
+                        }
+                        
+                        // Compare with the variable
                         asm.push("OP_EQUAL".to_string());
                         asm.push(format!("<{}>", var));
                     },
-                    (Expression::Property(prop), ">=", Expression::Variable(var)) => {
-                        asm.push(format!("<{}>", prop));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(format!("<{}>", var));
-                    },
-                    (Expression::Property(prop), "==", Expression::Literal(value)) => {
-                        asm.push(format!("<{}>", prop));
-                        asm.push("OP_EQUAL".to_string());
-                        asm.push(value.clone());
-                    },
-                    (Expression::Property(prop), ">=", Expression::Literal(value)) => {
-                        asm.push(format!("<{}>", prop));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(value.clone());
-                    },
-                    (Expression::Property(prop), "==", Expression::Property(prop2)) => {
-                        asm.push(format!("<{}>", prop));
-                        asm.push("OP_EQUAL".to_string());
-                        asm.push(format!("<{}>", prop2));
-                    },
-                    (Expression::Property(prop), ">=", Expression::Property(prop2)) => {
-                        asm.push(format!("<{}>", prop));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(format!("<{}>", prop2));
-                    },
+                    
+                    // Handle Sha256 expressions
                     (Expression::Sha256(var), "==", Expression::Variable(var2)) => {
                         asm.push(format!("<{}>", var));
+                        asm.push("OP_SHA256".to_string());
                         asm.push("OP_EQUAL".to_string());
                         asm.push(format!("<{}>", var2));
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Sha256(var), ">=", Expression::Variable(var2)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(format!("<{}>", var2));
-                        asm.push("OP_SHA256".to_string());
                     },
                     (Expression::Sha256(var), "==", Expression::Literal(value)) => {
                         asm.push(format!("<{}>", var));
+                        asm.push("OP_SHA256".to_string());
                         asm.push("OP_EQUAL".to_string());
                         asm.push(value.clone());
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Sha256(var), ">=", Expression::Literal(value)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(value.clone());
-                        asm.push("OP_SHA256".to_string());
                     },
                     (Expression::Sha256(var), "==", Expression::Property(prop)) => {
                         asm.push(format!("<{}>", var));
+                        asm.push("OP_SHA256".to_string());
                         asm.push("OP_EQUAL".to_string());
                         asm.push(format!("<{}>", prop));
+                    },
+                    (Expression::Sha256(var), ">=", Expression::Variable(var2)) => {
+                        asm.push(format!("<{}>", var));
                         asm.push("OP_SHA256".to_string());
+                        asm.push("OP_GREATERTHANOREQUAL".to_string());
+                        asm.push(format!("<{}>", var2));
+                    },
+                    (Expression::Sha256(var), ">=", Expression::Literal(value)) => {
+                        asm.push(format!("<{}>", var));
+                        asm.push("OP_SHA256".to_string());
+                        asm.push("OP_GREATERTHANOREQUAL".to_string());
+                        asm.push(value.clone());
                     },
                     (Expression::Sha256(var), ">=", Expression::Property(prop)) => {
                         asm.push(format!("<{}>", var));
+                        asm.push("OP_SHA256".to_string());
                         asm.push("OP_GREATERTHANOREQUAL".to_string());
                         asm.push(format!("<{}>", prop));
-                        asm.push("OP_SHA256".to_string());
                     },
+                    
+                    // Handle CurrentInput expressions
                     (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
                         if value == "true" {
-                            // Handle tx.input.current
+                            // Handle tx.currentInput
                             // No need for OP_ACTIVEBYTECODESTART as we're directly accessing the current input
                             
                             // If there's a property, access it specifically
@@ -417,6 +618,7 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                             }
                         }
                     },
+                    
                     // Add a catch-all pattern to fix the non-exhaustive patterns error
                     _ => {
                         // Default handling for unmatched patterns

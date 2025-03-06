@@ -3,6 +3,10 @@ use pest_derive::Parser;
 use pest::iterators::{Pair, Pairs};
 use crate::models::{Contract, Function, Parameter, Requirement, Expression};
 
+// Include the elements opcodes module
+pub mod elements_opcodes;
+pub mod debug;
+
 // Grammar definition for pest parser
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
@@ -325,18 +329,18 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Requirement {
             // and handle it during compilation
             let property_access = pair.as_str().to_string();
             
-            // Special handling for tx.input.current
-            if property_access.starts_with("tx.input.current") {
-                // Extract the property after tx.input.current if any
-                // Format is tx.input.current.property or just tx.input.current
-                let property = if property_access == "tx.input.current" {
-                    // If just tx.input.current, default to the entire input
+            // Special handling for tx.currentInput
+            if property_access.starts_with("tx.currentInput") {
+                // Extract the property after tx.currentInput if any
+                // Format is tx.currentInput.property or just tx.currentInput
+                let property = if property_access == "tx.currentInput" {
+                    // If just tx.currentInput, default to the entire input
                     None
                 } else {
-                    // Extract the property after tx.input.current.
+                    // Extract the property after tx.currentInput.
                     let parts: Vec<&str> = property_access.split('.').collect();
-                    if parts.len() >= 4 {
-                        Some(parts[3].to_string())
+                    if parts.len() >= 3 {
+                        Some(parts[2].to_string())
                     } else {
                         None
                     }
