@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("bare.tap", "bare.json"),
         ("htlc.tap", "htlc.json"),
         ("fuji_safe.tap", "fuji_safe.json"),
+        ("extra_opcodes.tap", "extra_opcodes.json"),
     ];
     
     // Compile each file

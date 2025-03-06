@@ -1,0 +1,322 @@
+{
+  "contractName": "ElementsOpcodes",
+  "constructorInputs": [
+    {
+      "name": "user",
+      "type": "pubkey"
+    },
+    {
+      "name": "server",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "hashLargeData",
+      "functionInputs": [
+        {
+          "name": "preimage1",
+          "type": "bytes"
+        },
+        {
+          "name": "preimage2",
+          "type": "bytes"
+        },
+        {
+          "name": "expectedHash",
+          "type": "bytes"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "hashLargeData",
+      "functionInputs": [
+        {
+          "name": "preimage1",
+          "type": "bytes"
+        },
+        {
+          "name": "preimage2",
+          "type": "bytes"
+        },
+        {
+          "name": "expectedHash",
+          "type": "bytes"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "inspectTransaction",
+      "functionInputs": [
+        {
+          "name": "inputIndex",
+          "type": "int"
+        },
+        {
+          "name": "outputIndex",
+          "type": "int"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "inspectTransaction",
+      "functionInputs": [
+        {
+          "name": "inputIndex",
+          "type": "int"
+        },
+        {
+          "name": "outputIndex",
+          "type": "int"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "arithmetic64",
+      "functionInputs": [
+        {
+          "name": "a",
+          "type": "int"
+        },
+        {
+          "name": "b",
+          "type": "int"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "arithmetic64",
+      "functionInputs": [
+        {
+          "name": "a",
+          "type": "int"
+        },
+        {
+          "name": "b",
+          "type": "int"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "conversion",
+      "functionInputs": [
+        {
+          "name": "scriptNum",
+          "type": "int"
+        },
+        {
+          "name": "le32Value",
+          "type": "int"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "conversion",
+      "functionInputs": [
+        {
+          "name": "scriptNum",
+          "type": "int"
+        },
+        {
+          "name": "le32Value",
+          "type": "int"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "cryptoOperations",
+      "functionInputs": [
+        {
+          "name": "scalar",
+          "type": "bytes"
+        },
+        {
+          "name": "pointP",
+          "type": "bytes"
+        },
+        {
+          "name": "pointQ",
+          "type": "bytes"
+        },
+        {
+          "name": "internalKey",
+          "type": "bytes"
+        },
+        {
+          "name": "tweak",
+          "type": "bytes"
+        },
+        {
+          "name": "outputKey",
+          "type": "bytes"
+        },
+        {
+          "name": "message",
+          "type": "bytes"
+        },
+        {
+          "name": "sig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "cryptoOperations",
+      "functionInputs": [
+        {
+          "name": "scalar",
+          "type": "bytes"
+        },
+        {
+          "name": "pointP",
+          "type": "bytes"
+        },
+        {
+          "name": "pointQ",
+          "type": "bytes"
+        },
+        {
+          "name": "internalKey",
+          "type": "bytes"
+        },
+        {
+          "name": "tweak",
+          "type": "bytes"
+        },
+        {
+          "name": "outputKey",
+          "type": "bytes"
+        },
+        {
+          "name": "message",
+          "type": "bytes"
+        },
+        {
+          "name": "sig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "144",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "// Elements Opcodes Example\n// This example demonstrates the use of the new Elements opcodes (OP_SUCCESS196-228)\n\noptions {\n  // Server key parameter from contract parameters\n  server = server;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  exit = 144;\n}\n\ncontract ElementsOpcodes(\n  pubkey user,\n  pubkey server\n) {\n  // Demonstrate streaming SHA256 opcodes\n  function hashLargeData(bytes preimage1, bytes preimage2, bytes expectedHash) {\n    // Initialize the SHA256 context with the first preimage\n    bytes context = sha256Initialize(preimage1);\n    \n    // Update the context with the second preimage\n    bytes updatedContext = sha256Update(context, preimage2);\n    \n    // Finalize the hash - using preimage1 as the final data\n    bytes hash = sha256Finalize(updatedContext, preimage1);\n    \n    // Verify the hash matches the expected hash\n    require(hash == expectedHash);\n  }\n  \n  // Demonstrate transaction introspection opcodes\n  function inspectTransaction(int inputIndex, int outputIndex) {\n    // Get the current input index\n    int currentIdx = tx.currentInput.index;\n    \n    // Inspect input properties\n    bytes outpoint = tx.inputs[inputIndex].outpoint;\n    bytes inputValue = tx.inputs[inputIndex].value;\n    bytes inputScript = tx.inputs[inputIndex].scriptPubKey;\n    int sequence = tx.inputs[inputIndex].sequence;\n    \n    // Inspect output properties\n    bytes outputValue = tx.outputs[outputIndex].value;\n    bytes outputScript = tx.outputs[outputIndex].scriptPubKey;\n    \n    // Inspect transaction properties\n    int version = tx.version;\n    int locktime = tx.locktime;\n    int numInputs = tx.inputs.length;\n    int numOutputs = tx.outputs.length;\n    int weight = tx.weight;\n    \n    // Verify the transaction properties\n    require(numInputs > 0);\n    require(numOutputs > 0);\n    require(version == 2);\n  }\n  \n  // Demonstrate 64-bit arithmetic opcodes\n  function arithmetic64(int a, int b) {\n    // Addition\n    int sum = add64(a, b);\n    require(sum > 0);\n    \n    // Subtraction\n    int difference = sub64(a, b);\n    \n    // Multiplication\n    int product = mul64(a, b);\n    \n    // Division\n    int quotient = div64(a, b);\n    \n    // Negation\n    int negated = neg64(a);\n  }\n  \n  // Demonstrate conversion opcodes\n  function conversion(int scriptNum, int le32Value) {\n    // Convert script number to 64-bit LE\n    int le64FromScriptNum = scriptNumToLE64(scriptNum);\n    \n    // Convert 64-bit LE to script number\n    int scriptNumFromLE64 = le64ToScriptNum(le64FromScriptNum);\n    \n    // Convert 32-bit LE to 64-bit LE\n    int le64FromLE32 = le32ToLE64(le32Value);\n    \n    // Verify the conversions\n    require(scriptNum == scriptNumFromLE64);\n  }\n  \n  // Demonstrate crypto opcodes\n  function cryptoOperations(bytes scalar, bytes pointP, bytes pointQ, \n                           bytes internalKey, bytes tweak, bytes outputKey,\n                           bytes message, signature sig) {\n    // Verify EC scalar multiplication\n    bytes result = ecmulscalar(scalar, pointP);\n    require(result == pointQ);\n    \n    // Verify key tweaking\n    bytes tweakedKey = tweakAdd(internalKey, tweak);\n    require(tweakedKey == outputKey);\n    \n    // Verify signature from stack\n    require(checkSigFromStack(sig, message, user));\n    \n    // Also verify a regular signature\n    require(checkSig(sig, user));\n  }\n} ",
+  "compiler": {
+    "name": "taplang",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2025-03-06T02:09:46.252886+00:00"
+}

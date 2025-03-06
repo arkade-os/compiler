@@ -87,9 +87,9 @@ contract FujiSafe(
     // For renewal, we ensure the output is another P2TR with the same key and value
     // This preserves the Taproot commitment structure
     
-    // Using the new tx.input.current syntax to access the current input's properties
-    bytes currentScript = tx.input.current.scriptPubKey;
-    int currentValue = tx.input.current.value;
+    // Using the tx.currentInput syntax to access the current input's properties
+    bytes currentScript = tx.currentInput.scriptPubKey;
+    int currentValue = tx.currentInput.value;
     
     // Verify that output 0 has the same P2TR script as the current input
     require(tx.outputs[0].scriptPubKey == currentScript, "P2TR output mismatch");

@@ -1,6 +1,7 @@
 pub mod models;
 pub mod parser;
 pub mod compiler;
+pub mod interpreter;
 
 pub use models::{Contract, Function, Parameter, Requirement, Expression, ContractJson};
 
@@ -59,4 +60,33 @@ pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Er
         Ok(output) => Ok(output),
         Err(err) => Err(err.into()),
     }
+}
+
+use std::fs;
+use std::path::Path;
+
+pub fn compile_file(input_path: &str, output_path: &str) -> Result<(), String> {
+    // Read the input file
+    let source_code = fs::read_to_string(input_path)
+        .map_err(|e| format!("Failed to read input file: {}", e))?;
+    
+    // Compile the source code
+    let contract_json = compiler::compile(&source_code)?;
+    
+    // Serialize to JSON
+    let json_string = serde_json::to_string_pretty(&contract_json)
+        .map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
+    
+    // Write to the output file
+    fs::write(output_path, json_string)
+        .map_err(|e| format!("Failed to write output file: {}", e))?;
+    
+    Ok(())
+}
+
+pub fn compile_to_json(source_code: &str) -> Result<String, String> {
+    let contract_json = compiler::compile(source_code)?;
+    
+    serde_json::to_string_pretty(&contract_json)
+        .map_err(|e| format!("Failed to serialize to JSON: {}", e))
 } 

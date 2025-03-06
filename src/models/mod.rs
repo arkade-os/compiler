@@ -1,5 +1,9 @@
 use serde::{Serialize, Deserialize};
 
+// Export the opcodes module
+pub mod opcodes;
+pub use opcodes::Opcode;
+
 /// JSON output structures
 /// 
 /// These structures are used to represent the compiled contract in a format

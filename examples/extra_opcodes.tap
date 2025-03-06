@@ -1,0 +1,111 @@
+// Elements Opcodes Example
+// This example demonstrates the use of the new Elements opcodes (OP_SUCCESS196-228)
+
+options {
+  // Server key parameter from contract parameters
+  server = server;
+  
+  // Exit timelock: 24 hours (144 blocks)
+  exit = 144;
+}
+
+contract ElementsOpcodes(
+  pubkey user,
+  pubkey server
+) {
+  // Demonstrate streaming SHA256 opcodes
+  function hashLargeData(bytes preimage1, bytes preimage2, bytes expectedHash) {
+    // Initialize the SHA256 context with the first preimage
+    bytes context = sha256Initialize(preimage1);
+    
+    // Update the context with the second preimage
+    bytes updatedContext = sha256Update(context, preimage2);
+    
+    // Finalize the hash - using preimage1 as the final data
+    bytes hash = sha256Finalize(updatedContext, preimage1);
+    
+    // Verify the hash matches the expected hash
+    require(hash == expectedHash);
+  }
+  
+  // Demonstrate transaction introspection opcodes
+  function inspectTransaction(int inputIndex, int outputIndex) {
+    // Get the current input index
+    int currentIdx = tx.currentInput.index;
+    
+    // Inspect input properties
+    bytes outpoint = tx.inputs[inputIndex].outpoint;
+    bytes inputValue = tx.inputs[inputIndex].value;
+    bytes inputScript = tx.inputs[inputIndex].scriptPubKey;
+    int sequence = tx.inputs[inputIndex].sequence;
+    
+    // Inspect output properties
+    bytes outputValue = tx.outputs[outputIndex].value;
+    bytes outputScript = tx.outputs[outputIndex].scriptPubKey;
+    
+    // Inspect transaction properties
+    int version = tx.version;
+    int locktime = tx.locktime;
+    int numInputs = tx.inputs.length;
+    int numOutputs = tx.outputs.length;
+    int weight = tx.weight;
+    
+    // Verify the transaction properties
+    require(numInputs > 0);
+    require(numOutputs > 0);
+    require(version == 2);
+  }
+  
+  // Demonstrate 64-bit arithmetic opcodes
+  function arithmetic64(int a, int b) {
+    // Addition
+    int sum = add64(a, b);
+    require(sum > 0);
+    
+    // Subtraction
+    int difference = sub64(a, b);
+    
+    // Multiplication
+    int product = mul64(a, b);
+    
+    // Division
+    int quotient = div64(a, b);
+    
+    // Negation
+    int negated = neg64(a);
+  }
+  
+  // Demonstrate conversion opcodes
+  function conversion(int scriptNum, int le32Value) {
+    // Convert script number to 64-bit LE
+    int le64FromScriptNum = scriptNumToLE64(scriptNum);
+    
+    // Convert 64-bit LE to script number
+    int scriptNumFromLE64 = le64ToScriptNum(le64FromScriptNum);
+    
+    // Convert 32-bit LE to 64-bit LE
+    int le64FromLE32 = le32ToLE64(le32Value);
+    
+    // Verify the conversions
+    require(scriptNum == scriptNumFromLE64);
+  }
+  
+  // Demonstrate crypto opcodes
+  function cryptoOperations(bytes scalar, bytes pointP, bytes pointQ, 
+                           bytes internalKey, bytes tweak, bytes outputKey,
+                           bytes message, signature sig) {
+    // Verify EC scalar multiplication
+    bytes result = ecmulscalar(scalar, pointP);
+    require(result == pointQ);
+    
+    // Verify key tweaking
+    bytes tweakedKey = tweakAdd(internalKey, tweak);
+    require(tweakedKey == outputKey);
+    
+    // Verify signature from stack
+    require(checkSigFromStack(sig, message, user));
+    
+    // Also verify a regular signature
+    require(checkSig(sig, user));
+  }
+} 

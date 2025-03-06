@@ -32,7 +32,7 @@ param_list = {
 parameter = { data_type ~ identifier }
 
 // Supported data types - atomic rule to prevent partial matches
-data_type = @{ "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "asset" | "int" | "bool" }
+data_type = @{ "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "asset" | "int" | "int32" | "int64" | "bool" }
 
 // Function definition with strict structure
 function = { 
@@ -76,7 +76,13 @@ complex_expression = _{
     function_call |
     identifier |
     number_literal |
-    array_literal
+    array_literal |
+    // New Elements opcodes
+    streaming_sha256 |
+    tx_introspection |
+    arithmetic64 |
+    conversion |
+    crypto_op
 }
 
 // Time comparison (tx.time >= timelock)
@@ -120,8 +126,6 @@ p2tr_constructor_args = {
 // Transaction property access with special handling
 tx_property_access = {
     "tx" ~ "." ~ (
-        // Input.current syntax - new first-class support
-        ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
         // Standard property access
         (tx_property_part ~ (array_access | ("." ~ tx_property_part))*)
     )
@@ -205,4 +209,149 @@ number_literal = @{
 // String literals are sequences of characters enclosed in double quotes
 string_literal = @{
     "\"" ~ (!"\"" ~ ANY)* ~ "\""
+}
+
+// Streaming SHA256 operations
+streaming_sha256 = {
+    sha256_initialize |
+    sha256_update |
+    sha256_finalize |
+    sha256_large_data
+}
+
+sha256_initialize = {
+    "sha256Initialize" ~ "(" ~ complex_expression ~ ")"
+}
+
+sha256_update = {
+    "sha256Update" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+sha256_finalize = {
+    "sha256Finalize" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+sha256_large_data = {
+    "sha256LargeData" ~ "(" ~ complex_expression ~ ")"
+}
+
+// Transaction introspection operations
+tx_introspection = {
+    // Input introspection
+    "tx.input" ~ "[" ~ complex_expression ~ "]" ~ "." ~ tx_input_property |
+    "tx.currentInput" ~ "." ~ tx_input_property |
+    "tx.currentInputIndex" |
+    
+    // Output introspection
+    "tx.output" ~ "[" ~ complex_expression ~ "]" ~ "." ~ tx_output_property |
+    
+    // Transaction introspection
+    "tx.version" |
+    "tx.locktime" |
+    "tx.numInputs" |
+    "tx.numOutputs" |
+    "tx.weight"
+}
+
+tx_input_property = {
+    "outpoint" |
+    "asset" |
+    "value" |
+    "scriptPubKey" |
+    "sequence" |
+    "issuance"
+}
+
+tx_output_property = {
+    "asset" |
+    "value" |
+    "nonce" |
+    "scriptPubKey"
+}
+
+// 64-bit arithmetic operations
+arithmetic64 = {
+    add64 |
+    sub64 |
+    mul64 |
+    div64 |
+    neg64 |
+    less_than64 |
+    less_than_or_equal64 |
+    greater_than64 |
+    greater_than_or_equal64
+}
+
+add64 = {
+    "add64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+sub64 = {
+    "sub64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+mul64 = {
+    "mul64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+div64 = {
+    "div64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+neg64 = {
+    "neg64" ~ "(" ~ complex_expression ~ ")"
+}
+
+less_than64 = {
+    "lessThan64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+less_than_or_equal64 = {
+    "lessThanOrEqual64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+greater_than64 = {
+    "greaterThan64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+greater_than_or_equal64 = {
+    "greaterThanOrEqual64" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+// Conversion operations
+conversion = {
+    scriptnum_to_le64 |
+    le64_to_scriptnum |
+    le32_to_le64
+}
+
+scriptnum_to_le64 = {
+    "scriptNumToLE64" ~ "(" ~ complex_expression ~ ")"
+}
+
+le64_to_scriptnum = {
+    "le64ToScriptNum" ~ "(" ~ complex_expression ~ ")"
+}
+
+le32_to_le64 = {
+    "le32ToLE64" ~ "(" ~ complex_expression ~ ")"
+}
+
+// Crypto operations
+crypto_op = {
+    ecmulscalar_verify |
+    tweak_verify |
+    checksig_from_stack
+}
+
+ecmulscalar_verify = {
+    "ecmulscalarVerify" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+tweak_verify = {
+    "tweakVerify" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ "," ~ complex_expression ~ ")"
+}
+
+checksig_from_stack = {
+    "checkSigFromStack" ~ "(" ~ complex_expression ~ "," ~ complex_expression ~ "," ~ complex_expression ~ ")"
 }
