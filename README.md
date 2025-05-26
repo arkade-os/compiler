@@ -1,20 +1,4 @@
----
-title: "Arkade Compiler"
-description: "Compiling Arkade Script to Bitcoin Taproot scripts"
-icon: "gears"
----
-
-<Warning>
-  **Experimental Technology**
-  
-  The Arkade Compiler is experimental technology in active development. All code and examples presented here are for exploration and proof of concept purposes only. Do not use in production environments.
-</Warning>
-
 # Arkade Compiler
-
-<Card title="Arkade Compiler" icon="github" href="https://github.com/arkade-os/compiler">
-  Official repository for the Arkade Script compiler
-</Card>
 
 The Arkade Compiler transforms high-level Arkade Script contracts into optimized Bitcoin Taproot scripts. It handles the complexity of Bitcoin Script generation, allowing developers to focus on contract logic rather than low-level script details.
 
@@ -26,29 +10,6 @@ arkadec contract.ark
 ```
 
 This will compile your Arkade Script contract to a JSON file that can be used with Bitcoin Taproot libraries.
-
-## Compiler Architecture
-
-The Arkade Compiler consists of several components:
-
-1. **Lexer**: Tokenizes the source code
-2. **Parser**: Builds an abstract syntax tree (AST)
-3. **Type Checker**: Verifies type correctness
-4. **Optimizer**: Optimizes the AST for efficient execution
-5. **Code Generator**: Generates Bitcoin Script from the optimized AST
-
-## Compilation Process
-
-The compilation process follows these steps:
-
-1. Parse the Arkade Script source code
-2. Analyze the contract structure and dependencies
-3. For each function in the contract:
-   - Generate the cooperative path (with server signature)
-   - Generate the unilateral path (with timelock)
-4. Optimize the generated scripts
-5. Generate the Taproot output structure
-6. Output the compiled contract in JSON format
 
 ## Compiler Options
 
@@ -132,54 +93,6 @@ Example output:
   "updatedAt": "2023-03-06T01:27:51.391557+00:00"
 }
 ```
-
-## Script Optimization
-
-The Arkade Compiler includes several optimization passes:
-
-- **Constant folding**: Evaluates constant expressions at compile time
-- **Dead code elimination**: Removes unreachable code
-- **Stack optimization**: Minimizes stack operations
-- **Script size reduction**: Compresses the generated script
-
-These optimizations help reduce transaction fees and improve execution efficiency.
-
-## Debugging Support
-
-The compiler provides debugging support through:
-
-- Source maps linking Bitcoin Script operations to Arkade Script source code
-- Detailed error messages with line and column information
-- Warnings for potential issues
-- Simulation mode for testing contract execution
-
-## Integration with Development Tools
-
-The Arkade Compiler integrates with other development tools:
-
-- **Contract Simulator**: Test contract execution in various scenarios
-- **Debugger**: Step through contract execution to identify issues
-- **Contract Explorer**: Visualize contract state and execution paths
-
-## Future Directions
-
-The Arkade Compiler roadmap includes:
-
-- **Formal verification**: Mathematical proof of contract correctness
-- **Gas estimation**: Predicting transaction fees before deployment
-- **Cross-contract compilation**: Supporting contract composition
-- **Optimized library support**: Pre-compiled common contract patterns
-
-## Contributing
-
-Contributions to the Arkade Compiler are welcome! Areas where help is particularly valuable:
-
-- Optimization techniques
-- Testing infrastructure
-- Documentation improvements
-- New language features
-
-Please refer to the contribution guidelines in the repository for more information.
 
 ## Examples
 
@@ -442,10 +355,6 @@ function verifyCondition() internal {
 
 ### Expressions
 
----
-
-<NextButton url="/contracts/arkade-syntax" text="Arkade Syntax" />
-
 Arkade Script supports various expressions:
 
 #### Signature Verification
@@ -614,7 +523,3 @@ TapLang compiles contracts to a JSON format that can be used with Bitcoin Taproo
     - `serverVariant: false`: Requires timelock (exit path)
 - `require`: The requirements for each spending path
 - `asm`: The Bitcoin Script assembly code for each spending path
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
