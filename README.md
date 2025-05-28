@@ -1,6 +1,10 @@
 # Arkade Compiler
 
-The Arkade Compiler transforms high-level Arkade Script contracts into optimized Bitcoin Taproot scripts. It handles the complexity of Bitcoin Script generation, allowing developers to focus on contract logic rather than low-level script details.
+Arkade Language is a high-level contract language that compiles down to Arkade Script, an extended version of Bitcoin Script designed for the Arkade OS. Arkade Language lets developers write expressive, stateful smart contracts that compile to scripts executable by Arkade’s Virtual Machine.
+
+Arkade Script supports advanced primitives for arithmetic, introspection, and asset flows across Virtual Transaction Outputs (VTXOs), enabling rich offchain transaction logic with unilateral onchain exit guarantees. Contracts are verified and executed inside secure Trusted Execution Environments (TEEs) and signed by the Arkade Signer, ensuring verifiable and tamper-proof execution.
+
+This language significantly lowers the barrier for Bitcoin-native app development, allowing contracts to be written in a structured, Ivy-like syntax and compiled into Arkade-native scripts.
 
 
 ## Basic Usage
