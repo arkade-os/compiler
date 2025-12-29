@@ -32,7 +32,8 @@ param_list = {
 parameter = { data_type ~ identifier }
 
 // Supported data types - atomic rule to prevent partial matches
-data_type = @{ "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "asset" | "int" | "bool" }
+// Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
+data_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
 
 // Function definition with strict structure
 function = { 

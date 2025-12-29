@@ -1,4 +1,4 @@
-use taplang::compile;
+use arkade_compiler::compile;
 
 #[test]
 fn test_bare_vtxo_contract() {
@@ -82,7 +82,7 @@ contract BareVTXO(
     assert_eq!(timeout_function.asm[0], "<user>");
     assert_eq!(timeout_function.asm[1], "<userSig>");
     assert_eq!(timeout_function.asm[2], "OP_CHECKSIG");
-    assert_eq!(timeout_function.asm[3], "0");
+    assert_eq!(timeout_function.asm[3], "<timelock>");  // Variable reference
     assert_eq!(timeout_function.asm[4], "OP_CHECKLOCKTIMEVERIFY");
     assert_eq!(timeout_function.asm[5], "OP_DROP");
     assert_eq!(timeout_function.asm[6], "<SERVER_KEY>");

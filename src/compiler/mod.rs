@@ -64,18 +64,23 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         functions: Vec::new(),
         source: Some(source_code.to_string()),
         compiler: Some(CompilerInfo {
-            name: "taplang".to_string(),
+            name: "arkade-compiler".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
         updated_at: Some(Utc::now().to_rfc3339()),
     };
     
-    // Process each function
+    // Process each function (skip internal functions)
     for function in &contract.functions {
+        // Internal functions are helpers and don't generate spending paths
+        if function.is_internal {
+            continue;
+        }
+
         // Generate collaborative path (with server signature)
         let collaborative_function = generate_function(function, &contract, true);
         json.functions.push(collaborative_function);
-        
+
         // Generate exit path (with timelock)
         let exit_function = generate_function(function, &contract, false);
         json.functions.push(exit_function);
@@ -260,18 +265,6 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                         asm.push("OP_GREATERTHANOREQUAL".to_string());
                         asm.push(format!("<{}>", prop));
                     },
-                    (Expression::Variable(var), "==", Expression::Sha256(var2)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_EQUAL".to_string());
-                        asm.push(format!("<{}>", var2));
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Variable(var), ">=", Expression::Sha256(var2)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(format!("<{}>", var2));
-                        asm.push("OP_SHA256".to_string());
-                    },
                     (Expression::Literal(lit), "==", Expression::Variable(var)) => {
                         asm.push(lit.clone());
                         asm.push("OP_EQUAL".to_string());
@@ -302,18 +295,6 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                         asm.push("OP_GREATERTHANOREQUAL".to_string());
                         asm.push(format!("<{}>", prop));
                     },
-                    (Expression::Literal(lit), "==", Expression::Sha256(var)) => {
-                        asm.push(lit.clone());
-                        asm.push("OP_EQUAL".to_string());
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Literal(lit), ">=", Expression::Sha256(var)) => {
-                        asm.push(lit.clone());
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_SHA256".to_string());
-                    },
                     (Expression::Property(prop), "==", Expression::Variable(var)) => {
                         asm.push(format!("<{}>", prop));
                         asm.push("OP_EQUAL".to_string());
@@ -343,42 +324,6 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                         asm.push(format!("<{}>", prop));
                         asm.push("OP_GREATERTHANOREQUAL".to_string());
                         asm.push(format!("<{}>", prop2));
-                    },
-                    (Expression::Sha256(var), "==", Expression::Variable(var2)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_EQUAL".to_string());
-                        asm.push(format!("<{}>", var2));
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Sha256(var), ">=", Expression::Variable(var2)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(format!("<{}>", var2));
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Sha256(var), "==", Expression::Literal(value)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_EQUAL".to_string());
-                        asm.push(value.clone());
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Sha256(var), ">=", Expression::Literal(value)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(value.clone());
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Sha256(var), "==", Expression::Property(prop)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_EQUAL".to_string());
-                        asm.push(format!("<{}>", prop));
-                        asm.push("OP_SHA256".to_string());
-                    },
-                    (Expression::Sha256(var), ">=", Expression::Property(prop)) => {
-                        asm.push(format!("<{}>", var));
-                        asm.push("OP_GREATERTHANOREQUAL".to_string());
-                        asm.push(format!("<{}>", prop));
-                        asm.push("OP_SHA256".to_string());
                     },
                     (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
                         if value == "true" {

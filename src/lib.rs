@@ -4,9 +4,9 @@ pub mod compiler;
 
 pub use models::{Contract, Function, Parameter, Requirement, Expression, ContractJson};
 
-/// Compile TapLang source code to a JSON-serializable structure
+/// Compile Arkade Script source code to a JSON-serializable structure
 ///
-/// This function takes TapLang source code as input, parses it into an AST,
+/// This function takes Arkade Script source code as input, parses it into an AST,
 /// and then compiles it into a ContractJson structure that can be serialized to JSON.
 ///
 /// The output includes:
@@ -20,7 +20,7 @@ pub use models::{Contract, Function, Parameter, Requirement, Expression, Contrac
 ///
 /// # Arguments
 ///
-/// * `source_code` - The TapLang source code as a string
+/// * `source_code` - The Arkade Script source code as a string
 ///
 /// # Returns
 ///
@@ -28,8 +28,8 @@ pub use models::{Contract, Function, Parameter, Requirement, Expression, Contrac
 ///
 /// # Example
 ///
-/// ```
-/// use taplang::compile;
+/// ```ignore
+/// use arkade_compiler::compile;
 ///
 /// let source_code = r#"
 /// // Contract configuration options

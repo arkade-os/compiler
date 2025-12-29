@@ -1,4 +1,4 @@
-use taplang::compile;
+use arkade_compiler::compile;
 use std::fs;
 use tempfile::tempdir;
 use serde_json::Value;
@@ -97,7 +97,7 @@ contract HTLC(
     assert_eq!(refund_function.asm[0], "<sender>");
     assert_eq!(refund_function.asm[1], "<senderSig>");
     assert_eq!(refund_function.asm[2], "OP_CHECKSIG");
-    assert_eq!(refund_function.asm[3], "0");
+    assert_eq!(refund_function.asm[3], "<refundTime>");  // Variable reference
     assert_eq!(refund_function.asm[4], "OP_CHECKLOCKTIMEVERIFY");
     assert_eq!(refund_function.asm[5], "OP_DROP");
     assert_eq!(refund_function.asm[6], "<SERVER_KEY>");
@@ -127,7 +127,7 @@ contract HTLC(
 fn test_htlc_cli() {
     // Create a temporary directory for our test files
     let temp_dir = tempdir().unwrap();
-    let input_path = temp_dir.path().join("htlc.tap");
+    let input_path = temp_dir.path().join("htlc.ark");
     let output_path = temp_dir.path().join("htlc.json");
     
     // HTLC contract source code
@@ -170,7 +170,7 @@ contract HTLC(
     assert!(result.is_ok());
     
     // Run the CLI command
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_tapc"))
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(input_path.to_str().unwrap())
         .arg("-o")
         .arg(output_path.to_str().unwrap())

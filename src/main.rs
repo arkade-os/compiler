@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::error::Error;
 use clap::Parser as ClapParser;
 
 mod models;
