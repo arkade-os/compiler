@@ -5,7 +5,7 @@ use std::fs;
 
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
-pub struct TapLangParser;
+pub struct ArkadeParser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_code = r#"contract HTLC(
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }"#;
 
     // Try to parse the contract
-    let pairs = TapLangParser::parse(Rule::contract, source_code)?;
+    let pairs = ArkadeParser::parse(Rule::contract, source_code)?;
     
     // Print the parse tree
     for pair in pairs {

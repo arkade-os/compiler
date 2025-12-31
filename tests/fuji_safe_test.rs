@@ -1,9 +1,9 @@
-use taplang::compile;
+use arkade_compiler::compile;
 
 #[test]
 fn test_fuji_safe_contract() {
     // Fuji Safe contract source code
-    let fuji_code = include_str!("../examples/fuji_safe.tap");
+    let fuji_code = include_str!("../examples/fuji_safe.ark");
     
     // Compile the contract
     let result = compile(fuji_code);
@@ -16,8 +16,8 @@ fn test_fuji_safe_contract() {
     
     // Verify parameters
     assert_eq!(output.parameters.len(), 9);
-    assert_eq!(output.parameters[0].name, "borrowAsset");
-    assert_eq!(output.parameters[0].param_type, "asset");
+    assert_eq!(output.parameters[0].name, "assetCommitmentHash");
+    assert_eq!(output.parameters[0].param_type, "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
     assert_eq!(output.parameters[1].param_type, "int");
     assert_eq!(output.parameters[2].name, "borrowerPk");
@@ -71,37 +71,41 @@ fn test_fuji_safe_contract() {
 
 #[test]
 fn test_fuji_safe_cli() {
-    use std::process::Command;
     use tempfile::tempdir;
     use std::fs;
     use std::path::Path;
-    
+
     // Create a temporary directory
     let temp_dir = tempdir().unwrap();
+    let input_path = temp_dir.path().join("fuji_safe.ark");
     let output_path = temp_dir.path().join("fuji_safe.json");
-    
-    // Run the compiler CLI
-    let status = Command::new("cargo")
-        .args(&["run", "--bin", "tapc", "--", 
-                "examples/fuji_safe.tap", 
-                "-o", output_path.to_str().unwrap()])
-        .status()
+
+    // Copy the example file to temp directory
+    let fuji_code = include_str!("../examples/fuji_safe.ark");
+    fs::write(&input_path, fuji_code).unwrap();
+
+    // Run the compiler CLI using the built binary
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+        .arg(input_path.to_str().unwrap())
+        .arg("-o")
+        .arg(output_path.to_str().unwrap())
+        .output()
         .expect("Failed to execute command");
-    
-    assert!(status.success());
-    
+
+    assert!(output.status.success(), "Command failed: {}", String::from_utf8_lossy(&output.stderr));
+
     // Check that the output file exists
     assert!(Path::new(&output_path).exists());
-    
+
     // Read the output file
     let json_output = fs::read_to_string(&output_path).unwrap();
-    
-    // Basic validation of the JSON output
-    assert!(json_output.contains("\"contractName\":\"FujiSafe\""));
-    assert!(json_output.contains("\"borrowAsset\""));
+
+    // Basic validation of the JSON output (note: pretty-printed JSON has spaces)
+    assert!(json_output.contains("\"contractName\": \"FujiSafe\""));
+    assert!(json_output.contains("\"assetCommitmentHash\""));
     assert!(json_output.contains("\"borrowAmount\""));
     assert!(json_output.contains("\"borrowerPk\""));
     assert!(json_output.contains("\"treasuryPk\""));
-    assert!(json_output.contains("\"serverVariant\":true"));
-    assert!(json_output.contains("\"serverVariant\":false"));
+    assert!(json_output.contains("\"serverVariant\": true"));
+    assert!(json_output.contains("\"serverVariant\": false"));
 } 

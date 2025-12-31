@@ -6,10 +6,10 @@ use crate::models::{Contract, Function, Parameter, Requirement, Expression};
 // Grammar definition for pest parser
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
-pub struct TapLangParser;
+pub struct ArkadeParser;
 
 pub fn parse(source_code: &str) -> Result<Contract, Box<dyn std::error::Error>> {
-    let pairs = TapLangParser::parse(Rule::main, source_code)?;
+    let pairs = ArkadeParser::parse(Rule::main, source_code)?;
     let ast = build_ast(pairs);
     Ok(ast)
 }
@@ -167,28 +167,27 @@ fn parse_function(pair: Pair<Rule>) -> Function {
 
 // Parse function body (requirements and function calls)
 fn parse_function_body(func: &mut Function, pair: Pair<Rule>) {
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::require_stmt => {
-                let mut inner = p.into_inner();
-                let expr = inner.next().unwrap();
-                let requirement = parse_complex_expression(expr);
-                
-                // Check if there's an error message
-                let _message = inner.next().unwrap().as_str().to_string();
-                
-                func.requirements.push(requirement);
-            }
-            Rule::function_call_stmt => {
-                // In a more complete implementation, we would handle function calls
-                // For now, we just ignore them
-            }
-            Rule::variable_declaration => {
-                // In a more complete implementation, we would handle variable declarations
-                // For now, we just ignore them
-            }
-            _ => {}
+    // The pair is already a statement (require_stmt, function_call_stmt, etc.)
+    match pair.as_rule() {
+        Rule::require_stmt => {
+            let mut inner = pair.into_inner();
+            let expr = inner.next().unwrap();
+            let requirement = parse_complex_expression(expr);
+
+            // Check if there's an optional error message (ignore it for now)
+            let _message = inner.next().map(|p| p.as_str().to_string());
+
+            func.requirements.push(requirement);
         }
+        Rule::function_call_stmt => {
+            // In a more complete implementation, we would handle function calls
+            // For now, we just ignore them
+        }
+        Rule::variable_declaration => {
+            // In a more complete implementation, we would handle variable declarations
+            // For now, we just ignore them
+        }
+        _ => {}
     }
 }
 

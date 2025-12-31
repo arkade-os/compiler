@@ -53,25 +53,6 @@ pub struct AbiFunction {
     pub asm: Vec<String>,
 }
 
-/// Script path for a function
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Operation {
-    pub op: String,
-    pub data: Option<String>,
-}
-
-/// Script path for a function
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ScriptPath {
-    /// Function name
-    pub function: String,
-    /// Whether this is a server variant
-    #[serde(rename = "serverVariant")]
-    pub server_variant: bool,
-    /// Bitcoin script operations
-    pub operations: Vec<Operation>,
-}
-
 /// JSON output for a contract
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContractJson {
@@ -96,9 +77,9 @@ pub struct CompilerInfo {
 }
 
 /// AST structures
-/// 
+///
 /// These structures represent the parsed abstract syntax tree (AST)
-/// of a TapLang contract.
+/// of an Arkade Script contract.
 
 /// Contract AST
 #[derive(Debug, Clone)]
@@ -154,8 +135,6 @@ pub enum Expression {
     Literal(String),
     /// Property access (e.g., tx.time)
     Property(String),
-    /// SHA256 hash function
-    Sha256(String),
     /// Current input access (tx.input.current)
     CurrentInput(Option<String>),
 } 
