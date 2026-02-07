@@ -1,8 +1,19 @@
-# Arkade Asset Primitives — Implementation Plan
+# Arkade Compiler — Contract Primitives Plan
 
-Single PR on `claude/add-contract-support-crNr1`, one commit per feature.
+The compiler today handles simple spending-path contracts (checkSig, checkMultisig, hashlock, timelock). Real contracts need more: asset introspection, arithmetic with operator precedence, control flow, and compile-time loop unrolling. This plan adds six primitives that, together, make recursive covenants, controlled minting/burning, fee calculations, epoch-based rate limiting, read-only beacons, and threshold signature verification expressible in Arkade Script.
+
+Single PR on `claude/add-contract-support-crNr1`, one commit per primitive.
 Each commit adds grammar + parser + AST + compiler + example `.ark` + test.
 Existing tests must pass after every commit.
+
+| # | Primitive | What it unlocks |
+|---|-----------|-----------------|
+| 1 | Asset lookups on inputs/outputs | Covenant token accounting, control asset checks |
+| 2 | Asset group introspection | Mint/burn verification, delta enforcement, supply locks |
+| 3 | Arithmetic expressions | Fee calculations, complex comparisons, operator precedence |
+| 4 | If/else + variable reassignment | Conditional logic, epoch reset vs accumulate |
+| 5 | For loops (compile-time unrolled) | Iterate asset groups, beacon passthrough |
+| 6 | Array types + indexing | Threshold signature schemes, N-of-M verification |
 
 ---
 
