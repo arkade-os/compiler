@@ -1,0 +1,50 @@
+// Token Vault Contract
+// Demonstrates asset lookup primitives for Arkades Assets
+//
+// This contract locks tokens and allows:
+// 1. deposit() - Owner deposits tokens; output must hold at least as many as input
+// 2. withdraw() - Owner withdraws tokens with server co-signature
+//
+// Asset lookups use the OP_INSPECTINASSETLOOKUP / OP_INSPECTOUTASSETLOOKUP
+// opcodes with sentinel-guard patterns for safe balance verification.
+
+options {
+  server = serverPk;
+  exit = 144;
+}
+
+contract TokenVault(
+  pubkey ownerPk,
+  pubkey serverPk,
+  bytes32 tokenAssetId,
+  bytes32 ctrlAssetId
+) {
+  // Deposit: ensure the control asset stays in the output
+  // and output token balance >= input token balance
+  function deposit(signature ownerSig) {
+    // Control asset must be present in input 0
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in input");
+
+    // Control asset must be present in output 0
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
+
+    // Output tokens >= input tokens (no leaking tokens)
+    require(
+      tx.outputs[0].assets.lookup(tokenAssetId) >=
+        tx.inputs[0].assets.lookup(tokenAssetId),
+      "token balance decreased"
+    );
+
+    // Owner must sign
+    require(checkSig(ownerSig, ownerPk), "invalid owner signature");
+  }
+
+  // Withdraw: owner withdraws tokens cooperatively with server
+  function withdraw(signature ownerSig, int amount) {
+    // Control asset must stay in the output
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
+
+    // Owner must sign
+    require(checkSig(ownerSig, ownerPk), "invalid owner signature");
+  }
+}

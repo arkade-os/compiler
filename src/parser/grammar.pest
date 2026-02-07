@@ -6,11 +6,11 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
 main = { SOI ~ contract ~ EOI }
 
 // Contract definition with strict structure and optional options block
-contract = { 
+contract = {
     options_block? ~
-    "contract" ~ identifier ~ 
-    "(" ~ param_list ~ ")" ~ 
-    "{" ~ function* ~ "}" 
+    "contract" ~ identifier ~
+    "(" ~ param_list ~ ")" ~
+    "{" ~ function* ~ "}"
 }
 
 // Options block for contract configuration
@@ -24,8 +24,8 @@ option_setting = {
 }
 
 // Parameter list with proper comma separation
-param_list = { 
-    (parameter ~ ("," ~ parameter)*)? 
+param_list = {
+    (parameter ~ ("," ~ parameter)*)?
 }
 
 // Parameter definition
@@ -36,19 +36,24 @@ parameter = { data_type ~ identifier }
 data_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
 
 // Function definition with strict structure
-function = { 
-    "function" ~ identifier ~ 
-    "(" ~ param_list ~ ")" ~ 
+function = {
+    "function" ~ identifier ~
+    "(" ~ param_list ~ ")" ~
     function_modifier? ~
-    "{" ~ (require_stmt | function_call_stmt | variable_declaration)* ~ "}" 
+    "{" ~ (require_stmt | let_binding | function_call_stmt | variable_declaration)* ~ "}"
 }
 
 // Function modifier (internal, etc.)
 function_modifier = { "internal" }
 
 // Require statement
-require_stmt = { 
-    "require" ~ "(" ~ complex_expression ~ ("," ~ string_literal)? ~ ")" ~ ";" 
+require_stmt = {
+    "require" ~ "(" ~ complex_expression ~ ("," ~ string_literal)? ~ ")" ~ ";"
+}
+
+// Let binding: let identifier = expression;
+let_binding = {
+    "let" ~ identifier ~ "=" ~ complex_expression ~ ";"
 }
 
 // Function call statement
@@ -61,16 +66,21 @@ variable_declaration = {
     data_type ~ identifier ~ "=" ~ complex_expression ~ ";"
 }
 
-// Complex expression types
-complex_expression = _{ 
+// Complex expression types — ordered by specificity (most specific first)
+// PEG ordered choice: first matching alternative wins
+complex_expression = _{
     check_sig_from_stack |
-    check_sig | 
-    check_multisig | 
+    check_sig |
+    check_multisig |
     time_comparison |
-    identifier_comparison |
     hash_comparison |
+    asset_lookup_comparison |
+    group_property_comparison |
     property_comparison |
+    identifier_comparison |
     binary_operation |
+    asset_lookup |
+    asset_group_access |
     p2tr_constructor |
     tx_property_access |
     this_property_access |
@@ -79,6 +89,54 @@ complex_expression = _{
     number_literal |
     array_literal
 }
+
+// ─── Asset Lookups ─────────────────────────────────────────────────────────────
+
+// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(assetId)
+asset_lookup = {
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ "." ~ "lookup" ~ "(" ~ identifier ~ ")"
+}
+
+// Source of asset lookup (inputs or outputs)
+asset_lookup_source = { "inputs" | "outputs" }
+
+// Asset lookup comparison: asset_lookup op expression
+// Handles: tx.inputs[0].assets.lookup(id) >= 0
+//          tx.outputs[0].assets.lookup(id) >= tx.inputs[0].assets.lookup(id)
+//          tx.outputs[0].assets.lookup(id) >= tx.inputs[0].assets.lookup(id) + amount
+asset_lookup_comparison = {
+    asset_lookup ~ binary_operator ~ (asset_lookup_arith_expr | asset_lookup | identifier | number_literal)
+}
+
+// Arithmetic expression in asset lookup context (e.g., lookup + amount)
+asset_lookup_arith_expr = {
+    (asset_lookup | identifier | number_literal) ~ ("+" | "-" | "*" | "/") ~ (asset_lookup | identifier | number_literal)
+}
+
+// ─── Asset Groups ──────────────────────────────────────────────────────────────
+
+// Asset group access: tx.assetGroups.find(id), tx.assetGroups.length,
+// tx.assetGroups[k].sumInputs, etc.
+asset_group_access = {
+    "tx" ~ "." ~ "assetGroups" ~ (
+        "." ~ "find" ~ "(" ~ identifier ~ ")" |
+        "." ~ "length" |
+        array_access ~ "." ~ group_property
+    )
+}
+
+// Group property names — atomic to prevent partial matches
+group_property = @{
+    "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh"
+}
+
+// Group property comparison: variable.property op expression
+// Matches patterns like: tokenGroup.delta == amount, tokenGroup.sumOutputs >= 0
+group_property_comparison = {
+    identifier ~ "." ~ group_property ~ binary_operator ~ (asset_lookup | asset_group_access | identifier | number_literal)
+}
+
+// ─── Standard Comparisons ──────────────────────────────────────────────────────
 
 // Time comparison (tx.time >= timelock)
 time_comparison = {
@@ -92,7 +150,7 @@ identifier_comparison = {
 
 // Property comparison (property_access operator expression)
 property_comparison = {
-    (tx_property_access | this_property_access) ~ binary_operator ~ (identifier | number_literal | tx_property_access | this_property_access | p2tr_constructor)
+    (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | identifier | number_literal | tx_property_access | this_property_access | p2tr_constructor)
 }
 
 // Hash comparison (sha256(preimage) == hash)
@@ -106,7 +164,9 @@ binary_operation = {
     (identifier ~ binary_operator ~ (identifier | number_literal))
 }
 
-binary_operator = { "==" | "<" | ">" | ">=" | "<=" | "!=" | "+" | "-" | "*" | "/" }
+binary_operator = { "==" | "<=" | ">=" | "!=" | "<" | ">" | "+" | "-" | "*" | "/" }
+
+// ─── P2TR Constructor ──────────────────────────────────────────────────────────
 
 // P2TR constructor
 p2tr_constructor = {
@@ -118,10 +178,12 @@ p2tr_constructor_args = {
     complex_expression ~ ("," ~ complex_expression)*
 }
 
+// ─── Transaction Property Access ───────────────────────────────────────────────
+
 // Transaction property access with special handling
 tx_property_access = {
     "tx" ~ "." ~ (
-        // Input.current syntax - new first-class support
+        // Input.current syntax - first-class support for current input introspection
         ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
         // Standard property access
         (tx_property_part ~ (array_access | ("." ~ tx_property_part))*)
@@ -144,8 +206,8 @@ tx_property_part = {
 }
 
 // Special properties that have specific meaning
-tx_special_property = { 
-    "time" | "inputs" | "outputs" | "version" | "locktime" | "currentInput"
+tx_special_property = {
+    "time" | "inputs" | "outputs" | "version" | "locktime" | "currentInput" | "assetGroups"
 }
 
 // Array access with index
@@ -168,9 +230,11 @@ function_call = {
     identifier ~ "(" ~ (complex_expression ~ ("," ~ complex_expression)*)? ~ ")"
 }
 
+// ─── Cryptographic Primitives ──────────────────────────────────────────────────
+
 // CheckSig expression
-check_sig = { 
-    "checkSig" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" 
+check_sig = {
+    "checkSig" ~ "(" ~ identifier ~ "," ~ identifier ~ ")"
 }
 
 // CheckSigFromStack expression
@@ -179,13 +243,13 @@ check_sig_from_stack = {
 }
 
 // CheckMultisig expression
-check_multisig = { 
-    "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")" 
+check_multisig = {
+    "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")"
 }
 
 // Array of identifiers
-array = { 
-    "[" ~ identifier ~ ("," ~ identifier)* ~ "]" 
+array = {
+    "[" ~ identifier ~ ("," ~ identifier)* ~ "]"
 }
 
 // SHA256 function
@@ -193,14 +257,16 @@ sha256_func = {
     "sha256" ~ "(" ~ complex_expression ~ ")"
 }
 
+// ─── Terminals ─────────────────────────────────────────────────────────────────
+
 // Identifiers must start with a letter and can contain letters, numbers, and underscores
-identifier = @{ 
-    ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* 
+identifier = @{
+    ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*
 }
 
 // Number literals are sequences of digits
-number_literal = @{ 
-    ASCII_DIGIT+ 
+number_literal = @{
+    ASCII_DIGIT+
 }
 
 // String literals are sequences of characters enclosed in double quotes

@@ -126,6 +126,24 @@ pub enum Requirement {
     Comparison { left: Expression, op: String, right: Expression },
 }
 
+/// Source of an asset lookup (input or output)
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssetLookupSource {
+    /// tx.inputs[i]
+    Input,
+    /// tx.outputs[o]
+    Output,
+}
+
+/// Source of an asset group sum (inputs or outputs)
+#[derive(Debug, Clone, PartialEq)]
+pub enum GroupSumSource {
+    /// sumInputs (source=0)
+    Inputs,
+    /// sumOutputs (source=1)
+    Outputs,
+}
+
 /// Expression AST
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -137,4 +155,32 @@ pub enum Expression {
     Property(String),
     /// Current input access (tx.input.current)
     CurrentInput(Option<String>),
+    /// Asset lookup: tx.inputs[i].assets.lookup(assetId) or tx.outputs[o].assets.lookup(assetId)
+    AssetLookup {
+        source: AssetLookupSource,
+        index: Box<Expression>,
+        asset_id: String,
+    },
+    /// Binary arithmetic operation (a + b, a - b, a * b, a / b)
+    BinaryOp {
+        left: Box<Expression>,
+        op: String,
+        right: Box<Expression>,
+    },
+    /// Asset group find: tx.assetGroups.find(assetId) → csn index
+    GroupFind {
+        asset_id: String,
+    },
+    /// Asset group property: group.sumInputs, group.delta, etc.
+    GroupProperty {
+        group: String,
+        property: String,
+    },
+    /// Asset groups length: tx.assetGroups.length → csn
+    AssetGroupsLength,
+    /// Asset group sum with explicit index: tx.assetGroups[k].sumInputs/sumOutputs
+    GroupSum {
+        index: Box<Expression>,
+        source: GroupSumSource,
+    },
 } 

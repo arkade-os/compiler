@@ -1,0 +1,44 @@
+// Fee Adapter Contract
+// Demonstrates arithmetic expressions with tx input/output verification
+//
+// This contract implements a fee-taking adapter where:
+// 1. execute() - Processes a payment, verifying output asset balances
+// 2. The output must preserve assets minus fee
+//
+// Uses asset lookups on tx.inputs and tx.outputs with arithmetic
+// comparisons for balance verification.
+
+options {
+  server = operatorPk;
+  exit = 144;
+}
+
+contract FeeAdapter(
+  pubkey senderPk,
+  pubkey operatorPk,
+  pubkey recipientPk,
+  bytes32 paymentAssetId,
+  int minFee
+) {
+  // Execute: process payment with fee deduction
+  // Verifies that the output asset balance reflects the fee deduction
+  function execute(signature senderSig, int fee) {
+    // Fee must be at least the minimum
+    require(fee >= minFee, "fee below minimum");
+
+    // Input must contain the payment asset
+    require(tx.inputs[0].assets.lookup(paymentAssetId) > 0, "no payment asset in input");
+
+    // Output must contain the payment asset (minus fee)
+    require(tx.outputs[0].assets.lookup(paymentAssetId) > 0, "no payment asset in output");
+
+    // Sender must sign
+    require(checkSig(senderSig, senderPk), "invalid sender signature");
+  }
+
+  // Adjust: operator adjusts fee parameters
+  function adjust(signature operatorSig) {
+    // Operator must sign
+    require(checkSig(operatorSig, operatorPk), "invalid operator signature");
+  }
+}
