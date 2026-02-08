@@ -875,6 +875,24 @@ fn parse_group_property_comparison(pair: Pair<Rule>) -> Result<Requirement, Stri
                 return Err("Expected expression from asset group access".to_string());
             }
         }
+        Rule::identifier_property_access => {
+            // Parse variable.property (e.g., group.sumInputs)
+            let mut prop_inner = right_pair.into_inner();
+            let var_name = prop_inner
+                .next()
+                .ok_or("Missing variable name in property access")?
+                .as_str()
+                .to_string();
+            let prop_name = prop_inner
+                .next()
+                .ok_or("Missing property name in property access")?
+                .as_str()
+                .to_string();
+            Expression::GroupProperty {
+                group: var_name,
+                property: prop_name,
+            }
+        }
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -990,7 +1008,22 @@ fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, String> {
         if param_pair.as_rule() == Rule::parameter {
             let mut param_inner = param_pair.into_inner();
             let param_type = match param_inner.next() {
-                Some(param_type) => param_type.as_str().to_string(),
+                Some(type_pair) => {
+                    // data_type is now a compound rule: base_type ~ ("[]")?
+                    // Extract the base type and check for array suffix
+                    let type_text = type_pair.as_str().trim();
+                    if type_text.ends_with("[]") {
+                        type_text.to_string()
+                    } else {
+                        // Parse inner to get just the base type
+                        let mut type_inner = type_pair.into_inner();
+                        if let Some(base) = type_inner.next() {
+                            base.as_str().to_string()
+                        } else {
+                            type_text.to_string()
+                        }
+                    }
+                }
                 None => return Err("Parameter is missing data type".to_string()),
             };
             let param_name = match param_inner.next() {

@@ -33,7 +33,9 @@ parameter = { data_type ~ identifier }
 
 // Supported data types - atomic rule to prevent partial matches
 // Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
-data_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
+// Array types use [] suffix (e.g., pubkey[], signature[])
+base_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
+data_type = { base_type ~ ("[]")? }
 
 // Function definition with strict structure
 function = {
@@ -128,8 +130,14 @@ primary_expr = {
     this_property_access |
     p2tr_constructor |
     function_call |
+    array_index_access |
     number_literal |
     identifier
+}
+
+// Array indexing: identifier[index]
+array_index_access = {
+    identifier ~ "[" ~ (identifier | number_literal) ~ "]"
 }
 
 // Operators
@@ -205,8 +213,14 @@ group_property = @{
 
 // Group property comparison: variable.property op expression
 // Matches patterns like: tokenGroup.delta == amount, tokenGroup.sumOutputs >= 0
+// Also supports: group.sumOutputs >= group.sumInputs (both sides can have group property)
 group_property_comparison = {
-    identifier ~ "." ~ group_property ~ binary_operator ~ (asset_lookup | asset_group_access | identifier | number_literal)
+    identifier ~ "." ~ group_property ~ binary_operator ~ (identifier_property_access | asset_lookup | asset_group_access | identifier | number_literal)
+}
+
+// Identifier property access: variable.property (e.g., group.sumInputs, tokenGroup.delta)
+identifier_property_access = {
+    identifier ~ "." ~ group_property
 }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
@@ -335,9 +349,13 @@ check_sig = {
 }
 
 // CheckSigFromStack expression
+// Arguments can be identifiers or array access (e.g., oracles[i])
 check_sig_from_stack = {
-    "checkSigFromStack" ~ "(" ~ identifier ~ "," ~ identifier ~ "," ~ identifier ~ ")"
+    "checkSigFromStack" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }
+
+// Signature function argument: identifier or array access
+sig_arg = { array_index_access | identifier }
 
 // CheckMultisig expression
 check_multisig = {

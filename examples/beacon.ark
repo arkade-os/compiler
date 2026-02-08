@@ -1,0 +1,38 @@
+// Price Beacon Contract
+// Read-only recursive covenant that ensures all asset groups survive intact.
+//
+// This contract demonstrates compile-time loop unrolling:
+// - `for (k, group) in tx.assetGroups` iterates over all asset groups
+// - The loop is unrolled N times based on `numGroups` constructor param
+//
+// Use cases:
+// - Price oracle beacons where asset quantities encode values
+// - Passthrough covenants that preserve all assets
+
+options {
+  server = oracleServerPk;
+  exit = 144;
+}
+
+contract PriceBeacon(
+  bytes32 ctrlAssetId,
+  pubkey oraclePk,
+  pubkey oracleServerPk,
+  int numGroups
+) {
+  // Anyone can pass through - all groups must survive
+  function passthrough() {
+    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
+
+    for (k, group) in tx.assetGroups {
+      require(group.sumOutputs >= group.sumInputs, "drained");
+    }
+  }
+
+  // Oracle updates price (quantity encodes value)
+  function update(signature oracleSig) {
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
+    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
+    require(checkSig(oracleSig, oraclePk), "bad sig");
+  }
+}
