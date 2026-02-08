@@ -395,6 +395,8 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
+        Rule::input_introspection => parse_input_introspection_to_expression(pair),
+        Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::p2tr_constructor => {
             Ok(Expression::Property(pair.as_str().to_string()))
@@ -425,7 +427,11 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::asset_lookup_comparison => parse_asset_lookup_comparison(pair),
         Rule::asset_count_comparison => parse_asset_count_comparison(pair),
         Rule::asset_at_comparison => parse_asset_at_comparison(pair),
+        Rule::input_introspection_comparison => parse_input_introspection_comparison(pair),
+        Rule::output_introspection_comparison => parse_output_introspection_comparison(pair),
         Rule::tx_introspection_comparison => parse_tx_introspection_comparison(pair),
+        Rule::input_introspection => parse_standalone_input_introspection(pair),
+        Rule::output_introspection => parse_standalone_output_introspection(pair),
         Rule::tx_introspection => parse_standalone_tx_introspection(pair),
         Rule::asset_lookup => parse_standalone_asset_lookup(pair),
         Rule::asset_count => parse_standalone_asset_count(pair),
@@ -944,6 +950,156 @@ fn parse_tx_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement, St
         _ => {
             return Err(format!(
                 "Unexpected right side in tx introspection comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+// ─── Input/Output Introspection Parsing ─────────────────────────────────────────
+
+/// Parse input_introspection pair into an Expression::InputIntrospection
+/// tx.inputs[i].value, tx.inputs[i].scriptPubKey, etc.
+fn parse_input_introspection_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // Parse array access (the index)
+    let array_access = inner.next().ok_or("Missing input index")?;
+    let index_pair = array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing index value")?;
+    let index = match index_pair.as_rule() {
+        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
+        _ => Expression::Literal(index_pair.as_str().to_string()),
+    };
+
+    // Parse the property
+    let property = inner
+        .next()
+        .ok_or("Missing input introspection property")?
+        .as_str()
+        .to_string();
+
+    Ok(Expression::InputIntrospection {
+        index: Box::new(index),
+        property,
+    })
+}
+
+/// Parse output_introspection pair into an Expression::OutputIntrospection
+/// tx.outputs[o].value, tx.outputs[o].scriptPubKey, tx.outputs[o].nonce
+fn parse_output_introspection_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // Parse array access (the index)
+    let array_access = inner.next().ok_or("Missing output index")?;
+    let index_pair = array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing index value")?;
+    let index = match index_pair.as_rule() {
+        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
+        _ => Expression::Literal(index_pair.as_str().to_string()),
+    };
+
+    // Parse the property
+    let property = inner
+        .next()
+        .ok_or("Missing output introspection property")?
+        .as_str()
+        .to_string();
+
+    Ok(Expression::OutputIntrospection {
+        index: Box::new(index),
+        property,
+    })
+}
+
+/// Parse a standalone input_introspection (not in a comparison context)
+fn parse_standalone_input_introspection(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_input_introspection_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse a standalone output_introspection (not in a comparison context)
+fn parse_standalone_output_introspection(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_output_introspection_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse input_introspection_comparison: input_introspection op expression
+fn parse_input_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left input introspection")?;
+    let left = parse_input_introspection_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::input_introspection => parse_input_introspection_to_expression(right_pair)?,
+        Rule::output_introspection => parse_output_introspection_to_expression(right_pair)?,
+        Rule::tx_property_access | Rule::this_property_access => {
+            parse_tx_property_to_expression(right_pair)
+        }
+        Rule::p2tr_constructor => Expression::Property(right_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in input introspection comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+/// Parse output_introspection_comparison: output_introspection op expression
+fn parse_output_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left output introspection")?;
+    let left = parse_output_introspection_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::input_introspection => parse_input_introspection_to_expression(right_pair)?,
+        Rule::output_introspection => parse_output_introspection_to_expression(right_pair)?,
+        Rule::tx_property_access | Rule::this_property_access => {
+            parse_tx_property_to_expression(right_pair)
+        }
+        Rule::p2tr_constructor => Expression::Property(right_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in output introspection comparison: {:?}",
                 right_pair.as_rule()
             ))
         }

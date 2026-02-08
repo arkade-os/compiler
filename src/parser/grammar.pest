@@ -129,6 +129,8 @@ primary_expr = {
     asset_at |
     asset_count |
     asset_lookup |
+    input_introspection |
+    output_introspection |
     tx_introspection |
     tx_property_access |
     this_property_access |
@@ -162,6 +164,8 @@ complex_expression = _{
     asset_lookup_comparison |
     asset_count_comparison |
     asset_at_comparison |
+    input_introspection_comparison |
+    output_introspection_comparison |
     tx_introspection_comparison |
     group_property_comparison |
     property_comparison |
@@ -170,6 +174,8 @@ complex_expression = _{
     asset_at |
     asset_count |
     asset_lookup |
+    input_introspection |
+    output_introspection |
     tx_introspection |
     asset_group_access |
     p2tr_constructor |
@@ -243,6 +249,34 @@ tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs
 // Transaction introspection comparison: tx_introspection op expression
 tx_introspection_comparison = {
     tx_introspection ~ binary_operator ~ (identifier | number_literal)
+}
+
+// ─── Indexed Input/Output Introspection ─────────────────────────────────────────
+
+// Input introspection: tx.inputs[i].property (value, scriptPubKey, sequence, outpoint, issuance)
+input_introspection = {
+    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ input_introspection_property
+}
+
+// Input introspection properties (excluding asset - use .assets.* API instead)
+input_introspection_property = { "value" | "scriptPubKey" | "sequence" | "outpoint" | "issuance" }
+
+// Output introspection: tx.outputs[o].property (value, scriptPubKey, nonce)
+output_introspection = {
+    "tx" ~ "." ~ "outputs" ~ array_access ~ "." ~ output_introspection_property
+}
+
+// Output introspection properties (excluding asset - use .assets.* API instead)
+output_introspection_property = { "value" | "scriptPubKey" | "nonce" }
+
+// Input introspection comparison: input_introspection op expression
+input_introspection_comparison = {
+    input_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | p2tr_constructor | identifier | number_literal)
+}
+
+// Output introspection comparison: output_introspection op expression
+output_introspection_comparison = {
+    output_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | p2tr_constructor | identifier | number_literal)
 }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────

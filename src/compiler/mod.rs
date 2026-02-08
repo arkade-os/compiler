@@ -532,6 +532,12 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::TxIntrospection { property } => {
             emit_tx_introspection_asm(property, asm);
         },
+        Expression::InputIntrospection { index, property } => {
+            emit_input_introspection_asm(index, property, asm);
+        },
+        Expression::OutputIntrospection { index, property } => {
+            emit_output_introspection_asm(index, property, asm);
+        },
         Expression::GroupFind { asset_id } => {
             asm.push(format!("<{}_txid>", asset_id));
             asm.push(format!("<{}_gidx>", asset_id));
@@ -763,6 +769,9 @@ fn is_64bit_expression(expr: &Expression) -> bool {
         Expression::GroupSum { .. } => true,
         // AssetAt with "amount" property returns u64
         Expression::AssetAt { property, .. } => property == "amount",
+        // Input/Output "value" property returns u64
+        Expression::InputIntrospection { property, .. } => property == "value",
+        Expression::OutputIntrospection { property, .. } => property == "value",
         Expression::BinaryOp { left, right, .. } => {
             is_64bit_expression(left) || is_64bit_expression(right)
         }
@@ -800,6 +809,12 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         Expression::TxIntrospection { property } => {
             emit_tx_introspection_asm(property, asm);
+        }
+        Expression::InputIntrospection { index, property } => {
+            emit_input_introspection_asm(index, property, asm);
+        }
+        Expression::OutputIntrospection { index, property } => {
+            emit_output_introspection_asm(index, property, asm);
         }
         Expression::BinaryOp { left, op, right } => {
             emit_binary_op_asm(left, op, right, asm);
@@ -986,6 +1001,42 @@ fn emit_tx_introspection_asm(property: &str, asm: &mut Vec<String>) {
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.{}>", property));
+        }
+    }
+}
+
+/// Emit assembly for input introspection: tx.inputs[i].property
+fn emit_input_introspection_asm(index: &Expression, property: &str, asm: &mut Vec<String>) {
+    // Push the index
+    emit_expression_asm(index, asm);
+
+    // Emit the appropriate opcode
+    match property {
+        "value" => asm.push("OP_INSPECTINPUTVALUE".to_string()),
+        "scriptPubKey" => asm.push("OP_INSPECTINPUTSCRIPTPUBKEY".to_string()),
+        "sequence" => asm.push("OP_INSPECTINPUTSEQUENCE".to_string()),
+        "outpoint" => asm.push("OP_INSPECTINPUTOUTPOINT".to_string()),
+        "issuance" => asm.push("OP_INSPECTINPUTISSUANCE".to_string()),
+        _ => {
+            // Unknown property, emit as placeholder
+            asm.push(format!("<tx.inputs[?].{}>", property));
+        }
+    }
+}
+
+/// Emit assembly for output introspection: tx.outputs[o].property
+fn emit_output_introspection_asm(index: &Expression, property: &str, asm: &mut Vec<String>) {
+    // Push the index
+    emit_expression_asm(index, asm);
+
+    // Emit the appropriate opcode
+    match property {
+        "value" => asm.push("OP_INSPECTOUTPUTVALUE".to_string()),
+        "scriptPubKey" => asm.push("OP_INSPECTOUTPUTSCRIPTPUBKEY".to_string()),
+        "nonce" => asm.push("OP_INSPECTOUTPUTNONCE".to_string()),
+        _ => {
+            // Unknown property, emit as placeholder
+            asm.push(format!("<tx.outputs[?].{}>", property));
         }
     }
 }
@@ -1360,6 +1411,20 @@ fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k:
             Expression::CheckSigExpr {
                 signature: new_sig,
                 pubkey: pubkey.clone()
+            }
+        }
+        // Handle InputIntrospection - substitute index if it matches loop variable
+        Expression::InputIntrospection { index, property } => {
+            Expression::InputIntrospection {
+                index: Box::new(substitute_expression(index, index_var, value_var, k, array_name)),
+                property: property.clone(),
+            }
+        }
+        // Handle OutputIntrospection - substitute index if it matches loop variable
+        Expression::OutputIntrospection { index, property } => {
+            Expression::OutputIntrospection {
+                index: Box::new(substitute_expression(index, index_var, value_var, k, array_name)),
+                property: property.clone(),
             }
         }
         // All other expressions are returned as-is

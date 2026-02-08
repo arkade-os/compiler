@@ -201,6 +201,16 @@ pub enum Expression {
     TxIntrospection {
         property: String,
     },
+    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint, issuance
+    InputIntrospection {
+        index: Box<Expression>,
+        property: String,
+    },
+    /// Output introspection: tx.outputs[o].value, scriptPubKey, nonce
+    OutputIntrospection {
+        index: Box<Expression>,
+        property: String,
+    },
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
         left: Box<Expression>,

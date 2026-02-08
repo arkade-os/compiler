@@ -3,8 +3,9 @@
 ## Current Status
 
 - **Build:** Passing
-- **Tests:** 33 passing, 0 failing
+- **Tests:** 56 passing, 0 failing
 - **Commits 1-6:** Complete (core primitives)
+- **Opcode Implementation:** Phase 1-3 Complete
 
 ---
 
@@ -29,6 +30,37 @@
 - `arr[i]` indexing resolution during loop unrolling
 - Loop unrolling over array variables
 - Tests: `threshold_oracle_test.rs` (9 tests)
+
+### Phase 1 — .assets APIs (NEW)
+
+- `tx.outputs[o].assets.length` → `OP_INSPECTOUTASSETCOUNT`
+- `tx.inputs[i].assets.length` → `OP_INSPECTINASSETCOUNT`
+- `tx.outputs[o].assets[t].assetId` → `OP_INSPECTOUTASSETAT`
+- `tx.outputs[o].assets[t].amount` → `OP_INSPECTOUTASSETAT`
+- `tx.inputs[i].assets[t].assetId` → `OP_INSPECTINASSETAT`
+- `tx.inputs[i].assets[t].amount` → `OP_INSPECTINASSETAT`
+- Tests: `asset_introspection_test.rs` (6 tests)
+
+### Phase 2 — Transaction Introspection (NEW)
+
+- `tx.version` → `OP_INSPECTVERSION`
+- `tx.locktime` → `OP_INSPECTLOCKTIME`
+- `tx.numInputs` → `OP_INSPECTNUMINPUTS`
+- `tx.numOutputs` → `OP_INSPECTNUMOUTPUTS`
+- `tx.weight` → `OP_TXWEIGHT`
+- Tests: `tx_introspection_test.rs` (5 tests)
+
+### Phase 3 — Indexed Input/Output Introspection (NEW)
+
+- `tx.inputs[i].value` → `OP_INSPECTINPUTVALUE`
+- `tx.inputs[i].scriptPubKey` → `OP_INSPECTINPUTSCRIPTPUBKEY`
+- `tx.inputs[i].sequence` → `OP_INSPECTINPUTSEQUENCE`
+- `tx.inputs[i].outpoint` → `OP_INSPECTINPUTOUTPOINT`
+- `tx.inputs[i].issuance` → `OP_INSPECTINPUTISSUANCE`
+- `tx.outputs[o].value` → `OP_INSPECTOUTPUTVALUE`
+- `tx.outputs[o].scriptPubKey` → `OP_INSPECTOUTPUTSCRIPTPUBKEY`
+- `tx.outputs[o].nonce` → `OP_INSPECTOUTPUTNONCE`
+- Tests: `io_introspection_test.rs` (11 tests)
 
 ---
 
@@ -71,6 +103,34 @@ But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead
 
 ---
 
+## Remaining Opcodes (Future Phases)
+
+### Phase 4 — Streaming SHA256 (Medium Priority)
+
+| Syntax | Opcode | Status |
+| ------ | ------ | ------ |
+| `sha256Initialize(data)` | `OP_SHA256INITIALIZE` | Not implemented |
+| `sha256Update(ctx, chunk)` | `OP_SHA256UPDATE` | Not implemented |
+| `sha256Finalize(ctx, lastChunk)` | `OP_SHA256FINALIZE` | Not implemented |
+
+### Phase 5 — Conversion & Arithmetic (Medium Priority)
+
+| Syntax | Opcode | Status |
+| ------ | ------ | ------ |
+| `neg64(value)` | `OP_NEG64` | Not implemented |
+| `le64ToScriptNum(value)` | `OP_LE64TOSCRIPTNUM` | Not implemented |
+| `le32ToLe64(value)` | `OP_LE32TOLE64` | Not implemented |
+
+### Phase 6 — Crypto Opcodes (Medium Priority)
+
+| Syntax | Opcode | Status |
+| ------ | ------ | ------ |
+| `ecMulScalarVerify(k, P, Q)` | `OP_ECMULSCALARVERIFY` | Not implemented |
+| `tweakVerify(P, k, Q)` | `OP_TWEAKVERIFY` | Not implemented |
+| `checkSigFromStackVerify(sig, pk, msg)` | `OP_CHECKSIGFROMSTACKVERIFY` | Not implemented |
+
+---
+
 ## Potential Future Work
 
 1. **Update examples** to demonstrate full asset group API:
@@ -78,9 +138,9 @@ But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead
    - `group.control` for control asset verification
    - `group.delta` for mint/burn detection
 
-2. **Implement missing features**:
-   - `group.isFresh` -> `OP_INSPECTASSETGROUPASSETID k` + txid comparison
-   - `group.assetId` -> returns `(txid32, gidx_u16)` tuple
+2. **Implement missing group features**:
+   - `group.isFresh` → `OP_INSPECTASSETGROUPASSETID k` + `OP_TXHASH OP_EQUAL`
+   - `group.assetId` → returns `(txid32, gidx_u16)` tuple
 
 3. **Add ArkadeKitties-style contracts** to examples:
    - Commit-reveal breeding with oracle randomness
@@ -99,7 +159,10 @@ But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead
 | 4 | If/Else | 8/8 |
 | 5 | For Loops | 5/5 |
 | 6 | Arrays | 9/9 |
-| **Total** | | **28/28** |
+| Phase 1 | .assets APIs | 6/6 |
+| Phase 2 | Tx Introspection | 5/5 |
+| Phase 3 | I/O Introspection | 11/11 |
+| **Total** | | **56/56** |
 
 ---
 
