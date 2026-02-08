@@ -123,9 +123,18 @@ unary_expr = { primary_expr }
 // Primary expressions (atoms)
 primary_expr = {
     "(" ~ general_expression ~ ")" |
+    check_sig_from_stack_verify |
     check_sig_from_stack |
     check_sig |
+    sha256_initialize |
+    sha256_update |
+    sha256_finalize |
     sha256_func |
+    neg64_func |
+    le64_to_script_num |
+    le32_to_le64 |
+    ec_mul_scalar_verify |
+    tweak_verify |
     asset_at |
     asset_count |
     asset_lookup |
@@ -156,6 +165,7 @@ div_op = { "/" }
 // Complex expression types (for require statements)
 // PEG ordered choice: first matching alternative wins
 complex_expression = _{
+    check_sig_from_stack_verify |
     check_sig_from_stack |
     check_sig |
     check_multisig |
@@ -171,6 +181,14 @@ complex_expression = _{
     property_comparison |
     identifier_comparison |
     binary_operation |
+    sha256_initialize |
+    sha256_update |
+    sha256_finalize |
+    neg64_func |
+    le64_to_script_num |
+    le32_to_le64 |
+    ec_mul_scalar_verify |
+    tweak_verify |
     asset_at |
     asset_count |
     asset_lookup |
@@ -468,6 +486,57 @@ array = {
 // SHA256 function
 sha256_func = {
     "sha256" ~ "(" ~ complex_expression ~ ")"
+}
+
+// ─── Streaming SHA256 ──────────────────────────────────────────────────
+
+// Streaming SHA256 initialize: sha256Initialize(data) → OP_SHA256INITIALIZE
+sha256_initialize = {
+    "sha256Initialize" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// Streaming SHA256 update: sha256Update(ctx, chunk) → OP_SHA256UPDATE
+sha256_update = {
+    "sha256Update" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk) → OP_SHA256FINALIZE
+sha256_finalize = {
+    "sha256Finalize" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// ─── Conversion & Arithmetic ───────────────────────────────────────────
+
+// Negate 64-bit value: neg64(value) → OP_NEG64
+neg64_func = {
+    "neg64" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// Convert LE64 to script number: le64ToScriptNum(value) → OP_LE64TOSCRIPTNUM
+le64_to_script_num = {
+    "le64ToScriptNum" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// Convert LE32 to LE64: le32ToLe64(value) → OP_LE32TOLE64
+le32_to_le64 = {
+    "le32ToLe64" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// ─── Crypto Opcodes ────────────────────────────────────────────────────
+
+// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY
+ec_mul_scalar_verify = {
+    "ecMulScalarVerify" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Tweak verification: tweakVerify(P, k, Q) → OP_TWEAKVERIFY
+tweak_verify = {
+    "tweakVerify" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACKVERIFY
+check_sig_from_stack_verify = {
+    "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────

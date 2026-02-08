@@ -3,9 +3,9 @@
 ## Current Status
 
 - **Build:** Passing
-- **Tests:** 56 passing, 0 failing
+- **Tests:** 67 passing, 0 failing
 - **Commits 1-6:** Complete (core primitives)
-- **Opcode Implementation:** Phase 1-3 Complete
+- **Opcode Implementation:** Phase 1-6 Complete
 
 ---
 
@@ -101,33 +101,26 @@ require(tokenGroup.control == ctrlAssetId, "wrong control");
 
 But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead.
 
----
+### Phase 4 — Streaming SHA256
 
-## Remaining Opcodes (Future Phases)
+- `sha256Initialize(data)` → `OP_SHA256INITIALIZE`
+- `sha256Update(ctx, chunk)` → `OP_SHA256UPDATE`
+- `sha256Finalize(ctx, lastChunk)` → `OP_SHA256FINALIZE`
+- Tests: `new_opcodes_test.rs` (3 tests + 1 workflow test)
 
-### Phase 4 — Streaming SHA256 (Medium Priority)
+### Phase 5 — Conversion & Arithmetic
 
-| Syntax | Opcode | Status |
-| ------ | ------ | ------ |
-| `sha256Initialize(data)` | `OP_SHA256INITIALIZE` | Not implemented |
-| `sha256Update(ctx, chunk)` | `OP_SHA256UPDATE` | Not implemented |
-| `sha256Finalize(ctx, lastChunk)` | `OP_SHA256FINALIZE` | Not implemented |
+- `neg64(value)` → `OP_NEG64`
+- `le64ToScriptNum(value)` → `OP_LE64TOSCRIPTNUM`
+- `le32ToLe64(value)` → `OP_LE32TOLE64`
+- Tests: `new_opcodes_test.rs` (3 tests + 1 chain test)
 
-### Phase 5 — Conversion & Arithmetic (Medium Priority)
+### Phase 6 — Crypto Opcodes
 
-| Syntax | Opcode | Status |
-| ------ | ------ | ------ |
-| `neg64(value)` | `OP_NEG64` | Not implemented |
-| `le64ToScriptNum(value)` | `OP_LE64TOSCRIPTNUM` | Not implemented |
-| `le32ToLe64(value)` | `OP_LE32TOLE64` | Not implemented |
-
-### Phase 6 — Crypto Opcodes (Medium Priority)
-
-| Syntax | Opcode | Status |
-| ------ | ------ | ------ |
-| `ecMulScalarVerify(k, P, Q)` | `OP_ECMULSCALARVERIFY` | Not implemented |
-| `tweakVerify(P, k, Q)` | `OP_TWEAKVERIFY` | Not implemented |
-| `checkSigFromStackVerify(sig, pk, msg)` | `OP_CHECKSIGFROMSTACKVERIFY` | Not implemented |
+- `ecMulScalarVerify(k, P, Q)` → `OP_ECMULSCALARVERIFY`
+- `tweakVerify(P, k, Q)` → `OP_TWEAKVERIFY`
+- `checkSigFromStackVerify(sig, pk, msg)` → `OP_CHECKSIGFROMSTACKVERIFY`
+- Tests: `new_opcodes_test.rs` (3 tests)
 
 ---
 
@@ -162,7 +155,10 @@ But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead
 | Phase 1 | .assets APIs | 6/6 |
 | Phase 2 | Tx Introspection | 5/5 |
 | Phase 3 | I/O Introspection | 11/11 |
-| **Total** | | **56/56** |
+| Phase 4 | Streaming SHA256 | 4/4 |
+| Phase 5 | Conversion & Arithmetic | 4/4 |
+| Phase 6 | Crypto Opcodes | 3/3 |
+| **Total** | | **67/67** |
 
 ---
 

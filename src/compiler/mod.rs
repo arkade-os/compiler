@@ -520,6 +520,53 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIGFROMSTACK".to_string());
         },
+        // Streaming SHA256
+        Expression::Sha256Initialize { data } => {
+            generate_expression_asm(data, asm);
+            asm.push("OP_SHA256INITIALIZE".to_string());
+        },
+        Expression::Sha256Update { context, chunk } => {
+            generate_expression_asm(context, asm);
+            generate_expression_asm(chunk, asm);
+            asm.push("OP_SHA256UPDATE".to_string());
+        },
+        Expression::Sha256Finalize { context, last_chunk } => {
+            generate_expression_asm(context, asm);
+            generate_expression_asm(last_chunk, asm);
+            asm.push("OP_SHA256FINALIZE".to_string());
+        },
+        // Conversion & Arithmetic
+        Expression::Neg64 { value } => {
+            generate_expression_asm(value, asm);
+            asm.push("OP_NEG64".to_string());
+        },
+        Expression::Le64ToScriptNum { value } => {
+            generate_expression_asm(value, asm);
+            asm.push("OP_LE64TOSCRIPTNUM".to_string());
+        },
+        Expression::Le32ToLe64 { value } => {
+            generate_expression_asm(value, asm);
+            asm.push("OP_LE32TOLE64".to_string());
+        },
+        // Crypto Opcodes
+        Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
+            generate_expression_asm(point_q, asm);
+            generate_expression_asm(point_p, asm);
+            generate_expression_asm(scalar, asm);
+            asm.push("OP_ECMULSCALARVERIFY".to_string());
+        },
+        Expression::TweakVerify { point_p, tweak, point_q } => {
+            generate_expression_asm(point_q, asm);
+            generate_expression_asm(tweak, asm);
+            generate_expression_asm(point_p, asm);
+            asm.push("OP_TWEAKVERIFY".to_string());
+        },
+        Expression::CheckSigFromStackVerify { signature, pubkey, message } => {
+            asm.push(format!("<{}>", message));
+            asm.push(format!("<{}>", pubkey));
+            asm.push(format!("<{}>", signature));
+            asm.push("OP_CHECKSIGFROMSTACKVERIFY".to_string());
+        },
         Expression::AssetLookup { source, index, asset_id } => {
             emit_asset_lookup_asm(source, index, asset_id, asm);
         },
@@ -857,6 +904,53 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIGFROMSTACK".to_string());
+        }
+        // Streaming SHA256
+        Expression::Sha256Initialize { data } => {
+            emit_expression_asm(data, asm);
+            asm.push("OP_SHA256INITIALIZE".to_string());
+        }
+        Expression::Sha256Update { context, chunk } => {
+            emit_expression_asm(context, asm);
+            emit_expression_asm(chunk, asm);
+            asm.push("OP_SHA256UPDATE".to_string());
+        }
+        Expression::Sha256Finalize { context, last_chunk } => {
+            emit_expression_asm(context, asm);
+            emit_expression_asm(last_chunk, asm);
+            asm.push("OP_SHA256FINALIZE".to_string());
+        }
+        // Conversion & Arithmetic
+        Expression::Neg64 { value } => {
+            emit_expression_asm(value, asm);
+            asm.push("OP_NEG64".to_string());
+        }
+        Expression::Le64ToScriptNum { value } => {
+            emit_expression_asm(value, asm);
+            asm.push("OP_LE64TOSCRIPTNUM".to_string());
+        }
+        Expression::Le32ToLe64 { value } => {
+            emit_expression_asm(value, asm);
+            asm.push("OP_LE32TOLE64".to_string());
+        }
+        // Crypto Opcodes
+        Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
+            emit_expression_asm(point_q, asm);
+            emit_expression_asm(point_p, asm);
+            emit_expression_asm(scalar, asm);
+            asm.push("OP_ECMULSCALARVERIFY".to_string());
+        }
+        Expression::TweakVerify { point_p, tweak, point_q } => {
+            emit_expression_asm(point_q, asm);
+            emit_expression_asm(tweak, asm);
+            emit_expression_asm(point_p, asm);
+            asm.push("OP_TWEAKVERIFY".to_string());
+        }
+        Expression::CheckSigFromStackVerify { signature, pubkey, message } => {
+            asm.push(format!("<{}>", message));
+            asm.push(format!("<{}>", pubkey));
+            asm.push(format!("<{}>", signature));
+            asm.push("OP_CHECKSIGFROMSTACKVERIFY".to_string());
         }
     }
 }

@@ -251,4 +251,51 @@ pub enum Expression {
         pubkey: String,
         message: String,
     },
+    // ─── Streaming SHA256 ──────────────────────────────────────────────
+    /// Streaming SHA256 initialize: sha256Initialize(data)
+    Sha256Initialize {
+        data: Box<Expression>,
+    },
+    /// Streaming SHA256 update: sha256Update(ctx, chunk)
+    Sha256Update {
+        context: Box<Expression>,
+        chunk: Box<Expression>,
+    },
+    /// Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk)
+    Sha256Finalize {
+        context: Box<Expression>,
+        last_chunk: Box<Expression>,
+    },
+    // ─── Conversion & Arithmetic ───────────────────────────────────────
+    /// Negate 64-bit value: neg64(value)
+    Neg64 {
+        value: Box<Expression>,
+    },
+    /// Convert LE64 to script number: le64ToScriptNum(value)
+    Le64ToScriptNum {
+        value: Box<Expression>,
+    },
+    /// Convert LE32 to LE64: le32ToLe64(value)
+    Le32ToLe64 {
+        value: Box<Expression>,
+    },
+    // ─── Crypto Opcodes ────────────────────────────────────────────────
+    /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
+    EcMulScalarVerify {
+        scalar: Box<Expression>,
+        point_p: Box<Expression>,
+        point_q: Box<Expression>,
+    },
+    /// Tweak verification: tweakVerify(P, k, Q)
+    TweakVerify {
+        point_p: Box<Expression>,
+        tweak: Box<Expression>,
+        point_q: Box<Expression>,
+    },
+    /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
+    CheckSigFromStackVerify {
+        signature: String,
+        pubkey: String,
+        message: String,
+    },
 } 
