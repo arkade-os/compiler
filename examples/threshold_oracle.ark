@@ -1,0 +1,46 @@
+// Threshold Oracle Contract
+// Generic threshold signature verifier for multi-oracle attestations.
+//
+// This contract demonstrates:
+// - Array types in constructor params (pubkey[] oracles)
+// - Array types in function params (signature[] oracleSigs)
+// - Array indexing (oracles[i])
+// - Loop unrolling with array iteration
+// - Threshold counting for quorum verification
+//
+// N oracles, require M valid signatures over a message.
+
+options {
+  server = serverPk;
+  exit = 288;
+}
+
+contract ThresholdOracle(
+  bytes32 tokenAssetId,
+  bytes32 ctrlAssetId,
+  pubkey serverPk,
+  pubkey[] oracles,
+  int threshold
+) {
+  function attest(
+    int amount,
+    bytes32 messageHash,
+    pubkey recipientPk,
+    signature[] oracleSigs
+  ) {
+    require(amount > 0, "zero");
+
+    int valid = 0;
+    for (i, sig) in oracleSigs {
+      if (checkSigFromStack(sig, oracles[i], messageHash)) {
+        valid = valid + 1;
+      }
+    }
+    require(valid >= threshold, "quorum failed");
+
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
+    require(tx.outputs[1].assets.lookup(tokenAssetId) >= amount, "short");
+    require(tx.outputs[1].scriptPubKey == new P2TR(recipientPk), "wrong dest");
+    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
+  }
+}

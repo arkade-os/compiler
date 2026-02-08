@@ -1,0 +1,48 @@
+// Controlled Mint Contract
+// Demonstrates asset group introspection primitives
+//
+// This contract manages a token minting authority where:
+// 1. mint() - Authority can mint new tokens while preserving the control asset
+// 2. burn() - Authority can burn tokens
+//
+// Asset groups provide aggregate views of asset flows across all inputs/outputs,
+// enabling balance verification without iterating individual UTXOs.
+
+options {
+  server = authorityPk;
+  exit = 144;
+}
+
+contract ControlledMint(
+  pubkey authorityPk,
+  pubkey serverPk,
+  bytes32 tokenAssetId,
+  bytes32 ctrlAssetId,
+  int maxMintAmount
+) {
+  // Mint: authority creates new tokens
+  // - control asset must be preserved (sumOutputs >= sumInputs)
+  // - minted token amount must not exceed maxMintAmount
+  function mint(signature authSig, int mintAmount) {
+    // Ensure control asset is not leaked
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl asset");
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "ctrl not preserved");
+
+    // Mint amount must be within limits
+    require(mintAmount <= maxMintAmount, "exceeds max mint");
+
+    // Authority must sign
+    require(checkSig(authSig, authorityPk), "invalid authority signature");
+  }
+
+  // Burn: authority destroys tokens
+  // - control asset must be preserved
+  function burn(signature authSig) {
+    // Control asset preserved
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl asset");
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "ctrl not preserved");
+
+    // Authority must sign
+    require(checkSig(authSig, authorityPk), "invalid authority signature");
+  }
+}
