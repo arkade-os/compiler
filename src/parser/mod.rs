@@ -168,7 +168,7 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let mut inner = pair.into_inner();
             let expr = match inner.next() {
                 Some(expr) => expr,
-                None => return Err(format!("Invalid arguments to function {}", func.name)),
+                None => return Err(format!("Parse error: Invalid arguments to function {}", func.name)),
             };
             let requirement = parse_complex_expression(expr)?;
 
@@ -181,8 +181,8 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
         }
         Rule::let_binding => {
             let mut inner = pair.into_inner();
-            let name = inner.next().ok_or("Missing variable name in let binding")?.as_str().to_string();
-            let value_pair = inner.next().ok_or("Missing value in let binding")?;
+            let name = inner.next().ok_or_else(|| "Parse error: Missing variable name in let binding".to_string())?.as_str().to_string();
+            let value_pair = inner.next().ok_or_else(|| "Parse error: Missing value in let binding".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
             func.statements.push(Statement::LetBinding { name, value });
@@ -190,8 +190,8 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
         }
         Rule::var_assign => {
             let mut inner = pair.into_inner();
-            let name = inner.next().ok_or("Missing variable name in assignment")?.as_str().to_string();
-            let value_pair = inner.next().ok_or("Missing value in assignment")?;
+            let name = inner.next().ok_or_else(|| "Parse error: Missing variable name in assignment".to_string())?.as_str().to_string();
+            let value_pair = inner.next().ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
             func.statements.push(Statement::VarAssign { name, value });
@@ -199,10 +199,10 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
         }
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
-            let condition_pair = inner.next().ok_or("Missing condition in if statement")?;
+            let condition_pair = inner.next().ok_or_else(|| "Parse error: Missing condition in if statement".to_string())?;
             let condition = parse_general_expression(condition_pair)?;
 
-            let then_block = inner.next().ok_or("Missing then block in if statement")?;
+            let then_block = inner.next().ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
             let then_body = parse_block(then_block)?;
 
             let else_body = if let Some(else_block) = inner.next() {
@@ -216,11 +216,11 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
         }
         Rule::for_stmt => {
             let mut inner = pair.into_inner();
-            let index_var = inner.next().ok_or("Missing index variable in for loop")?.as_str().to_string();
-            let value_var = inner.next().ok_or("Missing value variable in for loop")?.as_str().to_string();
-            let iterable_pair = inner.next().ok_or("Missing iterable in for loop")?;
+            let index_var = inner.next().ok_or_else(|| "Parse error: Missing index variable in for loop".to_string())?.as_str().to_string();
+            let value_var = inner.next().ok_or_else(|| "Parse error: Missing value variable in for loop".to_string())?.as_str().to_string();
+            let iterable_pair = inner.next().ok_or_else(|| "Parse error: Missing iterable in for loop".to_string())?;
             let iterable = parse_general_expression(iterable_pair)?;
-            let body_block = inner.next().ok_or("Missing body in for loop")?;
+            let body_block = inner.next().ok_or_else(|| "Parse error: Missing body in for loop".to_string())?;
             let body = parse_block(body_block)?;
 
             func.statements.push(Statement::ForIn { index_var, value_var, iterable, body });
@@ -234,8 +234,8 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             // Legacy typed variable declaration - treat like let binding
             let mut inner = pair.into_inner();
             let _data_type = inner.next(); // Skip data type
-            let name = inner.next().ok_or("Missing variable name")?.as_str().to_string();
-            let value_pair = inner.next().ok_or("Missing value")?;
+            let name = inner.next().ok_or_else(|| "Parse error: Missing variable name".to_string())?.as_str().to_string();
+            let value_pair = inner.next().ok_or_else(|| "Parse error: Missing value".to_string())?;
             // For legacy variable declarations, wrap the expression
             let value = Expression::Property(value_pair.as_str().to_string());
 

@@ -79,13 +79,14 @@ fn test_beacon_passthrough_has_loop_unrolling() {
         .filter(|s| s.contains("OP_INSPECTASSETGROUPSUM"))
         .count();
 
-    // For the passthrough function, if there's a for loop, it should contain
-    // OP_INSPECTASSETGROUPSUM calls (2 per iteration: sumInputs + sumOutputs)
-    // Note: With numGroups=3, we'd expect 6 calls (3 iterations x 2 sums each)
-    // But since numGroups is a param, unrolling may be dynamic or use a max
+    // For the passthrough function, the for loop should be unrolled with
+    // OP_INSPECTASSETGROUPSUM calls (2 per iteration: sumInputs + sumOutputs).
+    // At minimum, we expect 2 calls for a single iteration.
     assert!(
-        sum_count >= 0, // For now just ensure it compiles
-        "Assembly should contain OP_INSPECTASSETGROUPSUM for group introspection"
+        sum_count >= 2,
+        "Expected at least 2 OP_INSPECTASSETGROUPSUM instructions for loop unrolling \
+         (sumInputs + sumOutputs per iteration), found {}",
+        sum_count
     );
 }
 
@@ -124,7 +125,7 @@ fn test_beacon_update_has_covenant_recursion() {
         .any(|s| s.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY") || s.contains("OP_INSPECTINPUTSCRIPTPUBKEY"));
 
     assert!(
-        has_output_inspect || update.asm.iter().any(|s| s.contains("tx.outputs")),
-        "Missing covenant recursion check in update function"
+        has_output_inspect,
+        "Missing OP_INSPECTOUTPUTSCRIPTPUBKEY or OP_INSPECTINPUTSCRIPTPUBKEY in update function for covenant recursion"
     );
 }
