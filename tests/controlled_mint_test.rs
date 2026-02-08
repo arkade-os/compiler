@@ -14,10 +14,21 @@ fn test_controlled_mint_contract() {
 
     // Verify parameters
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
-    assert!(param_names.contains(&"authorityPk"), "missing authorityPk");
+    assert!(param_names.contains(&"issuerPk"), "missing issuerPk");
     assert!(param_names.contains(&"serverPk"), "missing serverPk");
 
-    // ctrlAssetId (bytes32 used in lookups) should be decomposed into _txid + _gidx
+    // tokenAssetId (bytes32 used in lookups) should be decomposed into _txid + _gidx
+    assert!(
+        param_names.contains(&"tokenAssetId_txid"),
+        "missing tokenAssetId_txid decomposition, got: {:?}",
+        param_names
+    );
+    assert!(
+        param_names.contains(&"tokenAssetId_gidx"),
+        "missing tokenAssetId_gidx decomposition"
+    );
+
+    // ctrlAssetId should also be decomposed (used in find and lookup)
     assert!(
         param_names.contains(&"ctrlAssetId_txid"),
         "missing ctrlAssetId_txid decomposition, got: {:?}",
@@ -28,20 +39,8 @@ fn test_controlled_mint_contract() {
         "missing ctrlAssetId_gidx decomposition"
     );
 
-    // tokenAssetId is bytes32 but NOT used in assets.lookup(), so not decomposed
-    assert!(
-        param_names.contains(&"tokenAssetId"),
-        "tokenAssetId should remain as-is (not used in lookup)"
-    );
-
-    // maxMintAmount is int, should not be decomposed
-    assert!(
-        param_names.contains(&"maxMintAmount"),
-        "missing maxMintAmount"
-    );
-
-    // Verify functions: 2 functions x 2 variants = 4
-    assert_eq!(output.functions.len(), 4, "expected 4 functions");
+    // Verify functions: 3 functions x 2 variants = 6
+    assert_eq!(output.functions.len(), 6, "expected 6 functions");
 
     // Verify mint function
     let mint = output
@@ -52,31 +51,38 @@ fn test_controlled_mint_contract() {
 
     let mint_asm = mint.asm.join(" ");
 
-    // Should have asset lookup opcodes for both input and output
+    // Should have asset group find opcode
     assert!(
-        mint_asm.contains("OP_INSPECTINASSETLOOKUP"),
-        "missing OP_INSPECTINASSETLOOKUP in mint: {}",
+        mint_asm.contains("OP_FINDASSETGROUPBYASSETID"),
+        "missing OP_FINDASSETGROUPBYASSETID in mint: {}",
         mint_asm
     );
+
+    // Should have group property opcodes for delta and control
+    assert!(
+        mint_asm.contains("OP_INSPECTASSETGROUPSUM") || mint_asm.contains("OP_SUB64"),
+        "missing group sum or delta in mint: {}",
+        mint_asm
+    );
+
+    assert!(
+        mint_asm.contains("OP_INSPECTASSETGROUPCTRL"),
+        "missing OP_INSPECTASSETGROUPCTRL in mint: {}",
+        mint_asm
+    );
+
+    // Should have asset lookup for output check
     assert!(
         mint_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
         "missing OP_INSPECTOUTASSETLOOKUP in mint: {}",
         mint_asm
     );
 
-    // Should have sentinel guard pattern
+    // Should have checksig
     assert!(
-        mint_asm.contains("OP_DUP OP_1NEGATE OP_EQUAL OP_NOT OP_VERIFY"),
-        "missing sentinel guard in mint: {}",
+        mint_asm.contains("OP_CHECKSIG"),
+        "missing checksig in mint: {}",
         mint_asm
-    );
-
-    // Should have comparison operators for mint amount limit
-    assert!(
-        mint.require
-            .iter()
-            .any(|r| r.req_type == "comparison" || r.req_type == "assetCheck"),
-        "missing comparison requirement in mint"
     );
 
     // Verify burn function
@@ -87,20 +93,43 @@ fn test_controlled_mint_contract() {
         .expect("burn server variant not found");
 
     let burn_asm = burn.asm.join(" ");
+
+    // Burn uses group sumInputs >= sumOutputs + amount
     assert!(
-        burn_asm.contains("OP_INSPECTINASSETLOOKUP"),
-        "missing input lookup in burn: {}",
+        burn_asm.contains("OP_FINDASSETGROUPBYASSETID"),
+        "missing group find in burn: {}",
         burn_asm
     );
     assert!(
-        burn_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
-        "missing output lookup in burn: {}",
+        burn_asm.contains("OP_INSPECTASSETGROUPSUM"),
+        "missing group sum in burn: {}",
         burn_asm
     );
     assert!(
         burn_asm.contains("OP_CHECKSIG"),
         "missing checksig in burn: {}",
         burn_asm
+    );
+
+    // Verify lockSupply function
+    let lock = output
+        .functions
+        .iter()
+        .find(|f| f.name == "lockSupply" && f.server_variant)
+        .expect("lockSupply server variant not found");
+
+    let lock_asm = lock.asm.join(" ");
+
+    // lockSupply checks sumOutputs == 0
+    assert!(
+        lock_asm.contains("OP_FINDASSETGROUPBYASSETID"),
+        "missing group find in lockSupply: {}",
+        lock_asm
+    );
+    assert!(
+        lock_asm.contains("OP_INSPECTASSETGROUPSUM"),
+        "missing group sum in lockSupply: {}",
+        lock_asm
     );
 }
 
@@ -133,6 +162,9 @@ fn test_controlled_mint_cli() {
 
     let json = fs::read_to_string(&output_path).unwrap();
     assert!(json.contains("\"contractName\": \"ControlledMint\""));
-    assert!(json.contains("OP_INSPECTINASSETLOOKUP"));
-    assert!(json.contains("OP_INSPECTOUTASSETLOOKUP"));
+
+    // Should have group-related opcodes
+    assert!(json.contains("OP_FINDASSETGROUPBYASSETID"), "missing OP_FINDASSETGROUPBYASSETID");
+    assert!(json.contains("OP_INSPECTASSETGROUPSUM"), "missing OP_INSPECTASSETGROUPSUM");
+    assert!(json.contains("OP_INSPECTASSETGROUPCTRL"), "missing OP_INSPECTASSETGROUPCTRL");
 }

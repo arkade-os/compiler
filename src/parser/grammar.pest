@@ -126,6 +126,10 @@ primary_expr = {
     check_sig_from_stack |
     check_sig |
     sha256_func |
+    asset_at |
+    asset_count |
+    asset_lookup |
+    tx_introspection |
     tx_property_access |
     this_property_access |
     p2tr_constructor |
@@ -156,11 +160,17 @@ complex_expression = _{
     time_comparison |
     hash_comparison |
     asset_lookup_comparison |
+    asset_count_comparison |
+    asset_at_comparison |
+    tx_introspection_comparison |
     group_property_comparison |
     property_comparison |
     identifier_comparison |
     binary_operation |
+    asset_at |
+    asset_count |
     asset_lookup |
+    tx_introspection |
     asset_group_access |
     p2tr_constructor |
     tx_property_access |
@@ -178,6 +188,20 @@ asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ "." ~ "lookup" ~ "(" ~ identifier ~ ")"
 }
 
+// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
+asset_count = {
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ "." ~ "length"
+}
+
+// Indexed asset access: tx.outputs[o].assets[t].property
+// Returns assetId (txid32, gidx_u16) or amount (u64)
+asset_at = {
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ array_access ~ "." ~ asset_at_property
+}
+
+// Properties for asset_at
+asset_at_property = { "assetId" | "amount" }
+
 // Source of asset lookup (inputs or outputs)
 asset_lookup_source = { "inputs" | "outputs" }
 
@@ -189,9 +213,36 @@ asset_lookup_comparison = {
     asset_lookup ~ binary_operator ~ (asset_lookup_arith_expr | asset_lookup | identifier | number_literal)
 }
 
+// Asset count comparison: asset_count op expression
+// Handles: tx.outputs[0].assets.length >= 1
+asset_count_comparison = {
+    asset_count ~ binary_operator ~ (identifier | number_literal)
+}
+
+// Asset at comparison: asset_at op expression
+// Handles: tx.outputs[0].assets[0].amount >= minAmount
+asset_at_comparison = {
+    asset_at ~ binary_operator ~ (asset_at | identifier | number_literal)
+}
+
 // Arithmetic expression in asset lookup context (e.g., lookup + amount)
 asset_lookup_arith_expr = {
     (asset_lookup | identifier | number_literal) ~ ("+" | "-" | "*" | "/") ~ (asset_lookup | identifier | number_literal)
+}
+
+// ─── Transaction Introspection ─────────────────────────────────────────────────
+
+// Transaction-level introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
+tx_introspection = {
+    "tx" ~ "." ~ tx_introspection_property
+}
+
+// Transaction introspection properties
+tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" }
+
+// Transaction introspection comparison: tx_introspection op expression
+tx_introspection_comparison = {
+    tx_introspection ~ binary_operator ~ (identifier | number_literal)
 }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
@@ -214,9 +265,18 @@ group_property = @{
 // Group property comparison: variable.property op expression
 // Matches patterns like: tokenGroup.delta == amount, tokenGroup.sumOutputs >= 0
 // Also supports: group.sumOutputs >= group.sumInputs (both sides can have group property)
+// Also supports: group.sumInputs >= group.sumOutputs + amount (arithmetic on right side)
 group_property_comparison = {
-    identifier ~ "." ~ group_property ~ binary_operator ~ (identifier_property_access | asset_lookup | asset_group_access | identifier | number_literal)
+    identifier ~ "." ~ group_property ~ binary_operator ~ (group_property_arith_expr | identifier_property_access | asset_lookup | asset_group_access | identifier | number_literal)
 }
+
+// Arithmetic expression with group properties: group.property +/- value
+group_property_arith_expr = {
+    identifier_property_access ~ arith_op ~ (identifier | number_literal)
+}
+
+// Arithmetic operator for group property expressions
+arith_op = { "+" | "-" }
 
 // Identifier property access: variable.property (e.g., group.sumInputs, tokenGroup.delta)
 identifier_property_access = {
@@ -275,8 +335,12 @@ tx_property_access = {
 tx_property_body = {
     // Input.current syntax - first-class support for current input introspection
     ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
-    // Asset groups access with optional indexing and properties
-    ("assetGroups" ~ (array_access ~ ("." ~ asset_group_property)?)?) |
+    // Asset groups access: find, length, or indexed property access
+    ("assetGroups" ~ (
+        "." ~ "find" ~ "(" ~ identifier ~ ")" |
+        "." ~ "length" |
+        array_access ~ ("." ~ asset_group_property)?
+    )?) |
     // Standard property access
     (tx_property_part ~ tx_property_suffix*)
 }

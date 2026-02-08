@@ -4,88 +4,102 @@
 
 - **Build:** Passing
 - **Tests:** 33 passing, 0 failing
-- **Commits 1-6:** Complete
+- **Commits 1-6:** Complete (core primitives)
 
 ---
 
-## Commit 4 — If/Else + Variable Reassignment
+## Completed Work
 
-**Status:** Complete
+### Commit 4 — If/Else + Variable Reassignment
 
-### Grammar/Parser/AST: DONE
-- `if_stmt`, `block`, `var_assign` rules in grammar.pest
-- `Statement::IfElse`, `Statement::VarAssign` in models
-- Parser handles if/else and variable assignment
+- `if_stmt`, `block`, `var_assign` rules
+- `OP_IF`/`OP_ELSE`/`OP_ENDIF` emission
+- Tests: `epoch_limiter_test.rs` (8 tests)
 
-### Compiler Codegen: DONE
-- [x] `OP_IF`/`OP_ELSE`/`OP_ENDIF` emission
-- [x] Recursive codegen for branches
+### Commit 5 — For Loops (Compile-Time Unrolled)
 
-### Test: `tests/epoch_limiter_test.rs`
-- 8 tests passing
+- `for_stmt` rule, `Statement::ForIn`
+- Loop unrolling over `tx.assetGroups`
+- Group property substitution (`sumInputs`, `sumOutputs`)
+- Tests: `beacon_test.rs` (5 tests)
 
----
+### Commit 6 — Array Types + Indexing
 
-## Commit 5 — For Loops (Compile-Time Unrolled)
-
-**Status:** Complete
-
-### Grammar/Parser/AST: DONE
-- `for_stmt` rule in grammar.pest
-- `Statement::ForIn` in models
-- Parser handles `for (k, group) in iterable { body }`
-
-### Compiler Codegen: DONE
-- [x] Recognize `tx.assetGroups` as iterable
-- [x] Default to 3 iterations for unrolling
-- [x] Unroll loop body N times
-- [x] Substitute `index_var` with literal 0, 1, 2, ...
-- [x] Transform `group.sumOutputs` → `Expression::GroupSum { index: k, source: Outputs }`
-- [x] Transform `group.sumInputs` → `Expression::GroupSum { index: k, source: Inputs }`
-
-### Test: `tests/beacon_test.rs`
-- 5 tests passing
+- Array type flattening in constructor/function ABI
+- `arr[i]` indexing resolution during loop unrolling
+- Loop unrolling over array variables
+- Tests: `threshold_oracle_test.rs` (9 tests)
 
 ---
 
-## Commit 6 — Array Types + Indexing
+## API Spec Alignment Analysis
 
-**Status:** Complete
+Comparing examples to `arkade-script-with-assets.md` and `ArkadeKitties.md`:
 
-### Grammar/Parser/AST: DONE
-- `data_type` allows `[]` suffix in grammar.pest
-- `Expression::ArrayIndex`, `Expression::ArrayLength` in models
-- Parser handles array types and indexing
+### Currently Implemented & Used in Examples
 
-### Compiler Codegen: DONE
-- [x] Array type flattening in constructor ABI (e.g., `pubkey[] oracles` → `oracles_0`, `oracles_1`, `oracles_2`)
-- [x] Array type flattening in function witness ABI (e.g., `signature[] sigs` → `sigs_0`, `sigs_1`, `sigs_2`)
-- [x] `arr[i]` indexing (resolve to `arr_{i}` when `i` is literal/unrolled)
-- [x] Loop unrolling over array variables (not just `tx.assetGroups`)
+| Feature | API | Opcode | Used In |
+|---------|-----|--------|---------|
+| Input asset lookup | `tx.inputs[i].assets.lookup(assetId)` | `OP_INSPECTINASSETLOOKUP` | token_vault, controlled_mint, fee_adapter |
+| Output asset lookup | `tx.outputs[o].assets.lookup(assetId)` | `OP_INSPECTOUTASSETLOOKUP` | token_vault, controlled_mint |
+| Group sum (inputs) | `tx.assetGroups[k].sumInputs` | `OP_INSPECTASSETGROUPSUM k 0` | beacon |
+| Group sum (outputs) | `tx.assetGroups[k].sumOutputs` | `OP_INSPECTASSETGROUPSUM k 1` | beacon |
+| Group count | `tx.assetGroups.length` | `OP_INSPECTNUMASSETGROUPS` | (parser ready) |
 
-### Test: `tests/threshold_oracle_test.rs`
-- 9 tests passing
+### Specified in Docs but Missing from Examples
+
+| Feature | API | Opcode | Notes |
+|---------|-----|--------|-------|
+| Find group by ID | `tx.assetGroups.find(assetId)` | `OP_FINDASSETGROUPBYASSETID` | Parser has `GroupFind`, not used in examples |
+| Group control | `group.control` | `OP_INSPECTASSETGROUPCTRL k` | Parser has `GroupProperty`, not fully tested |
+| Group delta | `group.delta` | `sumOutputs - sumInputs` via `OP_SUB64` | Parser ready, not used in examples |
+| Metadata hash | `group.metadataHash` | `OP_INSPECTASSETGROUPMETADATAHASH k` | Parser has `GroupProperty` |
+| Fresh check | `group.isFresh` | `OP_INSPECTASSETGROUPASSETID k` + `OP_TXID OP_EQUAL` | Not implemented |
+| Group asset ID | `tx.assetGroups[k].assetId` | `OP_INSPECTASSETGROUPASSETID k` | Not implemented |
+
+### Gap Summary
+
+The PLAN.md Commit 2 example (`controlled_mint.ark`) specifies:
+
+```solidity
+let tokenGroup = tx.assetGroups.find(tokenAssetId);
+require(tokenGroup.delta == amount, "delta mismatch");
+require(tokenGroup.control == ctrlAssetId, "wrong control");
+```
+
+But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead.
 
 ---
 
-## Summary
+## Potential Future Work
 
-| Commit | Feature | Parser | Compiler | Tests |
-|--------|---------|--------|----------|-------|
-| 1 | Asset Lookups | DONE | DONE | 2/2 |
-| 2 | Asset Groups | DONE | DONE | 2/2 |
-| 3 | Arithmetic | DONE | DONE | 2/2 |
-| 4 | If/Else | DONE | DONE | 8/8 |
-| 5 | For Loops | DONE | DONE | 5/5 |
-| 6 | Arrays | DONE | DONE | 9/9 |
+1. **Update examples** to demonstrate full asset group API:
+   - `tx.assetGroups.find(assetId)` for group discovery
+   - `group.control` for control asset verification
+   - `group.delta` for mint/burn detection
+
+2. **Implement missing features**:
+   - `group.isFresh` -> `OP_INSPECTASSETGROUPASSETID k` + txid comparison
+   - `group.assetId` -> returns `(txid32, gidx_u16)` tuple
+
+3. **Add ArkadeKitties-style contracts** to examples:
+   - Commit-reveal breeding with oracle randomness
+   - Metadata hash verification
+   - Control asset enforcement for species validation
 
 ---
 
-## Files Modified
+## Test Summary
 
-| File | Changes |
-|------|---------|
-| `src/compiler/mod.rs` | Array flattening, loop unrolling over arrays, array index substitution |
+| Commit | Feature | Tests |
+|--------|---------|-------|
+| 1 | Asset Lookups | 2/2 |
+| 2 | Asset Groups | 2/2 |
+| 3 | Arithmetic | 2/2 |
+| 4 | If/Else | 8/8 |
+| 5 | For Loops | 5/5 |
+| 6 | Arrays | 9/9 |
+| **Total** | | **28/28** |
 
 ---
 

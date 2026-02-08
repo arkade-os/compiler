@@ -392,6 +392,10 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
             // For now, represent as property
             Ok(Expression::Property(pair.as_str().to_string()))
         }
+        Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
+        Rule::asset_count => parse_asset_count_to_expression(pair),
+        Rule::asset_at => parse_asset_at_to_expression(pair),
+        Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::p2tr_constructor => {
             Ok(Expression::Property(pair.as_str().to_string()))
         }
@@ -419,7 +423,13 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::hash_comparison => parse_hash_comparison(pair),
         Rule::binary_operation => parse_binary_operation(pair),
         Rule::asset_lookup_comparison => parse_asset_lookup_comparison(pair),
+        Rule::asset_count_comparison => parse_asset_count_comparison(pair),
+        Rule::asset_at_comparison => parse_asset_at_comparison(pair),
+        Rule::tx_introspection_comparison => parse_tx_introspection_comparison(pair),
+        Rule::tx_introspection => parse_standalone_tx_introspection(pair),
         Rule::asset_lookup => parse_standalone_asset_lookup(pair),
+        Rule::asset_count => parse_standalone_asset_count(pair),
+        Rule::asset_at => parse_standalone_asset_at(pair),
         Rule::asset_group_access => parse_asset_group_access(pair),
         Rule::group_property_comparison => parse_group_property_comparison(pair),
         Rule::p2tr_constructor => {
@@ -728,6 +738,220 @@ fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, Stri
     })
 }
 
+/// Parse an asset_count pair into an Expression::AssetCount
+/// tx.inputs[i].assets.length or tx.outputs[o].assets.length
+fn parse_asset_count_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // Parse source: "inputs" or "outputs"
+    let source_pair = inner.next().ok_or("Missing asset count source")?;
+    let source = match source_pair.as_str() {
+        "inputs" => AssetLookupSource::Input,
+        "outputs" => AssetLookupSource::Output,
+        _ => return Err(format!("Invalid asset count source: {}", source_pair.as_str())),
+    };
+
+    // Parse array access index
+    let array_access = inner.next().ok_or("Missing array index")?;
+    let index_pair = array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing index value")?;
+    let index = match index_pair.as_rule() {
+        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
+        _ => Expression::Literal(index_pair.as_str().to_string()),
+    };
+
+    Ok(Expression::AssetCount {
+        source,
+        index: Box::new(index),
+    })
+}
+
+/// Parse an asset_at pair into an Expression::AssetAt
+/// tx.inputs[i].assets[t].assetId or tx.outputs[o].assets[t].amount
+fn parse_asset_at_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // Parse source: "inputs" or "outputs"
+    let source_pair = inner.next().ok_or("Missing asset at source")?;
+    let source = match source_pair.as_str() {
+        "inputs" => AssetLookupSource::Input,
+        "outputs" => AssetLookupSource::Output,
+        _ => return Err(format!("Invalid asset at source: {}", source_pair.as_str())),
+    };
+
+    // Parse first array access (io_index)
+    let io_array_access = inner.next().ok_or("Missing io array index")?;
+    let io_index_pair = io_array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing io index value")?;
+    let io_index = match io_index_pair.as_rule() {
+        Rule::number_literal => Expression::Literal(io_index_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(io_index_pair.as_str().to_string()),
+        _ => Expression::Literal(io_index_pair.as_str().to_string()),
+    };
+
+    // Parse second array access (asset_index)
+    let asset_array_access = inner.next().ok_or("Missing asset array index")?;
+    let asset_index_pair = asset_array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing asset index value")?;
+    let asset_index = match asset_index_pair.as_rule() {
+        Rule::number_literal => Expression::Literal(asset_index_pair.as_str().to_string()),
+        Rule::identifier => Expression::Variable(asset_index_pair.as_str().to_string()),
+        _ => Expression::Literal(asset_index_pair.as_str().to_string()),
+    };
+
+    // Parse property: "assetId" or "amount"
+    let property = inner
+        .next()
+        .ok_or("Missing asset property")?
+        .as_str()
+        .to_string();
+
+    Ok(Expression::AssetAt {
+        source,
+        io_index: Box::new(io_index),
+        asset_index: Box::new(asset_index),
+        property,
+    })
+}
+
+/// Parse a standalone asset_count (not in a comparison context)
+fn parse_standalone_asset_count(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_asset_count_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse a standalone asset_at (not in a comparison context)
+fn parse_standalone_asset_at(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_asset_at_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse asset_count_comparison: asset_count op expression
+fn parse_asset_count_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left asset count")?;
+    let left = parse_asset_count_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in asset count comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+/// Parse asset_at_comparison: asset_at op expression
+fn parse_asset_at_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left asset at")?;
+    let left = parse_asset_at_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::asset_at => parse_asset_at_to_expression(right_pair)?,
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in asset at comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+// ─── Transaction Introspection Parsing ─────────────────────────────────────────
+
+/// Parse tx_introspection pair into an Expression::TxIntrospection
+fn parse_tx_introspection_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // Parse the property
+    let property = inner
+        .next()
+        .ok_or("Missing tx introspection property")?
+        .as_str()
+        .to_string();
+
+    Ok(Expression::TxIntrospection { property })
+}
+
+/// Parse a standalone tx_introspection (not in a comparison context)
+fn parse_standalone_tx_introspection(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_tx_introspection_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse tx_introspection_comparison: tx_introspection op expression
+fn parse_tx_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left tx introspection")?;
+    let left = parse_tx_introspection_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in tx introspection comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
 /// Parse an arithmetic expression in asset lookup context (e.g., lookup + amount)
 fn parse_arith_expr_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
@@ -865,6 +1089,42 @@ fn parse_group_property_comparison(pair: Pair<Rule>) -> Result<Requirement, Stri
 
     let right_pair = inner.next().ok_or("Missing right side expression")?;
     let right = match right_pair.as_rule() {
+        Rule::group_property_arith_expr => {
+            // Parse group.property +/- value (e.g., tokenGroup.sumOutputs + amount)
+            let mut arith_inner = right_pair.into_inner();
+            let prop_access = arith_inner.next().ok_or("Missing property access in arithmetic expression")?;
+            let mut prop_inner = prop_access.into_inner();
+            let var_name = prop_inner
+                .next()
+                .ok_or("Missing variable name in property access")?
+                .as_str()
+                .to_string();
+            let prop_name = prop_inner
+                .next()
+                .ok_or("Missing property name in property access")?
+                .as_str()
+                .to_string();
+            let left_expr = Expression::GroupProperty {
+                group: var_name,
+                property: prop_name,
+            };
+            let arith_op = arith_inner
+                .next()
+                .ok_or("Missing arithmetic operator")?
+                .as_str()
+                .to_string();
+            let right_operand = arith_inner.next().ok_or("Missing right operand in arithmetic")?;
+            let right_expr = match right_operand.as_rule() {
+                Rule::identifier => Expression::Variable(right_operand.as_str().to_string()),
+                Rule::number_literal => Expression::Literal(right_operand.as_str().to_string()),
+                _ => Expression::Property(right_operand.as_str().to_string()),
+            };
+            Expression::BinaryOp {
+                left: Box::new(left_expr),
+                op: arith_op,
+                right: Box::new(right_expr),
+            }
+        }
         Rule::asset_lookup => parse_asset_lookup_to_expression(right_pair)?,
         Rule::asset_group_access => {
             // Parse the group access and extract the expression
@@ -917,6 +1177,19 @@ fn parse_group_property_comparison(pair: Pair<Rule>) -> Result<Requirement, Stri
 /// Handles special patterns like tx.assetGroups[idx].sumInputs/sumOutputs
 fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     let text = pair.as_str();
+
+    // Handle tx.assetGroups.find(assetId)
+    if text.starts_with("tx.assetGroups.find(") && text.ends_with(")") {
+        let start = "tx.assetGroups.find(".len();
+        let end = text.len() - 1;
+        let asset_id = text[start..end].to_string();
+        return Ok(Expression::GroupFind { asset_id });
+    }
+
+    // Handle tx.assetGroups.length
+    if text == "tx.assetGroups.length" {
+        return Ok(Expression::AssetGroupsLength);
+    }
 
     // Handle tx.assetGroups[idx].sumInputs or tx.assetGroups[idx].sumOutputs
     if text.starts_with("tx.assetGroups[") {

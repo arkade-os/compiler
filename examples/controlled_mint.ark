@@ -2,47 +2,49 @@
 // Demonstrates asset group introspection primitives
 //
 // This contract manages a token minting authority where:
-// 1. mint() - Authority can mint new tokens while preserving the control asset
-// 2. burn() - Authority can burn tokens
+// 1. mint() - Authority can mint new tokens (delta > 0), control asset required
+// 2. burn() - Anyone can burn tokens (delta < 0), no control needed
+// 3. lockSupply() - Authority burns the control asset to lock supply forever
 //
 // Asset groups provide aggregate views of asset flows across all inputs/outputs,
 // enabling balance verification without iterating individual UTXOs.
 
 options {
-  server = authorityPk;
-  exit = 144;
+  server = serverPk;
+  exit = 288;
 }
 
 contract ControlledMint(
-  pubkey authorityPk,
-  pubkey serverPk,
   bytes32 tokenAssetId,
   bytes32 ctrlAssetId,
-  int maxMintAmount
+  pubkey issuerPk,
+  pubkey serverPk
 ) {
-  // Mint: authority creates new tokens
-  // - control asset must be preserved (sumOutputs >= sumInputs)
-  // - minted token amount must not exceed maxMintAmount
-  function mint(signature authSig, int mintAmount) {
-    // Ensure control asset is not leaked
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl asset");
-    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "ctrl not preserved");
+  // Mint: delta > 0, control asset present and retained
+  function mint(int amount, pubkey recipientPk, signature issuerSig) {
+    let tokenGroup = tx.assetGroups.find(tokenAssetId);
+    require(tokenGroup.delta == amount, "delta mismatch");
+    require(tokenGroup.control == ctrlAssetId, "wrong control");
 
-    // Mint amount must be within limits
-    require(mintAmount <= maxMintAmount, "exceeds max mint");
+    let ctrlGroup = tx.assetGroups.find(ctrlAssetId);
+    require(ctrlGroup.delta == 0, "ctrl supply changed");
 
-    // Authority must sign
-    require(checkSig(authSig, authorityPk), "invalid authority signature");
+    require(tx.outputs[0].assets.lookup(tokenAssetId) >= amount, "mint short");
+    require(tx.outputs[0].scriptPubKey == new P2TR(recipientPk), "wrong dest");
+    require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 
-  // Burn: authority destroys tokens
-  // - control asset must be preserved
-  function burn(signature authSig) {
-    // Control asset preserved
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl asset");
-    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "ctrl not preserved");
+  // Burn: delta < 0, no control asset needed
+  function burn(int amount, signature ownerSig, pubkey ownerPk) {
+    let tokenGroup = tx.assetGroups.find(tokenAssetId);
+    require(tokenGroup.sumInputs >= tokenGroup.sumOutputs + amount, "burn short");
+    require(checkSig(ownerSig, ownerPk), "bad sig");
+  }
 
-    // Authority must sign
-    require(checkSig(authSig, authorityPk), "invalid authority signature");
+  // Lock supply forever: burn the control asset
+  function lockSupply(signature issuerSig) {
+    let ctrlGroup = tx.assetGroups.find(ctrlAssetId);
+    require(ctrlGroup.sumOutputs == 0, "ctrl not burned");
+    require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 }

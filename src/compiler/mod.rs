@@ -523,6 +523,15 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetLookup { source, index, asset_id } => {
             emit_asset_lookup_asm(source, index, asset_id, asm);
         },
+        Expression::AssetCount { source, index } => {
+            emit_asset_count_asm(source, index, asm);
+        },
+        Expression::AssetAt { source, io_index, asset_index, property } => {
+            emit_asset_at_asm(source, io_index, asset_index, property, asm);
+        },
+        Expression::TxIntrospection { property } => {
+            emit_tx_introspection_asm(property, asm);
+        },
         Expression::GroupFind { asset_id } => {
             asm.push(format!("<{}_txid>", asset_id));
             asm.push(format!("<{}_gidx>", asset_id));
@@ -752,6 +761,8 @@ fn is_64bit_expression(expr: &Expression) -> bool {
     match expr {
         Expression::AssetLookup { .. } => true,
         Expression::GroupSum { .. } => true,
+        // AssetAt with "amount" property returns u64
+        Expression::AssetAt { property, .. } => property == "amount",
         Expression::BinaryOp { left, right, .. } => {
             is_64bit_expression(left) || is_64bit_expression(right)
         }
@@ -780,6 +791,15 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asset_id,
         } => {
             emit_asset_lookup_asm(source, index, asset_id, asm);
+        }
+        Expression::AssetCount { source, index } => {
+            emit_asset_count_asm(source, index, asm);
+        }
+        Expression::AssetAt { source, io_index, asset_index, property } => {
+            emit_asset_at_asm(source, io_index, asset_index, property, asm);
+        }
+        Expression::TxIntrospection { property } => {
+            emit_tx_introspection_asm(property, asm);
         }
         Expression::BinaryOp { left, op, right } => {
             emit_binary_op_asm(left, op, right, asm);
@@ -887,6 +907,89 @@ fn emit_asset_lookup_asm(
     asm.push("OP_VERIFY".to_string());
 }
 
+/// Emit assembly for asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
+///
+/// Pushes the count of assets at the given input/output index.
+fn emit_asset_count_asm(
+    source: &AssetLookupSource,
+    index: &Expression,
+    asm: &mut Vec<String>,
+) {
+    // Push the index
+    emit_expression_asm(index, asm);
+
+    // Emit the appropriate count opcode
+    match source {
+        AssetLookupSource::Input => {
+            asm.push("OP_INSPECTINASSETCOUNT".to_string());
+        }
+        AssetLookupSource::Output => {
+            asm.push("OP_INSPECTOUTASSETCOUNT".to_string());
+        }
+    }
+}
+
+/// Emit assembly for indexed asset access: tx.inputs[i].assets[t].property
+///
+/// OP_INSPECTINASSETAT / OP_INSPECTOUTASSETAT returns: txid32, gidx_u16, amount_u64
+/// We extract based on the property requested.
+fn emit_asset_at_asm(
+    source: &AssetLookupSource,
+    io_index: &Expression,
+    asset_index: &Expression,
+    property: &str,
+    asm: &mut Vec<String>,
+) {
+    // Push io_index
+    emit_expression_asm(io_index, asm);
+
+    // Push asset_index
+    emit_expression_asm(asset_index, asm);
+
+    // Emit the appropriate opcode
+    match source {
+        AssetLookupSource::Input => {
+            asm.push("OP_INSPECTINASSETAT".to_string());
+        }
+        AssetLookupSource::Output => {
+            asm.push("OP_INSPECTOUTASSETAT".to_string());
+        }
+    }
+
+    // Stack after opcode: txid32, gidx_u16, amount_u64 (top)
+    // Extract based on property
+    match property {
+        "assetId" => {
+            // Drop the amount, keep txid32 and gidx_u16
+            asm.push("OP_DROP".to_string());
+        }
+        "amount" => {
+            // Keep only the amount (top of stack)
+            // NIP removes the second item from the top
+            asm.push("OP_NIP".to_string()); // Remove gidx_u16
+            asm.push("OP_NIP".to_string()); // Remove txid32
+        }
+        _ => {
+            // Unknown property, leave stack as-is
+        }
+    }
+}
+
+/// Emit assembly for transaction introspection: tx.version, tx.locktime, etc.
+fn emit_tx_introspection_asm(property: &str, asm: &mut Vec<String>) {
+    match property {
+        "version" => asm.push("OP_INSPECTVERSION".to_string()),
+        "locktime" => asm.push("OP_INSPECTLOCKTIME".to_string()),
+        "numInputs" => asm.push("OP_INSPECTNUMINPUTS".to_string()),
+        "numOutputs" => asm.push("OP_INSPECTNUMOUTPUTS".to_string()),
+        "weight" => asm.push("OP_TXWEIGHT".to_string()),
+        _ => {
+            // Unknown property, emit as placeholder
+            asm.push(format!("<tx.{}>", property));
+        }
+    }
+}
+
 /// Emit assembly for a binary arithmetic operation (64-bit)
 fn emit_binary_op_asm(left: &Expression, op: &str, right: &Expression, asm: &mut Vec<String>) {
     // Emit left operand
@@ -938,6 +1041,10 @@ fn needs_u64_conversion(expr: &Expression) -> bool {
         Expression::Literal(_) => false,
         // Asset lookups already produce u64le
         Expression::AssetLookup { .. } => false,
+        // Asset count produces CScriptNum
+        Expression::AssetCount { .. } => false,
+        // AssetAt "amount" produces u64le, "assetId" produces (txid32, gidx_u16)
+        Expression::AssetAt { property, .. } => property != "amount",
         // Group sums already produce u64le
         Expression::GroupSum { .. } => false,
         // Binary ops produce u64le
@@ -981,8 +1088,21 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
             asm.push("OP_INSPECTASSETGROUPMETADATAHASH".to_string());
         }
         "assetId" => {
+            // Returns (txid32, gidx_u16) tuple on stack
             asm.push(format!("<{}>", group));
             asm.push("OP_INSPECTASSETGROUPASSETID".to_string());
+        }
+        "isFresh" => {
+            // isFresh: compares assetId.txid with current transaction's txid
+            // 1. Get group's assetId (returns txid32, gidx_u16)
+            asm.push(format!("<{}>", group));
+            asm.push("OP_INSPECTASSETGROUPASSETID".to_string());
+            // 2. Drop gidx_u16, keep txid32
+            asm.push("OP_DROP".to_string());
+            // 3. Get current transaction hash
+            asm.push("OP_TXHASH".to_string());
+            // 4. Compare txids - result is bool
+            asm.push("OP_EQUAL".to_string());
         }
         _ => {
             // Unknown group property
@@ -1132,16 +1252,22 @@ fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k:
         Expression::Variable(var) if var == value_var && array_name.is_some() => {
             Expression::Variable(format!("{}_{}", array_name.unwrap(), k))
         }
-        // Replace value_var.property with GroupSum
+        // Replace value_var.property with appropriate indexed expression
         Expression::GroupProperty { group, property } if group == value_var => {
-            let source = match property.as_str() {
-                "sumInputs" => GroupSumSource::Inputs,
-                "sumOutputs" => GroupSumSource::Outputs,
-                _ => return expr.clone(), // Keep other properties as-is
-            };
-            Expression::GroupSum {
-                index: Box::new(Expression::Literal(k.to_string())),
-                source,
+            match property.as_str() {
+                "sumInputs" => Expression::GroupSum {
+                    index: Box::new(Expression::Literal(k.to_string())),
+                    source: GroupSumSource::Inputs,
+                },
+                "sumOutputs" => Expression::GroupSum {
+                    index: Box::new(Expression::Literal(k.to_string())),
+                    source: GroupSumSource::Outputs,
+                },
+                // For delta, control, isFresh, assetId, metadataHash - replace group name with index literal
+                _ => Expression::GroupProperty {
+                    group: k.to_string(),
+                    property: property.clone(),
+                },
             }
         }
         // Handle array indexing: arr[index_var] → Variable("arr_{k}")

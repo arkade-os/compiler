@@ -185,6 +185,22 @@ pub enum Expression {
         index: Box<Expression>,
         asset_id: String,
     },
+    /// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
+    AssetCount {
+        source: AssetLookupSource,
+        index: Box<Expression>,
+    },
+    /// Indexed asset access: tx.inputs[i].assets[t].assetId or tx.outputs[o].assets[t].amount
+    AssetAt {
+        source: AssetLookupSource,
+        io_index: Box<Expression>,
+        asset_index: Box<Expression>,
+        property: String,  // "assetId" or "amount"
+    },
+    /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
+    TxIntrospection {
+        property: String,
+    },
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
         left: Box<Expression>,
