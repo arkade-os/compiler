@@ -33,3 +33,4 @@ Cargo.lock
 .env
 .env.local
 
+.claude
