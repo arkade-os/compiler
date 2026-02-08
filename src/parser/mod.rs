@@ -1,7 +1,7 @@
 use pest::Parser;
 use pest_derive::Parser;
 use pest::iterators::{Pair, Pairs};
-use crate::models::{Contract, Function, Parameter, Requirement, Expression};
+use crate::models::{Contract, Function, Parameter, Requirement, Expression, Statement};
 
 // Grammar definition for pest parser
 #[derive(Parser)]
@@ -141,7 +141,7 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
     let mut func = Function {
         name: String::new(),
         parameters: Vec::new(),
-        requirements: Vec::new(),
+        statements: Vec::new(),
         is_internal: false,
     };
     
@@ -212,7 +212,55 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             // Check if there's an optional error message (ignore it for now)
             let _message = inner.next().map(|p| p.as_str().to_string());
 
-            func.requirements.push(requirement);
+            // Wrap the requirement in a Statement::Require
+            func.statements.push(Statement::Require(requirement));
+            Ok(())
+        }
+        Rule::let_binding => {
+            let mut inner = pair.into_inner();
+            let name = inner.next().ok_or("Missing variable name in let binding")?.as_str().to_string();
+            let value_pair = inner.next().ok_or("Missing value in let binding")?;
+            let value = parse_general_expression(value_pair)?;
+
+            func.statements.push(Statement::LetBinding { name, value });
+            Ok(())
+        }
+        Rule::var_assign => {
+            let mut inner = pair.into_inner();
+            let name = inner.next().ok_or("Missing variable name in assignment")?.as_str().to_string();
+            let value_pair = inner.next().ok_or("Missing value in assignment")?;
+            let value = parse_general_expression(value_pair)?;
+
+            func.statements.push(Statement::VarAssign { name, value });
+            Ok(())
+        }
+        Rule::if_stmt => {
+            let mut inner = pair.into_inner();
+            let condition_pair = inner.next().ok_or("Missing condition in if statement")?;
+            let condition = parse_general_expression(condition_pair)?;
+
+            let then_block = inner.next().ok_or("Missing then block in if statement")?;
+            let then_body = parse_block(then_block)?;
+
+            let else_body = if let Some(else_block) = inner.next() {
+                Some(parse_block(else_block)?)
+            } else {
+                None
+            };
+
+            func.statements.push(Statement::IfElse { condition, then_body, else_body });
+            Ok(())
+        }
+        Rule::for_stmt => {
+            let mut inner = pair.into_inner();
+            let index_var = inner.next().ok_or("Missing index variable in for loop")?.as_str().to_string();
+            let value_var = inner.next().ok_or("Missing value variable in for loop")?.as_str().to_string();
+            let iterable_pair = inner.next().ok_or("Missing iterable in for loop")?;
+            let iterable = parse_general_expression(iterable_pair)?;
+            let body_block = inner.next().ok_or("Missing body in for loop")?;
+            let body = parse_block(body_block)?;
+
+            func.statements.push(Statement::ForIn { index_var, value_var, iterable, body });
             Ok(())
         }
         Rule::function_call_stmt => {
@@ -221,11 +269,177 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::variable_declaration => {
-            // In a more complete implementation, we would handle variable declarations
-            // For now, we just ignore them
+            // Legacy typed variable declaration - treat like let binding
+            let mut inner = pair.into_inner();
+            let _data_type = inner.next(); // Skip data type
+            let name = inner.next().ok_or("Missing variable name")?.as_str().to_string();
+            let value_pair = inner.next().ok_or("Missing value")?;
+            // For legacy variable declarations, wrap the expression
+            let value = Expression::Property(value_pair.as_str().to_string());
+
+            func.statements.push(Statement::LetBinding { name, value });
             Ok(())
         }
         _ => Ok(())
+    }
+}
+
+// Parse a block of statements
+fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
+    let mut statements = Vec::new();
+
+    for inner in pair.into_inner() {
+        // Create a temporary function to collect statements
+        let mut temp_func = Function {
+            name: String::new(),
+            parameters: Vec::new(),
+            statements: Vec::new(),
+            is_internal: false,
+        };
+
+        parse_function_body(&mut temp_func, inner)?;
+        statements.extend(temp_func.statements);
+    }
+
+    Ok(statements)
+}
+
+// Parse general expression (with operator precedence)
+fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    match pair.as_rule() {
+        Rule::general_expression | Rule::comparison_expr => {
+            // Unwrap and parse the inner expression
+            let mut inner = pair.into_inner();
+            if let Some(first) = inner.next() {
+                let left = parse_additive_expr(first)?;
+
+                // Check for comparison operator
+                if let Some(op_pair) = inner.next() {
+                    let op = op_pair.as_str().to_string();
+                    let right_pair = inner.next().ok_or("Missing right side of comparison")?;
+                    let right = parse_additive_expr(right_pair)?;
+                    Ok(Expression::BinaryOp {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                    })
+                } else {
+                    Ok(left)
+                }
+            } else {
+                Err("Empty expression".to_string())
+            }
+        }
+        Rule::additive_expr => parse_additive_expr(pair),
+        Rule::multiplicative_expr => parse_multiplicative_expr(pair),
+        Rule::unary_expr | Rule::primary_expr => parse_primary_expr(pair),
+        Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
+        Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
+        Rule::tx_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        _ => {
+            // Try to parse as a primary expression
+            parse_primary_expr(pair)
+        }
+    }
+}
+
+// Parse additive expression (+ and -)
+fn parse_additive_expr(pair: Pair<Rule>) -> Result<Expression, String> {
+    match pair.as_rule() {
+        Rule::additive_expr => {
+            let mut inner = pair.into_inner();
+            let first = inner.next().ok_or("Missing first operand in additive expression")?;
+            let mut result = parse_multiplicative_expr(first)?;
+
+            // Process remaining operands
+            while let Some(op_pair) = inner.next() {
+                let op = op_pair.as_str().to_string();
+                let right_pair = inner.next().ok_or("Missing right operand in additive expression")?;
+                let right = parse_multiplicative_expr(right_pair)?;
+                result = Expression::BinaryOp {
+                    left: Box::new(result),
+                    op,
+                    right: Box::new(right),
+                };
+            }
+
+            Ok(result)
+        }
+        _ => parse_multiplicative_expr(pair)
+    }
+}
+
+// Parse multiplicative expression (* and /)
+fn parse_multiplicative_expr(pair: Pair<Rule>) -> Result<Expression, String> {
+    match pair.as_rule() {
+        Rule::multiplicative_expr => {
+            let mut inner = pair.into_inner();
+            let first = inner.next().ok_or("Missing first operand in multiplicative expression")?;
+            let mut result = parse_primary_expr(first)?;
+
+            // Process remaining operands
+            while let Some(op_pair) = inner.next() {
+                let op = op_pair.as_str().to_string();
+                let right_pair = inner.next().ok_or("Missing right operand in multiplicative expression")?;
+                let right = parse_primary_expr(right_pair)?;
+                result = Expression::BinaryOp {
+                    left: Box::new(result),
+                    op,
+                    right: Box::new(right),
+                };
+            }
+
+            Ok(result)
+        }
+        _ => parse_primary_expr(pair)
+    }
+}
+
+// Parse primary expression (atoms)
+fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
+    match pair.as_rule() {
+        Rule::primary_expr | Rule::unary_expr => {
+            let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
+            parse_primary_expr(inner)
+        }
+        Rule::general_expression | Rule::comparison_expr => {
+            // Parenthesized expression
+            parse_general_expression(pair)
+        }
+        Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
+        Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
+        Rule::tx_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::check_sig => {
+            let mut inner = pair.into_inner();
+            let signature = inner.next().ok_or("Missing signature")?.as_str().to_string();
+            let pubkey = inner.next().ok_or("Missing pubkey")?.as_str().to_string();
+            Ok(Expression::CheckSigExpr { signature, pubkey })
+        }
+        Rule::check_sig_from_stack => {
+            let mut inner = pair.into_inner();
+            let signature = inner.next().ok_or("Missing signature")?.as_str().to_string();
+            let pubkey = inner.next().ok_or("Missing pubkey")?.as_str().to_string();
+            let message = inner.next().ok_or("Missing message")?.as_str().to_string();
+            Ok(Expression::CheckSigFromStackExpr { signature, pubkey, message })
+        }
+        Rule::sha256_func => {
+            // For now, represent as property
+            Ok(Expression::Property(pair.as_str().to_string()))
+        }
+        Rule::p2tr_constructor => {
+            Ok(Expression::Property(pair.as_str().to_string()))
+        }
+        Rule::function_call => {
+            Ok(Expression::Property(pair.as_str().to_string()))
+        }
+        Rule::additive_expr => parse_additive_expr(pair),
+        Rule::multiplicative_expr => parse_multiplicative_expr(pair),
+        _ => {
+            // Default to treating as a property string
+            Ok(Expression::Property(pair.as_str().to_string()))
+        }
     }
 }
 

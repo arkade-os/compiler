@@ -1,4 +1,4 @@
-use crate::models::{Requirement, Expression, ContractJson, AbiFunction, FunctionInput, RequireStatement, CompilerInfo};
+use crate::models::{Requirement, Expression, Statement, ContractJson, AbiFunction, FunctionInput, RequireStatement, CompilerInfo};
 use crate::parser;
 use chrono::Utc;
 
@@ -121,8 +121,8 @@ fn generate_function(function: &crate::models::Function, contract: &crate::model
         }
     }
     
-    // Generate assembly instructions
-    let mut asm = generate_base_asm_instructions(&function.requirements);
+    // Generate assembly instructions from statements
+    let mut asm = generate_asm_from_statements(&function.statements);
     
     // Add server signature or exit timelock check
     if server_variant {
@@ -150,49 +150,337 @@ fn generate_function(function: &crate::models::Function, contract: &crate::model
     }
 }
 
-/// Generate requirements from function requirements
+/// Generate requirements from function statements
 fn generate_requirements(function: &crate::models::Function) -> Vec<RequireStatement> {
     let mut requirements = Vec::new();
-    
-    for req in &function.requirements {
-        match req {
-            Requirement::CheckSig { signature: _, pubkey: _ } => {
-                requirements.push(RequireStatement {
-                    req_type: "signature".to_string(),
-                    message: None,
-                });
-            },
-            Requirement::CheckMultisig { signatures: _, pubkeys: _ } => {
-                requirements.push(RequireStatement {
-                    req_type: "multisig".to_string(),
-                    message: None,
-                });
-            },
-            Requirement::After { blocks, timelock_var: _ } => {
-                requirements.push(RequireStatement {
-                    req_type: "older".to_string(),
-                    message: Some(format!("Timelock of {} blocks", blocks)),
-                });
-            },
-            Requirement::HashEqual { preimage: _, hash: _ } => {
-                requirements.push(RequireStatement {
-                    req_type: "hash".to_string(),
-                    message: None,
-                });
-            },
-            Requirement::Comparison { left: _, op: _, right: _ } => {
-                requirements.push(RequireStatement {
-                    req_type: "comparison".to_string(),
-                    message: None,
-                });
-            },
-        }
-    }
-    
+
+    // Recursively collect requirements from statements
+    collect_requirements_from_statements(&function.statements, &mut requirements);
+
     requirements
 }
 
-/// Generate assembly instructions for a requirement
+/// Recursively collect requirements from a list of statements
+fn collect_requirements_from_statements(statements: &[Statement], requirements: &mut Vec<RequireStatement>) {
+    for stmt in statements {
+        match stmt {
+            Statement::Require(req) => {
+                let req_statement = requirement_to_statement(req);
+                requirements.push(req_statement);
+            },
+            Statement::IfElse { then_body, else_body, .. } => {
+                collect_requirements_from_statements(then_body, requirements);
+                if let Some(else_stmts) = else_body {
+                    collect_requirements_from_statements(else_stmts, requirements);
+                }
+            },
+            Statement::ForIn { body, .. } => {
+                collect_requirements_from_statements(body, requirements);
+            },
+            Statement::LetBinding { .. } | Statement::VarAssign { .. } => {
+                // Variable bindings and assignments don't generate requirements
+            }
+        }
+    }
+}
+
+/// Convert a Requirement to a RequireStatement
+fn requirement_to_statement(req: &Requirement) -> RequireStatement {
+    match req {
+        Requirement::CheckSig { .. } => {
+            RequireStatement {
+                req_type: "signature".to_string(),
+                message: None,
+            }
+        },
+        Requirement::CheckMultisig { .. } => {
+            RequireStatement {
+                req_type: "multisig".to_string(),
+                message: None,
+            }
+        },
+        Requirement::After { blocks, .. } => {
+            RequireStatement {
+                req_type: "older".to_string(),
+                message: Some(format!("Timelock of {} blocks", blocks)),
+            }
+        },
+        Requirement::HashEqual { .. } => {
+            RequireStatement {
+                req_type: "hash".to_string(),
+                message: None,
+            }
+        },
+        Requirement::Comparison { .. } => {
+            RequireStatement {
+                req_type: "comparison".to_string(),
+                message: None,
+            }
+        },
+    }
+}
+
+/// Generate assembly instructions from statements
+fn generate_asm_from_statements(statements: &[Statement]) -> Vec<String> {
+    let mut asm = Vec::new();
+    generate_asm_from_statements_recursive(statements, &mut asm);
+    asm
+}
+
+/// Recursively generate assembly from statements
+fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Vec<String>) {
+    for stmt in statements {
+        match stmt {
+            Statement::Require(req) => {
+                generate_requirement_asm(req, asm);
+            },
+            Statement::IfElse { condition, then_body, else_body } => {
+                // Generate condition expression
+                generate_expression_asm(condition, asm);
+                asm.push("OP_IF".to_string());
+
+                // Generate then branch
+                generate_asm_from_statements_recursive(then_body, asm);
+
+                // Generate else branch if present
+                if let Some(else_stmts) = else_body {
+                    asm.push("OP_ELSE".to_string());
+                    generate_asm_from_statements_recursive(else_stmts, asm);
+                }
+
+                asm.push("OP_ENDIF".to_string());
+            },
+            Statement::ForIn { index_var: _, value_var: _, iterable: _, body: _ } => {
+                // TODO: Implement loop unrolling in Commit 5
+                // For now, just process the body as if it were inline
+            },
+            Statement::LetBinding { name: _, value: _ } => {
+                // TODO: Implement variable binding with stack tracking
+            },
+            Statement::VarAssign { name: _, value: _ } => {
+                // TODO: Implement variable reassignment
+            },
+        }
+    }
+}
+
+/// Generate assembly for a single requirement
+fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
+    match req {
+        Requirement::CheckSig { signature, pubkey } => {
+            asm.push(format!("<{}>", pubkey));
+            asm.push(format!("<{}>", signature));
+            asm.push("OP_CHECKSIG".to_string());
+        },
+        Requirement::CheckMultisig { signatures, pubkeys } => {
+            asm.push(format!("OP_{}", pubkeys.len()));
+            for pubkey in pubkeys {
+                asm.push(format!("<{}>", pubkey));
+            }
+            asm.push(format!("OP_{}", signatures.len()));
+            for signature in signatures {
+                asm.push(format!("<{}>", signature));
+            }
+            asm.push("OP_CHECKMULTISIG".to_string());
+        },
+        Requirement::After { blocks, timelock_var } => {
+            if let Some(var) = timelock_var {
+                asm.push(format!("<{}>", var));
+            } else {
+                asm.push(format!("{}", blocks));
+            }
+            asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
+            asm.push("OP_DROP".to_string());
+        },
+        Requirement::HashEqual { preimage, hash } => {
+            asm.push(format!("<{}>", preimage));
+            asm.push("OP_SHA256".to_string());
+            asm.push(format!("<{}>", hash));
+            asm.push("OP_EQUAL".to_string());
+        },
+        Requirement::Comparison { left, op, right } => {
+            generate_comparison_asm(left, op, right, asm);
+        },
+    }
+}
+
+/// Generate assembly for expression (for use in if conditions)
+fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
+    match expr {
+        Expression::Variable(var) => {
+            asm.push(format!("<{}>", var));
+        },
+        Expression::Literal(lit) => {
+            asm.push(lit.clone());
+        },
+        Expression::Property(prop) => {
+            asm.push(format!("<{}>", prop));
+        },
+        Expression::BinaryOp { left, op, right } => {
+            generate_expression_asm(left, asm);
+            generate_expression_asm(right, asm);
+            match op.as_str() {
+                "+" => asm.push("OP_ADD64".to_string()),
+                "-" => asm.push("OP_SUB64".to_string()),
+                "*" => asm.push("OP_MUL64".to_string()),
+                "/" => asm.push("OP_DIV64".to_string()),
+                ">=" => asm.push("OP_GREATERTHANOREQUAL64".to_string()),
+                "<=" => asm.push("OP_LESSTHANOREQUAL64".to_string()),
+                ">" => asm.push("OP_GREATERTHAN64".to_string()),
+                "<" => asm.push("OP_LESSTHAN64".to_string()),
+                "==" => asm.push("OP_EQUAL".to_string()),
+                "!=" => {
+                    asm.push("OP_EQUAL".to_string());
+                    asm.push("OP_NOT".to_string());
+                },
+                _ => asm.push("OP_FALSE".to_string()),
+            }
+        },
+        Expression::CurrentInput(property) => {
+            if let Some(prop) = property {
+                match prop.as_str() {
+                    "scriptPubKey" => asm.push("OP_INPUTBYTECODE".to_string()),
+                    "value" => asm.push("OP_INPUTVALUE".to_string()),
+                    "sequence" => asm.push("OP_INPUTSEQUENCE".to_string()),
+                    "outpoint" => asm.push("OP_INPUTOUTPOINT".to_string()),
+                    _ => asm.push("OP_INPUTBYTECODE".to_string()),
+                }
+            } else {
+                asm.push("OP_INPUTBYTECODE".to_string());
+            }
+        },
+        Expression::ArrayIndex { array, index } => {
+            // TODO: Implement array indexing in Commit 6
+            generate_expression_asm(array, asm);
+            generate_expression_asm(index, asm);
+        },
+        Expression::ArrayLength(_) => {
+            // TODO: Implement array length in Commit 6
+        },
+        Expression::CheckSigExpr { signature, pubkey } => {
+            asm.push(format!("<{}>", pubkey));
+            asm.push(format!("<{}>", signature));
+            asm.push("OP_CHECKSIG".to_string());
+        },
+        Expression::CheckSigFromStackExpr { signature, pubkey, message } => {
+            asm.push(format!("<{}>", message));
+            asm.push(format!("<{}>", pubkey));
+            asm.push(format!("<{}>", signature));
+            asm.push("OP_CHECKSIGFROMSTACK".to_string());
+        },
+    }
+}
+
+/// Generate assembly for comparison expressions
+fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm: &mut Vec<String>) {
+    match (left, op, right) {
+        (Expression::Variable(var), ">=", Expression::Literal(value)) => {
+            asm.push(format!("<{}>", var));
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(value.clone());
+        },
+        (Expression::Variable(var), "==", Expression::Variable(var2)) => {
+            asm.push(format!("<{}>", var));
+            asm.push("OP_EQUAL".to_string());
+            asm.push(format!("<{}>", var2));
+        },
+        (Expression::Variable(var), ">=", Expression::Variable(var2)) => {
+            asm.push(format!("<{}>", var));
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(format!("<{}>", var2));
+        },
+        (Expression::Variable(var), "==", Expression::Property(prop)) => {
+            asm.push(format!("<{}>", var));
+            asm.push("OP_EQUAL".to_string());
+            asm.push(format!("<{}>", prop));
+        },
+        (Expression::Variable(var), ">=", Expression::Property(prop)) => {
+            asm.push(format!("<{}>", var));
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(format!("<{}>", prop));
+        },
+        (Expression::Literal(lit), "==", Expression::Variable(var)) => {
+            asm.push(lit.clone());
+            asm.push("OP_EQUAL".to_string());
+            asm.push(format!("<{}>", var));
+        },
+        (Expression::Literal(lit), ">=", Expression::Variable(var)) => {
+            asm.push(lit.clone());
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(format!("<{}>", var));
+        },
+        (Expression::Literal(lit), "==", Expression::Literal(value)) => {
+            asm.push(lit.clone());
+            asm.push("OP_EQUAL".to_string());
+            asm.push(value.clone());
+        },
+        (Expression::Literal(lit), ">=", Expression::Literal(value)) => {
+            asm.push(lit.clone());
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(value.clone());
+        },
+        (Expression::Literal(lit), "==", Expression::Property(prop)) => {
+            asm.push(lit.clone());
+            asm.push("OP_EQUAL".to_string());
+            asm.push(format!("<{}>", prop));
+        },
+        (Expression::Literal(lit), ">=", Expression::Property(prop)) => {
+            asm.push(lit.clone());
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(format!("<{}>", prop));
+        },
+        (Expression::Property(prop), "==", Expression::Variable(var)) => {
+            asm.push(format!("<{}>", prop));
+            asm.push("OP_EQUAL".to_string());
+            asm.push(format!("<{}>", var));
+        },
+        (Expression::Property(prop), ">=", Expression::Variable(var)) => {
+            asm.push(format!("<{}>", prop));
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(format!("<{}>", var));
+        },
+        (Expression::Property(prop), "==", Expression::Literal(value)) => {
+            asm.push(format!("<{}>", prop));
+            asm.push("OP_EQUAL".to_string());
+            asm.push(value.clone());
+        },
+        (Expression::Property(prop), ">=", Expression::Literal(value)) => {
+            asm.push(format!("<{}>", prop));
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(value.clone());
+        },
+        (Expression::Property(prop), "==", Expression::Property(prop2)) => {
+            asm.push(format!("<{}>", prop));
+            asm.push("OP_EQUAL".to_string());
+            asm.push(format!("<{}>", prop2));
+        },
+        (Expression::Property(prop), ">=", Expression::Property(prop2)) => {
+            asm.push(format!("<{}>", prop));
+            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(format!("<{}>", prop2));
+        },
+        (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
+            if value == "true" {
+                if let Some(prop) = property {
+                    match prop.as_str() {
+                        "scriptPubKey" => asm.push("OP_INPUTBYTECODE".to_string()),
+                        "value" => asm.push("OP_INPUTVALUE".to_string()),
+                        "sequence" => asm.push("OP_INPUTSEQUENCE".to_string()),
+                        "outpoint" => asm.push("OP_INPUTOUTPOINT".to_string()),
+                        _ => asm.push("OP_INPUTBYTECODE".to_string()),
+                    }
+                } else {
+                    asm.push("OP_INPUTBYTECODE".to_string());
+                }
+            }
+        },
+        _ => {
+            asm.push("OP_FALSE".to_string());
+        }
+    }
+}
+
+/// Generate assembly instructions for a requirement (legacy function)
 fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
     let mut asm = Vec::new();
     

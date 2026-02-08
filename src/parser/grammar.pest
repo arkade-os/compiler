@@ -6,11 +6,11 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
 main = { SOI ~ contract ~ EOI }
 
 // Contract definition with strict structure and optional options block
-contract = { 
+contract = {
     options_block? ~
-    "contract" ~ identifier ~ 
-    "(" ~ param_list ~ ")" ~ 
-    "{" ~ function* ~ "}" 
+    "contract" ~ identifier ~
+    "(" ~ param_list ~ ")" ~
+    "{" ~ function* ~ "}"
 }
 
 // Options block for contract configuration
@@ -24,8 +24,8 @@ option_setting = {
 }
 
 // Parameter list with proper comma separation
-param_list = { 
-    (parameter ~ ("," ~ parameter)*)? 
+param_list = {
+    (parameter ~ ("," ~ parameter)*)?
 }
 
 // Parameter definition
@@ -36,19 +36,54 @@ parameter = { data_type ~ identifier }
 data_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
 
 // Function definition with strict structure
-function = { 
-    "function" ~ identifier ~ 
-    "(" ~ param_list ~ ")" ~ 
+function = {
+    "function" ~ identifier ~
+    "(" ~ param_list ~ ")" ~
     function_modifier? ~
-    "{" ~ (require_stmt | function_call_stmt | variable_declaration)* ~ "}" 
+    "{" ~ statement* ~ "}"
 }
 
 // Function modifier (internal, etc.)
 function_modifier = { "internal" }
 
+// Statement types - order matters, more specific first
+statement = _{
+    if_stmt |
+    for_stmt |
+    let_binding |
+    var_assign |
+    require_stmt |
+    function_call_stmt |
+    variable_declaration
+}
+
+// If statement with optional else
+if_stmt = {
+    "if" ~ "(" ~ general_expression ~ ")" ~ block ~ ("else" ~ block)?
+}
+
+// For loop statement (compile-time unrolled)
+for_stmt = {
+    "for" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" ~ "in" ~ general_expression ~ block
+}
+
+// Block of statements
+block = { "{" ~ statement* ~ "}" }
+
+// Let binding (new variable with let keyword)
+let_binding = {
+    "let" ~ identifier ~ "=" ~ general_expression ~ ";"
+}
+
+// Variable assignment (reassignment without let keyword)
+// Must check for = but not == or >= or <=
+var_assign = {
+    identifier ~ "=" ~ !("=") ~ general_expression ~ ";"
+}
+
 // Require statement
-require_stmt = { 
-    "require" ~ "(" ~ complex_expression ~ ("," ~ string_literal)? ~ ")" ~ ";" 
+require_stmt = {
+    "require" ~ "(" ~ complex_expression ~ ("," ~ string_literal)? ~ ")" ~ ";"
 }
 
 // Function call statement
@@ -56,16 +91,59 @@ function_call_stmt = {
     identifier ~ "(" ~ (complex_expression ~ ("," ~ complex_expression)*)? ~ ")" ~ ";"
 }
 
-// Variable declaration
+// Variable declaration (typed, legacy support)
 variable_declaration = {
     data_type ~ identifier ~ "=" ~ complex_expression ~ ";"
 }
 
-// Complex expression types
-complex_expression = _{ 
+// General expression with operator precedence
+// Used in conditions, let bindings, and assignments
+general_expression = { comparison_expr }
+
+// Comparison expressions (lowest precedence)
+comparison_expr = {
+    additive_expr ~ (comparison_operator ~ additive_expr)?
+}
+
+// Additive expressions (+ and -)
+additive_expr = {
+    multiplicative_expr ~ ((add_op | sub_op) ~ multiplicative_expr)*
+}
+
+// Multiplicative expressions (* and /)
+multiplicative_expr = {
+    unary_expr ~ ((mul_op | div_op) ~ unary_expr)*
+}
+
+// Unary and primary expressions
+unary_expr = { primary_expr }
+
+// Primary expressions (atoms)
+primary_expr = {
+    "(" ~ general_expression ~ ")" |
     check_sig_from_stack |
-    check_sig | 
-    check_multisig | 
+    check_sig |
+    sha256_func |
+    tx_property_access |
+    this_property_access |
+    p2tr_constructor |
+    function_call |
+    number_literal |
+    identifier
+}
+
+// Operators
+comparison_operator = { ">=" | "<=" | "==" | "!=" | ">" | "<" }
+add_op = { "+" }
+sub_op = { "-" }
+mul_op = { "*" }
+div_op = { "/" }
+
+// Complex expression types (for require statements - legacy support)
+complex_expression = _{
+    check_sig_from_stack |
+    check_sig |
+    check_multisig |
     time_comparison |
     identifier_comparison |
     hash_comparison |
@@ -91,8 +169,9 @@ identifier_comparison = {
 }
 
 // Property comparison (property_access operator expression)
+// Note: tx_property_access must come before identifier to avoid partial matching
 property_comparison = {
-    (tx_property_access | this_property_access) ~ binary_operator ~ (identifier | number_literal | tx_property_access | this_property_access | p2tr_constructor)
+    (tx_property_access | this_property_access) ~ binary_operator ~ (tx_property_access | this_property_access | p2tr_constructor | number_literal | identifier)
 }
 
 // Hash comparison (sha256(preimage) == hash)
@@ -106,7 +185,7 @@ binary_operation = {
     (identifier ~ binary_operator ~ (identifier | number_literal))
 }
 
-binary_operator = { "==" | "<" | ">" | ">=" | "<=" | "!=" | "+" | "-" | "*" | "/" }
+binary_operator = { "==" | ">=" | "<=" | "!=" | "<" | ">" | "+" | "-" | "*" | "/" }
 
 // P2TR constructor
 p2tr_constructor = {
@@ -120,12 +199,27 @@ p2tr_constructor_args = {
 
 // Transaction property access with special handling
 tx_property_access = {
-    "tx" ~ "." ~ (
-        // Input.current syntax - new first-class support
-        ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
-        // Standard property access
-        (tx_property_part ~ (array_access | ("." ~ tx_property_part))*)
-    )
+    "tx" ~ "." ~ tx_property_body
+}
+
+// Body of tx property access - separated to control greediness
+tx_property_body = {
+    // Input.current syntax - new first-class support
+    ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
+    // Asset groups access with optional indexing and properties
+    ("assetGroups" ~ (array_access ~ ("." ~ asset_group_property)?)?) |
+    // Standard property access
+    (tx_property_part ~ tx_property_suffix*)
+}
+
+// Suffix for tx property access - explicitly requires [ or .
+tx_property_suffix = {
+    array_access | ("." ~ tx_property_part)
+}
+
+// Asset group properties
+asset_group_property = {
+    "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
 }
 
 // This property access
@@ -144,18 +238,28 @@ tx_property_part = {
 }
 
 // Special properties that have specific meaning
-tx_special_property = { 
-    "time" | "inputs" | "outputs" | "version" | "locktime" | "currentInput"
+tx_special_property = {
+    "time" | "inputs" | "outputs" | "version" | "locktime" | "currentInput" | "assetGroups"
 }
 
-// Array access with index
+// Array access with index - simplified to avoid parsing ambiguity
 array_access = {
-    "[" ~ (number_literal | identifier | this_property_access | tx_special_property) ~ "]"
+    "[" ~ (number_literal | identifier) ~ "]"
 }
 
-// Method call
+// Method call with optional arguments
 tx_method_call = {
-    identifier ~ "(" ~ ")"
+    identifier ~ "(" ~ method_args? ~ ")"
+}
+
+// Method arguments - simplified to avoid left recursion
+method_args = {
+    method_arg ~ ("," ~ method_arg)*
+}
+
+// Single method argument
+method_arg = {
+    number_literal | identifier
 }
 
 // Array literal
@@ -169,8 +273,8 @@ function_call = {
 }
 
 // CheckSig expression
-check_sig = { 
-    "checkSig" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" 
+check_sig = {
+    "checkSig" ~ "(" ~ identifier ~ "," ~ identifier ~ ")"
 }
 
 // CheckSigFromStack expression
@@ -179,13 +283,13 @@ check_sig_from_stack = {
 }
 
 // CheckMultisig expression
-check_multisig = { 
-    "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")" 
+check_multisig = {
+    "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")"
 }
 
 // Array of identifiers
-array = { 
-    "[" ~ identifier ~ ("," ~ identifier)* ~ "]" 
+array = {
+    "[" ~ identifier ~ ("," ~ identifier)* ~ "]"
 }
 
 // SHA256 function
@@ -194,13 +298,13 @@ sha256_func = {
 }
 
 // Identifiers must start with a letter and can contain letters, numbers, and underscores
-identifier = @{ 
-    ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* 
+identifier = @{
+    ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*
 }
 
 // Number literals are sequences of digits
-number_literal = @{ 
-    ASCII_DIGIT+ 
+number_literal = @{
+    ASCII_DIGIT+
 }
 
 // String literals are sequences of characters enclosed in double quotes

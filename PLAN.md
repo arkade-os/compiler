@@ -1,8 +1,17 @@
 # Arkade Compiler — Contract Primitives Plan
 
-The compiler today handles simple spending-path contracts (checkSig, checkMultisig, hashlock, timelock). Real contracts need more: asset introspection, arithmetic with operator precedence, control flow, and compile-time loop unrolling. This plan adds six primitives that, together, make recursive covenants, controlled minting/burning, fee calculations, epoch-based rate limiting, read-only beacons, and threshold signature verification expressible in Arkade Script.
+Implement PLAN.md Commits 4-6 for the Arkade Compiler. Don't ask questions — deliver working, tested code. Push to branch `claude/dialectical-autocoding-tl7zY`.
 
-Single PR on `claude/add-contract-support-crNr1`, one commit per primitive.
+Single PR on, one commit per primitive.
+Commits 1-3 (asset lookups, asset groups, arithmetic) are done and pushed. 11 tests pass. But **the build is currently broken** because `src/models/mod.rs` was partially edited — `Function` struct has a `statements: Vec<Statement>` field that the parser doesn't initialize. Fix this first.
+
+
+## Context
+
+This is a Rust compiler (`arkadec`) that compiles Arkade Script (.ark) → Bitcoin Script assembly + JSON. The pipeline is: `.ark` source → Pest PEG parser → AST → compiler → JSON output. Each non-internal function produces two variants: server (cooperative, user sig + server sig) and exit (user sig + timelock).
+
+
+
 Each commit adds grammar + parser + AST + compiler + example `.ark` + test.
 Existing tests must pass after every commit.
 
