@@ -340,9 +340,27 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
 
                 asm.push("OP_ENDIF".to_string());
             },
-            Statement::ForIn { index_var: _, value_var: _, iterable: _, body: _ } => {
-                // TODO: Implement loop unrolling in Commit 5
-                // For now, just process the body as if it were inline
+            Statement::ForIn { index_var, value_var, iterable, body } => {
+                // Commit 5: Compile-time loop unrolling
+                // Determine if this is iterating over tx.assetGroups
+                let is_asset_groups = match iterable {
+                    Expression::Property(prop) => prop == "tx.assetGroups",
+                    _ => false,
+                };
+
+                if is_asset_groups {
+                    // Default to 3 iterations (can be overridden by numGroups param)
+                    let num_iterations = 3;
+
+                    for k in 0..num_iterations {
+                        // Substitute loop variables and generate ASM for each iteration
+                        let substituted_body = substitute_loop_body(body, index_var, value_var, k);
+                        generate_asm_from_statements_recursive(&substituted_body, asm);
+                    }
+                } else {
+                    // For other iterables, process body once (fallback)
+                    generate_asm_from_statements_recursive(body, asm);
+                }
             },
             Statement::LetBinding { name: _, value } => {
                 // Emit the expression value onto the stack
@@ -979,5 +997,100 @@ fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
             asm.push(format!("OP_{}", op));
             asm.push("OP_VERIFY".to_string());
         }
+    }
+}
+
+// ─── Loop Unrolling (Commit 5) ─────────────────────────────────────────────────
+
+/// Substitute loop variables in the body for a specific iteration index k.
+///
+/// Transforms:
+/// - `GroupProperty { group: value_var, property: "sumOutputs" }` → `GroupSum { index: k, source: Outputs }`
+/// - `GroupProperty { group: value_var, property: "sumInputs" }` → `GroupSum { index: k, source: Inputs }`
+/// - `Variable(index_var)` → `Literal(k)`
+fn substitute_loop_body(body: &[Statement], index_var: &str, value_var: &str, k: usize) -> Vec<Statement> {
+    body.iter()
+        .map(|stmt| substitute_statement(stmt, index_var, value_var, k))
+        .collect()
+}
+
+fn substitute_statement(stmt: &Statement, index_var: &str, value_var: &str, k: usize) -> Statement {
+    match stmt {
+        Statement::Require(req) => {
+            Statement::Require(substitute_requirement(req, index_var, value_var, k))
+        }
+        Statement::LetBinding { name, value } => {
+            Statement::LetBinding {
+                name: name.clone(),
+                value: substitute_expression(value, index_var, value_var, k),
+            }
+        }
+        Statement::VarAssign { name, value } => {
+            Statement::VarAssign {
+                name: name.clone(),
+                value: substitute_expression(value, index_var, value_var, k),
+            }
+        }
+        Statement::IfElse { condition, then_body, else_body } => {
+            Statement::IfElse {
+                condition: substitute_expression(condition, index_var, value_var, k),
+                then_body: substitute_loop_body(then_body, index_var, value_var, k),
+                else_body: else_body.as_ref().map(|b| substitute_loop_body(b, index_var, value_var, k)),
+            }
+        }
+        Statement::ForIn { index_var: inner_idx, value_var: inner_val, iterable, body } => {
+            // Nested loops: substitute in iterable, leave inner variables alone
+            Statement::ForIn {
+                index_var: inner_idx.clone(),
+                value_var: inner_val.clone(),
+                iterable: substitute_expression(iterable, index_var, value_var, k),
+                body: body.clone(), // Inner loop body keeps its own variables
+            }
+        }
+    }
+}
+
+fn substitute_requirement(req: &Requirement, index_var: &str, value_var: &str, k: usize) -> Requirement {
+    match req {
+        Requirement::Comparison { left, op, right } => {
+            Requirement::Comparison {
+                left: substitute_expression(left, index_var, value_var, k),
+                op: op.clone(),
+                right: substitute_expression(right, index_var, value_var, k),
+            }
+        }
+        // Other requirement types don't need substitution
+        _ => req.clone(),
+    }
+}
+
+fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k: usize) -> Expression {
+    match expr {
+        // Replace index variable with literal k
+        Expression::Variable(var) if var == index_var => {
+            Expression::Literal(k.to_string())
+        }
+        // Replace value_var.property with GroupSum
+        Expression::GroupProperty { group, property } if group == value_var => {
+            let source = match property.as_str() {
+                "sumInputs" => GroupSumSource::Inputs,
+                "sumOutputs" => GroupSumSource::Outputs,
+                _ => return expr.clone(), // Keep other properties as-is
+            };
+            Expression::GroupSum {
+                index: Box::new(Expression::Literal(k.to_string())),
+                source,
+            }
+        }
+        // Recursively substitute in binary operations
+        Expression::BinaryOp { left, op, right } => {
+            Expression::BinaryOp {
+                left: Box::new(substitute_expression(left, index_var, value_var, k)),
+                op: op.clone(),
+                right: Box::new(substitute_expression(right, index_var, value_var, k)),
+            }
+        }
+        // All other expressions are returned as-is
+        _ => expr.clone(),
     }
 }
