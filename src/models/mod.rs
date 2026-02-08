@@ -105,10 +105,34 @@ pub struct Function {
     pub name: String,
     /// Function arguments
     pub parameters: Vec<Parameter>,
-    /// Function requirements
-    pub requirements: Vec<Requirement>,
+    /// Function body statements (replaces requirements for Commits 4-6)
+    pub statements: Vec<Statement>,
     /// Whether this is an internal function
     pub is_internal: bool,
+}
+
+/// Statement AST - represents any executable statement in a function body
+#[derive(Debug, Clone)]
+pub enum Statement {
+    /// require(expr, "message");
+    Require(Requirement),
+    /// let name = expr;
+    LetBinding { name: String, value: Expression },
+    /// name = expr; (variable reassignment)
+    VarAssign { name: String, value: Expression },
+    /// if (condition) { then_body } else { else_body }
+    IfElse {
+        condition: Expression,
+        then_body: Vec<Statement>,
+        else_body: Option<Vec<Statement>>,
+    },
+    /// for (index_var, value_var) in iterable { body }
+    ForIn {
+        index_var: String,
+        value_var: String,
+        iterable: Expression,
+        body: Vec<Statement>,
+    },
 }
 
 /// Requirement AST
@@ -161,7 +185,7 @@ pub enum Expression {
         index: Box<Expression>,
         asset_id: String,
     },
-    /// Binary arithmetic operation (a + b, a - b, a * b, a / b)
+    /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
         left: Box<Expression>,
         op: String,
@@ -182,5 +206,23 @@ pub enum Expression {
     GroupSum {
         index: Box<Expression>,
         source: GroupSumSource,
+    },
+    /// Array indexing (e.g., arr[i])
+    ArrayIndex {
+        array: Box<Expression>,
+        index: Box<Expression>,
+    },
+    /// Array/collection length (e.g., arr.length)
+    ArrayLength(String),
+    /// CheckSig expression result (for use in if conditions)
+    CheckSigExpr {
+        signature: String,
+        pubkey: String,
+    },
+    /// CheckSigFromStack expression result
+    CheckSigFromStackExpr {
+        signature: String,
+        pubkey: String,
+        message: String,
     },
 } 

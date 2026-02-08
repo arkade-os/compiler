@@ -1,0 +1,60 @@
+{
+  "contractName": "LeftOnlyTest",
+  "constructorInputs": [
+    {
+      "name": "ctrlAssetId",
+      "type": "bytes32"
+    },
+    {
+      "name": "serverPk",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "test",
+      "functionInputs": [],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "OP_FALSE",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "test",
+      "functionInputs": [],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 288 blocks"
+        }
+      ],
+      "asm": [
+        "OP_FALSE",
+        "288",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "options {\n  server = serverPk;\n  exit = 288;\n}\n\ncontract LeftOnlyTest(\n  bytes32 ctrlAssetId,\n  pubkey serverPk\n) {\n  function test() {\n    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, \"no ctrl\");\n  }\n}\n",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-02-08T02:00:39.606601+00:00"
+}
