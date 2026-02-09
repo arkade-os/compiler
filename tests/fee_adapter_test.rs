@@ -132,10 +132,37 @@ fn test_fee_adapter_contract() {
         .expect("execute exit variant not found");
 
     let exit_asm = execute_exit.asm.join(" ");
+
+    // Exit path with introspection should have:
+    // 1. N-of-N CHECKSIG chain (pure Bitcoin, no introspection)
+    // 2. CSV timelock (relative, not absolute CLTV)
     assert!(
-        exit_asm.contains("OP_CHECKLOCKTIMEVERIFY"),
-        "missing exit timelock: {}",
+        exit_asm.contains("OP_CHECKSIG"),
+        "missing CHECKSIG in exit path: {}",
         exit_asm
+    );
+    assert!(
+        exit_asm.contains("OP_CHECKSEQUENCEVERIFY"),
+        "missing CSV exit timelock: {}",
+        exit_asm
+    );
+
+    // Exit path should NOT have introspection opcodes (pure Bitcoin fallback)
+    assert!(
+        !exit_asm.contains("OP_INSPECTINASSETLOOKUP"),
+        "exit path should not have introspection: {}",
+        exit_asm
+    );
+    assert!(
+        !exit_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
+        "exit path should not have introspection: {}",
+        exit_asm
+    );
+
+    // Should have N-of-N multisig requirement
+    assert!(
+        execute_exit.require.iter().any(|r| r.req_type == "nOfNMultisig"),
+        "missing nOfNMultisig requirement in exit path"
     );
 }
 

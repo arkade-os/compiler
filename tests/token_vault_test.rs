@@ -89,6 +89,7 @@ fn test_token_vault_contract() {
     );
 
     // Verify withdraw function with exit variant
+    // Exit path with introspection should have N-of-N + CSV (no introspection opcodes)
     let withdraw_exit = output
         .functions
         .iter()
@@ -96,15 +97,32 @@ fn test_token_vault_contract() {
         .expect("withdraw exit variant not found");
 
     let withdraw_asm = withdraw_exit.asm.join(" ");
+
+    // Exit path should have N-of-N CHECKSIG chain (pure Bitcoin)
     assert!(
-        withdraw_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
-        "missing output asset lookup in withdraw exit: {}",
+        withdraw_asm.contains("OP_CHECKSIG"),
+        "missing CHECKSIG in withdraw exit: {}",
         withdraw_asm
     );
+
+    // Exit path should use CSV (relative timelock)
     assert!(
-        withdraw_asm.contains("OP_CHECKLOCKTIMEVERIFY"),
-        "missing exit timelock in withdraw exit variant: {}",
+        withdraw_asm.contains("OP_CHECKSEQUENCEVERIFY"),
+        "missing CSV exit timelock in withdraw exit variant: {}",
         withdraw_asm
+    );
+
+    // Exit path should NOT have introspection opcodes (pure Bitcoin fallback)
+    assert!(
+        !withdraw_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
+        "exit path should not have introspection: {}",
+        withdraw_asm
+    );
+
+    // Should have N-of-N multisig requirement
+    assert!(
+        withdraw_exit.require.iter().any(|r| r.req_type == "nOfNMultisig"),
+        "missing nOfNMultisig requirement in exit path"
     );
 }
 

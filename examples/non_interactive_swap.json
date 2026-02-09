@@ -1,0 +1,229 @@
+{
+  "contractName": "NonInteractiveSwap",
+  "constructorInputs": [
+    {
+      "name": "makerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "offerAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "offerAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "offerAmount",
+      "type": "int"
+    },
+    {
+      "name": "wantAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "wantAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "wantAmount",
+      "type": "int"
+    },
+    {
+      "name": "expirationTime",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "swap",
+      "functionInputs": [
+        {
+          "name": "takerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "takerSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<takerPk>",
+        "<takerSig>",
+        "OP_CHECKSIG",
+        "0",
+        "<wantAssetId_txid>",
+        "<wantAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<wantAmount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(makerPk)>",
+        "OP_EQUAL",
+        "1",
+        "<offerAssetId_txid>",
+        "<offerAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<offerAmount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(takerPk)>",
+        "OP_EQUAL",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "swap",
+      "functionInputs": [
+        {
+          "name": "takerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "takerSig",
+          "type": "signature"
+        },
+        {
+          "name": "makerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "takerPkSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<makerPk>",
+        "<makerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<takerPk>",
+        "<takerPkSig>",
+        "OP_CHECKSIG",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "cancel",
+      "functionInputs": [
+        {
+          "name": "makerSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "older",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<expirationTime>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<makerPk>",
+        "<makerSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "cancel",
+      "functionInputs": [
+        {
+          "name": "makerSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "older",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<expirationTime>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<makerPk>",
+        "<makerSig>",
+        "OP_CHECKSIG",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "// Non-Interactive Swap Contract\n// Allows users to exchange assets without requiring both parties to be online simultaneously.\n//\n// VTXO\n// - Cooperative path: Server emulates/validates introspection, co-signs for fast settlement\n// - Exit path: N-of-N user signatures when introspection is used (pure Bitcoin fallback)\n//\n// Paths:\n// - swap cooperative: takerSig + serverSig + OP_INSPECT* (trustless via introspection)\n// - swap exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin)\n// - cancel cooperative: makerSig + serverSig + after(expiration)\n// - cancel exit: makerSig + after(expiration) + CSV (normal exit)\n\noptions {\n  // Server key is injected from getInfo(), not passed in constructor\n  server = serverPk;\n  // Exit delay: 144 blocks (~24 hours) for unilateral recovery\n  exit = 144;\n}\n\ncontract NonInteractiveSwap(\n  // Maker's public key (creator of the swap offer)\n  pubkey makerPk,\n  // Asset ID the maker is offering (locked in this contract)\n  bytes32 offerAssetId,\n  // Amount of offer asset locked\n  int offerAmount,\n  // Asset ID the maker wants to receive\n  bytes32 wantAssetId,\n  // Amount of want asset required for the swap\n  int wantAmount,\n  // Expiration timestamp (block height) after which maker can cancel\n  int expirationTime\n) {\n  // Swap: Any taker can fulfill - introspection makes cooperative path trustless\n  // Cooperative: takerSig + serverSig + OP_INSPECT* (server validates outputs)\n  // Exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin - no introspection)\n  function swap(pubkey takerPk, signature takerSig) {\n    // Taker must sign to authorize spending their wantAsset\n    require(checkSig(takerSig, takerPk), \"invalid taker signature\");\n\n    // Introspection verifies the atomic exchange:\n    // Output 0: maker receives wantAsset\n    require(\n      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,\n      \"insufficient want asset for maker\"\n    );\n    require(\n      tx.outputs[0].scriptPubKey == new P2TR(makerPk),\n      \"output 0 not spendable by maker\"\n    );\n\n    // Output 1: taker receives offerAsset\n    require(\n      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,\n      \"insufficient offer asset for taker\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new P2TR(takerPk),\n      \"output 1 not spendable by taker\"\n    );\n  }\n\n  // Cancel: Maker reclaims after expiration if no taker\n  // No introspection used, so normal exit path applies\n  // Cooperative: makerSig + serverSig + after(expiration)\n  // Exit: makerSig + after(expiration) + CSV\n  function cancel(signature makerSig) {\n    require(tx.time >= expirationTime, \"swap not expired\");\n    require(checkSig(makerSig, makerPk), \"invalid maker signature\");\n  }\n}\n",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-02-09T22:55:31.626799+00:00"
+}

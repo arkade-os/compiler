@@ -1,9 +1,120 @@
 use crate::models::{
     Requirement, Expression, Statement, ContractJson, AbiFunction, FunctionInput,
-    RequireStatement, CompilerInfo, AssetLookupSource, GroupSumSource,
+    RequireStatement, CompilerInfo, AssetLookupSource, GroupSumSource, Function,
 };
 use crate::parser;
 use chrono::Utc;
+
+// ─── Introspection Detection ────────────────────────────────────────────────────
+//
+// These helpers detect if a function uses introspection opcodes (OP_INSPECT*).
+// When introspection is detected, the exit path requires N-of-N signatures
+// instead of the normal user sig + timelock pattern.
+
+/// Check if a function uses any introspection opcodes
+fn function_uses_introspection(function: &Function) -> bool {
+    function.statements.iter().any(|s| statement_uses_introspection(s))
+}
+
+/// Check if a statement uses introspection
+fn statement_uses_introspection(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Require(req) => requirement_uses_introspection(req),
+        Statement::IfElse { condition, then_body, else_body } => {
+            expression_uses_introspection(condition)
+                || then_body.iter().any(|s| statement_uses_introspection(s))
+                || else_body.as_ref().map_or(false, |b| b.iter().any(|s| statement_uses_introspection(s)))
+        }
+        Statement::ForIn { iterable, body, .. } => {
+            expression_uses_introspection(iterable)
+                || body.iter().any(|s| statement_uses_introspection(s))
+        }
+        Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
+            expression_uses_introspection(value)
+        }
+    }
+}
+
+/// Check if a requirement uses introspection
+fn requirement_uses_introspection(req: &Requirement) -> bool {
+    match req {
+        Requirement::Comparison { left, right, .. } => {
+            expression_uses_introspection(left) || expression_uses_introspection(right)
+        }
+        _ => false,
+    }
+}
+
+/// Check if an expression uses introspection opcodes
+fn expression_uses_introspection(expr: &Expression) -> bool {
+    match expr {
+        // Direct introspection opcodes
+        Expression::TxIntrospection { .. } => true,
+        Expression::InputIntrospection { .. } => true,
+        Expression::OutputIntrospection { .. } => true,
+        Expression::AssetLookup { .. } => true,
+        Expression::AssetCount { .. } => true,
+        Expression::AssetAt { .. } => true,
+        Expression::GroupFind { .. } => true,
+        Expression::GroupProperty { .. } => true,
+        Expression::AssetGroupsLength => true,
+        Expression::GroupSum { .. } => true,
+        Expression::CurrentInput(_) => true,
+
+        // Recursive checks for compound expressions
+        Expression::BinaryOp { left, right, .. } => {
+            expression_uses_introspection(left) || expression_uses_introspection(right)
+        }
+        Expression::ArrayIndex { array, index } => {
+            expression_uses_introspection(array) || expression_uses_introspection(index)
+        }
+        Expression::Sha256Initialize { data } => expression_uses_introspection(data),
+        Expression::Sha256Update { context, chunk } => {
+            expression_uses_introspection(context) || expression_uses_introspection(chunk)
+        }
+        Expression::Sha256Finalize { context, last_chunk } => {
+            expression_uses_introspection(context) || expression_uses_introspection(last_chunk)
+        }
+        Expression::Neg64 { value } => expression_uses_introspection(value),
+        Expression::Le64ToScriptNum { value } => expression_uses_introspection(value),
+        Expression::Le32ToLe64 { value } => expression_uses_introspection(value),
+        Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
+            expression_uses_introspection(scalar)
+                || expression_uses_introspection(point_p)
+                || expression_uses_introspection(point_q)
+        }
+        Expression::TweakVerify { point_p, tweak, point_q } => {
+            expression_uses_introspection(point_p)
+                || expression_uses_introspection(tweak)
+                || expression_uses_introspection(point_q)
+        }
+
+        // Check for P2TR constructor in Property strings (e.g., "new P2TR(...)")
+        Expression::Property(prop) => prop.starts_with("new P2TR"),
+
+        // Non-introspection expressions
+        Expression::Variable(_) => false,
+        Expression::Literal(_) => false,
+        Expression::ArrayLength(_) => false,
+        Expression::CheckSigExpr { .. } => false,
+        Expression::CheckSigFromStackExpr { .. } => false,
+        Expression::CheckSigFromStackVerify { .. } => false,
+    }
+}
+
+/// Collect all pubkey parameters from constructor and function for N-of-N fallback
+/// Excludes the server key (which comes from options, not constructor)
+fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) -> Vec<String> {
+    let server_key = contract.server_key_param.as_ref();
+
+    contract.parameters.iter()
+        .chain(function.parameters.iter())
+        .filter(|p| p.param_type == "pubkey")
+        // Exclude server key from N-of-N (it's for cooperative path only)
+        .filter(|p| server_key.map_or(true, |sk| &p.name != sk))
+        .map(|p| p.name.clone())
+        .collect()
+}
 
 /// Compiles an Arkade Script contract into a JSON-serializable structure.
 ///
@@ -29,15 +140,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
-    // Validate server key parameter exists in contract parameters
-    if let Some(ref server_key) = contract.server_key_param {
-        if !contract.parameters.iter().any(|p| p.name == *server_key) {
-            return Err(format!(
-                "Server key parameter '{}' not found in contract parameters",
-                server_key
-            ));
-        }
-    }
+    // Note: Server key is injected externally via getInfo(), not required in constructor.
+    // The `server = serverPk` in options references an external key, not a constructor param.
 
     // Collect asset IDs used in lookups for constructor param decomposition
     let lookup_asset_ids = collect_lookup_asset_ids(&contract);
@@ -176,13 +280,24 @@ fn decompose_constructor_params(
 }
 
 /// Generate a function ABI with server variant flag
+///
+/// For functions using introspection opcodes:
+/// - Cooperative path: normal ASM + introspection + server signature
+/// - Exit path: N-of-N CHECKSIG chain (pure Bitcoin) + exit timelock
+///
+/// For functions without introspection:
+/// - Cooperative path: normal ASM + server signature
+/// - Exit path: normal ASM + exit timelock
 fn generate_function(
     function: &crate::models::Function,
     contract: &crate::models::Contract,
     server_variant: bool,
 ) -> AbiFunction {
+    let uses_introspection = function_uses_introspection(function);
+    let all_pubkeys = collect_all_pubkeys(contract, function);
+
     // Flatten array types in function inputs (e.g., signature[] → signature_0, signature_1, etc.)
-    let function_inputs: Vec<FunctionInput> = function
+    let mut function_inputs: Vec<FunctionInput> = function
         .parameters
         .iter()
         .flat_map(|param| {
@@ -203,7 +318,40 @@ fn generate_function(
         })
         .collect();
 
-    let mut require = generate_requirements(function);
+    // For exit path with introspection, add signature inputs for all constructor pubkeys
+    // that aren't already in function params
+    if !server_variant && uses_introspection {
+        let existing_sig_names: Vec<String> = function_inputs
+            .iter()
+            .filter(|i| i.param_type == "signature")
+            .map(|i| i.name.clone())
+            .collect();
+
+        for pk in &all_pubkeys {
+            let sig_name = format!("{}Sig", pk);
+            // Check if we already have a signature for this pubkey
+            let has_sig = existing_sig_names.iter().any(|s| s.contains(pk) || s == &sig_name);
+            if !has_sig {
+                function_inputs.push(FunctionInput {
+                    name: sig_name,
+                    param_type: "signature".to_string(),
+                });
+            }
+        }
+    }
+
+    let mut require = if !server_variant && uses_introspection {
+        // For exit path with introspection, generate requirements for N-of-N
+        let mut reqs = Vec::new();
+        reqs.push(RequireStatement {
+            req_type: "nOfNMultisig".to_string(),
+            message: Some(format!("{}-of-{} signatures required (introspection fallback)",
+                                  all_pubkeys.len(), all_pubkeys.len())),
+        });
+        reqs
+    } else {
+        generate_requirements(function)
+    };
 
     if server_variant {
         if contract.server_key_param.is_some() {
@@ -219,8 +367,14 @@ fn generate_function(
         });
     }
 
-    // Generate assembly instructions from statements
-    let mut asm = generate_asm_from_statements(&function.statements);
+    // Generate assembly instructions
+    let mut asm = if !server_variant && uses_introspection {
+        // Exit path with introspection: generate N-of-N CHECKSIG chain (pure Bitcoin)
+        generate_nofn_checksig_asm(&all_pubkeys, function)
+    } else {
+        // Normal path: generate ASM from statements (includes introspection opcodes)
+        generate_asm_from_statements(&function.statements)
+    };
 
     // Add server signature or exit timelock check
     if server_variant {
@@ -231,7 +385,7 @@ fn generate_function(
         }
     } else if let Some(exit_timelock) = contract.exit_timelock {
         asm.push(format!("{}", exit_timelock));
-        asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
+        asm.push("OP_CHECKSEQUENCEVERIFY".to_string());
         asm.push("OP_DROP".to_string());
     }
 
@@ -242,6 +396,36 @@ fn generate_function(
         require,
         asm,
     }
+}
+
+/// Generate N-of-N CHECKSIG chain assembly (Tapscript style)
+///
+/// For N pubkeys, generates pure Bitcoin script with no introspection:
+/// ```text
+/// <pk1> <pk1Sig> OP_CHECKSIGVERIFY
+/// <pk2> <pk2Sig> OP_CHECKSIGVERIFY
+/// ...
+/// <pkN> <pkNSig> OP_CHECKSIG
+/// ```
+///
+/// This is the fallback for exit paths when introspection is used.
+/// All parties must agree to spend - no introspection opcodes are included.
+fn generate_nofn_checksig_asm(pubkeys: &[String], _function: &Function) -> Vec<String> {
+    let mut asm = Vec::new();
+
+    // Generate ONLY N-of-N CHECKSIG chain - no original requirements
+    // This is pure Bitcoin script with no Arkade-specific opcodes
+    for (i, pk) in pubkeys.iter().enumerate() {
+        asm.push(format!("<{}>", pk));
+        asm.push(format!("<{}Sig>", pk));
+        if i < pubkeys.len() - 1 {
+            asm.push("OP_CHECKSIGVERIFY".to_string());
+        } else {
+            asm.push("OP_CHECKSIG".to_string());
+        }
+    }
+
+    asm
 }
 
 /// Generate requirements from function statements

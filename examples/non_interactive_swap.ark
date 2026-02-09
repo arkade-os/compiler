@@ -1,0 +1,72 @@
+// Non-Interactive Swap Contract
+// Allows users to exchange assets without requiring both parties to be online simultaneously.
+//
+// VTXO
+// - Cooperative path: Server emulates/validates introspection, co-signs for fast settlement
+// - Exit path: N-of-N user signatures when introspection is used (pure Bitcoin fallback)
+//
+// Paths:
+// - swap cooperative: takerSig + serverSig + OP_INSPECT* (trustless via introspection)
+// - swap exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin)
+// - cancel cooperative: makerSig + serverSig + after(expiration)
+// - cancel exit: makerSig + after(expiration) + CSV (normal exit)
+
+options {
+  // Server key is injected from getInfo(), not passed in constructor
+  server = serverPk;
+  // Exit delay: 144 blocks (~24 hours) for unilateral recovery
+  exit = 144;
+}
+
+contract NonInteractiveSwap(
+  // Maker's public key (creator of the swap offer)
+  pubkey makerPk,
+  // Asset ID the maker is offering (locked in this contract)
+  bytes32 offerAssetId,
+  // Amount of offer asset locked
+  int offerAmount,
+  // Asset ID the maker wants to receive
+  bytes32 wantAssetId,
+  // Amount of want asset required for the swap
+  int wantAmount,
+  // Expiration timestamp (block height) after which maker can cancel
+  int expirationTime
+) {
+  // Swap: Any taker can fulfill - introspection makes cooperative path trustless
+  // Cooperative: takerSig + serverSig + OP_INSPECT* (server validates outputs)
+  // Exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin - no introspection)
+  function swap(pubkey takerPk, signature takerSig) {
+    // Taker must sign to authorize spending their wantAsset
+    require(checkSig(takerSig, takerPk), "invalid taker signature");
+
+    // Introspection verifies the atomic exchange:
+    // Output 0: maker receives wantAsset
+    require(
+      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,
+      "insufficient want asset for maker"
+    );
+    require(
+      tx.outputs[0].scriptPubKey == new P2TR(makerPk),
+      "output 0 not spendable by maker"
+    );
+
+    // Output 1: taker receives offerAsset
+    require(
+      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,
+      "insufficient offer asset for taker"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new P2TR(takerPk),
+      "output 1 not spendable by taker"
+    );
+  }
+
+  // Cancel: Maker reclaims after expiration if no taker
+  // No introspection used, so normal exit path applies
+  // Cooperative: makerSig + serverSig + after(expiration)
+  // Exit: makerSig + after(expiration) + CSV
+  function cancel(signature makerSig) {
+    require(tx.time >= expirationTime, "swap not expired");
+    require(checkSig(makerSig, makerPk), "invalid maker signature");
+  }
+}
