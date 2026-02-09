@@ -576,7 +576,7 @@ fn parse_check_sig(pair: Pair<Rule>) -> Result<Requirement, String> {
     Ok(Requirement::CheckSig { signature, pubkey })
 }
 
-/// Parse checkSigFromStack(sig, pubkey, message) → CheckSig requirement
+/// Parse checkSigFromStack(sig, pubkey, message) → CheckSigFromStack requirement
 fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
     let signature = inner
@@ -589,12 +589,12 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
         .ok_or("Missing public key")?
         .as_str()
         .to_string();
-    let _message = inner
+    let message = inner
         .next()
         .ok_or("Missing message")?
         .as_str()
         .to_string();
-    Ok(Requirement::CheckSig { signature, pubkey })
+    Ok(Requirement::CheckSigFromStack { signature, pubkey, message })
 }
 
 /// Parse checkMultisig([pubkeys], [sigs]) → CheckMultisig requirement

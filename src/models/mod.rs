@@ -140,6 +140,8 @@ pub enum Statement {
 pub enum Requirement {
     /// Check signature requirement
     CheckSig { signature: String, pubkey: String },
+    /// Check signature from stack requirement (signature verified against a message)
+    CheckSigFromStack { signature: String, pubkey: String, message: String },
     /// Check multisig requirement
     CheckMultisig { signatures: Vec<String>, pubkeys: Vec<String> },
     /// After requirement
