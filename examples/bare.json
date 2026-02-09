@@ -22,10 +22,16 @@
       "serverVariant": true,
       "require": [
         {
+          "type": "signature"
+        },
+        {
           "type": "serverSignature"
         }
       ],
       "asm": [
+        "<user>",
+        "<userSig>",
+        "OP_CHECKSIG",
         "<SERVER_KEY>",
         "<serverSig>",
         "OP_CHECKSIG"
@@ -42,21 +48,27 @@
       "serverVariant": false,
       "require": [
         {
+          "type": "signature"
+        },
+        {
           "type": "older",
           "message": "Exit timelock of 144 blocks"
         }
       ],
       "asm": [
+        "<user>",
+        "<userSig>",
+        "OP_CHECKSIG",
         "144",
-        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
       ]
     }
   ],
   "source": "// Contract configuration options\noptions {\n  // Server key parameter from contract parameters\n  server = server;\n  \n  // Renewal timelock: 7 days (1008 blocks)\n  // The contract must be renewed with the Ark server within this period\n  renew = 1008;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  // Time required to exit unilaterally without server involvement\n  exit = 144;\n}\n\ncontract BareVTXO(\n  pubkey user,\n  pubkey server\n) {\n  // Single signature spend path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(user) && checkSig(server)\n  // 2. Exit path: checkSig(user) && after 144 blocks\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n} ",
   "compiler": {
-    "name": "taplang",
+    "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2025-03-06T01:32:53.623030+00:00"
+  "updatedAt": "2026-02-09T23:11:00.080766+00:00"
 }

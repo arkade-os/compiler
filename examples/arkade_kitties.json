@@ -307,57 +307,17 @@
         {
           "name": "ctrlOutputIdx",
           "type": "int"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
         }
       ],
       "serverVariant": false,
       "require": [
         {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "signature"
-        },
-        {
-          "type": "assetCheck"
-        },
-        {
-          "type": "assetCheck"
-        },
-        {
-          "type": "assetCheck"
-        },
-        {
-          "type": "assetCheck"
+          "type": "nOfNMultisig",
+          "message": "1-of-1 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -365,142 +325,11 @@
         }
       ],
       "asm": [
-        "<sireId_txid>",
-        "<sireId_gidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "<sireGroup>",
-        "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
-        "OP_EQUAL",
-        "<sireGroup>",
-        "OP_INSPECTASSETGROUPMETADATAHASH",
-        "<sireGenomeHash>",
-        "OP_EQUAL",
-        "<sireGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<sireGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "0",
-        "OP_EQUAL",
-        "<dameId_txid>",
-        "<dameId_gidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "<dameGroup>",
-        "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
-        "OP_EQUAL",
-        "<dameGroup>",
-        "OP_INSPECTASSETGROUPMETADATAHASH",
-        "<dameGenomeHash>",
-        "OP_EQUAL",
-        "<dameGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<dameGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "0",
-        "OP_EQUAL",
-        "<childId_txid>",
-        "<childId_gidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "<childGroup>",
-        "OP_INSPECTASSETGROUPASSETID",
-        "OP_DROP",
-        "OP_TXHASH",
-        "OP_EQUAL",
-        "1",
-        "OP_EQUAL",
-        "<childGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<childGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "<childGroup>",
-        "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
-        "OP_EQUAL",
-        "<childGroup>",
-        "OP_INSPECTASSETGROUPMETADATAHASH",
-        "<expectedChildMetadataHash>",
-        "OP_EQUAL",
-        "<speciesControlId_txid>",
-        "<speciesControlId_gidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "<ctrlGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<ctrlGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "0",
-        "OP_EQUAL",
         "<oraclePk>",
-        "<oracleSig>",
+        "<oraclePkSig>",
         "OP_CHECKSIG",
-        "<childOutputIdx>",
-        "<childId_txid>",
-        "<childId_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "OP_VERIFY",
-        "<sireOutputIdx>",
-        "<sireId_txid>",
-        "<sireId_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "OP_VERIFY",
-        "<dameOutputIdx>",
-        "<dameId_txid>",
-        "<dameId_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "OP_VERIFY",
-        "<ctrlOutputIdx>",
-        "<speciesControlId_txid>",
-        "<speciesControlId_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "OP_VERIFY",
         "576",
-        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
       ]
     },
@@ -615,27 +444,25 @@
         {
           "name": "ownerPk",
           "type": "pubkey"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newOwnerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "ownerPkSig",
+          "type": "signature"
         }
       ],
       "serverVariant": false,
       "require": [
         {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "assetCheck"
-        },
-        {
-          "type": "comparison"
-        },
-        {
-          "type": "signature"
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -643,51 +470,17 @@
         }
       ],
       "asm": [
-        "<kittyId_txid>",
-        "<kittyId_gidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "<kittyGroup>",
-        "OP_INSPECTASSETGROUPASSETID",
-        "OP_DROP",
-        "OP_TXHASH",
-        "OP_EQUAL",
-        "0",
-        "OP_EQUAL",
-        "<kittyGroup>",
-        "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
-        "OP_EQUAL",
-        "<kittyGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<kittyGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "0",
-        "OP_EQUAL",
-        "0",
-        "<kittyId_txid>",
-        "<kittyId_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "OP_VERIFY",
-        "0",
-        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<new P2TR(newOwnerPk)>",
-        "OP_EQUAL",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newOwnerPk>",
+        "<newOwnerPkSig>",
+        "OP_CHECKSIGVERIFY",
         "<ownerPk>",
-        "<ownerSig>",
+        "<ownerPkSig>",
         "OP_CHECKSIG",
         "576",
-        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
       ]
     }
@@ -697,5 +490,5 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-02-08T23:18:11.844891+00:00"
+  "updatedAt": "2026-02-09T23:11:00.082946+00:00"
 }
