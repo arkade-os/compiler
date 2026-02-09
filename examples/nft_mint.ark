@@ -1,0 +1,80 @@
+// NFT Minting Contract
+// Demonstrates isFresh and assetId properties for unique asset creation
+//
+// This contract enforces:
+// 1. Each NFT is fresh (newly created in this transaction)
+// 2. NFTs are controlled by a collection control asset
+// 3. Only one unit per NFT (delta = 1)
+//
+// Key group properties used:
+// - group.isFresh: Detects if asset was created in current transaction
+// - group.delta: Ensures exactly 1 unit is minted
+// - group.control: Verifies collection membership
+
+options {
+    server = serverPk;
+    exit = 288;
+}
+
+contract NFTMint(
+    bytes32 collectionCtrlId,
+    pubkey issuerPk,
+    pubkey serverPk
+) {
+    // Mint a new NFT: must be fresh with delta=1
+    function mint(bytes32 nftAssetId, pubkey recipientPk, signature issuerSig) {
+        let nftGroup = tx.assetGroups.find(nftAssetId);
+
+        // Must be a brand new asset (genesis in this tx)
+        require(nftGroup.isFresh == 1, "must be fresh");
+
+        // Must mint exactly 1 (NFT)
+        require(nftGroup.delta == 1, "must mint exactly 1");
+
+        // Must be controlled by the collection
+        require(nftGroup.control == collectionCtrlId, "wrong collection");
+
+        // Control asset must be retained (delta == 0)
+        let ctrlGroup = tx.assetGroups.find(collectionCtrlId);
+        require(ctrlGroup.delta == 0, "control must be retained");
+
+        // NFT goes to recipient
+        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, "NFT not in output");
+        require(tx.outputs[0].scriptPubKey == new P2TR(recipientPk), "wrong recipient");
+
+        require(checkSig(issuerSig, issuerPk), "bad issuer sig");
+    }
+
+    // Transfer existing NFT (not fresh)
+    function transfer(bytes32 nftAssetId, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {
+        let nftGroup = tx.assetGroups.find(nftAssetId);
+
+        // Must NOT be fresh (existing asset)
+        require(nftGroup.isFresh == 0, "cannot be fresh");
+
+        // Must be a transfer (delta == 0)
+        require(nftGroup.delta == 0, "must be transfer");
+
+        // Must be controlled by the collection
+        require(nftGroup.control == collectionCtrlId, "wrong collection");
+
+        // NFT goes to new owner
+        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, "NFT not in output");
+        require(tx.outputs[0].scriptPubKey == new P2TR(newOwnerPk), "wrong dest");
+
+        require(checkSig(ownerSig, ownerPk), "bad owner sig");
+    }
+
+    // Burn an NFT (delta = -1)
+    function burn(bytes32 nftAssetId, signature ownerSig, pubkey ownerPk) {
+        let nftGroup = tx.assetGroups.find(nftAssetId);
+
+        // Must be existing asset
+        require(nftGroup.isFresh == 0, "cannot burn fresh asset");
+
+        // Must burn exactly 1 (negative delta)
+        require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, "must burn exactly 1");
+
+        require(checkSig(ownerSig, ownerPk), "bad owner sig");
+    }
+}

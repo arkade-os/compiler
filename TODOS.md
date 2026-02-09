@@ -3,9 +3,9 @@
 ## Current Status
 
 - **Build:** Passing
-- **Tests:** 67 passing, 0 failing
+- **Tests:** 81 passing, 0 failing
 - **Commits 1-6:** Complete (core primitives)
-- **Opcode Implementation:** Phase 1-6 Complete
+- **Opcode Implementation:** Phase 1-7 Complete
 
 ---
 
@@ -78,28 +78,20 @@ Comparing examples to `arkade-script-with-assets.md` and `ArkadeKitties.md`:
 | Group sum (outputs) | `tx.assetGroups[k].sumOutputs` | `OP_INSPECTASSETGROUPSUM k 1` | beacon |
 | Group count | `tx.assetGroups.length` | `OP_INSPECTNUMASSETGROUPS` | (parser ready) |
 
-### Specified in Docs but Missing from Examples
+### Now Fully Implemented & Demonstrated in Examples
 
-| Feature | API | Opcode | Notes |
-|---------|-----|--------|-------|
-| Find group by ID | `tx.assetGroups.find(assetId)` | `OP_FINDASSETGROUPBYASSETID` | Parser has `GroupFind`, not used in examples |
-| Group control | `group.control` | `OP_INSPECTASSETGROUPCTRL k` | Parser has `GroupProperty`, not fully tested |
-| Group delta | `group.delta` | `sumOutputs - sumInputs` via `OP_SUB64` | Parser ready, not used in examples |
-| Metadata hash | `group.metadataHash` | `OP_INSPECTASSETGROUPMETADATAHASH k` | Parser has `GroupProperty` |
-| Fresh check | `group.isFresh` | `OP_INSPECTASSETGROUPASSETID k` + `OP_TXID OP_EQUAL` | Not implemented |
-| Group asset ID | `tx.assetGroups[k].assetId` | `OP_INSPECTASSETGROUPASSETID k` | Not implemented |
+| Feature        | API                              | Opcode                                             | Used In                                   |
+|----------------|----------------------------------|----------------------------------------------------|-------------------------------------------|
+| Find group     | `tx.assetGroups.find(assetId)`   | `OP_FINDASSETGROUPBYASSETID`                       | controlled_mint, nft_mint, arkade_kitties |
+| Group control  | `group.control`                  | `OP_INSPECTASSETGROUPCTRL k`                       | controlled_mint, nft_mint, arkade_kitties |
+| Group delta    | `group.delta`                    | `sumOutputs - sumInputs` via `OP_SUB64`            | controlled_mint, nft_mint, arkade_kitties |
+| Metadata hash  | `group.metadataHash`             | `OP_INSPECTASSETGROUPMETADATAHASH k`               | arkade_kitties                            |
+| Fresh check    | `group.isFresh`                  | `OP_INSPECTASSETGROUPASSETID k` + `OP_TXHASH`      | nft_mint, arkade_kitties                  |
+| Group asset ID | `tx.assetGroups[k].assetId`      | `OP_INSPECTASSETGROUPASSETID k`                    | group_properties_test                     |
 
 ### Gap Summary
 
-The PLAN.md Commit 2 example (`controlled_mint.ark`) specifies:
-
-```solidity
-let tokenGroup = tx.assetGroups.find(tokenAssetId);
-require(tokenGroup.delta == amount, "delta mismatch");
-require(tokenGroup.control == ctrlAssetId, "wrong control");
-```
-
-But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead.
+All asset group features are now implemented and tested. The `examples/controlled_mint.ark` now uses the full asset group API including `find()`, `delta`, and `control` properties.
 
 ### Phase 4 — Streaming SHA256
 
@@ -124,21 +116,23 @@ But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead
 
 ---
 
+### Phase 7 — Group Properties & Examples
+
+- `group.isFresh` → `OP_INSPECTASSETGROUPASSETID` + `OP_DROP` + `OP_TXHASH` + `OP_EQUAL`
+- `group.assetId` → `OP_INSPECTASSETGROUPASSETID` (returns txid32, gidx_u16 tuple)
+- New example: `nft_mint.ark` (NFT minting with isFresh/delta/control)
+- New example: `arkade_kitties.ark` (breeding with metadataHash/isFresh/control)
+- Tests: `group_properties_test.rs` (6 tests), `arkade_kitties_test.rs` (9 tests)
+
+---
+
 ## Potential Future Work
 
-1. **Update examples** to demonstrate full asset group API:
-   - `tx.assetGroups.find(assetId)` for group discovery
-   - `group.control` for control asset verification
-   - `group.delta` for mint/burn detection
+All originally planned features are now complete. Potential extensions:
 
-2. **Implement missing group features**:
-   - `group.isFresh` → `OP_INSPECTASSETGROUPASSETID k` + `OP_TXHASH OP_EQUAL`
-   - `group.assetId` → returns `(txid32, gidx_u16)` tuple
-
-3. **Add ArkadeKitties-style contracts** to examples:
-   - Commit-reveal breeding with oracle randomness
-   - Metadata hash verification
-   - Control asset enforcement for species validation
+1. **Additional example contracts** for other use cases
+2. **Loop unrolling with isFresh** in for-loop contexts
+3. **Tuple destructuring** for `group.assetId` (txid, gidx) pairs
 
 ---
 
@@ -158,7 +152,9 @@ But the actual `examples/controlled_mint.ark` uses simpler asset lookups instead
 | Phase 4 | Streaming SHA256 | 4/4 |
 | Phase 5 | Conversion & Arithmetic | 4/4 |
 | Phase 6 | Crypto Opcodes | 3/3 |
-| **Total** | | **67/67** |
+| Phase 7 | Group Properties (isFresh, assetId) | 6/6 |
+| Phase 7 | ArkadeKitties Example | 9/9 |
+| **Total** | | **81/81** |
 
 ---
 

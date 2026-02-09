@@ -1,0 +1,701 @@
+{
+  "contractName": "ArkadeKitties",
+  "constructorInputs": [
+    {
+      "name": "speciesControlId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "speciesControlId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "oraclePk",
+      "type": "pubkey"
+    },
+    {
+      "name": "serverPk",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "breed",
+      "functionInputs": [
+        {
+          "name": "sireId",
+          "type": "bytes32"
+        },
+        {
+          "name": "dameId",
+          "type": "bytes32"
+        },
+        {
+          "name": "childId",
+          "type": "bytes32"
+        },
+        {
+          "name": "sireGenomeHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "dameGenomeHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "expectedChildMetadataHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "childOutputIdx",
+          "type": "int"
+        },
+        {
+          "name": "sireOutputIdx",
+          "type": "int"
+        },
+        {
+          "name": "dameOutputIdx",
+          "type": "int"
+        },
+        {
+          "name": "ctrlOutputIdx",
+          "type": "int"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<sireId_txid>",
+        "<sireId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<sireGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<sireGroup>",
+        "OP_INSPECTASSETGROUPMETADATAHASH",
+        "<sireGenomeHash>",
+        "OP_EQUAL",
+        "<sireGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<sireGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<dameId_txid>",
+        "<dameId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<dameGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<dameGroup>",
+        "OP_INSPECTASSETGROUPMETADATAHASH",
+        "<dameGenomeHash>",
+        "OP_EQUAL",
+        "<dameGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<dameGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<childId_txid>",
+        "<childId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<childGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "1",
+        "OP_EQUAL",
+        "<childGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<childGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "<childGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<childGroup>",
+        "OP_INSPECTASSETGROUPMETADATAHASH",
+        "<expectedChildMetadataHash>",
+        "OP_EQUAL",
+        "<speciesControlId_txid>",
+        "<speciesControlId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<ctrlGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<ctrlGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIG",
+        "<childOutputIdx>",
+        "<childId_txid>",
+        "<childId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<sireOutputIdx>",
+        "<sireId_txid>",
+        "<sireId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<dameOutputIdx>",
+        "<dameId_txid>",
+        "<dameId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<ctrlOutputIdx>",
+        "<speciesControlId_txid>",
+        "<speciesControlId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "breed",
+      "functionInputs": [
+        {
+          "name": "sireId",
+          "type": "bytes32"
+        },
+        {
+          "name": "dameId",
+          "type": "bytes32"
+        },
+        {
+          "name": "childId",
+          "type": "bytes32"
+        },
+        {
+          "name": "sireGenomeHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "dameGenomeHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "expectedChildMetadataHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "childOutputIdx",
+          "type": "int"
+        },
+        {
+          "name": "sireOutputIdx",
+          "type": "int"
+        },
+        {
+          "name": "dameOutputIdx",
+          "type": "int"
+        },
+        {
+          "name": "ctrlOutputIdx",
+          "type": "int"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 576 blocks"
+        }
+      ],
+      "asm": [
+        "<sireId_txid>",
+        "<sireId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<sireGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<sireGroup>",
+        "OP_INSPECTASSETGROUPMETADATAHASH",
+        "<sireGenomeHash>",
+        "OP_EQUAL",
+        "<sireGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<sireGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<dameId_txid>",
+        "<dameId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<dameGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<dameGroup>",
+        "OP_INSPECTASSETGROUPMETADATAHASH",
+        "<dameGenomeHash>",
+        "OP_EQUAL",
+        "<dameGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<dameGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<childId_txid>",
+        "<childId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<childGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "1",
+        "OP_EQUAL",
+        "<childGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<childGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "<childGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<childGroup>",
+        "OP_INSPECTASSETGROUPMETADATAHASH",
+        "<expectedChildMetadataHash>",
+        "OP_EQUAL",
+        "<speciesControlId_txid>",
+        "<speciesControlId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<ctrlGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<ctrlGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIG",
+        "<childOutputIdx>",
+        "<childId_txid>",
+        "<childId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<sireOutputIdx>",
+        "<sireId_txid>",
+        "<sireId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<dameOutputIdx>",
+        "<dameId_txid>",
+        "<dameId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<ctrlOutputIdx>",
+        "<speciesControlId_txid>",
+        "<speciesControlId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "576",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "kittyId",
+          "type": "bytes32"
+        },
+        {
+          "name": "newOwnerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "ownerPk",
+          "type": "pubkey"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<kittyId_txid>",
+        "<kittyId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<kittyGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "0",
+        "OP_EQUAL",
+        "<kittyGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<kittyGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<kittyGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "0",
+        "<kittyId_txid>",
+        "<kittyId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(newOwnerPk)>",
+        "OP_EQUAL",
+        "<ownerPk>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "kittyId",
+          "type": "bytes32"
+        },
+        {
+          "name": "newOwnerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "ownerPk",
+          "type": "pubkey"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 576 blocks"
+        }
+      ],
+      "asm": [
+        "<kittyId_txid>",
+        "<kittyId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<kittyGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "0",
+        "OP_EQUAL",
+        "<kittyGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<speciesControlId>",
+        "OP_EQUAL",
+        "<kittyGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<kittyGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "0",
+        "<kittyId_txid>",
+        "<kittyId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(newOwnerPk)>",
+        "OP_EQUAL",
+        "<ownerPk>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "576",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "// ArkadeKitties - Simplified Breeding Contract\n// Demonstrates commit-reveal breeding with oracle randomness\n//\n// Key features demonstrated:\n// - group.isFresh: Detect newly minted kitties\n// - group.control: Verify species membership\n// - group.metadataHash: Verify genome/attributes\n// - group.delta: Detect minting vs transfer\n//\n// Asset hierarchy:\n// - speciesControlId: The \"species\" control asset (e.g., \"ArkadeKitties\")\n// - Each kitty is a unique asset controlled by speciesControlId\n// - Breeding creates a new kitty with isFresh=1\n\noptions {\n    server = serverPk;\n    exit = 576;  // ~4 days for breeding timeout\n}\n\ncontract ArkadeKitties(\n    bytes32 speciesControlId,\n    pubkey oraclePk,\n    pubkey serverPk\n) {\n    // Breed two kitties to create a new one\n    // Parents must be species-controlled, child must be fresh\n    function breed(\n        bytes32 sireId,\n        bytes32 dameId,\n        bytes32 childId,\n        bytes32 sireGenomeHash,\n        bytes32 dameGenomeHash,\n        bytes32 expectedChildMetadataHash,\n        signature oracleSig,\n        int childOutputIdx,\n        int sireOutputIdx,\n        int dameOutputIdx,\n        int ctrlOutputIdx\n    ) {\n        // Verify sire is species-controlled with correct genome\n        let sireGroup = tx.assetGroups.find(sireId);\n        require(sireGroup.control == speciesControlId, \"sire not species-controlled\");\n        require(sireGroup.metadataHash == sireGenomeHash, \"sire genome mismatch\");\n        require(sireGroup.delta == 0, \"sire must be retained\");\n\n        // Verify dame is species-controlled with correct genome\n        let dameGroup = tx.assetGroups.find(dameId);\n        require(dameGroup.control == speciesControlId, \"dame not species-controlled\");\n        require(dameGroup.metadataHash == dameGenomeHash, \"dame genome mismatch\");\n        require(dameGroup.delta == 0, \"dame must be retained\");\n\n        // Verify child is fresh (new issuance in this tx)\n        let childGroup = tx.assetGroups.find(childId);\n        require(childGroup.isFresh == 1, \"child must be fresh\");\n        require(childGroup.delta == 1, \"must mint exactly 1 child\");\n        require(childGroup.control == speciesControlId, \"child not species-controlled\");\n        require(childGroup.metadataHash == expectedChildMetadataHash, \"child genome mismatch\");\n\n        // Species control must be retained (delta == 0)\n        let ctrlGroup = tx.assetGroups.find(speciesControlId);\n        require(ctrlGroup.delta == 0, \"species control must be retained\");\n\n        // Oracle signature validates the breeding (genome combination)\n        require(checkSig(oracleSig, oraclePk), \"invalid oracle sig\");\n\n        // Verify outputs contain all assets\n        require(tx.outputs[childOutputIdx].assets.lookup(childId) == 1, \"child not in output\");\n        require(tx.outputs[sireOutputIdx].assets.lookup(sireId) == 1, \"sire not returned\");\n        require(tx.outputs[dameOutputIdx].assets.lookup(dameId) == 1, \"dame not returned\");\n        require(tx.outputs[ctrlOutputIdx].assets.lookup(speciesControlId) == 1, \"ctrl not retained\");\n    }\n\n    // Transfer a kitty to a new owner\n    function transfer(bytes32 kittyId, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let kittyGroup = tx.assetGroups.find(kittyId);\n\n        // Must be existing kitty (not fresh)\n        require(kittyGroup.isFresh == 0, \"must be existing kitty\");\n\n        // Must be species-controlled\n        require(kittyGroup.control == speciesControlId, \"not species-controlled\");\n\n        // Must be transfer (delta == 0)\n        require(kittyGroup.delta == 0, \"must be transfer only\");\n\n        require(tx.outputs[0].assets.lookup(kittyId) == 1, \"kitty not in output\");\n        require(tx.outputs[0].scriptPubKey == new P2TR(newOwnerPk), \"wrong destination\");\n        require(checkSig(ownerSig, ownerPk), \"invalid owner sig\");\n    }\n}\n",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-02-08T23:18:11.844891+00:00"
+}

@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let files = vec![
         ("bare.ark", "bare.json"),
         ("htlc.ark", "htlc.json"),
-        ("fuji_safe.ark", "fuji_safe.json"),
+        ("arkade_kitties", "arkade_kitties.json")
     ];
     
     // Compile each file

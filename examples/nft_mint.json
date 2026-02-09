@@ -1,0 +1,548 @@
+{
+  "contractName": "NFTMint",
+  "constructorInputs": [
+    {
+      "name": "collectionCtrlId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "collectionCtrlId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "issuerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "serverPk",
+      "type": "pubkey"
+    }
+  ],
+  "functions": [
+    {
+      "name": "mint",
+      "functionInputs": [
+        {
+          "name": "nftAssetId",
+          "type": "bytes32"
+        },
+        {
+          "name": "recipientPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "issuerSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "1",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<nftGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<collectionCtrlId>",
+        "OP_EQUAL",
+        "<collectionCtrlId_txid>",
+        "<collectionCtrlId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<ctrlGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<ctrlGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "0",
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(recipientPk)>",
+        "OP_EQUAL",
+        "<issuerPk>",
+        "<issuerSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "mint",
+      "functionInputs": [
+        {
+          "name": "nftAssetId",
+          "type": "bytes32"
+        },
+        {
+          "name": "recipientPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "issuerSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 288 blocks"
+        }
+      ],
+      "asm": [
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "1",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<nftGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<collectionCtrlId>",
+        "OP_EQUAL",
+        "<collectionCtrlId_txid>",
+        "<collectionCtrlId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<ctrlGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<ctrlGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "0",
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(recipientPk)>",
+        "OP_EQUAL",
+        "<issuerPk>",
+        "<issuerSig>",
+        "OP_CHECKSIG",
+        "288",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "nftAssetId",
+          "type": "bytes32"
+        },
+        {
+          "name": "newOwnerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "ownerPk",
+          "type": "pubkey"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "0",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<nftGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<collectionCtrlId>",
+        "OP_EQUAL",
+        "0",
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(newOwnerPk)>",
+        "OP_EQUAL",
+        "<ownerPk>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "nftAssetId",
+          "type": "bytes32"
+        },
+        {
+          "name": "newOwnerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "ownerPk",
+          "type": "pubkey"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 288 blocks"
+        }
+      ],
+      "asm": [
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "0",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<nftGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "0",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPCTRL",
+        "<collectionCtrlId>",
+        "OP_EQUAL",
+        "0",
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new P2TR(newOwnerPk)>",
+        "OP_EQUAL",
+        "<ownerPk>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "288",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "burn",
+      "functionInputs": [
+        {
+          "name": "nftAssetId",
+          "type": "bytes32"
+        },
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "ownerPk",
+          "type": "pubkey"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "0",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "<nftGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "1",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "OP_GREATERTHANOREQUAL",
+        "<ownerPk>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "burn",
+      "functionInputs": [
+        {
+          "name": "nftAssetId",
+          "type": "bytes32"
+        },
+        {
+          "name": "ownerSig",
+          "type": "signature"
+        },
+        {
+          "name": "ownerPk",
+          "type": "pubkey"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 288 blocks"
+        }
+      ],
+      "asm": [
+        "<nftAssetId_txid>",
+        "<nftAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<nftGroup>",
+        "OP_INSPECTASSETGROUPASSETID",
+        "OP_DROP",
+        "OP_TXHASH",
+        "OP_EQUAL",
+        "0",
+        "OP_EQUAL",
+        "<nftGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "<nftGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "1",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "OP_GREATERTHANOREQUAL",
+        "<ownerPk>",
+        "<ownerSig>",
+        "OP_CHECKSIG",
+        "288",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "// NFT Minting Contract\n// Demonstrates isFresh and assetId properties for unique asset creation\n//\n// This contract enforces:\n// 1. Each NFT is fresh (newly created in this transaction)\n// 2. NFTs are controlled by a collection control asset\n// 3. Only one unit per NFT (delta = 1)\n//\n// Key group properties used:\n// - group.isFresh: Detects if asset was created in current transaction\n// - group.delta: Ensures exactly 1 unit is minted\n// - group.control: Verifies collection membership\n\noptions {\n    server = serverPk;\n    exit = 288;\n}\n\ncontract NFTMint(\n    bytes32 collectionCtrlId,\n    pubkey issuerPk,\n    pubkey serverPk\n) {\n    // Mint a new NFT: must be fresh with delta=1\n    function mint(bytes32 nftAssetId, pubkey recipientPk, signature issuerSig) {\n        let nftGroup = tx.assetGroups.find(nftAssetId);\n\n        // Must be a brand new asset (genesis in this tx)\n        require(nftGroup.isFresh == 1, \"must be fresh\");\n\n        // Must mint exactly 1 (NFT)\n        require(nftGroup.delta == 1, \"must mint exactly 1\");\n\n        // Must be controlled by the collection\n        require(nftGroup.control == collectionCtrlId, \"wrong collection\");\n\n        // Control asset must be retained (delta == 0)\n        let ctrlGroup = tx.assetGroups.find(collectionCtrlId);\n        require(ctrlGroup.delta == 0, \"control must be retained\");\n\n        // NFT goes to recipient\n        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new P2TR(recipientPk), \"wrong recipient\");\n\n        require(checkSig(issuerSig, issuerPk), \"bad issuer sig\");\n    }\n\n    // Transfer existing NFT (not fresh)\n    function transfer(bytes32 nftAssetId, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetId);\n\n        // Must NOT be fresh (existing asset)\n        require(nftGroup.isFresh == 0, \"cannot be fresh\");\n\n        // Must be a transfer (delta == 0)\n        require(nftGroup.delta == 0, \"must be transfer\");\n\n        // Must be controlled by the collection\n        require(nftGroup.control == collectionCtrlId, \"wrong collection\");\n\n        // NFT goes to new owner\n        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new P2TR(newOwnerPk), \"wrong dest\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n\n    // Burn an NFT (delta = -1)\n    function burn(bytes32 nftAssetId, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetId);\n\n        // Must be existing asset\n        require(nftGroup.isFresh == 0, \"cannot burn fresh asset\");\n\n        // Must burn exactly 1 (negative delta)\n        require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, \"must burn exactly 1\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n}\n",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-02-08T23:17:35.857687+00:00"
+}
