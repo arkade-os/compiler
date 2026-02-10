@@ -1462,6 +1462,16 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
             asm.push("OP_1".to_string()); // source=outputs
             asm.push("OP_INSPECTASSETGROUPSUM".to_string());
         }
+        "numInputs" => {
+            asm.push(format!("<{}>", group));
+            asm.push("OP_0".to_string()); // source=inputs
+            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+        }
+        "numOutputs" => {
+            asm.push(format!("<{}>", group));
+            asm.push("OP_1".to_string()); // source=outputs
+            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+        }
         "delta" => {
             // delta = sumOutputs - sumInputs
             asm.push(format!("<{}>", group));

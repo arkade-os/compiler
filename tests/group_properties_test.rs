@@ -306,3 +306,131 @@ fn test_all_group_properties() {
         asm_str
     );
 }
+
+/// Test group.numInputs emits OP_INSPECTASSETGROUPNUM with source=0
+#[test]
+fn test_group_num_inputs() {
+    let code = r#"
+        options {
+            server = serverKey;
+            exit = 144;
+        }
+
+        contract NumInputsTest(pubkey serverKey, bytes32 assetId) {
+            function checkInputCount(signature sig, pubkey pk) {
+                require(checkSig(sig, pk));
+                let group = tx.assetGroups.find(assetId);
+                require(group.numInputs >= 1, "need at least one input");
+            }
+        }
+    "#;
+
+    let result = compile(code);
+    assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
+
+    let output = result.unwrap();
+    let func = output
+        .functions
+        .iter()
+        .find(|f| f.name == "checkInputCount" && f.server_variant)
+        .expect("checkInputCount server variant not found");
+
+    let asm_str = func.asm.join(" ");
+
+    // numInputs emits: <group> OP_0 OP_INSPECTASSETGROUPNUM
+    assert!(
+        asm_str.contains("OP_INSPECTASSETGROUPNUM"),
+        "Expected OP_INSPECTASSETGROUPNUM for numInputs: {}",
+        asm_str
+    );
+    assert!(
+        asm_str.contains("OP_0"),
+        "Expected OP_0 (source=inputs) for numInputs: {}",
+        asm_str
+    );
+}
+
+/// Test group.numOutputs emits OP_INSPECTASSETGROUPNUM with source=1
+#[test]
+fn test_group_num_outputs() {
+    let code = r#"
+        options {
+            server = serverKey;
+            exit = 144;
+        }
+
+        contract NumOutputsTest(pubkey serverKey, bytes32 assetId) {
+            function checkOutputCount(signature sig, pubkey pk) {
+                require(checkSig(sig, pk));
+                let group = tx.assetGroups.find(assetId);
+                require(group.numOutputs >= 2, "need at least two outputs");
+            }
+        }
+    "#;
+
+    let result = compile(code);
+    assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
+
+    let output = result.unwrap();
+    let func = output
+        .functions
+        .iter()
+        .find(|f| f.name == "checkOutputCount" && f.server_variant)
+        .expect("checkOutputCount server variant not found");
+
+    let asm_str = func.asm.join(" ");
+
+    // numOutputs emits: <group> OP_1 OP_INSPECTASSETGROUPNUM
+    assert!(
+        asm_str.contains("OP_INSPECTASSETGROUPNUM"),
+        "Expected OP_INSPECTASSETGROUPNUM for numOutputs: {}",
+        asm_str
+    );
+    assert!(
+        asm_str.contains("OP_1"),
+        "Expected OP_1 (source=outputs) for numOutputs: {}",
+        asm_str
+    );
+}
+
+/// Test numInputs and numOutputs together
+#[test]
+fn test_group_num_io_together() {
+    let code = r#"
+        options {
+            server = serverKey;
+            exit = 144;
+        }
+
+        contract NumIOTest(pubkey serverKey, bytes32 assetId) {
+            function checkCounts(signature sig, pubkey pk) {
+                require(checkSig(sig, pk));
+                let group = tx.assetGroups.find(assetId);
+                require(group.numInputs >= 1, "need inputs");
+                require(group.numOutputs >= 1, "need outputs");
+                require(group.numOutputs >= group.numInputs, "outputs must be >= inputs");
+            }
+        }
+    "#;
+
+    let result = compile(code);
+    assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
+
+    let output = result.unwrap();
+    let func = output
+        .functions
+        .iter()
+        .find(|f| f.name == "checkCounts" && f.server_variant)
+        .expect("checkCounts server variant not found");
+
+    let asm_str = func.asm.join(" ");
+
+    // Should have multiple OP_INSPECTASSETGROUPNUM calls
+    let count = asm_str.matches("OP_INSPECTASSETGROUPNUM").count();
+    assert!(
+        count >= 2,
+        "Expected at least 2 OP_INSPECTASSETGROUPNUM calls, got {}: {}",
+        count,
+        asm_str
+    );
+}
