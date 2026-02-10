@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arkade Playground</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>Arkade Playground</h1>
+            <span class="version" id="compiler-version"></span>
+        </div>
+        <div class="header-right">
+            <select id="example-select">
+                <option value="">Load Example...</option>
+                <option value="bare">BareVTXO</option>
+                <option value="htlc">HTLC</option>
+                <option value="multisig">MultiSig</option>
+            </select>
+            <button id="compile-btn" class="btn-primary">
+                <i class="fas fa-play"></i> Compile
+            </button>
+            <a href="https://github.com/ArkadeOS/compiler" target="_blank" class="btn-icon">
+                <i class="fab fa-github"></i>
+            </a>
+        </div>
+    </header>
+
+    <main>
+        <div class="panel editor-panel">
+            <div class="panel-header">
+                <span><i class="fas fa-code"></i> Source Code</span>
+                <span class="file-name">contract.ark</span>
+            </div>
+            <div id="editor"></div>
+        </div>
+
+        <div class="divider" id="divider"></div>
+
+        <div class="panel output-panel">
+            <div class="panel-header">
+                <div class="output-tabs">
+                    <button class="tab active" data-tab="json">
+                        <i class="fas fa-file-code"></i> JSON Output
+                    </button>
+                    <button class="tab" data-tab="asm">
+                        <i class="fas fa-microchip"></i> Assembly
+                    </button>
+                    <button class="tab" data-tab="errors">
+                        <i class="fas fa-exclamation-triangle"></i> Errors
+                        <span class="error-count" id="error-count"></span>
+                    </button>
+                </div>
+                <button id="copy-btn" class="btn-icon" title="Copy to clipboard">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+            <div class="output-content">
+                <div id="json-output" class="output-tab active"></div>
+                <div id="asm-output" class="output-tab"></div>
+                <div id="errors-output" class="output-tab"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <span>Arkade Compiler <span id="footer-version"></span></span>
+        <span class="separator">|</span>
+        <span>Press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to compile</span>
+    </footer>
+
+    <!-- Monaco Editor -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+    <!-- Arkade Language Definition -->
+    <script src="arkade-language.js"></script>
+
+    <!-- Main Application -->
+    <script type="module" src="main.js"></script>
+</body>
+</html>
