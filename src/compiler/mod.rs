@@ -485,6 +485,12 @@ fn requirement_to_statement(req: &Requirement) -> RequireStatement {
                 message: None,
             }
         },
+        Requirement::CheckSigFromStack { .. } => {
+            RequireStatement {
+                req_type: "signatureFromStack".to_string(),
+                message: None,
+            }
+        },
         Requirement::CheckMultisig { .. } => {
             RequireStatement {
                 req_type: "multisig".to_string(),
@@ -607,6 +613,12 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIG".to_string());
+        },
+        Requirement::CheckSigFromStack { signature, pubkey, message } => {
+            asm.push(format!("<{}>", message));
+            asm.push(format!("<{}>", pubkey));
+            asm.push(format!("<{}>", signature));
+            asm.push("OP_CHECKSIGFROMSTACK".to_string());
         },
         Requirement::CheckMultisig { signatures, pubkeys } => {
             asm.push(format!("OP_{}", pubkeys.len()));
@@ -912,6 +924,12 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 asm.push(format!("<{}>", pubkey));
                 asm.push(format!("<{}>", signature));
                 asm.push("OP_CHECKSIG".to_string());
+            }
+            Requirement::CheckSigFromStack { signature, pubkey, message } => {
+                asm.push(format!("<{}>", message));
+                asm.push(format!("<{}>", pubkey));
+                asm.push(format!("<{}>", signature));
+                asm.push("OP_CHECKSIGFROMSTACK".to_string());
             }
             Requirement::CheckMultisig {
                 signatures,
@@ -1565,6 +1583,21 @@ fn substitute_requirement(req: &Requirement, index_var: &str, value_var: &str, k
             };
             let new_pk = pubkey.clone();
             Requirement::CheckSig { signature: new_sig, pubkey: new_pk }
+        }
+        Requirement::CheckSigFromStack { signature, pubkey, message } => {
+            // Substitute signature, pubkey, and message if they match loop variables
+            let new_sig = if signature == value_var {
+                if let Some(arr) = array_name {
+                    format!("{}_{}", arr, k)
+                } else {
+                    signature.clone()
+                }
+            } else {
+                signature.clone()
+            };
+            let new_pk = pubkey.clone();
+            let new_msg = message.clone();
+            Requirement::CheckSigFromStack { signature: new_sig, pubkey: new_pk, message: new_msg }
         }
         // Other requirement types don't need substitution
         _ => req.clone(),
