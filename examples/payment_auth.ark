@@ -1,0 +1,112 @@
+// Payment Authorization Contract
+// Authorization-based escrow with timelocked refunds using transaction introspection
+//
+// This contract implements a credit card-like payment flow:
+// 1. Customer locks funds in escrow
+// 2. Merchant can capture (authorize and settle) the payment
+// 3. If not captured, customer can refund after timelock expires
+//
+// The contract validates the full payout structure:
+// - Merchant receives payment minus processor fee
+// - Processor receives fee (basis points of payment)
+// - Customer receives change if overpayment
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract PaymentAuthorization(
+  // Server key for cooperative path
+  pubkey server,
+
+  // Payment terms
+  int invoiceAmount,
+  int feeRateBasisPoints,
+
+  // Output scripts (P2TR scriptPubKeys)
+  bytes merchantScript,
+  bytes processorScript,
+  bytes customerScript,
+
+  // Refund timelock (block height)
+  int refundBlockHeight,
+
+  // Authorization key
+  pubkey merchantPubkey
+) {
+
+  // Capture: merchant-authorized settlement
+  // Validates payout structure based on payment amount vs invoice
+  function capture(signature merchantSig) {
+    require(checkSig(merchantSig, merchantPubkey), "Invalid merchant signature");
+
+    // Get the current input value (amount locked in escrow)
+    let vtxoValue = tx.input.current.value;
+
+    // Case 1: Underpayment (vtxoValue < invoiceAmount)
+    // Pay merchant (minus fee) + processor fee
+    if (vtxoValue < invoiceAmount) {
+      require(vtxoValue >= 10000, "Payment below dust threshold");
+      require(tx.numOutputs == 2, "Expected 2 outputs for underpayment");
+
+      // Fee = vtxoValue * feeRateBasisPoints / 10000
+      let processorFee = (vtxoValue * feeRateBasisPoints) / 10000;
+      let merchantAmount = vtxoValue - processorFee;
+
+      require(tx.outputs[0].value == merchantAmount, "Merchant amount incorrect");
+      require(tx.outputs[0].scriptPubKey == merchantScript, "Merchant script incorrect");
+
+      require(tx.outputs[1].value == processorFee, "Processor fee incorrect");
+      require(tx.outputs[1].scriptPubKey == processorScript, "Processor script incorrect");
+    }
+
+    // Case 2: Exact payment (vtxoValue == invoiceAmount)
+    // Pay merchant (minus fee) + processor fee
+    if (vtxoValue == invoiceAmount) {
+      require(tx.numOutputs == 2, "Expected 2 outputs for exact payment");
+
+      // Fee = invoiceAmount * feeRateBasisPoints / 10000
+      let processorFee = (invoiceAmount * feeRateBasisPoints) / 10000;
+      let merchantAmount = invoiceAmount - processorFee;
+
+      require(tx.outputs[0].value == merchantAmount, "Merchant amount incorrect");
+      require(tx.outputs[0].scriptPubKey == merchantScript, "Merchant script incorrect");
+
+      require(tx.outputs[1].value == processorFee, "Processor fee incorrect");
+      require(tx.outputs[1].scriptPubKey == processorScript, "Processor script incorrect");
+    }
+
+    // Case 3: Overpayment (vtxoValue > invoiceAmount)
+    // Pay merchant (minus fee) + processor fee + customer change
+    if (vtxoValue > invoiceAmount) {
+      require(tx.numOutputs == 3, "Expected 3 outputs for overpayment");
+
+      // Fee = invoiceAmount * feeRateBasisPoints / 10000
+      let processorFee = (invoiceAmount * feeRateBasisPoints) / 10000;
+      let merchantAmount = invoiceAmount - processorFee;
+      let changeAmount = vtxoValue - invoiceAmount;
+
+      require(tx.outputs[0].value == merchantAmount, "Merchant amount incorrect");
+      require(tx.outputs[0].scriptPubKey == merchantScript, "Merchant script incorrect");
+
+      require(tx.outputs[1].value == processorFee, "Processor fee incorrect");
+      require(tx.outputs[1].scriptPubKey == processorScript, "Processor script incorrect");
+
+      require(tx.outputs[2].value == changeAmount, "Change amount incorrect");
+      require(tx.outputs[2].scriptPubKey == customerScript, "Change script incorrect");
+    }
+  }
+
+  // Refund: timelocked fallback back to customer
+  // Becomes valid after refundBlockHeight - effectively anyone-can-spend into customerScript
+  function refund() {
+    require(tx.time >= refundBlockHeight, "Refund timelock not reached");
+
+    let vtxoValue = tx.input.current.value;
+
+    require(tx.numOutputs == 1, "Expected 1 output for refund");
+    require(tx.outputs[0].value == vtxoValue, "Refund amount incorrect");
+    require(tx.outputs[0].scriptPubKey == customerScript, "Refund script incorrect");
+  }
+}
