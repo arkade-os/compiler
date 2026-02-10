@@ -665,22 +665,61 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", prop));
         },
         Expression::BinaryOp { left, op, right } => {
+            // Emit left operand
             generate_expression_asm(left, asm);
+
+            // Convert to u64le if needed (witness inputs arrive as CScriptNum)
+            if needs_u64_conversion(left) {
+                asm.push("OP_SCRIPTNUMTOLE64".to_string());
+            }
+
+            // Emit right operand
             generate_expression_asm(right, asm);
+
+            // Convert to u64le if needed
+            if needs_u64_conversion(right) {
+                asm.push("OP_SCRIPTNUMTOLE64".to_string());
+            }
+
+            // Emit opcode with OP_VERIFY for 64-bit ops (same as emit_binary_op_asm)
             match op.as_str() {
-                "+" => asm.push("OP_ADD64".to_string()),
-                "-" => asm.push("OP_SUB64".to_string()),
-                "*" => asm.push("OP_MUL64".to_string()),
-                "/" => asm.push("OP_DIV64".to_string()),
-                ">=" => asm.push("OP_GREATERTHANOREQUAL64".to_string()),
-                "<=" => asm.push("OP_LESSTHANOREQUAL64".to_string()),
-                ">" => asm.push("OP_GREATERTHAN64".to_string()),
-                "<" => asm.push("OP_LESSTHAN64".to_string()),
+                "+" => {
+                    asm.push("OP_ADD64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
+                "-" => {
+                    asm.push("OP_SUB64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
+                "*" => {
+                    asm.push("OP_MUL64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
+                "/" => {
+                    asm.push("OP_DIV64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
+                ">=" => {
+                    asm.push("OP_GREATERTHANOREQUAL64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
+                "<=" => {
+                    asm.push("OP_LESSTHANOREQUAL64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
+                ">" => {
+                    asm.push("OP_GREATERTHAN64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
+                "<" => {
+                    asm.push("OP_LESSTHAN64".to_string());
+                    asm.push("OP_VERIFY".to_string());
+                }
                 "==" => asm.push("OP_EQUAL".to_string()),
                 "!=" => {
                     asm.push("OP_EQUAL".to_string());
                     asm.push("OP_NOT".to_string());
-                },
+                }
                 _ => asm.push("OP_FALSE".to_string()),
             }
         },
