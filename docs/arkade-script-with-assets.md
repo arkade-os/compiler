@@ -2,7 +2,7 @@
 
 This document outlines the introspection opcodes available in Arkade Script for interacting with Arkade Assets, along with the high-level API structure and example contracts.
 
-For base opcodes (transaction introspection, arithmetic, cryptographic, etc.), see [arkd PR #577](https://github.com/arkade-os/arkd/pull/577).
+For base opcodes (transaction introspection, arithmetic, cryptographic, etc.), see [Introspector](https://github.com/ArkLabsHQ/introspector?tab=readme-ov-file#supported-opcodes).
 
 ---
 
@@ -10,64 +10,54 @@ For base opcodes (transaction introspection, arithmetic, cryptographic, etc.), s
 
 These opcodes provide access to the Arkade Asset V1 packet embedded in the transaction.
 
-All Asset IDs are represented as **two stack items**: `(txid32, gidx_u16)`.
+All Asset IDs are represented as **two stack items**: `(txid32, gidx_u16)`. `txid32` is the transaction ID of the genesis transaction where the asset was minted, and `gidx_u16` is the index of the asset group within that genesis transaction.
 
 ### Packet & Groups
 
 | Opcode | Stack Effect | Description |
 |--------|--------------|-------------|
-| `OP_INSPECTNUMASSETGROUPS` | → `K` | Number of groups in the Arkade Asset packet |
-| `OP_INSPECTASSETGROUPASSETID` `k` | → `txid32 gidx_u16` | Resolved AssetId of group `k`. Fresh groups use `this_txid`. |
-| `OP_INSPECTASSETGROUPCTRL` `k` | → `-1` \| `txid32 gidx_u16` | Control AssetId if present, else -1 |
-| `OP_FINDASSETGROUPBYASSETID` `txid32 gidx_u16` | → `-1` \| `k` | Find group index, or -1 if absent |
+| `OP_INSPECTNUMASSETGROUPS` | → `count_u16` | Number of groups in the Arkade Asset packet |
+| `OP_INSPECTASSETGROUPASSETID` `gidx_u16` | → `txid32 gidx_u16` | Resolved AssetId of group `gidx_u16`. Issuance group uses `this_txid` as its genesis transaction. |
+| `OP_INSPECTASSETGROUPCTRL` `gidx_u16` | → `-1` \| `txid32 gidx_u16` | Control AssetId if present, else -1 |
+| `OP_FINDASSETGROUPBYASSETID` `txid32 gidx_u16` | → `-1` \| `gidx_u16` | Find group index, or -1 if absent |
 
 ### Per-Group Metadata
 
 | Opcode | Stack Effect | Description |
 |--------|--------------|-------------|
-| `OP_INSPECTASSETGROUPMETADATAHASH` `k` | → `hash32` | Immutable metadata Merkle root (set at genesis) |
+| `OP_INSPECTASSETGROUPMETADATAHASH` `gidx_u16` | → `hash32` | Immutable metadata Merkle root (set at genesis) |
 
 ### Per-Group Inputs/Outputs
 
 | Opcode | Stack Effect | Description |
 |--------|--------------|-------------|
-| `OP_INSPECTASSETGROUPNUM` `k source_u8` | → `count_u16` or `in_u16 out_u16` | Count of inputs/outputs. `source`: 0=inputs, 1=outputs, 2=both |
-| `OP_INSPECTASSETGROUP` `k j source_u8` | → `type_u8 data... amount_u64` | j-th input/output of group `k`. `source`: 0=input, 1=output |
-| `OP_INSPECTASSETGROUPSUM` `k source_u8` | → `sum_u64` or `in_u64 out_u64` | Sum of amounts. `source`: 0=inputs, 1=outputs, 2=both |
+| `OP_INSPECTASSETGROUPNUM` `gidx_u16 source_u8` | → `count_u16` or `input_count_u16 output_count_u16` | Count of inputs/outputs. `source`: 0=inputs, 1=outputs, 2=both |
+| `OP_INSPECTASSETGROUP` `gidx_u16 j_u32 source_u8` | → `type_u8 data... amount_u64` | `j_u32`-th input/output of group `gidx_u16`. `source`: 0=input, 1=output |
+| `OP_INSPECTASSETGROUPSUM` `gidx_u16 source_u8` | → `sum_u64` or `input_sum_u64 output_sum_u64` | Sum of amounts. `source`: 0=inputs, 1=outputs, 2=both |
 
 **`OP_INSPECTASSETGROUP` return values by type:**
 
 | Type | `type_u8` | Additional Data |
 |------|-----------|-----------------|
 | LOCAL input | `0x01` | `input_index_u32 amount_u64` |
-| INTENT input | `0x02` | `txid_32 output_index_u32 amount_u64` |
+| INTENT input | `0x02` | `txid_32 (intent_txid)` |
 | LOCAL output | `0x01` | `output_index_u32 amount_u64` |
-| INTENT output | `0x02` | `output_index_u32 amount_u64` |
 
 ### Cross-Output (Multi-Asset per UTXO)
 
 | Opcode | Stack Effect | Description |
 |--------|--------------|-------------|
-| `OP_INSPECTOUTASSETCOUNT` `o` | → `n` | Number of asset entries assigned to output `o` |
-| `OP_INSPECTOUTASSETAT` `o t` | → `txid32 gidx_u16 amount_u64` | t-th asset at output `o` |
-| `OP_INSPECTOUTASSETLOOKUP` `o txid32 gidx_u16` | → `amount_u64` \| `-1` | Amount of asset at output `o`, or -1 if not found |
+| `OP_INSPECTOUTASSETCOUNT` `o_u32` | → `count_u32` | Number of asset entries assigned to output `o_u32` |
+| `OP_INSPECTOUTASSETAT` `o_u32 t_u32` | → `txid32 gidx_u16 amount_u64` | `t_u32`-th asset at output `o_u32` |
+| `OP_INSPECTOUTASSETLOOKUP` `o_u32 txid32 gidx_u16` | → `amount_u64` \| `-1` | Amount of asset `(txid32, gidx_u16)` at output `o_u32`, or -1 if not found |
 
 ### Cross-Input (Packet-Declared)
 
 | Opcode | Stack Effect | Description |
 |--------|--------------|-------------|
-| `OP_INSPECTINASSETCOUNT` `i` | → `n` | Number of assets declared for input `i` |
-| `OP_INSPECTINASSETAT` `i t` | → `txid32 gidx_u16 amount_u64` | t-th asset declared for input `i` |
-| `OP_INSPECTINASSETLOOKUP` `i txid32 gidx_u16` | → `amount_u64` \| `-1` | Declared amount for asset at input `i`, or -1 if not found |
-
-### Intent-Specific
-
-| Opcode | Stack Effect | Description |
-|--------|--------------|-------------|
-| `OP_INSPECTGROUPINTENTOUTCOUNT` `k` | → `n` | Number of INTENT outputs in group `k` |
-| `OP_INSPECTGROUPINTENTOUT` `k j` | → `output_index_u32 amount_u64` | j-th INTENT output in group `k` |
-| `OP_INSPECTGROUPINTENTINCOUNT` `k` | → `n` | Number of INTENT inputs in group `k` |
-| `OP_INSPECTGROUPINTENTIN` `k j` | → `txid_32 output_index_u32 amount_u64` | j-th INTENT input in group `k` |
+| `OP_INSPECTINASSETCOUNT` `i_u32` | → `count_u32` | Number of assets declared for input `i_u32` |
+| `OP_INSPECTINASSETAT` `i_u32 t_u32` | → `txid32 gidx_u16 amount_u64` | `t_u32`-th asset declared for input `i_u32` |
+| `OP_INSPECTINASSETLOOKUP` `i_u32 txid32 gidx_u16` | → `amount_u64` \| `-1` | Declared amount for asset `(txid32, gidx_u16)` at input `i_u32`, or -1 if not found |
 
 ---
 

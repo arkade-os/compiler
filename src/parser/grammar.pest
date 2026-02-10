@@ -310,8 +310,9 @@ asset_group_access = {
 }
 
 // Group property names — atomic to prevent partial matches
+// numInputs/numOutputs must come before sumInputs/sumOutputs to prevent partial matches
 group_property = @{
-    "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh"
 }
 
 // Group property comparison: variable.property op expression
@@ -404,7 +405,7 @@ tx_property_suffix = {
 
 // Asset group properties
 asset_group_property = {
-    "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
 }
 
 // This property access

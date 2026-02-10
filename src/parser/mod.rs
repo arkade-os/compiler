@@ -3,7 +3,7 @@ use pest_derive::Parser;
 use pest::iterators::{Pair, Pairs};
 use crate::models::{
     Contract, Function, Parameter, Requirement, Expression, Statement,
-    AssetLookupSource, GroupSumSource,
+    AssetLookupSource, GroupSumSource, GroupIOSource,
 };
 
 /// Pest parser generated from grammar.pest
@@ -1287,6 +1287,14 @@ fn parse_asset_group_access(pair: Pair<Rule>) -> Result<Requirement, String> {
                 index: Box::new(index),
                 source: GroupSumSource::Outputs,
             },
+            "numInputs" => Expression::GroupNumIO {
+                index: Box::new(index),
+                source: GroupIOSource::Inputs,
+            },
+            "numOutputs" => Expression::GroupNumIO {
+                index: Box::new(index),
+                source: GroupIOSource::Outputs,
+            },
             _ => Expression::GroupProperty {
                 group: format!("assetGroups[{}]", index_pair_to_string(&index)),
                 property,
@@ -1665,6 +1673,16 @@ fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
                     return Ok(Expression::GroupSum {
                         index: Box::new(index),
                         source: GroupSumSource::Outputs,
+                    });
+                } else if text.ends_with(".numInputs") {
+                    return Ok(Expression::GroupNumIO {
+                        index: Box::new(index),
+                        source: GroupIOSource::Inputs,
+                    });
+                } else if text.ends_with(".numOutputs") {
+                    return Ok(Expression::GroupNumIO {
+                        index: Box::new(index),
+                        source: GroupIOSource::Outputs,
                     });
                 }
             }

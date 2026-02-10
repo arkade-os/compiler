@@ -1,6 +1,6 @@
 use crate::models::{
     Requirement, Expression, Statement, ContractJson, AbiFunction, FunctionInput,
-    RequireStatement, CompilerInfo, AssetLookupSource, GroupSumSource, Function,
+    RequireStatement, CompilerInfo, AssetLookupSource, GroupSumSource, GroupIOSource, Function,
 };
 use crate::parser;
 use chrono::Utc;
@@ -59,6 +59,8 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
         Expression::GroupProperty { .. } => true,
         Expression::AssetGroupsLength => true,
         Expression::GroupSum { .. } => true,
+        Expression::GroupNumIO { .. } => true,
+        Expression::GroupIOAccess { .. } => true,
         Expression::CurrentInput(_) => true,
 
         // Recursive checks for compound expressions
@@ -788,6 +790,39 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.push("OP_INSPECTASSETGROUPSUM".to_string());
         },
+        Expression::GroupNumIO { index, source } => {
+            generate_expression_asm(index, asm);
+            match source {
+                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
+                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+            }
+            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+        },
+        Expression::GroupIOAccess { group_index, io_index, source, property } => {
+            generate_expression_asm(group_index, asm);
+            generate_expression_asm(io_index, asm);
+            match source {
+                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
+                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+            }
+            asm.push("OP_INSPECTASSETGROUP".to_string());
+            // Extract property if specified
+            // Stack after opcode: type_u8, data..., amount_u64 (top)
+            if let Some(prop) = property {
+                match prop.as_str() {
+                    "amount" => {
+                        // Keep only amount (top of stack)
+                        // Need to handle based on type, but for now just keep top
+                    },
+                    "type" => {
+                        // Drop everything except type
+                        asm.push("OP_DROP".to_string()); // amount
+                        asm.push("OP_DROP".to_string()); // data (varies)
+                    },
+                    _ => {}
+                }
+            }
+        },
     }
 }
 
@@ -1069,6 +1104,36 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 GroupSumSource::Outputs => asm.push("OP_1".to_string()),
             }
             asm.push("OP_INSPECTASSETGROUPSUM".to_string());
+        }
+        Expression::GroupNumIO { index, source } => {
+            emit_expression_asm(index, asm);
+            match source {
+                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
+                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+            }
+            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+        }
+        Expression::GroupIOAccess { group_index, io_index, source, property } => {
+            emit_expression_asm(group_index, asm);
+            emit_expression_asm(io_index, asm);
+            match source {
+                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
+                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+            }
+            asm.push("OP_INSPECTASSETGROUP".to_string());
+            // Extract property if specified
+            if let Some(prop) = property {
+                match prop.as_str() {
+                    "amount" => {
+                        // Amount is on top, no extraction needed for amount
+                    },
+                    "type" => {
+                        asm.push("OP_DROP".to_string()); // amount
+                        asm.push("OP_DROP".to_string()); // data
+                    },
+                    _ => {}
+                }
+            }
         }
         Expression::ArrayIndex { array, index } => {
             // TODO: Implement array indexing in Commit 6

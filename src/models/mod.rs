@@ -168,6 +168,15 @@ pub enum GroupSumSource {
     Outputs,
 }
 
+/// Source for per-group input/output access
+#[derive(Debug, Clone, PartialEq)]
+pub enum GroupIOSource {
+    /// inputs (source=0)
+    Inputs,
+    /// outputs (source=1)
+    Outputs,
+}
+
 /// Expression AST
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -232,6 +241,19 @@ pub enum Expression {
     GroupSum {
         index: Box<Expression>,
         source: GroupSumSource,
+    },
+    /// Asset group input/output count: tx.assetGroups[k].numInputs/numOutputs
+    GroupNumIO {
+        index: Box<Expression>,
+        source: GroupIOSource,
+    },
+    /// Per-group input/output access: tx.assetGroups[k].inputs[j] or tx.assetGroups[k].outputs[j]
+    /// Returns: type_u8, data..., amount_u64 based on input/output type
+    GroupIOAccess {
+        group_index: Box<Expression>,
+        io_index: Box<Expression>,
+        source: GroupIOSource,
+        property: Option<String>,  // Optional property like "amount", "type", "inputIndex", "outputIndex"
     },
     /// Array indexing (e.g., arr[i])
     ArrayIndex {
