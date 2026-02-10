@@ -1,6 +1,6 @@
 // Contract configuration options
 options {
-  // Server key parameter from contract parameters
+  // Server key 
   server = server;
   
   // Renewal timelock: 7 days (1008 blocks)

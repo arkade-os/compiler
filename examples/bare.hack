@@ -1,5 +1,5 @@
 # BareVTXO
-# Opcodes for ScriptWizard / BitAuth IDE
+#
 #
 
 # Function: spend (cooperative)

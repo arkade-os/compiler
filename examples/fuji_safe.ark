@@ -1,6 +1,6 @@
 // Contract configuration options
 options {
-  // Server key parameter from contract parameters
+  // Server key 
   server = treasuryPk;
   
   // Exit timelock: 24 hours (144 blocks)

@@ -1,5 +1,5 @@
 # ArkadeKitties
-# Opcodes for ScriptWizard / BitAuth IDE
+#
 #
 
 # Function: breed (cooperative)

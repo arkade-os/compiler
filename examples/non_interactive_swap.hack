@@ -1,5 +1,5 @@
 # NonInteractiveSwap
-# Opcodes for ScriptWizard / BitAuth IDE
+#
 #
 
 # Function: swap (cooperative)

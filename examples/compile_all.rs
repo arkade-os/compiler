@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Generate .hack file with opcodes for Bitcoin Script editors
         let mut hack_content = String::new();
         hack_content.push_str(&format!("# {}\n", output.name));
-        hack_content.push_str("# Opcodes for ScriptWizard / BitAuth IDE\n");
+        hack_content.push_str("#\n");
         hack_content.push_str("#\n\n");
 
         for func in &output.functions {

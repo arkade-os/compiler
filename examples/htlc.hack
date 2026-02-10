@@ -1,5 +1,5 @@
 # HTLC
-# Opcodes for ScriptWizard / BitAuth IDE
+#
 #
 
 # Function: together (cooperative)
