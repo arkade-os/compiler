@@ -1,0 +1,361 @@
+{
+  "contractName": "FujiSafe",
+  "constructorInputs": [
+    {
+      "name": "assetCommitmentHash",
+      "type": "bytes"
+    },
+    {
+      "name": "borrowAmount",
+      "type": "int"
+    },
+    {
+      "name": "borrowerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "treasuryPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "expirationTimeout",
+      "type": "int"
+    },
+    {
+      "name": "priceLevel",
+      "type": "int"
+    },
+    {
+      "name": "setupTimestamp",
+      "type": "int"
+    },
+    {
+      "name": "oraclePk",
+      "type": "pubkey"
+    },
+    {
+      "name": "assetPair",
+      "type": "bytes"
+    }
+  ],
+  "functions": [
+    {
+      "name": "claim",
+      "functionInputs": [
+        {
+          "name": "treasurySig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "older",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<expirationTimeout>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<treasuryPk>",
+        "<treasurySig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "claim",
+      "functionInputs": [
+        {
+          "name": "treasurySig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "older",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<expirationTimeout>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<treasuryPk>",
+        "<treasurySig>",
+        "OP_CHECKSIG",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "liquidate",
+      "functionInputs": [
+        {
+          "name": "currentPrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "treasurySig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "older",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<currentPrice>",
+        "<priceLevel>",
+        "OP_LESSTHAN",
+        "<setupTimestamp>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<sha256(assetPair)>",
+        "<message>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<treasuryPk>",
+        "<treasurySig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "liquidate",
+      "functionInputs": [
+        {
+          "name": "currentPrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "treasurySig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "older",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<currentPrice>",
+        "<priceLevel>",
+        "OP_LESSTHAN",
+        "<setupTimestamp>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<sha256(assetPair)>",
+        "<message>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<treasuryPk>",
+        "<treasurySig>",
+        "OP_CHECKSIG",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "redeem",
+      "functionInputs": [
+        {
+          "name": "borrowerSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<borrowerPk>",
+        "<borrowerSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "redeem",
+      "functionInputs": [
+        {
+          "name": "borrowerSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<borrowerPk>",
+        "<borrowerSig>",
+        "OP_CHECKSIG",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "renew",
+      "functionInputs": [
+        {
+          "name": "treasurySig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<tx.input.current.value>",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new FujiSafe(\n        assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,\n        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair\n      )>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<currentValue>",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<treasuryPk>",
+        "<treasurySig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "renew",
+      "functionInputs": [
+        {
+          "name": "treasurySig",
+          "type": "signature"
+        },
+        {
+          "name": "borrowerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 144 blocks"
+        }
+      ],
+      "asm": [
+        "<borrowerPk>",
+        "<borrowerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIG",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "// Contract configuration options\noptions {\n  // Server key \n  server = treasuryPk;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  exit = 144;\n}\n\n// Fuji Safe Contract\ncontract FujiSafe(\n  // The asset commitment hash (client-side validated)\n  bytes assetCommitmentHash,\n  // The amount being borrowed\n  int borrowAmount,\n  // The borrower's public key\n  pubkey borrowerPk,\n  // The treasury's public key\n  pubkey treasuryPk,\n  // The expiration timeout in blocks\n  int expirationTimeout,\n  // The price level for liquidation\n  int priceLevel,\n  // The setup timestamp\n  int setupTimestamp,\n  // The oracle's public key\n  pubkey oraclePk,\n  // The asset pair identifier\n  bytes assetPair\n) {\n  // Helper function to verify Fuji token burning via Taproot output\n  // Takes the pubkey to use as the internal key for the P2TR output\n  function verifyFujiBurning(pubkey internalKey) internal {\n    // In Taproot, we verify the output is a P2TR that commits to our asset\n    // Using the provided pubkey as the internal key\n    bytes p2trScript = new P2TR(internalKey, assetCommitmentHash);\n    \n    // Verify output 0 has the correct P2TR scriptPubKey and value\n    require(tx.outputs[0].scriptPubKey == p2trScript, \"P2TR output mismatch\");\n    require(tx.outputs[0].value == borrowAmount, \"Value mismatch\");\n  }\n\n  // Claim: Treasury can unlock all collateral after expiration when burning Fuji\n  function claim(signature treasurySig) {\n    // Check that expiration timeout has passed\n    require(tx.time >= expirationTimeout, \"Expiration timeout not reached\");\n    \n    // Verify burning of Fuji token using treasury key\n    verifyFujiBurning(treasuryPk);\n    \n    // Require treasury signature\n    require(checkSig(treasurySig, treasuryPk), \"Invalid treasury signature\");\n  }\n  \n  // Liquidation: Treasury can unlock all collateral with attestation price below the liquidation target\n  function liquidate(int currentPrice, signature oracleSig, signature treasurySig) {\n    // Check price is below liquidation threshold\n    require(currentPrice < priceLevel, \"Price not below liquidation threshold\");\n    \n    // Verify timestamp is after setup\n    require(tx.time >= setupTimestamp, \"Timestamp before setup\");\n    \n    // Create message for oracle signature verification\n    bytes message = sha256(assetPair);\n    \n    // Verify oracle signature on price data\n    require(checkSigFromStack(oracleSig, oraclePk, message), \"Invalid oracle signature\");\n    \n    // Verify burning of Fuji token using treasury key\n    verifyFujiBurning(treasuryPk);\n    \n    // Require treasury signature\n    require(checkSig(treasurySig, treasuryPk), \"Invalid treasury signature\");\n  }\n  \n  // Private Redemption: Only owner can unlock all collateral with key when burning Fuji\n  function redeem(signature borrowerSig) {\n    // Verify burning of Fuji token using borrower key\n    verifyFujiBurning(borrowerPk);\n    \n    // Require borrower signature\n    require(checkSig(borrowerSig, borrowerPk), \"Invalid borrower signature\");\n  }\n  \n  // Treasury Renew: Treasury can unilaterally renew the expiration time\n  function renew(signature treasurySig) {\n    int currentValue = tx.input.current.value;\n\n    // Recreate same contract with identical parameters\n    require(\n      tx.outputs[0].scriptPubKey == new FujiSafe(\n        assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,\n        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair\n      ),\n      \"contract mismatch\"\n    );\n    require(tx.outputs[0].value == currentValue, \"Value mismatch\");\n\n    // Require treasury signature\n    require(checkSig(treasurySig, treasuryPk), \"Invalid treasury signature\");\n  }\n} ",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-02-10T22:23:27.608512+00:00"
+}

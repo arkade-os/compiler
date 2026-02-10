@@ -1,0 +1,212 @@
+{
+  "contractName": "ThresholdOracle",
+  "constructorInputs": [
+    {
+      "name": "tokenAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "tokenAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "ctrlAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "ctrlAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "oracles_0",
+      "type": "pubkey"
+    },
+    {
+      "name": "oracles_1",
+      "type": "pubkey"
+    },
+    {
+      "name": "oracles_2",
+      "type": "pubkey"
+    },
+    {
+      "name": "threshold",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "attest",
+      "functionInputs": [
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "messageHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "recipientPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "oracleSigs_0",
+          "type": "signature"
+        },
+        {
+          "name": "oracleSigs_1",
+          "type": "signature"
+        },
+        {
+          "name": "oracleSigs_2",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<amount>",
+        "0",
+        "OP_GREATERTHAN",
+        "<0>",
+        "<messageHash>",
+        "<oracles_0>",
+        "<oracleSigs_0>",
+        "OP_CHECKSIGFROMSTACK",
+        "OP_IF",
+        "OP_ENDIF",
+        "<messageHash>",
+        "<oracles_1>",
+        "<oracleSigs_1>",
+        "OP_CHECKSIGFROMSTACK",
+        "OP_IF",
+        "OP_ENDIF",
+        "<messageHash>",
+        "<oracles_2>",
+        "<oracleSigs_2>",
+        "OP_CHECKSIGFROMSTACK",
+        "OP_IF",
+        "OP_ENDIF",
+        "<valid>",
+        "OP_GREATERTHANOREQUAL",
+        "<threshold>",
+        "0",
+        "<ctrlAssetId_txid>",
+        "<ctrlAssetId_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "0",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "1",
+        "<tokenAssetId_txid>",
+        "<tokenAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<amount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new SingleSig(recipientPk)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<new ThresholdOracle(tokenAssetId, ctrlAssetId, oracles, threshold)>",
+        "OP_EQUAL",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "attest",
+      "functionInputs": [
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "messageHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "recipientPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "oracleSigs_0",
+          "type": "signature"
+        },
+        {
+          "name": "oracleSigs_1",
+          "type": "signature"
+        },
+        {
+          "name": "oracleSigs_2",
+          "type": "signature"
+        },
+        {
+          "name": "recipientPkSig",
+          "type": "signature"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "1-of-1 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of 288 blocks"
+        }
+      ],
+      "asm": [
+        "<recipientPk>",
+        "<recipientPkSig>",
+        "OP_CHECKSIG",
+        "288",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "// Threshold Oracle Contract\n// Generic threshold signature verifier for multi-oracle attestations.\n//\n// This contract demonstrates:\n// - Array types in constructor params (pubkey[] oracles)\n// - Array types in function params (signature[] oracleSigs)\n// - Array indexing (oracles[i])\n// - Loop unrolling with array iteration\n// - Threshold counting for quorum verification\n//\n// N oracles, require M valid signatures over a message.\n\noptions {\n  server = serverPk;\n  exit = 288;\n}\n\ncontract ThresholdOracle(\n  bytes32 tokenAssetId,\n  bytes32 ctrlAssetId,\n  pubkey[] oracles,\n  int threshold\n) {\n  function attest(\n    int amount,\n    bytes32 messageHash,\n    pubkey recipientPk,\n    signature[] oracleSigs\n  ) {\n    require(amount > 0, \"zero\");\n\n    int valid = 0;\n    for (i, sig) in oracleSigs {\n      if (checkSigFromStack(sig, oracles[i], messageHash)) {\n        valid = valid + 1;\n      }\n    }\n    require(valid >= threshold, \"quorum failed\");\n\n    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, \"no ctrl\");\n    require(tx.outputs[1].assets.lookup(tokenAssetId) >= amount, \"short\");\n    require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk), \"wrong dest\");\n    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetId, ctrlAssetId, oracles, threshold), \"broken\");\n  }\n}\n",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-02-10T22:23:27.362271+00:00"
+}

@@ -1,0 +1,73 @@
+// Price Beacon Contract
+// On-chain price oracle using asset quantity as price.
+// The quantity of priceAssetId represents BTC/USD price in cents.
+//
+// Example: 10000000 = $100,000.00 per BTC
+//
+// Properties:
+// - Price is publicly visible on-chain
+// - Anyone can read via introspection (tx.inputs[i].assets.lookup)
+// - Passthrough ensures beacon survives every transaction
+// - Only oracle can update the price
+
+options {
+  server = oraclePk;
+  exit = 144;
+}
+
+contract PriceBeacon(
+  bytes32 priceAssetId,      // Asset whose quantity = price
+  pubkey oraclePk            // Oracle authorized to update
+) {
+  // Anyone can read price via passthrough
+  // Beacon must survive with same or greater asset quantity
+  function passthrough() {
+    // Preserve the beacon script
+    require(
+      tx.outputs[0].scriptPubKey == new PriceBeacon(priceAssetId, oraclePk),
+      "beacon script must survive"
+    );
+
+    // Preserve the price asset (quantity is the price)
+    int currentPrice = tx.inputs[0].assets.lookup(priceAssetId);
+    require(
+      tx.outputs[0].assets.lookup(priceAssetId) >= currentPrice,
+      "price asset must survive"
+    );
+  }
+
+  // Oracle updates the price by changing asset quantity
+  function update(signature oracleSig, int newPrice) {
+    require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
+    require(newPrice > 0, "price must be positive");
+
+    // Preserve the beacon script
+    require(
+      tx.outputs[0].scriptPubKey == new PriceBeacon(priceAssetId, oraclePk),
+      "beacon script must survive"
+    );
+
+    // Output must have newPrice as asset quantity
+    require(
+      tx.outputs[0].assets.lookup(priceAssetId) == newPrice,
+      "price not updated correctly"
+    );
+  }
+
+  // Oracle can migrate to new beacon (upgrade)
+  function migrate(signature oracleSig, pubkey newOraclePk) {
+    require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
+
+    int currentPrice = tx.inputs[0].assets.lookup(priceAssetId);
+
+    // Create new beacon with new oracle
+    require(
+      tx.outputs[0].scriptPubKey == new PriceBeacon(priceAssetId, newOraclePk),
+      "invalid new beacon"
+    );
+    require(
+      tx.outputs[0].assets.lookup(priceAssetId) == currentPrice,
+      "price must be preserved"
+    );
+  }
+}

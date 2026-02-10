@@ -12,7 +12,7 @@ options {
   exit = 144;
 }
 
-contract BareVTXO(
+contract SingleSig(
   pubkey user,
   pubkey server
 ) {
@@ -35,7 +35,7 @@ contract BareVTXO(
     let output = result.unwrap();
     
     // Verify contract name
-    assert_eq!(output.name, "BareVTXO");
+    assert_eq!(output.name, "SingleSig");
     
     // Verify parameters
     assert_eq!(output.parameters.len(), 2);

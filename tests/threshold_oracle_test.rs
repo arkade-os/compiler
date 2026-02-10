@@ -38,8 +38,8 @@ contract ThresholdOracle(
 
     require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
     require(tx.outputs[1].assets.lookup(tokenAssetId) >= amount, "short");
-    require(tx.outputs[1].scriptPubKey == new P2TR(recipientPk), "wrong dest");
-    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
+    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetId, ctrlAssetId, serverPk, oracles, threshold), "broken");
   }
 }
 "#;

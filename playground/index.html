@@ -14,12 +14,6 @@
             <span class="version" id="compiler-version"></span>
         </div>
         <div class="header-right">
-            <select id="example-select">
-                <option value="">Load Example...</option>
-                <option value="bare">BareVTXO</option>
-                <option value="htlc">HTLC</option>
-                <option value="multisig">MultiSig</option>
-            </select>
             <button id="compile-btn" class="btn-primary">
                 <i class="fas fa-play"></i> Compile
             </button>
@@ -30,10 +24,25 @@
     </header>
 
     <main>
+        <!-- File Explorer Sidebar -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <span><i class="fas fa-folder-tree"></i> Explorer</span>
+            </div>
+            <div class="file-tree" id="file-tree"></div>
+        </div>
+
+        <div class="sidebar-divider" id="sidebar-divider"></div>
+
         <div class="panel editor-panel">
             <div class="panel-header">
-                <span><i class="fas fa-code"></i> Source Code</span>
-                <span class="file-name">contract.ark</span>
+                <div class="file-tabs" id="file-tabs">
+                    <span class="file-tab active" data-file="main">
+                        <i class="fas fa-file-code"></i>
+                        <span class="tab-name">contract.ark</span>
+                    </span>
+                </div>
+                <span class="file-name" id="current-file">contract.ark</span>
             </div>
             <div id="editor"></div>
         </div>

@@ -6,7 +6,7 @@ use arkade_compiler::compile;
 fn main() -> Result<(), Box<dyn Error>> {
     // Define the Arkade Script files to compile
     let files = vec![
-        ("bare.ark", "bare.json", "bare.hack"),
+        ("single_sig.ark", "single_sig.json", "single_sig.hack"),
         ("htlc.ark", "htlc.json", "htlc.hack"),
         ("arkade_kitties.ark", "arkade_kitties.json", "arkade_kitties.hack"),
         ("non_interactive_swap.ark", "non_interactive_swap.json", "non_interactive_swap.hack")

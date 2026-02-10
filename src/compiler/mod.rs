@@ -91,8 +91,8 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
                 || expression_uses_introspection(point_q)
         }
 
-        // Check for P2TR constructor in Property strings (e.g., "new P2TR(...)")
-        Expression::Property(prop) => prop.starts_with("new P2TR"),
+        // Check for constructor expressions in Property strings (e.g., "new ContractName(...)")
+        Expression::Property(prop) => prop.starts_with("new "),
 
         // Non-introspection expressions
         Expression::Variable(_) => false,
