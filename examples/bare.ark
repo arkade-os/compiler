@@ -13,8 +13,7 @@ options {
 }
 
 contract BareVTXO(
-  pubkey user,
-  pubkey server
+  pubkey user
 ) {
   // Single signature spend path
   // This will automatically be compiled into:

@@ -17,7 +17,6 @@ options {
 contract PriceBeacon(
   bytes32 ctrlAssetId,
   pubkey oraclePk,
-  pubkey oracleServerPk,
   int numGroups
 ) {
   // Anyone can pass through - all groups must survive

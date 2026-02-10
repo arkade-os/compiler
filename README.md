@@ -6,7 +6,6 @@ Arkade Script supports advanced primitives for arithmetic, introspection, and as
 
 This language significantly lowers the barrier for Bitcoin-native app development, allowing contracts to be written in a structured, Ivy-like syntax and compiled into Arkade-native scripts.
 
-
 ## Basic Usage
 
 ```bash
@@ -46,8 +45,7 @@ Example output:
 {
   "contractName": "MyContract",
   "constructorInputs": [
-    { "name": "user", "type": "pubkey" },
-    { "name": "server", "type": "pubkey" }
+    { "name": "user", "type": "pubkey" }
   ],
   "functions": [
     {
@@ -105,7 +103,7 @@ Example output:
 ```solidity
 // Contract configuration options
 options {
-  // Server key parameter from contract parameters
+  // Server key 
   server = server;
   
   // Exit timelock: 24 hours (144 blocks)
@@ -113,8 +111,7 @@ options {
 }
 
 contract BareVTXO(
-  pubkey user,
-  pubkey server
+  pubkey user
 ) {
   // Single signature spend path
   // This will automatically be compiled into:
@@ -131,7 +128,7 @@ contract BareVTXO(
 ```solidity
 // Contract configuration options
 options {
-  // Server key parameter from contract parameters
+  // Server key 
   server = server;
   
   // Exit timelock: 24 hours (144 blocks)
@@ -142,8 +139,7 @@ contract HTLC(
   pubkey sender,
   pubkey receiver,
   bytes hash,
-  int refundTime,
-  pubkey server
+  int refundTime
 ) {
   // Cooperative close path
   function together(signature senderSig, signature receiverSig) {
@@ -306,8 +302,7 @@ options {
 
 // Contract declaration with parameters
 contract MyContract(
-  pubkey user,
-  pubkey server
+  pubkey user
 ) {
   // Function declarations (spending paths)
   function spend(signature userSig) {
@@ -322,7 +317,7 @@ The options block configures contract-wide settings:
 
 ```solidity
 options {
-  // Server key parameter from contract parameters
+  // Server key 
   server = server;
   
   // Renewal timelock: 7 days (1008 blocks)
@@ -465,8 +460,7 @@ TapLang compiles contracts to a JSON format that can be used with Bitcoin Taproo
 {
   "contractName": "MyContract",
   "constructorInputs": [
-    { "name": "user", "type": "pubkey" },
-    { "name": "server", "type": "pubkey" }
+    { "name": "user", "type": "pubkey" }
   ],
   "functions": [
     {

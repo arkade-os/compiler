@@ -18,8 +18,7 @@ options {
 
 contract NFTMint(
     bytes32 collectionCtrlId,
-    pubkey issuerPk,
-    pubkey serverPk
+    pubkey issuerPk
 ) {
     // Mint a new NFT: must be fresh with delta=1
     function mint(bytes32 nftAssetId, pubkey recipientPk, signature issuerSig) {

@@ -15,7 +15,6 @@ options {
 
 contract TokenVault(
   pubkey ownerPk,
-  pubkey serverPk,
   bytes32 tokenAssetId,
   bytes32 ctrlAssetId
 ) {

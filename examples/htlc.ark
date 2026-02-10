@@ -16,8 +16,7 @@ contract HTLC(
   pubkey sender,
   pubkey receiver,
   bytes hash,
-  int refundTime,
-  pubkey server
+  int refundTime
 ) {
   // Cooperative close path
   function together(signature senderSig, signature receiverSig) {

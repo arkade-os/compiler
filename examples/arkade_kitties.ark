@@ -19,8 +19,7 @@ options {
 
 contract ArkadeKitties(
     bytes32 speciesControlId,
-    pubkey oraclePk,
-    pubkey serverPk
+    pubkey oraclePk
 ) {
     // Breed two kitties to create a new one
     // Parents must be species-controlled, child must be fresh

@@ -18,7 +18,6 @@ options {
 contract ThresholdOracle(
   bytes32 tokenAssetId,
   bytes32 ctrlAssetId,
-  pubkey serverPk,
   pubkey[] oracles,
   int threshold
 ) {
