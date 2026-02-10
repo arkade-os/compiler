@@ -231,13 +231,12 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::variable_declaration => {
-            // Legacy typed variable declaration - treat like let binding
+            // Typed variable declaration - treat like let binding
             let mut inner = pair.into_inner();
             let _data_type = inner.next(); // Skip data type
             let name = inner.next().ok_or_else(|| "Parse error: Missing variable name".to_string())?.as_str().to_string();
             let value_pair = inner.next().ok_or_else(|| "Parse error: Missing value".to_string())?;
-            // For legacy variable declarations, wrap the expression
-            let value = Expression::Property(value_pair.as_str().to_string());
+            let value = parse_general_expression(value_pair)?;
 
             func.statements.push(Statement::LetBinding { name, value });
             Ok(())

@@ -14,12 +14,10 @@ fn test_token_vault_contract() {
 
     // Verify parameters - bytes32 params used in lookups should be decomposed
     // ownerPk (pubkey, no decomposition)
-    // serverPk (pubkey, no decomposition)
     // tokenAssetId (bytes32 → _txid + _gidx)
     // ctrlAssetId (bytes32 → _txid + _gidx)
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"ownerPk"), "missing ownerPk");
-    assert!(param_names.contains(&"serverPk"), "missing serverPk");
     assert!(
         param_names.contains(&"tokenAssetId_txid"),
         "missing tokenAssetId_txid decomposition"

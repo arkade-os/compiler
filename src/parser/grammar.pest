@@ -93,9 +93,9 @@ function_call_stmt = {
     identifier ~ "(" ~ (complex_expression ~ ("," ~ complex_expression)*)? ~ ")" ~ ";"
 }
 
-// Variable declaration (typed, legacy support)
+// Variable declaration (typed)
 variable_declaration = {
-    data_type ~ identifier ~ "=" ~ complex_expression ~ ";"
+    data_type ~ identifier ~ "=" ~ general_expression ~ ";"
 }
 
 // General expression with operator precedence
