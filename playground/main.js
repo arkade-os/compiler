@@ -1,6 +1,7 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
 import initWasm, { compile, version, validate, init as initPanicHook } from './pkg/arkade_compiler.js';
+import * as contracts from './contracts.js';
 
 // Projects: collections of related contracts
 const projects = {
@@ -8,400 +9,27 @@ const projects = {
         name: 'DEX',
         description: 'Decentralized Exchange with non-interactive swaps',
         files: {
-            'swap.ark': `// Non-Interactive Swap Contract
-// Allows users to exchange assets without requiring both parties to be online simultaneously.
-//
-// Paths:
-// - swap cooperative: takerSig + serverSig + OP_INSPECT* (trustless via introspection)
-// - swap exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin)
-// - cancel cooperative: makerSig + serverSig + after(expiration)
-// - cancel exit: makerSig + after(expiration) + CSV
-
-options {
-  server = serverPk;
-  exit = 144;
-}
-
-contract NonInteractiveSwap(
-  pubkey makerPk,
-  bytes32 offerAssetId,
-  int offerAmount,
-  bytes32 wantAssetId,
-  int wantAmount,
-  int expirationTime
-) {
-  // Swap: Any taker can fulfill
-  function swap(pubkey takerPk, signature takerSig) {
-    require(checkSig(takerSig, takerPk), "invalid taker signature");
-
-    // Output 0: maker receives wantAsset
-    require(
-      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,
-      "insufficient want asset for maker"
-    );
-    require(
-      tx.outputs[0].scriptPubKey == new P2TR(makerPk),
-      "output 0 not spendable by maker"
-    );
-
-    // Output 1: taker receives offerAsset
-    require(
-      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,
-      "insufficient offer asset for taker"
-    );
-    require(
-      tx.outputs[1].scriptPubKey == new P2TR(takerPk),
-      "output 1 not spendable by taker"
-    );
-  }
-
-  // Cancel: Maker reclaims after expiration
-  function cancel(signature makerSig) {
-    require(tx.time >= expirationTime, "swap not expired");
-    require(checkSig(makerSig, makerPk), "invalid maker signature");
-  }
-}`,
-            'beacon.ark': `// Price Beacon Contract
-// Read-only recursive covenant that ensures all asset groups survive intact.
-// Use cases: Price oracle beacons, passthrough covenants
-
-options {
-  server = oracleServerPk;
-  exit = 144;
-}
-
-contract PriceBeacon(
-  bytes32 ctrlAssetId,
-  pubkey oraclePk,
-  int numGroups
-) {
-  // Anyone can pass through - all groups must survive
-  function passthrough() {
-    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
-
-    for (k, group) in tx.assetGroups {
-      require(group.sumOutputs >= group.sumInputs, "drained");
-    }
-  }
-
-  // Oracle updates price (quantity encodes value)
-  function update(signature oracleSig) {
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
-    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
-    require(checkSig(oracleSig, oraclePk), "bad sig");
-  }
-}`
+            'swap.ark': contracts.non_interactive_swap,
+            'beacon.ark': contracts.beacon,
         }
     },
     stability: {
         name: 'Stability',
         description: 'Synthetic USD stablecoins with on-chain price beacon',
         files: {
-            'beacon.ark': `// Price Beacon Contract
-// On-chain price oracle using asset quantity as price.
-// Quantity of priceAssetId = BTC/USD price in cents.
-
-options {
-  server = oraclePk;
-  exit = 144;
-}
-
-contract PriceBeacon(
-  bytes32 priceAssetId,      // Asset whose quantity = price
-  pubkey oraclePk            // Oracle authorized to update
-) {
-  // Anyone can read price via passthrough
-  function passthrough() {
-    require(
-      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
-      "beacon must survive"
-    );
-    int currentPrice = tx.input.current.assets.lookup(priceAssetId);
-    require(
-      tx.outputs[0].assets.lookup(priceAssetId) >= currentPrice,
-      "price asset must survive"
-    );
-  }
-
-  // Oracle updates the price
-  function update(signature oracleSig, int newPrice) {
-    require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
-    require(newPrice > 0, "price must be positive");
-    require(
-      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
-      "beacon must survive"
-    );
-    require(
-      tx.outputs[0].assets.lookup(priceAssetId) == newPrice,
-      "price not updated"
-    );
-  }
-}`,
-            'offer.ark': `// Stability Offer Contract
-// Provider pre-commits liquidity to specific user.
-// Uses PriceBeacon for on-chain price discovery.
-
-options {
-  server = providerPk;
-  exit = 144;
-}
-
-contract StabilityOffer(
-  pubkey providerPk,
-  pubkey userPk,             // User this offer is for
-  bytes32 priceAssetId,
-  int entryPriceUSD,
-  int collateralBTC,
-  int maxExposureBTC
-) {
-  // Anyone can execute - offer pre-committed to userPk
-  function take(int userBTC) {
-    require(userBTC > 0, "zero deposit");
-    require(userBTC <= maxExposureBTC, "exceeds capacity");
-
-    int stableUSD = userBTC * entryPriceUSD / 100000000;
-    int totalCollateral = userBTC + collateralBTC;
-
-    require(
-      tx.outputs[0].scriptPubKey == new StablePosition(
-        userPk, providerPk, priceAssetId,
-        stableUSD, entryPriceUSD, totalCollateral
-      ),
-      "invalid position"
-    );
-    require(tx.outputs[0].value >= totalCollateral, "insufficient collateral");
-
-    int remaining = maxExposureBTC - userBTC;
-    if (remaining > 0) {
-      require(
-        tx.outputs[1].scriptPubKey == new StabilityOffer(
-          providerPk, userPk, priceAssetId,
-          entryPriceUSD, collateralBTC, remaining
-        ),
-        "invalid remaining offer"
-      );
-    }
-  }
-
-  function withdraw(signature providerSig) {
-    require(checkSig(providerSig, providerPk), "invalid signature");
-  }
-}`,
-            'position.ark': `// Stable Position Contract
-// User holds fixed USD value backed by BTC.
-// Reads price from PriceBeacon via introspection.
-
-options {
-  server = providerPk;
-  exit = 144;
-}
-
-contract StablePosition(
-  pubkey userPk,
-  pubkey providerPk,
-  bytes32 priceAssetId,      // PriceBeacon reference
-  int targetUSD,
-  int entryPrice,
-  int totalCollateral
-) {
-  // User settles - include beacon as input[1]
-  function settle(signature userSig) {
-    require(checkSig(userSig, userPk), "invalid user signature");
-
-    // Read price from beacon input
-    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
-    require(currentPrice > 0, "invalid price");
-
-    int userPayout = targetUSD * 100000000 / currentPrice;
-    require(userPayout <= totalCollateral, "insufficient collateral");
-
-    require(tx.outputs[0].value >= userPayout, "payout too low");
-    require(tx.outputs[0].scriptPubKey == new P2TR(userPk), "not user");
-
-    int providerPayout = totalCollateral - userPayout;
-    if (providerPayout > 546) {
-      require(tx.outputs[1].value >= providerPayout, "provider payout low");
-      require(tx.outputs[1].scriptPubKey == new P2TR(providerPk), "not provider");
-    }
-
-    // Beacon must survive
-    require(tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice, "beacon died");
-  }
-
-  // Transfer to new owner
-  function transfer(signature userSig, pubkey newUserPk) {
-    require(checkSig(userSig, userPk), "invalid signature");
-    require(
-      tx.outputs[0].scriptPubKey == new StablePosition(
-        newUserPk, providerPk, priceAssetId,
-        targetUSD, entryPrice, totalCollateral
-      ),
-      "invalid transfer"
-    );
-    require(tx.outputs[0].value >= totalCollateral, "collateral lost");
-  }
-
-  // Provider liquidates if undercollateralized
-  function liquidate(signature providerSig) {
-    require(checkSig(providerSig, providerPk), "invalid signature");
-
-    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
-    int userValueBTC = targetUSD * 100000000 / currentPrice;
-    int required = userValueBTC * 120 / 100;
-    require(totalCollateral < required, "not undercollateralized");
-
-    require(tx.outputs[0].value >= totalCollateral, "claim all");
-    require(tx.outputs[0].scriptPubKey == new P2TR(providerPk), "not provider");
-    require(tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice, "beacon died");
-  }
-
-  // Provider tops up collateral
-  function topUp(signature providerSig, int additionalBTC) {
-    require(checkSig(providerSig, providerPk), "invalid signature");
-    require(additionalBTC > 0, "must add");
-
-    int newCollateral = totalCollateral + additionalBTC;
-    require(
-      tx.outputs[0].scriptPubKey == new StablePosition(
-        userPk, providerPk, priceAssetId,
-        targetUSD, entryPrice, newCollateral
-      ),
-      "invalid top-up"
-    );
-    require(tx.outputs[0].value >= newCollateral, "insufficient");
-  }
-}`
+            'beacon.ark': contracts.price_beacon,
+            'offer.ark': contracts.stability_offer,
+            'position.ark': contracts.stable_position,
         }
     }
 };
 
 // Single file examples
 const examples = {
-    bare: {
-        name: 'BareVTXO',
-        code: `// Contract configuration options
-options {
-  // Server key
-  server = server;
-
-  // Renewal timelock: 7 days (1008 blocks)
-  renew = 1008;
-
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
-contract BareVTXO(
-  pubkey user
-) {
-  // Single signature spend path
-  // This will automatically be compiled into:
-  // 1. Cooperative path: checkSig(user) && checkSig(server)
-  // 2. Exit path: checkSig(user) && after 144 blocks
-  function spend(signature userSig) {
-    require(checkSig(userSig, user));
-  }
-}`
-    },
-
-    htlc: {
-        name: 'HTLC',
-        code: `// Hash Time-Locked Contract (HTLC)
-options {
-  server = server;
-  exit = 144;
-}
-
-contract HTLC(
-  pubkey sender,
-  pubkey receiver,
-  bytes32 hashLock,
-  int timeout
-) {
-  // Receiver claims with preimage
-  function claim(signature receiverSig, bytes32 preimage) {
-    require(sha256(preimage) == hashLock);
-    require(checkSig(receiverSig, receiver));
-  }
-
-  // Sender refunds after timeout
-  function refund(signature senderSig) {
-    require(tx.time >= timeout);
-    require(checkSig(senderSig, sender));
-  }
-}`
-    },
-
-    multisig: {
-        name: 'MultiSig',
-        code: `// 2-of-3 MultiSig Vault
-options {
-  server = server;
-  exit = 288;
-}
-
-contract MultiSigVault(
-  pubkey owner1,
-  pubkey owner2,
-  pubkey owner3
-) {
-  // Spend requires 2 of 3 owner signatures
-  function spend(signature sig1, signature sig2) {
-    require(checkMultisig([sig1, sig2], [owner1, owner2, owner3]));
-  }
-}`
-    },
-
-    swap: {
-        name: 'Non-Interactive Swap',
-        code: `// Non-Interactive Swap Contract
-// Allows users to exchange assets without requiring both parties to be online simultaneously.
-
-options {
-  server = serverPk;
-  exit = 144;
-}
-
-contract NonInteractiveSwap(
-  pubkey makerPk,
-  bytes32 offerAssetId,
-  int offerAmount,
-  bytes32 wantAssetId,
-  int wantAmount,
-  int expirationTime
-) {
-  // Swap: Any taker can fulfill
-  function swap(pubkey takerPk, signature takerSig) {
-    require(checkSig(takerSig, takerPk), "invalid taker signature");
-
-    // Output 0: maker receives wantAsset
-    require(
-      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,
-      "insufficient want asset for maker"
-    );
-    require(
-      tx.outputs[0].scriptPubKey == new P2TR(makerPk),
-      "output 0 not spendable by maker"
-    );
-
-    // Output 1: taker receives offerAsset
-    require(
-      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,
-      "insufficient offer asset for taker"
-    );
-    require(
-      tx.outputs[1].scriptPubKey == new P2TR(takerPk),
-      "output 1 not spendable by taker"
-    );
-  }
-
-  // Cancel: Maker reclaims after expiration
-  function cancel(signature makerSig) {
-    require(tx.time >= expirationTime, "swap not expired");
-    require(checkSig(makerSig, makerPk), "invalid maker signature");
-  }
-}`
-    }
+    single_sig: { name: 'SingleSig', code: contracts.single_sig },
+    htlc: { name: 'HTLC', code: contracts.htlc },
+    fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
+    swap: { name: 'Non-Interactive Swap', code: contracts.non_interactive_swap },
 };
 
 // Global state
@@ -412,6 +40,359 @@ let currentFile = null;
 let openTabs = [];
 let fileContents = {}; // Cache of file contents for each open file
 let expandedFolders = new Set(); // Track which folders are expanded
+
+// ── localStorage persistence ──────────────────────────────────────
+const STORAGE_KEY = 'arkade-playground';
+
+function saveToStorage() {
+    const data = {
+        projects: {},
+        examples: {}
+    };
+    // Only save user-created / modified entries
+    for (const [id, proj] of Object.entries(projects)) {
+        data.projects[id] = { name: proj.name, description: proj.description || '', files: proj.files };
+    }
+    for (const [id, ex] of Object.entries(examples)) {
+        data.examples[id] = { name: ex.name, code: ex.code };
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function loadFromStorage() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (data.projects) {
+            for (const [id, proj] of Object.entries(data.projects)) {
+                projects[id] = proj;
+            }
+        }
+        if (data.examples) {
+            for (const [id, ex] of Object.entries(data.examples)) {
+                examples[id] = ex;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load from localStorage:', e);
+    }
+}
+
+// ── File management helpers ───────────────────────────────────────
+
+function generateId(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/(^_|_$)/g, '') || 'untitled';
+}
+
+function uniqueId(base, existing) {
+    if (!(base in existing)) return base;
+    let i = 1;
+    while (`${base}_${i}` in existing) i++;
+    return `${base}_${i}`;
+}
+
+function createFolder(name) {
+    const id = uniqueId(generateId(name), projects);
+    projects[id] = { name, description: '', files: {} };
+    expandedFolders.add(id);
+    saveToStorage();
+    renderFileTree();
+    return id;
+}
+
+function createFileInFolder(folderId, fileName) {
+    if (!fileName.endsWith('.ark')) fileName += '.ark';
+    const project = projects[folderId];
+    if (!project) return;
+    if (project.files[fileName]) return; // already exists
+    const defaultCode = `// ${fileName}\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract MyContract(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
+    project.files[fileName] = defaultCode;
+    saveToStorage();
+    selectProjectFile(folderId, fileName);
+}
+
+function createStandaloneFile(name) {
+    if (!name.endsWith('.ark')) name += '.ark';
+    const displayName = name.replace(/\.ark$/, '');
+    const id = uniqueId(generateId(displayName), examples);
+    const defaultCode = `// ${displayName} Contract\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract ${displayName}(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
+    examples[id] = { name: displayName, code: defaultCode };
+    expandedFolders.add('_examples');
+    saveToStorage();
+    selectExample(id);
+}
+
+function renameFolder(folderId, newName) {
+    const project = projects[folderId];
+    if (!project) return;
+    project.name = newName;
+    saveToStorage();
+    renderFileTree();
+}
+
+function renameFileInFolder(folderId, oldName, newName) {
+    if (!newName.endsWith('.ark')) newName += '.ark';
+    const project = projects[folderId];
+    if (!project || !project.files[oldName] || oldName === newName) return;
+    if (project.files[newName]) return; // target exists
+
+    project.files[newName] = project.files[oldName];
+    delete project.files[oldName];
+
+    // Update tabs and cache
+    const oldTabId = `${folderId}:${oldName}`;
+    const newTabId = `${folderId}:${newName}`;
+    const tab = openTabs.find(t => t.id === oldTabId);
+    if (tab) {
+        tab.id = newTabId;
+        tab.file = newName;
+        tab.name = newName;
+        if (fileContents[oldTabId] !== undefined) {
+            fileContents[newTabId] = fileContents[oldTabId];
+            delete fileContents[oldTabId];
+        }
+    }
+    if (currentProject === folderId && currentFile === oldName) {
+        currentFile = newName;
+    }
+
+    saveToStorage();
+    updateFileTabs();
+    renderFileTree();
+    updateCurrentFileName(newName);
+}
+
+function renameExample(exampleId, newName) {
+    const example = examples[exampleId];
+    if (!example) return;
+    example.name = newName;
+
+    // Update tab display name
+    const tab = openTabs.find(t => t.id === exampleId);
+    if (tab) {
+        tab.name = `${newName}.ark`;
+    }
+    if (currentProject === null && currentFile === exampleId) {
+        updateCurrentFileName(`${newName}.ark`);
+    }
+
+    saveToStorage();
+    updateFileTabs();
+    renderFileTree();
+}
+
+function deleteFolder(folderId) {
+    if (!projects[folderId]) return;
+    // Close all tabs from this folder
+    const tabsToClose = openTabs.filter(t => t.project === folderId).map(t => t.id);
+    for (const tabId of tabsToClose) {
+        closeTab(tabId);
+    }
+    delete projects[folderId];
+    expandedFolders.delete(folderId);
+    saveToStorage();
+    renderFileTree();
+}
+
+function deleteFileInFolder(folderId, fileName) {
+    const project = projects[folderId];
+    if (!project || !project.files[fileName]) return;
+    const tabId = `${folderId}:${fileName}`;
+    closeTab(tabId);
+    delete project.files[fileName];
+    saveToStorage();
+    renderFileTree();
+}
+
+function deleteExample(exampleId) {
+    if (!examples[exampleId]) return;
+    closeTab(exampleId);
+    delete examples[exampleId];
+    saveToStorage();
+    renderFileTree();
+}
+
+// ── Context menu ──────────────────────────────────────────────────
+
+let contextMenuTarget = null;
+
+function showContextMenu(e, items) {
+    e.preventDefault();
+    const menu = document.getElementById('context-menu');
+    let html = '';
+    for (const item of items) {
+        if (item.separator) {
+            html += '<div class="context-menu-separator"></div>';
+        } else {
+            const cls = item.danger ? 'context-menu-item danger' : 'context-menu-item';
+            html += `<div class="${cls}" data-action="${item.action}">
+                <i class="fas ${item.icon}"></i> ${item.label}
+            </div>`;
+        }
+    }
+    menu.innerHTML = html;
+
+    // Position
+    menu.style.left = `${e.clientX}px`;
+    menu.style.top = `${e.clientY}px`;
+    menu.classList.add('visible');
+
+    // Ensure menu stays within viewport
+    requestAnimationFrame(() => {
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+        }
+    });
+
+    // Action handlers
+    menu.querySelectorAll('.context-menu-item').forEach(el => {
+        el.addEventListener('click', () => {
+            hideContextMenu();
+            handleContextAction(el.dataset.action);
+        });
+    });
+}
+
+function hideContextMenu() {
+    document.getElementById('context-menu').classList.remove('visible');
+}
+
+function handleContextAction(action) {
+    const t = contextMenuTarget;
+    contextMenuTarget = null;
+    if (!t) return;
+
+    switch (action) {
+        case 'new-file-in-folder':
+            promptNewFileInFolder(t.folderId);
+            break;
+        case 'rename-folder':
+            startInlineRename('folder', t.folderId);
+            break;
+        case 'delete-folder':
+            if (confirm(`Delete folder "${projects[t.folderId]?.name}" and all its files?`)) {
+                deleteFolder(t.folderId);
+            }
+            break;
+        case 'rename-file':
+            if (t.folderId) {
+                startInlineRename('project-file', t.folderId, t.fileName);
+            } else {
+                startInlineRename('example', t.exampleId);
+            }
+            break;
+        case 'delete-file':
+            if (t.folderId) {
+                if (confirm(`Delete "${t.fileName}"?`)) {
+                    deleteFileInFolder(t.folderId, t.fileName);
+                }
+            } else {
+                if (confirm(`Delete "${examples[t.exampleId]?.name}.ark"?`)) {
+                    deleteExample(t.exampleId);
+                }
+            }
+            break;
+        case 'new-file':
+            promptNewStandaloneFile();
+            break;
+        case 'new-folder':
+            promptNewFolder();
+            break;
+    }
+}
+
+// ── Inline rename ─────────────────────────────────────────────────
+
+function startInlineRename(type, id, fileName) {
+    renderFileTree(); // reset any existing rename inputs
+    let el;
+
+    if (type === 'folder') {
+        el = document.querySelector(`.tree-folder[data-folder="${id}"]`);
+        if (!el) return;
+        const currentName = projects[id]?.name || id;
+        const input = document.createElement('input');
+        input.className = 'tree-rename-input';
+        input.value = currentName;
+        el.textContent = '';
+        el.appendChild(input);
+        input.focus();
+        input.select();
+        const commit = () => {
+            const val = input.value.trim();
+            if (val && val !== currentName) renameFolder(id, val);
+            else renderFileTree();
+        };
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { input.value = currentName; input.blur(); }
+        });
+    } else if (type === 'project-file') {
+        el = document.querySelector(`.tree-item[data-project="${id}"][data-file="${fileName}"]`);
+        if (!el) return;
+        const input = document.createElement('input');
+        input.className = 'tree-rename-input';
+        input.value = fileName;
+        el.textContent = '';
+        el.appendChild(input);
+        input.focus();
+        input.select();
+        const commit = () => {
+            let val = input.value.trim();
+            if (val && val !== fileName) renameFileInFolder(id, fileName, val);
+            else renderFileTree();
+        };
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { input.value = fileName; input.blur(); }
+        });
+    } else if (type === 'example') {
+        el = document.querySelector(`.tree-item[data-example="${id}"]`);
+        if (!el) return;
+        const currentName = examples[id]?.name || id;
+        const input = document.createElement('input');
+        input.className = 'tree-rename-input';
+        input.value = currentName;
+        el.textContent = '';
+        el.appendChild(input);
+        input.focus();
+        input.select();
+        const commit = () => {
+            const val = input.value.trim();
+            if (val && val !== currentName) renameExample(id, val);
+            else renderFileTree();
+        };
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { input.value = currentName; input.blur(); }
+        });
+    }
+}
+
+// ── Prompt dialogs for new items ──────────────────────────────────
+
+function promptNewFolder() {
+    const name = prompt('New folder name:');
+    if (name && name.trim()) createFolder(name.trim());
+}
+
+function promptNewFileInFolder(folderId) {
+    const name = prompt('New file name (e.g. contract.ark):');
+    if (name && name.trim()) createFileInFolder(folderId, name.trim());
+}
+
+function promptNewStandaloneFile() {
+    const name = prompt('New file name (e.g. MyContract.ark):');
+    if (name && name.trim()) createStandaloneFile(name.trim());
+}
 
 // Initialize WASM module
 async function initCompiler() {
@@ -481,6 +462,25 @@ function renderFileTree() {
             const folderId = folder.dataset.folder;
             toggleFolder(folderId);
         });
+        // Right-click context menu for folders
+        folder.addEventListener('contextmenu', (e) => {
+            e.stopPropagation();
+            const folderId = folder.dataset.folder;
+            if (folderId === '_examples') {
+                contextMenuTarget = { type: 'examples-folder' };
+                showContextMenu(e, [
+                    { action: 'new-file', icon: 'fa-file-circle-plus', label: 'New File' }
+                ]);
+            } else {
+                contextMenuTarget = { type: 'folder', folderId };
+                showContextMenu(e, [
+                    { action: 'new-file-in-folder', icon: 'fa-file-circle-plus', label: 'New File' },
+                    { separator: true },
+                    { action: 'rename-folder', icon: 'fa-pen', label: 'Rename' },
+                    { action: 'delete-folder', icon: 'fa-trash', label: 'Delete', danger: true }
+                ]);
+            }
+        });
     });
 
     container.querySelectorAll('.tree-item[data-project]').forEach(item => {
@@ -488,12 +488,30 @@ function renderFileTree() {
             e.stopPropagation();
             selectProjectFile(item.dataset.project, item.dataset.file);
         });
+        // Right-click context menu for project files
+        item.addEventListener('contextmenu', (e) => {
+            e.stopPropagation();
+            contextMenuTarget = { type: 'project-file', folderId: item.dataset.project, fileName: item.dataset.file };
+            showContextMenu(e, [
+                { action: 'rename-file', icon: 'fa-pen', label: 'Rename' },
+                { action: 'delete-file', icon: 'fa-trash', label: 'Delete', danger: true }
+            ]);
+        });
     });
 
     container.querySelectorAll('.tree-item[data-example]').forEach(item => {
         item.addEventListener('click', (e) => {
             e.stopPropagation();
             selectExample(item.dataset.example);
+        });
+        // Right-click context menu for example files
+        item.addEventListener('contextmenu', (e) => {
+            e.stopPropagation();
+            contextMenuTarget = { type: 'example', exampleId: item.dataset.example };
+            showContextMenu(e, [
+                { action: 'rename-file', icon: 'fa-pen', label: 'Rename' },
+                { action: 'delete-file', icon: 'fa-trash', label: 'Delete', danger: true }
+            ]);
         });
     });
 }
@@ -569,7 +587,7 @@ function selectExample(exampleId) {
     doCompile();
 }
 
-// Save current file content to cache
+// Save current file content to cache and source data
 function saveCurrentFile() {
     if (!editor) return;
 
@@ -581,7 +599,16 @@ function saveCurrentFile() {
     }
 
     if (tabId) {
-        fileContents[tabId] = editor.getValue();
+        const content = editor.getValue();
+        fileContents[tabId] = content;
+
+        // Persist back to source data
+        if (currentProject && projects[currentProject]) {
+            projects[currentProject].files[currentFile] = content;
+        } else if (currentFile && examples[currentFile]) {
+            examples[currentFile].code = content;
+        }
+        saveToStorage();
     }
 }
 
@@ -661,7 +688,7 @@ function closeTab(tabId) {
             return;
         } else {
             // No tabs left, load default
-            selectExample('bare');
+            selectExample('single_sig');
             return;
         }
     }
@@ -717,7 +744,7 @@ function initMonaco() {
 
         // Create editor
         editor = monaco.editor.create(document.getElementById('editor'), {
-            value: examples.bare.code,
+            value: examples.single_sig.code,
             language: 'arkade',
             theme: 'arkade-dark',
             automaticLayout: true,
@@ -978,6 +1005,9 @@ function initSidebarResizer() {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    // Load user data from localStorage
+    loadFromStorage();
+
     // Expand Examples folder by default
     expandedFolders.add('_examples');
 
@@ -985,9 +1015,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderFileTree();
 
     // Set initial file state
-    currentFile = 'bare';
-    openTabs.push({ id: 'bare', project: null, file: 'bare', name: 'BareVTXO.ark' });
-    fileContents['bare'] = examples.bare.code;
+    currentFile = 'single_sig';
+    openTabs.push({ id: 'single_sig', project: null, file: 'single_sig', name: 'SingleSig.ark' });
+    fileContents['single_sig'] = examples.single_sig.code;
     updateFileTabs();
 
     // Initialize Monaco
@@ -1007,4 +1037,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Copy button
     document.getElementById('copy-btn').addEventListener('click', copyOutput);
+
+    // Sidebar action buttons
+    document.getElementById('new-file-btn').addEventListener('click', promptNewStandaloneFile);
+    document.getElementById('new-folder-btn').addEventListener('click', promptNewFolder);
+
+    // Dismiss context menu on click outside
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('contextmenu', (e) => {
+        // Only hide if clicking outside the file tree
+        if (!e.target.closest('.file-tree') && !e.target.closest('.context-menu')) {
+            hideContextMenu();
+        }
+    });
 });

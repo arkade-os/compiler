@@ -151,6 +151,30 @@ main {
     margin-right: 0.5rem;
 }
 
+.sidebar-actions {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+}
+
+.sidebar-action-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem 0.375rem;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    transition: color 0.15s, background 0.15s;
+    display: flex;
+    align-items: center;
+}
+
+.sidebar-action-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
 .file-tree {
     flex: 1;
     overflow-y: auto;
@@ -558,6 +582,118 @@ kbd {
 
 .compile-error {
     color: var(--error);
+}
+
+/* Context Menu */
+.context-menu {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0;
+    min-width: 160px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu.visible {
+    display: block;
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.context-menu-item:hover {
+    background: var(--accent);
+    color: white;
+}
+
+.context-menu-item i {
+    width: 1rem;
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.context-menu-item:hover i {
+    color: white;
+}
+
+.context-menu-item.danger {
+    color: var(--error);
+}
+
+.context-menu-item.danger i {
+    color: var(--error);
+}
+
+.context-menu-item.danger:hover {
+    background: var(--error);
+    color: white;
+}
+
+.context-menu-item.danger:hover i {
+    color: white;
+}
+
+.context-menu-separator {
+    height: 1px;
+    background: var(--border);
+    margin: 0.25rem 0;
+}
+
+/* Inline Rename Input */
+.tree-rename-input {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    outline: none;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    padding: 0.125rem 0.25rem;
+    border-radius: 2px;
+    width: calc(100% - 2rem);
+    margin-left: 0.25rem;
+}
+
+/* New item input row in file tree */
+.tree-new-item {
+    display: flex;
+    align-items: center;
+    padding: 0.375rem 0.75rem;
+    padding-left: 2rem;
+}
+
+.tree-new-item.root-level {
+    padding-left: 0.75rem;
+}
+
+.tree-new-item input {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    outline: none;
+    font-size: 0.8125rem;
+    font-family: inherit;
+    padding: 0.125rem 0.25rem;
+    border-radius: 2px;
+    width: 100%;
+    margin-left: 0.25rem;
+}
+
+.tree-new-item i {
+    font-size: 0.75rem;
+    width: 1rem;
+    text-align: center;
 }
 
 /* Responsive */

@@ -18,19 +18,23 @@ if ! command -v wasm-pack &> /dev/null; then
     exit 1
 fi
 
+# Generate contracts.js from examples/*.ark
+echo "[1/4] Generating contracts.js from examples..."
+"$SCRIPT_DIR/generate_contracts.sh"
+
 # Build WASM package
-echo "[1/3] Building WASM package..."
+echo "[2/4] Building WASM package..."
 cd "$PROJECT_DIR"
 wasm-pack build --target web --out-dir playground/pkg --features wasm
 
 # Clean up unnecessary files
-echo "[2/3] Cleaning up..."
+echo "[3/4] Cleaning up..."
 rm -f playground/pkg/.gitignore
 rm -f playground/pkg/package.json
 rm -f playground/pkg/README.md
 
 # Done
-echo "[3/3] Build complete!"
+echo "[4/4] Build complete!"
 echo ""
 echo "To serve the playground locally:"
 echo "  cd playground && python3 -m http.server 8080"
