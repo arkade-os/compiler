@@ -291,7 +291,7 @@ fn decompose_constructor_params(
 /// - Cooperative path: normal ASM + server signature
 /// - Exit path: normal ASM + exit timelock
 fn generate_function(
-    function: &crate::models::Function,
+    function: &Function,
     contract: &crate::models::Contract,
     server_variant: bool,
 ) -> AbiFunction {
@@ -501,7 +501,7 @@ fn requirement_to_statement(req: &Requirement) -> RequireStatement {
         },
         Requirement::After { blocks, .. } => {
             RequireStatement {
-                req_type: "older".to_string(),
+                req_type: "after".to_string(),
                 message: Some(format!("Timelock of {} blocks", blocks)),
             }
         },

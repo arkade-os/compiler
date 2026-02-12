@@ -163,7 +163,7 @@
       "serverVariant": true,
       "require": [
         {
-          "type": "older",
+          "type": "after",
           "message": "Timelock of 0 blocks"
         },
         {
@@ -196,7 +196,7 @@
       "serverVariant": false,
       "require": [
         {
-          "type": "older",
+          "type": "after",
           "message": "Timelock of 0 blocks"
         },
         {
@@ -225,5 +225,5 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-02-09T23:11:00.084114+00:00"
+  "updatedAt": "2026-02-12T10:17:23.023383684+00:00"
 }
