@@ -622,16 +622,30 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIGFROMSTACK".to_string());
         },
-        Requirement::CheckMultisig { signatures, pubkeys } => {
-            asm.push(format!("OP_{}", pubkeys.len()));
-            for pubkey in pubkeys {
-                asm.push(format!("<{}>", pubkey));
+        Requirement::CheckMultisig { signatures, pubkeys, threshold } => {
+            if signatures.is_empty() {
+                for (i, pubkey) in pubkeys.iter().enumerate() {
+                    if i == 0 {
+                        asm.push(format!("<{}>", pubkey));
+                        asm.push("OP_CHECKSIG".to_string());
+                        continue;
+                    }
+                    asm.push(format!("<{}>", pubkey));
+                    asm.push("OP_CHECKSIGADD".to_string());
+                }
+                asm.push(format!("OP_{}", threshold));
+                asm.push("OP_NUMEQUAL".to_string());
+            } else {
+                asm.push(format!("OP_{}", pubkeys.len()));
+                for pubkey in pubkeys {
+                    asm.push(format!("<{}>", pubkey));
+                }
+                asm.push(format!("OP_{}", signatures.len()));
+                for signature in signatures {
+                    asm.push(format!("<{}>", signature));
+                }
+                asm.push("OP_CHECKMULTISIG".to_string());
             }
-            asm.push(format!("OP_{}", signatures.len()));
-            for signature in signatures {
-                asm.push(format!("<{}>", signature));
-            }
-            asm.push("OP_CHECKMULTISIG".to_string());
         },
         Requirement::After { blocks, timelock_var } => {
             if let Some(var) = timelock_var {
@@ -1008,6 +1022,7 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
             Requirement::CheckMultisig {
                 signatures,
                 pubkeys,
+                threshold,
             } => {
                 asm.push(format!("OP_{}", pubkeys.len()));
                 for pubkey in pubkeys {

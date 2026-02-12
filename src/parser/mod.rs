@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use pest::Parser;
 use pest_derive::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -601,6 +602,7 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
 fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
+    // We do not worry about missing signatures because we have threshold multisig
     let signatures_array = inner.next().ok_or("Missing signatures")?;
 
     let pubkeys = pubkeys_array
@@ -611,10 +613,17 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         .into_inner()
         .map(|s| s.as_str().to_string())
         .collect();
+    let threshold = match u8::from_str(inner.next().ok_or("Missing threshold")?.as_str()) {
+        Ok(threshold) => threshold,
+        Err(e) => {
+            return Err(format!("{}", e))
+        }
+    };
 
     Ok(Requirement::CheckMultisig {
         signatures,
         pubkeys,
+        threshold
     })
 }
 

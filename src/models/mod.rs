@@ -143,7 +143,7 @@ pub enum Requirement {
     /// Check signature from stack requirement (signature verified against a message)
     CheckSigFromStack { signature: String, pubkey: String, message: String },
     /// Check multisig requirement
-    CheckMultisig { signatures: Vec<String>, pubkeys: Vec<String> },
+    CheckMultisig { signatures: Vec<String>, pubkeys: Vec<String>, threshold: u8 },
     /// After requirement
     After { blocks: u64, timelock_var: Option<String> },
     /// Hash equal requirement
