@@ -633,7 +633,11 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
                     asm.push(format!("<{}>", pubkey));
                     asm.push("OP_CHECKSIGADD".to_string());
                 }
-                asm.push(format!("OP_{}", threshold));
+                if threshold <= &16u8 {
+                    asm.push(format!("OP_{}", threshold));
+                } else {
+                    asm.push(format!("{}", threshold));
+                }
                 asm.push("OP_NUMEQUAL".to_string());
             } else {
                 asm.push(format!("OP_{}", pubkeys.len()));
