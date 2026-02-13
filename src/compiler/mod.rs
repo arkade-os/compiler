@@ -640,11 +640,21 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
                 }
                 asm.push("OP_NUMEQUAL".to_string());
             } else {
-                asm.push(format!("OP_{}", pubkeys.len()));
+                let number_of_pubkeys = pubkeys.len() as u8;
+                if number_of_pubkeys <= 16u8 {
+                    asm.push(format!("OP_{}", number_of_pubkeys));
+                } else {
+                    asm.push(format!("{}", number_of_pubkeys));
+                }
                 for pubkey in pubkeys {
                     asm.push(format!("<{}>", pubkey));
                 }
-                asm.push(format!("OP_{}", signatures.len()));
+                let number_of_sigs = signatures.len() as u8;
+                if number_of_sigs <= 16u8 {
+                    asm.push(format!("OP_{}", number_of_sigs));
+                } else {
+                    asm.push(format!("{}", number_of_sigs));
+                }
                 for signature in signatures {
                     asm.push(format!("<{}>", signature));
                 }
