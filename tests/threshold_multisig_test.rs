@@ -225,7 +225,7 @@ contract ThresholdMultisig(
 }"#;
 
     let result = compile(threshold_multisig_code);
-    assert!(result.is_err(), "{}", result.err().unwrap());
+    assert!(result.is_err(), "Expected compilation to fail for m > n threshold multisig");
 }
 
 #[test]
