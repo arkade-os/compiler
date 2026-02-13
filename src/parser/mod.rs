@@ -611,8 +611,13 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         .into_inner()
         .map(|p| p.as_str().to_string())
         .collect();
-    let pubkeys_size = pubkeys.len() as u16;
-    
+    let pubkeys_size = pubkeys.len();
+    let pubkeys_size = if pubkeys_size <= 999 {
+        pubkeys_size as u16
+    } else {
+      return Err("Number of pubkeys should be less than 999.".to_string());
+    };
+
     let mut threshold = 0u16;
 
     match next {
