@@ -600,43 +600,60 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
 
 /// Parse checkMultisig([pubkeys], [sigs]) → CheckMultisig requirement
 fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
-    let mut inner = pair.into_inner();
+    let mut inner = pair.into_inner().next().ok_or("Missing checkMultisig definition")?.into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
+
     // We do not worry about missing signatures because we have threshold multisig
-    let signatures_array = inner.next();
-    let threshold_value = inner.next();
+    // The next item can either be an array of signatures or a threshold number
+    let next = inner.next();
 
     let pubkeys: Vec<String> = pubkeys_array
         .into_inner()
         .map(|p| p.as_str().to_string())
         .collect();
 
-    let signatures = if let Some(signatures_array) = signatures_array {
-        signatures_array.into_inner()
-            .map(|s| s.as_str().to_string())
-            .collect()
-    } else {
-        // Allows signatures to be optional for threshold checkMultisig
-        Vec::new()
-    };
+    let mut threshold = 0u8;
 
-    let threshold = if let Some(threshold_value) = threshold_value {
-        match u8::from_str(threshold_value.as_str()) {
-            Ok(threshold) => threshold,
-            Err(e) => {
-                return Err(format!("{}", e));
+    match next {
+        Some(next_pair) => {
+            match next_pair.as_rule() {
+                Rule::array => {
+                    let signatures = next_pair.into_inner()
+                            .map(|s| s.as_str().to_string())
+                            .collect();
+                    Ok(Requirement::CheckMultisig {
+                        signatures,
+                        pubkeys,
+                        threshold
+                    })
+                }
+                _ => {
+                    // m-of-n threshold multisig
+                    let threshold = match u8::from_str(next_pair.as_str()) {
+                        Ok(threshold) => threshold,
+                        Err(e) => {
+                            return Err(format!("{}", e));
+                        }
+                    };
+
+                    Ok(Requirement::CheckMultisig {
+                        signatures: Vec::new(),
+                        pubkeys,
+                        threshold
+                    })
+                }
             }
         }
-    } else {
-        // An n-of-n multisig can should be created by optionally omitting the threshold from checkMultisig arguments
-        pubkeys.len() as u8
-    };
-
-    Ok(Requirement::CheckMultisig {
-        signatures,
-        pubkeys,
-        threshold
-    })
+        None => {
+            // An n-of-n multisig should be created by optionally omitting the threshold from checkMultisig arguments
+            threshold = pubkeys.len() as u8;
+            Ok(Requirement::CheckMultisig {
+                signatures: Vec::new(),
+                pubkeys,
+                threshold
+            })
+        }
+    }
 }
 
 /// Parse tx.time >= variable → After requirement

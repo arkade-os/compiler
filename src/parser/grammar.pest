@@ -475,8 +475,14 @@ check_sig_from_stack = {
 sig_arg = { array_index_access | identifier }
 
 // CheckMultisig expression
-check_multisig = {
+check_multisig = { check_legacy_multisig | check_p2tr_multisig }
+
+check_legacy_multisig = {
     "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")"
+}
+
+check_p2tr_multisig = {
+    "checkMultisig" ~ "(" ~ array ~ ("," ~ number_literal)? ~ ")"
 }
 
 // Array of identifiers
