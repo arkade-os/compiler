@@ -63,9 +63,13 @@ fn test_epoch_limiter_structure() {
     assert_eq!(output.functions.len(), 2);
 
     // Verify we have both server and exit variants
-    let server_func = output.functions.iter()
+    let server_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && f.server_variant);
-    let exit_func = output.functions.iter()
+    let exit_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && !f.server_variant);
 
     assert!(server_func.is_some(), "Missing server variant");
@@ -76,22 +80,27 @@ fn test_epoch_limiter_structure() {
 fn test_epoch_limiter_has_if_else() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let server_func = output.functions.iter()
+    let server_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && f.server_variant)
         .unwrap();
 
     // Check for if/else opcodes in the assembly
     assert!(
         server_func.asm.iter().any(|s| s == "OP_IF"),
-        "Missing OP_IF in assembly: {:?}", server_func.asm
+        "Missing OP_IF in assembly: {:?}",
+        server_func.asm
     );
     assert!(
         server_func.asm.iter().any(|s| s == "OP_ELSE"),
-        "Missing OP_ELSE in assembly: {:?}", server_func.asm
+        "Missing OP_ELSE in assembly: {:?}",
+        server_func.asm
     );
     assert!(
         server_func.asm.iter().any(|s| s == "OP_ENDIF"),
-        "Missing OP_ENDIF in assembly: {:?}", server_func.asm
+        "Missing OP_ENDIF in assembly: {:?}",
+        server_func.asm
     );
 }
 
@@ -99,7 +108,9 @@ fn test_epoch_limiter_has_if_else() {
 fn test_epoch_limiter_branch_structure() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let server_func = output.functions.iter()
+    let server_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && f.server_variant)
         .unwrap();
 
@@ -118,13 +129,18 @@ fn test_epoch_limiter_branch_structure() {
 fn test_epoch_limiter_asset_group_introspection() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let server_func = output.functions.iter()
+    let server_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && f.server_variant)
         .unwrap();
 
     // Should have OP_INSPECTASSETGROUPSUM for reading group sums
     assert!(
-        server_func.asm.iter().any(|s| s.contains("OP_INSPECTASSETGROUPSUM")),
+        server_func
+            .asm
+            .iter()
+            .any(|s| s.contains("OP_INSPECTASSETGROUPSUM")),
         "Missing OP_INSPECTASSETGROUPSUM in assembly"
     );
 }
@@ -133,7 +149,9 @@ fn test_epoch_limiter_asset_group_introspection() {
 fn test_epoch_limiter_64bit_arithmetic() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let server_func = output.functions.iter()
+    let server_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && f.server_variant)
         .unwrap();
 
@@ -148,13 +166,18 @@ fn test_epoch_limiter_64bit_arithmetic() {
 fn test_epoch_limiter_server_variant_has_checksig() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let server_func = output.functions.iter()
+    let server_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && f.server_variant)
         .unwrap();
 
     // Server variant should have server signature check
     assert!(
-        server_func.asm.iter().any(|s| s == "OP_CHECKSIG" || s == "OP_CHECKSIGVERIFY"),
+        server_func
+            .asm
+            .iter()
+            .any(|s| s == "OP_CHECKSIG" || s == "OP_CHECKSIGVERIFY"),
         "Server variant missing signature check"
     );
 }
@@ -163,13 +186,18 @@ fn test_epoch_limiter_server_variant_has_checksig() {
 fn test_epoch_limiter_exit_variant_has_timelock() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let exit_func = output.functions.iter()
+    let exit_func = output
+        .functions
+        .iter()
         .find(|f| f.name == "check" && !f.server_variant)
         .unwrap();
 
     // Exit variant should have CSV timelock (288 blocks)
     assert!(
-        exit_func.asm.iter().any(|s| s == "OP_CHECKLOCKTIMEVERIFY" || s == "OP_CHECKSEQUENCEVERIFY"),
+        exit_func
+            .asm
+            .iter()
+            .any(|s| s == "OP_CHECKLOCKTIMEVERIFY" || s == "OP_CHECKSEQUENCEVERIFY"),
         "Exit variant missing timelock check"
     );
 }

@@ -1,6 +1,6 @@
 use crate::models::{
-    Requirement, Expression, Statement, ContractJson, AbiFunction, FunctionInput,
-    RequireStatement, CompilerInfo, AssetLookupSource, GroupSumSource, GroupIOSource, Function,
+    AbiFunction, AssetLookupSource, CompilerInfo, ContractJson, Expression, Function,
+    FunctionInput, GroupIOSource, GroupSumSource, RequireStatement, Requirement, Statement,
 };
 use crate::parser;
 use chrono::Utc;
@@ -13,17 +13,26 @@ use chrono::Utc;
 
 /// Check if a function uses any introspection opcodes
 fn function_uses_introspection(function: &Function) -> bool {
-    function.statements.iter().any(|s| statement_uses_introspection(s))
+    function
+        .statements
+        .iter()
+        .any(|s| statement_uses_introspection(s))
 }
 
 /// Check if a statement uses introspection
 fn statement_uses_introspection(stmt: &Statement) -> bool {
     match stmt {
         Statement::Require(req) => requirement_uses_introspection(req),
-        Statement::IfElse { condition, then_body, else_body } => {
+        Statement::IfElse {
+            condition,
+            then_body,
+            else_body,
+        } => {
             expression_uses_introspection(condition)
                 || then_body.iter().any(|s| statement_uses_introspection(s))
-                || else_body.as_ref().map_or(false, |b| b.iter().any(|s| statement_uses_introspection(s)))
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(|s| statement_uses_introspection(s)))
         }
         Statement::ForIn { iterable, body, .. } => {
             expression_uses_introspection(iterable)
@@ -74,18 +83,27 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
         Expression::Sha256Update { context, chunk } => {
             expression_uses_introspection(context) || expression_uses_introspection(chunk)
         }
-        Expression::Sha256Finalize { context, last_chunk } => {
-            expression_uses_introspection(context) || expression_uses_introspection(last_chunk)
-        }
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => expression_uses_introspection(context) || expression_uses_introspection(last_chunk),
         Expression::Neg64 { value } => expression_uses_introspection(value),
         Expression::Le64ToScriptNum { value } => expression_uses_introspection(value),
         Expression::Le32ToLe64 { value } => expression_uses_introspection(value),
-        Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => {
             expression_uses_introspection(scalar)
                 || expression_uses_introspection(point_p)
                 || expression_uses_introspection(point_q)
         }
-        Expression::TweakVerify { point_p, tweak, point_q } => {
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => {
             expression_uses_introspection(point_p)
                 || expression_uses_introspection(tweak)
                 || expression_uses_introspection(point_q)
@@ -109,7 +127,9 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
 fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) -> Vec<String> {
     let server_key = contract.server_key_param.as_ref();
 
-    contract.parameters.iter()
+    contract
+        .parameters
+        .iter()
         .chain(function.parameters.iter())
         .filter(|p| p.param_type == "pubkey")
         // Exclude server key from N-of-N (it's for cooperative path only)
@@ -196,7 +216,11 @@ fn collect_asset_ids_from_statement(stmt: &Statement, ids: &mut Vec<String>) {
         Statement::Require(req) => {
             collect_asset_ids_from_requirement(req, ids);
         }
-        Statement::IfElse { condition, then_body, else_body } => {
+        Statement::IfElse {
+            condition,
+            then_body,
+            else_body,
+        } => {
             collect_asset_ids_from_expression(condition, ids);
             for s in then_body {
                 collect_asset_ids_from_statement(s, ids);
@@ -332,7 +356,9 @@ fn generate_function(
         for pk in &all_pubkeys {
             let sig_name = format!("{}Sig", pk);
             // Check if we already have a signature for this pubkey
-            let has_sig = existing_sig_names.iter().any(|s| s.contains(pk) || s == &sig_name);
+            let has_sig = existing_sig_names
+                .iter()
+                .any(|s| s.contains(pk) || s == &sig_name);
             if !has_sig {
                 function_inputs.push(FunctionInput {
                     name: sig_name,
@@ -347,8 +373,11 @@ fn generate_function(
         let mut reqs = Vec::new();
         reqs.push(RequireStatement {
             req_type: "nOfNMultisig".to_string(),
-            message: Some(format!("{}-of-{} signatures required (introspection fallback)",
-                                  all_pubkeys.len(), all_pubkeys.len())),
+            message: Some(format!(
+                "{}-of-{} signatures required (introspection fallback)",
+                all_pubkeys.len(),
+                all_pubkeys.len()
+            )),
         });
         reqs
     } else {
@@ -455,22 +484,29 @@ fn contains_group_expression(expr: &Expression) -> bool {
     )
 }
 /// Recursively collect requirements from a list of statements
-fn collect_requirements_from_statements(statements: &[Statement], requirements: &mut Vec<RequireStatement>) {
+fn collect_requirements_from_statements(
+    statements: &[Statement],
+    requirements: &mut Vec<RequireStatement>,
+) {
     for stmt in statements {
         match stmt {
             Statement::Require(req) => {
                 let req_statement = requirement_to_statement(req);
                 requirements.push(req_statement);
-            },
-            Statement::IfElse { then_body, else_body, .. } => {
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
                 collect_requirements_from_statements(then_body, requirements);
                 if let Some(else_stmts) = else_body {
                     collect_requirements_from_statements(else_stmts, requirements);
                 }
-            },
+            }
             Statement::ForIn { body, .. } => {
                 collect_requirements_from_statements(body, requirements);
-            },
+            }
             Statement::LetBinding { .. } | Statement::VarAssign { .. } => {
                 // Variable bindings and assignments don't generate requirements
             }
@@ -481,35 +517,25 @@ fn collect_requirements_from_statements(statements: &[Statement], requirements: 
 /// Convert a Requirement to a RequireStatement
 fn requirement_to_statement(req: &Requirement) -> RequireStatement {
     match req {
-        Requirement::CheckSig { .. } => {
-            RequireStatement {
-                req_type: "signature".to_string(),
-                message: None,
-            }
+        Requirement::CheckSig { .. } => RequireStatement {
+            req_type: "signature".to_string(),
+            message: None,
         },
-        Requirement::CheckSigFromStack { .. } => {
-            RequireStatement {
-                req_type: "signatureFromStack".to_string(),
-                message: None,
-            }
+        Requirement::CheckSigFromStack { .. } => RequireStatement {
+            req_type: "signatureFromStack".to_string(),
+            message: None,
         },
-        Requirement::CheckMultisig { .. } => {
-            RequireStatement {
-                req_type: "multisig".to_string(),
-                message: None,
-            }
+        Requirement::CheckMultisig { .. } => RequireStatement {
+            req_type: "multisig".to_string(),
+            message: None,
         },
-        Requirement::After { blocks, .. } => {
-            RequireStatement {
-                req_type: "older".to_string(),
-                message: Some(format!("Timelock of {} blocks", blocks)),
-            }
+        Requirement::After { blocks, .. } => RequireStatement {
+            req_type: "older".to_string(),
+            message: Some(format!("Timelock of {} blocks", blocks)),
         },
-        Requirement::HashEqual { .. } => {
-            RequireStatement {
-                req_type: "hash".to_string(),
-                message: None,
-            }
+        Requirement::HashEqual { .. } => RequireStatement {
+            req_type: "hash".to_string(),
+            message: None,
         },
         Requirement::Comparison { left, .. } => {
             // Detect asset-related comparisons
@@ -524,7 +550,7 @@ fn requirement_to_statement(req: &Requirement) -> RequireStatement {
                 req_type: req_type.to_string(),
                 message: None,
             }
-        },
+        }
     }
 }
 
@@ -541,8 +567,12 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
         match stmt {
             Statement::Require(req) => {
                 generate_requirement_asm(req, asm);
-            },
-            Statement::IfElse { condition, then_body, else_body } => {
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
                 // Generate condition expression
                 generate_expression_asm(condition, asm);
                 asm.push("OP_IF".to_string());
@@ -557,8 +587,13 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                 }
 
                 asm.push("OP_ENDIF".to_string());
-            },
-            Statement::ForIn { index_var, value_var, iterable, body } => {
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                iterable,
+                body,
+            } => {
                 // Commit 5 & 6: Compile-time loop unrolling
                 // Determine if this is iterating over tx.assetGroups or an array variable
                 let is_asset_groups = match iterable {
@@ -578,7 +613,8 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
 
                     for k in 0..num_iterations {
                         // Substitute loop variables and generate ASM for each iteration
-                        let substituted_body = substitute_loop_body(body, index_var, value_var, k, None);
+                        let substituted_body =
+                            substitute_loop_body(body, index_var, value_var, k, None);
                         generate_asm_from_statements_recursive(&substituted_body, asm);
                     }
                 } else if array_name.is_some() {
@@ -588,22 +624,28 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                     for k in 0..num_iterations {
                         // Substitute loop variables and generate ASM for each iteration
                         // Pass the array name so value_var can be substituted to array_name_{k}
-                        let substituted_body = substitute_loop_body(body, index_var, value_var, k, array_name.as_ref());
+                        let substituted_body = substitute_loop_body(
+                            body,
+                            index_var,
+                            value_var,
+                            k,
+                            array_name.as_ref(),
+                        );
                         generate_asm_from_statements_recursive(&substituted_body, asm);
                     }
                 } else {
                     // For other iterables, process body once (fallback)
                     generate_asm_from_statements_recursive(body, asm);
                 }
-            },
+            }
             Statement::LetBinding { name: _, value } => {
                 // Emit the expression value onto the stack
                 // TODO: Implement proper variable binding with stack tracking
                 generate_expression_asm(value, asm);
-            },
+            }
             Statement::VarAssign { name: _, value: _ } => {
                 // TODO: Implement variable reassignment
-            },
+            }
         }
     }
 }
@@ -615,14 +657,21 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIG".to_string());
-        },
-        Requirement::CheckSigFromStack { signature, pubkey, message } => {
+        }
+        Requirement::CheckSigFromStack {
+            signature,
+            pubkey,
+            message,
+        } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIGFROMSTACK".to_string());
-        },
-        Requirement::CheckMultisig { signatures, pubkeys } => {
+        }
+        Requirement::CheckMultisig {
+            signatures,
+            pubkeys,
+        } => {
             asm.push(format!("OP_{}", pubkeys.len()));
             for pubkey in pubkeys {
                 asm.push(format!("<{}>", pubkey));
@@ -632,8 +681,11 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
                 asm.push(format!("<{}>", signature));
             }
             asm.push("OP_CHECKMULTISIG".to_string());
-        },
-        Requirement::After { blocks, timelock_var } => {
+        }
+        Requirement::After {
+            blocks,
+            timelock_var,
+        } => {
             if let Some(var) = timelock_var {
                 asm.push(format!("<{}>", var));
             } else {
@@ -641,16 +693,16 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             }
             asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
             asm.push("OP_DROP".to_string());
-        },
+        }
         Requirement::HashEqual { preimage, hash } => {
             asm.push(format!("<{}>", preimage));
             asm.push("OP_SHA256".to_string());
             asm.push(format!("<{}>", hash));
             asm.push("OP_EQUAL".to_string());
-        },
+        }
         Requirement::Comparison { left, op, right } => {
             generate_comparison_asm(left, op, right, asm);
-        },
+        }
     }
 }
 
@@ -659,13 +711,13 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
     match expr {
         Expression::Variable(var) => {
             asm.push(format!("<{}>", var));
-        },
+        }
         Expression::Literal(lit) => {
             asm.push(lit.clone());
-        },
+        }
         Expression::Property(prop) => {
             asm.push(format!("<{}>", prop));
-        },
+        }
         Expression::BinaryOp { left, op, right } => {
             // Emit left operand
             generate_expression_asm(left, asm);
@@ -724,7 +776,7 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 }
                 _ => asm.push("OP_FALSE".to_string()),
             }
-        },
+        }
         Expression::CurrentInput(property) => {
             if let Some(prop) = property {
                 match prop.as_str() {
@@ -737,102 +789,130 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             } else {
                 asm.push("OP_INPUTBYTECODE".to_string());
             }
-        },
+        }
         Expression::ArrayIndex { array, index } => {
             // TODO: Implement array indexing in Commit 6
             generate_expression_asm(array, asm);
             generate_expression_asm(index, asm);
-        },
+        }
         Expression::ArrayLength(_) => {
             // TODO: Implement array length in Commit 6
-        },
+        }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIG".to_string());
-        },
-        Expression::CheckSigFromStackExpr { signature, pubkey, message } => {
+        }
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIGFROMSTACK".to_string());
-        },
+        }
         // Streaming SHA256
         Expression::Sha256Initialize { data } => {
             generate_expression_asm(data, asm);
             asm.push("OP_SHA256INITIALIZE".to_string());
-        },
+        }
         Expression::Sha256Update { context, chunk } => {
             generate_expression_asm(context, asm);
             generate_expression_asm(chunk, asm);
             asm.push("OP_SHA256UPDATE".to_string());
-        },
-        Expression::Sha256Finalize { context, last_chunk } => {
+        }
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => {
             generate_expression_asm(context, asm);
             generate_expression_asm(last_chunk, asm);
             asm.push("OP_SHA256FINALIZE".to_string());
-        },
+        }
         // Conversion & Arithmetic
         Expression::Neg64 { value } => {
             generate_expression_asm(value, asm);
             asm.push("OP_NEG64".to_string());
-        },
+        }
         Expression::Le64ToScriptNum { value } => {
             generate_expression_asm(value, asm);
             asm.push("OP_LE64TOSCRIPTNUM".to_string());
-        },
+        }
         Expression::Le32ToLe64 { value } => {
             generate_expression_asm(value, asm);
             asm.push("OP_LE32TOLE64".to_string());
-        },
+        }
         // Crypto Opcodes
-        Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => {
             generate_expression_asm(point_q, asm);
             generate_expression_asm(point_p, asm);
             generate_expression_asm(scalar, asm);
             asm.push("OP_ECMULSCALARVERIFY".to_string());
-        },
-        Expression::TweakVerify { point_p, tweak, point_q } => {
+        }
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => {
             generate_expression_asm(point_q, asm);
             generate_expression_asm(tweak, asm);
             generate_expression_asm(point_p, asm);
             asm.push("OP_TWEAKVERIFY".to_string());
-        },
-        Expression::CheckSigFromStackVerify { signature, pubkey, message } => {
+        }
+        Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIGFROMSTACKVERIFY".to_string());
-        },
-        Expression::AssetLookup { source, index, asset_id } => {
+        }
+        Expression::AssetLookup {
+            source,
+            index,
+            asset_id,
+        } => {
             emit_asset_lookup_asm(source, index, asset_id, asm);
-        },
+        }
         Expression::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
-        },
-        Expression::AssetAt { source, io_index, asset_index, property } => {
+        }
+        Expression::AssetAt {
+            source,
+            io_index,
+            asset_index,
+            property,
+        } => {
             emit_asset_at_asm(source, io_index, asset_index, property, asm);
-        },
+        }
         Expression::TxIntrospection { property } => {
             emit_tx_introspection_asm(property, asm);
-        },
+        }
         Expression::InputIntrospection { index, property } => {
             emit_input_introspection_asm(index, property, asm);
-        },
+        }
         Expression::OutputIntrospection { index, property } => {
             emit_output_introspection_asm(index, property, asm);
-        },
+        }
         Expression::GroupFind { asset_id } => {
             asm.push(format!("<{}_txid>", asset_id));
             asm.push(format!("<{}_gidx>", asset_id));
             asm.push("OP_FINDASSETGROUPBYASSETID".to_string());
-        },
+        }
         Expression::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
-        },
+        }
         Expression::AssetGroupsLength => {
             asm.push("OP_INSPECTNUMASSETGROUPS".to_string());
-        },
+        }
         Expression::GroupSum { index, source } => {
             generate_expression_asm(index, asm);
             match source {
@@ -840,7 +920,7 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 GroupSumSource::Outputs => asm.push("OP_1".to_string()),
             }
             asm.push("OP_INSPECTASSETGROUPSUM".to_string());
-        },
+        }
         Expression::GroupNumIO { index, source } => {
             generate_expression_asm(index, asm);
             match source {
@@ -848,8 +928,13 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 GroupIOSource::Outputs => asm.push("OP_1".to_string()),
             }
             asm.push("OP_INSPECTASSETGROUPNUM".to_string());
-        },
-        Expression::GroupIOAccess { group_index, io_index, source, property } => {
+        }
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            source,
+            property,
+        } => {
             generate_expression_asm(group_index, asm);
             generate_expression_asm(io_index, asm);
             match source {
@@ -864,16 +949,16 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                     "amount" => {
                         // Keep only amount (top of stack)
                         // Need to handle based on type, but for now just keep top
-                    },
+                    }
                     "type" => {
                         // Drop everything except type
                         asm.push("OP_DROP".to_string()); // amount
                         asm.push("OP_DROP".to_string()); // data (varies)
-                    },
+                    }
                     _ => {}
                 }
             }
-        },
+        }
     }
 }
 
@@ -884,87 +969,87 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
             asm.push(format!("<{}>", var));
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(value.clone());
-        },
+        }
         (Expression::Variable(var), "==", Expression::Variable(var2)) => {
             asm.push(format!("<{}>", var));
             asm.push("OP_EQUAL".to_string());
             asm.push(format!("<{}>", var2));
-        },
+        }
         (Expression::Variable(var), ">=", Expression::Variable(var2)) => {
             asm.push(format!("<{}>", var));
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(format!("<{}>", var2));
-        },
+        }
         (Expression::Variable(var), "==", Expression::Property(prop)) => {
             asm.push(format!("<{}>", var));
             asm.push("OP_EQUAL".to_string());
             asm.push(format!("<{}>", prop));
-        },
+        }
         (Expression::Variable(var), ">=", Expression::Property(prop)) => {
             asm.push(format!("<{}>", var));
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(format!("<{}>", prop));
-        },
+        }
         (Expression::Literal(lit), "==", Expression::Variable(var)) => {
             asm.push(lit.clone());
             asm.push("OP_EQUAL".to_string());
             asm.push(format!("<{}>", var));
-        },
+        }
         (Expression::Literal(lit), ">=", Expression::Variable(var)) => {
             asm.push(lit.clone());
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(format!("<{}>", var));
-        },
+        }
         (Expression::Literal(lit), "==", Expression::Literal(value)) => {
             asm.push(lit.clone());
             asm.push("OP_EQUAL".to_string());
             asm.push(value.clone());
-        },
+        }
         (Expression::Literal(lit), ">=", Expression::Literal(value)) => {
             asm.push(lit.clone());
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(value.clone());
-        },
+        }
         (Expression::Literal(lit), "==", Expression::Property(prop)) => {
             asm.push(lit.clone());
             asm.push("OP_EQUAL".to_string());
             asm.push(format!("<{}>", prop));
-        },
+        }
         (Expression::Literal(lit), ">=", Expression::Property(prop)) => {
             asm.push(lit.clone());
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(format!("<{}>", prop));
-        },
+        }
         (Expression::Property(prop), "==", Expression::Variable(var)) => {
             asm.push(format!("<{}>", prop));
             asm.push("OP_EQUAL".to_string());
             asm.push(format!("<{}>", var));
-        },
+        }
         (Expression::Property(prop), ">=", Expression::Variable(var)) => {
             asm.push(format!("<{}>", prop));
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(format!("<{}>", var));
-        },
+        }
         (Expression::Property(prop), "==", Expression::Literal(value)) => {
             asm.push(format!("<{}>", prop));
             asm.push("OP_EQUAL".to_string());
             asm.push(value.clone());
-        },
+        }
         (Expression::Property(prop), ">=", Expression::Literal(value)) => {
             asm.push(format!("<{}>", prop));
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(value.clone());
-        },
+        }
         (Expression::Property(prop), "==", Expression::Property(prop2)) => {
             asm.push(format!("<{}>", prop));
             asm.push("OP_EQUAL".to_string());
             asm.push(format!("<{}>", prop2));
-        },
+        }
         (Expression::Property(prop), ">=", Expression::Property(prop2)) => {
             asm.push(format!("<{}>", prop));
             asm.push("OP_GREATERTHANOREQUAL".to_string());
             asm.push(format!("<{}>", prop2));
-        },
+        }
         (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
             if value == "true" {
                 if let Some(prop) = property {
@@ -979,7 +1064,7 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
                     asm.push("OP_INPUTBYTECODE".to_string());
                 }
             }
-        },
+        }
         _ => {
             // For all other expression types, delegate to emit_comparison_asm
             emit_comparison_asm(left, op, right, asm);
@@ -999,7 +1084,11 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 asm.push(format!("<{}>", signature));
                 asm.push("OP_CHECKSIG".to_string());
             }
-            Requirement::CheckSigFromStack { signature, pubkey, message } => {
+            Requirement::CheckSigFromStack {
+                signature,
+                pubkey,
+                message,
+            } => {
                 asm.push(format!("<{}>", message));
                 asm.push(format!("<{}>", pubkey));
                 asm.push(format!("<{}>", signature));
@@ -1127,7 +1216,12 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
         }
-        Expression::AssetAt { source, io_index, asset_index, property } => {
+        Expression::AssetAt {
+            source,
+            io_index,
+            asset_index,
+            property,
+        } => {
             emit_asset_at_asm(source, io_index, asset_index, property, asm);
         }
         Expression::TxIntrospection { property } => {
@@ -1170,7 +1264,12 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.push("OP_INSPECTASSETGROUPNUM".to_string());
         }
-        Expression::GroupIOAccess { group_index, io_index, source, property } => {
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            source,
+            property,
+        } => {
             emit_expression_asm(group_index, asm);
             emit_expression_asm(io_index, asm);
             match source {
@@ -1183,11 +1282,11 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 match prop.as_str() {
                     "amount" => {
                         // Amount is on top, no extraction needed for amount
-                    },
+                    }
                     "type" => {
                         asm.push("OP_DROP".to_string()); // amount
                         asm.push("OP_DROP".to_string()); // data
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -1205,7 +1304,11 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", signature));
             asm.push("OP_CHECKSIG".to_string());
         }
-        Expression::CheckSigFromStackExpr { signature, pubkey, message } => {
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
@@ -1221,7 +1324,10 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(chunk, asm);
             asm.push("OP_SHA256UPDATE".to_string());
         }
-        Expression::Sha256Finalize { context, last_chunk } => {
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => {
             emit_expression_asm(context, asm);
             emit_expression_asm(last_chunk, asm);
             asm.push("OP_SHA256FINALIZE".to_string());
@@ -1240,19 +1346,31 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push("OP_LE32TOLE64".to_string());
         }
         // Crypto Opcodes
-        Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => {
             emit_expression_asm(point_q, asm);
             emit_expression_asm(point_p, asm);
             emit_expression_asm(scalar, asm);
             asm.push("OP_ECMULSCALARVERIFY".to_string());
         }
-        Expression::TweakVerify { point_p, tweak, point_q } => {
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => {
             emit_expression_asm(point_q, asm);
             emit_expression_asm(tweak, asm);
             emit_expression_asm(point_p, asm);
             asm.push("OP_TWEAKVERIFY".to_string());
         }
-        Expression::CheckSigFromStackVerify { signature, pubkey, message } => {
+        Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
@@ -1325,11 +1443,7 @@ fn emit_asset_lookup_asm(
 /// Emit assembly for asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
 ///
 /// Pushes the count of assets at the given input/output index.
-fn emit_asset_count_asm(
-    source: &AssetLookupSource,
-    index: &Expression,
-    asm: &mut Vec<String>,
-) {
+fn emit_asset_count_asm(source: &AssetLookupSource, index: &Expression, asm: &mut Vec<String>) {
     // Push the index
     emit_expression_asm(index, asm);
 
@@ -1633,37 +1747,54 @@ fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
 /// - `Variable(index_var)` → `Literal(k)`
 /// - `Variable(value_var)` when array_name is Some → `Variable("array_name_{k}")`
 /// - Array indexing `arr[index_var]` → `Variable("arr_{k}")`
-fn substitute_loop_body(body: &[Statement], index_var: &str, value_var: &str, k: usize, array_name: Option<&String>) -> Vec<Statement> {
+fn substitute_loop_body(
+    body: &[Statement],
+    index_var: &str,
+    value_var: &str,
+    k: usize,
+    array_name: Option<&String>,
+) -> Vec<Statement> {
     body.iter()
         .map(|stmt| substitute_statement(stmt, index_var, value_var, k, array_name))
         .collect()
 }
 
-fn substitute_statement(stmt: &Statement, index_var: &str, value_var: &str, k: usize, array_name: Option<&String>) -> Statement {
+fn substitute_statement(
+    stmt: &Statement,
+    index_var: &str,
+    value_var: &str,
+    k: usize,
+    array_name: Option<&String>,
+) -> Statement {
     match stmt {
-        Statement::Require(req) => {
-            Statement::Require(substitute_requirement(req, index_var, value_var, k, array_name))
-        }
-        Statement::LetBinding { name, value } => {
-            Statement::LetBinding {
-                name: name.clone(),
-                value: substitute_expression(value, index_var, value_var, k, array_name),
-            }
-        }
-        Statement::VarAssign { name, value } => {
-            Statement::VarAssign {
-                name: name.clone(),
-                value: substitute_expression(value, index_var, value_var, k, array_name),
-            }
-        }
-        Statement::IfElse { condition, then_body, else_body } => {
-            Statement::IfElse {
-                condition: substitute_expression(condition, index_var, value_var, k, array_name),
-                then_body: substitute_loop_body(then_body, index_var, value_var, k, array_name),
-                else_body: else_body.as_ref().map(|b| substitute_loop_body(b, index_var, value_var, k, array_name)),
-            }
-        }
-        Statement::ForIn { index_var: inner_idx, value_var: inner_val, iterable, body } => {
+        Statement::Require(req) => Statement::Require(substitute_requirement(
+            req, index_var, value_var, k, array_name,
+        )),
+        Statement::LetBinding { name, value } => Statement::LetBinding {
+            name: name.clone(),
+            value: substitute_expression(value, index_var, value_var, k, array_name),
+        },
+        Statement::VarAssign { name, value } => Statement::VarAssign {
+            name: name.clone(),
+            value: substitute_expression(value, index_var, value_var, k, array_name),
+        },
+        Statement::IfElse {
+            condition,
+            then_body,
+            else_body,
+        } => Statement::IfElse {
+            condition: substitute_expression(condition, index_var, value_var, k, array_name),
+            then_body: substitute_loop_body(then_body, index_var, value_var, k, array_name),
+            else_body: else_body
+                .as_ref()
+                .map(|b| substitute_loop_body(b, index_var, value_var, k, array_name)),
+        },
+        Statement::ForIn {
+            index_var: inner_idx,
+            value_var: inner_val,
+            iterable,
+            body,
+        } => {
             // Nested loops: substitute in iterable, leave inner variables alone
             Statement::ForIn {
                 index_var: inner_idx.clone(),
@@ -1675,15 +1806,19 @@ fn substitute_statement(stmt: &Statement, index_var: &str, value_var: &str, k: u
     }
 }
 
-fn substitute_requirement(req: &Requirement, index_var: &str, value_var: &str, k: usize, array_name: Option<&String>) -> Requirement {
+fn substitute_requirement(
+    req: &Requirement,
+    index_var: &str,
+    value_var: &str,
+    k: usize,
+    array_name: Option<&String>,
+) -> Requirement {
     match req {
-        Requirement::Comparison { left, op, right } => {
-            Requirement::Comparison {
-                left: substitute_expression(left, index_var, value_var, k, array_name),
-                op: op.clone(),
-                right: substitute_expression(right, index_var, value_var, k, array_name),
-            }
-        }
+        Requirement::Comparison { left, op, right } => Requirement::Comparison {
+            left: substitute_expression(left, index_var, value_var, k, array_name),
+            op: op.clone(),
+            right: substitute_expression(right, index_var, value_var, k, array_name),
+        },
         Requirement::CheckSig { signature, pubkey } => {
             // Substitute signature and pubkey if they match loop variables
             let new_sig = if signature == value_var {
@@ -1696,9 +1831,16 @@ fn substitute_requirement(req: &Requirement, index_var: &str, value_var: &str, k
                 signature.clone()
             };
             let new_pk = pubkey.clone();
-            Requirement::CheckSig { signature: new_sig, pubkey: new_pk }
+            Requirement::CheckSig {
+                signature: new_sig,
+                pubkey: new_pk,
+            }
         }
-        Requirement::CheckSigFromStack { signature, pubkey, message } => {
+        Requirement::CheckSigFromStack {
+            signature,
+            pubkey,
+            message,
+        } => {
             // Substitute signature, pubkey, and message if they match loop variables
             let new_sig = if signature == value_var {
                 if let Some(arr) = array_name {
@@ -1711,19 +1853,27 @@ fn substitute_requirement(req: &Requirement, index_var: &str, value_var: &str, k
             };
             let new_pk = pubkey.clone();
             let new_msg = message.clone();
-            Requirement::CheckSigFromStack { signature: new_sig, pubkey: new_pk, message: new_msg }
+            Requirement::CheckSigFromStack {
+                signature: new_sig,
+                pubkey: new_pk,
+                message: new_msg,
+            }
         }
         // Other requirement types don't need substitution
         _ => req.clone(),
     }
 }
 
-fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k: usize, array_name: Option<&String>) -> Expression {
+fn substitute_expression(
+    expr: &Expression,
+    index_var: &str,
+    value_var: &str,
+    k: usize,
+    array_name: Option<&String>,
+) -> Expression {
     match expr {
         // Replace index variable with literal k
-        Expression::Variable(var) if var == index_var => {
-            Expression::Literal(k.to_string())
-        }
+        Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
         // Replace value_var with array_name_{k} when iterating over arrays
         Expression::Variable(var) if var == value_var && array_name.is_some() => {
             Expression::Variable(format!("{}_{}", array_name.unwrap(), k))
@@ -1759,8 +1909,12 @@ fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k:
             }
             // Recursively substitute in array and index
             Expression::ArrayIndex {
-                array: Box::new(substitute_expression(array, index_var, value_var, k, array_name)),
-                index: Box::new(substitute_expression(index, index_var, value_var, k, array_name)),
+                array: Box::new(substitute_expression(
+                    array, index_var, value_var, k, array_name,
+                )),
+                index: Box::new(substitute_expression(
+                    index, index_var, value_var, k, array_name,
+                )),
             }
         }
         // Handle Property expressions that look like array indexing (e.g., "oracles[i]")
@@ -1778,15 +1932,21 @@ fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k:
             expr.clone()
         }
         // Recursively substitute in binary operations
-        Expression::BinaryOp { left, op, right } => {
-            Expression::BinaryOp {
-                left: Box::new(substitute_expression(left, index_var, value_var, k, array_name)),
-                op: op.clone(),
-                right: Box::new(substitute_expression(right, index_var, value_var, k, array_name)),
-            }
-        }
+        Expression::BinaryOp { left, op, right } => Expression::BinaryOp {
+            left: Box::new(substitute_expression(
+                left, index_var, value_var, k, array_name,
+            )),
+            op: op.clone(),
+            right: Box::new(substitute_expression(
+                right, index_var, value_var, k, array_name,
+            )),
+        },
         // Handle CheckSigFromStackExpr
-        Expression::CheckSigFromStackExpr { signature, pubkey, message } => {
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        } => {
             let new_sig = if signature == value_var {
                 if let Some(arr) = array_name {
                     format!("{}_{}", arr, k)
@@ -1819,7 +1979,7 @@ fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k:
             Expression::CheckSigFromStackExpr {
                 signature: new_sig,
                 pubkey: new_pk,
-                message: message.clone()
+                message: message.clone(),
             }
         }
         // Handle CheckSigExpr
@@ -1835,23 +1995,23 @@ fn substitute_expression(expr: &Expression, index_var: &str, value_var: &str, k:
             };
             Expression::CheckSigExpr {
                 signature: new_sig,
-                pubkey: pubkey.clone()
+                pubkey: pubkey.clone(),
             }
         }
         // Handle InputIntrospection - substitute index if it matches loop variable
-        Expression::InputIntrospection { index, property } => {
-            Expression::InputIntrospection {
-                index: Box::new(substitute_expression(index, index_var, value_var, k, array_name)),
-                property: property.clone(),
-            }
-        }
+        Expression::InputIntrospection { index, property } => Expression::InputIntrospection {
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+            property: property.clone(),
+        },
         // Handle OutputIntrospection - substitute index if it matches loop variable
-        Expression::OutputIntrospection { index, property } => {
-            Expression::OutputIntrospection {
-                index: Box::new(substitute_expression(index, index_var, value_var, k, array_name)),
-                property: property.clone(),
-            }
-        }
+        Expression::OutputIntrospection { index, property } => Expression::OutputIntrospection {
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+            property: property.clone(),
+        },
         // All other expressions are returned as-is
         _ => expr.clone(),
     }

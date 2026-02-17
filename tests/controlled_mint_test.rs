@@ -164,7 +164,16 @@ fn test_controlled_mint_cli() {
     assert!(json.contains("\"contractName\": \"ControlledMint\""));
 
     // Should have group-related opcodes
-    assert!(json.contains("OP_FINDASSETGROUPBYASSETID"), "missing OP_FINDASSETGROUPBYASSETID");
-    assert!(json.contains("OP_INSPECTASSETGROUPSUM"), "missing OP_INSPECTASSETGROUPSUM");
-    assert!(json.contains("OP_INSPECTASSETGROUPCTRL"), "missing OP_INSPECTASSETGROUPCTRL");
+    assert!(
+        json.contains("OP_FINDASSETGROUPBYASSETID"),
+        "missing OP_FINDASSETGROUPBYASSETID"
+    );
+    assert!(
+        json.contains("OP_INSPECTASSETGROUPSUM"),
+        "missing OP_INSPECTASSETGROUPSUM"
+    );
+    assert!(
+        json.contains("OP_INSPECTASSETGROUPCTRL"),
+        "missing OP_INSPECTASSETGROUPCTRL"
+    );
 }

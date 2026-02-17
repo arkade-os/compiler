@@ -1,10 +1,10 @@
+use clap::Parser as ClapParser;
 use std::fs;
 use std::path::Path;
-use clap::Parser as ClapParser;
 
+mod compiler;
 mod models;
 mod parser;
-mod compiler;
 
 /// Arkade Compiler CLI
 ///
@@ -48,16 +48,16 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI arguments
     let args = Args::parse();
-    
+
     // Ensure file has .ark extension
     let file_path = Path::new(&args.file);
     if file_path.extension().unwrap_or_default() != "ark" {
         return Err("Input file must have .ark extension".into());
     }
-    
+
     // Read source code
     let source_code = fs::read_to_string(&args.file)?;
-    
+
     // Compile source code to JSON
     let output = match compiler::compile(&source_code) {
         Ok(json) => json,
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(err.into());
         }
     };
-    
+
     // Determine output path
     let output_path = match args.output {
         Some(path) => path,
@@ -75,12 +75,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{}.json", stem)
         }
     };
-    
+
     // Write output JSON
     let json = serde_json::to_string_pretty(&output)?;
     fs::write(&output_path, json)?;
-    
+
     println!("Compilation successful. Output written to {}", output_path);
-    
+
     Ok(())
-} 
+}

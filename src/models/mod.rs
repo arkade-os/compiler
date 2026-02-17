@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// JSON output structures
-/// 
+///
 /// These structures are used to represent the compiled contract in a format
 /// that can be serialized to JSON.
 
@@ -141,15 +141,29 @@ pub enum Requirement {
     /// Check signature requirement
     CheckSig { signature: String, pubkey: String },
     /// Check signature from stack requirement (signature verified against a message)
-    CheckSigFromStack { signature: String, pubkey: String, message: String },
+    CheckSigFromStack {
+        signature: String,
+        pubkey: String,
+        message: String,
+    },
     /// Check multisig requirement
-    CheckMultisig { signatures: Vec<String>, pubkeys: Vec<String> },
+    CheckMultisig {
+        signatures: Vec<String>,
+        pubkeys: Vec<String>,
+    },
     /// After requirement
-    After { blocks: u64, timelock_var: Option<String> },
+    After {
+        blocks: u64,
+        timelock_var: Option<String>,
+    },
     /// Hash equal requirement
     HashEqual { preimage: String, hash: String },
     /// Comparison requirement
-    Comparison { left: Expression, op: String, right: Expression },
+    Comparison {
+        left: Expression,
+        op: String,
+        right: Expression,
+    },
 }
 
 /// Source of an asset lookup (input or output)
@@ -206,12 +220,10 @@ pub enum Expression {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: String,  // "assetId" or "amount"
+        property: String, // "assetId" or "amount"
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
-    TxIntrospection {
-        property: String,
-    },
+    TxIntrospection { property: String },
     /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint, issuance
     InputIntrospection {
         index: Box<Expression>,
@@ -229,14 +241,9 @@ pub enum Expression {
         right: Box<Expression>,
     },
     /// Asset group find: tx.assetGroups.find(assetId) → csn index
-    GroupFind {
-        asset_id: String,
-    },
+    GroupFind { asset_id: String },
     /// Asset group property: group.sumInputs, group.delta, etc.
-    GroupProperty {
-        group: String,
-        property: String,
-    },
+    GroupProperty { group: String, property: String },
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
     /// Asset group sum with explicit index: tx.assetGroups[k].sumInputs/sumOutputs
@@ -255,7 +262,7 @@ pub enum Expression {
         group_index: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<String>,  // Optional property like "amount", "type", "inputIndex", "outputIndex"
+        property: Option<String>, // Optional property like "amount", "type", "inputIndex", "outputIndex"
     },
     /// Array indexing (e.g., arr[i])
     ArrayIndex {
@@ -265,10 +272,7 @@ pub enum Expression {
     /// Array/collection length (e.g., arr.length)
     ArrayLength(String),
     /// CheckSig expression result (for use in if conditions)
-    CheckSigExpr {
-        signature: String,
-        pubkey: String,
-    },
+    CheckSigExpr { signature: String, pubkey: String },
     /// CheckSigFromStack expression result
     CheckSigFromStackExpr {
         signature: String,
@@ -277,9 +281,7 @@ pub enum Expression {
     },
     // ─── Streaming SHA256 ──────────────────────────────────────────────
     /// Streaming SHA256 initialize: sha256Initialize(data)
-    Sha256Initialize {
-        data: Box<Expression>,
-    },
+    Sha256Initialize { data: Box<Expression> },
     /// Streaming SHA256 update: sha256Update(ctx, chunk)
     Sha256Update {
         context: Box<Expression>,
@@ -292,17 +294,11 @@ pub enum Expression {
     },
     // ─── Conversion & Arithmetic ───────────────────────────────────────
     /// Negate 64-bit value: neg64(value)
-    Neg64 {
-        value: Box<Expression>,
-    },
+    Neg64 { value: Box<Expression> },
     /// Convert LE64 to script number: le64ToScriptNum(value)
-    Le64ToScriptNum {
-        value: Box<Expression>,
-    },
+    Le64ToScriptNum { value: Box<Expression> },
     /// Convert LE32 to LE64: le32ToLe64(value)
-    Le32ToLe64 {
-        value: Box<Expression>,
-    },
+    Le32ToLe64 { value: Box<Expression> },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
     EcMulScalarVerify {
@@ -322,4 +318,4 @@ pub enum Expression {
         pubkey: String,
         message: String,
     },
-} 
+}

@@ -1,8 +1,8 @@
+pub mod compiler;
 pub mod models;
 pub mod parser;
-pub mod compiler;
 
-pub use models::{Contract, Function, Parameter, Requirement, Expression, ContractJson};
+pub use models::{Contract, ContractJson, Expression, Function, Parameter, Requirement};
 
 /// Compile Arkade Script source code to a JSON-serializable structure
 ///
@@ -40,7 +40,7 @@ pub use models::{Contract, Function, Parameter, Requirement, Expression, Contrac
 ///   // Exit timelock: 24 hours (144 blocks)
 ///   exit = 144;
 /// }
-/// 
+///
 /// contract Example(pubkey owner, pubkey server) {
 ///     function spend(signature ownerSig) {
 ///         require(checkSig(ownerSig, owner));
@@ -59,4 +59,4 @@ pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Er
         Ok(output) => Ok(output),
         Err(err) => Err(err.into()),
     }
-} 
+}
