@@ -1,10 +1,5 @@
-use arkade_compiler::opcodes::{OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL64, OP_VERIFY};
-use arkade_compiler::opcodes::OP_NOT;
-use arkade_compiler::opcodes::OP_EQUAL;
-use arkade_compiler::opcodes::OP_1NEGATE;
-use arkade_compiler::opcodes::OP_DUP;
+use arkade_compiler::opcodes::{OP_NOT, OP_EQUAL, OP_1NEGATE, OP_DUP, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL64, OP_VERIFY};
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP};
 
 #[test]
 fn test_token_vault_contract() {
