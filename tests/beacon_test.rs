@@ -1,4 +1,5 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{OP_CHECKSIG, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTSCRIPTPUBKEY};
 
 /// Test contract from PLAN.md Commit 5: For Loops (Compile-Time Unrolled)
 ///
@@ -76,7 +77,7 @@ fn test_beacon_passthrough_has_loop_unrolling() {
     // Each iteration does: group.sumOutputs and group.sumInputs
     // With numGroups constructor param, the compiler unrolls the loop
     let sum_count = passthrough.asm.iter()
-        .filter(|s| s.contains("OP_INSPECTASSETGROUPSUM"))
+        .filter(|s| s.contains(OP_INSPECTASSETGROUPSUM))
         .count();
 
     // For the passthrough function, the for loop should be unrolled with
@@ -84,7 +85,7 @@ fn test_beacon_passthrough_has_loop_unrolling() {
     // At minimum, we expect 2 calls for a single iteration.
     assert!(
         sum_count >= 2,
-        "Expected at least 2 OP_INSPECTASSETGROUPSUM instructions for loop unrolling \
+        "Expected at least 2 {OP_INSPECTASSETGROUPSUM} instructions for loop unrolling \
          (sumInputs + sumOutputs per iteration), found {}",
         sum_count
     );
@@ -100,14 +101,14 @@ fn test_beacon_update_has_asset_lookup() {
 
     // Should have asset lookup for control asset check
     assert!(
-        update.asm.iter().any(|s| s.contains("OP_INSPECTINASSETLOOKUP")),
-        "Missing OP_INSPECTINASSETLOOKUP in update function"
+        update.asm.iter().any(|s| s.contains(OP_INSPECTINASSETLOOKUP)),
+        "Missing {OP_INSPECTINASSETLOOKUP} in update function"
     );
 
     // Should have signature check
     assert!(
-        update.asm.iter().any(|s| s == "OP_CHECKSIG"),
-        "Missing OP_CHECKSIG in update function"
+        update.asm.iter().any(|s| s == OP_CHECKSIG),
+        "Missing {OP_CHECKSIG} in update function"
     );
 }
 
@@ -122,10 +123,10 @@ fn test_beacon_update_has_covenant_recursion() {
     // Should check scriptPubKey equality for covenant recursion
     // This involves OP_INSPECTOUTPUTSCRIPTPUBKEY and comparison
     let has_output_inspect = update.asm.iter()
-        .any(|s| s.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY") || s.contains("OP_INSPECTINPUTSCRIPTPUBKEY"));
+        .any(|s| s.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY) || s.contains(OP_INSPECTINPUTSCRIPTPUBKEY));
 
     assert!(
         has_output_inspect,
-        "Missing OP_INSPECTOUTPUTSCRIPTPUBKEY or OP_INSPECTINPUTSCRIPTPUBKEY in update function for covenant recursion"
+        "Missing {OP_INSPECTOUTPUTSCRIPTPUBKEY} or {OP_INSPECTINPUTSCRIPTPUBKEY} in update function for covenant recursion"
     );
 }

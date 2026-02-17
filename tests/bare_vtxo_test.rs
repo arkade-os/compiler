@@ -1,4 +1,5 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG, OP_CHECKSIG, OP_DROP};
 
 #[test]
 fn test_bare_vtxo_contract() {
@@ -61,16 +62,16 @@ contract BareVTXO(
     
     // Check assembly instructions
     assert_eq!(cooperative_function.asm.len(), 10);
-    assert_eq!(cooperative_function.asm[0], "OP_2");
+    assert_eq!(cooperative_function.asm[0], OP_2);
     assert_eq!(cooperative_function.asm[1], "<user>");
     assert_eq!(cooperative_function.asm[2], "<server>");
-    assert_eq!(cooperative_function.asm[3], "OP_2");
+    assert_eq!(cooperative_function.asm[3], OP_2);
     assert_eq!(cooperative_function.asm[4], "<userSig>");
     assert_eq!(cooperative_function.asm[5], "<serverSig>");
-    assert_eq!(cooperative_function.asm[6], "OP_CHECKMULTISIG");
+    assert_eq!(cooperative_function.asm[6], OP_CHECKMULTISIG);
     assert_eq!(cooperative_function.asm[7], "<SERVER_KEY>");
     assert_eq!(cooperative_function.asm[8], "<serverSig>");
-    assert_eq!(cooperative_function.asm[9], "OP_CHECKSIG");
+    assert_eq!(cooperative_function.asm[9], OP_CHECKSIG);
     
     // Verify timeout function with server variant
     let timeout_function = output.functions.iter()
@@ -81,11 +82,11 @@ contract BareVTXO(
     assert_eq!(timeout_function.asm.len(), 9);
     assert_eq!(timeout_function.asm[0], "<user>");
     assert_eq!(timeout_function.asm[1], "<userSig>");
-    assert_eq!(timeout_function.asm[2], "OP_CHECKSIG");
+    assert_eq!(timeout_function.asm[2], OP_CHECKSIG);
     assert_eq!(timeout_function.asm[3], "<timelock>");  // Variable reference
-    assert_eq!(timeout_function.asm[4], "OP_CHECKLOCKTIMEVERIFY");
-    assert_eq!(timeout_function.asm[5], "OP_DROP");
+    assert_eq!(timeout_function.asm[4], OP_CHECKLOCKTIMEVERIFY);
+    assert_eq!(timeout_function.asm[5], OP_DROP);
     assert_eq!(timeout_function.asm[6], "<SERVER_KEY>");
     assert_eq!(timeout_function.asm[7], "<serverSig>");
-    assert_eq!(timeout_function.asm[8], "OP_CHECKSIG");
+    assert_eq!(timeout_function.asm[8], OP_CHECKSIG);
 } 

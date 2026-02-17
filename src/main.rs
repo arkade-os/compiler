@@ -5,6 +5,7 @@ use clap::Parser as ClapParser;
 mod models;
 mod parser;
 mod compiler;
+mod opcodes;
 
 /// Arkade Compiler CLI
 ///

@@ -1,5 +1,5 @@
 use arkade_compiler::compile;
-
+use arkade_compiler::opcodes::{OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_NEG64, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY};
 // ─── Streaming SHA256 Tests ────────────────────────────────────────────
 
 #[test]
@@ -27,8 +27,8 @@ fn test_sha256_initialize() {
         .expect("Should have initHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256INITIALIZE"),
-        "Expected OP_SHA256INITIALIZE in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_SHA256INITIALIZE),
+        "Expected {OP_SHA256INITIALIZE} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -56,8 +56,8 @@ fn test_sha256_update() {
         .expect("Should have updateHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256UPDATE"),
-        "Expected OP_SHA256UPDATE in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_SHA256UPDATE),
+        "Expected {OP_SHA256UPDATE} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -85,8 +85,8 @@ fn test_sha256_finalize() {
         .expect("Should have finalizeHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256FINALIZE"),
-        "Expected OP_SHA256FINALIZE in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_SHA256FINALIZE),
+        "Expected {OP_SHA256FINALIZE} in ASM: {}", asm_str);
 }
 
 // ─── Conversion & Arithmetic Tests ─────────────────────────────────────
@@ -116,8 +116,8 @@ fn test_neg64() {
         .expect("Should have negateValue server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_NEG64"),
-        "Expected OP_NEG64 in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_NEG64),
+        "Expected {OP_NEG64} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -145,8 +145,8 @@ fn test_le64_to_script_num() {
         .expect("Should have convertToScriptNum server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_LE64TOSCRIPTNUM"),
-        "Expected OP_LE64TOSCRIPTNUM in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_LE64TOSCRIPTNUM),
+        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -174,8 +174,8 @@ fn test_le32_to_le64() {
         .expect("Should have extendTo64Bit server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_LE32TOLE64"),
-        "Expected OP_LE32TOLE64 in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_LE32TOLE64),
+        "Expected {OP_LE32TOLE64} in ASM: {}", asm_str);
 }
 
 // ─── Crypto Opcodes Tests ──────────────────────────────────────────────
@@ -205,8 +205,8 @@ fn test_ec_mul_scalar_verify() {
         .expect("Should have verifyScalarMul server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_ECMULSCALARVERIFY"),
-        "Expected OP_ECMULSCALARVERIFY in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_ECMULSCALARVERIFY),
+        "Expected {OP_ECMULSCALARVERIFY} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -234,8 +234,8 @@ fn test_tweak_verify() {
         .expect("Should have verifyTweak server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_TWEAKVERIFY"),
-        "Expected OP_TWEAKVERIFY in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_TWEAKVERIFY),
+        "Expected {OP_TWEAKVERIFY} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -263,8 +263,8 @@ fn test_check_sig_from_stack_verify() {
         .expect("Should have verifyMessageSig server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_CHECKSIGFROMSTACKVERIFY"),
-        "Expected OP_CHECKSIGFROMSTACKVERIFY in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_CHECKSIGFROMSTACKVERIFY),
+        "Expected {OP_CHECKSIGFROMSTACKVERIFY} in ASM: {}", asm_str);
 }
 
 // ─── Combined Usage Tests ───────────────────────────────────────────────────────
@@ -296,12 +296,12 @@ fn test_streaming_hash_full_workflow() {
         .expect("Should have computeHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256INITIALIZE"),
-        "Expected OP_SHA256INITIALIZE in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_SHA256UPDATE"),
-        "Expected OP_SHA256UPDATE in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_SHA256FINALIZE"),
-        "Expected OP_SHA256FINALIZE in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_SHA256INITIALIZE),
+        "Expected {OP_SHA256INITIALIZE} in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_SHA256UPDATE),
+        "Expected {OP_SHA256UPDATE} in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_SHA256FINALIZE),
+        "Expected {OP_SHA256FINALIZE} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -331,10 +331,10 @@ fn test_conversion_chain() {
         .expect("Should have convertAndNegate server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_LE32TOLE64"),
-        "Expected OP_LE32TOLE64 in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_NEG64"),
-        "Expected OP_NEG64 in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_LE64TOSCRIPTNUM"),
-        "Expected OP_LE64TOSCRIPTNUM in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_LE32TOLE64),
+        "Expected {OP_LE32TOLE64} in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_NEG64),
+        "Expected {OP_NEG64} in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_LE64TOSCRIPTNUM),
+        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}", asm_str);
 }

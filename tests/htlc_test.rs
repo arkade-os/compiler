@@ -2,6 +2,7 @@ use arkade_compiler::compile;
 use std::fs;
 use tempfile::tempdir;
 use serde_json::Value;
+use arkade_compiler::opcodes::{OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG, OP_CHECKSIG, OP_DROP, OP_EQUAL, OP_SHA256};
 
 #[test]
 fn test_htlc_contract() {
@@ -76,16 +77,16 @@ contract HTLC(
     
     // Check assembly instructions
     assert_eq!(together_function.asm.len(), 10);
-    assert_eq!(together_function.asm[0], "OP_2");
+    assert_eq!(together_function.asm[0], OP_2);
     assert_eq!(together_function.asm[1], "<sender>");
     assert_eq!(together_function.asm[2], "<receiver>");
-    assert_eq!(together_function.asm[3], "OP_2");
+    assert_eq!(together_function.asm[3], OP_2);
     assert_eq!(together_function.asm[4], "<senderSig>");
     assert_eq!(together_function.asm[5], "<receiverSig>");
-    assert_eq!(together_function.asm[6], "OP_CHECKMULTISIG");
+    assert_eq!(together_function.asm[6], OP_CHECKMULTISIG);
     assert_eq!(together_function.asm[7], "<SERVER_KEY>");
     assert_eq!(together_function.asm[8], "<serverSig>");
-    assert_eq!(together_function.asm[9], "OP_CHECKSIG");
+    assert_eq!(together_function.asm[9], OP_CHECKSIG);
     
     // Verify refund function with server variant
     let refund_function = output.functions.iter()
@@ -96,13 +97,13 @@ contract HTLC(
     assert_eq!(refund_function.asm.len(), 9);
     assert_eq!(refund_function.asm[0], "<sender>");
     assert_eq!(refund_function.asm[1], "<senderSig>");
-    assert_eq!(refund_function.asm[2], "OP_CHECKSIG");
+    assert_eq!(refund_function.asm[2], OP_CHECKSIG);
     assert_eq!(refund_function.asm[3], "<refundTime>");  // Variable reference
-    assert_eq!(refund_function.asm[4], "OP_CHECKLOCKTIMEVERIFY");
-    assert_eq!(refund_function.asm[5], "OP_DROP");
+    assert_eq!(refund_function.asm[4], OP_CHECKLOCKTIMEVERIFY);
+    assert_eq!(refund_function.asm[5], OP_DROP);
     assert_eq!(refund_function.asm[6], "<SERVER_KEY>");
     assert_eq!(refund_function.asm[7], "<serverSig>");
-    assert_eq!(refund_function.asm[8], "OP_CHECKSIG");
+    assert_eq!(refund_function.asm[8], OP_CHECKSIG);
     
     // Verify claim function with server variant
     let claim_function = output.functions.iter()
@@ -113,14 +114,14 @@ contract HTLC(
     assert_eq!(claim_function.asm.len(), 10);
     assert_eq!(claim_function.asm[0], "<receiver>");
     assert_eq!(claim_function.asm[1], "<receiverSig>");
-    assert_eq!(claim_function.asm[2], "OP_CHECKSIG");
+    assert_eq!(claim_function.asm[2], OP_CHECKSIG);
     assert_eq!(claim_function.asm[3], "<preimage>");
-    assert_eq!(claim_function.asm[4], "OP_SHA256");
+    assert_eq!(claim_function.asm[4], OP_SHA256);
     assert_eq!(claim_function.asm[5], "<hash>");
-    assert_eq!(claim_function.asm[6], "OP_EQUAL");
+    assert_eq!(claim_function.asm[6], OP_EQUAL);
     assert_eq!(claim_function.asm[7], "<SERVER_KEY>");
     assert_eq!(claim_function.asm[8], "<serverSig>");
-    assert_eq!(claim_function.asm[9], "OP_CHECKSIG");
+    assert_eq!(claim_function.asm[9], OP_CHECKSIG);
 }
 
 #[test]

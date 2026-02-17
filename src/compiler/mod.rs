@@ -4,7 +4,7 @@ use crate::models::{
 };
 use crate::parser;
 use chrono::Utc;
-
+use crate::opcodes::{OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_CHECKSIGVERIFY, OP_DIV64, OP_DROP, OP_DUP, OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_FALSE, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL, OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE, OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SUB64, OP_TWEAKVERIFY, OP_TXHASH, OP_TXWEIGHT, OP_VERIFY};
 // ─── Introspection Detection ────────────────────────────────────────────────────
 //
 // These helpers detect if a function uses introspection opcodes (OP_INSPECT*).
@@ -383,12 +383,12 @@ fn generate_function(
         if contract.server_key_param.is_some() {
             asm.push("<SERVER_KEY>".to_string());
             asm.push("<serverSig>".to_string());
-            asm.push("OP_CHECKSIG".to_string());
+            asm.push(OP_CHECKSIG.to_string());
         }
     } else if let Some(exit_timelock) = contract.exit_timelock {
         asm.push(format!("{}", exit_timelock));
-        asm.push("OP_CHECKSEQUENCEVERIFY".to_string());
-        asm.push("OP_DROP".to_string());
+        asm.push(OP_CHECKSEQUENCEVERIFY.to_string());
+        asm.push(OP_DROP.to_string());
     }
 
     AbiFunction {
@@ -421,9 +421,9 @@ fn generate_nofn_checksig_asm(pubkeys: &[String], _function: &Function) -> Vec<S
         asm.push(format!("<{}>", pk));
         asm.push(format!("<{}Sig>", pk));
         if i < pubkeys.len() - 1 {
-            asm.push("OP_CHECKSIGVERIFY".to_string());
+            asm.push(OP_CHECKSIGVERIFY.to_string());
         } else {
-            asm.push("OP_CHECKSIG".to_string());
+            asm.push(OP_CHECKSIG.to_string());
         }
     }
 
@@ -545,18 +545,18 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
             Statement::IfElse { condition, then_body, else_body } => {
                 // Generate condition expression
                 generate_expression_asm(condition, asm);
-                asm.push("OP_IF".to_string());
+                asm.push(OP_IF.to_string());
 
                 // Generate then branch
                 generate_asm_from_statements_recursive(then_body, asm);
 
                 // Generate else branch if present
                 if let Some(else_stmts) = else_body {
-                    asm.push("OP_ELSE".to_string());
+                    asm.push(OP_ELSE.to_string());
                     generate_asm_from_statements_recursive(else_stmts, asm);
                 }
 
-                asm.push("OP_ENDIF".to_string());
+                asm.push(OP_ENDIF.to_string());
             },
             Statement::ForIn { index_var, value_var, iterable, body } => {
                 // Commit 5 & 6: Compile-time loop unrolling
@@ -614,13 +614,13 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
         Requirement::CheckSig { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIG".to_string());
+            asm.push(OP_CHECKSIG.to_string());
         },
         Requirement::CheckSigFromStack { signature, pubkey, message } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIGFROMSTACK".to_string());
+            asm.push(OP_CHECKSIGFROMSTACK.to_string());
         },
         Requirement::CheckMultisig { signatures, pubkeys } => {
             asm.push(format!("OP_{}", pubkeys.len()));
@@ -631,7 +631,7 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             for signature in signatures {
                 asm.push(format!("<{}>", signature));
             }
-            asm.push("OP_CHECKMULTISIG".to_string());
+            asm.push(OP_CHECKMULTISIG.to_string());
         },
         Requirement::After { blocks, timelock_var } => {
             if let Some(var) = timelock_var {
@@ -639,14 +639,14 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             } else {
                 asm.push(format!("{}", blocks));
             }
-            asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
-            asm.push("OP_DROP".to_string());
+            asm.push(OP_CHECKLOCKTIMEVERIFY.to_string());
+            asm.push(OP_DROP.to_string());
         },
         Requirement::HashEqual { preimage, hash } => {
             asm.push(format!("<{}>", preimage));
-            asm.push("OP_SHA256".to_string());
+            asm.push(OP_SHA256.to_string());
             asm.push(format!("<{}>", hash));
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
         },
         Requirement::Comparison { left, op, right } => {
             generate_comparison_asm(left, op, right, asm);
@@ -672,7 +672,7 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
 
             // Convert to u64le if needed (witness inputs arrive as CScriptNum)
             if needs_u64_conversion(left) {
-                asm.push("OP_SCRIPTNUMTOLE64".to_string());
+                asm.push(OP_SCRIPTNUMTOLE64.to_string());
             }
 
             // Emit right operand
@@ -680,62 +680,62 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
 
             // Convert to u64le if needed
             if needs_u64_conversion(right) {
-                asm.push("OP_SCRIPTNUMTOLE64".to_string());
+                asm.push(OP_SCRIPTNUMTOLE64.to_string());
             }
 
             // Emit opcode with OP_VERIFY for 64-bit ops (same as emit_binary_op_asm)
             match op.as_str() {
                 "+" => {
-                    asm.push("OP_ADD64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_ADD64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 "-" => {
-                    asm.push("OP_SUB64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_SUB64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 "*" => {
-                    asm.push("OP_MUL64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_MUL64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 "/" => {
-                    asm.push("OP_DIV64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_DIV64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 ">=" => {
-                    asm.push("OP_GREATERTHANOREQUAL64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_GREATERTHANOREQUAL64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 "<=" => {
-                    asm.push("OP_LESSTHANOREQUAL64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_LESSTHANOREQUAL64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 ">" => {
-                    asm.push("OP_GREATERTHAN64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_GREATERTHAN64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 "<" => {
-                    asm.push("OP_LESSTHAN64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_LESSTHAN64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
-                "==" => asm.push("OP_EQUAL".to_string()),
+                "==" => asm.push(OP_EQUAL.to_string()),
                 "!=" => {
-                    asm.push("OP_EQUAL".to_string());
-                    asm.push("OP_NOT".to_string());
+                    asm.push(OP_EQUAL.to_string());
+                    asm.push(OP_NOT.to_string());
                 }
-                _ => asm.push("OP_FALSE".to_string()),
+                _ => asm.push(OP_FALSE.to_string()),
             }
         },
         Expression::CurrentInput(property) => {
             if let Some(prop) = property {
                 match prop.as_str() {
-                    "scriptPubKey" => asm.push("OP_INPUTBYTECODE".to_string()),
-                    "value" => asm.push("OP_INPUTVALUE".to_string()),
-                    "sequence" => asm.push("OP_INPUTSEQUENCE".to_string()),
-                    "outpoint" => asm.push("OP_INPUTOUTPOINT".to_string()),
-                    _ => asm.push("OP_INPUTBYTECODE".to_string()),
+                    "scriptPubKey" => asm.push(OP_INPUTBYTECODE.to_string()),
+                    "value" => asm.push(OP_INPUTVALUE.to_string()),
+                    "sequence" => asm.push(OP_INPUTSEQUENCE.to_string()),
+                    "outpoint" => asm.push(OP_INPUTOUTPOINT.to_string()),
+                    _ => asm.push(OP_INPUTBYTECODE.to_string()),
                 }
             } else {
-                asm.push("OP_INPUTBYTECODE".to_string());
+                asm.push(OP_INPUTBYTECODE.to_string());
             }
         },
         Expression::ArrayIndex { array, index } => {
@@ -749,60 +749,60 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIG".to_string());
+            asm.push(OP_CHECKSIG.to_string());
         },
         Expression::CheckSigFromStackExpr { signature, pubkey, message } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIGFROMSTACK".to_string());
+            asm.push(OP_CHECKSIGFROMSTACK.to_string());
         },
         // Streaming SHA256
         Expression::Sha256Initialize { data } => {
             generate_expression_asm(data, asm);
-            asm.push("OP_SHA256INITIALIZE".to_string());
+            asm.push(OP_SHA256INITIALIZE.to_string());
         },
         Expression::Sha256Update { context, chunk } => {
             generate_expression_asm(context, asm);
             generate_expression_asm(chunk, asm);
-            asm.push("OP_SHA256UPDATE".to_string());
+            asm.push(OP_SHA256UPDATE.to_string());
         },
         Expression::Sha256Finalize { context, last_chunk } => {
             generate_expression_asm(context, asm);
             generate_expression_asm(last_chunk, asm);
-            asm.push("OP_SHA256FINALIZE".to_string());
+            asm.push(OP_SHA256FINALIZE.to_string());
         },
         // Conversion & Arithmetic
         Expression::Neg64 { value } => {
             generate_expression_asm(value, asm);
-            asm.push("OP_NEG64".to_string());
+            asm.push(OP_NEG64.to_string());
         },
         Expression::Le64ToScriptNum { value } => {
             generate_expression_asm(value, asm);
-            asm.push("OP_LE64TOSCRIPTNUM".to_string());
+            asm.push(OP_LE64TOSCRIPTNUM.to_string());
         },
         Expression::Le32ToLe64 { value } => {
             generate_expression_asm(value, asm);
-            asm.push("OP_LE32TOLE64".to_string());
+            asm.push(OP_LE32TOLE64.to_string());
         },
         // Crypto Opcodes
         Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
             generate_expression_asm(point_q, asm);
             generate_expression_asm(point_p, asm);
             generate_expression_asm(scalar, asm);
-            asm.push("OP_ECMULSCALARVERIFY".to_string());
+            asm.push(OP_ECMULSCALARVERIFY.to_string());
         },
         Expression::TweakVerify { point_p, tweak, point_q } => {
             generate_expression_asm(point_q, asm);
             generate_expression_asm(tweak, asm);
             generate_expression_asm(point_p, asm);
-            asm.push("OP_TWEAKVERIFY".to_string());
+            asm.push(OP_TWEAKVERIFY.to_string());
         },
         Expression::CheckSigFromStackVerify { signature, pubkey, message } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIGFROMSTACKVERIFY".to_string());
+            asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
         },
         Expression::AssetLookup { source, index, asset_id } => {
             emit_asset_lookup_asm(source, index, asset_id, asm);
@@ -825,38 +825,38 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::GroupFind { asset_id } => {
             asm.push(format!("<{}_txid>", asset_id));
             asm.push(format!("<{}_gidx>", asset_id));
-            asm.push("OP_FINDASSETGROUPBYASSETID".to_string());
+            asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
         },
         Expression::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
         },
         Expression::AssetGroupsLength => {
-            asm.push("OP_INSPECTNUMASSETGROUPS".to_string());
+            asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
         },
         Expression::GroupSum { index, source } => {
             generate_expression_asm(index, asm);
             match source {
-                GroupSumSource::Inputs => asm.push("OP_0".to_string()),
-                GroupSumSource::Outputs => asm.push("OP_1".to_string()),
+                GroupSumSource::Inputs => asm.push(OP_0.to_string()),
+                GroupSumSource::Outputs => asm.push(OP_1.to_string()),
             }
-            asm.push("OP_INSPECTASSETGROUPSUM".to_string());
+            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
         },
         Expression::GroupNumIO { index, source } => {
             generate_expression_asm(index, asm);
             match source {
-                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
-                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+                GroupIOSource::Inputs => asm.push(OP_0.to_string()),
+                GroupIOSource::Outputs => asm.push(OP_1.to_string()),
             }
-            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
         },
         Expression::GroupIOAccess { group_index, io_index, source, property } => {
             generate_expression_asm(group_index, asm);
             generate_expression_asm(io_index, asm);
             match source {
-                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
-                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+                GroupIOSource::Inputs => asm.push(OP_0.to_string()),
+                GroupIOSource::Outputs => asm.push(OP_1.to_string()),
             }
-            asm.push("OP_INSPECTASSETGROUP".to_string());
+            asm.push(OP_INSPECTASSETGROUP.to_string());
             // Extract property if specified
             // Stack after opcode: type_u8, data..., amount_u64 (top)
             if let Some(prop) = property {
@@ -867,8 +867,8 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                     },
                     "type" => {
                         // Drop everything except type
-                        asm.push("OP_DROP".to_string()); // amount
-                        asm.push("OP_DROP".to_string()); // data (varies)
+                        asm.push(OP_DROP.to_string()); // amount
+                        asm.push(OP_DROP.to_string()); // data (varies)
                     },
                     _ => {}
                 }
@@ -882,101 +882,101 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
     match (left, op, right) {
         (Expression::Variable(var), ">=", Expression::Literal(value)) => {
             asm.push(format!("<{}>", var));
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(value.clone());
         },
         (Expression::Variable(var), "==", Expression::Variable(var2)) => {
             asm.push(format!("<{}>", var));
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", var2));
         },
         (Expression::Variable(var), ">=", Expression::Variable(var2)) => {
             asm.push(format!("<{}>", var));
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", var2));
         },
         (Expression::Variable(var), "==", Expression::Property(prop)) => {
             asm.push(format!("<{}>", var));
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", prop));
         },
         (Expression::Variable(var), ">=", Expression::Property(prop)) => {
             asm.push(format!("<{}>", var));
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", prop));
         },
         (Expression::Literal(lit), "==", Expression::Variable(var)) => {
             asm.push(lit.clone());
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", var));
         },
         (Expression::Literal(lit), ">=", Expression::Variable(var)) => {
             asm.push(lit.clone());
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", var));
         },
         (Expression::Literal(lit), "==", Expression::Literal(value)) => {
             asm.push(lit.clone());
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(value.clone());
         },
         (Expression::Literal(lit), ">=", Expression::Literal(value)) => {
             asm.push(lit.clone());
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(value.clone());
         },
         (Expression::Literal(lit), "==", Expression::Property(prop)) => {
             asm.push(lit.clone());
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", prop));
         },
         (Expression::Literal(lit), ">=", Expression::Property(prop)) => {
             asm.push(lit.clone());
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", prop));
         },
         (Expression::Property(prop), "==", Expression::Variable(var)) => {
             asm.push(format!("<{}>", prop));
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", var));
         },
         (Expression::Property(prop), ">=", Expression::Variable(var)) => {
             asm.push(format!("<{}>", prop));
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", var));
         },
         (Expression::Property(prop), "==", Expression::Literal(value)) => {
             asm.push(format!("<{}>", prop));
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(value.clone());
         },
         (Expression::Property(prop), ">=", Expression::Literal(value)) => {
             asm.push(format!("<{}>", prop));
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(value.clone());
         },
         (Expression::Property(prop), "==", Expression::Property(prop2)) => {
             asm.push(format!("<{}>", prop));
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", prop2));
         },
         (Expression::Property(prop), ">=", Expression::Property(prop2)) => {
             asm.push(format!("<{}>", prop));
-            asm.push("OP_GREATERTHANOREQUAL".to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", prop2));
         },
         (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
             if value == "true" {
                 if let Some(prop) = property {
                     match prop.as_str() {
-                        "scriptPubKey" => asm.push("OP_INPUTBYTECODE".to_string()),
-                        "value" => asm.push("OP_INPUTVALUE".to_string()),
-                        "sequence" => asm.push("OP_INPUTSEQUENCE".to_string()),
-                        "outpoint" => asm.push("OP_INPUTOUTPOINT".to_string()),
-                        _ => asm.push("OP_INPUTBYTECODE".to_string()),
+                        "scriptPubKey" => asm.push(OP_INPUTBYTECODE.to_string()),
+                        "value" => asm.push(OP_INPUTVALUE.to_string()),
+                        "sequence" => asm.push(OP_INPUTSEQUENCE.to_string()),
+                        "outpoint" => asm.push(OP_INPUTOUTPOINT.to_string()),
+                        _ => asm.push(OP_INPUTBYTECODE.to_string()),
                     }
                 } else {
-                    asm.push("OP_INPUTBYTECODE".to_string());
+                    asm.push(OP_INPUTBYTECODE.to_string());
                 }
             }
         },
@@ -997,13 +997,13 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
             Requirement::CheckSig { signature, pubkey } => {
                 asm.push(format!("<{}>", pubkey));
                 asm.push(format!("<{}>", signature));
-                asm.push("OP_CHECKSIG".to_string());
+                asm.push(OP_CHECKSIG.to_string());
             }
             Requirement::CheckSigFromStack { signature, pubkey, message } => {
                 asm.push(format!("<{}>", message));
                 asm.push(format!("<{}>", pubkey));
                 asm.push(format!("<{}>", signature));
-                asm.push("OP_CHECKSIGFROMSTACK".to_string());
+                asm.push(OP_CHECKSIGFROMSTACK.to_string());
             }
             Requirement::CheckMultisig {
                 signatures,
@@ -1017,7 +1017,7 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 for signature in signatures {
                     asm.push(format!("<{}>", signature));
                 }
-                asm.push("OP_CHECKMULTISIG".to_string());
+                asm.push(OP_CHECKMULTISIG.to_string());
             }
             Requirement::After {
                 blocks,
@@ -1028,14 +1028,14 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 } else {
                     asm.push(format!("{}", blocks));
                 }
-                asm.push("OP_CHECKLOCKTIMEVERIFY".to_string());
-                asm.push("OP_DROP".to_string());
+                asm.push(OP_CHECKLOCKTIMEVERIFY.to_string());
+                asm.push(OP_DROP.to_string());
             }
             Requirement::HashEqual { preimage, hash } => {
                 asm.push(format!("<{}>", preimage));
-                asm.push("OP_SHA256".to_string());
+                asm.push(OP_SHA256.to_string());
                 asm.push(format!("<{}>", hash));
-                asm.push("OP_EQUAL".to_string());
+                asm.push(OP_EQUAL.to_string());
             }
             Requirement::Comparison { left, op, right } => {
                 emit_comparison_asm(left, op, right, &mut asm);
@@ -1146,38 +1146,38 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // tx.assetGroups.find(assetId) → OP_FINDASSETGROUPBYASSETID
             asm.push(format!("<{}_txid>", asset_id));
             asm.push(format!("<{}_gidx>", asset_id));
-            asm.push("OP_FINDASSETGROUPBYASSETID".to_string());
+            asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
         }
         Expression::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
         }
         Expression::AssetGroupsLength => {
-            asm.push("OP_INSPECTNUMASSETGROUPS".to_string());
+            asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
         }
         Expression::GroupSum { index, source } => {
             emit_expression_asm(index, asm);
             match source {
-                GroupSumSource::Inputs => asm.push("OP_0".to_string()),
-                GroupSumSource::Outputs => asm.push("OP_1".to_string()),
+                GroupSumSource::Inputs => asm.push(OP_0.to_string()),
+                GroupSumSource::Outputs => asm.push(OP_1.to_string()),
             }
-            asm.push("OP_INSPECTASSETGROUPSUM".to_string());
+            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
         }
         Expression::GroupNumIO { index, source } => {
             emit_expression_asm(index, asm);
             match source {
-                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
-                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+                GroupIOSource::Inputs => asm.push(OP_0.to_string()),
+                GroupIOSource::Outputs => asm.push(OP_1.to_string()),
             }
-            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
         }
         Expression::GroupIOAccess { group_index, io_index, source, property } => {
             emit_expression_asm(group_index, asm);
             emit_expression_asm(io_index, asm);
             match source {
-                GroupIOSource::Inputs => asm.push("OP_0".to_string()),
-                GroupIOSource::Outputs => asm.push("OP_1".to_string()),
+                GroupIOSource::Inputs => asm.push(OP_0.to_string()),
+                GroupIOSource::Outputs => asm.push(OP_1.to_string()),
             }
-            asm.push("OP_INSPECTASSETGROUP".to_string());
+            asm.push(OP_INSPECTASSETGROUP.to_string());
             // Extract property if specified
             if let Some(prop) = property {
                 match prop.as_str() {
@@ -1185,8 +1185,8 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                         // Amount is on top, no extraction needed for amount
                     },
                     "type" => {
-                        asm.push("OP_DROP".to_string()); // amount
-                        asm.push("OP_DROP".to_string()); // data
+                        asm.push(OP_DROP.to_string()); // amount
+                        asm.push(OP_DROP.to_string()); // data
                     },
                     _ => {}
                 }
@@ -1203,60 +1203,60 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIG".to_string());
+            asm.push(OP_CHECKSIG.to_string());
         }
         Expression::CheckSigFromStackExpr { signature, pubkey, message } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIGFROMSTACK".to_string());
+            asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         // Streaming SHA256
         Expression::Sha256Initialize { data } => {
             emit_expression_asm(data, asm);
-            asm.push("OP_SHA256INITIALIZE".to_string());
+            asm.push(OP_SHA256INITIALIZE.to_string());
         }
         Expression::Sha256Update { context, chunk } => {
             emit_expression_asm(context, asm);
             emit_expression_asm(chunk, asm);
-            asm.push("OP_SHA256UPDATE".to_string());
+            asm.push(OP_SHA256UPDATE.to_string());
         }
         Expression::Sha256Finalize { context, last_chunk } => {
             emit_expression_asm(context, asm);
             emit_expression_asm(last_chunk, asm);
-            asm.push("OP_SHA256FINALIZE".to_string());
+            asm.push(OP_SHA256FINALIZE.to_string());
         }
         // Conversion & Arithmetic
         Expression::Neg64 { value } => {
             emit_expression_asm(value, asm);
-            asm.push("OP_NEG64".to_string());
+            asm.push(OP_NEG64.to_string());
         }
         Expression::Le64ToScriptNum { value } => {
             emit_expression_asm(value, asm);
-            asm.push("OP_LE64TOSCRIPTNUM".to_string());
+            asm.push(OP_LE64TOSCRIPTNUM.to_string());
         }
         Expression::Le32ToLe64 { value } => {
             emit_expression_asm(value, asm);
-            asm.push("OP_LE32TOLE64".to_string());
+            asm.push(OP_LE32TOLE64.to_string());
         }
         // Crypto Opcodes
         Expression::EcMulScalarVerify { scalar, point_p, point_q } => {
             emit_expression_asm(point_q, asm);
             emit_expression_asm(point_p, asm);
             emit_expression_asm(scalar, asm);
-            asm.push("OP_ECMULSCALARVERIFY".to_string());
+            asm.push(OP_ECMULSCALARVERIFY.to_string());
         }
         Expression::TweakVerify { point_p, tweak, point_q } => {
             emit_expression_asm(point_q, asm);
             emit_expression_asm(tweak, asm);
             emit_expression_asm(point_p, asm);
-            asm.push("OP_TWEAKVERIFY".to_string());
+            asm.push(OP_TWEAKVERIFY.to_string());
         }
         Expression::CheckSigFromStackVerify { signature, pubkey, message } => {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push("OP_CHECKSIGFROMSTACKVERIFY".to_string());
+            asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
         }
     }
 }
@@ -1265,24 +1265,24 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
 fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<String>) {
     match property {
         Some("scriptPubKey") => {
-            asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
-            asm.push("OP_INSPECTINPUTSCRIPTPUBKEY".to_string());
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
         }
         Some("value") => {
-            asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
-            asm.push("OP_INSPECTINPUTVALUE".to_string());
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            asm.push(OP_INSPECTINPUTVALUE.to_string());
         }
         Some("sequence") => {
-            asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
-            asm.push("OP_INSPECTINPUTSEQUENCE".to_string());
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            asm.push(OP_INSPECTINPUTSEQUENCE.to_string());
         }
         Some("outpoint") => {
-            asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
-            asm.push("OP_INSPECTINPUTOUTPOINT".to_string());
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            asm.push(OP_INSPECTINPUTOUTPOINT.to_string());
         }
         _ => {
-            asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
-            asm.push("OP_INSPECTINPUTSCRIPTPUBKEY".to_string());
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
         }
     }
 }
@@ -1307,19 +1307,19 @@ fn emit_asset_lookup_asm(
     // Emit the appropriate lookup opcode
     match source {
         AssetLookupSource::Input => {
-            asm.push("OP_INSPECTINASSETLOOKUP".to_string());
+            asm.push(OP_INSPECTINASSETLOOKUP.to_string());
         }
         AssetLookupSource::Output => {
-            asm.push("OP_INSPECTOUTASSETLOOKUP".to_string());
+            asm.push(OP_INSPECTOUTASSETLOOKUP.to_string());
         }
     }
 
     // Sentinel guard: verify result is not -1 (asset not found)
-    asm.push("OP_DUP".to_string());
-    asm.push("OP_1NEGATE".to_string());
-    asm.push("OP_EQUAL".to_string());
-    asm.push("OP_NOT".to_string());
-    asm.push("OP_VERIFY".to_string());
+    asm.push(OP_DUP.to_string());
+    asm.push(OP_1NEGATE.to_string());
+    asm.push(OP_EQUAL.to_string());
+    asm.push(OP_NOT.to_string());
+    asm.push(OP_VERIFY.to_string());
 }
 
 /// Emit assembly for asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -1336,10 +1336,10 @@ fn emit_asset_count_asm(
     // Emit the appropriate count opcode
     match source {
         AssetLookupSource::Input => {
-            asm.push("OP_INSPECTINASSETCOUNT".to_string());
+            asm.push(OP_INSPECTINASSETCOUNT.to_string());
         }
         AssetLookupSource::Output => {
-            asm.push("OP_INSPECTOUTASSETCOUNT".to_string());
+            asm.push(OP_INSPECTOUTASSETCOUNT.to_string());
         }
     }
 }
@@ -1364,10 +1364,10 @@ fn emit_asset_at_asm(
     // Emit the appropriate opcode
     match source {
         AssetLookupSource::Input => {
-            asm.push("OP_INSPECTINASSETAT".to_string());
+            asm.push(OP_INSPECTINASSETAT.to_string());
         }
         AssetLookupSource::Output => {
-            asm.push("OP_INSPECTOUTASSETAT".to_string());
+            asm.push(OP_INSPECTOUTASSETAT.to_string());
         }
     }
 
@@ -1376,13 +1376,13 @@ fn emit_asset_at_asm(
     match property {
         "assetId" => {
             // Drop the amount, keep txid32 and gidx_u16
-            asm.push("OP_DROP".to_string());
+            asm.push(OP_DROP.to_string());
         }
         "amount" => {
             // Keep only the amount (top of stack)
             // NIP removes the second item from the top
-            asm.push("OP_NIP".to_string()); // Remove gidx_u16
-            asm.push("OP_NIP".to_string()); // Remove txid32
+            asm.push(OP_NIP.to_string()); // Remove gidx_u16
+            asm.push(OP_NIP.to_string()); // Remove txid32
         }
         _ => {
             // Unknown property, leave stack as-is
@@ -1393,11 +1393,11 @@ fn emit_asset_at_asm(
 /// Emit assembly for transaction introspection: tx.version, tx.locktime, etc.
 fn emit_tx_introspection_asm(property: &str, asm: &mut Vec<String>) {
     match property {
-        "version" => asm.push("OP_INSPECTVERSION".to_string()),
-        "locktime" => asm.push("OP_INSPECTLOCKTIME".to_string()),
-        "numInputs" => asm.push("OP_INSPECTNUMINPUTS".to_string()),
-        "numOutputs" => asm.push("OP_INSPECTNUMOUTPUTS".to_string()),
-        "weight" => asm.push("OP_TXWEIGHT".to_string()),
+        "version" => asm.push(OP_INSPECTVERSION.to_string()),
+        "locktime" => asm.push(OP_INSPECTLOCKTIME.to_string()),
+        "numInputs" => asm.push(OP_INSPECTNUMINPUTS.to_string()),
+        "numOutputs" => asm.push(OP_INSPECTNUMOUTPUTS.to_string()),
+        "weight" => asm.push(OP_TXWEIGHT.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.{}>", property));
@@ -1412,11 +1412,11 @@ fn emit_input_introspection_asm(index: &Expression, property: &str, asm: &mut Ve
 
     // Emit the appropriate opcode
     match property {
-        "value" => asm.push("OP_INSPECTINPUTVALUE".to_string()),
-        "scriptPubKey" => asm.push("OP_INSPECTINPUTSCRIPTPUBKEY".to_string()),
-        "sequence" => asm.push("OP_INSPECTINPUTSEQUENCE".to_string()),
-        "outpoint" => asm.push("OP_INSPECTINPUTOUTPOINT".to_string()),
-        "issuance" => asm.push("OP_INSPECTINPUTISSUANCE".to_string()),
+        "value" => asm.push(OP_INSPECTINPUTVALUE.to_string()),
+        "scriptPubKey" => asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string()),
+        "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
+        "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
+        "issuance" => asm.push(OP_INSPECTINPUTISSUANCE.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.inputs[?].{}>", property));
@@ -1431,9 +1431,9 @@ fn emit_output_introspection_asm(index: &Expression, property: &str, asm: &mut V
 
     // Emit the appropriate opcode
     match property {
-        "value" => asm.push("OP_INSPECTOUTPUTVALUE".to_string()),
-        "scriptPubKey" => asm.push("OP_INSPECTOUTPUTSCRIPTPUBKEY".to_string()),
-        "nonce" => asm.push("OP_INSPECTOUTPUTNONCE".to_string()),
+        "value" => asm.push(OP_INSPECTOUTPUTVALUE.to_string()),
+        "scriptPubKey" => asm.push(OP_INSPECTOUTPUTSCRIPTPUBKEY.to_string()),
+        "nonce" => asm.push(OP_INSPECTOUTPUTNONCE.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.outputs[?].{}>", property));
@@ -1448,7 +1448,7 @@ fn emit_binary_op_asm(left: &Expression, op: &str, right: &Expression, asm: &mut
 
     // Convert to u64le if needed (witness inputs arrive as csn)
     if needs_u64_conversion(left) {
-        asm.push("OP_SCRIPTNUMTOLE64".to_string());
+        asm.push(OP_SCRIPTNUMTOLE64.to_string());
     }
 
     // Emit right operand
@@ -1456,26 +1456,26 @@ fn emit_binary_op_asm(left: &Expression, op: &str, right: &Expression, asm: &mut
 
     // Convert to u64le if needed
     if needs_u64_conversion(right) {
-        asm.push("OP_SCRIPTNUMTOLE64".to_string());
+        asm.push(OP_SCRIPTNUMTOLE64.to_string());
     }
 
     // Emit 64-bit arithmetic opcode + overflow verify
     match op {
         "+" => {
-            asm.push("OP_ADD64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_ADD64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         "-" => {
-            asm.push("OP_SUB64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_SUB64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         "*" => {
-            asm.push("OP_MUL64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_MUL64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         "/" => {
-            asm.push("OP_DIV64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_DIV64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         _ => {
             asm.push(format!("OP_{}", op.to_uppercase()));
@@ -1511,59 +1511,59 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
     match property {
         "sumInputs" => {
             asm.push(format!("<{}>", group));
-            asm.push("OP_0".to_string()); // source=inputs
-            asm.push("OP_INSPECTASSETGROUPSUM".to_string());
+            asm.push(OP_0.to_string()); // source=inputs
+            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
         }
         "sumOutputs" => {
             asm.push(format!("<{}>", group));
-            asm.push("OP_1".to_string()); // source=outputs
-            asm.push("OP_INSPECTASSETGROUPSUM".to_string());
+            asm.push(OP_1.to_string()); // source=outputs
+            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
         }
         "numInputs" => {
             asm.push(format!("<{}>", group));
-            asm.push("OP_0".to_string()); // source=inputs
-            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+            asm.push(OP_0.to_string()); // source=inputs
+            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
         }
         "numOutputs" => {
             asm.push(format!("<{}>", group));
-            asm.push("OP_1".to_string()); // source=outputs
-            asm.push("OP_INSPECTASSETGROUPNUM".to_string());
+            asm.push(OP_1.to_string()); // source=outputs
+            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
         }
         "delta" => {
             // delta = sumOutputs - sumInputs
             asm.push(format!("<{}>", group));
-            asm.push("OP_1".to_string());
-            asm.push("OP_INSPECTASSETGROUPSUM".to_string());
+            asm.push(OP_1.to_string());
+            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
             asm.push(format!("<{}>", group));
-            asm.push("OP_0".to_string());
-            asm.push("OP_INSPECTASSETGROUPSUM".to_string());
-            asm.push("OP_SUB64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_0.to_string());
+            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
+            asm.push(OP_SUB64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         "control" => {
             asm.push(format!("<{}>", group));
-            asm.push("OP_INSPECTASSETGROUPCTRL".to_string());
+            asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
         }
         "metadataHash" => {
             asm.push(format!("<{}>", group));
-            asm.push("OP_INSPECTASSETGROUPMETADATAHASH".to_string());
+            asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string());
         }
         "assetId" => {
             // Returns (txid32, gidx_u16) tuple on stack
             asm.push(format!("<{}>", group));
-            asm.push("OP_INSPECTASSETGROUPASSETID".to_string());
+            asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
         }
         "isFresh" => {
             // isFresh: compares assetId.txid with current transaction's txid
             // 1. Get group's assetId (returns txid32, gidx_u16)
             asm.push(format!("<{}>", group));
-            asm.push("OP_INSPECTASSETGROUPASSETID".to_string());
+            asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
             // 2. Drop gidx_u16, keep txid32
-            asm.push("OP_DROP".to_string());
+            asm.push(OP_DROP.to_string());
             // 3. Get current transaction hash
-            asm.push("OP_TXHASH".to_string());
+            asm.push(OP_TXHASH.to_string());
             // 4. Compare txids - result is bool
-            asm.push("OP_EQUAL".to_string());
+            asm.push(OP_EQUAL.to_string());
         }
         _ => {
             // Unknown group property
@@ -1575,15 +1575,15 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
 /// Emit standard comparison operator (CScriptNum / non-64-bit)
 fn emit_comparison_op(op: &str, asm: &mut Vec<String>) {
     match op {
-        "==" => asm.push("OP_EQUAL".to_string()),
+        "==" => asm.push(OP_EQUAL.to_string()),
         "!=" => {
-            asm.push("OP_EQUAL".to_string());
-            asm.push("OP_NOT".to_string());
+            asm.push(OP_EQUAL.to_string());
+            asm.push(OP_NOT.to_string());
         }
-        ">=" => asm.push("OP_GREATERTHANOREQUAL".to_string()),
-        ">" => asm.push("OP_GREATERTHAN".to_string()),
-        "<=" => asm.push("OP_LESSTHANOREQUAL".to_string()),
-        "<" => asm.push("OP_LESSTHAN".to_string()),
+        ">=" => asm.push(OP_GREATERTHANOREQUAL.to_string()),
+        ">" => asm.push(OP_GREATERTHAN.to_string()),
+        "<=" => asm.push(OP_LESSTHANOREQUAL.to_string()),
+        "<" => asm.push(OP_LESSTHAN.to_string()),
         _ => asm.push(format!("OP_{}", op)),
     }
 }
@@ -1592,33 +1592,33 @@ fn emit_comparison_op(op: &str, asm: &mut Vec<String>) {
 fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
     match op {
         "==" => {
-            asm.push("OP_EQUAL".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_EQUAL.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         "!=" => {
-            asm.push("OP_EQUAL".to_string());
-            asm.push("OP_NOT".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_EQUAL.to_string());
+            asm.push(OP_NOT.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         ">=" => {
-            asm.push("OP_GREATERTHANOREQUAL64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_GREATERTHANOREQUAL64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         ">" => {
-            asm.push("OP_GREATERTHAN64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_GREATERTHAN64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         "<=" => {
-            asm.push("OP_LESSTHANOREQUAL64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_LESSTHANOREQUAL64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         "<" => {
-            asm.push("OP_LESSTHAN64".to_string());
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_LESSTHAN64.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         _ => {
             asm.push(format!("OP_{}", op));
-            asm.push("OP_VERIFY".to_string());
+            asm.push(OP_VERIFY.to_string());
         }
     }
 }

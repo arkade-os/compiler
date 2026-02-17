@@ -1,4 +1,5 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_SUB64, OP_TXHASH};
 
 /// Test that group.assetId emits OP_INSPECTASSETGROUPASSETID
 #[test]
@@ -34,8 +35,8 @@ fn test_group_asset_id_basic() {
 
     // assetId emits: OP_INSPECTASSETGROUPASSETID
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPASSETID"),
-        "Expected OP_INSPECTASSETGROUPASSETID for assetId access: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPASSETID),
+        "Expected {OP_INSPECTASSETGROUPASSETID} for assetId access: {}",
         asm_str
     );
 }
@@ -75,18 +76,18 @@ fn test_group_is_fresh_basic() {
 
     // isFresh emits: OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXHASH OP_EQUAL
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPASSETID"),
-        "Expected OP_INSPECTASSETGROUPASSETID for isFresh check: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPASSETID),
+        "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_DROP"),
-        "Expected OP_DROP for isFresh check: {}",
+        asm_str.contains(OP_DROP),
+        "Expected {OP_DROP} for isFresh check: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_TXHASH"),
-        "Expected OP_TXHASH for isFresh check: {}",
+        asm_str.contains(OP_TXHASH),
+        "Expected {OP_TXHASH} for isFresh check: {}",
         asm_str
     );
 }
@@ -125,24 +126,24 @@ fn test_is_fresh_with_delta_combo() {
 
     // Verify all three group property opcodes are present
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPASSETID"),
-        "Expected OP_INSPECTASSETGROUPASSETID for isFresh: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPASSETID),
+        "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_TXHASH"),
-        "Expected OP_TXHASH for isFresh: {}",
+        asm_str.contains(OP_TXHASH),
+        "Expected {OP_TXHASH} for isFresh: {}",
         asm_str
     );
     // delta uses OP_SUB64 for sumOutputs - sumInputs
     assert!(
-        asm_str.contains("OP_SUB64"),
-        "Expected OP_SUB64 for delta: {}",
+        asm_str.contains(OP_SUB64),
+        "Expected {OP_SUB64} for delta: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPCTRL"),
-        "Expected OP_INSPECTASSETGROUPCTRL for control: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPCTRL),
+        "Expected {OP_INSPECTASSETGROUPCTRL} for control: {}",
         asm_str
     );
 }
@@ -180,13 +181,13 @@ fn test_is_fresh_zero_for_existing_asset() {
 
     // isFresh emits the same opcode sequence regardless of comparison value
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPASSETID"),
-        "Expected OP_INSPECTASSETGROUPASSETID: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPASSETID),
+        "Expected {OP_INSPECTASSETGROUPASSETID}: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_TXHASH"),
-        "Expected OP_TXHASH: {}",
+        asm_str.contains(OP_TXHASH),
+        "Expected {OP_TXHASH}: {}",
         asm_str
     );
 }
@@ -222,8 +223,8 @@ fn test_group_metadata_hash() {
     let asm_str = func.asm.join(" ");
 
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPMETADATAHASH"),
-        "Expected OP_INSPECTASSETGROUPMETADATAHASH: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPMETADATAHASH),
+        "Expected {OP_INSPECTASSETGROUPMETADATAHASH}: {}",
         asm_str
     );
 }
@@ -271,38 +272,38 @@ fn test_all_group_properties() {
 
     // All group property opcodes should be present
     assert!(
-        asm_str.contains("OP_FINDASSETGROUPBYASSETID"),
-        "Expected OP_FINDASSETGROUPBYASSETID: {}",
+        asm_str.contains(OP_FINDASSETGROUPBYASSETID),
+        "Expected {OP_FINDASSETGROUPBYASSETID}: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPASSETID"),
-        "Expected OP_INSPECTASSETGROUPASSETID for isFresh: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPASSETID),
+        "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_TXHASH"),
-        "Expected OP_TXHASH for isFresh: {}",
+        asm_str.contains(OP_TXHASH),
+        "Expected {OP_TXHASH} for isFresh: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_SUB64"),
-        "Expected OP_SUB64 for delta: {}",
+        asm_str.contains(OP_SUB64),
+        "Expected {OP_SUB64} for delta: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPCTRL"),
-        "Expected OP_INSPECTASSETGROUPCTRL: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPCTRL),
+        "Expected {OP_INSPECTASSETGROUPCTRL}: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPMETADATAHASH"),
-        "Expected OP_INSPECTASSETGROUPMETADATAHASH: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPMETADATAHASH),
+        "Expected {OP_INSPECTASSETGROUPMETADATAHASH}: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPSUM"),
-        "Expected OP_INSPECTASSETGROUPSUM for sumInputs/sumOutputs: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPSUM),
+        "Expected {OP_INSPECTASSETGROUPSUM} for sumInputs/sumOutputs: {}",
         asm_str
     );
 }
@@ -339,13 +340,13 @@ fn test_group_num_inputs() {
 
     // numInputs emits: <group> OP_0 OP_INSPECTASSETGROUPNUM
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPNUM"),
-        "Expected OP_INSPECTASSETGROUPNUM for numInputs: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPNUM),
+        "Expected {OP_INSPECTASSETGROUPNUM} for numInputs: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_0"),
-        "Expected OP_0 (source=inputs) for numInputs: {}",
+        asm_str.contains(OP_0),
+        "Expected {OP_0} (source=inputs) for numInputs: {}",
         asm_str
     );
 }
@@ -382,13 +383,13 @@ fn test_group_num_outputs() {
 
     // numOutputs emits: <group> OP_1 OP_INSPECTASSETGROUPNUM
     assert!(
-        asm_str.contains("OP_INSPECTASSETGROUPNUM"),
-        "Expected OP_INSPECTASSETGROUPNUM for numOutputs: {}",
+        asm_str.contains(OP_INSPECTASSETGROUPNUM),
+        "Expected {OP_INSPECTASSETGROUPNUM} for numOutputs: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_1"),
-        "Expected OP_1 (source=outputs) for numOutputs: {}",
+        asm_str.contains(OP_1),
+        "Expected {OP_1} (source=outputs) for numOutputs: {}",
         asm_str
     );
 }
@@ -426,10 +427,10 @@ fn test_group_num_io_together() {
     let asm_str = func.asm.join(" ");
 
     // Should have multiple OP_INSPECTASSETGROUPNUM calls
-    let count = asm_str.matches("OP_INSPECTASSETGROUPNUM").count();
+    let count = asm_str.matches(OP_INSPECTASSETGROUPNUM).count();
     assert!(
         count >= 2,
-        "Expected at least 2 OP_INSPECTASSETGROUPNUM calls, got {}: {}",
+        "Expected at least 2 {OP_INSPECTASSETGROUPNUM} calls, got {}: {}",
         count,
         asm_str
     );

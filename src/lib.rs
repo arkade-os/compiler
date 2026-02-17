@@ -1,6 +1,7 @@
 pub mod models;
 pub mod parser;
 pub mod compiler;
+pub mod opcodes;
 
 pub use models::{Contract, Function, Parameter, Requirement, Expression, ContractJson};
 

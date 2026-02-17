@@ -1,4 +1,10 @@
+use arkade_compiler::opcodes::{OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL64, OP_VERIFY};
+use arkade_compiler::opcodes::OP_NOT;
+use arkade_compiler::opcodes::OP_EQUAL;
+use arkade_compiler::opcodes::OP_1NEGATE;
+use arkade_compiler::opcodes::OP_DUP;
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP};
 
 #[test]
 fn test_token_vault_contract() {
@@ -50,26 +56,27 @@ fn test_token_vault_contract() {
     // Check that assembly contains asset lookup opcodes
     let deposit_asm = deposit.asm.join(" ");
     assert!(
-        deposit_asm.contains("OP_INSPECTINASSETLOOKUP"),
-        "missing OP_INSPECTINASSETLOOKUP in deposit asm: {}",
+        deposit_asm.contains(OP_INSPECTINASSETLOOKUP),
+        "missing {OP_INSPECTINASSETLOOKUP} in deposit asm: {}",
         deposit_asm
     );
     assert!(
-        deposit_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
-        "missing OP_INSPECTOUTASSETLOOKUP in deposit asm: {}",
+        deposit_asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "missing {OP_INSPECTOUTASSETLOOKUP} in deposit asm: {}",
         deposit_asm
     );
 
     // Check sentinel guard pattern (DUP, 1NEGATE, EQUAL, NOT, VERIFY)
+    let sentinel_guard = format!("{OP_DUP} {OP_1NEGATE} {OP_EQUAL} {OP_NOT} {OP_VERIFY}");
     assert!(
-        deposit_asm.contains("OP_DUP OP_1NEGATE OP_EQUAL OP_NOT OP_VERIFY"),
+        deposit_asm.contains(&sentinel_guard),
         "missing sentinel guard pattern in deposit asm: {}",
         deposit_asm
     );
 
     // Check 64-bit comparison opcodes
     assert!(
-        deposit_asm.contains("OP_GREATERTHAN64") || deposit_asm.contains("OP_GREATERTHANOREQUAL64"),
+        deposit_asm.contains(OP_GREATERTHAN64) || deposit_asm.contains(OP_GREATERTHANOREQUAL64),
         "missing 64-bit comparison opcodes in deposit asm: {}",
         deposit_asm
     );
@@ -100,21 +107,21 @@ fn test_token_vault_contract() {
 
     // Exit path should have N-of-N CHECKSIG chain (pure Bitcoin)
     assert!(
-        withdraw_asm.contains("OP_CHECKSIG"),
-        "missing CHECKSIG in withdraw exit: {}",
+        withdraw_asm.contains(OP_CHECKSIG),
+        "missing {OP_CHECKSIG} in withdraw exit: {}",
         withdraw_asm
     );
 
     // Exit path should use CSV (relative timelock)
     assert!(
-        withdraw_asm.contains("OP_CHECKSEQUENCEVERIFY"),
+        withdraw_asm.contains(OP_CHECKSEQUENCEVERIFY),
         "missing CSV exit timelock in withdraw exit variant: {}",
         withdraw_asm
     );
 
     // Exit path should NOT have introspection opcodes (pure Bitcoin fallback)
     assert!(
-        !withdraw_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
+        !withdraw_asm.contains(OP_INSPECTOUTASSETLOOKUP),
         "exit path should not have introspection: {}",
         withdraw_asm
     );
@@ -155,8 +162,8 @@ fn test_token_vault_cli() {
 
     let json_output = fs::read_to_string(&output_path).unwrap();
     assert!(json_output.contains("\"contractName\": \"TokenVault\""));
-    assert!(json_output.contains("OP_INSPECTINASSETLOOKUP"));
-    assert!(json_output.contains("OP_INSPECTOUTASSETLOOKUP"));
+    assert!(json_output.contains(OP_INSPECTINASSETLOOKUP));
+    assert!(json_output.contains(OP_INSPECTOUTASSETLOOKUP));
     assert!(json_output.contains("tokenAssetId_txid"));
     assert!(json_output.contains("ctrlAssetId_txid"));
 }

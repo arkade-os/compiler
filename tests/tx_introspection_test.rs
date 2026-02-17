@@ -1,4 +1,5 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{OP_INSPECTLOCKTIME, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTVERSION, OP_TXWEIGHT};
 
 /// Test transaction introspection opcodes
 #[test]
@@ -26,8 +27,8 @@ fn test_tx_version() {
         .expect("Should have checkVersion server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_INSPECTVERSION"),
-        "Expected OP_INSPECTVERSION in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_INSPECTVERSION),
+        "Expected {OP_INSPECTVERSION} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -55,8 +56,8 @@ fn test_tx_locktime() {
         .expect("Should have checkLocktime server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_INSPECTLOCKTIME"),
-        "Expected OP_INSPECTLOCKTIME in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_INSPECTLOCKTIME),
+        "Expected {OP_INSPECTLOCKTIME} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -84,8 +85,8 @@ fn test_tx_num_inputs() {
         .expect("Should have checkInputs server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_INSPECTNUMINPUTS"),
-        "Expected OP_INSPECTNUMINPUTS in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_INSPECTNUMINPUTS),
+        "Expected {OP_INSPECTNUMINPUTS} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -113,8 +114,8 @@ fn test_tx_num_outputs() {
         .expect("Should have checkOutputs server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_INSPECTNUMOUTPUTS"),
-        "Expected OP_INSPECTNUMOUTPUTS in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_INSPECTNUMOUTPUTS),
+        "Expected {OP_INSPECTNUMOUTPUTS} in ASM: {}", asm_str);
 }
 
 #[test]
@@ -142,6 +143,6 @@ fn test_tx_weight() {
         .expect("Should have checkWeight server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_TXWEIGHT"),
-        "Expected OP_TXWEIGHT in ASM: {}", asm_str);
+    assert!(asm_str.contains(OP_TXWEIGHT),
+        "Expected {OP_TXWEIGHT} in ASM: {}", asm_str);
 }
