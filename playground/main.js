@@ -80,6 +80,64 @@ function loadFromStorage() {
     }
 }
 
+// ── URL sharing ───────────────────────────────────────────────────
+
+async function compressCode(text) {
+    const stream = new CompressionStream('deflate-raw');
+    const writer = stream.writable.getWriter();
+    writer.write(new TextEncoder().encode(text));
+    writer.close();
+    const chunks = [];
+    const reader = stream.readable.getReader();
+    let result;
+    while (!(result = await reader.read()).done) chunks.push(result.value);
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let i = 0;
+    for (const c of chunks) { out.set(c, i); i += c.length; }
+    let bin = '';
+    for (let j = 0; j < out.length; j++) bin += String.fromCharCode(out[j]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+async function decompressCode(b64url) {
+    const bin = atob(b64url.replace(/-/g, '+').replace(/_/g, '/'));
+    const data = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+    const stream = new DecompressionStream('deflate-raw');
+    const writer = stream.writable.getWriter();
+    writer.write(data);
+    writer.close();
+    const chunks = [];
+    const reader = stream.readable.getReader();
+    let result;
+    while (!(result = await reader.read()).done) chunks.push(result.value);
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let i = 0;
+    for (const c of chunks) { out.set(c, i); i += c.length; }
+    return new TextDecoder().decode(out);
+}
+
+async function shareContract() {
+    if (!editor) return;
+    const encoded = await compressCode(editor.getValue());
+    const url = `${location.origin}${location.pathname}#code=${encoded}`;
+    await navigator.clipboard.writeText(url);
+    const btn = document.getElementById('share-btn');
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-check"></i>';
+    setTimeout(() => { btn.innerHTML = orig; }, 2000);
+}
+
+async function loadFromUrl() {
+    if (!location.hash.startsWith('#code=')) return null;
+    try {
+        return await decompressCode(location.hash.slice(6));
+    } catch (e) {
+        console.warn('Failed to decode shared contract from URL:', e);
+        return null;
+    }
+}
+
 // ── File management helpers ───────────────────────────────────────
 
 function generateId(name) {
@@ -776,6 +834,17 @@ function initMonaco() {
             }
         });
 
+        // Load shared contract from URL hash if present
+        window._urlCodePromise.then(urlCode => {
+            if (urlCode) {
+                const id = uniqueId('shared', examples);
+                examples[id] = { name: 'Shared', code: urlCode };
+                saveToStorage();
+                selectExample(id);
+                history.replaceState(null, '', location.pathname + location.search);
+            }
+        });
+
         // Initialize WASM after editor is ready
         initCompiler();
     });
@@ -1053,6 +1122,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load user data from localStorage
     loadFromStorage();
 
+    // Begin decoding URL hash early (async) so it's ready when Monaco is up
+    window._urlCodePromise = loadFromUrl();
+
     // Expand Examples folder by default
     expandedFolders.add('_examples');
 
@@ -1090,6 +1162,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Copy button
     document.getElementById('copy-btn').addEventListener('click', copyOutput);
+
+    // Share button
+    document.getElementById('share-btn').addEventListener('click', shareContract);
 
     // Sidebar action buttons
     document.getElementById('new-file-btn').addEventListener('click', promptNewStandaloneFile);
