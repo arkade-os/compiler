@@ -28,7 +28,7 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
         parameters: Vec::new(),
         renewal_timelock: None,
         exit_timelock: None,
-        server_key_param: None,
+        has_server_key: false,
         functions: Vec::new(),
     };
 
@@ -102,7 +102,9 @@ fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), 
 
             match option_name {
                 "server" => {
-                    contract.server_key_param = Some(option_value.to_string());
+                    // The Arkade operator key is always injected externally.
+                    // The RHS value is ignored — it must never be a constructor parameter.
+                    contract.has_server_key = true;
                 }
                 "renew" => {
                     if let Ok(value) = option_value.parse::<u64>() {
@@ -276,7 +278,7 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::variable_declaration => {
-            // Legacy typed variable declaration - treat like let binding
+            // Typed variable declaration - treat like let binding
             let mut inner = pair.into_inner();
             let _data_type = inner.next(); // Skip data type
             let name = inner
@@ -287,8 +289,7 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value".to_string())?;
-            // For legacy variable declarations, wrap the expression
-            let value = Expression::Property(value_pair.as_str().to_string());
+            let value = parse_general_expression(value_pair)?;
 
             func.statements.push(Statement::LetBinding { name, value });
             Ok(())
@@ -481,7 +482,7 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::input_introspection => parse_input_introspection_to_expression(pair),
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
-        Rule::p2tr_constructor => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::constructor => Ok(Expression::Property(pair.as_str().to_string())),
         Rule::function_call => Ok(Expression::Property(pair.as_str().to_string())),
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
@@ -585,7 +586,7 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             })
         }
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
-        Rule::p2tr_constructor => {
+        Rule::constructor => {
             let constructor = pair.as_str().to_string();
             Ok(Requirement::Comparison {
                 left: Expression::Property(constructor),
@@ -753,7 +754,7 @@ fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(right_expr)
         }
-        Rule::p2tr_constructor => Expression::Property(right_expr.as_str().to_string()),
+        Rule::constructor => Expression::Property(right_expr.as_str().to_string()),
         Rule::asset_lookup => parse_asset_lookup_to_expression(right_expr)?,
         _ => return Err("Unexpected right expression in property comparison".to_string()),
     };
@@ -1205,7 +1206,7 @@ fn parse_input_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement,
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(right_pair)
         }
-        Rule::p2tr_constructor => Expression::Property(right_pair.as_str().to_string()),
+        Rule::constructor => Expression::Property(right_pair.as_str().to_string()),
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -1239,7 +1240,7 @@ fn parse_output_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(right_pair)
         }
-        Rule::p2tr_constructor => Expression::Property(right_pair.as_str().to_string()),
+        Rule::constructor => Expression::Property(right_pair.as_str().to_string()),
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {

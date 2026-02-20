@@ -1,7 +1,7 @@
 // Contract configuration options
 options {
-  // Server key 
-  server = treasuryPk;
+  // Arkade operator key (always external, never a contract party)
+  server = operator;
   
   // Exit timelock: 24 hours (144 blocks)
   exit = 144;
@@ -84,17 +84,18 @@ contract FujiSafe(
   
   // Treasury Renew: Treasury can unilaterally renew the expiration time
   function renew(signature treasurySig) {
-    // For renewal, we ensure the output is another P2TR with the same key and value
-    // This preserves the Taproot commitment structure
-    
-    // Using the new tx.input.current syntax to access the current input's properties
-    bytes currentScript = tx.input.current.scriptPubKey;
     int currentValue = tx.input.current.value;
-    
-    // Verify that output 0 has the same P2TR script as the current input
-    require(tx.outputs[0].scriptPubKey == currentScript, "P2TR output mismatch");
+
+    // Recreate same contract with identical parameters
+    require(
+      tx.outputs[0].scriptPubKey == new FujiSafe(
+        assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,
+        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair
+      ),
+      "contract mismatch"
+    );
     require(tx.outputs[0].value == currentValue, "Value mismatch");
-    
+
     // Require treasury signature
     require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
   }

@@ -6,7 +6,7 @@ use std::path::Path;
 fn main() -> Result<(), Box<dyn Error>> {
     // Define the Arkade Script files to compile
     let files = vec![
-        ("bare.ark", "bare.json", "bare.hack"),
+        ("single_sig.ark", "single_sig.json", "single_sig.hack"),
         ("htlc.ark", "htlc.json", "htlc.hack"),
         (
             "arkade_kitties.ark",

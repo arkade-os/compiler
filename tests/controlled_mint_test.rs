@@ -15,7 +15,6 @@ fn test_controlled_mint_contract() {
     // Verify parameters
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"issuerPk"), "missing issuerPk");
-    assert!(param_names.contains(&"serverPk"), "missing serverPk");
 
     // tokenAssetId (bytes32 used in lookups) should be decomposed into _txid + _gidx
     assert!(

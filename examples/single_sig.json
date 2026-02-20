@@ -1,5 +1,5 @@
 {
-  "contractName": "BareVTXO",
+  "contractName": "SingleSig",
   "constructorInputs": [
     {
       "name": "user",
@@ -65,7 +65,7 @@
       ]
     }
   ],
-  "source": "// Contract configuration options\noptions {\n  // Server key parameter from contract parameters\n  server = server;\n  \n  // Renewal timelock: 7 days (1008 blocks)\n  // The contract must be renewed with the Ark server within this period\n  renew = 1008;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  // Time required to exit unilaterally without server involvement\n  exit = 144;\n}\n\ncontract BareVTXO(\n  pubkey user,\n  pubkey server\n) {\n  // Single signature spend path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(user) && checkSig(server)\n  // 2. Exit path: checkSig(user) && after 144 blocks\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n} ",
+  "source": "// Contract configuration options\noptions {\n  // Server key parameter from contract parameters\n  server = server;\n  \n  // Renewal timelock: 7 days (1008 blocks)\n  // The contract must be renewed with the Ark server within this period\n  renew = 1008;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  // Time required to exit unilaterally without server involvement\n  exit = 144;\n}\n\ncontract SingleSig(\n  pubkey user,\n  pubkey server\n) {\n  // Single signature spend path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(user) && checkSig(server)\n  // 2. Exit path: checkSig(user) && after 144 blocks\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n} ",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"

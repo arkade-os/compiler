@@ -5,14 +5,14 @@ fn test_bare_vtxo_contract() {
     // Bare VTXO contract source code
     let vtxo_code = r#"// Contract configuration options
 options {
-  // Server key parameter from contract parameters
-  server = server;
+  // Arkade operator key (always external, never a contract party)
+  server = operator;
   
   // Exit timelock: 24 hours (144 blocks)
   exit = 144;
 }
 
-contract BareVTXO(
+contract SingleSig(
   pubkey user,
   pubkey server
 ) {
@@ -35,7 +35,7 @@ contract BareVTXO(
     let output = result.unwrap();
 
     // Verify contract name
-    assert_eq!(output.name, "BareVTXO");
+    assert_eq!(output.name, "SingleSig");
 
     // Verify parameters
     assert_eq!(output.parameters.len(), 2);
