@@ -37,7 +37,7 @@ pub use models::{Contract, ContractJson, Expression, Function, Parameter, Requir
 /// let source_code = r#"
 /// // Contract configuration options
 /// options {
-///   // Server key 
+///   // Server key
 ///   server = server;
 ///
 ///   // Exit timelock: 24 hours (144 blocks)

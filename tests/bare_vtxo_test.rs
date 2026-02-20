@@ -37,7 +37,6 @@ contract SingleSig(
     // Verify contract name
     assert_eq!(output.name, "SingleSig");
 
-
     // Verify parameters
     assert_eq!(output.parameters.len(), 2);
     assert_eq!(output.parameters[0].name, "user");

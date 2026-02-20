@@ -126,7 +126,9 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
 /// The Arkade operator key is always external and never appears as a constructor parameter,
 /// so no exclusion is needed here.
 fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) -> Vec<String> {
-    contract.parameters.iter()
+    contract
+        .parameters
+        .iter()
         .chain(function.parameters.iter())
         .filter(|p| p.param_type == "pubkey")
         .map(|p| p.name.clone())
