@@ -457,7 +457,7 @@ fn generate_nofn_checksig_asm(pubkeys: &[String], _function: &Function) -> Vec<S
 }
 
 /// Generate requirements from function statements
-fn generate_requirements(function: &crate::models::Function) -> Vec<RequireStatement> {
+fn generate_requirements(function: &Function) -> Vec<RequireStatement> {
     let mut requirements = Vec::new();
 
     // Recursively collect requirements from statements
