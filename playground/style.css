@@ -753,3 +753,34 @@ kbd {
         min-height: 200px;
     }
 }
+
+/* ── Nested sub-folders (projects inside Examples) ──────────────── */
+
+.tree-folder-content > .tree-folder {
+    padding-left: 1.5rem;
+}
+
+.tree-folder-content .tree-folder-content .tree-item {
+    padding-left: 3rem;
+}
+
+/* ── Drag-and-drop ───────────────────────────────────────────────── */
+
+.tree-item.dragging {
+    opacity: 0.4;
+    cursor: grabbing;
+}
+
+.tree-folder.drag-over {
+    background: var(--bg-hover);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+    border-radius: 2px;
+}
+
+.tree-folder-content.drag-over {
+    background: rgba(86, 156, 214, 0.08);
+    outline: 1px dashed var(--accent);
+    outline-offset: -1px;
+    border-radius: 2px;
+}
