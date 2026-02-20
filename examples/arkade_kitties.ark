@@ -83,7 +83,7 @@ contract ArkadeKitties(
         require(kittyGroup.delta == 0, "must be transfer only");
 
         require(tx.outputs[0].assets.lookup(kittyId) == 1, "kitty not in output");
-        require(tx.outputs[0].scriptPubKey == new P2TR(newOwnerPk), "wrong destination");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), "wrong destination");
         require(checkSig(ownerSig, ownerPk), "invalid owner sig");
     }
 }

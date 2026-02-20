@@ -29,7 +29,7 @@ contract ControlledMint(
     require(ctrlGroup.delta == 0, "ctrl supply changed");
 
     require(tx.outputs[0].assets.lookup(tokenAssetId) >= amount, "mint short");
-    require(tx.outputs[0].scriptPubKey == new P2TR(recipientPk), "wrong dest");
+    require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 

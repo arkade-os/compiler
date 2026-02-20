@@ -12,7 +12,7 @@ options {
   exit = 144;
 }
 
-contract BareVTXO(
+contract SingleSig(
   pubkey user
 ) {
   // Single signature spend path

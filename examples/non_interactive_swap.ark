@@ -46,7 +46,7 @@ contract NonInteractiveSwap(
       "insufficient want asset for maker"
     );
     require(
-      tx.outputs[0].scriptPubKey == new P2TR(makerPk),
+      tx.outputs[0].scriptPubKey == new SingleSig(makerPk),
       "output 0 not spendable by maker"
     );
 
@@ -56,7 +56,7 @@ contract NonInteractiveSwap(
       "insufficient offer asset for taker"
     );
     require(
-      tx.outputs[1].scriptPubKey == new P2TR(takerPk),
+      tx.outputs[1].scriptPubKey == new SingleSig(takerPk),
       "output 1 not spendable by taker"
     );
   }

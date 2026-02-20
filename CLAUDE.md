@@ -90,7 +90,7 @@ AbiFunction { name, functionInputs, serverVariant, require, asm }
 
 ```solidity
 options {
-  server = serverParam;   // Server key from contract params
+  server = operator;      // Arkade operator key (always external, never a contract party)
   exit = 144;             // Exit timelock in blocks
   renew = 1008;           // Optional: renewal timelock
 }

@@ -93,9 +93,9 @@ function_call_stmt = {
     identifier ~ "(" ~ (complex_expression ~ ("," ~ complex_expression)*)? ~ ")" ~ ";"
 }
 
-// Variable declaration (typed, legacy support)
+// Variable declaration (typed)
 variable_declaration = {
-    data_type ~ identifier ~ "=" ~ complex_expression ~ ";"
+    data_type ~ identifier ~ "=" ~ general_expression ~ ";"
 }
 
 // General expression with operator precedence
@@ -143,7 +143,7 @@ primary_expr = {
     tx_introspection |
     tx_property_access |
     this_property_access |
-    p2tr_constructor |
+    constructor |
     function_call |
     array_index_access |
     number_literal |
@@ -196,7 +196,7 @@ complex_expression = _{
     output_introspection |
     tx_introspection |
     asset_group_access |
-    p2tr_constructor |
+    constructor |
     tx_property_access |
     this_property_access |
     function_call |
@@ -289,12 +289,12 @@ output_introspection_property = { "value" | "scriptPubKey" | "nonce" }
 
 // Input introspection comparison: input_introspection op expression
 input_introspection_comparison = {
-    input_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | p2tr_constructor | identifier | number_literal)
+    input_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
 }
 
 // Output introspection comparison: output_introspection op expression
 output_introspection_comparison = {
-    output_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | p2tr_constructor | identifier | number_literal)
+    output_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
 }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
@@ -351,7 +351,7 @@ identifier_comparison = {
 // Property comparison (property_access operator expression)
 // Note: tx_property_access must come before identifier to avoid partial matching
 property_comparison = {
-    (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | tx_property_access | this_property_access | p2tr_constructor | number_literal | identifier)
+    (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)
 }
 
 // Hash comparison (sha256(preimage) == hash)
@@ -367,13 +367,13 @@ binary_operation = {
 
 binary_operator = { ">=" | "<=" | "==" | "!=" | ">" | "<" | "+" | "-" | "*" | "/" }
 
-// P2TR constructor
-p2tr_constructor = {
-    "new" ~ "P2TR" ~ "(" ~ p2tr_constructor_args ~ ")"
+// Constructor expression: new ContractName(args)
+constructor = {
+    "new" ~ identifier ~ "(" ~ constructor_args ~ ")"
 }
 
-// Arguments for P2TR constructor
-p2tr_constructor_args = {
+// Arguments for constructor
+constructor_args = {
     complex_expression ~ ("," ~ complex_expression)*
 }
 

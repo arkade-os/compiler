@@ -1,0 +1,102 @@
+// Stability Offer Contract
+// Provider pre-commits liquidity into standing offers that users can claim unilaterally.
+// Creates synthetic USD-stable positions backed by BTC collateral.
+//
+// Uses PriceBeacon for on-chain price discovery:
+// - Entry price read from beacon at offer creation
+// - Positions reference the same beacon for settlement
+
+options {
+  server = providerPk;
+  exit = 144;
+}
+
+contract StabilityOffer(
+  pubkey providerPk,
+  pubkey userPk,             // User this offer is committed to
+  bytes32 priceAssetId,      // Asset ID used by PriceBeacon
+  int entryPriceUSD,         // Fixed BTC/USD price at offer creation
+  int collateralBTC,         // Provider's BTC collateral per position
+  int maxExposureBTC         // Maximum user BTC this offer accepts
+) {
+  // Anyone can execute - offer is pre-committed to userPk
+  // No signatures needed - true non-interactive standing offer
+  function take(int userBTC) {
+    // User deposit within limits
+    require(userBTC > 0, "zero deposit");
+    require(userBTC <= maxExposureBTC, "exceeds offer capacity");
+
+    // Calculate position parameters
+    int stableUSD = userBTC * entryPriceUSD / 100000000;  // User's USD balance
+    int totalCollateral = userBTC + collateralBTC;        // Combined BTC locked
+
+    // Output 0: Create StablePosition with correct parameters
+    require(
+      tx.outputs[0].scriptPubKey == new StablePosition(
+        userPk,           // User owns the position
+        providerPk,       // Provider counterparty
+        priceAssetId,     // Reference to price beacon
+        stableUSD,        // User's USD balance
+        entryPriceUSD,    // Entry price for reference
+        totalCollateral   // Total BTC locked
+      ),
+      "invalid position created"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "insufficient position collateral");
+
+    // Output 1: Remaining offer capacity (recursive)
+    int remainingExposure = maxExposureBTC - userBTC;
+    if (remainingExposure > 0) {
+      require(
+        tx.outputs[1].scriptPubKey == new StabilityOffer(
+          providerPk,
+          userPk,
+          priceAssetId,
+          entryPriceUSD,
+          collateralBTC,
+          remainingExposure  // Reduced capacity
+        ),
+        "invalid remaining offer"
+      );
+      // Remaining offer needs proportional collateral
+      int remainingCollateral = collateralBTC * remainingExposure / maxExposureBTC;
+      require(tx.outputs[1].value >= remainingCollateral, "insufficient remaining collateral");
+    }
+  }
+
+  // Provider withdraws unused liquidity
+  function withdraw(signature providerSig) {
+    require(checkSig(providerSig, providerPk), "invalid provider signature");
+    // Provider can claim all value in this UTXO
+  }
+
+  // Provider updates offer price (creates new offer at current beacon price)
+  // Include PriceBeacon UTXO as input[1] to read current price
+  function reprice(signature providerSig) {
+    require(checkSig(providerSig, providerPk), "invalid provider signature");
+
+    // Read current price from beacon
+    int newPriceUSD = tx.inputs[1].assets.lookup(priceAssetId);
+    require(newPriceUSD > 0, "invalid price from beacon");
+
+    // Create new offer at updated price
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityOffer(
+        providerPk,
+        userPk,
+        priceAssetId,
+        newPriceUSD,      // New entry price from beacon
+        collateralBTC,
+        maxExposureBTC
+      ),
+      "invalid repriced offer"
+    );
+    require(tx.outputs[0].value >= collateralBTC, "collateral not preserved");
+
+    // Beacon must survive
+    require(
+      tx.outputs[1].assets.lookup(priceAssetId) >= newPriceUSD,
+      "beacon must survive"
+    );
+  }
+}

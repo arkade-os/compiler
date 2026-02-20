@@ -161,7 +161,10 @@ fn test_fee_adapter_contract() {
 
     // Should have N-of-N multisig requirement
     assert!(
-        execute_exit.require.iter().any(|r| r.req_type == "nOfNMultisig"),
+        execute_exit
+            .require
+            .iter()
+            .any(|r| r.req_type == "nOfNMultisig"),
         "missing nOfNMultisig requirement in exit path"
     );
 }

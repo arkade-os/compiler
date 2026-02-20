@@ -1,20 +1,31 @@
+use arkade_compiler::compile;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
-use arkade_compiler::compile;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Define the Arkade Script files to compile
     let files = vec![
-        ("bare.ark", "bare.json", "bare.hack"),
+        ("single_sig.ark", "single_sig.json", "single_sig.hack"),
         ("htlc.ark", "htlc.json", "htlc.hack"),
-        ("arkade_kitties.ark", "arkade_kitties.json", "arkade_kitties.hack"),
-        ("non_interactive_swap.ark", "non_interactive_swap.json", "non_interactive_swap.hack")
+        (
+            "arkade_kitties.ark",
+            "arkade_kitties.json",
+            "arkade_kitties.hack",
+        ),
+        (
+            "non_interactive_swap.ark",
+            "non_interactive_swap.json",
+            "non_interactive_swap.hack",
+        ),
     ];
 
     // Compile each file
     for (input_file, output_file, hack_file) in files {
-        println!("Compiling {} to {} and {}...", input_file, output_file, hack_file);
+        println!(
+            "Compiling {} to {} and {}...",
+            input_file, output_file, hack_file
+        );
 
         // Read the input file
         let input_path = Path::new("examples").join(input_file);
@@ -35,7 +46,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         hack_content.push_str("#\n\n");
 
         for func in &output.functions {
-            let variant = if func.server_variant { "cooperative" } else { "exit" };
+            let variant = if func.server_variant {
+                "cooperative"
+            } else {
+                "exit"
+            };
             hack_content.push_str(&format!("# Function: {} ({})\n", func.name, variant));
 
             for opcode in &func.asm {
@@ -47,11 +62,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         let hack_path = Path::new("examples").join(hack_file);
         fs::write(&hack_path, &hack_content)?;
 
-        println!("Successfully compiled {} to {} and {}", input_file, output_file, hack_file);
+        println!(
+            "Successfully compiled {} to {} and {}",
+            input_file, output_file, hack_file
+        );
         println!("\n-----------------------------------\n");
     }
 
     println!("All files compiled successfully!");
 
     Ok(())
-} 
+}
