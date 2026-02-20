@@ -135,6 +135,24 @@ fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) 
         .collect()
 }
 
+fn strip_comments(source: &str) -> String {
+    source
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                None
+            } else if let Some(idx) = line.find("//") {
+                let without_comment = line[..idx].trim_end();
+                Some(without_comment.to_string())
+            } else {
+                Some(line.to_string())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Compiles an Arkade Script contract into a JSON-serializable structure.
 ///
 /// Takes source code, parses it into an AST, and transforms it into a ContractJson
@@ -172,7 +190,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         name: contract.name.clone(),
         parameters,
         functions: Vec::new(),
-        source: Some(source_code.to_string()),
+        source: Some(strip_comments(source_code)),
         compiler: Some(CompilerInfo {
             name: "arkade-compiler".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
