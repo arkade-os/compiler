@@ -100,6 +100,27 @@ select:hover {
     background: var(--accent-hover);
 }
 
+.btn-primary.compiled {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: default;
+    opacity: 0.55;
+}
+
+.btn-primary.compiled:hover {
+    background: var(--bg-secondary);
+}
+
+@keyframes btn-ready {
+    0%   { box-shadow: 0 0 0 0 rgba(86, 156, 214, 0.7); }
+    70%  { box-shadow: 0 0 0 7px rgba(86, 156, 214, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(86, 156, 214, 0); }
+}
+
+.btn-primary.needs-compile {
+    animation: btn-ready 0.5s ease;
+}
+
 .btn-icon {
     background: transparent;
     color: var(--text-secondary);
@@ -440,6 +461,25 @@ main {
 
 .error-count.visible {
     display: inline;
+}
+
+.compile-status {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    display: none;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.compile-status.success {
+    display: inline-flex;
+    color: #4ec9b0;
+}
+
+.compile-status.error {
+    display: inline-flex;
+    color: var(--error);
 }
 
 /* Output Content */

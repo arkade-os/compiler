@@ -40,6 +40,7 @@ let currentFile = null;
 let openTabs = [];
 let fileContents = {}; // Cache of file contents for each open file
 let expandedFolders = new Set(); // Track which folders are expanded
+let lastCompiledSource = null; // Source that produced the current output
 
 // ── localStorage persistence ──────────────────────────────────────
 const STORAGE_KEY = 'arkade-playground';
@@ -405,8 +406,8 @@ async function initCompiler() {
         document.getElementById('compiler-version').textContent = `v${ver}`;
         document.getElementById('footer-version').textContent = `v${ver}`;
 
-        // Auto-compile on load
-        doCompile();
+        // Show button as ready to compile
+        markDirty();
     } catch (err) {
         console.error('Failed to initialize WASM:', err);
         showError('Failed to load compiler. Make sure the WASM module is built.');
@@ -554,7 +555,8 @@ function selectProjectFile(projectId, fileName) {
     updateFileTabs();
     renderFileTree();
     updateCurrentFileName(fileName);
-    doCompile();
+    lastCompiledSource = null;
+    markDirty();
 }
 
 // Select a single-file example
@@ -584,7 +586,8 @@ function selectExample(exampleId) {
     updateFileTabs();
     renderFileTree();
     updateCurrentFileName(`${example.name}.ark`);
-    doCompile();
+    lastCompiledSource = null;
+    markDirty();
 }
 
 // Save current file content to cache and source data
@@ -668,7 +671,8 @@ function switchToTab(tabId) {
     updateFileTabs();
     renderFileTree();
     updateCurrentFileName(tab.name);
-    doCompile();
+    lastCompiledSource = null;
+    markDirty();
 }
 
 // Close a tab
@@ -765,18 +769,36 @@ function initMonaco() {
             doCompile();
         });
 
-        // Compile on change (debounced)
-        let compileTimeout = null;
+        // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
-            clearTimeout(compileTimeout);
-            compileTimeout = setTimeout(() => {
-                doCompile();
-            }, 500);
+            if (editor.getValue() !== lastCompiledSource) {
+                markDirty();
+            }
         });
 
         // Initialize WASM after editor is ready
         initCompiler();
     });
+}
+
+// Mark the editor as having uncompiled changes
+function markDirty() {
+    const btn = document.getElementById('compile-btn');
+    // Re-trigger animation by removing and re-adding the class
+    btn.classList.remove('compiled', 'needs-compile');
+    void btn.offsetWidth; // reflow to restart animation
+    btn.classList.add('needs-compile');
+
+    const statusEl = document.getElementById('compile-status');
+    statusEl.textContent = '';
+    statusEl.className = 'compile-status';
+}
+
+// Mark the editor as up-to-date with compiled output
+function markCompiled() {
+    const btn = document.getElementById('compile-btn');
+    btn.classList.remove('needs-compile');
+    btn.classList.add('compiled');
 }
 
 // Compile the source code
@@ -788,8 +810,11 @@ function doCompile() {
 
     try {
         const result = compile(source);
+        lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
+        showSuccess(result);
+        markCompiled();
     } catch (err) {
         showError(err.toString());
     }
@@ -859,8 +884,8 @@ function displayAsm(jsonStr) {
 
 // Highlight assembly code
 function highlightAsm(asm) {
-    return asm
-        .split(' ')
+    const tokens = Array.isArray(asm) ? asm : asm.split(' ');
+    return tokens
         .map(token => {
             if (token.startsWith('OP_')) {
                 return `<span class="asm-opcode">${token}</span>`;
@@ -872,8 +897,25 @@ function highlightAsm(asm) {
         .join(' ');
 }
 
+// Show compilation success
+function showSuccess(jsonStr) {
+    const statusEl = document.getElementById('compile-status');
+    let funcCount = '';
+    try {
+        const data = JSON.parse(jsonStr);
+        const count = data.functions?.length || 0;
+        funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
+    } catch (e) {}
+    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}`;
+    statusEl.className = 'compile-status success';
+}
+
 // Show error
 function showError(message) {
+    const statusEl = document.getElementById('compile-status');
+    statusEl.innerHTML = `<i class="fas fa-times-circle"></i> Error`;
+    statusEl.className = 'compile-status error';
+
     const errorsTab = document.getElementById('errors-output');
     const errorCount = document.getElementById('error-count');
 
@@ -903,6 +945,9 @@ function clearErrors() {
     document.getElementById('errors-output').textContent = '';
     document.getElementById('error-count').textContent = '';
     document.getElementById('error-count').classList.remove('visible');
+    const statusEl = document.getElementById('compile-status');
+    statusEl.textContent = '';
+    statusEl.className = 'compile-status';
 }
 
 // Switch output tab
@@ -1034,6 +1079,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Compile button
     document.getElementById('compile-btn').addEventListener('click', doCompile);
+
+    // Cmd/Ctrl+S → compile (prevent browser save dialog)
+    document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+            e.preventDefault();
+            doCompile();
+        }
+    });
 
     // Copy button
     document.getElementById('copy-btn').addEventListener('click', copyOutput);
