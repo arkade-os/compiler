@@ -39,7 +39,7 @@ contract NFTMint(
 
         // NFT goes to recipient
         require(tx.outputs[0].assets.lookup(nftAssetId) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == new P2TR(recipientPk), "wrong recipient");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), "wrong recipient");
 
         require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
@@ -59,7 +59,7 @@ contract NFTMint(
 
         // NFT goes to new owner
         require(tx.outputs[0].assets.lookup(nftAssetId) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == new P2TR(newOwnerPk), "wrong dest");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), "wrong dest");
 
         require(checkSig(ownerSig, ownerPk), "bad owner sig");
     }

@@ -1,0 +1,113 @@
+// Stable Position Contract
+// Recursive covenant representing a USD-stable balance backed by BTC collateral.
+// User holds fixed USD value; settlement converts to BTC at current price.
+//
+// Uses PriceBeacon for on-chain price discovery:
+// - No oracle signatures needed
+// - Price is publicly visible in beacon UTXO
+// - Atomic reads via introspection
+
+options {
+  server = providerPk;
+  exit = 144;
+}
+
+contract StablePosition(
+  pubkey userPk,
+  pubkey providerPk,
+  bytes32 priceAssetId,      // Asset ID used by PriceBeacon (quantity = price)
+  int targetUSD,             // User's USD balance (immutable)
+  int entryPrice,            // BTC/USD at entry (for reference)
+  int totalCollateral        // Combined BTC locked (sats)
+) {
+  // User exits to BTC at current price from beacon
+  // Include PriceBeacon UTXO as input[1] to read price
+  function settle(signature userSig) {
+    require(checkSig(userSig, userPk), "invalid user signature");
+
+    // Read price from beacon input (input[1] is the beacon)
+    // Price is encoded as quantity of priceAssetId
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid price from beacon");
+
+    // User payout = targetUSD / currentPrice (in sats)
+    int userPayout = targetUSD * 100000000 / currentPrice;
+    require(userPayout <= totalCollateral, "insufficient collateral");
+
+    // Output 0: User receives their USD value in BTC
+    require(tx.outputs[0].value >= userPayout, "user payout too low");
+    require(tx.outputs[0].scriptPubKey == new SingleSig(userPk), "output 0 not user");
+
+    // Output 1: Provider receives remainder
+    int providerPayout = totalCollateral - userPayout;
+    if (providerPayout > 546) {
+      require(tx.outputs[1].value >= providerPayout, "provider payout too low");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
+    }
+
+    // Output 2: Beacon must survive (passthrough)
+    // The beacon's own script enforces this, but we verify it's preserved
+    require(
+      tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // Transfer stable balance to new owner (recursive covenant)
+  function transfer(signature userSig, pubkey newUserPk) {
+    require(checkSig(userSig, userPk), "invalid user signature");
+
+    // Output must be new StablePosition with newUserPk as owner
+    require(
+      tx.outputs[0].scriptPubKey == new StablePosition(
+        newUserPk, providerPk, priceAssetId,
+        targetUSD, entryPrice, totalCollateral
+      ),
+      "invalid position transfer"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // Provider liquidates if undercollateralized
+  // Include PriceBeacon UTXO as input[1]
+  function liquidate(signature providerSig) {
+    require(checkSig(providerSig, providerPk), "invalid provider signature");
+
+    // Read price from beacon
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid price from beacon");
+
+    // Check undercollateralization: collateral < 120% of user's BTC value
+    int userValueBTC = targetUSD * 100000000 / currentPrice;
+    int requiredCollateral = userValueBTC * 120 / 100;
+    require(totalCollateral < requiredCollateral, "position not undercollateralized");
+
+    // Provider claims all collateral
+    require(tx.outputs[0].value >= totalCollateral, "must claim all collateral");
+    require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "output not provider");
+
+    // Beacon must survive
+    require(
+      tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // Provider tops up collateral (recursive covenant)
+  function topUp(signature providerSig, int additionalBTC) {
+    require(checkSig(providerSig, providerPk), "invalid provider signature");
+    require(additionalBTC > 0, "must add collateral");
+
+    int newCollateral = totalCollateral + additionalBTC;
+
+    // Output must be new StablePosition with increased collateral
+    require(
+      tx.outputs[0].scriptPubKey == new StablePosition(
+        userPk, providerPk, priceAssetId,
+        targetUSD, entryPrice, newCollateral
+      ),
+      "invalid topped-up position"
+    );
+    require(tx.outputs[0].value >= newCollateral, "insufficient new collateral");
+  }
+}

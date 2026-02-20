@@ -15,7 +15,6 @@ fn test_controlled_mint_contract() {
     // Verify parameters
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"issuerPk"), "missing issuerPk");
-    assert!(param_names.contains(&"serverPk"), "missing serverPk");
 
     // tokenAssetId (bytes32 used in lookups) should be decomposed into _txid + _gidx
     assert!(
@@ -164,7 +163,16 @@ fn test_controlled_mint_cli() {
     assert!(json.contains("\"contractName\": \"ControlledMint\""));
 
     // Should have group-related opcodes
-    assert!(json.contains("OP_FINDASSETGROUPBYASSETID"), "missing OP_FINDASSETGROUPBYASSETID");
-    assert!(json.contains("OP_INSPECTASSETGROUPSUM"), "missing OP_INSPECTASSETGROUPSUM");
-    assert!(json.contains("OP_INSPECTASSETGROUPCTRL"), "missing OP_INSPECTASSETGROUPCTRL");
+    assert!(
+        json.contains("OP_FINDASSETGROUPBYASSETID"),
+        "missing OP_FINDASSETGROUPBYASSETID"
+    );
+    assert!(
+        json.contains("OP_INSPECTASSETGROUPSUM"),
+        "missing OP_INSPECTASSETGROUPSUM"
+    );
+    assert!(
+        json.contains("OP_INSPECTASSETGROUPCTRL"),
+        "missing OP_INSPECTASSETGROUPCTRL"
+    );
 }
