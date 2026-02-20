@@ -5,8 +5,8 @@ fn test_bare_vtxo_contract() {
     // Bare VTXO contract source code
     let vtxo_code = r#"// Contract configuration options
 options {
-  // Server key parameter from contract parameters
-  server = server;
+  // Arkade operator key (always external, never a contract party)
+  server = operator;
   
   // Exit timelock: 24 hours (144 blocks)
   exit = 144;

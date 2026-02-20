@@ -104,16 +104,13 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
     }
 }
 
-/// Collect all pubkey parameters from constructor and function for N-of-N fallback
-/// Excludes the server key (which comes from options, not constructor)
+/// Collect all pubkey parameters from constructor and function for N-of-N fallback.
+/// The Arkade operator key is always external and never appears as a constructor parameter,
+/// so no exclusion is needed here.
 fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) -> Vec<String> {
-    let server_key = contract.server_key_param.as_ref();
-
     contract.parameters.iter()
         .chain(function.parameters.iter())
         .filter(|p| p.param_type == "pubkey")
-        // Exclude server key from N-of-N (it's for cooperative path only)
-        .filter(|p| server_key.map_or(true, |sk| &p.name != sk))
         .map(|p| p.name.clone())
         .collect()
 }
@@ -142,8 +139,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
-    // Note: Server key is injected externally via getInfo(), not required in constructor.
-    // The `server = serverPk` in options references an external key, not a constructor param.
+    // The Arkade operator key is always injected externally (via getInfo()).
+    // It is never a constructor parameter — options.server is a boolean flag only.
 
     // Collect asset IDs used in lookups for constructor param decomposition
     let lookup_asset_ids = collect_lookup_asset_ids(&contract);
@@ -356,7 +353,7 @@ fn generate_function(
     };
 
     if server_variant {
-        if contract.server_key_param.is_some() {
+        if contract.has_server_key {
             require.push(RequireStatement {
                 req_type: "serverSignature".to_string(),
                 message: None,
@@ -380,7 +377,7 @@ fn generate_function(
 
     // Add server signature or exit timelock check
     if server_variant {
-        if contract.server_key_param.is_some() {
+        if contract.has_server_key {
             asm.push("<SERVER_KEY>".to_string());
             asm.push("<serverSig>".to_string());
             asm.push("OP_CHECKSIG".to_string());

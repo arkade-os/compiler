@@ -28,7 +28,7 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
         parameters: Vec::new(),
         renewal_timelock: None,
         exit_timelock: None,
-        server_key_param: None,
+        has_server_key: false,
         functions: Vec::new(),
     };
 
@@ -99,7 +99,9 @@ fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), 
 
             match option_name {
                 "server" => {
-                    contract.server_key_param = Some(option_value.to_string());
+                    // The Arkade operator key is always injected externally.
+                    // The RHS value is ignored — it must never be a constructor parameter.
+                    contract.has_server_key = true;
                 }
                 "renew" => {
                     if let Ok(value) = option_value.parse::<u64>() {
