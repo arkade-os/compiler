@@ -6,6 +6,45 @@ Arkade Script supports advanced primitives for arithmetic, introspection, and as
 
 This language significantly lowers the barrier for Bitcoin-native app development, allowing contracts to be written in a structured, Ivy-like syntax and compiled into Arkade-native scripts.
 
+## Playground
+
+Try Arkade Script in your browser — no installation required:
+
+**[arkadeos.github.io/compiler](https://arkadeos.github.io/compiler)**
+
+### Run the Playground Locally
+
+**Prerequisites:**
+
+- [Rust](https://rustup.rs/) toolchain
+- [`wasm-pack`](https://rustwasm.github.io/wasm-pack/installer/):
+  ```bash
+  cargo install wasm-pack
+  # or
+  curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+  ```
+
+**Build and serve:**
+
+```bash
+# Build the WASM package and set up the playground
+./playground/build.sh
+
+# Serve locally (default port 8080)
+./playground/serve.sh
+
+# Or specify a custom port
+./playground/serve.sh 3000
+```
+
+Then open [http://localhost:8080](http://localhost:8080) in your browser.
+
+**What the build script does:**
+
+1. Generates `contracts.js` from the `.ark` example files in `examples/`
+2. Compiles the Rust compiler to WebAssembly using `wasm-pack`
+3. Outputs the WASM package to `playground/pkg/`
+
 ## Basic Usage
 
 ```bash
