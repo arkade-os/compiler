@@ -19,16 +19,25 @@ fn test_sha256_initialize() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse sha256Initialize: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse sha256Initialize: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "initHash" && f.server_variant)
         .expect("Should have initHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256INITIALIZE"),
-        "Expected OP_SHA256INITIALIZE in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_SHA256INITIALIZE"),
+        "Expected OP_SHA256INITIALIZE in ASM: {}",
+        asm_str
+    );
 }
 
 #[test]
@@ -48,16 +57,25 @@ fn test_sha256_update() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse sha256Update: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse sha256Update: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "updateHash" && f.server_variant)
         .expect("Should have updateHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256UPDATE"),
-        "Expected OP_SHA256UPDATE in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_SHA256UPDATE"),
+        "Expected OP_SHA256UPDATE in ASM: {}",
+        asm_str
+    );
 }
 
 #[test]
@@ -77,16 +95,25 @@ fn test_sha256_finalize() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse sha256Finalize: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse sha256Finalize: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "finalizeHash" && f.server_variant)
         .expect("Should have finalizeHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256FINALIZE"),
-        "Expected OP_SHA256FINALIZE in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_SHA256FINALIZE"),
+        "Expected OP_SHA256FINALIZE in ASM: {}",
+        asm_str
+    );
 }
 
 // ─── Conversion & Arithmetic Tests ─────────────────────────────────────
@@ -111,13 +138,18 @@ fn test_neg64() {
     assert!(result.is_ok(), "Failed to parse neg64: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "negateValue" && f.server_variant)
         .expect("Should have negateValue server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_NEG64"),
-        "Expected OP_NEG64 in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_NEG64"),
+        "Expected OP_NEG64 in ASM: {}",
+        asm_str
+    );
 }
 
 #[test]
@@ -137,16 +169,25 @@ fn test_le64_to_script_num() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse le64ToScriptNum: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse le64ToScriptNum: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "convertToScriptNum" && f.server_variant)
         .expect("Should have convertToScriptNum server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_LE64TOSCRIPTNUM"),
-        "Expected OP_LE64TOSCRIPTNUM in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_LE64TOSCRIPTNUM"),
+        "Expected OP_LE64TOSCRIPTNUM in ASM: {}",
+        asm_str
+    );
 }
 
 #[test]
@@ -166,16 +207,25 @@ fn test_le32_to_le64() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse le32ToLe64: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse le32ToLe64: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "extendTo64Bit" && f.server_variant)
         .expect("Should have extendTo64Bit server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_LE32TOLE64"),
-        "Expected OP_LE32TOLE64 in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_LE32TOLE64"),
+        "Expected OP_LE32TOLE64 in ASM: {}",
+        asm_str
+    );
 }
 
 // ─── Crypto Opcodes Tests ──────────────────────────────────────────────
@@ -197,16 +247,25 @@ fn test_ec_mul_scalar_verify() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse ecMulScalarVerify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse ecMulScalarVerify: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "verifyScalarMul" && f.server_variant)
         .expect("Should have verifyScalarMul server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_ECMULSCALARVERIFY"),
-        "Expected OP_ECMULSCALARVERIFY in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_ECMULSCALARVERIFY"),
+        "Expected OP_ECMULSCALARVERIFY in ASM: {}",
+        asm_str
+    );
 }
 
 #[test]
@@ -226,16 +285,25 @@ fn test_tweak_verify() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse tweakVerify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse tweakVerify: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "verifyTweak" && f.server_variant)
         .expect("Should have verifyTweak server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_TWEAKVERIFY"),
-        "Expected OP_TWEAKVERIFY in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_TWEAKVERIFY"),
+        "Expected OP_TWEAKVERIFY in ASM: {}",
+        asm_str
+    );
 }
 
 #[test]
@@ -255,16 +323,25 @@ fn test_check_sig_from_stack_verify() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse checkSigFromStackVerify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse checkSigFromStackVerify: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "verifyMessageSig" && f.server_variant)
         .expect("Should have verifyMessageSig server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_CHECKSIGFROMSTACKVERIFY"),
-        "Expected OP_CHECKSIGFROMSTACKVERIFY in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_CHECKSIGFROMSTACKVERIFY"),
+        "Expected OP_CHECKSIGFROMSTACKVERIFY in ASM: {}",
+        asm_str
+    );
 }
 
 // ─── Combined Usage Tests ───────────────────────────────────────────────────────
@@ -288,20 +365,35 @@ fn test_streaming_hash_full_workflow() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse streaming hash workflow: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse streaming hash workflow: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "computeHash" && f.server_variant)
         .expect("Should have computeHash server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_SHA256INITIALIZE"),
-        "Expected OP_SHA256INITIALIZE in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_SHA256UPDATE"),
-        "Expected OP_SHA256UPDATE in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_SHA256FINALIZE"),
-        "Expected OP_SHA256FINALIZE in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_SHA256INITIALIZE"),
+        "Expected OP_SHA256INITIALIZE in ASM: {}",
+        asm_str
+    );
+    assert!(
+        asm_str.contains("OP_SHA256UPDATE"),
+        "Expected OP_SHA256UPDATE in ASM: {}",
+        asm_str
+    );
+    assert!(
+        asm_str.contains("OP_SHA256FINALIZE"),
+        "Expected OP_SHA256FINALIZE in ASM: {}",
+        asm_str
+    );
 }
 
 #[test]
@@ -323,18 +415,33 @@ fn test_conversion_chain() {
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse conversion chain: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse conversion chain: {:?}",
+        result.err()
+    );
 
     let output = result.unwrap();
-    let func = output.functions.iter()
+    let func = output
+        .functions
+        .iter()
         .find(|f| f.name == "convertAndNegate" && f.server_variant)
         .expect("Should have convertAndNegate server variant");
 
     let asm_str = func.asm.join(" ");
-    assert!(asm_str.contains("OP_LE32TOLE64"),
-        "Expected OP_LE32TOLE64 in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_NEG64"),
-        "Expected OP_NEG64 in ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_LE64TOSCRIPTNUM"),
-        "Expected OP_LE64TOSCRIPTNUM in ASM: {}", asm_str);
+    assert!(
+        asm_str.contains("OP_LE32TOLE64"),
+        "Expected OP_LE32TOLE64 in ASM: {}",
+        asm_str
+    );
+    assert!(
+        asm_str.contains("OP_NEG64"),
+        "Expected OP_NEG64 in ASM: {}",
+        asm_str
+    );
+    assert!(
+        asm_str.contains("OP_LE64TOSCRIPTNUM"),
+        "Expected OP_LE64TOSCRIPTNUM in ASM: {}",
+        asm_str
+    );
 }

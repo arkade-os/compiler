@@ -59,9 +59,13 @@ fn test_threshold_oracle_structure() {
     assert_eq!(output.functions.len(), 2);
 
     // Verify we have both server and exit variants
-    let server = output.functions.iter()
+    let server = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && f.server_variant);
-    let exit = output.functions.iter()
+    let exit = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && !f.server_variant);
 
     assert!(server.is_some(), "Missing server variant");
@@ -72,13 +76,18 @@ fn test_threshold_oracle_structure() {
 fn test_threshold_oracle_has_asset_lookup() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output.functions.iter()
+    let server = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && f.server_variant)
         .unwrap();
 
     // Should have asset lookup for control asset check
     assert!(
-        server.asm.iter().any(|s| s.contains("OP_INSPECTINASSETLOOKUP")),
+        server
+            .asm
+            .iter()
+            .any(|s| s.contains("OP_INSPECTINASSETLOOKUP")),
         "Missing OP_INSPECTINASSETLOOKUP in attest function"
     );
 }
@@ -87,17 +96,16 @@ fn test_threshold_oracle_has_asset_lookup() {
 fn test_threshold_oracle_has_control_flow() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output.functions.iter()
+    let server = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && f.server_variant)
         .unwrap();
 
     // Should have if/else for counting valid signatures
     // (or at least some form of control flow from the for loop)
     // For now, just verify the function compiles and has the basic structure
-    assert!(
-        server.asm.len() > 0,
-        "Assembly should not be empty"
-    );
+    assert!(server.asm.len() > 0, "Assembly should not be empty");
 }
 
 // ─── Commit 6: Array ABI Flattening Tests ──────────────────────────────────────
@@ -108,9 +116,7 @@ fn test_threshold_oracle_constructor_array_flattening() {
 
     // pubkey[] oracles should be flattened to oracles_0, oracles_1, oracles_2
     // in the constructorInputs (default 3 elements)
-    let param_names: Vec<&str> = output.parameters.iter()
-        .map(|p| p.name.as_str())
-        .collect();
+    let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
 
     assert!(
         param_names.contains(&"oracles_0"),
@@ -145,12 +151,16 @@ fn test_threshold_oracle_constructor_array_flattening() {
 fn test_threshold_oracle_witness_array_flattening() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output.functions.iter()
+    let server = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && f.server_variant)
         .unwrap();
 
     // signature[] oracleSigs should be flattened to oracleSigs_0, oracleSigs_1, oracleSigs_2
-    let input_names: Vec<&str> = server.function_inputs.iter()
+    let input_names: Vec<&str> = server
+        .function_inputs
+        .iter()
         .map(|p| p.name.as_str())
         .collect();
 
@@ -182,12 +192,16 @@ fn test_threshold_oracle_witness_array_flattening() {
 fn test_threshold_oracle_checksig_from_stack_unrolled() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output.functions.iter()
+    let server = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && f.server_variant)
         .unwrap();
 
     // The for loop should unroll to 3 OP_CHECKSIGFROMSTACK calls
-    let checksig_count = server.asm.iter()
+    let checksig_count = server
+        .asm
+        .iter()
         .filter(|s| *s == "OP_CHECKSIGFROMSTACK")
         .count();
 
@@ -202,7 +216,9 @@ fn test_threshold_oracle_checksig_from_stack_unrolled() {
 fn test_threshold_oracle_array_indexing_in_loop() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output.functions.iter()
+    let server = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && f.server_variant)
         .unwrap();
 
@@ -245,7 +261,9 @@ fn test_threshold_oracle_array_indexing_in_loop() {
 fn test_threshold_oracle_quorum_uses_csn_comparison() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output.functions.iter()
+    let server = output
+        .functions
+        .iter()
         .find(|f| f.name == "attest" && f.server_variant)
         .unwrap();
 
