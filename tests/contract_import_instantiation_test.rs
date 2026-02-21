@@ -188,72 +188,12 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
     assert!(vtxo_op.contains("<refundTime>"), "Missing <refundTime> in {}", vtxo_op);
 }
 
-// ─── Value-equality covenant (both paths) ─────────────────────────────────────
-
-#[test]
-fn test_new_expression_both_paths_get_value_check() {
-    // When a function uses `new ContractName(args)` the compiler automatically
-    // appends `output[i].value == tx.input.current.value` to BOTH the cooperative
-    // and the exit path.  No CHECKSIG is needed; the covenant is sufficient.
-    let code = r#"
-import "single_sig.ark";
-
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
-  function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
-  }
-}
-"#;
-
-    let result = compile(code).expect("Compile failed");
-
-    for variant in [true, false] {
-        let f = result
-            .functions
-            .iter()
-            .find(|f| f.name == "send" && f.server_variant == variant)
-            .unwrap_or_else(|| panic!("Missing send (serverVariant={})", variant));
-
-        // Both paths must check the output scriptPubKey
-        assert!(
-            f.asm.iter().any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-            "serverVariant={}: missing OP_INSPECTOUTPUTSCRIPTPUBKEY in {:?}",
-            variant, f.asm
-        );
-        // Both paths must have the VTXO placeholder
-        assert!(
-            f.asm.iter().any(|op| op.contains("VTXO:SingleSig")),
-            "serverVariant={}: missing VTXO:SingleSig placeholder in {:?}",
-            variant, f.asm
-        );
-        // Both paths must append the value-equality check
-        assert!(
-            f.asm.iter().any(|op| op == "OP_INSPECTOUTPUTVALUE"),
-            "serverVariant={}: missing OP_INSPECTOUTPUTVALUE in {:?}",
-            variant, f.asm
-        );
-        assert!(
-            f.asm.iter().any(|op| op == "OP_INSPECTINPUTVALUE"),
-            "serverVariant={}: missing OP_INSPECTINPUTVALUE in {:?}",
-            variant, f.asm
-        );
-        assert!(
-            f.asm.iter().any(|op| op == "OP_PUSHCURRENTINPUTINDEX"),
-            "serverVariant={}: missing OP_PUSHCURRENTINPUTINDEX in {:?}",
-            variant, f.asm
-        );
-    }
-}
+// ─── Exit-path behavior for ContractInstance ──────────────────────────────────
 
 #[test]
 fn test_new_expression_exit_path_has_no_checksig() {
-    // The exit path for a ContractInstance function must NOT fall back to
-    // N-of-N CHECKSIG; the value-equality covenant replaces it.
+    // ContractInstance functions use normal ASM on the exit path — no N-of-N
+    // CHECKSIG fallback. The user's covenant constraints are the exit guard.
     let code = r#"
 import "single_sig.ark";
 
@@ -276,18 +216,35 @@ contract RecursiveVtxo(pubkey ownerPk) {
         .find(|f| f.name == "send" && !f.server_variant)
         .expect("No exit send function");
 
+    // No N-of-N CHECKSIG fallback
     assert!(
         !send_exit.asm.iter().any(|op| op.contains("OP_CHECKSIG")),
         "Exit path must NOT contain OP_CHECKSIG, got {:?}",
+        send_exit.asm
+    );
+    // Must still contain the scriptPubKey check and VTXO placeholder
+    assert!(
+        send_exit.asm.iter().any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        "Exit path missing OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
+        send_exit.asm
+    );
+    assert!(
+        send_exit.asm.iter().any(|op| op.contains("VTXO:SingleSig")),
+        "Exit path missing VTXO:SingleSig placeholder, got {:?}",
+        send_exit.asm
+    );
+    // Exit timelock must still be appended
+    assert!(
+        send_exit.asm.iter().any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
+        "Exit path missing OP_CHECKSEQUENCEVERIFY, got {:?}",
         send_exit.asm
     );
 }
 
 #[test]
 fn test_cooperative_path_asm_order() {
-    // Verify exact cooperative ASM:
+    // Verify exact cooperative ASM (only the user's require statement + server sig):
     //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
-    //   0 OP_INSPECTOUTPUTVALUE OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE OP_EQUAL OP_VERIFY
     //   <SERVER_KEY> <serverSig> OP_CHECKSIG
     let code = r#"
 import "single_sig.ark";
@@ -316,12 +273,6 @@ contract RecursiveVtxo(pubkey ownerPk) {
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
         "<VTXO:SingleSig(<ownerPk>)>",
         "OP_EQUAL",
-        "0",
-        "OP_INSPECTOUTPUTVALUE",
-        "OP_PUSHCURRENTINPUTINDEX",
-        "OP_INSPECTINPUTVALUE",
-        "OP_EQUAL",
-        "OP_VERIFY",
         "<SERVER_KEY>",
         "<serverSig>",
         "OP_CHECKSIG",
@@ -337,9 +288,8 @@ contract RecursiveVtxo(pubkey ownerPk) {
 
 #[test]
 fn test_exit_path_asm_order() {
-    // Verify exact exit ASM:
+    // Verify exact exit ASM (only the user's require statement + timelock):
     //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
-    //   0 OP_INSPECTOUTPUTVALUE OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE OP_EQUAL OP_VERIFY
     //   144 OP_CHECKSEQUENCEVERIFY OP_DROP
     let code = r#"
 import "single_sig.ark";
@@ -368,12 +318,6 @@ contract RecursiveVtxo(pubkey ownerPk) {
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
         "<VTXO:SingleSig(<ownerPk>)>",
         "OP_EQUAL",
-        "0",
-        "OP_INSPECTOUTPUTVALUE",
-        "OP_PUSHCURRENTINPUTINDEX",
-        "OP_INSPECTINPUTVALUE",
-        "OP_EQUAL",
-        "OP_VERIFY",
         "144",
         "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP",
