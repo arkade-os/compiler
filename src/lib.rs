@@ -1,5 +1,6 @@
 pub mod compiler;
 pub mod models;
+pub mod opcodes;
 pub mod parser;
 
 #[cfg(feature = "wasm")]
