@@ -97,6 +97,8 @@ pub struct Contract {
     pub has_server_key: bool,
     /// Contract functions
     pub functions: Vec<Function>,
+    /// Imported contract file paths (declared via `import "path.ark";`)
+    pub imports: Vec<String>,
 }
 
 /// Function AST
@@ -318,5 +320,17 @@ pub enum Expression {
         signature: String,
         pubkey: String,
         message: String,
+    },
+    /// Contract instantiation: new ContractName(arg1, arg2, ...)
+    ///
+    /// Resolves to the Taproot scriptPubKey of the named contract instantiated
+    /// with the given arguments. Options (server key, exit timelock) are
+    /// inherited from the enclosing contract. Used for recursion enforcement
+    /// via output introspection: `tx.outputs[0].scriptPubKey == new Foo(x)`
+    ContractInstance {
+        /// Name of the contract to instantiate
+        contract_name: String,
+        /// Constructor arguments (typically Variable or Literal)
+        args: Vec<Expression>,
     },
 }

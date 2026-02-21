@@ -2,8 +2,11 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
 
+// Import statement: import "path/to/contract.ark";
+import_stmt = { "import" ~ string_literal ~ ";" }
+
 // Main entry point - must consume the entire input
-main = { SOI ~ contract ~ EOI }
+main = { SOI ~ import_stmt* ~ contract ~ EOI }
 
 // Contract definition with strict structure and optional options block
 contract = {
@@ -372,9 +375,9 @@ constructor = {
     "new" ~ identifier ~ "(" ~ constructor_args ~ ")"
 }
 
-// Arguments for constructor
+// Arguments for constructor (optional - allows zero-arg constructors)
 constructor_args = {
-    complex_expression ~ ("," ~ complex_expression)*
+    (complex_expression ~ ("," ~ complex_expression)*)?
 }
 
 // ─── Transaction Property Access ───────────────────────────────────────────────
