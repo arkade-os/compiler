@@ -8,6 +8,9 @@ echo "Formatted Rust code successfully. Commit again!"
 exit 1
 fi
 
+git stash --quiet --keep-index --include-untracked
+trap "git stash pop --quiet" EXIT
+
 if ! cargo test ; then
   echo "Fix failing tests and commit again"
   exit 1
