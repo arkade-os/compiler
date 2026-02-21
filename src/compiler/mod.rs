@@ -139,6 +139,139 @@ fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) 
         .collect()
 }
 
+/// Check whether a function contains any `new ContractName(args)` expression used in a
+/// scriptPubKey comparison against an output or input.
+fn function_has_contract_instance(function: &Function) -> bool {
+    function
+        .statements
+        .iter()
+        .any(|s| statement_has_contract_instance(s))
+}
+
+fn statement_has_contract_instance(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Require(req) => requirement_has_contract_instance(req),
+        Statement::IfElse {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            expression_has_contract_instance(condition)
+                || then_body.iter().any(statement_has_contract_instance)
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(statement_has_contract_instance))
+        }
+        Statement::ForIn { body, .. } => body.iter().any(statement_has_contract_instance),
+        Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
+            expression_has_contract_instance(value)
+        }
+    }
+}
+
+fn requirement_has_contract_instance(req: &Requirement) -> bool {
+    match req {
+        Requirement::Comparison { left, right, .. } => {
+            expression_has_contract_instance(left) || expression_has_contract_instance(right)
+        }
+        _ => false,
+    }
+}
+
+fn expression_has_contract_instance(expr: &Expression) -> bool {
+    match expr {
+        Expression::ContractInstance { .. } => true,
+        Expression::BinaryOp { left, right, .. } => {
+            expression_has_contract_instance(left) || expression_has_contract_instance(right)
+        }
+        _ => false,
+    }
+}
+
+/// Collect the output index expressions from every
+/// `require(tx.outputs[i].scriptPubKey == new ContractName(...))` statement.
+///
+/// These indices are used in the exit path to generate value-preservation checks:
+/// `tx.outputs[i].value >= tx.input.current.value`.
+fn collect_instance_output_indices(function: &Function) -> Vec<Expression> {
+    let mut indices = Vec::new();
+    for stmt in &function.statements {
+        collect_indices_from_statement(stmt, &mut indices);
+    }
+    indices
+}
+
+fn collect_indices_from_statement(stmt: &Statement, out: &mut Vec<Expression>) {
+    match stmt {
+        Statement::Require(Requirement::Comparison { left, right, .. }) => {
+            if matches!(right, Expression::ContractInstance { .. }) {
+                if let Expression::OutputIntrospection { index, property } = left {
+                    if property == "scriptPubKey" {
+                        out.push(*index.clone());
+                    }
+                }
+            }
+            // Also handle reversed order (ContractInstance on the left, though uncommon)
+            if matches!(left, Expression::ContractInstance { .. }) {
+                if let Expression::OutputIntrospection { index, property } = right {
+                    if property == "scriptPubKey" {
+                        out.push(*index.clone());
+                    }
+                }
+            }
+        }
+        Statement::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            for s in then_body {
+                collect_indices_from_statement(s, out);
+            }
+            if let Some(else_stmts) = else_body {
+                for s in else_stmts {
+                    collect_indices_from_statement(s, out);
+                }
+            }
+        }
+        Statement::ForIn { body, .. } => {
+            for s in body {
+                collect_indices_from_statement(s, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Generate the value-preservation exit path ASM for contract instantiation.
+///
+/// For each output index `i` that has a `new ContractName(...)` scriptPubKey check in
+/// the cooperative path, the exit path enforces:
+///
+///   `tx.outputs[i].value >= tx.input.current.value`
+///
+/// using 64-bit opcodes (both sides produce u64le values). This is a pure covenant —
+/// no witness signatures are required. The exit timelock is appended by the caller.
+fn generate_instance_exit_asm(instance_indices: &[Expression]) -> Vec<String> {
+    let mut asm = Vec::new();
+
+    for index in instance_indices {
+        // Push the output index then inspect the output value
+        emit_expression_asm(index, &mut asm);
+        asm.push("OP_INSPECTOUTPUTVALUE".to_string());
+
+        // Push the current input value (index-free: uses OP_PUSHCURRENTINPUTINDEX)
+        asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
+        asm.push("OP_INSPECTINPUTVALUE".to_string());
+
+        // output[i].value >= current_input.value  (64-bit comparison)
+        asm.push("OP_GREATERTHANOREQUAL64".to_string());
+        asm.push("OP_VERIFY".to_string());
+    }
+
+    asm
+}
+
 fn strip_comments(source: &str) -> String {
     source
         .lines()
@@ -339,6 +472,7 @@ fn generate_function(
     server_variant: bool,
 ) -> AbiFunction {
     let uses_introspection = function_uses_introspection(function);
+    let has_instance = function_has_contract_instance(function);
     let all_pubkeys = collect_all_pubkeys(contract, function);
 
     // Flatten array types in function inputs (e.g., signature[] → signature_0, signature_1, etc.)
@@ -363,9 +497,19 @@ fn generate_function(
         })
         .collect();
 
-    // For exit path with introspection, add signature inputs for all constructor pubkeys
-    // that aren't already in function params
-    if !server_variant && uses_introspection {
+    // Exit path branching:
+    //
+    // 1. Function uses ContractInstance (`new Foo(...)`) → value-preservation covenant:
+    //    output[i].value >= tx.input.current.value + exit timelock.
+    //    No witness signatures needed — function_inputs is left empty for the exit variant.
+    //
+    // 2. Function uses other introspection (no ContractInstance) → N-of-N CHECKSIG fallback
+    //    (pure Bitcoin script) + exit timelock. Extra signature inputs are injected.
+    //
+    // 3. No introspection → normal ASM + exit timelock, function_inputs unchanged.
+
+    if !server_variant && uses_introspection && !has_instance {
+        // Case 2: introspection without ContractInstance — inject sig inputs for N-of-N
         let existing_sig_names: Vec<String> = function_inputs
             .iter()
             .filter(|i| i.param_type == "signature")
@@ -374,7 +518,6 @@ fn generate_function(
 
         for pk in &all_pubkeys {
             let sig_name = format!("{}Sig", pk);
-            // Check if we already have a signature for this pubkey
             let has_sig = existing_sig_names
                 .iter()
                 .any(|s| s.contains(pk) || s == &sig_name);
@@ -385,20 +528,41 @@ fn generate_function(
                 });
             }
         }
+    } else if !server_variant && has_instance {
+        // Case 1: value-preservation covenant — no witness inputs needed for the exit path
+        function_inputs.clear();
     }
 
-    let mut require = if !server_variant && uses_introspection {
-        // For exit path with introspection, generate requirements for N-of-N
-        let mut reqs = Vec::new();
-        reqs.push(RequireStatement {
+    let mut require = if !server_variant && uses_introspection && !has_instance {
+        // Case 2: N-of-N multisig requirement
+        vec![RequireStatement {
             req_type: "nOfNMultisig".to_string(),
             message: Some(format!(
                 "{}-of-{} signatures required (introspection fallback)",
                 all_pubkeys.len(),
                 all_pubkeys.len()
             )),
-        });
-        reqs
+        }]
+    } else if !server_variant && has_instance {
+        // Case 1: value-preservation requirement per locked output
+        let indices = collect_instance_output_indices(function);
+        indices
+            .iter()
+            .map(|idx| {
+                let idx_str = match idx {
+                    Expression::Literal(s) => s.clone(),
+                    Expression::Variable(s) => s.clone(),
+                    _ => "?".to_string(),
+                };
+                RequireStatement {
+                    req_type: "covenantOutput".to_string(),
+                    message: Some(format!(
+                        "output[{}].value must be >= current input value",
+                        idx_str
+                    )),
+                }
+            })
+            .collect()
     } else {
         generate_requirements(function)
     };
@@ -417,16 +581,20 @@ fn generate_function(
         });
     }
 
-    // Generate assembly instructions
-    let mut asm = if !server_variant && uses_introspection {
-        // Exit path with introspection: generate N-of-N CHECKSIG chain (pure Bitcoin)
+    // Generate assembly
+    let mut asm = if !server_variant && uses_introspection && !has_instance {
+        // Case 2: N-of-N CHECKSIG chain (pure Bitcoin, no introspection opcodes)
         generate_nofn_checksig_asm(&all_pubkeys, function)
+    } else if !server_variant && has_instance {
+        // Case 1: value-preservation covenant — output[i].value >= current_input.value
+        let indices = collect_instance_output_indices(function);
+        generate_instance_exit_asm(&indices)
     } else {
-        // Normal path: generate ASM from statements (includes introspection opcodes)
+        // Normal path: full ASM from statements (includes introspection opcodes)
         generate_asm_from_statements(&function.statements)
     };
 
-    // Add server signature or exit timelock check
+    // Append server signature or exit timelock
     if server_variant {
         if contract.has_server_key {
             asm.push("<SERVER_KEY>".to_string());
