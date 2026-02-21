@@ -192,13 +192,12 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
     assert!(vtxo_op.contains("<refundTime>"), "Missing <refundTime> in {}", vtxo_op);
 }
 
-// ─── Introspection detection / value-preservation exit path ───────────────────
+// ─── Introspection detection ───────────────────────────────────────────────────
 
 #[test]
-fn test_new_expression_exit_path_is_value_preservation() {
-    // A function using `new ContractName(...)` triggers a value-preservation exit
-    // path instead of N-of-N CHECKSIG.  The exit script enforces that the same
-    // output's value is >= the current input value, requiring no witness signatures.
+fn test_new_expression_triggers_introspection_exit_path() {
+    // A function using `new ContractName(...)` uses introspection (scriptPubKey
+    // comparison). The exit path must therefore fall back to N-of-N CHECKSIG.
     let code = r#"
 import "single_sig.ark";
 
@@ -223,110 +222,19 @@ contract RecursiveVtxo(pubkey ownerPk) {
         .find(|f| f.name == "send" && !f.server_variant)
         .expect("No exit send function");
 
-    // Exit path must NOT use OP_CHECKSIG (that's N-of-N fallback, not needed here)
+    // Exit path must contain OP_CHECKSIG (N-of-N fallback) and NOT the
+    // introspection opcode.
     assert!(
-        !send_exit.asm.iter().any(|op| op.contains("OP_CHECKSIG")),
-        "Exit path must not contain OP_CHECKSIG, got {:?}",
+        send_exit.asm.iter().any(|op| op.contains("OP_CHECKSIG")),
+        "Exit path should contain OP_CHECKSIG (N-of-N fallback), got {:?}",
         send_exit.asm
     );
-
-    // Must NOT contain the scriptPubKey introspection opcode
     assert!(
         !send_exit
             .asm
             .iter()
             .any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Exit path must not contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
-        send_exit.asm
-    );
-
-    // Must contain the value-preservation check opcodes
-    assert!(
-        send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_INSPECTOUTPUTVALUE"),
-        "Exit path should contain OP_INSPECTOUTPUTVALUE, got {:?}",
-        send_exit.asm
-    );
-    assert!(
-        send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_INSPECTINPUTVALUE"),
-        "Exit path should contain OP_INSPECTINPUTVALUE, got {:?}",
-        send_exit.asm
-    );
-    assert!(
-        send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_GREATERTHANOREQUAL64"),
-        "Exit path should contain OP_GREATERTHANOREQUAL64, got {:?}",
-        send_exit.asm
-    );
-
-    // No witness inputs needed for the covenant exit path
-    assert!(
-        send_exit.function_inputs.is_empty(),
-        "Exit path function_inputs should be empty (covenant), got {:?}",
-        send_exit.function_inputs
-    );
-
-    // Exit timelock must still be appended
-    assert!(
-        send_exit.asm.iter().any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
-        "Exit path must end with OP_CHECKSEQUENCEVERIFY, got {:?}",
-        send_exit.asm
-    );
-}
-
-#[test]
-fn test_exit_path_asm_order() {
-    // Verify exact ASM sequence for the exit path:
-    //   <outputIdx> OP_INSPECTOUTPUTVALUE
-    //   OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
-    //   OP_GREATERTHANOREQUAL64 OP_VERIFY
-    //   <timelock> OP_CHECKSEQUENCEVERIFY OP_DROP
-    let code = r#"
-import "single_sig.ark";
-
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
-  function send(signature ownerSig) {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
-    require(checkSig(ownerSig, ownerPk));
-  }
-}
-"#;
-
-    let result = compile(code).expect("Compile failed");
-    let send_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && !f.server_variant)
-        .expect("No exit send function");
-
-    let expected: &[&str] = &[
-        "0",
-        "OP_INSPECTOUTPUTVALUE",
-        "OP_PUSHCURRENTINPUTINDEX",
-        "OP_INSPECTINPUTVALUE",
-        "OP_GREATERTHANOREQUAL64",
-        "OP_VERIFY",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP",
-    ];
-
-    assert_eq!(
-        send_exit.asm.as_slice(),
-        expected,
-        "Unexpected exit ASM: {:?}",
+        "Exit path must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
         send_exit.asm
     );
 }
