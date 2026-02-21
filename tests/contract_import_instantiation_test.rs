@@ -83,9 +83,8 @@ options {
 }
 
 contract RecursiveVtxo(pubkey ownerPk) {
-  function send(signature ownerSig) {
+  function send() {
     require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
-    require(checkSig(ownerSig, ownerPk));
   }
 }
 "#;
@@ -96,10 +95,8 @@ contract RecursiveVtxo(pubkey ownerPk) {
 
 #[test]
 fn test_new_expression_asm_output() {
-    // Verify the cooperative path ASM contains:
-    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY  (introspect output[0].scriptPubKey)
-    //   <VTXO:SingleSig(<ownerPk>)>     (expected scriptPubKey placeholder)
-    //   OP_EQUAL                        (equality check)
+    // Verify the cooperative path ASM contains the scriptPubKey check,
+    // the VTXO placeholder, and the auto-appended value-equality check.
     let code = r#"
 import "single_sig.ark";
 
@@ -109,9 +106,8 @@ options {
 }
 
 contract RecursiveVtxo(pubkey ownerPk) {
-  function send(signature ownerSig) {
+  function send() {
     require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
-    require(checkSig(ownerSig, ownerPk));
   }
 }
 "#;
@@ -192,12 +188,13 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
     assert!(vtxo_op.contains("<refundTime>"), "Missing <refundTime> in {}", vtxo_op);
 }
 
-// ─── Introspection detection ───────────────────────────────────────────────────
+// ─── Value-equality covenant (both paths) ─────────────────────────────────────
 
 #[test]
-fn test_new_expression_triggers_introspection_exit_path() {
-    // A function using `new ContractName(...)` uses introspection (scriptPubKey
-    // comparison). The exit path must therefore fall back to N-of-N CHECKSIG.
+fn test_new_expression_both_paths_get_value_check() {
+    // When a function uses `new ContractName(args)` the compiler automatically
+    // appends `output[i].value == tx.input.current.value` to BOTH the cooperative
+    // and the exit path.  No CHECKSIG is needed; the covenant is sufficient.
     let code = r#"
 import "single_sig.ark";
 
@@ -207,34 +204,185 @@ options {
 }
 
 contract RecursiveVtxo(pubkey ownerPk) {
-  function send(signature ownerSig) {
+  function send() {
     require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
-    require(checkSig(ownerSig, ownerPk));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
 
+    for variant in [true, false] {
+        let f = result
+            .functions
+            .iter()
+            .find(|f| f.name == "send" && f.server_variant == variant)
+            .unwrap_or_else(|| panic!("Missing send (serverVariant={})", variant));
+
+        // Both paths must check the output scriptPubKey
+        assert!(
+            f.asm.iter().any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+            "serverVariant={}: missing OP_INSPECTOUTPUTSCRIPTPUBKEY in {:?}",
+            variant, f.asm
+        );
+        // Both paths must have the VTXO placeholder
+        assert!(
+            f.asm.iter().any(|op| op.contains("VTXO:SingleSig")),
+            "serverVariant={}: missing VTXO:SingleSig placeholder in {:?}",
+            variant, f.asm
+        );
+        // Both paths must append the value-equality check
+        assert!(
+            f.asm.iter().any(|op| op == "OP_INSPECTOUTPUTVALUE"),
+            "serverVariant={}: missing OP_INSPECTOUTPUTVALUE in {:?}",
+            variant, f.asm
+        );
+        assert!(
+            f.asm.iter().any(|op| op == "OP_INSPECTINPUTVALUE"),
+            "serverVariant={}: missing OP_INSPECTINPUTVALUE in {:?}",
+            variant, f.asm
+        );
+        assert!(
+            f.asm.iter().any(|op| op == "OP_PUSHCURRENTINPUTINDEX"),
+            "serverVariant={}: missing OP_PUSHCURRENTINPUTINDEX in {:?}",
+            variant, f.asm
+        );
+    }
+}
+
+#[test]
+fn test_new_expression_exit_path_has_no_checksig() {
+    // The exit path for a ContractInstance function must NOT fall back to
+    // N-of-N CHECKSIG; the value-equality covenant replaces it.
+    let code = r#"
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract RecursiveVtxo(pubkey ownerPk) {
+  function send() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
     let send_exit = result
         .functions
         .iter()
         .find(|f| f.name == "send" && !f.server_variant)
         .expect("No exit send function");
 
-    // Exit path must contain OP_CHECKSIG (N-of-N fallback) and NOT the
-    // introspection opcode.
     assert!(
-        send_exit.asm.iter().any(|op| op.contains("OP_CHECKSIG")),
-        "Exit path should contain OP_CHECKSIG (N-of-N fallback), got {:?}",
+        !send_exit.asm.iter().any(|op| op.contains("OP_CHECKSIG")),
+        "Exit path must NOT contain OP_CHECKSIG, got {:?}",
         send_exit.asm
     );
-    assert!(
-        !send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Exit path must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
+}
+
+#[test]
+fn test_cooperative_path_asm_order() {
+    // Verify exact cooperative ASM:
+    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+    //   0 OP_INSPECTOUTPUTVALUE OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE OP_EQUAL OP_VERIFY
+    //   <SERVER_KEY> <serverSig> OP_CHECKSIG
+    let code = r#"
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract RecursiveVtxo(pubkey ownerPk) {
+  function send() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+    let send_coop = result
+        .functions
+        .iter()
+        .find(|f| f.name == "send" && f.server_variant)
+        .expect("No cooperative send function");
+
+    let expected: &[&str] = &[
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<ownerPk>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "OP_PUSHCURRENTINPUTINDEX",
+        "OP_INSPECTINPUTVALUE",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG",
+    ];
+
+    assert_eq!(
+        send_coop.asm.as_slice(),
+        expected,
+        "Unexpected cooperative ASM: {:?}",
+        send_coop.asm
+    );
+}
+
+#[test]
+fn test_exit_path_asm_order() {
+    // Verify exact exit ASM:
+    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+    //   0 OP_INSPECTOUTPUTVALUE OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE OP_EQUAL OP_VERIFY
+    //   144 OP_CHECKSEQUENCEVERIFY OP_DROP
+    let code = r#"
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract RecursiveVtxo(pubkey ownerPk) {
+  function send() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+    let send_exit = result
+        .functions
+        .iter()
+        .find(|f| f.name == "send" && !f.server_variant)
+        .expect("No exit send function");
+
+    let expected: &[&str] = &[
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<ownerPk>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "OP_PUSHCURRENTINPUTINDEX",
+        "OP_INSPECTINPUTVALUE",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "144",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP",
+    ];
+
+    assert_eq!(
+        send_exit.asm.as_slice(),
+        expected,
+        "Unexpected exit ASM: {:?}",
         send_exit.asm
     );
 }
@@ -254,9 +402,8 @@ options {
 }
 
 contract RecursiveVtxo(pubkey ownerPk) {
-  function send(signature ownerSig) {
+  function send() {
     require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
-    require(checkSig(ownerSig, ownerPk));
   }
 }
 "#;
@@ -345,9 +492,8 @@ options {
 }
 
 contract SelfRef(pubkey ownerPk) {
-  function renew(signature ownerSig) {
+  function renew() {
     require(tx.outputs[0].scriptPubKey == new SelfRef(ownerPk));
-    require(checkSig(ownerSig, ownerPk));
   }
 }
 "#;

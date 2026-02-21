@@ -139,6 +139,133 @@ fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) 
         .collect()
 }
 
+/// Check whether a function contains any `new ContractName(args)` expression.
+fn function_has_contract_instance(function: &Function) -> bool {
+    function
+        .statements
+        .iter()
+        .any(|s| statement_has_contract_instance(s))
+}
+
+fn statement_has_contract_instance(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Require(req) => requirement_has_contract_instance(req),
+        Statement::IfElse {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            expression_has_contract_instance(condition)
+                || then_body.iter().any(statement_has_contract_instance)
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| b.iter().any(statement_has_contract_instance))
+        }
+        Statement::ForIn { body, .. } => body.iter().any(statement_has_contract_instance),
+        Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
+            expression_has_contract_instance(value)
+        }
+    }
+}
+
+fn requirement_has_contract_instance(req: &Requirement) -> bool {
+    match req {
+        Requirement::Comparison { left, right, .. } => {
+            expression_has_contract_instance(left) || expression_has_contract_instance(right)
+        }
+        _ => false,
+    }
+}
+
+fn expression_has_contract_instance(expr: &Expression) -> bool {
+    match expr {
+        Expression::ContractInstance { .. } => true,
+        Expression::BinaryOp { left, right, .. } => {
+            expression_has_contract_instance(left) || expression_has_contract_instance(right)
+        }
+        _ => false,
+    }
+}
+
+/// Collect the output index expressions from every
+/// `require(tx.outputs[i].scriptPubKey == new ContractName(...))` statement.
+///
+/// The compiler appends a value-equality check for each of these indices on
+/// both the cooperative and exit paths, enforcing that the output forwards the
+/// full amount of the current input being spent.
+fn collect_instance_output_indices(function: &Function) -> Vec<Expression> {
+    let mut indices = Vec::new();
+    for stmt in &function.statements {
+        collect_indices_from_statement(stmt, &mut indices);
+    }
+    indices
+}
+
+fn collect_indices_from_statement(stmt: &Statement, out: &mut Vec<Expression>) {
+    match stmt {
+        Statement::Require(Requirement::Comparison { left, right, .. }) => {
+            // tx.outputs[i].scriptPubKey == new Foo(...)
+            if matches!(right, Expression::ContractInstance { .. }) {
+                if let Expression::OutputIntrospection { index, property } = left {
+                    if property == "scriptPubKey" {
+                        out.push(*index.clone());
+                    }
+                }
+            }
+            // new Foo(...) == tx.outputs[i].scriptPubKey  (reversed)
+            if matches!(left, Expression::ContractInstance { .. }) {
+                if let Expression::OutputIntrospection { index, property } = right {
+                    if property == "scriptPubKey" {
+                        out.push(*index.clone());
+                    }
+                }
+            }
+        }
+        Statement::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            for s in then_body {
+                collect_indices_from_statement(s, out);
+            }
+            if let Some(else_stmts) = else_body {
+                for s in else_stmts {
+                    collect_indices_from_statement(s, out);
+                }
+            }
+        }
+        Statement::ForIn { body, .. } => {
+            for s in body {
+                collect_indices_from_statement(s, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Append value-equality checks for each output that has a ContractInstance
+/// scriptPubKey constraint.
+///
+/// For each output index `i`, emits:
+///   `<i> OP_INSPECTOUTPUTVALUE`
+///   `OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE`
+///   `OP_EQUAL OP_VERIFY`
+///
+/// This enforces that the constrained output carries exactly the same value as
+/// the current input being spent, making CHECKSIG unnecessary — the covenant
+/// (correct script + correct amount) is sufficient.
+fn append_instance_value_checks(instance_indices: &[Expression], asm: &mut Vec<String>) {
+    for index in instance_indices {
+        emit_expression_asm(index, asm);
+        asm.push("OP_INSPECTOUTPUTVALUE".to_string());
+        asm.push("OP_PUSHCURRENTINPUTINDEX".to_string());
+        asm.push("OP_INSPECTINPUTVALUE".to_string());
+        asm.push("OP_EQUAL".to_string());
+        asm.push("OP_VERIFY".to_string());
+    }
+}
+
 fn strip_comments(source: &str) -> String {
     source
         .lines()
@@ -324,13 +451,23 @@ fn decompose_constructor_params(
     result
 }
 
-/// Generate a function ABI with server variant flag
+/// Generate a function ABI with server variant flag.
 ///
-/// For functions using introspection opcodes:
+/// **Contract-instantiation path** (`new ContractName(args)` present):
+/// Both cooperative and exit paths run the normal introspection ASM
+/// (scriptPubKey check via `<VTXO:…>` placeholder) and then the compiler
+/// automatically appends a value-equality check for every constrained output:
+///
+///   `output[i].value == tx.input.current.value`
+///
+/// No CHECKSIG is required — the covenant (correct script + correct amount)
+/// is sufficient.
+///
+/// **Other introspection path** (no `ContractInstance`):
 /// - Cooperative path: normal ASM + introspection + server signature
 /// - Exit path: N-of-N CHECKSIG chain (pure Bitcoin) + exit timelock
 ///
-/// For functions without introspection:
+/// **No introspection**:
 /// - Cooperative path: normal ASM + server signature
 /// - Exit path: normal ASM + exit timelock
 fn generate_function(
@@ -339,9 +476,10 @@ fn generate_function(
     server_variant: bool,
 ) -> AbiFunction {
     let uses_introspection = function_uses_introspection(function);
+    let has_instance = function_has_contract_instance(function);
     let all_pubkeys = collect_all_pubkeys(contract, function);
 
-    // Flatten array types in function inputs (e.g., signature[] → signature_0, signature_1, etc.)
+    // Flatten array types in function inputs
     let mut function_inputs: Vec<FunctionInput> = function
         .parameters
         .iter()
@@ -363,9 +501,8 @@ fn generate_function(
         })
         .collect();
 
-    // For exit path with introspection, add signature inputs for all constructor pubkeys
-    // that aren't already in function params
-    if !server_variant && uses_introspection {
+    // For exit path with non-instance introspection: inject N-of-N signature inputs
+    if !server_variant && uses_introspection && !has_instance {
         let existing_sig_names: Vec<String> = function_inputs
             .iter()
             .filter(|i| i.param_type == "signature")
@@ -374,7 +511,6 @@ fn generate_function(
 
         for pk in &all_pubkeys {
             let sig_name = format!("{}Sig", pk);
-            // Check if we already have a signature for this pubkey
             let has_sig = existing_sig_names
                 .iter()
                 .any(|s| s.contains(pk) || s == &sig_name);
@@ -387,20 +523,38 @@ fn generate_function(
         }
     }
 
-    let mut require = if !server_variant && uses_introspection {
-        // For exit path with introspection, generate requirements for N-of-N
-        let mut reqs = Vec::new();
-        reqs.push(RequireStatement {
+    let mut require = if !server_variant && uses_introspection && !has_instance {
+        // Exit path with plain introspection: N-of-N multisig fallback
+        vec![RequireStatement {
             req_type: "nOfNMultisig".to_string(),
             message: Some(format!(
                 "{}-of-{} signatures required (introspection fallback)",
                 all_pubkeys.len(),
                 all_pubkeys.len()
             )),
-        });
-        reqs
+        }]
     } else {
-        generate_requirements(function)
+        let mut reqs = generate_requirements(function);
+        // For contract-instantiation functions, add a covenantOutput requirement
+        // for each constrained output to make the value check explicit in the ABI.
+        if has_instance {
+            let indices = collect_instance_output_indices(function);
+            for idx in &indices {
+                let idx_str = match idx {
+                    Expression::Literal(s) => s.clone(),
+                    Expression::Variable(s) => s.clone(),
+                    _ => "?".to_string(),
+                };
+                reqs.push(RequireStatement {
+                    req_type: "covenantOutput".to_string(),
+                    message: Some(format!(
+                        "output[{}].value must equal current input value",
+                        idx_str
+                    )),
+                });
+            }
+        }
+        reqs
     };
 
     if server_variant {
@@ -417,16 +571,24 @@ fn generate_function(
         });
     }
 
-    // Generate assembly instructions
-    let mut asm = if !server_variant && uses_introspection {
-        // Exit path with introspection: generate N-of-N CHECKSIG chain (pure Bitcoin)
+    // Generate assembly
+    let mut asm = if !server_variant && uses_introspection && !has_instance {
+        // Exit path with plain introspection: N-of-N CHECKSIG chain (pure Bitcoin)
         generate_nofn_checksig_asm(&all_pubkeys, function)
     } else {
-        // Normal path: generate ASM from statements (includes introspection opcodes)
+        // Normal path (covers both variants for ContractInstance functions):
+        // run the full statement ASM including scriptPubKey checks
         generate_asm_from_statements(&function.statements)
     };
 
-    // Add server signature or exit timelock check
+    // For contract-instantiation functions, append the value-equality checks on
+    // both the cooperative and exit paths.
+    if has_instance {
+        let indices = collect_instance_output_indices(function);
+        append_instance_value_checks(&indices, &mut asm);
+    }
+
+    // Append server signature or exit timelock
     if server_variant {
         if contract.has_server_key {
             asm.push("<SERVER_KEY>".to_string());
