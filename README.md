@@ -9,7 +9,7 @@ This language significantly lowers the barrier for Bitcoin-native app developmen
 ## Development Setup
 - Setup pre-commit checks
   ```bash
-    cp ./scripts/pre-commit .git/hooks 
+  cp ./scripts/pre-commit .git/hooks 
   ```
 
 ## Playground
@@ -54,7 +54,7 @@ Then open [http://localhost:8080](http://localhost:8080) in your browser.
 ## Basic Usage
 
 ```bash
-arkadec contract.ark
+  arkadec contract.ark
 ```
 
 This will compile your Arkade Script contract to a JSON file that can be used with Bitcoin Taproot libraries.
