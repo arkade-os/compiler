@@ -1,11 +1,13 @@
 pub mod compiler;
 pub mod models;
 pub mod parser;
+pub mod typechecker;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-pub use models::{Contract, ContractJson, Expression, Function, Parameter, Requirement};
+pub use models::{Contract, ContractJson, Expression, Function, Parameter, Requirement, WitnessElement};
+pub use typechecker::{ArkType, TypeError};
 
 /// Compile Arkade Script source code to a JSON-serializable structure
 ///

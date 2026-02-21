@@ -36,14 +36,51 @@ pub struct RequireStatement {
     pub message: Option<String>,
 }
 
+/// A single element in the tapscript witness stack.
+///
+/// `witnessSchema` lists every value the caller must supply at spend time,
+/// in the order they appear as `<name>` placeholders in the `asm` array
+/// (constructor parameters, which are baked into the script, are excluded).
+///
+/// The `encoding` field is a stable identifier that code generators
+/// (TypeScript, Go, …) can switch on to pick the correct serializer:
+///
+/// | encoding        | description                                   |
+/// |-----------------|-----------------------------------------------|
+/// | `compressed-33` | 33-byte SEC-compressed secp256k1 public key  |
+/// | `schnorr-64`    | 64-byte Schnorr signature (BIP-340)           |
+/// | `raw`           | arbitrary byte array (caller decides length)  |
+/// | `raw-20`        | 20-byte array (e.g., HASH160)                 |
+/// | `raw-32`        | 32-byte array (e.g., SHA256, txid)            |
+/// | `scriptnum`     | Bitcoin CScriptNum (variable-length LE)       |
+/// | `le64`          | 8-byte unsigned little-endian int64           |
+/// | `le32`          | 4-byte unsigned little-endian int32           |
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WitnessElement {
+    /// Parameter name (matches an `<name>` placeholder in `asm`)
+    pub name: String,
+    /// Arkade Script type string (e.g., `"pubkey"`, `"signature"`, `"bytes32"`)
+    #[serde(rename = "type")]
+    pub elem_type: String,
+    /// Wire-encoding descriptor for client stub generators
+    pub encoding: String,
+}
+
 /// Function definition in the ABI
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AbiFunction {
     /// Function name
     pub name: String,
-    /// Function inputs
+    /// Function inputs (parameter names + declared types)
     #[serde(rename = "functionInputs")]
     pub function_inputs: Vec<FunctionInput>,
+    /// Ordered witness stack elements the caller must supply at spend time.
+    ///
+    /// Includes all function inputs plus any server/exit-path signatures.
+    /// Constructor parameters are **not** listed here — they are baked into
+    /// the tapscript leaf and not part of the witness.
+    #[serde(rename = "witnessSchema")]
+    pub witness_schema: Vec<WitnessElement>,
     /// Whether this is a server variant
     #[serde(rename = "serverVariant")]
     pub server_variant: bool,
