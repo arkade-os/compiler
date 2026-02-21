@@ -8,7 +8,7 @@ echo "Formatted Rust code successfully. Commit again!"
 exit 1
 fi
 
-if ! cargo test --lib ; then
+if ! cargo test ; then
   echo "Fix failing tests and commit again"
   exit 1
 fi
