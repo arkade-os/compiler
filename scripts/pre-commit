@@ -4,9 +4,17 @@
 if ! cargo fmt --check ; then
 cargo fmt
 git update-index --again
-echo "Formatted Rust code successfully! Commit again."
+echo "Formatted Rust code successfully. Commit again!"
 exit 1
 fi
 
-echo "Rust code is formatted correctly."
+git stash --quiet --keep-index --include-untracked
+trap "git stash pop --quiet" EXIT
+
+if ! cargo test ; then
+  echo "Fix failing tests and commit again"
+  exit 1
+fi
+
+echo "Rust code is formatted correctly and all unit tests passed."
 exit 0
