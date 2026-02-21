@@ -6,6 +6,12 @@ Arkade Script supports advanced primitives for arithmetic, introspection, and as
 
 This language significantly lowers the barrier for Bitcoin-native app development, allowing contracts to be written in a structured, Ivy-like syntax and compiled into Arkade-native scripts.
 
+## Development Setup
+- Setup pre-commit checks
+  ```bash
+    cp ./scripts/pre-commit .git/hooks 
+  ```
+
 ## Playground
 
 Try Arkade Script in your browser — no installation required:
