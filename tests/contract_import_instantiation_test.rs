@@ -191,9 +191,10 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
 // ─── Exit-path behavior for ContractInstance ──────────────────────────────────
 
 #[test]
-fn test_new_expression_exit_path_has_no_checksig() {
-    // ContractInstance functions use normal ASM on the exit path — no N-of-N
-    // CHECKSIG fallback. The user's covenant constraints are the exit guard.
+fn test_new_expression_exit_path_uses_nofn_checksig() {
+    // ContractInstance uses non-Bitcoin-Script opcodes (OP_INSPECTOUTPUTSCRIPTPUBKEY),
+    // so the exit path MUST fall back to N-of-N CHECKSIG — same rule as all
+    // other introspection-using functions.  No introspection opcodes on exit.
     let code = r#"
 import "single_sig.ark";
 
@@ -216,24 +217,24 @@ contract RecursiveVtxo(pubkey ownerPk) {
         .find(|f| f.name == "send" && !f.server_variant)
         .expect("No exit send function");
 
-    // No N-of-N CHECKSIG fallback
+    // Must fall back to N-of-N CHECKSIG (pure Bitcoin Script)
     assert!(
-        !send_exit.asm.iter().any(|op| op.contains("OP_CHECKSIG")),
-        "Exit path must NOT contain OP_CHECKSIG, got {:?}",
+        send_exit.asm.iter().any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
+        "Exit path must use N-of-N CHECKSIG fallback, got {:?}",
         send_exit.asm
     );
-    // Must still contain the scriptPubKey check and VTXO placeholder
+    // Must NOT contain any introspection opcodes
     assert!(
-        send_exit.asm.iter().any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Exit path missing OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
+        !send_exit.asm.iter().any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        "Exit path must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
         send_exit.asm
     );
     assert!(
-        send_exit.asm.iter().any(|op| op.contains("VTXO:SingleSig")),
-        "Exit path missing VTXO:SingleSig placeholder, got {:?}",
+        !send_exit.asm.iter().any(|op| op.contains("VTXO:")),
+        "Exit path must NOT contain VTXO placeholder, got {:?}",
         send_exit.asm
     );
-    // Exit timelock must still be appended
+    // Exit timelock must still be appended after the CHECKSIG chain
     assert!(
         send_exit.asm.iter().any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
         "Exit path missing OP_CHECKSEQUENCEVERIFY, got {:?}",
@@ -288,8 +289,10 @@ contract RecursiveVtxo(pubkey ownerPk) {
 
 #[test]
 fn test_exit_path_asm_order() {
-    // Verify exact exit ASM (only the user's require statement + timelock):
-    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+    // Verify exact exit ASM: N-of-N CHECKSIG chain + timelock.
+    // ContractInstance uses non-Bitcoin-Script opcodes, so exit path falls
+    // back to pure Bitcoin Script (no introspection opcodes allowed).
+    //   <ownerPk> <ownerPkSig> OP_CHECKSIG
     //   144 OP_CHECKSEQUENCEVERIFY OP_DROP
     let code = r#"
 import "single_sig.ark";
@@ -314,10 +317,9 @@ contract RecursiveVtxo(pubkey ownerPk) {
         .expect("No exit send function");
 
     let expected: &[&str] = &[
-        "0",
-        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:SingleSig(<ownerPk>)>",
-        "OP_EQUAL",
+        "<ownerPk>",
+        "<ownerPkSig>",
+        "OP_CHECKSIG",
         "144",
         "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP",

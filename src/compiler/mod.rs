@@ -139,54 +139,6 @@ fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) 
         .collect()
 }
 
-/// Check whether a function contains any `new ContractName(args)` expression.
-fn function_has_contract_instance(function: &Function) -> bool {
-    function
-        .statements
-        .iter()
-        .any(|s| statement_has_contract_instance(s))
-}
-
-fn statement_has_contract_instance(stmt: &Statement) -> bool {
-    match stmt {
-        Statement::Require(req) => requirement_has_contract_instance(req),
-        Statement::IfElse {
-            condition,
-            then_body,
-            else_body,
-        } => {
-            expression_has_contract_instance(condition)
-                || then_body.iter().any(statement_has_contract_instance)
-                || else_body
-                    .as_ref()
-                    .map_or(false, |b| b.iter().any(statement_has_contract_instance))
-        }
-        Statement::ForIn { body, .. } => body.iter().any(statement_has_contract_instance),
-        Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
-            expression_has_contract_instance(value)
-        }
-    }
-}
-
-fn requirement_has_contract_instance(req: &Requirement) -> bool {
-    match req {
-        Requirement::Comparison { left, right, .. } => {
-            expression_has_contract_instance(left) || expression_has_contract_instance(right)
-        }
-        _ => false,
-    }
-}
-
-fn expression_has_contract_instance(expr: &Expression) -> bool {
-    match expr {
-        Expression::ContractInstance { .. } => true,
-        Expression::BinaryOp { left, right, .. } => {
-            expression_has_contract_instance(left) || expression_has_contract_instance(right)
-        }
-        _ => false,
-    }
-}
-
 fn strip_comments(source: &str) -> String {
     source
         .lines()
@@ -394,7 +346,6 @@ fn generate_function(
     server_variant: bool,
 ) -> AbiFunction {
     let uses_introspection = function_uses_introspection(function);
-    let has_instance = function_has_contract_instance(function);
     let all_pubkeys = collect_all_pubkeys(contract, function);
 
     // Flatten array types in function inputs
@@ -419,9 +370,10 @@ fn generate_function(
         })
         .collect();
 
-    // For exit path with plain introspection (no ContractInstance):
-    // inject N-of-N signature inputs for the CHECKSIG fallback.
-    if !server_variant && uses_introspection && !has_instance {
+    // Exit path with any introspection (including ContractInstance): inject
+    // N-of-N signature inputs for the CHECKSIG fallback.
+    // Non-Bitcoin-Script opcodes cannot appear on the exit path.
+    if !server_variant && uses_introspection {
         let existing_sig_names: Vec<String> = function_inputs
             .iter()
             .filter(|i| i.param_type == "signature")
@@ -442,8 +394,9 @@ fn generate_function(
         }
     }
 
-    let mut require = if !server_variant && uses_introspection && !has_instance {
-        // Exit path with plain introspection: N-of-N multisig fallback
+    let mut require = if !server_variant && uses_introspection {
+        // Exit path with any introspection: N-of-N multisig fallback.
+        // No non-Bitcoin-Script opcodes are allowed on the exit path.
         vec![RequireStatement {
             req_type: "nOfNMultisig".to_string(),
             message: Some(format!(
@@ -471,10 +424,10 @@ fn generate_function(
     }
 
     // Generate assembly.
-    // ContractInstance functions use normal ASM on both paths (the covenant
-    // constraints written by the user serve as the exit guard).
-    // Plain-introspection exit path falls back to N-of-N CHECKSIG.
-    let mut asm = if !server_variant && uses_introspection && !has_instance {
+    // Exit path with any introspection falls back to N-of-N CHECKSIG
+    // (pure Bitcoin Script — no non-Bitcoin-Script opcodes allowed).
+    // Cooperative path always uses the full statement ASM.
+    let mut asm = if !server_variant && uses_introspection {
         generate_nofn_checksig_asm(&all_pubkeys, function)
     } else {
         generate_asm_from_statements(&function.statements)
