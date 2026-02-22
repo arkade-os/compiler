@@ -1,7 +1,7 @@
 use crate::models::{
     AbiFunction, AssetLookupSource, CompilerInfo, ContractJson, Expression, Function,
     FunctionInput, GroupIOSource, GroupSumSource, RequireStatement, Requirement, Statement,
-    WitnessElement,
+    WitnessElement, DEFAULT_ARRAY_LENGTH,
 };
 use crate::parser;
 use crate::typechecker::{self, ArkType};
@@ -293,9 +293,6 @@ fn collect_asset_ids_from_expression(expr: &Expression, ids: &mut Vec<String>) {
         _ => {}
     }
 }
-
-/// Default array length for flattening (when not specified by numGroups or similar)
-const DEFAULT_ARRAY_LENGTH: usize = 3;
 
 /// Decompose constructor params: bytes32 params used in asset lookups become _txid + _gidx pairs
 /// Array types (e.g., pubkey[]) are flattened to name_0, name_1, name_2, etc.

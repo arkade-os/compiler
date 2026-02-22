@@ -1,5 +1,19 @@
 use serde::{Deserialize, Serialize};
 
+/// The number of elements that array-typed parameters (e.g. `pubkey[]`) are
+/// flattened into throughout the pipeline.
+///
+/// This single constant governs:
+/// - Constructor / function input flattening in the compiler
+/// - Witness schema generation (`pubkey_0 … pubkey_N`)
+/// - Compile-time loop unrolling (`for (k, v) in arr`)
+/// - Scope expansion in the type checker
+///
+/// Raising this value increases the size of every compiled tapscript that
+/// uses array parameters; lower it to tighten script sizes when contracts
+/// only need fewer elements.
+pub const DEFAULT_ARRAY_LENGTH: usize = 3;
+
 /// JSON output structures
 ///
 /// These structures are used to represent the compiled contract in a format

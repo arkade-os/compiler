@@ -9,7 +9,7 @@
 ///   decides how to surface them)
 use std::collections::HashMap;
 
-use crate::models::{Contract, Expression, Function, Requirement, Statement};
+use crate::models::{Contract, Expression, Function, Requirement, Statement, DEFAULT_ARRAY_LENGTH};
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
@@ -139,14 +139,18 @@ fn build_scope(params: &[crate::models::Parameter]) -> Scope {
     params
         .iter()
         .flat_map(|p| {
-            // Flatten array types: pubkey[] → pubkey_0, pubkey_1, pubkey_2
             if p.param_type.ends_with("[]") {
                 let base = p.param_type.trim_end_matches("[]");
                 let elem_type = ArkType::parse(base);
-                // We don't know the real length at type-check time, so register
-                // the name itself as the array type and also common indexed forms.
-                let mut entries = vec![(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())))];
-                for i in 0..3 {
+                // Register the bare name as the array type, plus each flattened
+                // index form (name_0 … name_{N-1}).  The count must match
+                // DEFAULT_ARRAY_LENGTH so the type checker and the compiler
+                // always agree on how many elements exist.
+                let mut entries = vec![(
+                    p.name.clone(),
+                    ArkType::Array(Box::new(elem_type.clone())),
+                )];
+                for i in 0..DEFAULT_ARRAY_LENGTH {
                     entries.push((format!("{}_{}", p.name, i), elem_type.clone()));
                 }
                 entries
