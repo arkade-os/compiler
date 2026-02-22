@@ -4,6 +4,7 @@ use std::path::Path;
 
 mod compiler;
 mod models;
+mod opcodes;
 mod parser;
 
 /// Arkade Compiler CLI

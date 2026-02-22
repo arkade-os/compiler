@@ -1,4 +1,8 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_1NEGATE, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_GREATERTHAN64,
+    OP_GREATERTHANOREQUAL, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_NOT, OP_VERIFY,
+};
 
 #[test]
 fn test_fee_adapter_contract() {
@@ -70,40 +74,41 @@ fn test_fee_adapter_contract() {
     // Check assembly for asset lookup opcodes
     let execute_asm = execute.asm.join(" ");
     assert!(
-        execute_asm.contains("OP_INSPECTINASSETLOOKUP"),
-        "missing OP_INSPECTINASSETLOOKUP in execute: {}",
+        execute_asm.contains(OP_INSPECTINASSETLOOKUP),
+        "missing {OP_INSPECTINASSETLOOKUP} in execute: {}",
         execute_asm
     );
     assert!(
-        execute_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
-        "missing OP_INSPECTOUTASSETLOOKUP in execute: {}",
+        execute_asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "missing {OP_INSPECTOUTASSETLOOKUP} in execute: {}",
         execute_asm
     );
 
     // Should have sentinel guard pattern
+    let sentinel_guard = format!("{OP_DUP} {OP_1NEGATE} {OP_EQUAL} {OP_NOT} {OP_VERIFY}");
     assert!(
-        execute_asm.contains("OP_DUP OP_1NEGATE OP_EQUAL OP_NOT OP_VERIFY"),
+        execute_asm.contains(&sentinel_guard),
         "missing sentinel guard in execute: {}",
         execute_asm
     );
 
     // Should have 64-bit comparison opcodes for asset comparisons
     assert!(
-        execute_asm.contains("OP_GREATERTHAN64"),
-        "missing 64-bit comparison in execute: {}",
+        execute_asm.contains(OP_GREATERTHAN64),
+        "missing {OP_GREATERTHAN64} in execute: {}",
         execute_asm
     );
 
     // Should also have standard comparison opcodes (fee >= minFee)
     assert!(
-        execute_asm.contains("OP_GREATERTHANOREQUAL"),
-        "missing comparison opcode in execute: {}",
+        execute_asm.contains(OP_GREATERTHANOREQUAL),
+        "missing {OP_GREATERTHANOREQUAL} in execute: {}",
         execute_asm
     );
 
     assert!(
-        execute_asm.contains("OP_CHECKSIG"),
-        "missing OP_CHECKSIG in execute: {}",
+        execute_asm.contains(OP_CHECKSIG),
+        "missing {OP_CHECKSIG} in execute: {}",
         execute_asm
     );
 
@@ -137,24 +142,24 @@ fn test_fee_adapter_contract() {
     // 1. N-of-N CHECKSIG chain (pure Bitcoin, no introspection)
     // 2. CSV timelock (relative, not absolute CLTV)
     assert!(
-        exit_asm.contains("OP_CHECKSIG"),
-        "missing CHECKSIG in exit path: {}",
+        exit_asm.contains(OP_CHECKSIG),
+        "missing {OP_CHECKSIG} in exit path: {}",
         exit_asm
     );
     assert!(
-        exit_asm.contains("OP_CHECKSEQUENCEVERIFY"),
+        exit_asm.contains(OP_CHECKSEQUENCEVERIFY),
         "missing CSV exit timelock: {}",
         exit_asm
     );
 
     // Exit path should NOT have introspection opcodes (pure Bitcoin fallback)
     assert!(
-        !exit_asm.contains("OP_INSPECTINASSETLOOKUP"),
+        !exit_asm.contains(OP_INSPECTINASSETLOOKUP),
         "exit path should not have introspection: {}",
         exit_asm
     );
     assert!(
-        !exit_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
+        !exit_asm.contains(OP_INSPECTOUTASSETLOOKUP),
         "exit path should not have introspection: {}",
         exit_asm
     );
@@ -200,6 +205,6 @@ fn test_fee_adapter_cli() {
     assert!(json.contains("\"contractName\": \"FeeAdapter\""));
     assert!(json.contains("\"serverVariant\": true"));
     assert!(json.contains("\"serverVariant\": false"));
-    assert!(json.contains("OP_INSPECTINASSETLOOKUP"));
-    assert!(json.contains("OP_INSPECTOUTASSETLOOKUP"));
+    assert!(json.contains(OP_INSPECTINASSETLOOKUP));
+    assert!(json.contains(OP_INSPECTOUTASSETLOOKUP));
 }

@@ -1,5 +1,8 @@
 use arkade_compiler::compile;
-
+use arkade_compiler::opcodes::{
+    OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_NEG64,
+    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
+};
 // ─── Streaming SHA256 Tests ────────────────────────────────────────────
 
 #[test]
@@ -34,8 +37,8 @@ fn test_sha256_initialize() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_SHA256INITIALIZE"),
-        "Expected OP_SHA256INITIALIZE in ASM: {}",
+        asm_str.contains(OP_SHA256INITIALIZE),
+        "Expected {OP_SHA256INITIALIZE} in ASM: {}",
         asm_str
     );
 }
@@ -72,8 +75,8 @@ fn test_sha256_update() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_SHA256UPDATE"),
-        "Expected OP_SHA256UPDATE in ASM: {}",
+        asm_str.contains(OP_SHA256UPDATE),
+        "Expected {OP_SHA256UPDATE} in ASM: {}",
         asm_str
     );
 }
@@ -110,8 +113,8 @@ fn test_sha256_finalize() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_SHA256FINALIZE"),
-        "Expected OP_SHA256FINALIZE in ASM: {}",
+        asm_str.contains(OP_SHA256FINALIZE),
+        "Expected {OP_SHA256FINALIZE} in ASM: {}",
         asm_str
     );
 }
@@ -146,8 +149,8 @@ fn test_neg64() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_NEG64"),
-        "Expected OP_NEG64 in ASM: {}",
+        asm_str.contains(OP_NEG64),
+        "Expected {OP_NEG64} in ASM: {}",
         asm_str
     );
 }
@@ -184,8 +187,8 @@ fn test_le64_to_script_num() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_LE64TOSCRIPTNUM"),
-        "Expected OP_LE64TOSCRIPTNUM in ASM: {}",
+        asm_str.contains(OP_LE64TOSCRIPTNUM),
+        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}",
         asm_str
     );
 }
@@ -222,8 +225,8 @@ fn test_le32_to_le64() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_LE32TOLE64"),
-        "Expected OP_LE32TOLE64 in ASM: {}",
+        asm_str.contains(OP_LE32TOLE64),
+        "Expected {OP_LE32TOLE64} in ASM: {}",
         asm_str
     );
 }
@@ -262,8 +265,8 @@ fn test_ec_mul_scalar_verify() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_ECMULSCALARVERIFY"),
-        "Expected OP_ECMULSCALARVERIFY in ASM: {}",
+        asm_str.contains(OP_ECMULSCALARVERIFY),
+        "Expected {OP_ECMULSCALARVERIFY} in ASM: {}",
         asm_str
     );
 }
@@ -300,8 +303,8 @@ fn test_tweak_verify() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_TWEAKVERIFY"),
-        "Expected OP_TWEAKVERIFY in ASM: {}",
+        asm_str.contains(OP_TWEAKVERIFY),
+        "Expected {OP_TWEAKVERIFY} in ASM: {}",
         asm_str
     );
 }
@@ -338,8 +341,8 @@ fn test_check_sig_from_stack_verify() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_CHECKSIGFROMSTACKVERIFY"),
-        "Expected OP_CHECKSIGFROMSTACKVERIFY in ASM: {}",
+        asm_str.contains(OP_CHECKSIGFROMSTACKVERIFY),
+        "Expected {OP_CHECKSIGFROMSTACKVERIFY} in ASM: {}",
         asm_str
     );
 }
@@ -380,18 +383,18 @@ fn test_streaming_hash_full_workflow() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_SHA256INITIALIZE"),
-        "Expected OP_SHA256INITIALIZE in ASM: {}",
+        asm_str.contains(OP_SHA256INITIALIZE),
+        "Expected {OP_SHA256INITIALIZE} in ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_SHA256UPDATE"),
-        "Expected OP_SHA256UPDATE in ASM: {}",
+        asm_str.contains(OP_SHA256UPDATE),
+        "Expected {OP_SHA256UPDATE} in ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_SHA256FINALIZE"),
-        "Expected OP_SHA256FINALIZE in ASM: {}",
+        asm_str.contains(OP_SHA256FINALIZE),
+        "Expected {OP_SHA256FINALIZE} in ASM: {}",
         asm_str
     );
 }
@@ -430,18 +433,18 @@ fn test_conversion_chain() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_LE32TOLE64"),
-        "Expected OP_LE32TOLE64 in ASM: {}",
+        asm_str.contains(OP_LE32TOLE64),
+        "Expected {OP_LE32TOLE64} in ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_NEG64"),
-        "Expected OP_NEG64 in ASM: {}",
+        asm_str.contains(OP_NEG64),
+        "Expected {OP_NEG64} in ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_LE64TOSCRIPTNUM"),
-        "Expected OP_LE64TOSCRIPTNUM in ASM: {}",
+        asm_str.contains(OP_LE64TOSCRIPTNUM),
+        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}",
         asm_str
     );
 }
