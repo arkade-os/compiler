@@ -1,6 +1,7 @@
 use crate::models::{
     AbiFunction, AssetLookupSource, CompilerInfo, ContractJson, Expression, Function,
     FunctionInput, GroupIOSource, GroupSumSource, RequireStatement, Requirement, Statement,
+    WitnessElement, DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG,
@@ -22,6 +23,7 @@ use crate::opcodes::{
     OP_VERIFY,
 };
 use crate::parser;
+use crate::typechecker::{self, ArkType};
 use chrono::Utc;
 // ─── Introspection Detection ────────────────────────────────────────────────────
 //
@@ -195,6 +197,15 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
+    // ── Type checking ──────────────────────────────────────────────────────
+    // Run the type checker and emit any errors as warnings on stderr.
+    // Type errors are currently non-fatal so contracts that were accepted
+    // before this pass is introduced continue to compile.
+    let type_errors = typechecker::check_contract(&contract);
+    for e in &type_errors {
+        eprintln!("warning[type]: {}", e.message);
+    }
+
     // The Arkade operator key is always injected externally (via getInfo()).
     // It is never a constructor parameter — options.server is a boolean flag only.
 
@@ -301,9 +312,6 @@ fn collect_asset_ids_from_expression(expr: &Expression, ids: &mut Vec<String>) {
     }
 }
 
-/// Default array length for flattening (when not specified by numGroups or similar)
-const DEFAULT_ARRAY_LENGTH: usize = 3;
-
 /// Decompose constructor params: bytes32 params used in asset lookups become _txid + _gidx pairs
 /// Array types (e.g., pubkey[]) are flattened to name_0, name_1, name_2, etc.
 fn decompose_constructor_params(
@@ -336,6 +344,68 @@ fn decompose_constructor_params(
         }
     }
     result
+}
+
+/// Build the `witnessSchema` for a function variant.
+///
+/// The schema lists every value the *caller* must supply in the witness,
+/// in the order they appear as `<name>` placeholders in the generated ASM.
+/// Constructor parameters are excluded — they are baked into the tapscript leaf.
+///
+/// For exit paths that fall back to N-of-N (introspection functions), the
+/// schema lists one `<pkName>Sig` entry per constructor pubkey.
+fn generate_witness_schema(
+    function: &crate::models::Function,
+    contract: &crate::models::Contract,
+    server_variant: bool,
+    uses_introspection: bool,
+    all_pubkeys: &[String],
+) -> Vec<WitnessElement> {
+    let mut schema: Vec<WitnessElement> = Vec::new();
+
+    if !server_variant && uses_introspection {
+        // N-of-N exit path: one signature per constructor pubkey.
+        for pk in all_pubkeys {
+            schema.push(WitnessElement {
+                name: format!("{}Sig", pk),
+                elem_type: "signature".to_string(),
+                encoding: ArkType::Signature.encoding().to_string(),
+            });
+        }
+    } else {
+        // Normal path: function parameters form the witness elements.
+        for param in &function.parameters {
+            if param.param_type.ends_with("[]") {
+                let base = param.param_type.trim_end_matches("[]");
+                let ark_type = ArkType::parse(base);
+                for i in 0..DEFAULT_ARRAY_LENGTH {
+                    schema.push(WitnessElement {
+                        name: format!("{}_{}", param.name, i),
+                        elem_type: base.to_string(),
+                        encoding: ark_type.encoding().to_string(),
+                    });
+                }
+            } else {
+                let ark_type = ArkType::parse(&param.param_type);
+                schema.push(WitnessElement {
+                    name: param.name.clone(),
+                    elem_type: param.param_type.clone(),
+                    encoding: ark_type.encoding().to_string(),
+                });
+            }
+        }
+    }
+
+    // Append the server signature for cooperative paths.
+    if server_variant && contract.has_server_key {
+        schema.push(WitnessElement {
+            name: "serverSig".to_string(),
+            elem_type: "signature".to_string(),
+            encoding: ArkType::Signature.encoding().to_string(),
+        });
+    }
+
+    schema
 }
 
 /// Generate a function ABI with server variant flag
@@ -453,9 +523,18 @@ fn generate_function(
         asm.push(OP_DROP.to_string());
     }
 
+    let witness_schema = generate_witness_schema(
+        function,
+        contract,
+        server_variant,
+        uses_introspection,
+        &all_pubkeys,
+    );
+
     AbiFunction {
         name: function.name.clone(),
         function_inputs,
+        witness_schema,
         server_variant,
         require,
         asm,
@@ -676,8 +755,14 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                 // TODO: Implement proper variable binding with stack tracking
                 generate_expression_asm(value, asm);
             }
-            Statement::VarAssign { name: _, value: _ } => {
-                // TODO: Implement variable reassignment
+            Statement::VarAssign { name: _, value } => {
+                // Push the new value onto the stack.
+                // Full variable reassignment (dropping the old stack value) requires
+                // stack-position tracking, which is deferred to a later phase.
+                // For the common pattern of `typed_var = expr; require(typed_var == ...)`,
+                // emitting the expression is sufficient because the old value has already
+                // been consumed by the time the re-assignment is reached.
+                generate_expression_asm(value, asm);
             }
         }
     }
