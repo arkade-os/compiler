@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_EQUAL,
-    OP_NUMEQUAL, OP_SHA256,
+    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_EQUAL, OP_NUMEQUAL,
+    OP_SHA256,
 };
 use serde_json::Value;
 use std::fs;
