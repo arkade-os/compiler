@@ -5,6 +5,7 @@ use crate::models::{
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
+use std::str::FromStr;
 
 /// Pest parser generated from grammar.pest
 #[derive(Parser)]
@@ -665,25 +666,41 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     })
 }
 
-/// Parse checkMultisig([pubkeys], [sigs]) → CheckMultisig requirement
+/// Parse checkMultisig([pubkeys], threshold) → CheckMultisig requirement
 fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
-    let mut inner = pair.into_inner();
+    let mut inner = pair
+        .into_inner()
+        .next()
+        .ok_or("Missing checkMultisig definition")?
+        .into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
-    let signatures_array = inner.next().ok_or("Missing signatures")?;
 
-    let pubkeys = pubkeys_array
+    // We support threshold multisig only, so signatures are not required
+    // The next item is a threshold number
+    let next = inner.next();
+
+    let pubkeys: Vec<String> = pubkeys_array
         .into_inner()
         .map(|p| p.as_str().to_string())
         .collect();
-    let signatures = signatures_array
-        .into_inner()
-        .map(|s| s.as_str().to_string())
-        .collect();
+    match next {
+        Some(next_pair) => {
+            // m-of-n threshold multisig
+            let threshold = match u16::from_str(next_pair.as_str()) {
+                Ok(threshold) => threshold,
+                Err(e) => {
+                    return Err(format!("{}", e));
+                }
+            };
 
-    Ok(Requirement::CheckMultisig {
-        signatures,
-        pubkeys,
-    })
+            Ok(Requirement::CheckMultisig { pubkeys, threshold })
+        }
+        None => {
+            // An n-of-n multisig should be created by optionally omitting the threshold from checkMultisig arguments
+            let threshold = pubkeys.len() as u16;
+            Ok(Requirement::CheckMultisig { pubkeys, threshold })
+        }
+    }
 }
 
 /// Parse tx.time >= variable → After requirement

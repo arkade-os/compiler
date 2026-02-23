@@ -3,26 +3,27 @@ use crate::models::{
     FunctionInput, GroupIOSource, GroupSumSource, RequireStatement, Requirement, Statement,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG,
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY,
-    OP_CHECKSIGVERIFY, OP_DIV64, OP_DROP, OP_DUP, OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF,
-    OP_EQUAL, OP_FALSE, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64,
-    OP_GREATERTHANOREQUAL, OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT,
-    OP_INPUTSEQUENCE, OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID,
-    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
-    OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
-    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN,
-    OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT,
+    OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_CHECKSIGVERIFY, OP_DIV64,
+    OP_DROP, OP_DUP, OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_FALSE,
+    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
+    OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE,
+    OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTISSUANCE,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS,
+    OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP,
+    OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION,
+    OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL,
+    OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT, OP_NUMEQUAL,
     OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SHA256FINALIZE,
     OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SUB64, OP_TWEAKVERIFY, OP_TXHASH, OP_TXWEIGHT,
     OP_VERIFY,
 };
 use crate::parser;
 use chrono::Utc;
+
 // ─── Introspection Detection ────────────────────────────────────────────────────
 //
 // These helpers detect if a function uses introspection opcodes (OP_INSPECT*).
@@ -221,10 +222,10 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
             continue;
         }
 
-        let collaborative = generate_function(function, &contract, true);
+        let collaborative = generate_function(function, &contract, true)?;
         json.functions.push(collaborative);
 
-        let exit = generate_function(function, &contract, false);
+        let exit = generate_function(function, &contract, false)?;
         json.functions.push(exit);
     }
 
@@ -351,7 +352,7 @@ fn generate_function(
     function: &crate::models::Function,
     contract: &crate::models::Contract,
     server_variant: bool,
-) -> AbiFunction {
+) -> Result<AbiFunction, String> {
     let uses_introspection = function_uses_introspection(function);
     let all_pubkeys = collect_all_pubkeys(contract, function);
 
@@ -437,7 +438,7 @@ fn generate_function(
         generate_nofn_checksig_asm(&all_pubkeys, function)
     } else {
         // Normal path: generate ASM from statements (includes introspection opcodes)
-        generate_asm_from_statements(&function.statements)
+        generate_asm_from_statements(&function.statements)?
     };
 
     // Add server signature or exit timelock check
@@ -453,13 +454,13 @@ fn generate_function(
         asm.push(OP_DROP.to_string());
     }
 
-    AbiFunction {
+    Ok(AbiFunction {
         name: function.name.clone(),
         function_inputs,
         server_variant,
         require,
         asm,
-    }
+    })
 }
 
 /// Generate N-of-N CHECKSIG chain assembly (Tapscript style)
@@ -588,18 +589,21 @@ fn requirement_to_statement(req: &Requirement) -> RequireStatement {
 }
 
 /// Generate assembly instructions from statements
-fn generate_asm_from_statements(statements: &[Statement]) -> Vec<String> {
+fn generate_asm_from_statements(statements: &[Statement]) -> Result<Vec<String>, String> {
     let mut asm = Vec::new();
-    generate_asm_from_statements_recursive(statements, &mut asm);
-    asm
+    generate_asm_from_statements_recursive(statements, &mut asm)?;
+    Ok(asm)
 }
 
 /// Recursively generate assembly from statements
-fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Vec<String>) {
+fn generate_asm_from_statements_recursive(
+    statements: &[Statement],
+    asm: &mut Vec<String>,
+) -> Result<(), String> {
     for stmt in statements {
         match stmt {
             Statement::Require(req) => {
-                generate_requirement_asm(req, asm);
+                generate_requirement_asm(req, asm)?;
             }
             Statement::IfElse {
                 condition,
@@ -611,12 +615,12 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                 asm.push(OP_IF.to_string());
 
                 // Generate then branch
-                generate_asm_from_statements_recursive(then_body, asm);
+                generate_asm_from_statements_recursive(then_body, asm)?;
 
                 // Generate else branch if present
                 if let Some(else_stmts) = else_body {
                     asm.push(OP_ELSE.to_string());
-                    generate_asm_from_statements_recursive(else_stmts, asm);
+                    generate_asm_from_statements_recursive(else_stmts, asm)?;
                 }
 
                 asm.push(OP_ENDIF.to_string());
@@ -648,7 +652,7 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                         // Substitute loop variables and generate ASM for each iteration
                         let substituted_body =
                             substitute_loop_body(body, index_var, value_var, k, None);
-                        generate_asm_from_statements_recursive(&substituted_body, asm);
+                        generate_asm_from_statements_recursive(&substituted_body, asm)?;
                     }
                 } else if array_name.is_some() {
                     // Iterating over an array variable - unroll with array substitution
@@ -664,11 +668,11 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
                             k,
                             array_name.as_ref(),
                         );
-                        generate_asm_from_statements_recursive(&substituted_body, asm);
+                        generate_asm_from_statements_recursive(&substituted_body, asm)?;
                     }
                 } else {
                     // For other iterables, process body once (fallback)
-                    generate_asm_from_statements_recursive(body, asm);
+                    generate_asm_from_statements_recursive(body, asm)?;
                 }
             }
             Statement::LetBinding { name: _, value } => {
@@ -681,15 +685,17 @@ fn generate_asm_from_statements_recursive(statements: &[Statement], asm: &mut Ve
             }
         }
     }
+    Ok(())
 }
 
 /// Generate assembly for a single requirement
-fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
+fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<(), String> {
     match req {
         Requirement::CheckSig { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIG.to_string());
+            Ok(())
         }
         Requirement::CheckSigFromStack {
             signature,
@@ -700,20 +706,45 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
+            Ok(())
         }
-        Requirement::CheckMultisig {
-            signatures,
-            pubkeys,
-        } => {
-            asm.push(format!("OP_{}", pubkeys.len()));
-            for pubkey in pubkeys {
+        Requirement::CheckMultisig { pubkeys, threshold } => {
+            let pubkeys_size = pubkeys.len();
+            let pubkeys_size = if pubkeys_size <= 999 {
+                pubkeys_size as u16
+            } else {
+                return Err("Number of pubkeys should be less than 999.".to_string());
+            };
+
+            if threshold < &1u16 {
+                return Err(format!(
+                    "m-of-n multisig cannot succeed with threshold(m) of {}",
+                    threshold
+                ));
+            }
+            if threshold > &pubkeys_size {
+                return Err(
+                    "m-of-n multisig threshold(m) exceeds acceptable number of signers(n)"
+                        .to_string(),
+                );
+            }
+
+            for (i, pubkey) in pubkeys.iter().enumerate() {
+                if i == 0 {
+                    asm.push(format!("<{}>", pubkey));
+                    asm.push(OP_CHECKSIG.to_string());
+                    continue;
+                }
                 asm.push(format!("<{}>", pubkey));
+                asm.push(OP_CHECKSIGADD.to_string());
             }
-            asm.push(format!("OP_{}", signatures.len()));
-            for signature in signatures {
-                asm.push(format!("<{}>", signature));
+            if threshold <= &16u16 {
+                asm.push(format!("OP_{}", threshold));
+            } else {
+                asm.push(format!("{}", threshold));
             }
-            asm.push(OP_CHECKMULTISIG.to_string());
+            asm.push(OP_NUMEQUAL.to_string());
+            Ok(())
         }
         Requirement::After {
             blocks,
@@ -726,15 +757,18 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) {
             }
             asm.push(OP_CHECKLOCKTIMEVERIFY.to_string());
             asm.push(OP_DROP.to_string());
+            Ok(())
         }
         Requirement::HashEqual { preimage, hash } => {
             asm.push(format!("<{}>", preimage));
             asm.push(OP_SHA256.to_string());
             asm.push(format!("<{}>", hash));
             asm.push(OP_EQUAL.to_string());
+            Ok(())
         }
         Requirement::Comparison { left, op, right } => {
             generate_comparison_asm(left, op, right, asm);
+            Ok(())
         }
     }
 }
@@ -779,8 +813,8 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                     asm.push(OP_VERIFY.to_string());
                 }
                 "*" => {
-                    asm.push("OP_MUL64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_MUL64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 "/" => {
                     asm.push(OP_DIV64.to_string());
@@ -1128,10 +1162,13 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 asm.push(OP_CHECKSIGFROMSTACK.to_string());
             }
             Requirement::CheckMultisig {
-                signatures,
+                // signatures,
                 pubkeys,
+                threshold,
             } => {
-                asm.push(format!("OP_{}", pubkeys.len()));
+                // We cannot update here, this is dead code
+
+                /*asm.push(format!("OP_{}", pubkeys.len()));
                 for pubkey in pubkeys {
                     asm.push(format!("<{}>", pubkey));
                 }
@@ -1139,7 +1176,7 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 for signature in signatures {
                     asm.push(format!("<{}>", signature));
                 }
-                asm.push(OP_CHECKMULTISIG.to_string());
+                asm.push(OP_CHECKMULTISIG.to_string());*/
             }
             Requirement::After {
                 blocks,
