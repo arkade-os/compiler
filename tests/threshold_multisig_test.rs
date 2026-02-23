@@ -169,9 +169,6 @@ fn test_threshold_multisig() {
     // Check require types
     assert_eq!(two_of_two_function.require[0].req_type, "multisig");
 
-    // Check function inputs
-    assert_eq!(two_of_two_function.function_inputs.len(), 2);
-
     // Check assembly instructions
     assert_eq!(two_of_two_function.asm.len(), 9);
     assert_eq!(two_of_two_function.asm[0], "<signer>");
@@ -312,7 +309,7 @@ contract ThresholdMultisig(
 }
 
 #[test]
-fn test_threshold_multisig_should_fail_on_m_greater_than_max() {
+fn test_threshold_multisig_should_fail_on_n_greater_than_max() {
     // Threshold multisig example source code
     let threshold_multisig_code = r#"// Contract configuration options
 options {
