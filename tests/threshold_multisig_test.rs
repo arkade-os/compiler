@@ -280,6 +280,38 @@ contract ThresholdMultisig(
 }
 
 #[test]
+fn test_threshold_multisig_should_fail_on_m_equal_to_zero() {
+    // Threshold multisig example source code
+    let threshold_multisig_code = r#"// Contract configuration options
+options {
+  // Server key parameter from contract parameters
+  server = server;
+
+  // Exit timelock: 24 hours (144 blocks)
+  exit = 144;
+}
+
+contract ThresholdMultisig(
+  pubkey signer,
+  pubkey signer1,
+  pubkey signer2,
+  pubkey server
+) {
+  // m-of-n using literal threshold greater than number of pubkeys
+  // Should fail to compile
+  function fourOfThree(signature signerSig, signature signer1Sig, signature signer2Sig) {
+    require(checkMultisig([signer, signer1, signer2], 0));
+  }
+}"#;
+
+    let result = compile(threshold_multisig_code);
+    assert!(
+        result.is_err(),
+        "Expected compilation to fail for m = 0 threshold multisig"
+    );
+}
+
+#[test]
 fn test_threshold_multisig_cli() {
     // Create a temporary directory for our test files
     let temp_dir = tempdir().unwrap();
