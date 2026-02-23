@@ -1,4 +1,8 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_CHECKSIG, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTOUTASSETLOOKUP, OP_SUB64,
+};
 
 #[test]
 fn test_controlled_mint_contract() {
@@ -52,34 +56,34 @@ fn test_controlled_mint_contract() {
 
     // Should have asset group find opcode
     assert!(
-        mint_asm.contains("OP_FINDASSETGROUPBYASSETID"),
-        "missing OP_FINDASSETGROUPBYASSETID in mint: {}",
+        mint_asm.contains(OP_FINDASSETGROUPBYASSETID),
+        "missing {OP_FINDASSETGROUPBYASSETID} in mint: {}",
         mint_asm
     );
 
     // Should have group property opcodes for delta and control
     assert!(
-        mint_asm.contains("OP_INSPECTASSETGROUPSUM") || mint_asm.contains("OP_SUB64"),
+        mint_asm.contains(OP_INSPECTASSETGROUPSUM) || mint_asm.contains(OP_SUB64),
         "missing group sum or delta in mint: {}",
         mint_asm
     );
 
     assert!(
-        mint_asm.contains("OP_INSPECTASSETGROUPCTRL"),
-        "missing OP_INSPECTASSETGROUPCTRL in mint: {}",
+        mint_asm.contains(OP_INSPECTASSETGROUPCTRL),
+        "missing {OP_INSPECTASSETGROUPCTRL} in mint: {}",
         mint_asm
     );
 
     // Should have asset lookup for output check
     assert!(
-        mint_asm.contains("OP_INSPECTOUTASSETLOOKUP"),
-        "missing OP_INSPECTOUTASSETLOOKUP in mint: {}",
+        mint_asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "missing {OP_INSPECTOUTASSETLOOKUP} in mint: {}",
         mint_asm
     );
 
     // Should have checksig
     assert!(
-        mint_asm.contains("OP_CHECKSIG"),
+        mint_asm.contains(OP_CHECKSIG),
         "missing checksig in mint: {}",
         mint_asm
     );
@@ -95,17 +99,17 @@ fn test_controlled_mint_contract() {
 
     // Burn uses group sumInputs >= sumOutputs + amount
     assert!(
-        burn_asm.contains("OP_FINDASSETGROUPBYASSETID"),
+        burn_asm.contains(OP_FINDASSETGROUPBYASSETID),
         "missing group find in burn: {}",
         burn_asm
     );
     assert!(
-        burn_asm.contains("OP_INSPECTASSETGROUPSUM"),
+        burn_asm.contains(OP_INSPECTASSETGROUPSUM),
         "missing group sum in burn: {}",
         burn_asm
     );
     assert!(
-        burn_asm.contains("OP_CHECKSIG"),
+        burn_asm.contains(OP_CHECKSIG),
         "missing checksig in burn: {}",
         burn_asm
     );
@@ -121,12 +125,12 @@ fn test_controlled_mint_contract() {
 
     // lockSupply checks sumOutputs == 0
     assert!(
-        lock_asm.contains("OP_FINDASSETGROUPBYASSETID"),
+        lock_asm.contains(OP_FINDASSETGROUPBYASSETID),
         "missing group find in lockSupply: {}",
         lock_asm
     );
     assert!(
-        lock_asm.contains("OP_INSPECTASSETGROUPSUM"),
+        lock_asm.contains(OP_INSPECTASSETGROUPSUM),
         "missing group sum in lockSupply: {}",
         lock_asm
     );
@@ -164,15 +168,15 @@ fn test_controlled_mint_cli() {
 
     // Should have group-related opcodes
     assert!(
-        json.contains("OP_FINDASSETGROUPBYASSETID"),
-        "missing OP_FINDASSETGROUPBYASSETID"
+        json.contains(OP_FINDASSETGROUPBYASSETID),
+        "missing {OP_FINDASSETGROUPBYASSETID}"
     );
     assert!(
-        json.contains("OP_INSPECTASSETGROUPSUM"),
-        "missing OP_INSPECTASSETGROUPSUM"
+        json.contains(OP_INSPECTASSETGROUPSUM),
+        "missing {OP_INSPECTASSETGROUPSUM}"
     );
     assert!(
-        json.contains("OP_INSPECTASSETGROUPCTRL"),
-        "missing OP_INSPECTASSETGROUPCTRL"
+        json.contains(OP_INSPECTASSETGROUPCTRL),
+        "missing {OP_INSPECTASSETGROUPCTRL}"
     );
 }

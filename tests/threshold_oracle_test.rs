@@ -1,4 +1,7 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_CHECKSIGFROMSTACK, OP_GREATERTHANOREQUAL, OP_INSPECTINASSETLOOKUP,
+};
 
 /// Test contract from PLAN.md Commit 6: Array Types + Threshold Verification
 ///
@@ -84,11 +87,8 @@ fn test_threshold_oracle_has_asset_lookup() {
 
     // Should have asset lookup for control asset check
     assert!(
-        server
-            .asm
-            .iter()
-            .any(|s| s.contains("OP_INSPECTINASSETLOOKUP")),
-        "Missing OP_INSPECTINASSETLOOKUP in attest function"
+        server.asm.iter().any(|s| s == OP_INSPECTINASSETLOOKUP),
+        "Missing {OP_INSPECTINASSETLOOKUP} in attest function"
     );
 }
 
@@ -202,12 +202,12 @@ fn test_threshold_oracle_checksig_from_stack_unrolled() {
     let checksig_count = server
         .asm
         .iter()
-        .filter(|s| *s == "OP_CHECKSIGFROMSTACK")
+        .filter(|s| *s == OP_CHECKSIGFROMSTACK)
         .count();
 
     assert_eq!(
         checksig_count, 3,
-        "Expected 3 OP_CHECKSIGFROMSTACK calls (one per oracle). Got: {}. ASM: {:?}",
+        "Expected 3 {OP_CHECKSIGFROMSTACK} calls (one per oracle). Got: {}. ASM: {:?}",
         checksig_count, server.asm
     );
 }
@@ -270,8 +270,8 @@ fn test_threshold_oracle_quorum_uses_csn_comparison() {
     // The quorum check (valid >= threshold) should use OP_GREATERTHANOREQUAL
     // (not the 64-bit variant) because valid is a small counter, not an asset amount
     assert!(
-        server.asm.iter().any(|s| s == "OP_GREATERTHANOREQUAL"),
-        "Missing OP_GREATERTHANOREQUAL for quorum check. ASM: {:?}",
+        server.asm.iter().any(|s| s == OP_GREATERTHANOREQUAL),
+        "Missing {OP_GREATERTHANOREQUAL} for quorum check. ASM: {:?}",
         server.asm
     );
 }

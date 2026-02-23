@@ -5,14 +5,6 @@ import * as contracts from './contracts.js';
 
 // Projects: collections of related contracts
 const projects = {
-    dex: {
-        name: 'DEX',
-        description: 'Decentralized Exchange with non-interactive swaps',
-        files: {
-            'swap.ark': contracts.non_interactive_swap,
-            'beacon.ark': contracts.beacon,
-        }
-    },
     stability: {
         name: 'Stability',
         description: 'Synthetic USD stablecoins with on-chain price beacon',
@@ -29,7 +21,8 @@ const examples = {
     single_sig: { name: 'SingleSig', code: contracts.single_sig },
     htlc: { name: 'HTLC', code: contracts.htlc },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
-    swap: { name: 'Non-Interactive Swap', code: contracts.non_interactive_swap },
+    swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
+    beacon: { name: 'Beacon', code: contracts.beacon },
 };
 
 // Global state
@@ -77,6 +70,64 @@ function loadFromStorage() {
         }
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
+    }
+}
+
+// ── URL sharing ───────────────────────────────────────────────────
+
+async function compressCode(text) {
+    const stream = new CompressionStream('deflate-raw');
+    const writer = stream.writable.getWriter();
+    writer.write(new TextEncoder().encode(text));
+    writer.close();
+    const chunks = [];
+    const reader = stream.readable.getReader();
+    let result;
+    while (!(result = await reader.read()).done) chunks.push(result.value);
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let i = 0;
+    for (const c of chunks) { out.set(c, i); i += c.length; }
+    let bin = '';
+    for (let j = 0; j < out.length; j++) bin += String.fromCharCode(out[j]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+async function decompressCode(b64url) {
+    const bin = atob(b64url.replace(/-/g, '+').replace(/_/g, '/'));
+    const data = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+    const stream = new DecompressionStream('deflate-raw');
+    const writer = stream.writable.getWriter();
+    writer.write(data);
+    writer.close();
+    const chunks = [];
+    const reader = stream.readable.getReader();
+    let result;
+    while (!(result = await reader.read()).done) chunks.push(result.value);
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let i = 0;
+    for (const c of chunks) { out.set(c, i); i += c.length; }
+    return new TextDecoder().decode(out);
+}
+
+async function shareContract() {
+    if (!editor) return;
+    const encoded = await compressCode(editor.getValue());
+    const url = `${location.origin}${location.pathname}#code=${encoded}`;
+    await navigator.clipboard.writeText(url);
+    const btn = document.getElementById('share-btn');
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-check"></i>';
+    setTimeout(() => { btn.innerHTML = orig; }, 2000);
+}
+
+async function loadFromUrl() {
+    if (!location.hash.startsWith('#code=')) return null;
+    try {
+        return await decompressCode(location.hash.slice(6));
+    } catch (e) {
+        console.warn('Failed to decode shared contract from URL:', e);
+        return null;
     }
 }
 
@@ -211,6 +262,150 @@ function deleteExample(exampleId) {
     closeTab(exampleId);
     delete examples[exampleId];
     saveToStorage();
+    renderFileTree();
+}
+
+function moveProjectFileToFolder(fromFolderId, fileName, toFolderId) {
+    const fromProject = projects[fromFolderId];
+    const toProject   = projects[toFolderId];
+    if (!fromProject || !toProject) return;
+    if (fromFolderId === toFolderId) return;
+    if (!fromProject.files[fileName]) return;
+
+    // Resolve name collision in destination
+    const baseName  = fileName.replace(/\.ark$/, '');
+    const destFiles = toProject.files;
+    let   destName  = fileName;
+    if (destName in destFiles) {
+        let i = 2;
+        while (`${baseName}_${i}.ark` in destFiles) i++;
+        destName = `${baseName}_${i}.ark`;
+    }
+
+    // Read latest content (prefer in-memory cache to preserve unsaved edits)
+    const oldTabId = `${fromFolderId}:${fileName}`;
+    const content  = fileContents[oldTabId] !== undefined
+                       ? fileContents[oldTabId]
+                       : fromProject.files[fileName];
+
+    // Mutate source data
+    toProject.files[destName] = content;
+    delete fromProject.files[fileName];
+
+    // Remap open tab if present
+    const newTabId = `${toFolderId}:${destName}`;
+    const tab = openTabs.find(t => t.id === oldTabId);
+    if (tab) {
+        tab.id      = newTabId;
+        tab.project = toFolderId;
+        tab.file    = destName;
+        tab.name    = destName;
+        fileContents[newTabId] = content;
+        delete fileContents[oldTabId];
+    }
+
+    // Patch active editor state
+    if (currentProject === fromFolderId && currentFile === fileName) {
+        currentProject = toFolderId;
+        currentFile    = destName;
+        updateCurrentFileName(destName);
+    }
+
+    expandedFolders.add(toFolderId);
+    saveToStorage();
+    updateFileTabs();
+    renderFileTree();
+}
+
+function moveProjectFileToExamples(folderId, fileName) {
+    const project = projects[folderId];
+    if (!project || !project.files[fileName]) return;
+
+    // Read latest content
+    const oldTabId = `${folderId}:${fileName}`;
+    const content  = fileContents[oldTabId] !== undefined
+                       ? fileContents[oldTabId]
+                       : project.files[fileName];
+
+    // Derive example id
+    const displayName = fileName.replace(/\.ark$/, '');
+    const baseId      = generateId(displayName);
+    const exampleId   = uniqueId(baseId, examples);
+
+    // Mutate source data
+    examples[exampleId] = { name: displayName, code: content };
+    delete project.files[fileName];
+
+    // Remap open tab if present
+    const tab = openTabs.find(t => t.id === oldTabId);
+    if (tab) {
+        tab.id      = exampleId;
+        tab.project = null;
+        tab.file    = exampleId;
+        tab.name    = `${displayName}.ark`;
+        fileContents[exampleId] = content;
+        delete fileContents[oldTabId];
+    }
+
+    // Patch active editor state
+    if (currentProject === folderId && currentFile === fileName) {
+        currentProject = null;
+        currentFile    = exampleId;
+        updateCurrentFileName(`${displayName}.ark`);
+    }
+
+    expandedFolders.add('_examples');
+    saveToStorage();
+    updateFileTabs();
+    renderFileTree();
+}
+
+function moveExampleToFolder(exampleId, toFolderId) {
+    const example   = examples[exampleId];
+    const toProject = projects[toFolderId];
+    if (!example || !toProject) return;
+
+    // Read latest content
+    const oldTabId = exampleId;
+    const content  = fileContents[oldTabId] !== undefined
+                       ? fileContents[oldTabId]
+                       : example.code;
+
+    // Resolve destination file name
+    const baseName = example.name;
+    let   destName = `${baseName}.ark`;
+    if (destName in toProject.files) {
+        let i = 2;
+        while (`${baseName}_${i}.ark` in toProject.files) i++;
+        destName = `${baseName}_${i}.ark`;
+    }
+
+    // Mutate source data
+    toProject.files[destName] = content;
+    delete examples[exampleId];
+
+    // Remap open tab if present
+    const newTabId = `${toFolderId}:${destName}`;
+    const tab = openTabs.find(t => t.id === oldTabId);
+    if (tab) {
+        tab.id      = newTabId;
+        tab.project = toFolderId;
+        tab.file    = destName;
+        tab.name    = destName;
+        fileContents[newTabId] = content;
+        delete fileContents[oldTabId];
+    }
+
+    // Patch active editor state
+    if (currentProject === null && currentFile === exampleId) {
+        currentProject = toFolderId;
+        currentFile    = destName;
+        updateCurrentFileName(destName);
+    }
+
+    expandedFolders.add(toFolderId);
+    saveToStorage();
+    updateFileTabs();
     renderFileTree();
 }
 
@@ -419,7 +614,16 @@ function renderFileTree() {
     const container = document.getElementById('file-tree');
     let html = '';
 
-    // Projects section
+    // Examples folder (contains project sub-folders + standalone examples)
+    const examplesExpanded = expandedFolders.has('_examples');
+    html += `<div class="tree-folder" data-folder="_examples">
+        <i class="fas ${examplesExpanded ? 'fa-chevron-down' : 'fa-chevron-right'}"></i>
+        <i class="fas fa-folder${examplesExpanded ? '-open' : ''}"></i>
+        Examples
+    </div>`;
+    html += `<div class="tree-folder-content ${examplesExpanded ? 'expanded' : ''}" data-folder="_examples">`;
+
+    // Project sub-folders nested inside Examples
     for (const [id, project] of Object.entries(projects)) {
         const isExpanded = expandedFolders.has(id);
         html += `<div class="tree-folder" data-folder="${id}">
@@ -430,7 +634,7 @@ function renderFileTree() {
         html += `<div class="tree-folder-content ${isExpanded ? 'expanded' : ''}" data-folder="${id}">`;
         for (const fileName of Object.keys(project.files)) {
             const isActive = currentProject === id && currentFile === fileName;
-            html += `<div class="tree-item ${isActive ? 'active' : ''}" data-project="${id}" data-file="${fileName}">
+            html += `<div class="tree-item ${isActive ? 'active' : ''}" data-project="${id}" data-file="${fileName}" draggable="true">
                 <i class="fas fa-file-code"></i>
                 ${fileName}
             </div>`;
@@ -438,17 +642,10 @@ function renderFileTree() {
         html += '</div>';
     }
 
-    // Examples folder
-    const examplesExpanded = expandedFolders.has('_examples');
-    html += `<div class="tree-folder" data-folder="_examples">
-        <i class="fas ${examplesExpanded ? 'fa-chevron-down' : 'fa-chevron-right'}"></i>
-        <i class="fas fa-folder${examplesExpanded ? '-open' : ''}"></i>
-        Examples
-    </div>`;
-    html += `<div class="tree-folder-content ${examplesExpanded ? 'expanded' : ''}" data-folder="_examples">`;
+    // Standalone examples
     for (const [id, example] of Object.entries(examples)) {
         const isActive = currentProject === null && currentFile === id;
-        html += `<div class="tree-item ${isActive ? 'active' : ''}" data-example="${id}">
+        html += `<div class="tree-item ${isActive ? 'active' : ''}" data-example="${id}" draggable="true">
             <i class="fas fa-file-code"></i>
             ${example.name}.ark
         </div>`;
@@ -482,6 +679,73 @@ function renderFileTree() {
                 ]);
             }
         });
+        // Drag-and-drop: folder header as drop target
+        folder.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes('text/plain')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            folder.classList.add('drag-over');
+        });
+        folder.addEventListener('dragleave', (e) => {
+            if (folder.contains(e.relatedTarget)) return;
+            folder.classList.remove('drag-over');
+        });
+        folder.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            folder.classList.remove('drag-over');
+            const raw = e.dataTransfer.getData('text/plain');
+            if (!raw) return;
+            const targetFolderId = folder.dataset.folder;
+            const parts = raw.split('|');
+            if (parts[0] === 'project-file') {
+                const fromFolderId = parts[1];
+                const fileName     = parts[2];
+                if (targetFolderId === '_examples') {
+                    moveProjectFileToExamples(fromFolderId, fileName);
+                } else {
+                    moveProjectFileToFolder(fromFolderId, fileName, targetFolderId);
+                }
+            } else if (parts[0] === 'example') {
+                if (targetFolderId === '_examples') return;
+                moveExampleToFolder(parts[1], targetFolderId);
+            }
+        });
+    });
+
+    // Drag-and-drop: folder content area as drop target
+    container.querySelectorAll('.tree-folder-content').forEach(content => {
+        const folderId = content.dataset.folder;
+        content.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes('text/plain')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            content.classList.add('drag-over');
+        });
+        content.addEventListener('dragleave', (e) => {
+            if (content.contains(e.relatedTarget)) return;
+            content.classList.remove('drag-over');
+        });
+        content.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            content.classList.remove('drag-over');
+            const raw = e.dataTransfer.getData('text/plain');
+            if (!raw) return;
+            const parts = raw.split('|');
+            if (parts[0] === 'project-file') {
+                const fromFolderId = parts[1];
+                const fileName     = parts[2];
+                if (folderId === '_examples') {
+                    moveProjectFileToExamples(fromFolderId, fileName);
+                } else {
+                    moveProjectFileToFolder(fromFolderId, fileName, folderId);
+                }
+            } else if (parts[0] === 'example') {
+                if (folderId === '_examples') return;
+                moveExampleToFolder(parts[1], folderId);
+            }
+        });
     });
 
     container.querySelectorAll('.tree-item[data-project]').forEach(item => {
@@ -498,6 +762,17 @@ function renderFileTree() {
                 { action: 'delete-file', icon: 'fa-trash', label: 'Delete', danger: true }
             ]);
         });
+        // Drag-and-drop: project file as drag source
+        item.addEventListener('dragstart', (e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData('text/plain', `project-file|${item.dataset.project}|${item.dataset.file}`);
+            e.dataTransfer.effectAllowed = 'move';
+            item.classList.add('dragging');
+        });
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            container.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+        });
     });
 
     container.querySelectorAll('.tree-item[data-example]').forEach(item => {
@@ -513,6 +788,17 @@ function renderFileTree() {
                 { action: 'rename-file', icon: 'fa-pen', label: 'Rename' },
                 { action: 'delete-file', icon: 'fa-trash', label: 'Delete', danger: true }
             ]);
+        });
+        // Drag-and-drop: example as drag source
+        item.addEventListener('dragstart', (e) => {
+            e.stopPropagation();
+            e.dataTransfer.setData('text/plain', `example|${item.dataset.example}`);
+            e.dataTransfer.effectAllowed = 'move';
+            item.classList.add('dragging');
+        });
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            container.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
         });
     });
 }
@@ -773,6 +1059,17 @@ function initMonaco() {
         editor.onDidChangeModelContent(() => {
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
+            }
+        });
+
+        // Load shared contract from URL hash if present
+        window._urlCodePromise.then(urlCode => {
+            if (urlCode) {
+                const id = uniqueId('shared', examples);
+                examples[id] = { name: 'Shared', code: urlCode };
+                saveToStorage();
+                selectExample(id);
+                history.replaceState(null, '', location.pathname + location.search);
             }
         });
 
@@ -1053,6 +1350,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load user data from localStorage
     loadFromStorage();
 
+    // Begin decoding URL hash early (async) so it's ready when Monaco is up
+    window._urlCodePromise = loadFromUrl();
+
     // Expand Examples folder by default
     expandedFolders.add('_examples');
 
@@ -1090,6 +1390,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Copy button
     document.getElementById('copy-btn').addEventListener('click', copyOutput);
+
+    // Share button
+    document.getElementById('share-btn').addEventListener('click', shareContract);
 
     // Sidebar action buttons
     document.getElementById('new-file-btn').addEventListener('click', promptNewStandaloneFile);
