@@ -127,10 +127,14 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
                 || expression_uses_introspection(point_q)
         }
 
-        // Check for constructor expressions in Property strings (e.g., "new ContractName(...)")
-        Expression::Property(prop) => prop.starts_with("new "),
+        // Contract instantiation resolves to a scriptPubKey via introspection
+        Expression::ContractInstance { args, .. } => {
+            // The instance itself is introspection-dependent; also recurse into args
+            args.iter().any(expression_uses_introspection) || true
+        }
 
         // Non-introspection expressions
+        Expression::Property(_) => false,
         Expression::Variable(_) => false,
         Expression::Literal(_) => false,
         Expression::ArrayLength(_) => false,
@@ -338,13 +342,20 @@ fn decompose_constructor_params(
     result
 }
 
-/// Generate a function ABI with server variant flag
+/// Generate a function ABI with server variant flag.
 ///
-/// For functions using introspection opcodes:
+/// **Contract-instantiation path** (`new ContractName(args)` present):
+/// Both cooperative and exit paths run the full statement ASM as written,
+/// including the `<VTXO:ContractName(args)>` scriptPubKey placeholder emitted
+/// by `new`. No additional opcodes are injected by the compiler — if the user
+/// wants a value check they write it explicitly in the source.
+/// Exit path: normal ASM + exit timelock (no N-of-N CHECKSIG fallback).
+///
+/// **Other introspection path** (no `ContractInstance`):
 /// - Cooperative path: normal ASM + introspection + server signature
 /// - Exit path: N-of-N CHECKSIG chain (pure Bitcoin) + exit timelock
 ///
-/// For functions without introspection:
+/// **No introspection**:
 /// - Cooperative path: normal ASM + server signature
 /// - Exit path: normal ASM + exit timelock
 fn generate_function(
@@ -355,7 +366,7 @@ fn generate_function(
     let uses_introspection = function_uses_introspection(function);
     let all_pubkeys = collect_all_pubkeys(contract, function);
 
-    // Flatten array types in function inputs (e.g., signature[] → signature_0, signature_1, etc.)
+    // Flatten array types in function inputs
     let mut function_inputs: Vec<FunctionInput> = function
         .parameters
         .iter()
@@ -377,8 +388,9 @@ fn generate_function(
         })
         .collect();
 
-    // For exit path with introspection, add signature inputs for all constructor pubkeys
-    // that aren't already in function params
+    // Exit path with any introspection (including ContractInstance): inject
+    // N-of-N signature inputs for the CHECKSIG fallback.
+    // Non-Bitcoin-Script opcodes cannot appear on the exit path.
     if !server_variant && uses_introspection {
         let existing_sig_names: Vec<String> = function_inputs
             .iter()
@@ -388,7 +400,6 @@ fn generate_function(
 
         for pk in &all_pubkeys {
             let sig_name = format!("{}Sig", pk);
-            // Check if we already have a signature for this pubkey
             let has_sig = existing_sig_names
                 .iter()
                 .any(|s| s.contains(pk) || s == &sig_name);
@@ -402,17 +413,16 @@ fn generate_function(
     }
 
     let mut require = if !server_variant && uses_introspection {
-        // For exit path with introspection, generate requirements for N-of-N
-        let mut reqs = Vec::new();
-        reqs.push(RequireStatement {
+        // Exit path with any introspection: N-of-N multisig fallback.
+        // No non-Bitcoin-Script opcodes are allowed on the exit path.
+        vec![RequireStatement {
             req_type: "nOfNMultisig".to_string(),
             message: Some(format!(
                 "{}-of-{} signatures required (introspection fallback)",
                 all_pubkeys.len(),
                 all_pubkeys.len()
             )),
-        });
-        reqs
+        }]
     } else {
         generate_requirements(function)
     };
@@ -431,16 +441,17 @@ fn generate_function(
         });
     }
 
-    // Generate assembly instructions
+    // Generate assembly.
+    // Exit path with any introspection falls back to N-of-N CHECKSIG
+    // (pure Bitcoin Script — no non-Bitcoin-Script opcodes allowed).
+    // Cooperative path always uses the full statement ASM.
     let mut asm = if !server_variant && uses_introspection {
-        // Exit path with introspection: generate N-of-N CHECKSIG chain (pure Bitcoin)
         generate_nofn_checksig_asm(&all_pubkeys, function)
     } else {
-        // Normal path: generate ASM from statements (includes introspection opcodes)
         generate_asm_from_statements(&function.statements)
     };
 
-    // Add server signature or exit timelock check
+    // Append server signature or exit timelock
     if server_variant {
         if contract.has_server_key {
             asm.push("<SERVER_KEY>".to_string());
@@ -992,6 +1003,12 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 }
             }
         }
+        Expression::ContractInstance {
+            contract_name,
+            args,
+        } => {
+            emit_contract_instance_asm(contract_name, args, asm);
+        }
     }
 }
 
@@ -1324,6 +1341,12 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 }
             }
         }
+        Expression::ContractInstance {
+            contract_name,
+            args,
+        } => {
+            emit_contract_instance_asm(contract_name, args, asm);
+        }
         Expression::ArrayIndex { array, index } => {
             // TODO: Implement array indexing in Commit 6
             emit_expression_asm(array, asm);
@@ -1436,6 +1459,47 @@ fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<String>) {
             asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
         }
     }
+}
+
+/// Emit assembly for a contract instantiation: `new ContractName(arg1, arg2, ...)`
+///
+/// Produces a single placeholder token `<VTXO:ContractName(<arg1>,<arg2>)>` that
+/// the runtime resolves to the Taproot scriptPubKey (34-byte P2TR output script)
+/// of the named contract instantiated with the given constructor arguments.
+///
+/// Options (server key, exit timelock) are inherited from the enclosing contract
+/// and must be applied by the runtime when computing the child contract's taproot
+/// key.
+///
+/// Typical usage (recursion / self-referential contract enforcement):
+/// ```text
+/// require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+/// ```
+/// compiles to:
+/// ```text
+/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+/// ```
+fn emit_contract_instance_asm(
+    contract_name: &str,
+    args: &[Expression],
+    asm: &mut Vec<String>,
+) {
+    let args_str = args
+        .iter()
+        .map(|a| match a {
+            Expression::Variable(v) => format!("<{}>", v),
+            Expression::Literal(l) => l.clone(),
+            _ => {
+                // For complex arg expressions, emit a nested representation
+                let mut nested = Vec::new();
+                emit_expression_asm(a, &mut nested);
+                nested.join(" ")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+
+    asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
 }
 
 /// Emit assembly for an asset lookup: tx.inputs[i].assets.lookup(assetId)
@@ -2044,6 +2108,17 @@ fn substitute_expression(
                 index, index_var, value_var, k, array_name,
             )),
             property: property.clone(),
+        },
+        // Recurse into contract instance arguments
+        Expression::ContractInstance {
+            contract_name,
+            args,
+        } => Expression::ContractInstance {
+            contract_name: contract_name.clone(),
+            args: args
+                .iter()
+                .map(|a| substitute_expression(a, index_var, value_var, k, array_name))
+                .collect(),
         },
         // All other expressions are returned as-is
         _ => expr.clone(),

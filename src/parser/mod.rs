@@ -30,14 +30,27 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
         exit_timelock: None,
         has_server_key: false,
         functions: Vec::new(),
+        imports: Vec::new(),
     };
 
     for pair in pairs {
         match pair.as_rule() {
             Rule::main => {
                 for inner_pair in pair.into_inner() {
-                    if inner_pair.as_rule() == Rule::contract {
-                        parse_contract(&mut contract, inner_pair)?;
+                    match inner_pair.as_rule() {
+                        Rule::import_stmt => {
+                            // Extract the import path (string literal without quotes)
+                            if let Some(path_pair) = inner_pair.into_inner().next() {
+                                let raw = path_pair.as_str();
+                                // Strip surrounding double-quotes
+                                let path = raw.trim_matches('"').to_string();
+                                contract.imports.push(path);
+                            }
+                        }
+                        Rule::contract => {
+                            parse_contract(&mut contract, inner_pair)?;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -482,7 +495,7 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::input_introspection => parse_input_introspection_to_expression(pair),
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
-        Rule::constructor => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::constructor => parse_constructor_to_expression(pair),
         Rule::function_call => Ok(Expression::Property(pair.as_str().to_string())),
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
@@ -587,9 +600,9 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         }
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
         Rule::constructor => {
-            let constructor = pair.as_str().to_string();
+            let expr = parse_constructor_to_expression(pair)?;
             Ok(Requirement::Comparison {
-                left: Expression::Property(constructor),
+                left: expr,
                 op: "==".to_string(),
                 right: Expression::Literal("true".to_string()),
             })
@@ -754,7 +767,7 @@ fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(right_expr)
         }
-        Rule::constructor => Expression::Property(right_expr.as_str().to_string()),
+        Rule::constructor => parse_constructor_to_expression(right_expr)?,
         Rule::asset_lookup => parse_asset_lookup_to_expression(right_expr)?,
         _ => return Err("Unexpected right expression in property comparison".to_string()),
     };
@@ -1206,7 +1219,7 @@ fn parse_input_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement,
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(right_pair)
         }
-        Rule::constructor => Expression::Property(right_pair.as_str().to_string()),
+        Rule::constructor => parse_constructor_to_expression(right_pair)?,
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -1240,7 +1253,7 @@ fn parse_output_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(right_pair)
         }
-        Rule::constructor => Expression::Property(right_pair.as_str().to_string()),
+        Rule::constructor => parse_constructor_to_expression(right_pair)?,
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -1703,6 +1716,63 @@ fn parse_check_sig_from_stack_verify_expr(pair: Pair<Rule>) -> Result<Expression
         pubkey,
         message,
     })
+}
+
+// ─── Constructor Parsing ───────────────────────────────────────────────────────
+
+/// Parse a `constructor` rule pair into an `Expression::ContractInstance`.
+///
+/// Handles `new ContractName(arg1, arg2, ...)` and produces
+/// `ContractInstance { contract_name, args }` which the compiler lowers to
+/// a `<VTXO:ContractName(...)>` scriptPubKey placeholder.
+fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // First child: contract name identifier
+    let contract_name = inner
+        .next()
+        .ok_or("Missing contract name in constructor")?
+        .as_str()
+        .to_string();
+
+    // Second child (optional): constructor_args rule
+    let args = if let Some(args_pair) = inner.next() {
+        parse_constructor_args(args_pair)?
+    } else {
+        Vec::new()
+    };
+
+    Ok(Expression::ContractInstance {
+        contract_name,
+        args,
+    })
+}
+
+/// Parse constructor arguments into a Vec<Expression>.
+///
+/// `constructor_args` is a named (non-silent) rule whose children are the
+/// alternatives matched by the silent `complex_expression` rule — so we
+/// see the raw inner rules (identifier, number_literal, etc.) directly.
+fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
+    let mut args = Vec::new();
+
+    for inner in pair.into_inner() {
+        let expr = match inner.as_rule() {
+            Rule::identifier => Expression::Variable(inner.as_str().to_string()),
+            Rule::number_literal => Expression::Literal(inner.as_str().to_string()),
+            Rule::constructor => parse_constructor_to_expression(inner)?,
+            Rule::input_introspection => parse_input_introspection_to_expression(inner)?,
+            Rule::output_introspection => parse_output_introspection_to_expression(inner)?,
+            Rule::tx_introspection => parse_tx_introspection_to_expression(inner)?,
+            _ => {
+                // Fall back to treating as a variable/property reference
+                Expression::Variable(inner.as_str().to_string())
+            }
+        };
+        args.push(expr);
+    }
+
+    Ok(args)
 }
 
 // ─── Helper Functions ──────────────────────────────────────────────────────────
