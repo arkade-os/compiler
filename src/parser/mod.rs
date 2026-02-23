@@ -683,13 +683,6 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         .into_inner()
         .map(|p| p.as_str().to_string())
         .collect();
-    let pubkeys_size = pubkeys.len();
-    let pubkeys_size = if pubkeys_size <= 999 {
-        pubkeys_size as u16
-    } else {
-        return Err("Number of pubkeys should be less than 999.".to_string());
-    };
-
     match next {
         Some(next_pair) => {
             // m-of-n threshold multisig
@@ -700,24 +693,11 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
                 }
             };
 
-            if threshold < 1 {
-                return Err(format!(
-                    "m-of-n multisig cannot succeed with threshold(m) of {}",
-                    threshold
-                ));
-            }
-            if threshold > pubkeys_size {
-                return Err(
-                    "m-of-n multisig threshold(m) exceeds acceptable number of signers(n)"
-                        .to_string(),
-                );
-            }
-
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
         None => {
             // An n-of-n multisig should be created by optionally omitting the threshold from checkMultisig arguments
-            let threshold = pubkeys_size;
+            let threshold = pubkeys.len() as u16;
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
     }

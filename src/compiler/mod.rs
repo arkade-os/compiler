@@ -709,6 +709,26 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             Ok(())
         }
         Requirement::CheckMultisig { pubkeys, threshold } => {
+            let pubkeys_size = pubkeys.len();
+            let pubkeys_size = if pubkeys_size <= 999 {
+                pubkeys_size as u16
+            } else {
+                return Err("Number of pubkeys should be less than 999.".to_string());
+            };
+
+            if threshold < &1u16 {
+                return Err(format!(
+                    "m-of-n multisig cannot succeed with threshold(m) of {}",
+                    threshold
+                ));
+            }
+            if threshold > &pubkeys_size {
+                return Err(
+                    "m-of-n multisig threshold(m) exceeds acceptable number of signers(n)"
+                        .to_string(),
+                );
+            }
+
             for (i, pubkey) in pubkeys.iter().enumerate() {
                 if i == 0 {
                     asm.push(format!("<{}>", pubkey));
