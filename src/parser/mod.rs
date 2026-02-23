@@ -666,7 +666,7 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     })
 }
 
-/// Parse checkMultisig([pubkeys], [sigs]) → CheckMultisig requirement
+/// Parse checkMultisig([pubkeys], threshold) → CheckMultisig requirement
 fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair
         .into_inner()
