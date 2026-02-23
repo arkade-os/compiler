@@ -1,4 +1,7 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_2, OP_3, OP_5, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_NUMEQUAL,
+};
 use serde_json::Value;
 use std::fs;
 use tempfile::tempdir;
@@ -82,14 +85,14 @@ fn test_threshold_multisig() {
     // Check assembly instructions
     assert_eq!(two_of_two_function.asm.len(), 9);
     assert_eq!(two_of_two_function.asm[0], "<signer>");
-    assert_eq!(two_of_two_function.asm[1], "OP_CHECKSIG");
+    assert_eq!(two_of_two_function.asm[1], OP_CHECKSIG);
     assert_eq!(two_of_two_function.asm[2], "<signer1>");
-    assert_eq!(two_of_two_function.asm[3], "OP_CHECKSIGADD");
-    assert_eq!(two_of_two_function.asm[4], "OP_2");
-    assert_eq!(two_of_two_function.asm[5], "OP_NUMEQUAL");
+    assert_eq!(two_of_two_function.asm[3], OP_CHECKSIGADD);
+    assert_eq!(two_of_two_function.asm[4], OP_2);
+    assert_eq!(two_of_two_function.asm[5], OP_NUMEQUAL);
     assert_eq!(two_of_two_function.asm[6], "<SERVER_KEY>");
     assert_eq!(two_of_two_function.asm[7], "<serverSig>");
-    assert_eq!(two_of_two_function.asm[8], "OP_CHECKSIG");
+    assert_eq!(two_of_two_function.asm[8], OP_CHECKSIG);
 
     // Verify fiveOfFive function with server variant
     let five_of_five_function = output
@@ -107,20 +110,20 @@ fn test_threshold_multisig() {
     // Check assembly instructions
     assert_eq!(five_of_five_function.asm.len(), 15);
     assert_eq!(five_of_five_function.asm[0], "<signer>");
-    assert_eq!(five_of_five_function.asm[1], "OP_CHECKSIG");
+    assert_eq!(five_of_five_function.asm[1], OP_CHECKSIG);
     assert_eq!(five_of_five_function.asm[2], "<signer1>");
-    assert_eq!(five_of_five_function.asm[3], "OP_CHECKSIGADD"); // Variable reference
+    assert_eq!(five_of_five_function.asm[3], OP_CHECKSIGADD);
     assert_eq!(five_of_five_function.asm[4], "<signer2>");
-    assert_eq!(five_of_five_function.asm[5], "OP_CHECKSIGADD"); // Variable reference
+    assert_eq!(five_of_five_function.asm[5], OP_CHECKSIGADD);
     assert_eq!(five_of_five_function.asm[6], "<signer3>");
-    assert_eq!(five_of_five_function.asm[7], "OP_CHECKSIGADD"); // Variable reference
+    assert_eq!(five_of_five_function.asm[7], OP_CHECKSIGADD);
     assert_eq!(five_of_five_function.asm[8], "<signer4>");
-    assert_eq!(five_of_five_function.asm[9], "OP_CHECKSIGADD"); // Variable reference
-    assert_eq!(five_of_five_function.asm[10], "OP_5");
-    assert_eq!(five_of_five_function.asm[11], "OP_NUMEQUAL");
+    assert_eq!(five_of_five_function.asm[9], OP_CHECKSIGADD);
+    assert_eq!(five_of_five_function.asm[10], OP_5);
+    assert_eq!(five_of_five_function.asm[11], OP_NUMEQUAL);
     assert_eq!(five_of_five_function.asm[12], "<SERVER_KEY>");
     assert_eq!(five_of_five_function.asm[13], "<serverSig>");
-    assert_eq!(five_of_five_function.asm[14], "OP_CHECKSIG");
+    assert_eq!(five_of_five_function.asm[14], OP_CHECKSIG);
 
     // Verify threeOfFive function with server variant
     let three_of_five_function = output
@@ -138,20 +141,20 @@ fn test_threshold_multisig() {
     // Check assembly instructions
     assert_eq!(three_of_five_function.asm.len(), 15);
     assert_eq!(three_of_five_function.asm[0], "<signer>");
-    assert_eq!(three_of_five_function.asm[1], "OP_CHECKSIG");
+    assert_eq!(three_of_five_function.asm[1], OP_CHECKSIG);
     assert_eq!(three_of_five_function.asm[2], "<signer1>");
-    assert_eq!(three_of_five_function.asm[3], "OP_CHECKSIGADD");
+    assert_eq!(three_of_five_function.asm[3], OP_CHECKSIGADD);
     assert_eq!(three_of_five_function.asm[4], "<signer2>");
-    assert_eq!(three_of_five_function.asm[5], "OP_CHECKSIGADD");
+    assert_eq!(three_of_five_function.asm[5], OP_CHECKSIGADD);
     assert_eq!(three_of_five_function.asm[6], "<signer3>");
-    assert_eq!(three_of_five_function.asm[7], "OP_CHECKSIGADD");
+    assert_eq!(three_of_five_function.asm[7], OP_CHECKSIGADD);
     assert_eq!(three_of_five_function.asm[8], "<signer4>");
-    assert_eq!(three_of_five_function.asm[9], "OP_CHECKSIGADD");
-    assert_eq!(three_of_five_function.asm[10], "OP_3");
-    assert_eq!(three_of_five_function.asm[11], "OP_NUMEQUAL");
+    assert_eq!(three_of_five_function.asm[9], OP_CHECKSIGADD);
+    assert_eq!(three_of_five_function.asm[10], OP_3);
+    assert_eq!(three_of_five_function.asm[11], OP_NUMEQUAL);
     assert_eq!(three_of_five_function.asm[12], "<SERVER_KEY>");
     assert_eq!(three_of_five_function.asm[13], "<serverSig>");
-    assert_eq!(three_of_five_function.asm[14], "OP_CHECKSIG");
+    assert_eq!(three_of_five_function.asm[14], OP_CHECKSIG);
 
     // Verify twoOfTwo function with exit path
     let two_of_two_function = output
@@ -172,14 +175,14 @@ fn test_threshold_multisig() {
     // Check assembly instructions
     assert_eq!(two_of_two_function.asm.len(), 9);
     assert_eq!(two_of_two_function.asm[0], "<signer>");
-    assert_eq!(two_of_two_function.asm[1], "OP_CHECKSIG");
+    assert_eq!(two_of_two_function.asm[1], OP_CHECKSIG);
     assert_eq!(two_of_two_function.asm[2], "<signer1>");
-    assert_eq!(two_of_two_function.asm[3], "OP_CHECKSIGADD");
-    assert_eq!(two_of_two_function.asm[4], "OP_2");
-    assert_eq!(two_of_two_function.asm[5], "OP_NUMEQUAL");
+    assert_eq!(two_of_two_function.asm[3], OP_CHECKSIGADD);
+    assert_eq!(two_of_two_function.asm[4], OP_2);
+    assert_eq!(two_of_two_function.asm[5], OP_NUMEQUAL);
     assert_eq!(two_of_two_function.asm[6], "144");
-    assert_eq!(two_of_two_function.asm[7], "OP_CHECKSEQUENCEVERIFY");
-    assert_eq!(two_of_two_function.asm[8], "OP_DROP");
+    assert_eq!(two_of_two_function.asm[7], OP_CHECKSEQUENCEVERIFY);
+    assert_eq!(two_of_two_function.asm[8], OP_DROP);
 
     // Verify fiveOfFive function with exit path
     let five_of_five_function = output
@@ -197,20 +200,20 @@ fn test_threshold_multisig() {
     // Check assembly instructions
     assert_eq!(five_of_five_function.asm.len(), 15);
     assert_eq!(five_of_five_function.asm[0], "<signer>");
-    assert_eq!(five_of_five_function.asm[1], "OP_CHECKSIG");
+    assert_eq!(five_of_five_function.asm[1], OP_CHECKSIG);
     assert_eq!(five_of_five_function.asm[2], "<signer1>");
-    assert_eq!(five_of_five_function.asm[3], "OP_CHECKSIGADD"); // Variable reference
+    assert_eq!(five_of_five_function.asm[3], OP_CHECKSIGADD);
     assert_eq!(five_of_five_function.asm[4], "<signer2>");
-    assert_eq!(five_of_five_function.asm[5], "OP_CHECKSIGADD"); // Variable reference
+    assert_eq!(five_of_five_function.asm[5], OP_CHECKSIGADD);
     assert_eq!(five_of_five_function.asm[6], "<signer3>");
-    assert_eq!(five_of_five_function.asm[7], "OP_CHECKSIGADD"); // Variable reference
+    assert_eq!(five_of_five_function.asm[7], OP_CHECKSIGADD);
     assert_eq!(five_of_five_function.asm[8], "<signer4>");
-    assert_eq!(five_of_five_function.asm[9], "OP_CHECKSIGADD"); // Variable reference
-    assert_eq!(five_of_five_function.asm[10], "OP_5");
-    assert_eq!(five_of_five_function.asm[11], "OP_NUMEQUAL");
+    assert_eq!(five_of_five_function.asm[9], OP_CHECKSIGADD);
+    assert_eq!(five_of_five_function.asm[10], OP_5);
+    assert_eq!(five_of_five_function.asm[11], OP_NUMEQUAL);
     assert_eq!(five_of_five_function.asm[12], "144");
-    assert_eq!(five_of_five_function.asm[13], "OP_CHECKSEQUENCEVERIFY");
-    assert_eq!(five_of_five_function.asm[14], "OP_DROP");
+    assert_eq!(five_of_five_function.asm[13], OP_CHECKSEQUENCEVERIFY);
+    assert_eq!(five_of_five_function.asm[14], OP_DROP);
 
     // Verify threeOfFive function with exit path
     let three_of_five_function = output
@@ -228,20 +231,20 @@ fn test_threshold_multisig() {
     // Check assembly instructions
     assert_eq!(three_of_five_function.asm.len(), 15);
     assert_eq!(three_of_five_function.asm[0], "<signer>");
-    assert_eq!(three_of_five_function.asm[1], "OP_CHECKSIG");
+    assert_eq!(three_of_five_function.asm[1], OP_CHECKSIG);
     assert_eq!(three_of_five_function.asm[2], "<signer1>");
-    assert_eq!(three_of_five_function.asm[3], "OP_CHECKSIGADD");
+    assert_eq!(three_of_five_function.asm[3], OP_CHECKSIGADD);
     assert_eq!(three_of_five_function.asm[4], "<signer2>");
-    assert_eq!(three_of_five_function.asm[5], "OP_CHECKSIGADD");
+    assert_eq!(three_of_five_function.asm[5], OP_CHECKSIGADD);
     assert_eq!(three_of_five_function.asm[6], "<signer3>");
-    assert_eq!(three_of_five_function.asm[7], "OP_CHECKSIGADD");
+    assert_eq!(three_of_five_function.asm[7], OP_CHECKSIGADD);
     assert_eq!(three_of_five_function.asm[8], "<signer4>");
-    assert_eq!(three_of_five_function.asm[9], "OP_CHECKSIGADD");
-    assert_eq!(three_of_five_function.asm[10], "OP_3");
-    assert_eq!(three_of_five_function.asm[11], "OP_NUMEQUAL");
+    assert_eq!(three_of_five_function.asm[9], OP_CHECKSIGADD);
+    assert_eq!(three_of_five_function.asm[10], OP_3);
+    assert_eq!(three_of_five_function.asm[11], OP_NUMEQUAL);
     assert_eq!(three_of_five_function.asm[12], "144");
-    assert_eq!(three_of_five_function.asm[13], "OP_CHECKSEQUENCEVERIFY");
-    assert_eq!(three_of_five_function.asm[14], "OP_DROP");
+    assert_eq!(three_of_five_function.asm[13], OP_CHECKSEQUENCEVERIFY);
+    assert_eq!(three_of_five_function.asm[14], OP_DROP);
 }
 
 #[test]

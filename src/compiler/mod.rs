@@ -793,8 +793,8 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                     asm.push(OP_VERIFY.to_string());
                 }
                 "*" => {
-                    asm.push("OP_MUL64".to_string());
-                    asm.push("OP_VERIFY".to_string());
+                    asm.push(OP_MUL64.to_string());
+                    asm.push(OP_VERIFY.to_string());
                 }
                 "/" => {
                     asm.push(OP_DIV64.to_string());
