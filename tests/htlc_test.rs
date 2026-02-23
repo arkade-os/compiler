@@ -1,6 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG, OP_CHECKSIG, OP_DROP, OP_EQUAL, OP_SHA256,
+    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKMULTISIG, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_EQUAL,
+    OP_NUMEQUAL, OP_SHA256,
 };
 use serde_json::Value;
 use std::fs;
@@ -26,7 +27,7 @@ contract HTLC(
   pubkey server
 ) {
   function together(signature senderSig, signature receiverSig) {
-    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
+    require(checkMultisig([sender, receiver]));
   }
   
   function refund(signature senderSig) {
@@ -80,17 +81,16 @@ contract HTLC(
     assert_eq!(together_function.function_inputs[1].param_type, "signature");
 
     // Check assembly instructions
-    assert_eq!(together_function.asm.len(), 10);
-    assert_eq!(together_function.asm[0], OP_2);
-    assert_eq!(together_function.asm[1], "<sender>");
+    assert_eq!(together_function.asm.len(), 9);
+    assert_eq!(together_function.asm[0], "<sender>");
+    assert_eq!(together_function.asm[1], OP_CHECKSIG);
     assert_eq!(together_function.asm[2], "<receiver>");
-    assert_eq!(together_function.asm[3], OP_2);
-    assert_eq!(together_function.asm[4], "<senderSig>");
-    assert_eq!(together_function.asm[5], "<receiverSig>");
-    assert_eq!(together_function.asm[6], OP_CHECKMULTISIG);
-    assert_eq!(together_function.asm[7], "<SERVER_KEY>");
-    assert_eq!(together_function.asm[8], "<serverSig>");
-    assert_eq!(together_function.asm[9], OP_CHECKSIG);
+    assert_eq!(together_function.asm[3], OP_CHECKSIGADD);
+    assert_eq!(together_function.asm[4], OP_2);
+    assert_eq!(together_function.asm[5], OP_NUMEQUAL);
+    assert_eq!(together_function.asm[6], "<SERVER_KEY>");
+    assert_eq!(together_function.asm[7], "<serverSig>");
+    assert_eq!(together_function.asm[8], OP_CHECKSIG);
     // Verify refund function with server variant
     let refund_function = output
         .functions

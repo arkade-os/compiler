@@ -675,8 +675,8 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         .into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
 
-    // We do not worry about missing signatures because we have threshold multisig
-    // The next item can either be an array of signatures or a threshold number
+    // We support threshold multisig only, so signatures are not required
+    // The next item is a threshold number
     let next = inner.next();
 
     let pubkeys: Vec<String> = pubkeys_array
@@ -690,60 +690,35 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         return Err("Number of pubkeys should be less than 999.".to_string());
     };
 
-    let mut threshold = 0u16;
-
     match next {
         Some(next_pair) => {
-            match next_pair.as_rule() {
-                Rule::array => {
-                    let signatures = next_pair
-                        .into_inner()
-                        .map(|s| s.as_str().to_string())
-                        .collect();
-                    Ok(Requirement::CheckMultisig {
-                        signatures,
-                        pubkeys,
-                        threshold,
-                    })
+            // m-of-n threshold multisig
+            let threshold = match u16::from_str(next_pair.as_str()) {
+                Ok(threshold) => threshold,
+                Err(e) => {
+                    return Err(format!("{}", e));
                 }
-                _ => {
-                    // m-of-n threshold multisig
-                    let threshold = match u16::from_str(next_pair.as_str()) {
-                        Ok(threshold) => threshold,
-                        Err(e) => {
-                            return Err(format!("{}", e));
-                        }
-                    };
+            };
 
-                    if threshold < 1 {
-                        return Err(format!(
-                            "m-of-n multisig cannot succeed with threshold(m) of {}",
-                            threshold
-                        ));
-                    }
-                    if threshold > pubkeys_size {
-                        return Err(
-                            "m-of-n multisig threshold(m) exceeds acceptable number of signers(n)"
-                                .to_string(),
-                        );
-                    }
-
-                    Ok(Requirement::CheckMultisig {
-                        signatures: Vec::new(),
-                        pubkeys,
-                        threshold,
-                    })
-                }
+            if threshold < 1 {
+                return Err(format!(
+                    "m-of-n multisig cannot succeed with threshold(m) of {}",
+                    threshold
+                ));
             }
+            if threshold > pubkeys_size {
+                return Err(
+                    "m-of-n multisig threshold(m) exceeds acceptable number of signers(n)"
+                        .to_string(),
+                );
+            }
+
+            Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
         None => {
             // An n-of-n multisig should be created by optionally omitting the threshold from checkMultisig arguments
-            threshold = pubkeys_size;
-            Ok(Requirement::CheckMultisig {
-                signatures: Vec::new(),
-                pubkeys,
-                threshold,
-            })
+            let threshold = pubkeys_size;
+            Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
     }
 }

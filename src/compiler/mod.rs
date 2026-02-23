@@ -708,62 +708,23 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
             Ok(())
         }
-        Requirement::CheckMultisig {
-            signatures,
-            pubkeys,
-            threshold,
-        } => {
-            if signatures.is_empty() {
-                for (i, pubkey) in pubkeys.iter().enumerate() {
-                    if i == 0 {
-                        asm.push(format!("<{}>", pubkey));
-                        asm.push(OP_CHECKSIG.to_string());
-                        continue;
-                    }
+        Requirement::CheckMultisig { pubkeys, threshold } => {
+            for (i, pubkey) in pubkeys.iter().enumerate() {
+                if i == 0 {
                     asm.push(format!("<{}>", pubkey));
-                    asm.push(OP_CHECKSIGADD.to_string());
+                    asm.push(OP_CHECKSIG.to_string());
+                    continue;
                 }
-                if threshold <= &16u16 {
-                    asm.push(format!("OP_{}", threshold));
-                } else {
-                    asm.push(format!("{}", threshold));
-                }
-                asm.push(OP_NUMEQUAL.to_string());
-                Ok(())
-            } else {
-                let number_of_pubkeys = pubkeys.len();
-                let number_of_sigs = signatures.len();
-
-                if number_of_pubkeys <= 20 && number_of_sigs <= 20 {
-                    let number_of_pubkeys = number_of_pubkeys as u8;
-                    let number_of_sigs = number_of_sigs as u8;
-
-                    if number_of_pubkeys <= 16u8 {
-                        asm.push(format!("OP_{}", number_of_pubkeys));
-                    } else {
-                        asm.push(format!("{}", number_of_pubkeys));
-                    }
-                    for pubkey in pubkeys {
-                        asm.push(format!("<{}>", pubkey));
-                    }
-
-                    if number_of_sigs <= 16u8 {
-                        asm.push(format!("OP_{}", number_of_sigs));
-                    } else {
-                        asm.push(format!("{}", number_of_sigs));
-                    }
-                    for signature in signatures {
-                        asm.push(format!("<{}>", signature));
-                    }
-                    asm.push(OP_CHECKMULTISIG.to_string());
-                    Ok(())
-                } else {
-                    Err(
-                        "Public keys or signatures have exceeded 20, the maximum number allowed"
-                            .to_string(),
-                    )
-                }
+                asm.push(format!("<{}>", pubkey));
+                asm.push(OP_CHECKSIGADD.to_string());
             }
+            if threshold <= &16u16 {
+                asm.push(format!("OP_{}", threshold));
+            } else {
+                asm.push(format!("{}", threshold));
+            }
+            asm.push(OP_NUMEQUAL.to_string());
+            Ok(())
         }
         Requirement::After {
             blocks,
@@ -1181,11 +1142,13 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 asm.push(OP_CHECKSIGFROMSTACK.to_string());
             }
             Requirement::CheckMultisig {
-                signatures,
+                // signatures,
                 pubkeys,
                 threshold,
             } => {
-                asm.push(format!("OP_{}", pubkeys.len()));
+                // We cannot update here, this is dead code
+
+                /*asm.push(format!("OP_{}", pubkeys.len()));
                 for pubkey in pubkeys {
                     asm.push(format!("<{}>", pubkey));
                 }
@@ -1193,7 +1156,7 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
                 for signature in signatures {
                     asm.push(format!("<{}>", signature));
                 }
-                asm.push(OP_CHECKMULTISIG.to_string());
+                asm.push(OP_CHECKMULTISIG.to_string());*/
             }
             Requirement::After {
                 blocks,

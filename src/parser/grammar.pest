@@ -475,7 +475,7 @@ check_sig_from_stack = {
 sig_arg = { array_index_access | identifier }
 
 // CheckMultisig expression
-check_multisig = { check_legacy_multisig | check_threshold_multisig }
+check_multisig = { check_threshold_multisig }
 
 check_legacy_multisig = {
     "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")"
