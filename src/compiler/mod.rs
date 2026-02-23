@@ -1393,7 +1393,7 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         Expression::Le32ToLe64 { value } => {
             emit_expression_asm(value, asm);
-            asm.push("OP_LE32TOLE64".to_string());
+            asm.push(OP_LE32TOLE64.to_string());
         }
         // Crypto Opcodes
         Expression::EcMulScalarVerify {
