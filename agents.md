@@ -59,7 +59,7 @@ IN_PROGRESS -> CANCELLED
 
 Rules:
 - Only Orchestrator transitions PENDING -> ASSIGNED.
-- BLOCKED requires: blocker, attempts, and required input.
+- BLOCKED requires: blocker, attempts, and required inputs.
 - REVIEW -> REJECTED must include concrete failure and expected fix.
 - BLOCKED for >30 minutes -> escalate to human.
 </state_machine>

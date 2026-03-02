@@ -33,7 +33,5 @@ Cargo.lock
 .env
 .env.local
 
-# I would suggest removing this to explicitly enable putting .claude skills and plugin in the repo
-# Note: with my PR, it will effectively still work because .codex/skills is used as source of truth
-# with multiple symlinks to it for compatibility with other harness tools.
-.claude
+# Canonical skills are stored in `.codex/skills`.
+# Track compatibility symlinks separately (`.claude/skills`, `.agents/skills`).
