@@ -1,0 +1,135 @@
+// Power Perpetual Short Position
+//
+// Mirror of PowerPerpLong: profits when index_price² falls, pays when it rises.
+// See: https://www.paradigm.xyz/2021/08/power-perpetuals
+//
+// === Payoff Mechanics ===
+// Short position funding delta is the inverse of the long:
+//
+//   ΔCollateral = notional * (lastPrice² - currentPrice²) / precision
+//
+// When ETH/USD rises: short loses collateral (pays to longs)
+// When ETH/USD falls: short gains collateral (receives from longs)
+//
+// Short sellers provide the counterpart liquidity that enables long-gamma
+// exposure. They effectively sell volatility for a funding premium when
+// realized vol is low, and pay out when vol is high.
+//
+// === Price Feed ===
+// Same PriceBeacon pattern as PowerPerpLong. Pass beacon UTXO as input[1]
+// on settleFunding and liquidate calls.
+//
+// === Opening ===
+// Short positions are created by PowerPerpOffer.openLong() — the maker
+// always takes the short side of each trade.
+
+options {
+  server = operatorPk;
+  exit = 2016;
+}
+
+contract PowerPerpShort(
+  pubkey traderPk,           // Short position holder (typically the offer maker)
+  pubkey operatorPk,         // Arkade operator (cooperative server key)
+  bytes32 priceAssetId,      // PriceBeacon asset ID (asset quantity = index price)
+  int notionalSats,          // Position size scalar
+  int precision,             // Divisor for price² arithmetic (e.g., 100000000)
+  int fundingInterval,       // Blocks between funding settlements (e.g., 144 ≈ 1 day)
+  int lastSettledBlock,      // Block of most recent funding settlement
+  int lastPrice,             // Index price at last settlement
+  int maintenanceBips        // Maintenance margin in basis points (e.g., 1000 = 10%)
+) {
+  // Settle one funding period.
+  // Anyone can call this; math enforces correctness.
+  // Include PriceBeacon UTXO as input[1].
+  function settleFunding() {
+    // Precompute RHS; time_comparison grammar only accepts an identifier on the right
+    int fundingDeadline = lastSettledBlock + fundingInterval;
+    require(tx.time >= fundingDeadline, "funding period not elapsed");
+
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    // Short PnL: profits when price² falls (reversed vs long)
+    // ΔCollateral = notional * (lastPrice² - currentPrice²) / precision
+    int lastPow2 = lastPrice * lastPrice;
+    int currentPow2 = currentPrice * currentPrice;
+    int deltaPow2 = lastPow2 - currentPow2;
+    int fundingDelta = notionalSats * deltaPow2 / precision;
+
+    int collateralIn = tx.input.current.value;
+    int collateralOut = collateralIn + fundingDelta;
+    require(collateralOut > 0, "position insolvent");
+
+    int minCollateral = notionalSats * currentPow2 / precision * maintenanceBips / 10000;
+    require(collateralOut > minCollateral, "below maintenance margin");
+
+    // Carry position forward with updated settlement state (recursive covenant)
+    require(
+      tx.outputs[0].scriptPubKey == new PowerPerpShort(
+        traderPk, operatorPk, priceAssetId,
+        notionalSats, precision, fundingInterval,
+        tx.time, currentPrice, maintenanceBips
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= collateralOut, "collateral not preserved");
+
+    // PriceBeacon must survive
+    require(
+      tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // Trader voluntarily closes the position and reclaims remaining collateral.
+  function close(signature traderSig) {
+    require(checkSig(traderSig, traderPk), "invalid trader signature");
+  }
+
+  // Permissionless liquidation when position breaches maintenance margin.
+  // Include PriceBeacon UTXO as input[1].
+  function liquidate(signature liquidatorSig, pubkey liquidatorPk) {
+    require(checkSig(liquidatorSig, liquidatorPk), "invalid liquidator signature");
+
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    // Short's pending funding: profits when price² falls
+    int lastPow2 = lastPrice * lastPrice;
+    int currentPow2 = currentPrice * currentPrice;
+    int deltaPow2 = lastPow2 - currentPow2;
+    int pendingFunding = notionalSats * deltaPow2 / precision;
+
+    int collateralIn = tx.input.current.value;
+    int projectedCollateral = collateralIn + pendingFunding;
+
+    int minCollateral = notionalSats * currentPow2 / precision * maintenanceBips / 10000;
+    require(projectedCollateral <= minCollateral, "position still solvent");
+
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(liquidatorPk),
+      "output must go to liquidator"
+    );
+
+    require(
+      tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // Trader tops up collateral without changing position state.
+  function addCollateral(signature traderSig) {
+    require(checkSig(traderSig, traderPk), "invalid trader signature");
+
+    require(
+      tx.outputs[0].scriptPubKey == new PowerPerpShort(
+        traderPk, operatorPk, priceAssetId,
+        notionalSats, precision, fundingInterval,
+        lastSettledBlock, lastPrice, maintenanceBips
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= tx.input.current.value, "collateral must not decrease");
+  }
+}

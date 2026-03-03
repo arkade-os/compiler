@@ -1,0 +1,124 @@
+// Power Perpetual Offer
+//
+// Standing offer from a market maker to underwrite power perpetual positions.
+// See: https://www.paradigm.xyz/2021/08/power-perpetuals
+//
+// === Role ===
+// Market makers deposit collateral into this contract and commit to taking
+// the short side of any incoming long trade at the current beacon price.
+// Takers can open positions non-interactively — no maker online presence needed.
+//
+// === How a Trade Opens ===
+// 1. Taker calls openLong(takerPk, longCollateral, shortCollateral)
+// 2. Contract reads current index price from PriceBeacon (input[1])
+// 3. Validates both sides meet minimum margin requirements
+// 4. Creates output[0]: PowerPerpLong for the taker
+// 5. Creates output[1]: PowerPerpShort for the maker
+// 6. Creates output[2]: Reduced-capacity offer (recursive)
+// 7. Passes beacon through to output[3]
+//
+// === Maker Economics ===
+// Makers earn funding when price² falls (short vol), pay when price² rises.
+// By seeding many standing offers they can maintain a diversified short book
+// and earn the natural variance risk premium that power perpetuals encode.
+//
+// === Pattern ===
+// Mirrors StabilityOffer (stability_offer.ark) adapted for power payoffs.
+
+options {
+  server = operatorPk;
+  exit = 144;
+}
+
+contract PowerPerpOffer(
+  pubkey makerPk,            // Market maker (underwrites the short side)
+  pubkey operatorPk,         // Arkade operator (cooperative server key)
+  bytes32 priceAssetId,      // PriceBeacon asset ID (asset quantity = index price)
+  int notionalSats,          // Position size scalar per trade
+  int precision,             // Divisor for price² arithmetic (e.g., 100000000)
+  int fundingInterval,       // Blocks per funding period for opened positions
+  int maintenanceBips,       // Maintenance margin in basis points (e.g., 1000 = 10%)
+  int maxPositions           // Remaining positions this offer will underwrite
+) {
+  // Open a matched long/short pair at the current beacon price.
+  // Taker specifies their pubkey and both sides' collateral amounts.
+  // Include PriceBeacon UTXO as input[1].
+  function openLong(pubkey takerPk, int longCollateral, int shortCollateral) {
+    require(longCollateral > 0, "zero long collateral");
+    require(shortCollateral > 0, "zero short collateral");
+    require(maxPositions > 0, "offer fully consumed");
+
+    // Read entry price from beacon
+    int entryPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(entryPrice > 0, "invalid entry price");
+
+    // Both sides must meet minimum margin (2x safety buffer at open)
+    int entryPow2 = entryPrice * entryPrice;
+    int minCollateral = notionalSats * entryPow2 / precision * maintenanceBips / 10000 * 2;
+    require(longCollateral >= minCollateral, "long undercollateralized");
+    require(shortCollateral >= minCollateral, "short undercollateralized");
+
+    // Output 0: Long position for taker
+    require(
+      tx.outputs[0].scriptPubKey == new PowerPerpLong(
+        takerPk, operatorPk, priceAssetId,
+        notionalSats, precision, fundingInterval,
+        tx.time, entryPrice, maintenanceBips
+      ),
+      "invalid long position output"
+    );
+    require(tx.outputs[0].value >= longCollateral, "long collateral short");
+
+    // Output 1: Short position for maker
+    require(
+      tx.outputs[1].scriptPubKey == new PowerPerpShort(
+        makerPk, operatorPk, priceAssetId,
+        notionalSats, precision, fundingInterval,
+        tx.time, entryPrice, maintenanceBips
+      ),
+      "invalid short position output"
+    );
+    require(tx.outputs[1].value >= shortCollateral, "short collateral short");
+
+    // Output 2: Remaining offer capacity (recursive covenant)
+    int remainingPositions = maxPositions - 1;
+    if (remainingPositions > 0) {
+      require(
+        tx.outputs[2].scriptPubKey == new PowerPerpOffer(
+          makerPk, operatorPk, priceAssetId,
+          notionalSats, precision, fundingInterval,
+          maintenanceBips, remainingPositions
+        ),
+        "invalid remaining offer"
+      );
+    }
+
+    // Output 3: PriceBeacon must survive
+    require(
+      tx.outputs[3].assets.lookup(priceAssetId) >= entryPrice,
+      "beacon must survive"
+    );
+  }
+
+  // Maker cancels the offer and withdraws unused collateral.
+  function cancel(signature makerSig) {
+    require(checkSig(makerSig, makerPk), "invalid maker signature");
+  }
+
+  // Maker updates offer parameters (e.g., after market conditions change).
+  // Creates a new offer UTXO with updated notional or margin settings.
+  function reprice(signature makerSig, int newNotional, int newMaintenanceBips) {
+    require(checkSig(makerSig, makerPk), "invalid maker signature");
+    require(newNotional > 0, "invalid notional");
+    require(newMaintenanceBips > 0, "invalid maintenance bips");
+
+    require(
+      tx.outputs[0].scriptPubKey == new PowerPerpOffer(
+        makerPk, operatorPk, priceAssetId,
+        newNotional, precision, fundingInterval,
+        newMaintenanceBips, maxPositions
+      ),
+      "invalid repriced offer"
+    );
+  }
+}

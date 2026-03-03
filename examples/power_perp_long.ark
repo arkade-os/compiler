@@ -1,0 +1,152 @@
+// Power Perpetual Long Position
+//
+// Implements a long position in a price² perpetual derivative.
+// See: https://www.paradigm.xyz/2021/08/power-perpetuals
+//
+// === Payoff Mechanics ===
+// A power perpetual tracks index_price² instead of index_price.
+// Each funding period the long position gains or loses:
+//
+//   ΔCollateral = notional * (currentPrice² - lastPrice²) / precision
+//
+// When ETH/USD rises: long gains (price² grows faster than price)
+// When ETH/USD falls: long loses collateral
+//
+// This gives long holders natural long-gamma / long-vol exposure without
+// an expiry date — matching the key result from the Paradigm paper.
+//
+// === Price Feed ===
+// Uses PriceBeacon (price_beacon.ark) for trustless on-chain price reads.
+// The beacon encodes index price as asset quantity (e.g., 10000000 = $100,000.00).
+// Pass the beacon UTXO as input[1] on settleFunding and liquidate calls.
+//
+// === Lifecycle ===
+//   1. Opened by PowerPerpOffer.openLong() paired with a short counterpart
+//   2. Anyone calls settleFunding() each period (no permission required)
+//   3. Trader calls close() to exit and claim remaining collateral
+//   4. Anyone calls liquidate() if collateral breaches maintenance margin
+//
+// === Precision ===
+// price²  arithmetic uses a `precision` divisor to keep values in range.
+// With price in USD cents (e.g., 10_000_000 for $100k) and precision=1e8:
+//   price² / precision ≈ 10^6  (fits comfortably in int64)
+
+options {
+  server = operatorPk;
+  exit = 2016;
+}
+
+contract PowerPerpLong(
+  pubkey traderPk,           // Long position holder
+  pubkey operatorPk,         // Arkade operator (cooperative server key)
+  bytes32 priceAssetId,      // PriceBeacon asset ID (asset quantity = index price)
+  int notionalSats,          // Position size scalar
+  int precision,             // Divisor for price² arithmetic (e.g., 100000000)
+  int fundingInterval,       // Blocks between funding settlements (e.g., 144 ≈ 1 day)
+  int lastSettledBlock,      // Block of most recent funding settlement
+  int lastPrice,             // Index price at last settlement
+  int maintenanceBips        // Maintenance margin in basis points (e.g., 1000 = 10%)
+) {
+  // Settle one funding period.
+  // Anyone can call this; math enforces correctness.
+  // Include PriceBeacon UTXO as input[1].
+  function settleFunding() {
+    // Funding period must have elapsed (precompute RHS; time_comparison only accepts identifier)
+    int fundingDeadline = lastSettledBlock + fundingInterval;
+    require(tx.time >= fundingDeadline, "funding period not elapsed");
+
+    // Read current index price from beacon (asset quantity encodes price)
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    // Long PnL: profits when price² rises
+    // ΔCollateral = notional * (currentPrice² - lastPrice²) / precision
+    int lastPow2 = lastPrice * lastPrice;
+    int currentPow2 = currentPrice * currentPrice;
+    int deltaPow2 = currentPow2 - lastPow2;
+    int fundingDelta = notionalSats * deltaPow2 / precision;
+
+    // Apply funding to collateral and enforce solvency
+    int collateralIn = tx.input.current.value;
+    int collateralOut = collateralIn + fundingDelta;
+    require(collateralOut > 0, "position insolvent");
+
+    // Maintenance margin: collateralOut > notional * price² / precision * bips / 10000
+    int minCollateral = notionalSats * currentPow2 / precision * maintenanceBips / 10000;
+    require(collateralOut > minCollateral, "below maintenance margin");
+
+    // Carry position forward with updated settlement state (recursive covenant)
+    require(
+      tx.outputs[0].scriptPubKey == new PowerPerpLong(
+        traderPk, operatorPk, priceAssetId,
+        notionalSats, precision, fundingInterval,
+        tx.time, currentPrice, maintenanceBips
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= collateralOut, "collateral not preserved");
+
+    // PriceBeacon must survive (passthrough to output[1])
+    require(
+      tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // Trader voluntarily closes the position and reclaims remaining collateral.
+  function close(signature traderSig) {
+    require(checkSig(traderSig, traderPk), "invalid trader signature");
+    // Collateral released to trader; no output constraints beyond signature
+  }
+
+  // Permissionless liquidation when position breaches maintenance margin.
+  // Include PriceBeacon UTXO as input[1]. Liquidator specifies their destination.
+  function liquidate(signature liquidatorSig, pubkey liquidatorPk) {
+    require(checkSig(liquidatorSig, liquidatorPk), "invalid liquidator signature");
+
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    // Project collateral after applying pending funding
+    int lastPow2 = lastPrice * lastPrice;
+    int currentPow2 = currentPrice * currentPrice;
+    int deltaPow2 = currentPow2 - lastPow2;
+    int pendingFunding = notionalSats * deltaPow2 / precision;
+
+    int collateralIn = tx.input.current.value;
+    int projectedCollateral = collateralIn + pendingFunding;
+
+    // Position must be at or below maintenance margin to be liquidatable
+    int minCollateral = notionalSats * currentPow2 / precision * maintenanceBips / 10000;
+    require(projectedCollateral <= minCollateral, "position still solvent");
+
+    // Liquidator receives the collateral as incentive
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(liquidatorPk),
+      "output must go to liquidator"
+    );
+
+    // PriceBeacon must survive
+    require(
+      tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // Trader tops up collateral without changing position state.
+  // New output must have the same script and equal-or-greater value.
+  function addCollateral(signature traderSig) {
+    require(checkSig(traderSig, traderPk), "invalid trader signature");
+
+    // Position parameters unchanged; only collateral value increases
+    require(
+      tx.outputs[0].scriptPubKey == new PowerPerpLong(
+        traderPk, operatorPk, priceAssetId,
+        notionalSats, precision, fundingInterval,
+        lastSettledBlock, lastPrice, maintenanceBips
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= tx.input.current.value, "collateral must not decrease");
+  }
+}
