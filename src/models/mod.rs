@@ -149,8 +149,8 @@ pub enum Requirement {
     },
     /// Check multisig requirement
     CheckMultisig {
-        signatures: Vec<String>,
         pubkeys: Vec<String>,
+        threshold: u16,
     },
     /// After requirement
     After {
