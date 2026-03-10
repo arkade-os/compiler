@@ -26,6 +26,8 @@ Each primitive gets a section number. The opcode listing references these.
 ## Source
 
 ```solidity
+import "single_sig.ark";
+
 options {
   server = serverPk;
   exit = 288;
@@ -364,11 +366,17 @@ OP_VERIFY                               ; [srcId, burnTx, recip, sig0, sig1, sig
 
 ; Check recipient scriptPubKey
 ; new SingleSig(recipientPk) emits the VTXO placeholder resolved by the runtime.
-; We compare against the actual scriptPubKey of output 1.
+; The runtime computes the full child Taproot scriptPubKey for SingleSig(<recipientPk>)
+; by inheriting the enclosing contract's options: the server key (serverPk) and the
+; exit timelock (288 blocks). The inlined script is NOT a generic SingleSig output —
+; it is the specific Ark VTXO taproot that includes those inherited parameters.
+; We compare output 1's scriptPubKey against that resolved script.
 OP_1
 OP_INSPECTOUTPUTSCRIPTPUBKEY            ; [.., ctrlIn, outScript(bytes)]
 
-<VTXO:SingleSig(<recipientPk>)>         ; runtime resolves to SingleSig scriptPubKey
+<VTXO:SingleSig(<recipientPk>)>         ; runtime resolves to SingleSig VTXO scriptPubKey
+                                        ; with inherited server key (serverPk) and
+                                        ; exit timelock (288) from the enclosing contract
 OP_EQUAL                                ; [.., eq(c)]
 OP_VERIFY                               ; [srcId, burnTx, recip, sig0, sig1, sig2,
                                         ;  amt(u), msg(32), ctrlIn(u)]
