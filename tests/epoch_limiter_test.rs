@@ -1,4 +1,8 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_ADD64, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY,
+    OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
+};
 
 /// Test contract from PLAN.md Commit 4: If/Else + Variable Reassignment
 ///
@@ -88,17 +92,17 @@ fn test_epoch_limiter_has_if_else() {
 
     // Check for if/else opcodes in the assembly
     assert!(
-        server_func.asm.iter().any(|s| s == "OP_IF"),
+        server_func.asm.iter().any(|s| s == OP_IF),
         "Missing OP_IF in assembly: {:?}",
         server_func.asm
     );
     assert!(
-        server_func.asm.iter().any(|s| s == "OP_ELSE"),
+        server_func.asm.iter().any(|s| s == OP_ELSE),
         "Missing OP_ELSE in assembly: {:?}",
         server_func.asm
     );
     assert!(
-        server_func.asm.iter().any(|s| s == "OP_ENDIF"),
+        server_func.asm.iter().any(|s| s == OP_ENDIF),
         "Missing OP_ENDIF in assembly: {:?}",
         server_func.asm
     );
@@ -115,9 +119,9 @@ fn test_epoch_limiter_branch_structure() {
         .unwrap();
 
     // Find positions of control flow opcodes
-    let if_idx = server_func.asm.iter().position(|s| s == "OP_IF");
-    let else_idx = server_func.asm.iter().position(|s| s == "OP_ELSE");
-    let endif_idx = server_func.asm.iter().position(|s| s == "OP_ENDIF");
+    let if_idx = server_func.asm.iter().position(|s| s == OP_IF);
+    let else_idx = server_func.asm.iter().position(|s| s == OP_ELSE);
+    let endif_idx = server_func.asm.iter().position(|s| s == OP_ENDIF);
 
     // Verify correct ordering: IF < ELSE < ENDIF
     assert!(if_idx.is_some() && else_idx.is_some() && endif_idx.is_some());
@@ -140,8 +144,8 @@ fn test_epoch_limiter_asset_group_introspection() {
         server_func
             .asm
             .iter()
-            .any(|s| s.contains("OP_INSPECTASSETGROUPSUM")),
-        "Missing OP_INSPECTASSETGROUPSUM in assembly"
+            .any(|s| s.contains(OP_INSPECTASSETGROUPSUM)),
+        "Missing {OP_INSPECTASSETGROUPSUM} in assembly"
     );
 }
 
@@ -157,7 +161,7 @@ fn test_epoch_limiter_64bit_arithmetic() {
 
     // Should use 64-bit arithmetic for asset amounts
     // At minimum: OP_ADD64 for epochStart + epochBlocks and epochTotal + transferAmount
-    let has_add64 = server_func.asm.iter().any(|s| s == "OP_ADD64");
+    let has_add64 = server_func.asm.iter().any(|s| s == OP_ADD64);
 
     assert!(has_add64, "Missing 64-bit arithmetic opcodes");
 }
@@ -177,7 +181,7 @@ fn test_epoch_limiter_server_variant_has_checksig() {
         server_func
             .asm
             .iter()
-            .any(|s| s == "OP_CHECKSIG" || s == "OP_CHECKSIGVERIFY"),
+            .any(|s| s == OP_CHECKSIG || s == OP_CHECKSIGVERIFY),
         "Server variant missing signature check"
     );
 }
@@ -197,7 +201,7 @@ fn test_epoch_limiter_exit_variant_has_timelock() {
         exit_func
             .asm
             .iter()
-            .any(|s| s == "OP_CHECKLOCKTIMEVERIFY" || s == "OP_CHECKSEQUENCEVERIFY"),
+            .any(|s| s == OP_CHECKLOCKTIMEVERIFY || s == OP_CHECKSEQUENCEVERIFY),
         "Exit variant missing timelock check"
     );
 }

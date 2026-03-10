@@ -1,4 +1,9 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY,
+    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTNONCE,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+};
 
 /// Test input introspection opcodes
 #[test]
@@ -33,8 +38,8 @@ fn test_input_value() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTINPUTVALUE"),
-        "Expected OP_INSPECTINPUTVALUE in ASM: {}",
+        asm_str.contains(OP_INSPECTINPUTVALUE),
+        "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
         asm_str
     );
 }
@@ -71,8 +76,8 @@ fn test_input_script_pubkey() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTINPUTSCRIPTPUBKEY"),
-        "Expected OP_INSPECTINPUTSCRIPTPUBKEY in ASM: {}",
+        asm_str.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
+        "Expected {OP_INSPECTINPUTSCRIPTPUBKEY} in ASM: {}",
         asm_str
     );
 }
@@ -109,8 +114,8 @@ fn test_input_sequence() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTINPUTSEQUENCE"),
-        "Expected OP_INSPECTINPUTSEQUENCE in ASM: {}",
+        asm_str.contains(OP_INSPECTINPUTSEQUENCE),
+        "Expected {OP_INSPECTINPUTSEQUENCE} in ASM: {}",
         asm_str
     );
 }
@@ -147,8 +152,8 @@ fn test_input_outpoint() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTINPUTOUTPOINT"),
-        "Expected OP_INSPECTINPUTOUTPOINT in ASM: {}",
+        asm_str.contains(OP_INSPECTINPUTOUTPOINT),
+        "Expected {OP_INSPECTINPUTOUTPOINT} in ASM: {}",
         asm_str
     );
 }
@@ -185,8 +190,8 @@ fn test_input_issuance() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTINPUTISSUANCE"),
-        "Expected OP_INSPECTINPUTISSUANCE in ASM: {}",
+        asm_str.contains(OP_INSPECTINPUTISSUANCE),
+        "Expected {OP_INSPECTINPUTISSUANCE} in ASM: {}",
         asm_str
     );
 }
@@ -224,8 +229,8 @@ fn test_output_value() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTOUTPUTVALUE"),
-        "Expected OP_INSPECTOUTPUTVALUE in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTPUTVALUE),
+        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",
         asm_str
     );
 }
@@ -262,8 +267,8 @@ fn test_output_script_pubkey() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Expected OP_INSPECTOUTPUTSCRIPTPUBKEY in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "Expected {OP_INSPECTOUTPUTSCRIPTPUBKEY} in ASM: {}",
         asm_str
     );
 }
@@ -300,8 +305,8 @@ fn test_output_nonce() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTOUTPUTNONCE"),
-        "Expected OP_INSPECTOUTPUTNONCE in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTPUTNONCE),
+        "Expected {OP_INSPECTOUTPUTNONCE} in ASM: {}",
         asm_str
     );
 }
@@ -344,8 +349,8 @@ fn test_variable_index_input() {
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTINPUTVALUE"),
-        "Expected OP_INSPECTINPUTVALUE in ASM: {}",
+        asm_str.contains(OP_INSPECTINPUTVALUE),
+        "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
         asm_str
     );
 }
@@ -387,8 +392,8 @@ fn test_variable_index_output() {
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTOUTPUTVALUE"),
-        "Expected OP_INSPECTOUTPUTVALUE in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTPUTVALUE),
+        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",
         asm_str
     );
 }
@@ -426,13 +431,13 @@ fn test_input_output_value_comparison() {
 
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTOUTPUTVALUE"),
-        "Expected OP_INSPECTOUTPUTVALUE in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTPUTVALUE),
+        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTINPUTVALUE"),
-        "Expected OP_INSPECTINPUTVALUE in ASM: {}",
+        asm_str.contains(OP_INSPECTINPUTVALUE),
+        "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
         asm_str
     );
 }

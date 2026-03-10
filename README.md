@@ -10,7 +10,7 @@ This language significantly lowers the barrier for Bitcoin-native app developmen
 
 Try Arkade Script in your browser — no installation required:
 
-**[arkadeos.github.io/compiler](https://arkadeos.github.io/compiler)**
+**[arkade-os.github.io/compiler](https://arkade-os.github.io/compiler)**
 
 ### Run the Playground Locally
 

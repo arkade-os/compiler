@@ -1,4 +1,8 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_DROP, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTOUTASSETAT,
+    OP_INSPECTOUTASSETCOUNT, OP_NIP,
+};
 
 /// Test asset count and indexed asset access opcodes
 #[test]
@@ -37,8 +41,8 @@ fn test_asset_count_parsing() {
     // Check that the ASM contains the asset count opcode
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTOUTASSETCOUNT"),
-        "Expected OP_INSPECTOUTASSETCOUNT in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTASSETCOUNT),
+        "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {}",
         asm_str
     );
 }
@@ -78,14 +82,14 @@ fn test_asset_at_amount_parsing() {
     // Check that the ASM contains the asset at opcode
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTOUTASSETAT"),
-        "Expected OP_INSPECTOUTASSETAT in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTASSETAT),
+        "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
         asm_str
     );
     // Should have OP_NIP to extract amount (drops txid and gidx)
     assert!(
-        asm_str.contains("OP_NIP"),
-        "Expected OP_NIP for amount extraction in ASM: {}",
+        asm_str.contains(OP_NIP),
+        "Expected {OP_NIP} for amount extraction in ASM: {}",
         asm_str
     );
 }
@@ -125,14 +129,14 @@ fn test_asset_at_assetid_parsing() {
     // Check that the ASM contains the asset at opcode
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTOUTASSETAT"),
-        "Expected OP_INSPECTOUTASSETAT in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTASSETAT),
+        "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
         asm_str
     );
     // Should have OP_DROP to remove amount and keep assetId (txid, gidx)
     assert!(
-        asm_str.contains("OP_DROP"),
-        "Expected OP_DROP for assetId extraction in ASM: {}",
+        asm_str.contains(OP_DROP),
+        "Expected {OP_DROP} for assetId extraction in ASM: {}",
         asm_str
     );
 }
@@ -172,8 +176,8 @@ fn test_input_asset_count() {
     // Check that the ASM contains the input asset count opcode
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTINASSETCOUNT"),
-        "Expected OP_INSPECTINASSETCOUNT in ASM: {}",
+        asm_str.contains(OP_INSPECTINASSETCOUNT),
+        "Expected {OP_INSPECTINASSETCOUNT} in ASM: {}",
         asm_str
     );
 }
@@ -213,8 +217,8 @@ fn test_input_asset_at() {
     // Check that the ASM contains the input asset at opcode
     let asm_str = func.asm.join(" ");
     assert!(
-        asm_str.contains("OP_INSPECTINASSETAT"),
-        "Expected OP_INSPECTINASSETAT in ASM: {}",
+        asm_str.contains(OP_INSPECTINASSETAT),
+        "Expected {OP_INSPECTINASSETAT} in ASM: {}",
         asm_str
     );
 }
@@ -258,8 +262,8 @@ fn test_asset_count_with_variable_index() {
         asm_str
     );
     assert!(
-        asm_str.contains("OP_INSPECTOUTASSETCOUNT"),
-        "Expected OP_INSPECTOUTASSETCOUNT in ASM: {}",
+        asm_str.contains(OP_INSPECTOUTASSETCOUNT),
+        "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {}",
         asm_str
     );
 }

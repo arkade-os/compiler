@@ -323,20 +323,7 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 &format!("checkSigFromStack() arg 2 '{}'", pubkey),
             );
         }
-        Requirement::CheckMultisig {
-            signatures,
-            pubkeys,
-        } => {
-            for sig in signatures {
-                expect_type(
-                    scope,
-                    sig,
-                    &ArkType::Signature,
-                    errors,
-                    fn_name,
-                    &format!("checkMultisig() signature '{}'", sig),
-                );
-            }
+        Requirement::CheckMultisig { pubkeys, .. } => {
             for pk in pubkeys {
                 expect_type(
                     scope,
