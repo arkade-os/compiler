@@ -82,6 +82,54 @@ select:hover {
     border-color: var(--accent);
 }
 
+/* Network Selector */
+.network-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.network-selector select {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    padding: 0.4rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+    cursor: pointer;
+}
+
+.network-selector select:hover {
+    border-color: var(--accent);
+}
+
+.network-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+    transition: background 0.3s;
+}
+
+.network-status.loading {
+    background: var(--warning);
+    animation: status-pulse 1s ease infinite;
+}
+
+.network-status.connected {
+    background: var(--success);
+}
+
+.network-status.error {
+    background: var(--error);
+}
+
+@keyframes status-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 .btn-primary {
     background: var(--accent);
     color: white;

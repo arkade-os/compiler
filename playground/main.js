@@ -3,6 +3,62 @@
 import initWasm, { compile, version, validate, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 
+// ── Network configuration ────────────────────────────────────────
+const NETWORKS = {
+    bitcoin:   { name: 'Bitcoin',   url: 'https://arkade.computer' },
+    mutinynet: { name: 'Mutinynet', url: 'https://mutinynet.arkade.sh' },
+    signet:    { name: 'Signet',    url: 'https://signet.arkade.sh' },
+};
+
+let selectedNetwork = 'bitcoin';
+let networkInfo = null; // cached API response for current network
+
+async function fetchNetworkInfo(networkKey) {
+    const net = NETWORKS[networkKey];
+    if (!net) return;
+
+    const statusEl = document.getElementById('network-status');
+    if (statusEl) {
+        statusEl.className = 'network-status loading';
+        statusEl.title = 'Fetching...';
+    }
+
+    try {
+        const resp = await fetch(`${net.url}/v1/info`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        networkInfo = data;
+        if (statusEl) {
+            statusEl.className = 'network-status connected';
+            statusEl.title = `${net.name}: connected`;
+        }
+    } catch (e) {
+        console.warn(`Failed to fetch ${net.name} info:`, e);
+        networkInfo = null;
+        if (statusEl) {
+            statusEl.className = 'network-status error';
+            statusEl.title = `${net.name}: unreachable`;
+        }
+    }
+}
+
+function getDefaultTemplate(fileName) {
+    const displayName = fileName.replace(/\.ark$/, '');
+    const net = NETWORKS[selectedNetwork];
+
+    let serverComment = '';
+    let exitValue = '144';
+    let renewValue = '1008';
+
+    if (networkInfo) {
+        serverComment = `  // Network: ${net.name} (${net.url})\n  // Signer pubkey: ${networkInfo.signerPubkey}\n`;
+        exitValue = networkInfo.unilateralExitDelay || '144';
+        renewValue = '4032';
+    }
+
+    return `// ${displayName} Contract\n\noptions {\n${serverComment}  server = server;\n\n  // Batch expiry: ~4 weeks\n  renew = ${renewValue};\n\n  // Unilateral exit delay\n  exit = ${exitValue};\n}\n\ncontract ${displayName}(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
+}
+
 // Projects: collections of related contracts
 const projects = {
     stability: {
@@ -41,7 +97,8 @@ const STORAGE_KEY = 'arkade-playground';
 function saveToStorage() {
     const data = {
         projects: {},
-        examples: {}
+        examples: {},
+        selectedNetwork
     };
     // Only save user-created / modified entries
     for (const [id, proj] of Object.entries(projects)) {
@@ -67,6 +124,9 @@ function loadFromStorage() {
             for (const [id, ex] of Object.entries(data.examples)) {
                 examples[id] = ex;
             }
+        }
+        if (data.selectedNetwork && NETWORKS[data.selectedNetwork]) {
+            selectedNetwork = data.selectedNetwork;
         }
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
@@ -158,8 +218,7 @@ function createFileInFolder(folderId, fileName) {
     const project = projects[folderId];
     if (!project) return;
     if (project.files[fileName]) return; // already exists
-    const defaultCode = `// ${fileName}\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract MyContract(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
-    project.files[fileName] = defaultCode;
+    project.files[fileName] = getDefaultTemplate(fileName);
     saveToStorage();
     selectProjectFile(folderId, fileName);
 }
@@ -168,8 +227,7 @@ function createStandaloneFile(name) {
     if (!name.endsWith('.ark')) name += '.ark';
     const displayName = name.replace(/\.ark$/, '');
     const id = uniqueId(generateId(displayName), examples);
-    const defaultCode = `// ${displayName} Contract\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract ${displayName}(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
-    examples[id] = { name: displayName, code: defaultCode };
+    examples[id] = { name: displayName, code: getDefaultTemplate(name) };
     expandedFolders.add('_examples');
     saveToStorage();
     selectExample(id);
@@ -1349,6 +1407,18 @@ function initSidebarResizer() {
 document.addEventListener('DOMContentLoaded', () => {
     // Load user data from localStorage
     loadFromStorage();
+
+    // Set up network selector
+    const networkSelect = document.getElementById('network-select');
+    networkSelect.value = selectedNetwork;
+    networkSelect.addEventListener('change', async () => {
+        selectedNetwork = networkSelect.value;
+        saveToStorage();
+        await fetchNetworkInfo(selectedNetwork);
+    });
+
+    // Fetch network info on startup
+    fetchNetworkInfo(selectedNetwork);
 
     // Begin decoding URL hash early (async) so it's ready when Monaco is up
     window._urlCodePromise = loadFromUrl();
