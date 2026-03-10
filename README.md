@@ -1,6 +1,6 @@
 # Arkade Compiler
 
-Arkade Language is a high-level contract language that compiles down to Arkade Script, an extended version of Bitcoin Script designed for the Arkade OS. Arkade Language lets developers write expressive, stateful smart contracts that compile to scripts executable by Arkade’s Virtual Machine.
+Arkade Language is a high-level contract language that compiles down to Arkade Script, an extended version of Bitcoin Script designed for the Arkade OS. Arkade Language lets developers write expressive, stateful smart contracts that compile to scripts executable by Arkade's Virtual Machine.
 
 Arkade Script supports advanced primitives for arithmetic, introspection, and asset flows across Virtual Transaction Outputs (VTXOs), enabling rich offchain transaction logic with unilateral onchain exit guarantees. Contracts are verified and executed inside secure Trusted Execution Environments (TEEs) and signed by the Arkade Signer, ensuring verifiable and tamper-proof execution.
 
@@ -52,21 +52,11 @@ Then open [http://localhost:8080](http://localhost:8080) in your browser.
 arkadec contract.ark
 ```
 
-This will compile your Arkade Script contract to a JSON artifact for use with Ark libraries.
-
-## Compiler Options
-
-The Arkade Compiler supports several command-line options:
+This compiles your Arkade Language contract to a JSON artifact for use with Ark libraries.
 
 ```bash
-# Output assembly instead of bytecode
-arkadec --output=asm contract.ark
-
-# Generate debug information
-arkadec --debug contract.ark
-
 # Specify output file
-arkadec --output-file=contract.json contract.ark
+arkadec contract.ark -o contract.json
 ```
 
 ## Compilation Artifacts
@@ -75,15 +65,14 @@ The compiler produces a JSON file containing:
 
 - Contract metadata (name, version, etc.)
 - Constructor parameters
-- Function definitions
-- Generated script for each function (both cooperative and unilateral paths)
-- Source map for debugging
+- Function definitions with both cooperative and exit spending paths
+- Assembly for each path
 
-Example output:
+Example — `SingleSig` compiled output:
 
 ```json
 {
-  "contractName": "MyContract",
+  "contractName": "SingleSig",
   "constructorInputs": [
     { "name": "user", "type": "pubkey" }
   ],
@@ -122,7 +111,7 @@ Example output:
         "<userSig>",
         "OP_CHECKSIG",
         "144",
-        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
       ]
     }
@@ -132,67 +121,54 @@ Example output:
     "name": "arkade-script",
     "version": "0.1.0"
   },
-  "updatedAt": "2023-03-06T01:27:51.391557+00:00"
+  "updatedAt": "2024-01-01T00:00:00Z"
 }
 ```
 
 ## Examples
 
-### Basic VTXO Contract
+### SingleSig — Bare VTXO
+
+The simplest VTXO: a single public key controls spending.
 
 ```solidity
-// Contract configuration options
 options {
-  // Server key 
   server = server;
-  
-  // Exit timelock: 24 hours (144 blocks)
+  renew = 1008;
   exit = 144;
 }
 
-contract BareVTXO(
-  pubkey user
-) {
-  // Single signature spend path
-  // This will automatically be compiled into:
-  // 1. Cooperative path: checkSig(user) && checkSig(server)
-  // 2. Exit path: checkSig(user) && after 144 blocks
+contract SingleSig(pubkey user) {
   function spend(signature userSig) {
     require(checkSig(userSig, user));
   }
 }
 ```
 
-### HTLC Contract
+Each function compiles to two variants automatically:
+
+- **Cooperative** (`serverVariant: true`): `checkSig(user) && checkSig(server)`
+- **Exit** (`serverVariant: false`): `checkSig(user) && after 144 blocks`
+
+### HTLC — Hash Time-Locked Contract
 
 ```solidity
-// Contract configuration options
 options {
-  // Server key 
   server = server;
-  
-  // Exit timelock: 24 hours (144 blocks)
+  renew = 1008;
   exit = 144;
 }
 
-contract HTLC(
-  pubkey sender,
-  pubkey receiver,
-  bytes hash,
-  int refundTime
-) {
-  // Cooperative close path
+contract HTLC(pubkey sender, pubkey receiver, bytes hash, int refundTime) {
   function together(signature senderSig, signature receiverSig) {
     require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
   }
-  
-  // Refund path
+
   function refund(signature senderSig) {
     require(checkSig(senderSig, sender));
     require(tx.time >= refundTime);
   }
-  
-  // Claim path
+
   function claim(signature receiverSig, bytes preimage) {
     require(checkSig(receiverSig, receiver));
     require(sha256(preimage) == hash);
@@ -200,101 +176,93 @@ contract HTLC(
 }
 ```
 
-### Fuji Safe Contract
+### Recursive VTXO — Contract Instantiation
+
+Use `import` and `new ContractName(args)` to enforce that a transaction output carries a specific VTXO contract. This is how VTXOs are forwarded or transformed on-chain.
 
 ```solidity
-// Contract configuration options
+import "single_sig.ark";
+
 options {
-  // Server key parameter from contract parameters
-  server = treasuryPk;
-  
-  // Exit timelock: 24 hours (144 blocks)
+  server = operator;
   exit = 144;
 }
 
-// Fuji Safe Contract
+contract RecursiveVtxo(pubkey ownerPk) {
+  // Forward ownership to output 0, maintaining the SingleSig VTXO shape.
+  function send() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+  }
+}
+```
+
+The `new SingleSig(ownerPk)` expression compiles to a `<VTXO:SingleSig(<ownerPk>)>` placeholder. At runtime the Ark server resolves this placeholder to the actual Taproot scriptPubKey of the child contract, so the introspection check is pure Bitcoin Script.
+
+**Cooperative path ASM:**
+
+```text
+0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+<SERVER_KEY> <serverSig> OP_CHECKSIG
+```
+
+**Exit path ASM** — because introspection opcodes are not available on pure Bitcoin Script exit paths, the compiler automatically falls back to N-of-N CHECKSIG:
+
+```text
+<ownerPk> <ownerPkSig> OP_CHECKSIG
+144 OP_CHECKSEQUENCEVERIFY OP_DROP
+```
+
+#### Splitting to two outputs
+
+```solidity
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract Splitter(pubkey alicePk, pubkey bobPk) {
+  function split() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk));
+    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk));
+  }
+}
+```
+
+#### Self-referential covenant (renew pattern)
+
+```solidity
+import "self.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
 contract FujiSafe(
-  // The asset commitment hash (client-side validated)
   bytes assetCommitmentHash,
-  // The amount being borrowed
   int borrowAmount,
-  // The borrower's public key
   pubkey borrowerPk,
-  // The treasury's public key
   pubkey treasuryPk,
-  // The expiration timeout in blocks
   int expirationTimeout,
-  // The price level for liquidation
   int priceLevel,
-  // The setup timestamp
   int setupTimestamp,
-  // The oracle's public key
   pubkey oraclePk,
-  // The asset pair identifier
   bytes assetPair
 ) {
-  // Helper function to verify Fuji token burning via VTXO output
-  // Takes the pubkey to use as the internal key for the SingleSig VTXO
-  function verifyFujiBurning(pubkey internalKey) internal {
-    // Verify output 0 is a SingleSig VTXO for the provided key
-    require(tx.outputs[0].scriptPubKey == new SingleSig(internalKey), "Wrong output VTXO");
-    require(tx.outputs[0].value == borrowAmount, "Value mismatch");
-  }
-
-  // Claim: Treasury can unlock all collateral after expiration when burning Fuji
-  function claim(signature treasurySig) {
-    // Check that expiration timeout has passed
-    require(tx.time >= expirationTimeout, "Expiration timeout not reached");
-    
-    // Verify burning of Fuji token using treasury key
-    verifyFujiBurning(treasuryPk);
-    
-    // Require treasury signature
-    require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
-  }
-  
-  // Liquidation: Treasury can unlock all collateral with attestation price below the liquidation target
-  function liquidate(int currentPrice, signature oracleSig, signature treasurySig) {
-    // Check price is below liquidation threshold
-    require(currentPrice < priceLevel, "Price not below liquidation threshold");
-    
-    // Verify timestamp is after setup
-    require(tx.time >= setupTimestamp, "Timestamp before setup");
-    
-    // Create message for oracle signature verification
-    bytes message = sha256(assetPair);
-    
-    // Verify oracle signature on price data
-    require(checkSigFromStack(oracleSig, oraclePk, message), "Invalid oracle signature");
-    
-    // Verify burning of Fuji token using treasury key
-    verifyFujiBurning(treasuryPk);
-    
-    // Require treasury signature
-    require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
-  }
-  
-  // Private Redemption: Only owner can unlock all collateral with key when burning Fuji
-  function redeem(signature borrowerSig) {
-    // Verify burning of Fuji token using borrower key
-    verifyFujiBurning(borrowerPk);
-    
-    // Require borrower signature
-    require(checkSig(borrowerSig, borrowerPk), "Invalid borrower signature");
-  }
-  
-  // Treasury Renew: Treasury can unilaterally renew the expiration time
+  // Treasury can renew the VTXO without changing any parameters.
   function renew(signature treasurySig) {
-    // For renewal, we ensure the output is the same VTXO with the same value
-    // Using tx.input.current to access the current input's properties
-    bytes currentScript = tx.input.current.scriptPubKey;
     int currentValue = tx.input.current.value;
 
-    // Verify that output 0 carries the same VTXO script as the current input
-    require(tx.outputs[0].scriptPubKey == currentScript, "Output VTXO mismatch");
+    require(
+      tx.outputs[0].scriptPubKey == new FujiSafe(
+        assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,
+        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair
+      ),
+      "contract mismatch"
+    );
     require(tx.outputs[0].value == currentValue, "Value mismatch");
-    
-    // Require treasury signature
     require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
   }
 }
@@ -302,43 +270,31 @@ contract FujiSafe(
 
 ## Language Reference
 
-Arkade Script is a domain-specific language for writing Bitcoin VTXO contracts with a focus on readability and safety.
-
 ### Data Types
 
-Arkade Script supports the following data types:
-
-- `pubkey`: Bitcoin public key
-- `signature`: Bitcoin signature
+- `pubkey`: Bitcoin public key (32-byte x-only, BIP340)
+- `signature`: Bitcoin signature (64-byte BIP340 Schnorr)
 - `bytes`: Arbitrary byte array
-- `bytes20`: 20-byte array (useful for hashes)
-- `bytes32`: 32-byte array (useful for hashes)
-- `int`: Integer value
+- `bytes20`: 20-byte array
+- `bytes32`: 32-byte array
+- `int`: Integer value (CScriptNum)
 - `bool`: Boolean value
 - `asset`: Asset identifier (for asset-aware contracts)
 
 ### Contract Structure
 
-An Arkade Script contract consists of:
-
-1. An optional `options` block for configuration
-2. A `contract` declaration with parameters
-3. One or more `function` declarations that define spending paths
-
-Example:
+An Arkade Language file may start with zero or more `import` declarations, followed by an `options` block and a `contract` declaration:
 
 ```solidity
-// Optional configuration
+import "other_contract.ark";   // optional — imports for contract instantiation
+
 options {
-  server = treasuryPk;
-  exit = 144;
+  server = operator;  // Ark operator key
+  renew = 1008;       // renewal timelock in blocks (optional)
+  exit = 144;         // exit timelock in blocks
 }
 
-// Contract declaration with parameters
-contract MyContract(
-  pubkey user
-) {
-  // Function declarations (spending paths)
+contract MyContract(pubkey user) {
   function spend(signature userSig) {
     require(checkSig(userSig, user));
   }
@@ -347,138 +303,106 @@ contract MyContract(
 
 ### Options Block
 
-The options block configures contract-wide settings:
-
-```solidity
-options {
-  // Server key 
-  server = server;
-  
-  // Renewal timelock: 7 days (1008 blocks)
-  renew = 1008;
-  
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-```
-
-Available options:
-
-- `server`: Specifies which parameter contains the server public key
-- `renew`: Specifies the renewal timelock in blocks
-- `exit`: Specifies the exit timelock in blocks
+| Field    | Required | Description                                        |
+|----------|----------|----------------------------------------------------|
+| `server` | yes      | Parameter name holding the Ark operator public key |
+| `exit`   | yes      | Unilateral exit timelock in blocks                 |
+| `renew`  | no       | Cooperative renewal timelock in blocks             |
 
 ### Functions
 
-Functions define spending paths for the contract:
+Functions define spending paths. Every non-`internal` function produces two compiled variants:
 
 ```solidity
+// Spending path — compiled to cooperative + exit variants
 function spend(signature userSig) {
   require(checkSig(userSig, user));
 }
-```
 
-Functions can be marked as `internal` to indicate they are helper functions and not spending paths:
-
-```solidity
-function verifyCondition() internal {
-  // Helper logic
+// Helper — not a spending path, inlined into callers
+function verify() internal {
+  require(tx.outputs[0].value > 0);
 }
 ```
 
-### Expressions
+### Imports and Contract Instantiation
 
-Arkade Script supports various expressions:
+Use `import` to declare which contracts may appear in `new` expressions:
+
+```solidity
+import "single_sig.ark";
+import "htlc.ark";
+```
+
+Use `new ContractName(arg1, arg2, ...)` as the right-hand side of a `scriptPubKey` comparison to enforce the shape of an output or input VTXO:
+
+```solidity
+// Output enforcement
+require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+
+// Input enforcement
+require(tx.inputs[0].scriptPubKey == new HTLC(sender, receiver, hash, refundTime));
+
+// Current input enforcement (recursive covenant)
+require(tx.input.current.scriptPubKey == new SingleSig(ownerPk));
+```
+
+**Zero-argument constructors** are supported:
+
+```solidity
+require(tx.outputs[0].scriptPubKey == new StaticContract());
+```
+
+**Exit path fallback:** any function that uses `new ContractName(...)` automatically falls back to an N-of-N CHECKSIG chain on the exit path, because the `OP_INSPECTOUTPUTSCRIPTPUBKEY` opcode is not available in pure Bitcoin Script.
+
+### Expressions
 
 #### Signature Verification
 
 ```solidity
-// Single signature verification
 require(checkSig(userSig, user));
-
-// Multi-signature verification
 require(checkMultisig([user, admin], [userSig, adminSig]));
-
-// Signature verification from stack
 require(checkSigFromStack(oracleSig, oraclePk, message));
 ```
 
 #### Hash Verification
 
 ```solidity
-// SHA-256 hash verification
 require(sha256(preimage) == hash);
 ```
 
-#### Timelock Verification
+#### Timelock
 
 ```solidity
-// Absolute timelock
-require(tx.time >= expirationTime);
+require(tx.time >= expirationTime);   // absolute (CHECKLOCKTIMEVERIFY)
 ```
 
 #### Transaction Introspection
 
-TapLang provides access to transaction data:
-
 ```solidity
-// Access transaction time
-require(tx.time >= lockTime);
-
-// Access outputs
+// Outputs
 require(tx.outputs[0].value == amount);
-require(tx.outputs[0].scriptPubKey == script);
+require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
 
-// Access inputs
+// Indexed inputs
 require(tx.inputs[0].value == amount);
 require(tx.inputs[0].scriptPubKey == script);
 
-// Access the current input (new syntax)
+// Current input (self-reference)
 require(tx.input.current.value == amount);
 require(tx.input.current.scriptPubKey == script);
 ```
 
-#### Current Input Access
-
-TapLang provides a special syntax for accessing the current input being spent:
-
-```solidity
-// Access the current input's value
-int currentValue = tx.input.current.value;
-
-// Access the current input's scriptPubKey
-bytes currentScript = tx.input.current.scriptPubKey;
-
-// Access the current input's sequence number
-int sequence = tx.input.current.sequence;
-
-// Access the current input's outpoint
-bytes outpoint = tx.input.current.outpoint;
-```
-
-This is more intuitive than using an index variable:
-
-```solidity
-// Old approach (less intuitive)
-int currentIndex = 0; // Assume the current input is at index 0
-int currentValue = tx.inputs[currentIndex].value;
-
-// New approach (more intuitive)
-int currentValue = tx.input.current.value;
-```
+`tx.input.current` properties: `value`, `scriptPubKey`, `sequence`, `outpoint`.
 
 ### Variable Declarations
 
-You can declare variables to store intermediate values:
-
 ```solidity
 bytes message = sha256(timestamp + currentPrice + assetPair);
-bytes vtxoScript = new SingleSig(recipientPk);
+int currentValue = tx.input.current.value;
 ```
 
 ### Error Messages
-
-You can provide custom error messages for require statements:
 
 ```solidity
 require(tx.time >= expirationTimeout, "Expiration timeout not reached");
@@ -488,70 +412,23 @@ require(tx.time >= expirationTimeout, "Expiration timeout not reached");
 
 Arkade Language compiles to Arkade Script and produces a JSON artifact for use with Ark libraries.
 
-### JSON Structure
+### Key Fields
 
-```json
-{
-  "contractName": "MyContract",
-  "constructorInputs": [
-    { "name": "user", "type": "pubkey" }
-  ],
-  "functions": [
-    {
-      "name": "spend",
-      "functionInputs": [
-        { "name": "userSig", "type": "signature" }
-      ],
-      "serverVariant": true,
-      "require": [
-        { "type": "signature" },
-        { "type": "serverSignature" }
-      ],
-      "asm": [
-        "<user>",
-        "<userSig>",
-        "OP_CHECKSIG",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "spend",
-      "functionInputs": [
-        { "name": "userSig", "type": "signature" }
-      ],
-      "serverVariant": false,
-      "require": [
-        { "type": "signature" },
-        { "type": "older", "message": "Exit timelock of 144 blocks" }
-      ],
-      "asm": [
-        "<user>",
-        "<userSig>",
-        "OP_CHECKSIG",
-        "144",
-        "OP_CHECKLOCKTIMEVERIFY",
-        "OP_DROP"
-      ]
-    }
-  ],
-  "source": "...",
-  "compiler": {
-    "name": "arkade-script",
-    "version": "0.1.0"
-  },
-  "updatedAt": "2023-03-06T01:27:51.391557+00:00"
-}
+| Field               | Description                                                              |
+|---------------------|--------------------------------------------------------------------------|
+| `contractName`      | Contract identifier                                                      |
+| `constructorInputs` | Parameters baked into the tapscript leaf at instantiation                |
+| `functions`         | Spending paths — each appears twice (cooperative + exit)                 |
+| `serverVariant`     | `true` = cooperative (needs server sig), `false` = exit (needs timelock) |
+| `require`           | Human-readable spending conditions                                       |
+| `asm`               | Arkade Script assembly; `<name>` = placeholder resolved at runtime       |
+
+### VTXO Placeholder Format
+
+Contract instantiation expressions in ASM use the format:
+
+```text
+<VTXO:ContractName(<arg1>,<arg2>)>
 ```
 
-### Key Components
-
-- `contractName`: The name of the contract
-- `constructorInputs`: The parameters required to instantiate the contract
-- `functions`: The spending paths of the contract
-  - Each function has two variants:
-    - `serverVariant: true`: Requires server signature (cooperative path)
-    - `serverVariant: false`: Requires timelock (exit path)
-- `require`: The requirements for each spending path
-- `asm`: The Bitcoin Script assembly code for each spending path
+The Ark runtime resolves this placeholder to the Taproot scriptPubKey of the named contract instantiated with the given arguments. Options (`server`, `exit`, `renew`) are inherited from the enclosing contract.
