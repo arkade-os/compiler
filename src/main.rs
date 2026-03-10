@@ -6,6 +6,7 @@ mod compiler;
 mod models;
 mod opcodes;
 mod parser;
+mod typechecker;
 
 /// Arkade Compiler CLI
 ///
@@ -67,6 +68,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(err.into());
         }
     };
+
+    // Print any type-check warnings to stderr
+    for w in &output.warnings {
+        eprintln!("{}", w);
+    }
 
     // Determine output path
     let output_path = match args.output {
