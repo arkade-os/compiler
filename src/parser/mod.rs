@@ -1731,7 +1731,7 @@ fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, Strin
     // First child: contract name identifier
     let contract_name = inner
         .next()
-        .ok_or("Missing contract name in constructor")?
+        .ok_or("Parse error: Missing contract name in constructor")?
         .as_str()
         .to_string();
 

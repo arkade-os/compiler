@@ -110,10 +110,7 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
         }
 
         // Contract instantiation resolves to a scriptPubKey via introspection
-        Expression::ContractInstance { args, .. } => {
-            // The instance itself is introspection-dependent; also recurse into args
-            args.iter().any(expression_uses_introspection) || true
-        }
+        Expression::ContractInstance { .. } => true,
 
         // Non-introspection expressions
         Expression::Property(_) => false,
@@ -326,16 +323,9 @@ fn decompose_constructor_params(
 
 /// Generate a function ABI with server variant flag.
 ///
-/// **Contract-instantiation path** (`new ContractName(args)` present):
-/// Both cooperative and exit paths run the full statement ASM as written,
-/// including the `<VTXO:ContractName(args)>` scriptPubKey placeholder emitted
-/// by `new`. No additional opcodes are injected by the compiler — if the user
-/// wants a value check they write it explicitly in the source.
-/// Exit path: normal ASM + exit timelock (no N-of-N CHECKSIG fallback).
-///
-/// **Other introspection path** (no `ContractInstance`):
-/// - Cooperative path: normal ASM + introspection + server signature
-/// - Exit path: N-of-N CHECKSIG chain (pure Bitcoin) + exit timelock
+/// **Introspection path** (including `ContractInstance` — `new ContractName(args)` present):
+/// - Cooperative path: normal ASM (including `<VTXO:...>` placeholders) + server signature
+/// - Exit path: N-of-N CHECKSIG chain (pure Bitcoin Script) + exit timelock
 ///
 /// **No introspection**:
 /// - Cooperative path: normal ASM + server signature
@@ -1461,11 +1451,7 @@ fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<String>) {
 /// ```text
 /// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
 /// ```
-fn emit_contract_instance_asm(
-    contract_name: &str,
-    args: &[Expression],
-    asm: &mut Vec<String>,
-) {
+fn emit_contract_instance_asm(contract_name: &str, args: &[Expression], asm: &mut Vec<String>) {
     let args_str = args
         .iter()
         .map(|a| match a {

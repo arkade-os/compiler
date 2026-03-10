@@ -95,8 +95,8 @@ contract RecursiveVtxo(pubkey ownerPk) {
 
 #[test]
 fn test_new_expression_asm_output() {
-    // Verify the cooperative path ASM contains the scriptPubKey check,
-    // the VTXO placeholder, and the auto-appended value-equality check.
+    // Verify the cooperative path ASM contains the scriptPubKey check
+    // and the VTXO placeholder.
     let code = r#"
 import "single_sig.ark";
 
@@ -182,10 +182,22 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
         .find(|op| op.contains("VTXO:HTLC"))
         .expect("No VTXO:HTLC placeholder in ASM");
 
-    assert!(vtxo_op.contains("<sender>"), "Missing <sender> in {}", vtxo_op);
-    assert!(vtxo_op.contains("<receiver>"), "Missing <receiver> in {}", vtxo_op);
+    assert!(
+        vtxo_op.contains("<sender>"),
+        "Missing <sender> in {}",
+        vtxo_op
+    );
+    assert!(
+        vtxo_op.contains("<receiver>"),
+        "Missing <receiver> in {}",
+        vtxo_op
+    );
     assert!(vtxo_op.contains("<hash>"), "Missing <hash> in {}", vtxo_op);
-    assert!(vtxo_op.contains("<refundTime>"), "Missing <refundTime> in {}", vtxo_op);
+    assert!(
+        vtxo_op.contains("<refundTime>"),
+        "Missing <refundTime> in {}",
+        vtxo_op
+    );
 }
 
 // ─── Exit-path behavior for ContractInstance ──────────────────────────────────
@@ -219,13 +231,19 @@ contract RecursiveVtxo(pubkey ownerPk) {
 
     // Must fall back to N-of-N CHECKSIG (pure Bitcoin Script)
     assert!(
-        send_exit.asm.iter().any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
+        send_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
         "Exit path must use N-of-N CHECKSIG fallback, got {:?}",
         send_exit.asm
     );
     // Must NOT contain any introspection opcodes
     assert!(
-        !send_exit.asm.iter().any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        !send_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
         "Exit path must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
         send_exit.asm
     );
@@ -236,7 +254,10 @@ contract RecursiveVtxo(pubkey ownerPk) {
     );
     // Exit timelock must still be appended after the CHECKSIG chain
     assert!(
-        send_exit.asm.iter().any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
+        send_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
         "Exit path missing OP_CHECKSEQUENCEVERIFY, got {:?}",
         send_exit.asm
     );
