@@ -81,7 +81,7 @@ contract USDT0Bridge(
 
     // --- Mint output correct ---
     require(tx.outputs[1].assets.lookup(usdt0AssetId) >= amount, "mint short");
-    require(tx.outputs[1].scriptPubKey == new P2TR(recipientPk), "wrong dest");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
 
     // --- Recursive covenant ---
     require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
@@ -106,7 +106,7 @@ contract USDT0Bridge(
 | `u64le` | 8 bytes | Signed LE | INSPECTASSETGROUPSUM, ADD64, INSPECTINASSETLOOKUP (non-sentinel) | ADD64, GREATERTHAN64, EQUAL |
 | `sentinel` | varies | CScriptNum `-1` | INSPECTINASSETLOOKUP (not found), INSPECTOUTASSETLOOKUP (not found) | Must branch before arithmetic |
 | `bytes32` | 32 bytes | Raw | SHA256FINALIZE, witness pushes | SHA256UPDATE, EQUAL, CHECKSIGFROMSTACK |
-| `pubkey` | 32 bytes | x-only (BIP340) | Witness, constructor literal | CHECKSIG, CHECKSIGFROMSTACK, P2TR |
+| `pubkey` | 32 bytes | x-only (BIP340) | Witness, constructor literal | CHECKSIG, CHECKSIGFROMSTACK, SingleSig |
 | `signature` | 64 bytes | BIP340 Schnorr | Witness | CHECKSIG, CHECKSIGFROMSTACK |
 | `hashctx` | opaque | SHA256 midstate | SHA256INITIALIZE, SHA256UPDATE | SHA256UPDATE, SHA256FINALIZE |
 
@@ -332,7 +332,7 @@ OP_VERIFY                               ; [.., ctrlIn(u)]  -- now known to be u6
 ; ║  PHASE 7: MINT OUTPUT CORRECT                    [P6, P8] ║
 ; ╚═══════════════════════════════════════════════════════════╝
 ; require(tx.outputs[1].assets.lookup(usdt0AssetId) >= amount)
-; require(tx.outputs[1].scriptPubKey == new P2TR(recipientPk))
+; require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk))
 
 ; Check mint amount
 OP_1                                    ; output index 1
@@ -363,39 +363,12 @@ OP_VERIFY                               ; [srcId, burnTx, recip, sig0, sig1, sig
                                         ;  amt(u), msg(32), ctrlIn(u)]
 
 ; Check recipient scriptPubKey
-; new P2TR(recipientPk) = OP_1 <32-byte-x-only-key>
+; new SingleSig(recipientPk) emits the VTXO placeholder resolved by the runtime.
 ; We compare against the actual scriptPubKey of output 1.
 OP_1
 OP_INSPECTOUTPUTSCRIPTPUBKEY            ; [.., ctrlIn, outScript(bytes)]
 
-; Build expected P2TR script from recipientPk
-; recipientPk is at depth... recount:
-; [srcId(9), burnTx(8), recip(7), sig0(6), sig1(5), sig2(4),
-;  amt(3), msg(2), ctrlIn(1), outScript(0)]
-; recip at depth 7.
-OP_7 OP_PICK                            ; copy recip
-                                        ; [.., outScript, recip(pk)]
-
-; Build P2TR scriptPubKey: 0x5120 + <32-byte-key>
-; The compiler emits this as a known template.
-; OP_1 pushes 0x51, the key is 32 bytes, total = OP_1 <key>
-; But INSPECTOUTPUTSCRIPTPUBKEY returns the raw scriptPubKey bytes.
-; For P2TR, that's: 0x5120 <32-byte-x-only-key>
-; We need to construct the same 34 bytes.
-;
-; Compiler approach: concatenate 0x5120 prefix with recipientPk.
-; Since we lack OP_CAT in base Tapscript, the compiler uses
-; OP_SHA256 of both and compares hashes. OR the compiler
-; verifies the output scriptPubKey decomposes correctly:
-;   - first 2 bytes == 0x5120
-;   - remaining 32 bytes == recipientPk
-;
-; In Arkade Script (Elements-based), OP_CAT IS available.
-; Elements re-enabled it. So:
-
-0x5120                                  ; 2-byte push: witness v1 + push32
-OP_SWAP                                 ; [.., outScript, 0x5120, recip]
-OP_CAT                                  ; [.., outScript, expectedScript(34 bytes)]
+<VTXO:SingleSig(<recipientPk>)>         ; runtime resolves to SingleSig scriptPubKey
 OP_EQUAL                                ; [.., eq(c)]
 OP_VERIFY                               ; [srcId, burnTx, recip, sig0, sig1, sig2,
                                         ;  amt(u), msg(32), ctrlIn(u)]
@@ -499,11 +472,9 @@ After `OP_1 OP_PICK` (copy msg), 10 items on stack. Depth from msgCopy (top=0):
 
 The decreasing depth is correct: each sig is one position closer to the top of the base stack. The original draft had `OP_7 OP_PICK` for iteration 0. Fixed to `OP_6 OP_PICK` in this version.
 
-### A6: OP_CAT availability
+### A6: Recipient scriptPubKey verification
 
-The listing uses `OP_CAT` to build the P2TR scriptPubKey for recipient verification. Elements/Liquid re-enabled `OP_CAT`. Arkade inherits this. Correct.
-
-If `OP_CAT` were unavailable, the alternative is to hash both sides and compare hashes. But `OP_CAT` is cheaper (1 opcode vs ~6).
+The listing uses a `<VTXO:SingleSig(<recipientPk>)>` placeholder for recipient verification. The runtime resolves this to the SingleSig contract's scriptPubKey and inlines it before script execution. This removes the need for `OP_CAT` or manual witness-program construction.
 
 ### A7: OP_GREATERTHANOREQUAL for quorum check
 

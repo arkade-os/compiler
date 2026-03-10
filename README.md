@@ -18,6 +18,7 @@ Try Arkade Script in your browser — no installation required:
 
 - [Rust](https://rustup.rs/) toolchain
 - [`wasm-pack`](https://rustwasm.github.io/wasm-pack/installer/):
+
   ```bash
   cargo install wasm-pack
   # or
@@ -51,7 +52,7 @@ Then open [http://localhost:8080](http://localhost:8080) in your browser.
 arkadec contract.ark
 ```
 
-This will compile your Arkade Script contract to a JSON file that can be used with Bitcoin Taproot libraries.
+This will compile your Arkade Script contract to a JSON artifact for use with Ark libraries.
 
 ## Compiler Options
 
@@ -232,15 +233,11 @@ contract FujiSafe(
   // The asset pair identifier
   bytes assetPair
 ) {
-  // Helper function to verify Fuji token burning via Taproot output
-  // Takes the pubkey to use as the internal key for the P2TR output
+  // Helper function to verify Fuji token burning via VTXO output
+  // Takes the pubkey to use as the internal key for the SingleSig VTXO
   function verifyFujiBurning(pubkey internalKey) internal {
-    // In Taproot, we verify the output is a P2TR that commits to our asset
-    // Using the provided pubkey as the internal key
-    bytes p2trScript = new P2TR(internalKey, assetCommitmentHash);
-    
-    // Verify output 0 has the correct P2TR scriptPubKey and value
-    require(tx.outputs[0].scriptPubKey == p2trScript, "P2TR output mismatch");
+    // Verify output 0 is a SingleSig VTXO for the provided key
+    require(tx.outputs[0].scriptPubKey == new SingleSig(internalKey), "Wrong output VTXO");
     require(tx.outputs[0].value == borrowAmount, "Value mismatch");
   }
 
@@ -288,15 +285,13 @@ contract FujiSafe(
   
   // Treasury Renew: Treasury can unilaterally renew the expiration time
   function renew(signature treasurySig) {
-    // For renewal, we ensure the output is another P2TR with the same key and value
-    // This preserves the Taproot commitment structure
-    
-    // Using the new tx.input.current syntax to access the current input's properties
+    // For renewal, we ensure the output is the same VTXO with the same value
+    // Using tx.input.current to access the current input's properties
     bytes currentScript = tx.input.current.scriptPubKey;
     int currentValue = tx.input.current.value;
-    
-    // Verify that output 0 has the same P2TR script as the current input
-    require(tx.outputs[0].scriptPubKey == currentScript, "P2TR output mismatch");
+
+    // Verify that output 0 carries the same VTXO script as the current input
+    require(tx.outputs[0].scriptPubKey == currentScript, "Output VTXO mismatch");
     require(tx.outputs[0].value == currentValue, "Value mismatch");
     
     // Require treasury signature
@@ -307,11 +302,11 @@ contract FujiSafe(
 
 ## Language Reference
 
-TapLang is a domain-specific language for writing Bitcoin Taproot contracts with a focus on readability and safety.
+Arkade Script is a domain-specific language for writing Bitcoin VTXO contracts with a focus on readability and safety.
 
 ### Data Types
 
-TapLang supports the following data types:
+Arkade Script supports the following data types:
 
 - `pubkey`: Bitcoin public key
 - `signature`: Bitcoin signature
@@ -320,11 +315,11 @@ TapLang supports the following data types:
 - `bytes32`: 32-byte array (useful for hashes)
 - `int`: Integer value
 - `bool`: Boolean value
-- `asset`: Taproot Asset (for asset-aware contracts)
+- `asset`: Asset identifier (for asset-aware contracts)
 
 ### Contract Structure
 
-A TapLang contract consists of:
+An Arkade Script contract consists of:
 
 1. An optional `options` block for configuration
 2. A `contract` declaration with parameters
@@ -478,7 +473,7 @@ You can declare variables to store intermediate values:
 
 ```solidity
 bytes message = sha256(timestamp + currentPrice + assetPair);
-bytes p2trScript = new P2TR(internalKey, assetCommitmentHash);
+bytes vtxoScript = new SingleSig(recipientPk);
 ```
 
 ### Error Messages
@@ -491,7 +486,7 @@ require(tx.time >= expirationTimeout, "Expiration timeout not reached");
 
 ## Artifact Format
 
-TapLang compiles contracts to a JSON format that can be used with Bitcoin Taproot libraries.
+Arkade Language compiles to Arkade Script and produces a JSON artifact for use with Ark libraries.
 
 ### JSON Structure
 
@@ -543,7 +538,7 @@ TapLang compiles contracts to a JSON format that can be used with Bitcoin Taproo
   ],
   "source": "...",
   "compiler": {
-    "name": "taplang",
+    "name": "arkade-script",
     "version": "0.1.0"
   },
   "updatedAt": "2023-03-06T01:27:51.391557+00:00"
