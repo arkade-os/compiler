@@ -118,6 +118,8 @@ pub struct ContractJson {
     pub compiler: Option<CompilerInfo>,
     #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
 }
 
 /// Compiler information

@@ -81,36 +81,24 @@ mod arkd_integration {
         server_variant: bool,
         script_hex: &str,
     ) -> Result<(), String> {
-        // ── Placeholder ─────────────────────────────────────────────────────
-        // Log what would be sent so the output is useful even before the
-        // HTTP call is wired up.
+        // ── Stub ─────────────────────────────────────────────────────────────
+        // HTTP client not yet implemented.  Emit a clear warning so callers
+        // know no real validation is performed, then return an error so that
+        // a misconfigured CI job doesn't silently pass.
+        //
+        // TODO: replace with an actual HTTP call once the arkd 2.7 RPC schema
+        // is confirmed (see comment block above for the expected request shape).
+        // Add `reqwest` or `ureq` as an optional dev-dependency gated on
+        // `arkd-integration` at that point.
         println!(
-            "[arkd] {url} → {contract_name}::{function_name} (server={server_variant})\n  script: {script_hex}"
+            "[arkd-stub] ARKD_URL={url} — HTTP client not implemented; \
+             skipping live validation for {contract_name}::{function_name} \
+             (server={server_variant})\n  script: {script_hex}"
         );
-
-        // TODO: replace with actual HTTP call, e.g.:
-        //
-        // let client = reqwest::blocking::Client::new();
-        // let resp = client
-        //     .post(format!("{}/v1/vtxo/validate", url))
-        //     .json(&serde_json::json!({
-        //         "contractName":  contract_name,
-        //         "functionName":  function_name,
-        //         "serverVariant": server_variant,
-        //         "script":        script_hex,
-        //     }))
-        //     .send()
-        //     .map_err(|e| format!("HTTP error: {e}"))?;
-        //
-        // if !resp.status().is_success() {
-        //     return Err(format!(
-        //         "arkd rejected script ({}): {}",
-        //         resp.status(),
-        //         resp.text().unwrap_or_default()
-        //     ));
-        // }
-
-        Ok(())
+        Err(format!(
+            "submit_to_arkd: HTTP client not implemented \
+             (url={url}, contract={contract_name}, fn={function_name})"
+        ))
     }
 
     /// Compile `source` and validate every generated function script against arkd.
@@ -127,22 +115,20 @@ mod arkd_integration {
         let contract_name = result.name.clone();
 
         for function in &result.functions {
-            for asm_tokens in [&function.asm] {
-                let script_hex = asm_to_script_hex(asm_tokens);
-                submit_to_arkd(
-                    &url,
-                    &contract_name,
-                    &function.name,
-                    function.server_variant,
-                    &script_hex,
+            let script_hex = asm_to_script_hex(&function.asm);
+            submit_to_arkd(
+                &url,
+                &contract_name,
+                &function.name,
+                function.server_variant,
+                &script_hex,
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "arkd rejected {}::{} (server={}): {}",
+                    contract_name, function.name, function.server_variant, e
                 )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "arkd rejected {}::{} (server={}): {}",
-                        contract_name, function.name, function.server_variant, e
-                    )
-                });
-            }
+            });
         }
     }
 
@@ -150,15 +136,13 @@ mod arkd_integration {
 
     #[test]
     fn test_bare_vtxo_against_arkd() {
-        let source = fs::read_to_string("examples/bare.ark")
-            .expect("examples/bare.ark must exist");
+        let source = fs::read_to_string("examples/bare.ark").expect("examples/bare.ark must exist");
         validate_contract(&source);
     }
 
     #[test]
     fn test_htlc_against_arkd() {
-        let source = fs::read_to_string("examples/htlc.ark")
-            .expect("examples/htlc.ark must exist");
+        let source = fs::read_to_string("examples/htlc.ark").expect("examples/htlc.ark must exist");
         validate_contract(&source);
     }
 

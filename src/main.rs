@@ -68,6 +68,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Print any type-check warnings to stderr
+    for w in &output.warnings {
+        eprintln!("{}", w);
+    }
+
     // Determine output path
     let output_path = match args.output {
         Some(path) => path,

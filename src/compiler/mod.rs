@@ -180,13 +180,13 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     };
 
     // ── Type checking ──────────────────────────────────────────────────────
-    // Run the type checker and emit any errors as warnings on stderr.
-    // Type errors are currently non-fatal so contracts that were accepted
-    // before this pass is introduced continue to compile.
+    // Run the type checker. Errors are non-fatal and returned as warnings on
+    // ContractJson so callers (CLI, WASM, tests) can surface them as they see fit.
     let type_errors = typechecker::check_contract(&contract);
-    for e in &type_errors {
-        eprintln!("warning[type]: {}", e.message);
-    }
+    let warnings: Vec<String> = type_errors
+        .iter()
+        .map(|e| format!("warning[type]: {}", e.message))
+        .collect();
 
     // The Arkade operator key is always injected externally (via getInfo()).
     // It is never a constructor parameter — options.server is a boolean flag only.
@@ -207,6 +207,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
         updated_at: Some(Utc::now().to_rfc3339()),
+        warnings,
     };
 
     for function in &contract.functions {

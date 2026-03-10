@@ -146,10 +146,8 @@ fn build_scope(params: &[crate::models::Parameter]) -> Scope {
                 // index form (name_0 … name_{N-1}).  The count must match
                 // DEFAULT_ARRAY_LENGTH so the type checker and the compiler
                 // always agree on how many elements exist.
-                let mut entries = vec![(
-                    p.name.clone(),
-                    ArkType::Array(Box::new(elem_type.clone())),
-                )];
+                let mut entries =
+                    vec![(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())))];
                 for i in 0..DEFAULT_ARRAY_LENGTH {
                     entries.push((format!("{}_{}", p.name, i), elem_type.clone()));
                 }
@@ -182,17 +180,32 @@ fn check_function(function: &Function, constructor_scope: &Scope) -> Vec<TypeErr
     scope.extend(build_scope(&function.parameters));
 
     let mut errors = Vec::new();
-    check_statements(&function.statements, &mut scope, &mut errors, &function.name);
+    check_statements(
+        &function.statements,
+        &mut scope,
+        &mut errors,
+        &function.name,
+    );
     errors
 }
 
-fn check_statements(stmts: &[Statement], scope: &mut Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
+fn check_statements(
+    stmts: &[Statement],
+    scope: &mut Scope,
+    errors: &mut Vec<TypeError>,
+    fn_name: &str,
+) {
     for stmt in stmts {
         check_statement(stmt, scope, errors, fn_name);
     }
 }
 
-fn check_statement(stmt: &Statement, scope: &mut Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
+fn check_statement(
+    stmt: &Statement,
+    scope: &mut Scope,
+    errors: &mut Vec<TypeError>,
+    fn_name: &str,
+) {
     match stmt {
         Statement::Require(req) => {
             check_requirement(req, scope, errors, fn_name);
@@ -226,11 +239,11 @@ fn check_statement(stmt: &Statement, scope: &mut Scope, errors: &mut Vec<TypeErr
                     cond_type.as_str()
                 )));
             }
-            // Note: we don't fork scope into branches — LetBindings in branches
-            // are not visible outside them, but we don't enforce that here yet.
-            check_statements(then_body, scope, errors, fn_name);
+            // Use cloned child scopes so LetBindings inside branches don't
+            // leak into the parent scope.
+            check_statements(then_body, &mut scope.clone(), errors, fn_name);
             if let Some(else_stmts) = else_body {
-                check_statements(else_stmts, scope, errors, fn_name);
+                check_statements(else_stmts, &mut scope.clone(), errors, fn_name);
             }
         }
         Statement::ForIn {
@@ -240,10 +253,11 @@ fn check_statement(stmt: &Statement, scope: &mut Scope, errors: &mut Vec<TypeErr
             body,
         } => {
             let _ = infer_type(iterable, scope);
-            // Seed the loop variables with placeholder types for body checking.
-            scope.insert(index_var.clone(), ArkType::Int);
-            scope.insert(value_var.clone(), ArkType::Unknown);
-            check_statements(body, scope, errors, fn_name);
+            // Use a cloned child scope so loop variables don't leak out.
+            let mut loop_scope = scope.clone();
+            loop_scope.insert(index_var.clone(), ArkType::Int);
+            loop_scope.insert(value_var.clone(), ArkType::Unknown);
+            check_statements(body, &mut loop_scope, errors, fn_name);
         }
     }
 }
@@ -261,10 +275,22 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 )));
                 return;
             }
-            expect_type(scope, signature, &ArkType::Signature, errors, fn_name,
-                &format!("checkSig() arg 1 '{}'", signature));
-            expect_type(scope, pubkey, &ArkType::Pubkey, errors, fn_name,
-                &format!("checkSig() arg 2 '{}'", pubkey));
+            expect_type(
+                scope,
+                signature,
+                &ArkType::Signature,
+                errors,
+                fn_name,
+                &format!("checkSig() arg 1 '{}'", signature),
+            );
+            expect_type(
+                scope,
+                pubkey,
+                &ArkType::Pubkey,
+                errors,
+                fn_name,
+                &format!("checkSig() arg 2 '{}'", pubkey),
+            );
         }
         Requirement::CheckSigFromStack {
             signature,
@@ -280,19 +306,46 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 )));
                 return;
             }
-            expect_type(scope, signature, &ArkType::Signature, errors, fn_name,
-                &format!("checkSigFromStack() arg 1 '{}'", signature));
-            expect_type(scope, pubkey, &ArkType::Pubkey, errors, fn_name,
-                &format!("checkSigFromStack() arg 2 '{}'", pubkey));
+            expect_type(
+                scope,
+                signature,
+                &ArkType::Signature,
+                errors,
+                fn_name,
+                &format!("checkSigFromStack() arg 1 '{}'", signature),
+            );
+            expect_type(
+                scope,
+                pubkey,
+                &ArkType::Pubkey,
+                errors,
+                fn_name,
+                &format!("checkSigFromStack() arg 2 '{}'", pubkey),
+            );
         }
-        Requirement::CheckMultisig { signatures, pubkeys } => {
+        Requirement::CheckMultisig {
+            signatures,
+            pubkeys,
+        } => {
             for sig in signatures {
-                expect_type(scope, sig, &ArkType::Signature, errors, fn_name,
-                    &format!("checkMultisig() signature '{}'", sig));
+                expect_type(
+                    scope,
+                    sig,
+                    &ArkType::Signature,
+                    errors,
+                    fn_name,
+                    &format!("checkMultisig() signature '{}'", sig),
+                );
             }
             for pk in pubkeys {
-                expect_type(scope, pk, &ArkType::Pubkey, errors, fn_name,
-                    &format!("checkMultisig() pubkey '{}'", pk));
+                expect_type(
+                    scope,
+                    pk,
+                    &ArkType::Pubkey,
+                    errors,
+                    fn_name,
+                    &format!("checkMultisig() pubkey '{}'", pk),
+                );
             }
         }
         Requirement::HashEqual { hash, .. } => {
@@ -301,7 +354,9 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 if *t != ArkType::Bytes32 && *t != ArkType::Bytes && *t != ArkType::Unknown {
                     errors.push(TypeError::new(format!(
                         "fn {}: sha256 comparison: '{}' has type '{}', expected bytes32",
-                        fn_name, hash, t.as_str()
+                        fn_name,
+                        hash,
+                        t.as_str()
                     )));
                 }
             }
@@ -320,7 +375,10 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                     errors.push(TypeError::new(format!(
                         "fn {}: comparison '{}' mixes uint64le ('{}') with scriptnum ('{}') — \
                          implicit conversion applied; use le64ToScriptNum() for explicit control",
-                        fn_name, op, lt.as_str(), rt.as_str()
+                        fn_name,
+                        op,
+                        lt.as_str(),
+                        rt.as_str()
                     )));
                 }
             }
@@ -358,9 +416,10 @@ fn expect_type(
 /// statically (e.g., unresolved variables, not-yet-implemented forms).
 pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     match expr {
-        Expression::Variable(name) => {
-            scope.get(name.as_str()).cloned().unwrap_or(ArkType::Unknown)
-        }
+        Expression::Variable(name) => scope
+            .get(name.as_str())
+            .cloned()
+            .unwrap_or(ArkType::Unknown),
         Expression::Literal(_) => ArkType::Int,
         Expression::Property(_) => ArkType::Unknown,
 
