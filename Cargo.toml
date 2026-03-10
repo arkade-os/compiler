@@ -21,6 +21,10 @@ console_error_panic_hook = { version = "0.1", optional = true }
 [features]
 default = []
 wasm = ["wasm-bindgen", "console_error_panic_hook"]
+# Enable integration tests against a live arkd 2.7 instance.
+# Requires ARKD_URL env var at test time.
+# Usage: cargo test --features arkd-integration
+arkd-integration = []
 
 [lib]
 name = "arkade_compiler"

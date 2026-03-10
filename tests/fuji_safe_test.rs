@@ -63,7 +63,7 @@ fn test_fuji_safe_contract() {
         .iter()
         .find(|f| f.name == "claim" && f.server_variant)
         .unwrap();
-    assert!(claim_func.require.iter().any(|r| r.req_type == "older"));
+    assert!(claim_func.require.iter().any(|r| r.req_type == "after"));
     assert!(claim_func
         .require
         .iter()

@@ -33,4 +33,5 @@ Cargo.lock
 .env
 .env.local
 
-.claude
+# Canonical skills are stored in `.codex/skills`.
+# Track compatibility symlinks separately (`.claude/skills`, `.agents/skills`).

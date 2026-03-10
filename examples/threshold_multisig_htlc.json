@@ -41,13 +41,12 @@
         }
       ],
       "asm": [
-        "OP_2",
         "<sender>",
+        "OP_CHECKSIG",
         "<receiver>",
+        "OP_CHECKSIGADD",
         "OP_2",
-        "<senderSig>",
-        "<receiverSig>",
-        "OP_CHECKMULTISIG",
+        "OP_NUMEQUAL",
         "<SERVER_KEY>",
         "<serverSig>",
         "OP_CHECKSIG"
@@ -76,13 +75,12 @@
         }
       ],
       "asm": [
-        "OP_2",
         "<sender>",
+        "OP_CHECKSIG",
         "<receiver>",
+        "OP_CHECKSIGADD",
         "OP_2",
-        "<senderSig>",
-        "<receiverSig>",
-        "OP_CHECKMULTISIG",
+        "OP_NUMEQUAL",
         "144",
         "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
@@ -102,7 +100,7 @@
           "type": "signature"
         },
         {
-          "type": "after",
+          "type": "older",
           "message": "Timelock of 0 blocks"
         },
         {
@@ -135,7 +133,7 @@
           "type": "signature"
         },
         {
-          "type": "after",
+          "type": "older",
           "message": "Timelock of 0 blocks"
         },
         {
@@ -231,10 +229,10 @@
       ]
     }
   ],
-  "source": "// Contract configuration options\noptions {\n  // Server key \n  server = server;\n  \n  // Renewal timelock: 7 days (1008 blocks)\n  // The contract must be renewed with the Ark server within this period\n  renew = 1008;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  // Time required to exit unilaterally without server involvement\n  exit = 144;\n}\n\ncontract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes hash,\n  int refundTime\n) {\n  // Cooperative close path\n  function together(signature senderSig, signature receiverSig) {\n    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));\n  }\n  \n  // Refund path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(sender) && after refundTime && checkSig(server)\n  // 2. Exit path: checkSig(sender) && after refundTime && after 24 hours\n  function refund(signature senderSig) {\n    require(checkSig(senderSig, sender));\n    require(tx.time >= refundTime);\n  }\n  \n  // Claim path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(receiver) && sha256(preimage) == hash && checkSig(server)\n  // 2. Exit path: checkSig(receiver) && sha256(preimage) == hash && after 24 hours\n  function claim(signature receiverSig, bytes preimage) {\n    require(checkSig(receiverSig, receiver));\n    require(sha256(preimage) == hash);\n  }\n} ",
+  "source": "// Contract configuration options\noptions {\n  // Server key \n  server = server;\n  \n  // Renewal timelock: 7 days (1008 blocks)\n  // The contract must be renewed with the Ark server within this period\n  renew = 1008;\n  \n  // Exit timelock: 24 hours (144 blocks)\n  // Time required to exit unilaterally without server involvement\n  exit = 144;\n}\n\ncontract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes hash,\n  int refundTime\n) {\n  // Cooperative close path\n  function together(signature senderSig, signature receiverSig) {\n    require(checkMultisig([sender, receiver]));\n  }\n  \n  // Refund path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(sender) && after refundTime && checkSig(server)\n  // 2. Exit path: checkSig(sender) && after refundTime && after 24 hours\n  function refund(signature senderSig) {\n    require(checkSig(senderSig, sender));\n    require(tx.time >= refundTime);\n  }\n  \n  // Claim path\n  // This will automatically be compiled into:\n  // 1. Cooperative path: checkSig(receiver) && sha256(preimage) == hash && checkSig(server)\n  // 2. Exit path: checkSig(receiver) && sha256(preimage) == hash && after 24 hours\n  function claim(signature receiverSig, bytes preimage) {\n    require(checkSig(receiverSig, receiver));\n    require(sha256(preimage) == hash);\n  }\n} ",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-02-12T10:17:23.011832498+00:00"
+  "updatedAt": "2026-02-13T09:51:37.492444999+00:00"
 }
