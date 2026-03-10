@@ -444,6 +444,398 @@ contract SpendChecker(pubkey ownerPk) {
     );
 }
 
+// ─── Zero-argument constructor ────────────────────────────────────────────────
+
+#[test]
+fn test_zero_arg_constructor_compiles() {
+    // Grammar marks constructor_args as optional, so new ContractName() with no
+    // arguments must be accepted and produce an empty-arg VTXO placeholder.
+    let code = r#"
+import "random_num.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract ZeroArgUser(pubkey ownerPk) {
+  function spend() {
+    require(tx.outputs[0].scriptPubKey == new RandomNum());
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+
+    let spend_coop = result
+        .functions
+        .iter()
+        .find(|f| f.name == "spend" && f.server_variant)
+        .expect("No cooperative spend function");
+
+    // Zero-arg placeholder must use empty parens, not omit them.
+    assert!(
+        spend_coop.asm.iter().any(|op| op == "<VTXO:RandomNum()>"),
+        "Expected <VTXO:RandomNum()> placeholder in {:?}",
+        spend_coop.asm
+    );
+}
+
+// ─── Literal argument in constructor ─────────────────────────────────────────
+
+#[test]
+fn test_literal_arg_constructor() {
+    // Integer literals as constructor args should appear unquoted in the
+    // placeholder (no angle brackets, just the raw value).
+    let code = r#"
+import "time_locked.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract TimedForwarder(pubkey ownerPk) {
+  function forward() {
+    require(tx.outputs[0].scriptPubKey == new TimeLocked(ownerPk, 144));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+
+    let fwd_coop = result
+        .functions
+        .iter()
+        .find(|f| f.name == "forward" && f.server_variant)
+        .expect("No cooperative forward function");
+
+    let vtxo_op = fwd_coop
+        .asm
+        .iter()
+        .find(|op| op.contains("VTXO:TimeLocked"))
+        .expect("No VTXO:TimeLocked placeholder in ASM");
+
+    // Variable arg is wrapped in angle brackets; literal is not.
+    assert!(
+        vtxo_op.contains("<ownerPk>"),
+        "Variable arg missing angle brackets in {}",
+        vtxo_op
+    );
+    assert!(
+        vtxo_op.contains("144"),
+        "Literal arg 144 missing from {}",
+        vtxo_op
+    );
+    // Literal must not be wrapped in extra angle brackets.
+    assert!(
+        !vtxo_op.contains("<144>"),
+        "Literal 144 must not be wrapped in angle brackets in {}",
+        vtxo_op
+    );
+}
+
+// ─── Multiple ContractInstance in one function ────────────────────────────────
+
+#[test]
+fn test_multiple_contract_instances_in_one_function() {
+    // A function that enforces two different outputs each matching a different
+    // VTXO contract.  Both cooperative-path placeholders must appear in ASM.
+    let code = r#"
+import "single_sig.ark";
+import "htlc.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract Splitter(pubkey alicePk, pubkey bobPk) {
+  function split() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk));
+    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+
+    let split_coop = result
+        .functions
+        .iter()
+        .find(|f| f.name == "split" && f.server_variant)
+        .expect("No cooperative split function");
+
+    // Both placeholders must appear.
+    assert!(
+        split_coop
+            .asm
+            .iter()
+            .any(|op| op.contains("VTXO:SingleSig") && op.contains("<alicePk>")),
+        "Missing VTXO:SingleSig(<alicePk>) in {:?}",
+        split_coop.asm
+    );
+    assert!(
+        split_coop
+            .asm
+            .iter()
+            .any(|op| op.contains("VTXO:SingleSig") && op.contains("<bobPk>")),
+        "Missing VTXO:SingleSig(<bobPk>) in {:?}",
+        split_coop.asm
+    );
+
+    // Exit path must fall back to N-of-N CHECKSIG (no introspection).
+    let split_exit = result
+        .functions
+        .iter()
+        .find(|f| f.name == "split" && !f.server_variant)
+        .expect("No exit split function");
+
+    assert!(
+        split_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
+        "Exit path must use N-of-N CHECKSIG, got {:?}",
+        split_exit.asm
+    );
+    assert!(
+        !split_exit.asm.iter().any(|op| op.contains("VTXO:")),
+        "Exit path must not contain VTXO placeholders, got {:?}",
+        split_exit.asm
+    );
+}
+
+// ─── Mixed ContractInstance + checkSig in same function ──────────────────────
+
+#[test]
+fn test_mixed_contract_instance_and_checksig_cooperative_path() {
+    // Cooperative path must include BOTH the introspection check and the
+    // explicit checkSig requirement when they appear in the same function.
+    let code = r#"
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract ForwardAndSign(pubkey ownerPk) {
+  function send(signature ownerSig) {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(checkSig(ownerSig, ownerPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+
+    let send_coop = result
+        .functions
+        .iter()
+        .find(|f| f.name == "send" && f.server_variant)
+        .expect("No cooperative send function");
+
+    // Both checks present on cooperative path.
+    assert!(
+        send_coop.asm.iter().any(|op| op.contains("VTXO:SingleSig")),
+        "Cooperative path missing VTXO placeholder in {:?}",
+        send_coop.asm
+    );
+    assert!(
+        send_coop.asm.iter().any(|op| op == "OP_CHECKSIG"),
+        "Cooperative path missing OP_CHECKSIG in {:?}",
+        send_coop.asm
+    );
+}
+
+#[test]
+fn test_mixed_contract_instance_and_checksig_exit_path() {
+    // When a function uses ContractInstance the exit path falls back to the
+    // N-of-N CHECKSIG chain and does NOT include the introspection check —
+    // the exit path is pure Bitcoin Script only.
+    let code = r#"
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract ForwardAndSign(pubkey ownerPk) {
+  function send(signature ownerSig) {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(checkSig(ownerSig, ownerPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+
+    let send_exit = result
+        .functions
+        .iter()
+        .find(|f| f.name == "send" && !f.server_variant)
+        .expect("No exit send function");
+
+    // Exit path: N-of-N CHECKSIG present, no introspection opcodes, no VTXO placeholders.
+    assert!(
+        send_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
+        "Exit path must use N-of-N CHECKSIG, got {:?}",
+        send_exit.asm
+    );
+    assert!(
+        !send_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        "Exit path must not contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
+        send_exit.asm
+    );
+    assert!(
+        !send_exit.asm.iter().any(|op| op.contains("VTXO:")),
+        "Exit path must not contain VTXO placeholders, got {:?}",
+        send_exit.asm
+    );
+    assert!(
+        send_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
+        "Exit path missing OP_CHECKSEQUENCEVERIFY, got {:?}",
+        send_exit.asm
+    );
+}
+
+// ─── Per-function introspection detection ─────────────────────────────────────
+
+#[test]
+fn test_introspection_detection_is_per_function() {
+    // Only the function that contains a ContractInstance should use the N-of-N
+    // CHECKSIG exit fallback.  A sibling function with plain checkSig must keep
+    // its normal exit path (checkSig + timelock).
+    let code = r#"
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract TwoFunctions(pubkey ownerPk) {
+  function forward() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+  }
+
+  function spend(signature ownerSig) {
+    require(checkSig(ownerSig, ownerPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+
+    // forward() exit path → N-of-N CHECKSIG (has ContractInstance)
+    let forward_exit = result
+        .functions
+        .iter()
+        .find(|f| f.name == "forward" && !f.server_variant)
+        .expect("No exit forward function");
+
+    assert!(
+        forward_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
+        "forward() exit must use N-of-N CHECKSIG, got {:?}",
+        forward_exit.asm
+    );
+    assert!(
+        !forward_exit.asm.iter().any(|op| op.contains("VTXO:")),
+        "forward() exit must not contain VTXO placeholders, got {:?}",
+        forward_exit.asm
+    );
+
+    // spend() exit path → normal (checkSig + timelock), no N-of-N fallback
+    let spend_exit = result
+        .functions
+        .iter()
+        .find(|f| f.name == "spend" && !f.server_variant)
+        .expect("No exit spend function");
+
+    assert!(
+        spend_exit.asm.iter().any(|op| op == "OP_CHECKSIG"),
+        "spend() exit must contain OP_CHECKSIG, got {:?}",
+        spend_exit.asm
+    );
+    assert!(
+        spend_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
+        "spend() exit must contain OP_CHECKSEQUENCEVERIFY, got {:?}",
+        spend_exit.asm
+    );
+}
+
+// ─── ContractInstance on current-input scriptPubKey ───────────────────────────
+
+#[test]
+fn test_new_expression_on_current_input_scriptpubkey() {
+    // new ContractName(...) can appear on the RHS of a tx.input.current.scriptPubKey
+    // comparison (recursive covenant enforcing the current UTXO's own script).
+    let code = r#"
+import "single_sig.ark";
+
+options {
+  server = operator;
+  exit = 144;
+}
+
+contract SelfEnforcing(pubkey ownerPk) {
+  function renew() {
+    require(tx.input.current.scriptPubKey == new SingleSig(ownerPk));
+  }
+}
+"#;
+
+    let result = compile(code).expect("Compile failed");
+
+    let renew_coop = result
+        .functions
+        .iter()
+        .find(|f| f.name == "renew" && f.server_variant)
+        .expect("No cooperative renew function");
+
+    assert!(
+        renew_coop
+            .asm
+            .iter()
+            .any(|op| op.contains("VTXO:SingleSig")),
+        "Missing VTXO:SingleSig placeholder in {:?}",
+        renew_coop.asm
+    );
+
+    // Exit path must still fall back to N-of-N CHECKSIG (ContractInstance present).
+    let renew_exit = result
+        .functions
+        .iter()
+        .find(|f| f.name == "renew" && !f.server_variant)
+        .expect("No exit renew function");
+
+    assert!(
+        renew_exit
+            .asm
+            .iter()
+            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
+        "Exit path must use N-of-N CHECKSIG, got {:?}",
+        renew_exit.asm
+    );
+}
+
 // ─── Current-input self-reference ────────────────────────────────────────────
 
 #[test]

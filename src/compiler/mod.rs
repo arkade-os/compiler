@@ -1162,12 +1162,6 @@ fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
 /// Handles both simple comparisons (variable/literal/property) and complex
 /// expressions involving asset lookups and 64-bit arithmetic.
 fn emit_comparison_asm(left: &Expression, op: &str, right: &Expression, asm: &mut Vec<String>) {
-    // Special case: CurrentInput introspection (dummy comparison from parser)
-    if let Expression::CurrentInput(property) = left {
-        emit_current_input_asm(property.as_deref(), asm);
-        return;
-    }
-
     // Special case: standalone property/function call introspection (dummy comparison)
     if op == "==" {
         if let Expression::Literal(val) = right {
