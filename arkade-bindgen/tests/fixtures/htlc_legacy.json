@@ -1,0 +1,45 @@
+{
+  "contractName": "HTLC",
+  "constructorInputs": [
+    { "name": "sender", "type": "pubkey" },
+    { "name": "receiver", "type": "pubkey" },
+    { "name": "hash", "type": "bytes" },
+    { "name": "refundTime", "type": "int" }
+  ],
+  "functions": [
+    {
+      "name": "claim",
+      "functionInputs": [
+        { "name": "receiverSig", "type": "signature" },
+        { "name": "preimage", "type": "bytes" }
+      ],
+      "witnessSchema": [],
+      "serverVariant": true,
+      "require": [
+        { "type": "signature" },
+        { "type": "hash" },
+        { "type": "serverSignature" }
+      ],
+      "asm": ["<receiver>", "<receiverSig>", "OP_CHECKSIG", "<preimage>", "OP_SHA256", "<hash>", "OP_EQUAL", "<SERVER_KEY>", "<serverSig>", "OP_CHECKSIG"]
+    },
+    {
+      "name": "claim",
+      "functionInputs": [
+        { "name": "receiverSig", "type": "signature" },
+        { "name": "preimage", "type": "bytes" }
+      ],
+      "witnessSchema": [],
+      "serverVariant": false,
+      "require": [
+        { "type": "signature" },
+        { "type": "hash" },
+        { "type": "older", "message": "Exit timelock of 144 blocks" }
+      ],
+      "asm": ["<receiver>", "<receiverSig>", "OP_CHECKSIG", "<preimage>", "OP_SHA256", "<hash>", "OP_EQUAL", "144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]
+    }
+  ],
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  }
+}

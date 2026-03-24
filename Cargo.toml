@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "arkade-bindgen"]
+resolver = "2"
+
 [package]
 name = "arkade-compiler"
 version = "0.1.0"
