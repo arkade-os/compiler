@@ -42,11 +42,7 @@ pub trait CodegenTarget {
     fn file_extension(&self) -> &str;
 
     /// Generate a source file from the contract IR.
-    fn generate(
-        &self,
-        ir: &ContractIR,
-        options: &CodegenOptions,
-    ) -> Result<GeneratedFile, String>;
+    fn generate(&self, ir: &ContractIR, options: &CodegenOptions) -> Result<GeneratedFile, String>;
 }
 
 /// All available codegen targets.

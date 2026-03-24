@@ -85,9 +85,8 @@ pub fn generate(
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        std::fs::write(&dest, &generated.content).map_err(|e| {
-            format!("Failed to write '{}': {}", dest.display(), e)
-        })?;
+        std::fs::write(&dest, &generated.content)
+            .map_err(|e| format!("Failed to write '{}': {}", dest.display(), e))?;
 
         results.push(generated);
     }

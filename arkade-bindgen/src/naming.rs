@@ -8,7 +8,9 @@ pub fn to_pascal_case(s: &str) -> String {
         return String::new();
     }
     // Already all-caps (e.g., "HTLC") — preserve as-is
-    if s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+    if s.chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
         return s.to_string();
     }
     // Split on underscores or camelCase boundaries
@@ -40,7 +42,9 @@ pub fn to_camel_case(s: &str) -> String {
         return pascal;
     }
     // If original is all-caps, lowercase the whole thing
-    if s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+    if s.chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
         return pascal.to_lowercase();
     }
     let mut chars = pascal.chars();
@@ -58,7 +62,9 @@ pub fn to_snake_case(s: &str) -> String {
         return String::new();
     }
     // All-caps → lowercase
-    if s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+    if s.chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
         return s.to_lowercase();
     }
     let words = split_words(s);
@@ -82,7 +88,10 @@ fn split_words(s: &str) -> Vec<String> {
             }
         } else if ch.is_ascii_uppercase() && !current.is_empty() {
             // Check if we're in the middle of an all-caps run (e.g., "HTLC")
-            let prev_is_upper = current.chars().last().map_or(false, |c| c.is_ascii_uppercase());
+            let prev_is_upper = current
+                .chars()
+                .last()
+                .map_or(false, |c| c.is_ascii_uppercase());
             if prev_is_upper {
                 // Continue the caps run
                 current.push(ch);

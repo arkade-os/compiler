@@ -6,7 +6,8 @@ fn load_fixture(name: &str) -> String {
         env!("CARGO_MANIFEST_DIR"),
         name
     );
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to load fixture '{}': {}", path, e))
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to load fixture '{}': {}", path, e))
 }
 
 #[test]

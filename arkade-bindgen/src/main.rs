@@ -59,7 +59,10 @@ fn main() {
         .iter()
         .map(|name| {
             targets::get_target(name).unwrap_or_else(|| {
-                eprintln!("Error: unknown target '{}'. Use --list-targets to see available.", name);
+                eprintln!(
+                    "Error: unknown target '{}'. Use --list-targets to see available.",
+                    name
+                );
                 std::process::exit(1);
             })
         })
@@ -85,7 +88,11 @@ fn main() {
         for artifact_path in &artifact_paths {
             match process_artifact(artifact_path, backend.as_ref(), &target_dir, &cli) {
                 Ok(filename) => {
-                    println!("  {} -> {}", artifact_path.display(), target_dir.join(&filename).display());
+                    println!(
+                        "  {} -> {}",
+                        artifact_path.display(),
+                        target_dir.join(&filename).display()
+                    );
                     generated_count += 1;
                 }
                 Err(e) => {

@@ -103,10 +103,7 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
     let snake_name = to_snake_case(&ir.name);
     if options.embed_artifact {
         if let Some(ref json) = options.artifact_json {
-            out.push_str(&format!(
-                "\nconst artifact = {} as const;\n",
-                json.trim()
-            ));
+            out.push_str(&format!("\nconst artifact = {} as const;\n", json.trim()));
         }
     } else {
         out.push_str(&format!(
@@ -117,10 +114,7 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
     out.push('\n');
 
     // Constructor params interface
-    out.push_str(&format!(
-        "/** Constructor parameters for {} */\n",
-        ir.name
-    ));
+    out.push_str(&format!("/** Constructor parameters for {} */\n", ir.name));
     out.push_str(&format!("export interface {}Params {{\n", ir.name));
     for field in &ir.constructor_fields {
         let ts = field_ts_type(field);
@@ -158,14 +152,8 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
         let method_name = to_camel_case(&func.name);
         let pascal_name = crate::naming::to_pascal_case(&func.name);
 
-        let coop_type = format!(
-            "{}{}CooperativeWitness",
-            ir.name, pascal_name
-        );
-        let exit_type = format!(
-            "{}{}ExitWitness",
-            ir.name, pascal_name
-        );
+        let coop_type = format!("{}{}CooperativeWitness", ir.name, pascal_name);
+        let exit_type = format!("{}{}ExitWitness", ir.name, pascal_name);
 
         out.push_str(&format!(
             "\n\
@@ -191,10 +179,7 @@ fn emit_witness_interface(
     variant_label: &str,
 ) {
     let pascal_name = crate::naming::to_pascal_case(&func.name);
-    let iface_name = format!(
-        "{}{}{}Witness",
-        ir.name, pascal_name, variant_label
-    );
+    let iface_name = format!("{}{}{}Witness", ir.name, pascal_name, variant_label);
 
     // Doc comment
     let path_label = if variant_label == "Cooperative" {

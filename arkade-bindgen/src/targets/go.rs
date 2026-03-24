@@ -83,10 +83,7 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     let mut out = String::new();
 
     let version = ir.compiler_version.as_deref().unwrap_or("unknown");
-    let package = options
-        .package_name
-        .as_deref()
-        .unwrap_or("contracts");
+    let package = options.package_name.as_deref().unwrap_or("contracts");
 
     // Header
     let embed_import = if options.embed_artifact {
@@ -100,7 +97,9 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
          // Compiler: arkade-compiler v{}\n\n\
          package {}\n\n\
          import ({embed}\n\t\"github.com/arkade-os/contract-sdk-go/ark\"\n)\n\n",
-        ir.name, version, package,
+        ir.name,
+        version,
+        package,
         embed = embed_import,
     ));
 
@@ -129,10 +128,7 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     }
 
     // Contract struct
-    out.push_str(&format!(
-        "// {} wraps an Ark contract instance.\n",
-        ir.name
-    ));
+    out.push_str(&format!("// {} wraps an Ark contract instance.\n", ir.name));
     out.push_str(&format!(
         "type {} struct {{\n\t*ark.Contract\n}}\n\n",
         ir.name
@@ -170,7 +166,14 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     // Function methods — pick a receiver name that doesn't collide with 'w' (witness param)
     let receiver = pick_receiver(&ir.name);
     for func in &ir.functions {
-        emit_go_method(&mut out, ir, func, &func.cooperative, "Cooperative", &receiver);
+        emit_go_method(
+            &mut out,
+            ir,
+            func,
+            &func.cooperative,
+            "Cooperative",
+            &receiver,
+        );
         emit_go_method(&mut out, ir, func, &func.exit, "Exit", &receiver);
     }
 

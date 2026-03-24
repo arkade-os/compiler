@@ -7,7 +7,8 @@ fn load_fixture(name: &str) -> String {
         env!("CARGO_MANIFEST_DIR"),
         name
     );
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to load fixture '{}': {}", path, e))
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to load fixture '{}': {}", path, e))
 }
 
 #[test]
@@ -78,7 +79,10 @@ fn test_ir_legacy_artifact_infers_encoding() {
 
     // Cooperative: inferred from functionInputs + added serverSig
     assert_eq!(claim.cooperative.user_fields.len(), 2);
-    assert_eq!(claim.cooperative.user_fields[0].encoding, Encoding::Schnorr64);
+    assert_eq!(
+        claim.cooperative.user_fields[0].encoding,
+        Encoding::Schnorr64
+    );
     assert_eq!(claim.cooperative.user_fields[1].encoding, Encoding::Raw);
 
     // serverSig should be added for cooperative variant

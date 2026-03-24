@@ -193,8 +193,7 @@ fn pair_functions(artifact: &ContractJson) -> Result<Vec<FunctionIR>, String> {
 
         let cooperative_func = cooperative
             .ok_or_else(|| format!("Function '{}' missing cooperative variant", name))?;
-        let exit_func =
-            exit.ok_or_else(|| format!("Function '{}' missing exit variant", name))?;
+        let exit_func = exit.ok_or_else(|| format!("Function '{}' missing exit variant", name))?;
 
         result.push(FunctionIR {
             name: name.clone(),
@@ -265,10 +264,7 @@ fn build_variant(func: &arkade_compiler::models::AbiFunction) -> VariantIR {
         })
         .collect();
 
-    let is_nofn_fallback = func
-        .require
-        .iter()
-        .any(|r| r.req_type == "nOfNMultisig");
+    let is_nofn_fallback = func.require.iter().any(|r| r.req_type == "nOfNMultisig");
 
     VariantIR {
         user_fields,
