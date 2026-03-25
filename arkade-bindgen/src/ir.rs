@@ -210,10 +210,7 @@ fn build_variant(func: &arkade_compiler::models::AbiFunction) -> VariantIR {
     let has_witness_schema = !func.witness_schema.is_empty();
 
     // Check if "serverSig" is a user-declared input (not protocol-injected)
-    let user_declared_server_sig = func
-        .function_inputs
-        .iter()
-        .any(|fi| fi.name == "serverSig");
+    let user_declared_server_sig = func.function_inputs.iter().any(|fi| fi.name == "serverSig");
 
     let all_fields: Vec<Field> = if has_witness_schema {
         // Primary path: use witnessSchema with explicit encodings
