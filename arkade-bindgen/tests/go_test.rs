@@ -105,8 +105,8 @@ fn test_go_embed_mode() {
     let result = generate_from_str(&json, Target::Go, &opts);
     let code = result.unwrap().content;
 
-    // Should have inline artifact
-    assert!(code.contains("var singleSigArtifact = []byte(`"));
+    // Should have inline artifact (uses interpreted string literal, not raw backtick)
+    assert!(code.contains("var singleSigArtifact = []byte(\""));
     assert!(!code.contains("//go:embed"));
     // Embed mode should not import embed package
     assert!(!code.contains("_ \"embed\""));

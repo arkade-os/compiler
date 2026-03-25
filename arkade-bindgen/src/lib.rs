@@ -88,6 +88,19 @@ pub fn generate(
         std::fs::write(&dest, &generated.content)
             .map_err(|e| format!("Failed to write '{}': {}", dest.display(), e))?;
 
+        // In non-embed mode, copy the artifact JSON alongside the generated source
+        if !options.embed {
+            let json_filename = path
+                .file_stem()
+                .map(|s| format!("{}.json", s.to_string_lossy()))
+                .unwrap_or_else(|| "artifact.json".to_string());
+            let artifact_dest = out_path.join(&json_filename);
+            let artifact_bytes = std::fs::read(path)
+                .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
+            std::fs::write(&artifact_dest, artifact_bytes)
+                .map_err(|e| format!("Failed to write '{}': {}", artifact_dest.display(), e))?;
+        }
+
         results.push(generated);
     }
 

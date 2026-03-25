@@ -20,14 +20,20 @@ impl CodegenTarget for GoTarget {
     }
 }
 
-fn go_type(encoding: &Encoding) -> &'static str {
-    match encoding {
+fn go_type_for_field(field: &Field) -> &'static str {
+    match field.encoding {
         Encoding::Compressed33 => "[33]byte",
         Encoding::Schnorr64 => "[64]byte",
         Encoding::Raw => "[]byte",
         Encoding::Raw20 => "[20]byte",
         Encoding::Raw32 => "[32]byte",
-        Encoding::ScriptNum => "int64",
+        Encoding::ScriptNum => {
+            if field.ark_type == "bool" {
+                "bool"
+            } else {
+                "int64"
+            }
+        }
         Encoding::Le64 => "uint64",
         Encoding::Le32 => "uint32",
         Encoding::Unknown(_) => "[]byte",
@@ -62,7 +68,11 @@ fn value_expr(field: &Field, prefix: &str) -> String {
     let go_name = to_pascal_case(&field.name);
     match field.encoding {
         Encoding::ScriptNum => {
-            format!("ark.EncodeScriptNum({}.{})", prefix, go_name)
+            if field.ark_type == "bool" {
+                format!("ark.EncodeBool({}.{})", prefix, go_name)
+            } else {
+                format!("ark.EncodeScriptNum({}.{})", prefix, go_name)
+            }
         }
         Encoding::Le64 => {
             format!("ark.EncodeLe64({}.{})", prefix, go_name)
@@ -114,7 +124,7 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
         out.push_str(&format!(
             "\t{} {} // {} ({})\n",
             go_name,
-            go_type(&field.encoding),
+            go_type_for_field(field),
             field.ark_type,
             field.encoding.as_str(),
         ));
@@ -180,10 +190,12 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     // Artifact constant
     if options.embed_artifact {
         if let Some(ref json) = options.artifact_json {
+            // Use a Go interpreted string literal to safely handle backticks
+            // and other special characters in the JSON.
+            let escaped = escape_go_string(json.trim());
             out.push_str(&format!(
-                "var {}Artifact = []byte(`{}`)\n",
-                camel_name,
-                json.trim(),
+                "var {}Artifact = []byte(\"{}\")\n",
+                camel_name, escaped,
             ));
         }
     } else {
@@ -223,7 +235,7 @@ fn emit_witness_struct(
         out.push_str(&format!(
             "\t{} {} // {} ({})\n",
             go_name,
-            go_type(&field.encoding),
+            go_type_for_field(field),
             field.ark_type,
             field.encoding.as_str(),
         ));
@@ -292,4 +304,20 @@ fn emit_go_method(
     }
 
     out.push_str("\t})\n}\n\n");
+}
+
+/// Escape a string for use in a Go interpreted string literal ("...").
+fn escape_go_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }

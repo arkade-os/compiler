@@ -516,6 +516,67 @@ main {
     color: var(--error);
 }
 
+/* Bindings output */
+#bindings-output {
+    display: none;
+    height: 100%;
+    flex-direction: column;
+    padding: 0;
+}
+
+#bindings-output.active {
+    display: flex;
+}
+
+.bindings-toolbar {
+    display: flex;
+    gap: 0;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.bindings-lang-btn {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.75rem;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.bindings-lang-btn:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+.bindings-lang-btn:last-child {
+    border-radius: 0 4px 4px 0;
+    border-left: none;
+}
+
+.bindings-lang-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.bindings-lang-btn:hover:not(.active) {
+    background: var(--bg-secondary);
+}
+
+.bindings-code {
+    flex: 1;
+    overflow: auto;
+    padding: 1rem;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* JSON Syntax Highlighting */
 .json-key {
     color: #9cdcfe;

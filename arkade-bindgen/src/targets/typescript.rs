@@ -218,7 +218,12 @@ fn emit_witness_interface(
 }
 
 /// Get the TypeScript type for a field, preferring SDK aliases.
+/// Distinguishes `bool` (→ `boolean`) from `int` (→ `bigint`) even though
+/// both use `ScriptNum` encoding on the wire.
 fn field_ts_type(field: &Field) -> &'static str {
+    if field.ark_type == "bool" {
+        return "boolean";
+    }
     if let Some(alias) = sdk_type_alias(&field.encoding) {
         alias
     } else {

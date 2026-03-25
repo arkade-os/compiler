@@ -209,6 +209,12 @@ fn pair_functions(artifact: &ContractJson) -> Result<Vec<FunctionIR>, String> {
 fn build_variant(func: &arkade_compiler::models::AbiFunction) -> VariantIR {
     let has_witness_schema = !func.witness_schema.is_empty();
 
+    // Check if "serverSig" is a user-declared input (not protocol-injected)
+    let user_declared_server_sig = func
+        .function_inputs
+        .iter()
+        .any(|fi| fi.name == "serverSig");
+
     let all_fields: Vec<Field> = if has_witness_schema {
         // Primary path: use witnessSchema with explicit encodings
         func.witness_schema
@@ -217,7 +223,9 @@ fn build_variant(func: &arkade_compiler::models::AbiFunction) -> VariantIR {
                 name: w.name.clone(),
                 ark_type: w.elem_type.clone(),
                 encoding: Encoding::parse(&w.encoding),
-                is_server_injected: w.name == "serverSig",
+                is_server_injected: func.server_variant
+                    && w.name == "serverSig"
+                    && !user_declared_server_sig,
             })
             .collect()
     } else {
@@ -233,8 +241,8 @@ fn build_variant(func: &arkade_compiler::models::AbiFunction) -> VariantIR {
             })
             .collect();
 
-        // If this is a cooperative variant, add serverSig
-        if func.server_variant {
+        // If this is a cooperative variant and serverSig isn't user-declared, add it
+        if func.server_variant && !user_declared_server_sig {
             fields.push(Field {
                 name: "serverSig".to_string(),
                 ark_type: "signature".to_string(),
