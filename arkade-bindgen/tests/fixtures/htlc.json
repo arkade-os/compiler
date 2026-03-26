@@ -1,0 +1,120 @@
+{
+  "contractName": "HTLC",
+  "constructorInputs": [
+    { "name": "sender", "type": "pubkey" },
+    { "name": "receiver", "type": "pubkey" },
+    { "name": "hash", "type": "bytes" },
+    { "name": "refundTime", "type": "int" }
+  ],
+  "functions": [
+    {
+      "name": "together",
+      "functionInputs": [
+        { "name": "senderSig", "type": "signature" },
+        { "name": "receiverSig", "type": "signature" }
+      ],
+      "witnessSchema": [
+        { "name": "senderSig", "type": "signature", "encoding": "schnorr-64" },
+        { "name": "receiverSig", "type": "signature", "encoding": "schnorr-64" },
+        { "name": "serverSig", "type": "signature", "encoding": "schnorr-64" }
+      ],
+      "serverVariant": true,
+      "require": [
+        { "type": "multisig" },
+        { "type": "serverSignature" }
+      ],
+      "asm": ["OP_2", "<sender>", "<receiver>", "OP_2", "<senderSig>", "<receiverSig>", "OP_CHECKMULTISIG", "<SERVER_KEY>", "<serverSig>", "OP_CHECKSIG"]
+    },
+    {
+      "name": "together",
+      "functionInputs": [
+        { "name": "senderSig", "type": "signature" },
+        { "name": "receiverSig", "type": "signature" }
+      ],
+      "witnessSchema": [
+        { "name": "senderSig", "type": "signature", "encoding": "schnorr-64" },
+        { "name": "receiverSig", "type": "signature", "encoding": "schnorr-64" }
+      ],
+      "serverVariant": false,
+      "require": [
+        { "type": "multisig" },
+        { "type": "older", "message": "Exit timelock of 144 blocks" }
+      ],
+      "asm": ["OP_2", "<sender>", "<receiver>", "OP_2", "<senderSig>", "<receiverSig>", "OP_CHECKMULTISIG", "144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]
+    },
+    {
+      "name": "refund",
+      "functionInputs": [
+        { "name": "senderSig", "type": "signature" }
+      ],
+      "witnessSchema": [
+        { "name": "senderSig", "type": "signature", "encoding": "schnorr-64" },
+        { "name": "serverSig", "type": "signature", "encoding": "schnorr-64" }
+      ],
+      "serverVariant": true,
+      "require": [
+        { "type": "signature" },
+        { "type": "after", "message": "Timelock of 0 blocks" },
+        { "type": "serverSignature" }
+      ],
+      "asm": ["<sender>", "<senderSig>", "OP_CHECKSIG", "<refundTime>", "OP_CHECKLOCKTIMEVERIFY", "OP_DROP", "<SERVER_KEY>", "<serverSig>", "OP_CHECKSIG"]
+    },
+    {
+      "name": "refund",
+      "functionInputs": [
+        { "name": "senderSig", "type": "signature" }
+      ],
+      "witnessSchema": [
+        { "name": "senderSig", "type": "signature", "encoding": "schnorr-64" }
+      ],
+      "serverVariant": false,
+      "require": [
+        { "type": "signature" },
+        { "type": "after", "message": "Timelock of 0 blocks" },
+        { "type": "older", "message": "Exit timelock of 144 blocks" }
+      ],
+      "asm": ["<sender>", "<senderSig>", "OP_CHECKSIG", "<refundTime>", "OP_CHECKLOCKTIMEVERIFY", "OP_DROP", "144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]
+    },
+    {
+      "name": "claim",
+      "functionInputs": [
+        { "name": "receiverSig", "type": "signature" },
+        { "name": "preimage", "type": "bytes" }
+      ],
+      "witnessSchema": [
+        { "name": "receiverSig", "type": "signature", "encoding": "schnorr-64" },
+        { "name": "preimage", "type": "bytes", "encoding": "raw" },
+        { "name": "serverSig", "type": "signature", "encoding": "schnorr-64" }
+      ],
+      "serverVariant": true,
+      "require": [
+        { "type": "signature" },
+        { "type": "hash" },
+        { "type": "serverSignature" }
+      ],
+      "asm": ["<receiver>", "<receiverSig>", "OP_CHECKSIG", "<preimage>", "OP_SHA256", "<hash>", "OP_EQUAL", "<SERVER_KEY>", "<serverSig>", "OP_CHECKSIG"]
+    },
+    {
+      "name": "claim",
+      "functionInputs": [
+        { "name": "receiverSig", "type": "signature" },
+        { "name": "preimage", "type": "bytes" }
+      ],
+      "witnessSchema": [
+        { "name": "receiverSig", "type": "signature", "encoding": "schnorr-64" },
+        { "name": "preimage", "type": "bytes", "encoding": "raw" }
+      ],
+      "serverVariant": false,
+      "require": [
+        { "type": "signature" },
+        { "type": "hash" },
+        { "type": "older", "message": "Exit timelock of 144 blocks" }
+      ],
+      "asm": ["<receiver>", "<receiverSig>", "OP_CHECKSIG", "<preimage>", "OP_SHA256", "<hash>", "OP_EQUAL", "144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]
+    }
+  ],
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  }
+}

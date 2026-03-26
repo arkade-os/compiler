@@ -1,0 +1,21 @@
+[package]
+name = "arkade-bindgen"
+version = "0.1.0"
+edition = "2021"
+description = "Multi-language SDK binding generator for Arkade contract artifacts"
+authors = ["tiero"]
+license = "MIT"
+
+[dependencies]
+arkade-compiler = { path = ".." }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+
+[[bin]]
+name = "arkade-bindgen"
+path = "src/main.rs"
+
+[lib]
+name = "arkade_bindgen"
+path = "src/lib.rs"

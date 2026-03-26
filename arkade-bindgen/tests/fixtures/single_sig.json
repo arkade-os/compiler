@@ -1,0 +1,43 @@
+{
+  "contractName": "SingleSig",
+  "constructorInputs": [
+    { "name": "ownerPk", "type": "pubkey" }
+  ],
+  "functions": [
+    {
+      "name": "spend",
+      "functionInputs": [
+        { "name": "userSig", "type": "signature" }
+      ],
+      "witnessSchema": [
+        { "name": "userSig", "type": "signature", "encoding": "schnorr-64" },
+        { "name": "serverSig", "type": "signature", "encoding": "schnorr-64" }
+      ],
+      "serverVariant": true,
+      "require": [
+        { "type": "signature" },
+        { "type": "serverSignature" }
+      ],
+      "asm": ["<ownerPk>", "<userSig>", "OP_CHECKSIG", "<SERVER_KEY>", "<serverSig>", "OP_CHECKSIG"]
+    },
+    {
+      "name": "spend",
+      "functionInputs": [
+        { "name": "userSig", "type": "signature" }
+      ],
+      "witnessSchema": [
+        { "name": "userSig", "type": "signature", "encoding": "schnorr-64" }
+      ],
+      "serverVariant": false,
+      "require": [
+        { "type": "signature" },
+        { "type": "older", "message": "Exit timelock of 144 blocks" }
+      ],
+      "asm": ["<ownerPk>", "<userSig>", "OP_CHECKSIG", "144", "OP_CHECKSEQUENCEVERIFY", "OP_DROP"]
+    }
+  ],
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  }
+}

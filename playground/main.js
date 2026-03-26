@@ -2,6 +2,7 @@
 // Import default export for WASM initialization, plus the exported functions
 import initWasm, { compile, version, validate, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
+import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
 // Projects: collections of related contracts
 const projects = {
@@ -1110,6 +1111,7 @@ function doCompile() {
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
+        displayBindings(result);
         showSuccess(result);
         markCompiled();
     } catch (err) {
@@ -1177,6 +1179,56 @@ function displayAsm(jsonStr) {
     } catch (e) {
         container.textContent = 'Failed to parse assembly output';
     }
+}
+
+// Display generated SDK bindings
+function displayBindings(jsonStr) {
+    const container = document.getElementById('bindings-output');
+
+    // Build target selector + content area if first time
+    if (!container.querySelector('.bindings-toolbar')) {
+        const toolbar = document.createElement('div');
+        toolbar.className = 'bindings-toolbar';
+        toolbar.innerHTML = AVAILABLE_TARGETS.map(t =>
+            `<button class="bindings-lang-btn${t.value === 'typescript' ? ' active' : ''}" data-lang="${t.value}">${t.label}</button>`
+        ).join('');
+        container.appendChild(toolbar);
+
+        const content = document.createElement('div');
+        content.className = 'bindings-code';
+        container.appendChild(content);
+
+        toolbar.addEventListener('click', (e) => {
+            const btn = e.target.closest('.bindings-lang-btn');
+            if (!btn) return;
+            toolbar.querySelectorAll('.bindings-lang-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            renderBindings(container.querySelector('.bindings-code'), btn.dataset.lang);
+        });
+    }
+
+    // Store the JSON for re-rendering on target switch
+    container.dataset.lastJson = jsonStr;
+
+    const activeLang = container.querySelector('.bindings-lang-btn.active')?.dataset.lang || 'typescript';
+    renderBindings(container.querySelector('.bindings-code'), activeLang);
+}
+
+function renderBindings(contentEl, target) {
+    const container = document.getElementById('bindings-output');
+    const jsonStr = container.dataset.lastJson;
+    if (!jsonStr) { contentEl.textContent = 'Compile a contract first'; return; }
+
+    try {
+        const code = generateBindings(jsonStr, target);
+        contentEl.innerHTML = escapeHtml(code);
+    } catch (err) {
+        contentEl.textContent = 'Codegen error: ' + err.message;
+    }
+}
+
+function escapeHtml(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // Highlight assembly code
