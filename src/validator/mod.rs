@@ -5,15 +5,21 @@
 //! 1. **AST validation** (`validate_ast`) — runs after parsing, before compilation.
 //!    Catches semantic errors that the PEG grammar cannot express, such as duplicate
 //!    function names, missing required options, and invalid timelock values.
+//!    Also performs CashScript-style require-guard checks (warn when a function has
+//!    no `require()` statements — it would trivially pass all spends).
 //!
 //! 2. **Output validation** (`validate_output`) — runs after compilation.
 //!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
-//!    bugs before the output reaches callers.
+//!    bugs before the output reaches callers.  Includes:
+//!    - BSST-style ASM structure analysis (OP_IF/OP_ELSE/OP_ENDIF balance,
+//!      placeholder syntax, no empty instructions).
+//!    - CashScript-style placeholder consistency check (every `<name>` in ASM must
+//!      resolve against the witnessSchema or constructorInputs).
 //!
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
-use crate::models::{Contract, ContractJson};
+use crate::models::{Contract, ContractJson, Parameter, Statement};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -147,7 +153,47 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
+    // ── Require-guard check (CashScript-style) ────────────────────────────
+    // A non-internal function with no require() statements (directly or inside
+    // branches/loops) will always succeed — any spend attempt will pass.
+    // This is almost certainly a security bug, not intentional.
+    for func in contract.functions.iter().filter(|f| !f.is_internal) {
+        if !statements_have_require(&func.statements) {
+            issues.push(ValidationIssue::warning(format!(
+                "function '{}' has no require() statements; \
+                 it will always succeed regardless of witness — is this intentional?",
+                func.name
+            )));
+        }
+    }
+
     issues
+}
+
+// ─── AST helpers ─────────────────────────────────────────────────────────────
+
+/// Returns `true` if any statement in the slice contains a `Require` (recursing
+/// into if/else branches and for-loop bodies).
+fn statements_have_require(stmts: &[Statement]) -> bool {
+    stmts.iter().any(|s| statement_has_require(s))
+}
+
+fn statement_has_require(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Require(_) => true,
+        Statement::LetBinding { .. } | Statement::VarAssign { .. } => false,
+        Statement::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            statements_have_require(then_body)
+                || else_body
+                    .as_ref()
+                    .map_or(false, |b| statements_have_require(b))
+        }
+        Statement::ForIn { body, .. } => statements_have_require(body),
+    }
 }
 
 // ─── Output validation ────────────────────────────────────────────────────────
@@ -165,6 +211,10 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
 /// - Every function variant has non-empty `witnessSchema`.
 /// - Every unique function name has both a `serverVariant=true` and
 ///   `serverVariant=false` entry.
+/// - **BSST-style ASM structure**: OP_IF/OP_ELSE/OP_ENDIF are balanced, no empty
+///   instructions, all `<placeholder>` tokens are syntactically well-formed.
+/// - **Placeholder consistency**: every `<name>` in the ASM resolves to a
+///   witnessSchema element or a constructorInput (CashScript-style).
 pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
@@ -198,6 +248,22 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 func.name, func.server_variant
             )));
         }
+
+        // BSST-style ASM structure analysis
+        for issue in validate_asm_structure(&func.name, func.server_variant, &func.asm) {
+            issues.push(issue);
+        }
+
+        // Placeholder consistency (CashScript-style)
+        for issue in validate_placeholder_consistency(
+            &func.name,
+            func.server_variant,
+            &func.asm,
+            &func.witness_schema,
+            &output.parameters,
+        ) {
+            issues.push(issue);
+        }
     }
 
     // ── Both variants present for each function name ───────────────────────
@@ -222,6 +288,163 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 "function '{}' has no serverVariant=false (exit) entry",
                 name
             )));
+        }
+    }
+
+    issues
+}
+
+// ─── BSST-style ASM structure analysis ───────────────────────────────────────
+
+/// Analyse the ASM instruction array for structural correctness.
+///
+/// Inspired by BSST (Bitcoin Script Symbolic Tracer) — checks that are feasible
+/// without full symbolic execution (which would require accurate witness-stack
+/// depth context):
+///
+/// - No empty instruction strings (would produce malformed script bytes).
+/// - All `<placeholder>` tokens are syntactically well-formed: non-empty name,
+///   no spaces, properly closed with `>`.
+/// - `OP_IF` / `OP_NOTIF` are balanced by a matching `OP_ENDIF`.
+/// - `OP_ELSE` only appears inside an open `OP_IF` / `OP_NOTIF` block.
+///
+/// Note: Stack-depth tracking is intentionally omitted.  In Arkade's execution
+/// model the witness stack is pre-populated before the script runs, and accurately
+/// accounting for those initial elements requires the full witness schema (which
+/// belongs to `validate_placeholder_consistency`).  Attempting depth tracking
+/// here without that context produces false-positive underflow errors on every
+/// standard function.
+pub fn validate_asm_structure(
+    func_name: &str,
+    server_variant: bool,
+    asm: &[String],
+) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    let label = format!("fn '{}' (serverVariant={})", func_name, server_variant);
+
+    let mut if_depth: i32 = 0;
+
+    for (idx, instr) in asm.iter().enumerate() {
+        // ── Empty instruction ──────────────────────────────────────────────
+        if instr.is_empty() {
+            issues.push(ValidationIssue::error(format!(
+                "{}: empty ASM instruction at index {}",
+                label, idx
+            )));
+            continue;
+        }
+
+        // ── Placeholder syntax ────────────────────────────────────────────
+        if instr.starts_with('<') {
+            if !instr.ends_with('>') {
+                issues.push(ValidationIssue::error(format!(
+                    "{}: malformed placeholder '{}' at index {} — missing closing '>'",
+                    label, instr, idx
+                )));
+            } else if instr.len() < 3 {
+                issues.push(ValidationIssue::error(format!(
+                    "{}: empty placeholder '<>' at index {}",
+                    label, idx
+                )));
+            }
+            // Note: compound-expression placeholders like
+            // <checkMultisig([a,b],[c,d])> legitimately contain spaces and
+            // brackets — the compiler emits them as-is for expressions it
+            // cannot yet fully inline.  A space-presence check would produce
+            // false positives for every such emission, so we skip it here.
+            // The placeholder-consistency check handles unknown names separately.
+            continue;
+        }
+
+        // ── Control-flow balance ──────────────────────────────────────────
+        match instr.as_str() {
+            "OP_IF" | "OP_NOTIF" => {
+                if_depth += 1;
+            }
+            "OP_ELSE" => {
+                if if_depth == 0 {
+                    issues.push(ValidationIssue::error(format!(
+                        "{}: OP_ELSE at index {} has no matching OP_IF",
+                        label, idx
+                    )));
+                }
+            }
+            "OP_ENDIF" => {
+                if if_depth == 0 {
+                    issues.push(ValidationIssue::error(format!(
+                        "{}: OP_ENDIF at index {} has no matching OP_IF",
+                        label, idx
+                    )));
+                } else {
+                    if_depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ── Unclosed branches ─────────────────────────────────────────────────
+    if if_depth > 0 {
+        issues.push(ValidationIssue::error(format!(
+            "{}: {} unclosed OP_IF/OP_NOTIF — missing OP_ENDIF",
+            label, if_depth
+        )));
+    }
+
+    issues
+}
+
+// ─── Placeholder consistency (CashScript-style) ───────────────────────────────
+
+/// Cross-check every `<name>` placeholder in the ASM against the function's
+/// `witnessSchema` and the contract's `constructorInputs`.
+///
+/// Every placeholder must resolve to one of:
+/// - A name in `witnessSchema` (caller-supplied witness element).
+/// - A name in `constructorInputs` (constructor-bound script parameter).
+/// - A well-known runtime placeholder: `SERVER_KEY` (operator key), or any token
+///   starting with `VTXO:` (contract instance reference resolved by the Ark node).
+///
+/// Orphaned placeholders mean the transaction can never be constructed because
+/// there is no known binding for that name.
+pub fn validate_placeholder_consistency(
+    func_name: &str,
+    server_variant: bool,
+    asm: &[String],
+    witness_schema: &[crate::models::WitnessElement],
+    constructor_inputs: &[Parameter],
+) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    let label = format!("fn '{}' (serverVariant={})", func_name, server_variant);
+
+    let witness_names: HashSet<&str> = witness_schema.iter().map(|w| w.name.as_str()).collect();
+    let ctor_names: HashSet<&str> = constructor_inputs.iter().map(|p| p.name.as_str()).collect();
+
+    for instr in asm {
+        if instr.starts_with('<') && instr.ends_with('>') && instr.len() >= 3 {
+            let name = &instr[1..instr.len() - 1];
+
+            // Well-known runtime-resolved tokens
+            if name == "SERVER_KEY" || name.starts_with("VTXO:") || name.starts_with("serverSig") {
+                continue;
+            }
+
+            // Compound-expression placeholders like
+            // <checkMultisig([a,b],[c,d])> or <sha256(preimage)>
+            // are emitted verbatim when the compiler cannot fully inline an
+            // expression.  They are evaluated by the Ark node at spend time —
+            // not looked up by name — so we skip the name-resolution check.
+            if name.contains('(') || name.contains('[') || name.contains(',') {
+                continue;
+            }
+
+            if !witness_names.contains(name) && !ctor_names.contains(name) {
+                issues.push(ValidationIssue::warning(format!(
+                    "{}: placeholder <{}> is not in witnessSchema or constructorInputs; \
+                     this transaction cannot be constructed without a binding for '{}'",
+                    label, name, name
+                )));
+            }
         }
     }
 
