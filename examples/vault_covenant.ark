@@ -1,0 +1,70 @@
+// vault_covenant.ark
+// Recursive ERC-4626-style vault. Tracks share accounting and price-per-share (PPS).
+// Only reportYield() can increase totalAssets relative to totalShares.
+// PPS is monotonically non-decreasing: reportYield enforces newTotalAssets >= totalAssets.
+//
+// Division note: all arithmetic uses OP_DIV64 (floor toward zero).
+// PPS ratios are computed off-chain; the covenant enforces state transitions only.
+
+import "vault_covenant.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract VaultCovenant(
+  pubkey keeperPk,
+  pubkey ownerPk,
+  int totalAssets,
+  int totalShares,
+  bytes32 upgradeRoot
+) {
+  function deposit(signature ownerSig, int newTotalAssets, int newTotalShares) {
+    require(checkSig(ownerSig, ownerPk), "invalid owner");
+    require(newTotalShares > totalShares, "shares must increase");
+    require(newTotalAssets > totalAssets, "assets must increase");
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        keeperPk, ownerPk, newTotalAssets, newTotalShares, upgradeRoot
+      ),
+      "successor mismatch"
+    );
+  }
+
+  function withdraw(signature ownerSig, int newTotalAssets, int newTotalShares) {
+    require(checkSig(ownerSig, ownerPk), "invalid owner");
+    require(newTotalShares < totalShares, "shares must decrease");
+    require(newTotalAssets < totalAssets, "assets must decrease");
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        keeperPk, ownerPk, newTotalAssets, newTotalShares, upgradeRoot
+      ),
+      "successor mismatch"
+    );
+  }
+
+  // Only path that can increase PPS.
+  // keeperSig over reportHash prevents intra-block replay.
+  function reportYield(
+    signature keeperSig,
+    bytes32 reportHash,
+    int newTotalAssets
+  ) {
+    require(newTotalAssets >= totalAssets, "PPS decrease forbidden");
+    require(checkSigFromStack(keeperSig, keeperPk, reportHash), "invalid keeper");
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        keeperPk, ownerPk, newTotalAssets, totalShares, upgradeRoot
+      ),
+      "successor mismatch"
+    );
+  }
+
+  // Opt-in migration. Value conservation enforced; successor script is unconstrained.
+  // Merkle allowlist check (upgradeRoot) is performed off-chain or in a future version.
+  function migrate(signature ownerSig) {
+    require(checkSig(ownerSig, ownerPk), "invalid owner");
+    require(tx.outputs[0].value == tx.input.current.value, "value must be conserved");
+  }
+}

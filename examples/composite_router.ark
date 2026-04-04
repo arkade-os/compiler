@@ -1,0 +1,66 @@
+// composite_router.ark
+// Atomically updates VaultCovenant + 2 StrategyFragments in one transaction.
+// Keeper attestations verified via checkSigFromStack.
+// PPS monotonicity enforced: newTotalAssets >= currentTotalAssets.
+//
+// weight0 + weight1 must equal 10000 (basis points). This is not enforced on-chain;
+// the keeper is responsible for correct weighting at report time.
+//
+// Division note: (reported0 * weight0 + reported1 * weight1) / 10000 floors toward zero.
+// This may cause newTotalAssets to be 1 sat below the true weighted average at boundary values.
+
+import "vault_covenant.ark";
+import "strategy_fragment.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract CompositeRouter(
+  pubkey keeper0,
+  pubkey keeper1,
+  pubkey vaultKeeperPk,
+  pubkey ownerPk,
+  int weight0,        // basis points; weight0 + weight1 == 10000
+  int weight1,
+  bytes32 strategyId0,
+  bytes32 strategyId1,
+  bytes32 upgradeRoot
+) {
+  function route(
+    signature keeperSig0,
+    signature keeperSig1,
+    bytes32 reportHash0,
+    bytes32 reportHash1,
+    int reported0,
+    int reported1,
+    int currentTotalAssets,
+    int currentTotalShares
+  ) {
+    require(checkSigFromStack(keeperSig0, keeper0, reportHash0), "invalid keeper0");
+    require(checkSigFromStack(keeperSig1, keeper1, reportHash1), "invalid keeper1");
+
+    int newTotalAssets = (reported0 * weight0 + reported1 * weight1) / 10000;
+    require(newTotalAssets >= currentTotalAssets, "PPS decrease forbidden");
+
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        vaultKeeperPk, ownerPk, newTotalAssets, currentTotalShares, upgradeRoot
+      ),
+      "vault successor mismatch"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new StrategyFragment(
+        keeper0, reported0, strategyId0
+      ),
+      "fragment0 successor mismatch"
+    );
+    require(
+      tx.outputs[2].scriptPubKey == new StrategyFragment(
+        keeper1, reported1, strategyId1
+      ),
+      "fragment1 successor mismatch"
+    );
+  }
+}

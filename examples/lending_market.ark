@@ -1,0 +1,279 @@
+// lending_market.ark
+// Lending market covenant. Manages collateral and debt for one borrower position.
+//
+// Two borrow paths:
+//   borrowExogenous — debt is supplied externally (via SupplyFlow from VaultCovenant).
+//                     No token minting. Debt flows in from vault, collateral locks here.
+//   borrowSynthetic — debt is minted as asset-group tokens in the same transaction.
+//                     DebtToken minted to borrower; CreditToken minted to creditHolder.
+//                     Both tokens are fresh issuances gated by control assets.
+//
+// Repayment and liquidation:
+//   repay  — borrower burns DebtToken (delta < 0 for synthetic path), releases collateral.
+//             Credit holder receives repayment proceeds.
+//   liquidate — keeper-only. Verifies DebtToken burned for synthetic path.
+//               Waterfall: fee to keeper | face value to creditHolder | residual to borrower.
+//
+// Secondary market:
+//   transferCredit — atomically updates creditHolder in LendingMarket state AND
+//                    produces a new CreditNote VTXO. This is the on-chain settlement path:
+//                    a NonInteractiveSwap settles by calling transferCredit.
+//
+// Division note: all ratio checks use integer arithmetic scaled to basis points.
+// OP_DIV64 floors toward zero. Both sides of the LLTV check are consistently floored,
+// so no systematic bias exists. Ratio boundaries are very slightly borrower-favourable.
+// Liquidation fee truncates down (keeper receives marginally less at fee boundary values).
+
+import "lending_market.ark";
+import "single_sig.ark";
+import "debt_note.ark";
+import "credit_note.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract LendingMarket(
+  pubkey  borrowerPk,
+  pubkey  oraclePk,
+  pubkey  vaultKeeperPk,
+  pubkey  creditHolder,       // lender's on-chain address; updated by transferCredit
+  int     collateralAmount,
+  int     debtAmount,
+  int     lltv,               // basis points, e.g. 8500 = 85 %
+  int     isSynthetic,        // 1 = mint/burn token path, 0 = supply/repay path
+  bytes32 collateralAssetId,
+  bytes32 loanAssetId,
+  bytes32 oracleHash,
+  bytes32 debtTokenId,        // debt token asset ID — passed to assetGroups.find()
+  bytes32 creditTokenId,      // credit token asset ID — passed to assetGroups.find()
+  bytes32 debtTokenCtrlId,    // control asset that gates debt token issuance
+  bytes32 creditTokenCtrlId   // control asset that gates credit token issuance
+) {
+  // ─── Exogenous borrow ──────────────────────────────────────────────────────────
+  // Debt was supplied by VaultCovenant via SupplyFlow. No token minting.
+  // Borrower provides collateral; borrowed funds flow out to borrower on output 1.
+  function borrowExogenous(
+    signature borrowerSig,
+    bytes32 priceHash,
+    signature oracleSig,
+    int price,
+    int borrowAmount,
+    int collateral
+  ) {
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower");
+    require(checkSigFromStack(oracleSig, oraclePk, priceHash), "invalid oracle");
+
+    // Collateral ratio check: (collateral * price / 10000) >= (borrowAmount * 10000 / lltv)
+    // Division floors toward zero — see contract header note.
+    int lhs = collateral * price / 10000;
+    int rhs = borrowAmount * 10000 / lltv;
+    require(lhs >= rhs, "insufficient collateral ratio");
+
+    // Output 0: updated LendingMarket holding the collateral
+    require(tx.outputs[0].value == collateral, "collateral must be locked in output 0");
+    require(
+      tx.outputs[0].scriptPubKey == new LendingMarket(
+        borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
+        collateral, borrowAmount, lltv, isSynthetic,
+        collateralAssetId, loanAssetId, oracleHash,
+        debtTokenId, creditTokenId, debtTokenCtrlId, creditTokenCtrlId
+      ),
+      "successor mismatch"
+    );
+    // Output 1: borrowed funds flow to borrower
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk),
+      "borrower output mismatch"
+    );
+  }
+
+  // ─── Synthetic borrow ─────────────────────────────────────────────────────────
+  // Debt is minted as asset-group tokens. No vault supply needed.
+  // DebtToken minted to borrower (output 2); CreditToken minted to creditHolder (output 3).
+  // Both token groups must be fresh issuances in this transaction.
+  function borrowSynthetic(
+    signature borrowerSig,
+    bytes32 priceHash,
+    signature oracleSig,
+    int price,
+    int borrowAmount,
+    int collateral
+  ) {
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower");
+    require(checkSigFromStack(oracleSig, oraclePk, priceHash), "invalid oracle");
+
+    // Collateral ratio check
+    int lhs = collateral * price / 10000;
+    int rhs = borrowAmount * 10000 / lltv;
+    require(lhs >= rhs, "insufficient collateral ratio");
+
+    // Both token groups must be fresh issuances gated by their control assets
+    let debtGroup = tx.assetGroups.find(debtTokenId);
+    require(debtGroup.isFresh == 1, "debt token must be a new issuance");
+    require(debtGroup.control == debtTokenCtrlId, "wrong debt token control asset");
+    require(debtGroup.delta > 0, "must mint debt tokens");
+    require(tx.inputs[0].assets.lookup(debtTokenCtrlId) > 0, "debt control asset must be present at input 0");
+
+    let creditGroup = tx.assetGroups.find(creditTokenId);
+    require(creditGroup.isFresh == 1, "credit token must be a new issuance");
+    require(creditGroup.control == creditTokenCtrlId, "wrong credit token control asset");
+    require(creditGroup.delta > 0, "must mint credit tokens");
+    require(tx.inputs[0].assets.lookup(creditTokenCtrlId) > 0, "credit control asset must be present at input 0");
+
+    // Output 0: updated LendingMarket holding the collateral
+    require(tx.outputs[0].value == collateral, "collateral must be locked in output 0");
+    require(
+      tx.outputs[0].scriptPubKey == new LendingMarket(
+        borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
+        collateral, borrowAmount, lltv, isSynthetic,
+        collateralAssetId, loanAssetId, oracleHash,
+        debtTokenId, creditTokenId, debtTokenCtrlId, creditTokenCtrlId
+      ),
+      "successor mismatch"
+    );
+    // Output 1: minted synthetic debt to borrower
+    require(tx.outputs[1].value == borrowAmount, "minted debt must equal borrowAmount");
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk),
+      "borrower output mismatch"
+    );
+    // Output 2: DebtNote VTXO for borrower (transferable debt receipt)
+    require(
+      tx.outputs[2].scriptPubKey == new DebtNote(borrowerPk, oracleHash, borrowAmount),
+      "debt note output mismatch"
+    );
+    // Output 3: CreditNote VTXO for credit holder (transferable credit receipt)
+    require(
+      tx.outputs[3].scriptPubKey == new CreditNote(creditHolder, oracleHash, borrowAmount),
+      "credit note output mismatch"
+    );
+  }
+
+  // ─── Repay ────────────────────────────────────────────────────────────────────
+  // Borrower repays partial or full debt.
+  // For the synthetic path (isSynthetic == 1): DebtToken must be burned in this tx.
+  // Credit holder receives repayment proceeds on output 1.
+  // Full repay: collateral released to borrower on output 0.
+  // Partial repay: recursive covenant on output 0 with updated debtAmount.
+  function repay(
+    signature borrowerSig,
+    int repayAmount,
+    int newDebtAmount
+  ) {
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower");
+    require(repayAmount > 0, "repayAmount must be positive");
+
+    // Verify accounting: newDebtAmount + repayAmount == debtAmount
+    int verifySum = newDebtAmount + repayAmount;
+    require(verifySum == debtAmount, "invalid repay amounts");
+
+    // Synthetic path: verify DebtToken burned in this transaction
+    if (isSynthetic == 1) {
+      let debtGroup = tx.assetGroups.find(debtTokenId);
+      require(debtGroup.delta < 0, "DebtToken must be burned on repay");
+    }
+
+    // Credit holder receives repayment on output 1
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(creditHolder),
+      "repayment must go to credit holder"
+    );
+
+    if (newDebtAmount == 0) {
+      // Full repay: release collateral to borrower
+      require(tx.outputs[0].value == collateralAmount, "full collateral must be released");
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(borrowerPk),
+        "collateral must be returned to borrower"
+      );
+    } else {
+      // Partial repay: recursive covenant with reduced debt
+      require(
+        tx.outputs[0].scriptPubKey == new LendingMarket(
+          borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
+          collateralAmount, newDebtAmount, lltv, isSynthetic,
+          collateralAssetId, loanAssetId, oracleHash,
+          debtTokenId, creditTokenId, debtTokenCtrlId, creditTokenCtrlId
+        ),
+        "successor mismatch"
+      );
+    }
+  }
+
+  // ─── Liquidate ────────────────────────────────────────────────────────────────
+  // Keeper-only. Position must be underwater (threshold < debtAmount).
+  // For the synthetic path: DebtToken must be burned in this tx.
+  // Liquidation waterfall:
+  //   output 0: liquidation fee (5% of collateral) to keeper
+  //   output 1: face value (debtAmount) to credit holder
+  //   output 2: residual (collateral - fee - debtAmount) to borrower
+  //
+  // Division note: fee = collateralAmount * 500 / 10000 floors toward zero.
+  // residual = collateralAmount - fee - debtAmount (chained subtraction).
+  // Caller is responsible for ensuring collateralAmount >= fee + debtAmount.
+  function liquidate(
+    signature vaultKeeperSig,
+    bytes32 priceHash,
+    signature oracleSig,
+    int price
+  ) {
+    require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid keeper");
+    require(checkSigFromStack(oracleSig, oraclePk, priceHash), "invalid oracle");
+
+    // Position is underwater: collateral value * lltv < debt * 10000
+    int ratio = collateralAmount * price / 10000;
+    int threshold = ratio * lltv / 10000;
+    require(threshold < debtAmount, "position is not underwater");
+
+    // Synthetic path: verify DebtToken burned in this transaction
+    if (isSynthetic == 1) {
+      let debtGroup = tx.assetGroups.find(debtTokenId);
+      require(debtGroup.delta < 0, "DebtToken must be burned on liquidation");
+    }
+
+    // Liquidation waterfall
+    int fee = collateralAmount * 500 / 10000;
+    int residual = collateralAmount - fee - debtAmount;
+
+    require(tx.outputs[0].value >= fee, "liquidation fee output too low");
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(vaultKeeperPk),
+      "fee must go to keeper"
+    );
+    require(tx.outputs[1].value >= debtAmount, "credit holder payout too low");
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(creditHolder),
+      "face value must go to credit holder"
+    );
+    require(tx.outputs[2].value >= residual, "residual to borrower too low");
+    require(
+      tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk),
+      "residual must go to borrower"
+    );
+  }
+
+  // ─── Transfer credit ──────────────────────────────────────────────────────────
+  // Atomically updates creditHolder in this covenant AND produces a new CreditNote VTXO.
+  // This is the on-chain settlement path for secondary market trades:
+  // a NonInteractiveSwap settles by calling transferCredit, transferring the credit
+  // claim to the buyer without touching the borrower or collateral.
+  function transferCredit(signature currentHolder, pubkey newHolder) {
+    require(checkSig(currentHolder, creditHolder), "invalid credit holder");
+    require(
+      tx.outputs[0].scriptPubKey == new LendingMarket(
+        borrowerPk, oraclePk, vaultKeeperPk, newHolder,
+        collateralAmount, debtAmount, lltv, isSynthetic,
+        collateralAssetId, loanAssetId, oracleHash,
+        debtTokenId, creditTokenId, debtTokenCtrlId, creditTokenCtrlId
+      ),
+      "successor mismatch"
+    );
+    require(tx.outputs[0].value == tx.input.current.value, "value must be preserved");
+    require(
+      tx.outputs[1].scriptPubKey == new CreditNote(newHolder, oracleHash, debtAmount),
+      "credit note output mismatch"
+    );
+  }
+}

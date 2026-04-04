@@ -1,0 +1,35 @@
+// credit_note.ark
+// Transferable credit receipt. Represents the lender's claim on repayment.
+// Issued by LendingMarket.borrowSynthetic() to the creditHolder at borrow time.
+//
+// Whoever holds the CreditNote at repayment or liquidation time receives the proceeds.
+// Secondary market exit: holder posts a NonInteractiveSwap offering CreditNote for BTC.
+// Buyer takes the CreditNote; original supplier exits without touching the borrower.
+//
+// creditHolder in the LendingMarket covenant is updated atomically via
+// LendingMarket.transferCredit(), which produces a new CreditNote on output 1.
+// Standalone transfer (this function) does NOT update LendingMarket creditHolder.
+
+import "credit_note.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract CreditNote(
+  pubkey holderPk,
+  bytes32 marketRef,   // sha256(oracleHash) — identifies the associated LendingMarket
+  int faceValue        // original borrow amount (debt face value)
+) {
+  function transfer(signature holderSig, pubkey newHolderPk) {
+    require(checkSig(holderSig, holderPk), "invalid holder");
+    require(
+      tx.outputs[0].scriptPubKey == new CreditNote(
+        newHolderPk, marketRef, faceValue
+      ),
+      "successor mismatch"
+    );
+    require(tx.outputs[0].value == tx.input.current.value, "value preserved");
+  }
+}

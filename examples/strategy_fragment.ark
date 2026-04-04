@@ -1,0 +1,38 @@
+// strategy_fragment.ark
+// Independent VTXO per strategy. Zero shared state between fragments.
+// Keeper attests to reported amounts via checkSigFromStack.
+
+import "strategy_fragment.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract StrategyFragment(
+  pubkey keeperPk,
+  int allocatedAmount,
+  bytes32 strategyId
+) {
+  function allocate(signature keeperSig, int newAmount) {
+    require(checkSig(keeperSig, keeperPk), "invalid keeper");
+    require(newAmount > allocatedAmount, "must increase allocation");
+    require(
+      tx.outputs[0].scriptPubKey == new StrategyFragment(
+        keeperPk, newAmount, strategyId
+      ),
+      "successor mismatch"
+    );
+  }
+
+  function report(signature keeperSig, bytes32 reportHash, int reportedAmount) {
+    require(reportedAmount > 0, "reported amount must be positive");
+    require(checkSigFromStack(keeperSig, keeperPk, reportHash), "invalid keeper");
+    require(
+      tx.outputs[0].scriptPubKey == new StrategyFragment(
+        keeperPk, reportedAmount, strategyId
+      ),
+      "successor mismatch"
+    );
+  }
+}

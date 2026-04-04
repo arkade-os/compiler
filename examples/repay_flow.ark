@@ -1,0 +1,45 @@
+// repay_flow.ark
+// Inverse of SupplyFlow. Returns repaid assets from a closed LendingMarket back
+// to VaultCovenant, accreting yield to the vault.
+//
+// The vault's totalAssets increments by returnAmount. Full value flows into the vault:
+// output value == current input value (no value escapes).
+//
+// Yield accrual: returnAmount > original supplyAmount by the interest earned.
+// The caller provides both values; the covenant verifies only conservation and
+// the correct successor state. Interest accounting is settled off-chain.
+//
+// Division note: newVaultAssets = totalAssets + returnAmount (no rounding).
+
+import "vault_covenant.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract RepayFlow(
+  pubkey  vaultKeeperPk,
+  pubkey  ownerPk,
+  int     returnAmount,
+  int     totalAssets,
+  int     totalShares,
+  bytes32 upgradeRoot
+) {
+  function reclaim(signature vaultKeeperSig) {
+    require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
+
+    int newVaultAssets = totalAssets + returnAmount;
+
+    // Output 0: VaultCovenant with incremented totalAssets
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        vaultKeeperPk, ownerPk, newVaultAssets, totalShares, upgradeRoot
+      ),
+      "vault successor mismatch"
+    );
+
+    // Full value flows back into the vault — yield accrues as returnAmount > supplyAmount
+    require(tx.outputs[0].value == tx.input.current.value, "full value must flow to vault");
+  }
+}

@@ -1,0 +1,71 @@
+// supply_flow.ark
+// One-shot atomic template. Moves assets from VaultCovenant into a fresh LendingMarket.
+//
+// The vault's totalAssets decrements by supplyAmount. A fresh LendingMarket is created
+// with zero collateral and zero debt, ready for borrowExogenous. Value is conserved:
+// vault output + market output == current input value.
+//
+// The LendingMarket is initialized with isSynthetic = 0 (exogenous debt path).
+// For the synthetic path no SupplyFlow is needed — LendingMarket is created directly.
+//
+// Division note: newVaultAssets = totalAssets - supplyAmount (no rounding).
+
+import "vault_covenant.ark";
+import "lending_market.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract SupplyFlow(
+  pubkey  vaultKeeperPk,
+  pubkey  ownerPk,
+  pubkey  borrowerPk,
+  pubkey  oraclePk,
+  pubkey  creditHolder,
+  int     supplyAmount,
+  int     lltv,
+  int     totalAssets,
+  int     totalShares,
+  bytes32 upgradeRoot,
+  bytes32 collateralAssetId,
+  bytes32 loanAssetId,
+  bytes32 oracleHash,
+  bytes32 debtTokenId,
+  bytes32 creditTokenId,
+  bytes32 debtTokenCtrlId,
+  bytes32 creditTokenCtrlId
+) {
+  function supply(signature vaultKeeperSig) {
+    require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
+
+    int newVaultAssets = totalAssets - supplyAmount;
+
+    // Output 0: VaultCovenant with decremented totalAssets
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        vaultKeeperPk, ownerPk, newVaultAssets, totalShares, upgradeRoot
+      ),
+      "vault successor mismatch"
+    );
+
+    // Output 1: fresh LendingMarket initialized with zero state, ready for borrower
+    require(
+      tx.outputs[1].scriptPubKey == new LendingMarket(
+        borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
+        0, 0, lltv, 0,
+        collateralAssetId, loanAssetId, oracleHash,
+        debtTokenId, creditTokenId, debtTokenCtrlId, creditTokenCtrlId
+      ),
+      "market successor mismatch"
+    );
+
+    // Value conservation: vault output + market output == this input
+    int val0 = tx.outputs[0].value;
+    int val1 = tx.outputs[1].value;
+    int totalOut = val0 + val1;
+    int inputVal = tx.input.current.value;
+    require(totalOut == inputVal, "value conservation violated");
+  }
+}
