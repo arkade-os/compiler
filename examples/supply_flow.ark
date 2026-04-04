@@ -28,7 +28,6 @@ contract SupplyFlow(
   int     lltv,
   int     totalAssets,
   int     totalShares,
-  bytes32 upgradeRoot,
   bytes32 collateralAssetId,
   bytes32 loanAssetId,
   bytes32 oracleHash,
@@ -45,7 +44,7 @@ contract SupplyFlow(
     // Output 0: VaultCovenant with decremented totalAssets
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
-        vaultKeeperPk, ownerPk, newVaultAssets, totalShares, upgradeRoot
+        vaultKeeperPk, ownerPk, newVaultAssets, totalShares
       ),
       "vault successor mismatch"
     );

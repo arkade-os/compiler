@@ -25,8 +25,7 @@ contract CompositeRouter(
   int weight0,        // basis points; weight0 + weight1 == 10000
   int weight1,
   bytes32 strategyId0,
-  bytes32 strategyId1,
-  bytes32 upgradeRoot
+  bytes32 strategyId1
 ) {
   function route(
     signature keeperSig0,
@@ -46,7 +45,7 @@ contract CompositeRouter(
 
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
-        vaultKeeperPk, ownerPk, newTotalAssets, currentTotalShares, upgradeRoot
+        vaultKeeperPk, ownerPk, newTotalAssets, currentTotalShares
       ),
       "vault successor mismatch"
     );

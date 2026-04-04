@@ -3,6 +3,9 @@
 // Only reportYield() can increase totalAssets relative to totalShares.
 // PPS is monotonically non-decreasing: reportYield enforces newTotalAssets >= totalAssets.
 //
+// The covenant is fully non-custodial: every spending path produces a successor
+// VaultCovenant with the same keeperPk and ownerPk. There is no escape hatch.
+//
 // Division note: all arithmetic uses OP_DIV64 (floor toward zero).
 // PPS ratios are computed off-chain; the covenant enforces state transitions only.
 
@@ -17,8 +20,7 @@ contract VaultCovenant(
   pubkey keeperPk,
   pubkey ownerPk,
   int totalAssets,
-  int totalShares,
-  bytes32 upgradeRoot
+  int totalShares
 ) {
   function deposit(signature ownerSig, int newTotalAssets, int newTotalShares) {
     require(checkSig(ownerSig, ownerPk), "invalid owner");
@@ -26,7 +28,7 @@ contract VaultCovenant(
     require(newTotalAssets > totalAssets, "assets must increase");
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
-        keeperPk, ownerPk, newTotalAssets, newTotalShares, upgradeRoot
+        keeperPk, ownerPk, newTotalAssets, newTotalShares
       ),
       "successor mismatch"
     );
@@ -38,7 +40,7 @@ contract VaultCovenant(
     require(newTotalAssets < totalAssets, "assets must decrease");
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
-        keeperPk, ownerPk, newTotalAssets, newTotalShares, upgradeRoot
+        keeperPk, ownerPk, newTotalAssets, newTotalShares
       ),
       "successor mismatch"
     );
@@ -55,16 +57,9 @@ contract VaultCovenant(
     require(checkSigFromStack(keeperSig, keeperPk, reportHash), "invalid keeper");
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
-        keeperPk, ownerPk, newTotalAssets, totalShares, upgradeRoot
+        keeperPk, ownerPk, newTotalAssets, totalShares
       ),
       "successor mismatch"
     );
-  }
-
-  // Opt-in migration. Value conservation enforced; successor script is unconstrained.
-  // Merkle allowlist check (upgradeRoot) is performed off-chain or in a future version.
-  function migrate(signature ownerSig) {
-    require(checkSig(ownerSig, ownerPk), "invalid owner");
-    require(tx.outputs[0].value == tx.input.current.value, "value must be conserved");
   }
 }

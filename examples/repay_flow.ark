@@ -23,8 +23,7 @@ contract RepayFlow(
   pubkey  ownerPk,
   int     returnAmount,
   int     totalAssets,
-  int     totalShares,
-  bytes32 upgradeRoot
+  int     totalShares
 ) {
   function reclaim(signature vaultKeeperSig) {
     require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
@@ -34,7 +33,7 @@ contract RepayFlow(
     // Output 0: VaultCovenant with incremented totalAssets
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
-        vaultKeeperPk, ownerPk, newVaultAssets, totalShares, upgradeRoot
+        vaultKeeperPk, ownerPk, newVaultAssets, totalShares
       ),
       "vault successor mismatch"
     );
