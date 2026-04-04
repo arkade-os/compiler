@@ -14,7 +14,21 @@ const projects = {
             'offer.ark': contracts.stability_offer,
             'position.ark': contracts.stable_position,
         }
-    }
+    },
+    vault_lending: {
+        name: 'Vault + Lending',
+        description: 'ERC-4626 vault with yield strategies, lending market, and DebtToken/CreditToken synthetics',
+        files: {
+            'vault_covenant.ark': contracts.vault_lending_vault_covenant,
+            'strategy_fragment.ark': contracts.vault_lending_strategy_fragment,
+            'composite_router.ark': contracts.vault_lending_composite_router,
+            'debt_note.ark': contracts.vault_lending_debt_note,
+            'credit_note.ark': contracts.vault_lending_credit_note,
+            'lending_market.ark': contracts.vault_lending_lending_market,
+            'supply_flow.ark': contracts.vault_lending_supply_flow,
+            'repay_flow.ark': contracts.vault_lending_repay_flow,
+        }
+    },
 };
 
 // Single file examples
