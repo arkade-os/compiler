@@ -51,6 +51,9 @@ jobs:
           rm -f playground/pkg/package.json
           rm -f playground/pkg/README.md
 
+      - name: Remove playground .gitignore so generated files are included
+        run: rm playground/.gitignore
+
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
