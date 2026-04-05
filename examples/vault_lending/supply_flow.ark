@@ -2,11 +2,8 @@
 // One-shot atomic template. Moves assets from VaultCovenant into a fresh LendingMarket.
 //
 // The vault's totalAssets decrements by supplyAmount. A fresh LendingMarket is created
-// with zero collateral and zero debt, ready for borrowExogenous. Value is conserved:
+// with zero collateral and zero debt, ready for borrow(). Value is conserved:
 // vault output + market output == current input value.
-//
-// The LendingMarket is initialized with isSynthetic = 0 (exogenous debt path).
-// For the synthetic path no SupplyFlow is needed — LendingMarket is created directly.
 //
 // Division note: newVaultAssets = totalAssets - supplyAmount (no rounding).
 
@@ -30,11 +27,7 @@ contract SupplyFlow(
   int     totalShares,
   bytes32 collateralAssetId,
   bytes32 loanAssetId,
-  bytes32 oracleHash,
-  bytes32 debtTokenId,
-  bytes32 creditTokenId,
-  bytes32 debtTokenCtrlId,
-  bytes32 creditTokenCtrlId
+  bytes32 oracleHash
 ) {
   function supply(signature vaultKeeperSig) {
     require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
@@ -49,13 +42,12 @@ contract SupplyFlow(
       "vault successor mismatch"
     );
 
-    // Output 1: fresh LendingMarket initialized with zero state, ready for borrower
+    // Output 1: fresh LendingMarket with zero state, ready for borrower
     require(
       tx.outputs[1].scriptPubKey == new LendingMarket(
         borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
-        0, 0, lltv, 0,
-        collateralAssetId, loanAssetId, oracleHash,
-        debtTokenId, creditTokenId, debtTokenCtrlId, creditTokenCtrlId
+        0, 0, lltv,
+        collateralAssetId, loanAssetId, oracleHash
       ),
       "market successor mismatch"
     );
