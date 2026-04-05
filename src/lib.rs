@@ -3,6 +3,7 @@ pub mod models;
 pub mod opcodes;
 pub mod parser;
 pub mod typechecker;
+pub mod validator;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;

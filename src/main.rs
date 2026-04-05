@@ -7,6 +7,7 @@ mod models;
 mod opcodes;
 mod parser;
 mod typechecker;
+mod validator;
 
 /// Arkade Compiler CLI
 ///

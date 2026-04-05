@@ -24,6 +24,7 @@ use crate::opcodes::{
 };
 use crate::parser;
 use crate::typechecker::{self, ArkType};
+use crate::validator::{self, Severity};
 use chrono::Utc;
 
 // ─── Introspection Detection ────────────────────────────────────────────────────
@@ -199,14 +200,34 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
+    // ── Semantic validation ────────────────────────────────────────────────
+    // Catch errors the PEG grammar cannot express (duplicate names, missing
+    // timelocks, etc.) before we attempt code generation.
+    let ast_issues = validator::validate_ast(&contract);
+    if validator::has_errors(&ast_issues) {
+        let errors: Vec<String> = ast_issues
+            .iter()
+            .filter(|i| matches!(i.severity, Severity::Error))
+            .map(|i| format!("validation error: {}", i.message))
+            .collect();
+        return Err(errors.join("; "));
+    }
+
     // ── Type checking ──────────────────────────────────────────────────────
     // Run the type checker. Errors are non-fatal and returned as warnings on
     // ContractJson so callers (CLI, WASM, tests) can surface them as they see fit.
     let type_errors = typechecker::check_contract(&contract);
-    let warnings: Vec<String> = type_errors
+    let mut warnings: Vec<String> = type_errors
         .iter()
         .map(|e| format!("warning[type]: {}", e.message))
         .collect();
+
+    // Append any non-fatal validation warnings (e.g. renew=0)
+    for issue in &ast_issues {
+        if matches!(issue.severity, Severity::Warning) {
+            warnings.push(format!("warning[validation]: {}", issue.message));
+        }
+    }
 
     // The Arkade operator key is always injected externally (via getInfo()).
     // It is never a constructor parameter — options.server is a boolean flag only.
@@ -240,6 +261,19 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 
         let exit = generate_function(function, &contract, false)?;
         json.functions.push(exit);
+    }
+
+    // ── Output invariant check ─────────────────────────────────────────────
+    // Self-check the emitted JSON for structural invariants. Issues here
+    // indicate compiler bugs; surface them as warnings so callers can report
+    // them rather than silently producing malformed output.
+    let output_issues = validator::validate_output(&json);
+    for issue in &output_issues {
+        let tag = match issue.severity {
+            Severity::Error => "warning[output-invariant-error]",
+            Severity::Warning => "warning[output-invariant]",
+        };
+        json.warnings.push(format!("{}: {}", tag, issue.message));
     }
 
     Ok(json)
@@ -2076,8 +2110,12 @@ fn substitute_expression(
         // Replace index variable with literal k
         Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
         // Replace value_var with array_name_{k} when iterating over arrays
-        Expression::Variable(var) if var == value_var && array_name.is_some() => {
-            Expression::Variable(format!("{}_{}", array_name.unwrap(), k))
+        Expression::Variable(var) if var == value_var => {
+            if let Some(name) = array_name {
+                Expression::Variable(format!("{}_{}", name, k))
+            } else {
+                Expression::Variable(var.clone())
+            }
         }
         // Replace value_var.property with appropriate indexed expression
         Expression::GroupProperty { group, property } if group == value_var => {
