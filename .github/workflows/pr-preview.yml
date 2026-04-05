@@ -1,0 +1,126 @@
+name: PR Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - master
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Generate contracts.js
+        run: ./playground/generate_contracts.sh
+
+      - name: Build WASM package
+        run: wasm-pack build --target web --out-dir playground/pkg --features wasm
+
+      - name: Clean up WASM package artifacts
+        run: |
+          rm -f playground/pkg/.gitignore
+          rm -f playground/pkg/package.json
+          rm -f playground/pkg/README.md
+
+      - name: Remove playground .gitignore so generated files are included
+        run: rm playground/.gitignore
+
+      - name: Deploy PR preview
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: playground
+          target-folder: pr-previews/pr-${{ github.event.number }}
+          clean: true
+
+      - name: Post or update PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request.number;
+            const previewUrl = `https://arkade-os.github.io/compiler/pr-previews/pr-${pr}/`;
+            const marker = '<!-- arkade-pr-preview -->';
+            const body = `${marker}
+            ### Playground Preview
+
+            A live preview of this PR's playground is available at:
+            **[${previewUrl}](${previewUrl})**
+
+            > Built from commit \`${{ github.sha }}\` · [Workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr,
+                body,
+              });
+            }
+
+  cleanup-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Remove preview directory
+        run: |
+          PR_DIR="pr-previews/pr-${{ github.event.number }}"
+          if [ -d "$PR_DIR" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git rm -rf "$PR_DIR"
+            git commit -m "chore: remove PR preview for #${{ github.event.number }}"
+            git push
+          else
+            echo "No preview directory found at $PR_DIR, nothing to clean up."
+          fi
