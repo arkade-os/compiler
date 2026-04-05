@@ -64,6 +64,17 @@ jobs:
           target-folder: pr-previews/pr-${{ github.event.number }}
           clean: true
 
+      - name: Ensure root .nojekyll exists on gh-pages
+        run: |
+          mkdir /tmp/nojekyll-root
+          touch /tmp/nojekyll-root/.nojekyll
+      - uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: /tmp/nojekyll-root
+          target-folder: .
+          clean: false
+
       - name: Post or update PR comment
         uses: actions/github-script@v7
         with:
