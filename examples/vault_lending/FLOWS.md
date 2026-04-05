@@ -1,21 +1,17 @@
 # Vault + Lending — UTXO Spending Flows
 
-Each diagram shows one transaction: inputs on the left, outputs on the right.
-Covenant names are the Arkade contracts. `→` means "spending path / function called".
+Each diagram shows one transaction. Inputs are on the left, outputs on the right.
+`fn(...)` labels on edges name the covenant function being executed.
 
 ---
 
 ## 1. Deposit (LP → Vault)
 
 ```mermaid
-flowchart LR
-    subgraph TX["deposit()"]
-        direction LR
-        I0["INPUT 0\nVaultCovenant\n(keeperPk, ownerPk,\ntotalAssets, totalShares)"]
-        I1["INPUT 1\nSingleSig(ownerPk)\ndeposit value"]
-
-        O0["OUTPUT 0\nVaultCovenant\n(keeperPk, ownerPk,\ntotalAssets + deposit,\ntotalShares + newShares)"]
-    end
+graph LR
+    I0["VaultCovenant\nkeeperPk, ownerPk\ntotalAssets, totalShares"]
+    I1["SingleSig(ownerPk)\ndeposit value"]
+    O0["VaultCovenant\nkeeperPk, ownerPk\ntotalAssets + deposit\ntotalShares + newShares"]
 
     I0 -->|"deposit(ownerSig, ...)"| O0
     I1 --> O0
@@ -26,14 +22,10 @@ flowchart LR
 ## 2. Withdraw (Vault → LP)
 
 ```mermaid
-flowchart LR
-    subgraph TX["withdraw()"]
-        direction LR
-        I0["INPUT 0\nVaultCovenant\n(keeperPk, ownerPk,\ntotalAssets, totalShares)"]
-
-        O0["OUTPUT 0\nVaultCovenant\n(keeperPk, ownerPk,\ntotalAssets - withdraw,\ntotalShares - burnedShares)"]
-        O1["OUTPUT 1\nSingleSig(ownerPk)\nwithdraw value"]
-    end
+graph LR
+    I0["VaultCovenant\nkeeperPk, ownerPk\ntotalAssets, totalShares"]
+    O0["VaultCovenant\nkeeperPk, ownerPk\ntotalAssets - withdraw\ntotalShares - burned"]
+    O1["SingleSig(ownerPk)\nwithdraw value"]
 
     I0 -->|"withdraw(ownerSig, ...)"| O0
     I0 --> O1
@@ -43,17 +35,13 @@ flowchart LR
 
 ## 3. Supply (Vault → LendingMarket)
 
-`creditHolder` is the precomputed scriptPubKey of `RepayFlow(keeperPk, ownerPk, totalAssets − supplyAmount, totalShares)`.
+`creditHolder` = precomputed `scriptPubKey` of `RepayFlow(keeperPk, ownerPk, totalAssets − supplyAmount, totalShares)`
 
 ```mermaid
-flowchart LR
-    subgraph TX["supply()"]
-        direction LR
-        I0["INPUT 0\nSupplyFlow\n(keeperPk, ownerPk, borrowerPk,\noraclePk, creditHolder,\nsupplyAmount, lltv,\ntotalAssets, totalShares, ...)"]
-
-        O0["OUTPUT 0\nVaultCovenant\n(keeperPk, ownerPk,\ntotalAssets − supplyAmount,\ntotalShares)"]
-        O1["OUTPUT 1\nLendingMarket\n(borrowerPk, oraclePk, keeperPk,\ncreditHolder,\ncollateral=0, debt=0, lltv, ...)"]
-    end
+graph LR
+    I0["SupplyFlow\nkeeperPk, ownerPk, borrowerPk\ncreditHolder, supplyAmount, lltv\ntotalAssets, totalShares"]
+    O0["VaultCovenant\nkeeperPk, ownerPk\ntotalAssets - supplyAmount\ntotalShares"]
+    O1["LendingMarket\nborrowerPk, oraclePk, keeperPk\ncreditHolder = RepayFlow script\ncollateral=0, debt=0, lltv"]
 
     I0 -->|"supply(keeperSig)"| O0
     I0 --> O1
@@ -64,15 +52,11 @@ flowchart LR
 ## 4. Borrow (LendingMarket → Borrower)
 
 ```mermaid
-flowchart LR
-    subgraph TX["borrow()"]
-        direction LR
-        I0["INPUT 0\nLendingMarket\n(borrowerPk, oraclePk, keeperPk,\ncreditHolder,\ncollateral=0, debt=0, lltv, ...)"]
-        I1["INPUT 1\nSingleSig(borrowerPk)\ncollateral"]
-
-        O0["OUTPUT 0\nLendingMarket\n(borrowerPk, oraclePk, keeperPk,\ncreditHolder,\ncollateral, borrowAmount, lltv, ...)"]
-        O1["OUTPUT 1\nSingleSig(borrowerPk)\nborrowAmount"]
-    end
+graph LR
+    I0["LendingMarket\ncollateral=0, debt=0\ncreditHolder = RepayFlow script"]
+    I1["SingleSig(borrowerPk)\ncollateral"]
+    O0["LendingMarket\ncollateral, debt=borrowAmount\ncreditHolder = RepayFlow script"]
+    O1["SingleSig(borrowerPk)\nborrowAmount"]
 
     I0 -->|"borrow(borrowerSig, oracleSig, ...)"| O0
     I1 --> O0
@@ -84,17 +68,13 @@ flowchart LR
 ## 5a. Full Repay (Borrower closes position)
 
 ```mermaid
-flowchart LR
-    subgraph TX["repay() — full"]
-        direction LR
-        I0["INPUT 0\nLendingMarket\n(..., collateral, debt, ...)"]
-        I1["INPUT 1\nSingleSig(borrowerPk)\nrepayAmount"]
+graph LR
+    I0["LendingMarket\ncollateral, debt\ncreditHolder = RepayFlow script"]
+    I1["SingleSig(borrowerPk)\nrepayAmount"]
+    O0["SingleSig(borrowerPk)\ncollateral released"]
+    O1["RepayFlow\nkeeperPk, ownerPk\ntotalAssets, totalShares\nrepayAmount value"]
 
-        O0["OUTPUT 0\nSingleSig(borrowerPk)\ncollateral"]
-        O1["OUTPUT 1\nRepayFlow\n(keeperPk, ownerPk,\ntotalAssets, totalShares)\nrepayAmount"]
-    end
-
-    I0 -->|"repay(borrowerSig, repayAmount, 0)"| O0
+    I0 -->|"repay(borrowerSig, repayAmount, newDebt=0)"| O0
     I1 --> O0
     I0 --> O1
 ```
@@ -104,15 +84,11 @@ flowchart LR
 ## 5b. Partial Repay (Borrower reduces debt)
 
 ```mermaid
-flowchart LR
-    subgraph TX["repay() — partial"]
-        direction LR
-        I0["INPUT 0\nLendingMarket\n(..., collateral, debt, ...)"]
-        I1["INPUT 1\nSingleSig(borrowerPk)\nrepayAmount"]
-
-        O0["OUTPUT 0\nLendingMarket\n(..., collateral,\ndebt − repayAmount, ...)"]
-        O1["OUTPUT 1\nRepayFlow\n(keeperPk, ownerPk,\ntotalAssets, totalShares)\nrepayAmount"]
-    end
+graph LR
+    I0["LendingMarket\ncollateral, debt\ncreditHolder = RepayFlow script"]
+    I1["SingleSig(borrowerPk)\nrepayAmount"]
+    O0["LendingMarket\ncollateral, debt - repayAmount\ncreditHolder unchanged"]
+    O1["RepayFlow\nkeeperPk, ownerPk\ntotalAssets, totalShares\nrepayAmount value"]
 
     I0 -->|"repay(borrowerSig, repayAmount, newDebt)"| O0
     I1 --> O0
@@ -123,14 +99,12 @@ flowchart LR
 
 ## 6. Reclaim (RepayFlow → Vault)
 
-```mermaid
-flowchart LR
-    subgraph TX["reclaim()"]
-        direction LR
-        I0["INPUT 0\nRepayFlow\n(keeperPk, ownerPk,\ntotalAssets, totalShares)\nrepayAmount"]
+`returnAmount` is derived from `tx.input.current.value` — no keeper input.
 
-        O0["OUTPUT 0\nVaultCovenant\n(keeperPk, ownerPk,\ntotalAssets + repayAmount,\ntotalShares)"]
-    end
+```mermaid
+graph LR
+    I0["RepayFlow\nkeeperPk, ownerPk\ntotalAssets, totalShares\nreturnAmount value"]
+    O0["VaultCovenant\nkeeperPk, ownerPk\ntotalAssets + returnAmount\ntotalShares"]
 
     I0 -->|"reclaim(keeperSig)"| O0
 ```
@@ -140,15 +114,11 @@ flowchart LR
 ## 7. Liquidation (Keeper closes underwater position)
 
 ```mermaid
-flowchart LR
-    subgraph TX["liquidate()"]
-        direction LR
-        I0["INPUT 0\nLendingMarket\n(..., collateral, debt, ...)"]
-
-        O0["OUTPUT 0\nSingleSig(keeperPk)\nfee = collateral × 5%"]
-        O1["OUTPUT 1\nRepayFlow\n(keeperPk, ownerPk,\ntotalAssets, totalShares)\ndebt (face value)"]
-        O2["OUTPUT 2\nSingleSig(borrowerPk)\ncollateral − fee − debt"]
-    end
+graph LR
+    I0["LendingMarket\ncollateral, debt\nposition underwater"]
+    O0["SingleSig(keeperPk)\nfee = collateral × 5%"]
+    O1["RepayFlow\nkeeperPk, ownerPk\ntotalAssets, totalShares\ndebt value"]
+    O2["SingleSig(borrowerPk)\ncollateral - fee - debt"]
 
     I0 -->|"liquidate(keeperSig, oracleSig, ...)"| O0
     I0 --> O1
@@ -169,23 +139,25 @@ sequenceDiagram
     participant B as Borrower
 
     LP->>Vault: deposit()
-    Note over Vault: totalAssets ↑
+    Note over Vault: totalAssets increases
 
-    Vault->>SF: (keeper creates SupplyFlow VTXO)
+    Note over SF: keeper creates SupplyFlow VTXO
     SF->>Vault: supply() → VaultCovenant(totalAssets − X)
     SF->>LM: supply() → LendingMarket(debt=0, creditHolder=RepayFlow script)
 
-    B->>LM: borrow(collateral) → LendingMarket(debt=X)
+    B->>LM: borrow(collateral)
     LM-->>B: SingleSig(borrowerPk) borrowAmount
+    Note over LM: collateral locked, debt recorded
 
-    B->>LM: repay(repayAmount) → RepayFlow VTXO
+    B->>LM: repay(repayAmount)
     LM-->>B: SingleSig(borrowerPk) collateral (full repay)
+    LM-->>RF: RepayFlow VTXO created automatically
 
-    RF->>Vault: reclaim() → VaultCovenant(totalAssets + repayAmount)
-    Note over Vault: totalAssets ↑ (yield accrued)
+    RF->>Vault: reclaim()
+    Note over Vault: totalAssets + returnAmount
 
-    Vault->>LP: withdraw()
-    Note over LP: receives assets + yield
+    LP->>Vault: withdraw()
+    Vault-->>LP: assets + accrued yield
 ```
 
 ---
@@ -194,9 +166,9 @@ sequenceDiagram
 
 | Invariant | Enforced by |
 |---|---|
-| Repayment always lands in RepayFlow, never a pubkey | `creditHolder` is `bytes32` in LendingMarket; repay sets `outputs[1].scriptPubKey == creditHolder` |
+| Repayment always lands in RepayFlow, never a bare pubkey | `creditHolder` is `bytes32` in LendingMarket; `repay` checks `outputs[1].scriptPubKey == creditHolder` |
 | RepayFlow script committed at supply time | Off-chain: `creditHolder = scriptPubKey(RepayFlow(keeperPk, ownerPk, totalAssets − supplyAmount, totalShares))` |
-| Vault totalAssets only increases on reclaim by actual received value | `returnAmount = tx.input.current.value` in RepayFlow |
-| Borrower collateral ratio checked against oracle | `collateral × price / 10000 >= borrowAmount × 10000 / lltv` |
-| Weights sum to 10000 in CompositeRouter | `weightSum == 10000` enforced on-chain |
-| No value escapes liquidation waterfall | `residual >= 0` guard + exact value checks on all outputs |
+| Vault accounting bound to actual settled value | `returnAmount = tx.input.current.value` in RepayFlow — no caller input |
+| Collateral ratio enforced on every borrow | `collateral × price / 10000 >= borrowAmount × 10000 / lltv` |
+| Strategy weights sum to 10000 | `weightSum == 10000` on-chain in CompositeRouter |
+| Liquidation waterfall is solvent | `residual >= 0` guard before distributing outputs |
