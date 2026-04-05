@@ -1,0 +1,5 @@
+# WASM build output
+pkg/
+
+# Generated from examples/*.ark
+contracts.js
