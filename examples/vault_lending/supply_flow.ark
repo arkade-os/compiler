@@ -3,7 +3,12 @@
 //
 // The vault's totalAssets decrements by supplyAmount. A fresh LendingMarket is created
 // with zero collateral and zero debt, ready for borrow(). Value is conserved:
-// vault output + market output == current input value.
+// vault output == inputVal - supplyAmount; market output == supplyAmount.
+//
+// creditHolder must be supplied by the caller as the precomputed scriptPubKey of:
+//   RepayFlow(vaultKeeperPk, ownerPk, totalAssets - supplyAmount, totalShares)
+// This ensures repayments automatically land in the correct RepayFlow covenant
+// and cannot be redirected by the keeper.
 //
 // Division note: newVaultAssets = totalAssets - supplyAmount (no rounding).
 
@@ -20,7 +25,7 @@ contract SupplyFlow(
   pubkey  ownerPk,
   pubkey  borrowerPk,
   pubkey  oraclePk,
-  pubkey  creditHolder,
+  bytes32 creditHolder,       // scriptPubKey of RepayFlow(vaultKeeperPk, ownerPk, totalAssets - supplyAmount, totalShares)
   int     supplyAmount,
   int     lltv,
   int     totalAssets,

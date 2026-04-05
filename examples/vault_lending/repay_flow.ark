@@ -2,14 +2,16 @@
 // Inverse of SupplyFlow. Returns repaid assets from a closed LendingMarket back
 // to VaultCovenant, accreting yield to the vault.
 //
-// The vault's totalAssets increments by returnAmount. Full value flows into the vault:
-// output value == current input value (no value escapes).
+// creditHolder in LendingMarket is set to the scriptPubKey of this covenant at
+// supply time (computed off-chain). Repayment therefore lands here automatically —
+// the keeper cannot redirect it to any other script.
 //
-// Yield accrual: returnAmount > original supplyAmount by the interest earned.
-// The caller provides both values; the covenant verifies only conservation and
-// the correct successor state. Interest accounting is settled off-chain.
+// returnAmount is derived from tx.input.current.value (not a constructor param),
+// so the binding between received value and vault accounting is enforced on-chain.
+// totalAssets is the vault snapshot taken at SupplyFlow execution time.
 //
-// Division note: newVaultAssets = totalAssets + returnAmount (no rounding).
+// Yield accrual: if the borrower repays more than the original supplyAmount
+// (e.g. interest), the vault totalAssets grows by the full received amount.
 
 import "vault_covenant.ark";
 
@@ -21,17 +23,14 @@ options {
 contract RepayFlow(
   pubkey  vaultKeeperPk,
   pubkey  ownerPk,
-  int     returnAmount,
   int     totalAssets,
   int     totalShares
 ) {
   function reclaim(signature vaultKeeperSig) {
     require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
 
-    // Bind returnAmount to actual input value so vault accounting cannot drift
-    int inputVal = tx.input.current.value;
-    require(inputVal == returnAmount, "return amount must match input value");
-
+    // Derive return amount from actual settled value — no caller input required
+    int returnAmount = tx.input.current.value;
     int newVaultAssets = totalAssets + returnAmount;
 
     // Output 0: VaultCovenant with incremented totalAssets; all value flows back

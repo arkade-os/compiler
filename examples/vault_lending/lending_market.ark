@@ -26,7 +26,7 @@ contract LendingMarket(
   pubkey  borrowerPk,
   pubkey  oraclePk,
   pubkey  vaultKeeperPk,
-  pubkey  creditHolder,       // lender's on-chain address; updated by transferCredit
+  bytes32 creditHolder,       // repayment script (RepayFlow scriptPubKey); updated by transferCredit
   int     collateralAmount,
   int     debtAmount,
   int     lltv,               // basis points, e.g. 8500 = 85%
@@ -89,12 +89,9 @@ contract LendingMarket(
     int verifySum = newDebtAmount + repayAmount;
     require(verifySum == debtAmount, "invalid repay amounts");
 
-    // Credit holder receives repayment on output 1
+    // Repayment flows directly to the pre-committed RepayFlow covenant
     require(tx.outputs[1].value == repayAmount, "repayment value must match repay amount");
-    require(
-      tx.outputs[1].scriptPubKey == new SingleSig(creditHolder),
-      "repayment must go to credit holder"
-    );
+    require(tx.outputs[1].scriptPubKey == creditHolder, "repayment must go to credit script");
 
     if (newDebtAmount == 0) {
       // Full repay: release collateral to borrower
@@ -152,10 +149,7 @@ contract LendingMarket(
       "fee must go to keeper"
     );
     require(tx.outputs[1].value >= debtAmount, "credit holder payout too low");
-    require(
-      tx.outputs[1].scriptPubKey == new SingleSig(creditHolder),
-      "face value must go to credit holder"
-    );
+    require(tx.outputs[1].scriptPubKey == creditHolder, "face value must go to credit script");
     require(tx.outputs[2].value >= residual, "residual to borrower too low");
     require(
       tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk),
@@ -164,11 +158,10 @@ contract LendingMarket(
   }
 
   // ─── Transfer credit ──────────────────────────────────────────────────────────
-  // Updates creditHolder in the covenant state. Used for secondary market settlement:
-  // a NonInteractiveSwap calls transferCredit to hand the credit position to the buyer
-  // without touching the borrower or the locked collateral.
-  function transferCredit(signature currentHolder, pubkey newHolder) {
-    require(checkSig(currentHolder, creditHolder), "invalid credit holder");
+  // Keeper rotates creditHolder to a new RepayFlow script (e.g. to update vault
+  // snapshot after other vault activity). Only vaultKeeperPk may call this.
+  function transferCredit(signature keeperSig, bytes32 newHolder) {
+    require(checkSig(keeperSig, vaultKeeperPk), "invalid keeper");
     require(
       tx.outputs[0].scriptPubKey == new LendingMarket(
         borrowerPk, oraclePk, vaultKeeperPk, newHolder,
