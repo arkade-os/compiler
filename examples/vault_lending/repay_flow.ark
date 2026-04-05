@@ -12,6 +12,11 @@
 //
 // Yield accrual: if the borrower repays more than the original supplyAmount
 // (e.g. interest), the vault totalAssets grows by the full received amount.
+//
+// Liveness: reclaim() requires keeper liveness. If the keeper is unresponsive
+// after the exit timelock (144 blocks), the LP (ownerPk) can call reclaimExpired()
+// unilaterally, supplying the current vault state to produce the correct successor.
+// This guarantees the LP always recovers deployed capital regardless of keeper status.
 
 import "vault_covenant.ark";
 
@@ -26,18 +31,42 @@ contract RepayFlow(
   int     totalAssets,
   int     totalShares
 ) {
+  // ─── Reclaim (cooperative) ────────────────────────────────────────────────────
+  // Keeper routes repaid assets back into VaultCovenant. totalAssets and
+  // totalShares are baked into the constructor at supply time; returnAmount is
+  // derived from actual input value so vault accounting cannot drift.
   function reclaim(signature vaultKeeperSig) {
     require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
 
-    // Derive return amount from actual settled value — no caller input required
     int returnAmount = tx.input.current.value;
     int newVaultAssets = totalAssets + returnAmount;
 
-    // Output 0: VaultCovenant with incremented totalAssets; all value flows back
     require(tx.outputs[0].value == returnAmount, "full value must flow to vault");
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
         vaultKeeperPk, ownerPk, newVaultAssets, totalShares
+      ),
+      "vault successor mismatch"
+    );
+  }
+
+  // ─── Reclaim expired (unilateral after exit timelock) ─────────────────────────
+  // Available after 144 blocks without keeper action (Ark exit path).
+  // LP supplies current vault totalAssets and totalShares; the on-chain covenant
+  // verifies only that output 0 is a valid VaultCovenant and receives all value.
+  // The LP has an on-chain observable source of truth for these params (the vault
+  // VTXO scriptPubKey encodes them) and bears the accounting risk of supplying
+  // incorrect values.
+  function reclaimExpired(signature ownerSig, int currentTotalAssets, int currentTotalShares) {
+    require(checkSig(ownerSig, ownerPk), "invalid owner");
+
+    int returnAmount = tx.input.current.value;
+    int newVaultAssets = currentTotalAssets + returnAmount;
+
+    require(tx.outputs[0].value == returnAmount, "full value must flow to vault");
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        vaultKeeperPk, ownerPk, newVaultAssets, currentTotalShares
       ),
       "vault successor mismatch"
     );

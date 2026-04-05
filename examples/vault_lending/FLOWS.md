@@ -111,6 +111,21 @@ graph LR
 
 ---
 
+## 6b. Reclaim Expired (LP unilateral — after 144-block exit timelock)
+
+Keeper is unresponsive. LP calls `reclaimExpired()` without keeper co-sign.
+LP supplies current vault `totalAssets`/`totalShares` (observable from vault VTXO on-chain).
+
+```mermaid
+graph LR
+    I0["RepayFlow\nkeeperPk, ownerPk\ntotalAssets, totalShares\nreturnAmount value"]
+    O0["VaultCovenant\nkeeperPk, ownerPk\ncurrentTotalAssets + returnAmount\ncurrentTotalShares"]
+
+    I0 -->|"reclaimExpired(ownerSig, currentTotalAssets, currentTotalShares)"| O0
+```
+
+---
+
 ## 7. Liquidation (Keeper closes underwater position)
 
 ```mermaid
@@ -159,6 +174,21 @@ sequenceDiagram
     LP->>Vault: withdraw()
     Vault-->>LP: assets + accrued yield
 ```
+
+---
+
+## Liveness tradeoffs
+
+| Actor | Keeper required? | Self-sovereign exit? | Notes |
+|---|---|---|---|
+| **Borrower** | Cooperative path only | Yes — after 144 blocks | `exit = 144` guarantees collateral recovery |
+| **LP (idle vault assets)** | Cooperative path only | Yes — after 144 blocks | `VaultCovenant.withdraw()` unilateral after exit |
+| **LP (deployed assets)** | `reclaim()` needs keeper | Yes — `reclaimExpired()` after 144 blocks | LP supplies current vault state; no keeper needed |
+| **Liquidation** | Always keeper-gated | No | Underwater positions cannot be liquidated without keeper |
+| **Yield reporting** | Always keeper-gated | No | `reportYield()` requires keeperSig; PPS freezes if keeper down (no loss) |
+| **Credit transfer** | Always keeper-gated | No | `transferCredit()` rotates RepayFlow target; keeper-only |
+
+**Key asymmetry**: borrowers always have a self-sovereign exit. LPs in deployed positions now also have one via `reclaimExpired()`. Liquidations remain fully keeper-dependent — if the keeper is offline while positions are underwater, the vault absorbs the loss.
 
 ---
 
