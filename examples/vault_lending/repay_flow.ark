@@ -28,17 +28,19 @@ contract RepayFlow(
   function reclaim(signature vaultKeeperSig) {
     require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
 
+    // Bind returnAmount to actual input value so vault accounting cannot drift
+    int inputVal = tx.input.current.value;
+    require(inputVal == returnAmount, "return amount must match input value");
+
     int newVaultAssets = totalAssets + returnAmount;
 
-    // Output 0: VaultCovenant with incremented totalAssets
+    // Output 0: VaultCovenant with incremented totalAssets; all value flows back
+    require(tx.outputs[0].value == returnAmount, "full value must flow to vault");
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
         vaultKeeperPk, ownerPk, newVaultAssets, totalShares
       ),
       "vault successor mismatch"
     );
-
-    // Full value flows back into the vault — yield accrues as returnAmount > supplyAmount
-    require(tx.outputs[0].value == tx.input.current.value, "full value must flow to vault");
   }
 }

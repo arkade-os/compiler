@@ -65,6 +65,7 @@ contract LendingMarket(
       "successor mismatch"
     );
     // Output 1: borrowed funds flow to borrower
+    require(tx.outputs[1].value == borrowAmount, "borrower must receive borrow amount");
     require(
       tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk),
       "borrower output mismatch"
@@ -89,6 +90,7 @@ contract LendingMarket(
     require(verifySum == debtAmount, "invalid repay amounts");
 
     // Credit holder receives repayment on output 1
+    require(tx.outputs[1].value == repayAmount, "repayment value must match repay amount");
     require(
       tx.outputs[1].scriptPubKey == new SingleSig(creditHolder),
       "repayment must go to credit holder"
@@ -102,7 +104,8 @@ contract LendingMarket(
         "collateral must be returned to borrower"
       );
     } else {
-      // Partial repay: recursive covenant with reduced debt
+      // Partial repay: recursive covenant with reduced debt; collateral stays locked
+      require(tx.outputs[0].value == collateralAmount, "partial repay must preserve collateral value");
       require(
         tx.outputs[0].scriptPubKey == new LendingMarket(
           borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
@@ -141,6 +144,7 @@ contract LendingMarket(
     // Liquidation waterfall
     int fee = collateralAmount * 500 / 10000;
     int residual = collateralAmount - fee - debtAmount;
+    require(residual >= 0, "residual must be non-negative");
 
     require(tx.outputs[0].value >= fee, "liquidation fee output too low");
     require(

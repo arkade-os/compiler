@@ -31,10 +31,14 @@ contract SupplyFlow(
 ) {
   function supply(signature vaultKeeperSig) {
     require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
+    require(supplyAmount <= totalAssets, "supply amount exceeds vault assets");
 
     int newVaultAssets = totalAssets - supplyAmount;
+    int inputVal = tx.input.current.value;
+    int vaultOut = inputVal - supplyAmount;
 
     // Output 0: VaultCovenant with decremented totalAssets
+    require(tx.outputs[0].value == vaultOut, "vault output value mismatch");
     require(
       tx.outputs[0].scriptPubKey == new VaultCovenant(
         vaultKeeperPk, ownerPk, newVaultAssets, totalShares
@@ -42,7 +46,8 @@ contract SupplyFlow(
       "vault successor mismatch"
     );
 
-    // Output 1: fresh LendingMarket with zero state, ready for borrower
+    // Output 1: fresh LendingMarket seeded with supplyAmount, ready for borrower
+    require(tx.outputs[1].value == supplyAmount, "market output value mismatch");
     require(
       tx.outputs[1].scriptPubKey == new LendingMarket(
         borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
@@ -51,12 +56,5 @@ contract SupplyFlow(
       ),
       "market successor mismatch"
     );
-
-    // Value conservation: vault output + market output == this input
-    int val0 = tx.outputs[0].value;
-    int val1 = tx.outputs[1].value;
-    int totalOut = val0 + val1;
-    int inputVal = tx.input.current.value;
-    require(totalOut == inputVal, "value conservation violated");
   }
 }

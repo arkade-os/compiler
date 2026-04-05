@@ -3,8 +3,7 @@
 // Keeper attestations verified via checkSigFromStack.
 // PPS monotonicity enforced: newTotalAssets >= currentTotalAssets.
 //
-// weight0 + weight1 must equal 10000 (basis points). This is not enforced on-chain;
-// the keeper is responsible for correct weighting at report time.
+// weight0 + weight1 must equal 10000 (basis points); enforced on-chain in route().
 //
 // Division note: (reported0 * weight0 + reported1 * weight1) / 10000 floors toward zero.
 // This may cause newTotalAssets to be 1 sat below the true weighted average at boundary values.
@@ -39,6 +38,9 @@ contract CompositeRouter(
   ) {
     require(checkSigFromStack(keeperSig0, keeper0, reportHash0), "invalid keeper0");
     require(checkSigFromStack(keeperSig1, keeper1, reportHash1), "invalid keeper1");
+
+    int weightSum = weight0 + weight1;
+    require(weightSum == 10000, "weights must sum to 10000");
 
     int newTotalAssets = (reported0 * weight0 + reported1 * weight1) / 10000;
     require(newTotalAssets >= currentTotalAssets, "PPS decrease forbidden");

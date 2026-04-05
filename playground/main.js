@@ -25,6 +25,7 @@ const projects = {
             'lending_market.ark': contracts.vault_lending_lending_market,
             'supply_flow.ark': contracts.vault_lending_supply_flow,
             'repay_flow.ark': contracts.vault_lending_repay_flow,
+            'lending_pool.ark': contracts.vault_lending_lending_pool,
         }
     },
 };

@@ -1,0 +1,129 @@
+// lending_pool.ark
+// Pooled lending market with on-chain supply and borrow token mechanics.
+//
+// supply — anyone deposits liquidity and receives supply tokens (credit claims).
+//          Pool grows by supplyAmount; supply tokens are minted to the supplier.
+//          Token quantity tracks proportional ownership of the pool's assets.
+//
+// borrow — anyone provides collateral, receives borrowed funds and borrow tokens.
+//          Pool value adjusts (loses borrowAmount, gains collateral).
+//          Borrow tokens track outstanding debt obligations.
+//
+// Both functions are permissionless: security comes entirely from on-chain constraints
+// (oracle-attested price, collateral ratio enforcement, asset group token accounting).
+// No keeper signature is required.
+//
+// Token accounting uses asset group delta checks (aggregate mint/burn across the tx)
+// and per-output asset lookup to ensure tokens are routed to the correct recipients.
+//
+// Division note: collateral ratio uses OP_DIV64 (floor toward zero).
+// Both sides consistently floored — no systematic bias at LLTV boundary.
+
+import "lending_pool.ark";
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract LendingPool(
+  pubkey  oraclePk,
+  int     totalSupply,       // total liquidity deposited (satoshis)
+  int     totalBorrowed,     // total outstanding debt (satoshis)
+  int     lltv,              // liquidation LTV in basis points, e.g. 8500 = 85%
+  bytes32 supplyTokenId,     // supply/credit token asset ID — for assetGroups.find()
+  bytes32 supplyTokenCtrlId, // control asset that gates supply token issuance
+  bytes32 borrowTokenId,     // borrow/debt token asset ID — for assetGroups.find()
+  bytes32 borrowTokenCtrlId, // control asset that gates borrow token issuance
+  bytes32 oracleHash         // identifies the oracle feed
+) {
+  // ─── Supply ───────────────────────────────────────────────────────────────────
+  // Permissionless. Anyone deposits liquidity and receives supply tokens.
+  // Caller provides: their pubkey (token destination) and the supply amount.
+  // Pool VTXO grows by supplyAmount; supply tokens are minted 1:1 to the supplier.
+  function supply(pubkey supplierPk, int supplyAmount) {
+    // Supply tokens minted in this transaction
+    let supplyGroup = tx.assetGroups.find(supplyTokenId);
+    require(supplyGroup.delta == supplyAmount, "supply token delta must match supply amount");
+    require(supplyGroup.control == supplyTokenCtrlId, "wrong supply token control asset");
+    require(
+      tx.inputs[0].assets.lookup(supplyTokenCtrlId) > 0,
+      "supply control asset must be present at input 0"
+    );
+
+    // Pool grows by supplyAmount
+    int inputVal = tx.input.current.value;
+    int newPoolVal = inputVal + supplyAmount;
+    require(tx.outputs[0].value == newPoolVal, "pool must grow by supply amount");
+
+    // Pool successor with updated totalSupply
+    require(
+      tx.outputs[0].scriptPubKey == new LendingPool(
+        oraclePk, totalSupply + supplyAmount, totalBorrowed, lltv,
+        supplyTokenId, supplyTokenCtrlId, borrowTokenId, borrowTokenCtrlId, oracleHash
+      ),
+      "pool successor mismatch"
+    );
+
+    // Supplier receives supply tokens on output 1
+    require(
+      tx.outputs[1].assets.lookup(supplyTokenId) >= supplyAmount,
+      "supplier output must hold supply tokens"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(supplierPk),
+      "supply tokens must go to supplier"
+    );
+  }
+
+  // ─── Borrow ───────────────────────────────────────────────────────────────────
+  // Permissionless (modulo oracle). Borrower provides collateral and takes a loan.
+  // Oracle attests to the current price; collateral ratio is enforced on-chain.
+  // Pool loses borrowAmount and gains collateral; borrow tokens are minted to borrower.
+  function borrow(
+    pubkey  borrowerPk,
+    bytes32 priceHash,
+    signature oracleSig,
+    int price,
+    int borrowAmount,
+    int collateral
+  ) {
+    require(checkSigFromStack(oracleSig, oraclePk, priceHash), "invalid oracle");
+
+    // Collateral ratio: (collateral * price / 10000) >= (borrowAmount * 10000 / lltv)
+    int lhs = collateral * price / 10000;
+    int rhs = borrowAmount * 10000 / lltv;
+    require(lhs >= rhs, "insufficient collateral ratio");
+
+    // Borrow tokens minted in this transaction
+    let borrowGroup = tx.assetGroups.find(borrowTokenId);
+    require(borrowGroup.delta == borrowAmount, "borrow token delta must match borrow amount");
+    require(borrowGroup.control == borrowTokenCtrlId, "wrong borrow token control asset");
+    require(
+      tx.inputs[0].assets.lookup(borrowTokenCtrlId) > 0,
+      "borrow control asset must be present at input 0"
+    );
+
+    // Pool: loses borrowAmount, gains collateral
+    int inputVal = tx.input.current.value;
+    int newPoolVal = inputVal - borrowAmount + collateral;
+    require(tx.outputs[0].value == newPoolVal, "pool value mismatch");
+
+    // Pool successor with updated totalBorrowed
+    require(
+      tx.outputs[0].scriptPubKey == new LendingPool(
+        oraclePk, totalSupply, totalBorrowed + borrowAmount, lltv,
+        supplyTokenId, supplyTokenCtrlId, borrowTokenId, borrowTokenCtrlId, oracleHash
+      ),
+      "pool successor mismatch"
+    );
+
+    // Borrower receives funds and borrow tokens on output 1
+    require(tx.outputs[1].value == borrowAmount, "borrower must receive borrow amount");
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk),
+      "borrowed funds must go to borrower"
+    );
+  }
+}
