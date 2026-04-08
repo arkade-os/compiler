@@ -17,6 +17,7 @@ contract StrategyFragment(
   function allocate(signature keeperSig, int newAmount) {
     require(checkSig(keeperSig, keeperPk), "invalid keeper");
     require(newAmount > allocatedAmount, "must increase allocation");
+    require(tx.outputs[0].value == tx.input.current.value, "value must be preserved");
     require(
       tx.outputs[0].scriptPubKey == new StrategyFragment(
         keeperPk, newAmount, strategyId

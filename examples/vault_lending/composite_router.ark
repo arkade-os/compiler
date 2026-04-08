@@ -5,6 +5,12 @@
 //
 // weight0 + weight1 must equal 10000 (basis points); enforced on-chain in route().
 //
+// Trust assumption: currentTotalAssets and currentTotalShares are caller-supplied and not
+// verified against the actual vault VTXO state. The PPS monotonicity check
+// (newTotalAssets >= currentTotalAssets) can be circumvented by a keeper supplying a
+// deflated currentTotalAssets. Security relies on keeper honesty for these params;
+// they are not constrainable without spending the vault VTXO in the same transaction.
+//
 // Division note: (reported0 * weight0 + reported1 * weight1) / 10000 floors toward zero.
 // This may cause newTotalAssets to be 1 sat below the true weighted average at boundary values.
 

@@ -13,6 +13,15 @@
 // OP_DIV64 floors toward zero. Both sides of the LLTV check are consistently floored,
 // so no systematic bias exists. Ratio boundaries are very slightly borrower-favourable.
 // Liquidation fee truncates down (keeper receives marginally less at fee boundary values).
+//
+// Oracle trust assumption: checkSigFromStack(oracleSig, oraclePk, priceHash) verifies
+// the oracle signed priceHash, but the contract cannot verify that priceHash == hash(price)
+// because the Arkade language has no on-chain hash opcode for this binding. Security relies
+// on the oracle signing a message that commits to a specific price value (e.g. the oracle
+// message format includes the price as a fixed-width field that the verifier checks off-chain).
+// A compromised or colluding caller could replay a stale oracle signature with a different
+// price value. Deployments must ensure the oracle message format is unambiguous and that
+// priceHash commits to a canonical encoding of price.
 
 import "lending_market.ark";
 import "single_sig.ark";
@@ -143,12 +152,12 @@ contract LendingMarket(
     int residual = collateralAmount - fee - debtAmount;
     require(residual >= 0, "residual must be non-negative");
 
-    require(tx.outputs[0].value >= fee, "liquidation fee output too low");
+    require(tx.outputs[0].value == fee, "liquidation fee must be exact");
     require(
       tx.outputs[0].scriptPubKey == new SingleSig(vaultKeeperPk),
       "fee must go to keeper"
     );
-    require(tx.outputs[1].value >= debtAmount, "credit holder payout too low");
+    require(tx.outputs[1].value == debtAmount, "credit holder payout must be exact");
     require(tx.outputs[1].scriptPubKey == creditHolder, "face value must go to credit script");
     require(tx.outputs[2].value >= residual, "residual to borrower too low");
     require(
