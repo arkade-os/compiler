@@ -1,0 +1,78 @@
+// composite_router.ark
+// Atomically updates VaultCovenant + 2 StrategyFragments in one transaction.
+// Keeper attestations verified via checkSigFromStack.
+// PPS monotonicity enforced: newTotalAssets >= currentTotalAssets.
+//
+// weight0 + weight1 must equal 10000 (basis points); enforced on-chain in route().
+//
+// Trust assumption: currentTotalAssets and currentTotalShares are caller-supplied and not
+// verified against the actual vault VTXO state. The PPS monotonicity check
+// (newTotalAssets >= currentTotalAssets) can be circumvented by a keeper supplying a
+// deflated currentTotalAssets. Security relies on keeper honesty for these params;
+// they are not constrainable without spending the vault VTXO in the same transaction.
+//
+// Output value note: route() verifies scriptPubKey for all 3 outputs but not their values.
+// Value conservation across the 3 outputs is enforced by the Ark round mechanism rather
+// than by this covenant. A keeper constructing the transaction is responsible for correct
+// value splits; no additional value can be extracted beyond what is in the input set.
+//
+// Division note: (reported0 * weight0 + reported1 * weight1) / 10000 floors toward zero.
+// This may cause newTotalAssets to be 1 sat below the true weighted average at boundary values.
+
+import "vault_covenant.ark";
+import "strategy_fragment.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract CompositeRouter(
+  pubkey keeper0,
+  pubkey keeper1,
+  pubkey vaultKeeperPk,
+  pubkey ownerPk,
+  int weight0,        // basis points; weight0 + weight1 == 10000
+  int weight1,
+  bytes32 strategyId0,
+  bytes32 strategyId1
+) {
+  function route(
+    signature keeperSig0,
+    signature keeperSig1,
+    bytes32 reportHash0,
+    bytes32 reportHash1,
+    int reported0,
+    int reported1,
+    int currentTotalAssets,
+    int currentTotalShares
+  ) {
+    require(checkSigFromStack(keeperSig0, keeper0, reportHash0), "invalid keeper0");
+    require(checkSigFromStack(keeperSig1, keeper1, reportHash1), "invalid keeper1");
+
+    int weightSum = weight0 + weight1;
+    require(weightSum == 10000, "weights must sum to 10000");
+
+    int newTotalAssets = (reported0 * weight0 + reported1 * weight1) / 10000;
+    require(newTotalAssets >= currentTotalAssets, "PPS decrease forbidden");
+
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        vaultKeeperPk, ownerPk, newTotalAssets, currentTotalShares
+      ),
+      "vault successor mismatch"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new StrategyFragment(
+        keeper0, reported0, strategyId0
+      ),
+      "fragment0 successor mismatch"
+    );
+    require(
+      tx.outputs[2].scriptPubKey == new StrategyFragment(
+        keeper1, reported1, strategyId1
+      ),
+      "fragment1 successor mismatch"
+    );
+  }
+}
