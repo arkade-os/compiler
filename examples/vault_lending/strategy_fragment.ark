@@ -29,6 +29,7 @@ contract StrategyFragment(
   function report(signature keeperSig, bytes32 reportHash, int reportedAmount) {
     require(reportedAmount > 0, "reported amount must be positive");
     require(checkSigFromStack(keeperSig, keeperPk, reportHash), "invalid keeper");
+    require(tx.outputs[0].value == tx.input.current.value, "value must be preserved");
     require(
       tx.outputs[0].scriptPubKey == new StrategyFragment(
         keeperPk, reportedAmount, strategyId

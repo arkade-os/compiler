@@ -241,6 +241,25 @@ fn test_strategy_fragment_report_uses_checksig_from_stack() {
     );
 }
 
+#[test]
+fn test_strategy_fragment_report_preserves_value() {
+    // report() must preserve value — consistent with allocate()
+    let abi = compile(STRATEGY_FRAGMENT_SRC).unwrap();
+    let report = abi
+        .functions
+        .iter()
+        .find(|f| f.name == "report" && f.server_variant)
+        .unwrap();
+    assert!(
+        report
+            .asm
+            .iter()
+            .any(|op| op.contains("INSPECTINPUT") || op.contains("INSPECTOUTPUT")),
+        "report() must contain value introspection to enforce preservation, got {:?}",
+        report.asm
+    );
+}
+
 // ─── RepayFlow ────────────────────────────────────────────────────────────────
 
 #[test]
