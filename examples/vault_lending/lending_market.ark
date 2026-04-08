@@ -46,6 +46,8 @@ contract LendingMarket(
   // ─── Borrow ───────────────────────────────────────────────────────────────────
   // Debt was supplied by VaultCovenant via SupplyFlow.
   // Borrower provides collateral; borrowed funds flow out to borrower on output 1.
+  // Anti-reborrow: borrow() is only valid on a fresh position (debtAmount == 0).
+  // Value conservation: input value (available liquidity) must equal borrowAmount.
   function borrow(
     signature borrowerSig,
     bytes32 priceHash,
@@ -56,6 +58,14 @@ contract LendingMarket(
   ) {
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower");
     require(checkSigFromStack(oracleSig, oraclePk, priceHash), "invalid oracle");
+
+    // Guard against re-borrowing over an existing position
+    require(debtAmount == 0, "position already open");
+    require(collateralAmount == 0, "position already has collateral");
+
+    // Value conservation: the market input holds exactly the available liquidity;
+    // borrower must draw the full amount (partial draws leave unaccounted value).
+    require(tx.input.current.value == borrowAmount, "borrow amount must equal available liquidity");
 
     // Collateral ratio check: (collateral * price / 10000) >= (borrowAmount * 10000 / lltv)
     // Division floors toward zero — see contract header note.
@@ -168,9 +178,13 @@ contract LendingMarket(
 
   // ─── Transfer credit ──────────────────────────────────────────────────────────
   // Keeper rotates creditHolder to a new RepayFlow script (e.g. to update vault
-  // snapshot after other vault activity). Only vaultKeeperPk may call this.
+  // snapshot after other vault activity before the position is opened).
+  // Only callable on a fresh position (debtAmount == 0) — once a borrower has
+  // drawn against the market the creditHolder is immutable, preventing the keeper
+  // from redirecting repay()/liquidate() proceeds after the fact.
   function transferCredit(signature keeperSig, bytes32 newHolder) {
     require(checkSig(keeperSig, vaultKeeperPk), "invalid keeper");
+    require(debtAmount == 0, "cannot rotate credit on open position");
     require(
       tx.outputs[0].scriptPubKey == new LendingMarket(
         borrowerPk, oraclePk, vaultKeeperPk, newHolder,
