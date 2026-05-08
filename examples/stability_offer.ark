@@ -13,9 +13,10 @@
 //   5. Provider calls reprice() to update the offer's reference beacon if needed
 //      (offer price is read live from beacon on each take, so this is rarely needed).
 //
-// Collateral invariant: Provider always matches the Seeker 1:1.
+// Collateral invariant: Provider puts 1.5x the Seeker's BTC.
 // On each take(), the offer must receive userBTC from the taker and the
-// output StabilityVault must hold userBTC (seeker) + userBTC (provider) = 2*userBTC.
+// output StabilityVault must hold userBTC (seeker) + 1.5*userBTC (provider) = 2.5*userBTC.
+// This gives the Seeker 60% drop coverage and the Provider 1.67x BTC leverage.
 
 import "stability_vault.ark";
 
@@ -28,7 +29,7 @@ contract StabilityOffer(
   pubkey  providerPk,        // offer creator and collateral provider
   pubkey  oraclePk,          // must match the PriceBeacon oracle
   bytes32 priceAssetId,      // PriceBeacon asset id (quantity = BTC/USD in cents)
-  int     fundingSatPerBlock, // signed funding rate offered; zero = no fee either way
+  int     fundingSatPerBlock, // signed; positive = provider pays seeker (expected default)
   int     maxExposureBTC     // remaining capacity: max total seekerBTC this offer accepts
 ) {
 
@@ -43,7 +44,7 @@ contract StabilityOffer(
   //   input[0]:  this StabilityOffer UTXO
   //   input[1]:  PriceBeacon UTXO (pass-through)
   //   input[2]:  taker's BTC input (userBTC sats for the Seeker side)
-  //   output[0]: StabilityVault (2*userBTC collateral, seekerPk, providerPk)
+  //   output[0]: StabilityVault (2.5*userBTC collateral, seekerPk, providerPk)
   //   output[1]: remaining StabilityOffer (capacity reduced), if any
   //   output[2]: PriceBeacon pass-through
   // -------------------------------------------------------------------------
@@ -59,8 +60,8 @@ contract StabilityOffer(
     int targetUSD = userBTC * entryPrice / 100000000;
     require(targetUSD > 0, "position too small");
 
-    // 1:1 collateral: total = 2 * userBTC (seeker + provider halves)
-    int totalCollateral = userBTC * 2;
+    // 1.5:1 collateral: seeker puts userBTC, provider puts 1.5*userBTC = 2.5*userBTC total
+    int totalCollateral = userBTC * 5 / 2;
 
     // output[0]: new StabilityVault for the Seeker
     require(
@@ -82,8 +83,8 @@ contract StabilityOffer(
         ),
         "invalid remaining offer"
       );
-      // Remaining offer holds provider's proportional collateral
-      int remainingCollateral = remainingCapacity;
+      // Remaining offer holds provider's proportional collateral (1.5x per seekerBTC)
+      int remainingCollateral = remainingCapacity * 3 / 2;
       require(tx.outputs[1].value >= remainingCollateral, "insufficient offer collateral");
     }
 

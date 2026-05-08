@@ -23,11 +23,13 @@ The wallet needs an asset that:
 ## 2. Product Vision
 
 A wallet user taps "Add USD", sends USDT/USDC from anywhere, and sees a dollar
-balance. The BTC mechanics are invisible. Behind the scenes a Provider locks
-matching BTC collateral and takes a 2x leveraged BTC long. The user holds a
-USD-denominated claim backed by twice their BTC in collateral. They can spend
-it, send it, or swap it back to USDT at any time via a swap service. They never
-need to think about Bitcoin price.
+balance with a yield figure beneath it. The BTC mechanics are invisible. Behind
+the scenes a Provider locks 1.5x the Seeker's BTC as collateral and takes a
+leveraged BTC long position. The Provider pays the Seeker a funding rate for the
+privilege of that leverage. The Seeker holds a USD-denominated claim backed by
+2.5x their BTC in collateral — protected against a 60% price drop. They can
+spend it, send it, or swap it back to USDT at any time via a swap service. They
+never need to think about Bitcoin price or funding mechanics.
 
 ---
 
@@ -47,16 +49,17 @@ need to think about Bitcoin price.
 - Expects wallet UX identical to a USD bank balance
 
 ### Provider motivations
-- Wants self-custodied 2x BTC leverage at zero cost
-- No exchange counterparty, no forced liquidation bot, no funding cost
-- Exits voluntarily when they want to take profit or reduce exposure
+- Wants self-custodied 1.67x BTC leverage with no exchange counterparty risk
+- Pays a funding rate to Seeker (the cost of leverage; cheaper than alternatives)
+- No forced liquidation: exits voluntarily at the block and price of their choosing
+- No margin calls, no cascading failures, no race conditions with liquidation bots
 
 ### Swap Service role
 The swap service is a first-class participant, not an afterthought. It:
 - Accepts incoming StabilityVault positions from Seekers wanting USDT/USDC
 - Issues USDT/USDC in exchange (captures a small spread)
-- Holds positions as USD-denominated inventory (overcollateralised by 2x BTC)
-- Rebalances inventory by exiting positions (`seekerRedeem`) when BTC is available
+- Holds positions as USD-denominated inventory (backed by 2.5x BTC collateral)
+- Rebalances inventory by exiting positions (`seekerRedeem`) when needed
 - Creates a liquidity flywheel: more inventory → tighter spreads → more Seekers → more Providers
 
 ---
@@ -64,43 +67,73 @@ The swap service is a first-class participant, not an afterthought. It:
 ## 4. The Economic Model
 
 ```
-At open:
-  Seeker locks:       S sats  (e.g. 1 BTC at $100k)
-  Provider locks:     S sats  (1:1, matching collateral)
-  totalCollateral:    2S sats
-  targetUSD:          S * entryPrice / 1e8  (in cents)
+At open (1.5:1 Provider collateral ratio):
+  Seeker locks:       S sats        (e.g. 1 BTC at $100k)
+  Provider locks:     1.5 * S sats  (1.5x Seeker's BTC)
+  totalCollateral:    2.5 * S sats
+  targetUSD:          S * entryPrice / 1e8  (in cents; Seeker's claim only)
 
 At settlement, with oracle price P (cents per BTC):
-  seekerBase     = targetUSD * 1e8 / P          (sats owed to seeker)
-  fundingAccrued = fundingSatPerBlock * elapsed  (signed; zero by default)
+  seekerBase     = targetUSD * 1e8 / P           (sats owed to seeker)
+  fundingAccrued = fundingSatPerBlock * elapsed   (positive = paid to seeker)
   seekerRaw      = seekerBase + fundingAccrued
 
   seekerPayout   = min(max(seekerRaw, 0), totalCollateral)
   providerPayout = totalCollateral - seekerPayout
 ```
 
-### Price scenarios at default zero funding
+### Price scenarios (1 BTC Seeker, $100k entry, funding ignored for clarity)
 
-| BTC move | seekerPayout | providerPayout | Seeker status |
-|---|---|---|---|
-| Flat ($100k) | 1.00 BTC | 1.00 BTC | Fully covered |
-| +20% ($120k) | 0.83 BTC | 1.17 BTC | Fully covered (in fewer sats) |
-| -30% ($70k) | 1.43 BTC | 0.57 BTC | Fully covered |
-| -50% ($50k) | 2.00 BTC | 0.00 BTC | Fully covered, exactly |
-| -60% ($40k) | 2.00 BTC (cap) | 0.00 BTC | **Shortfall: seeker gets $80k not $100k** |
+| BTC move | totalCollateral | seekerPayout | providerPayout | Seeker status |
+|---|---|---|---|---|
+| Flat ($100k) | 2.5 BTC | 1.00 BTC | 1.50 BTC | Fully covered |
+| +20% ($120k) | 2.5 BTC | 0.83 BTC | 1.67 BTC | Fully covered |
+| -30% ($70k) | 2.5 BTC | 1.43 BTC | 1.07 BTC | Fully covered |
+| -60% ($40k) | 2.5 BTC | 2.50 BTC | 0.00 BTC | Fully covered, exactly at ceiling |
+| -70% ($30k) | 2.5 BTC | 2.50 BTC (cap) | 0.00 BTC | **Shortfall: seeker gets $75k not $100k** |
 
-The 50% single-epoch drop is the hard coverage ceiling. Beyond it the Seeker
-absorbs the residual loss. This must be disclosed in UX.
+The 60% single-period drop is the hard coverage ceiling. Beyond it the Seeker
+absorbs the residual loss. This must be disclosed clearly in UX.
 
-### Funding rate (optional, default zero)
+### Provider leverage
+
+```
+BTC rises 20% ($100k → $120k), 1 BTC Seeker position:
+  seekerPayout  = $100k / $120k = 0.833 BTC
+  providerPayout = 2.5 - 0.833 = 1.667 BTC
+
+  Provider put in:   1.5 BTC = $150k
+  Provider receives: 1.667 BTC × $120k = $200k
+  Provider gain:     $50k on $150k = +33% on a +20% BTC move = 1.67x leverage
+  vs. holding 1.5 BTC spot: +20% = $30k gain
+  Outperformance:    +$20k from holding the long side of the contract
+```
+
+### Funding rate (positive by default, Provider pays Seeker)
+
 `fundingSatPerBlock` is a signed integer agreed at contract open:
-- `> 0`: Provider pays Seeker (bull market default — Provider wants cheap leverage)
-- `= 0`: No fee either direction (v1 default)
-- `< 0`: Seeker pays Provider (bear market — Seeker pays for stability)
+- `> 0`: Provider pays Seeker — the expected default. Cost of self-custodied leverage.
+- `= 0`: No fee either direction — rare, only if both parties agree.
+- `< 0`: Seeker pays Provider — bear market, Seeker pays for stability like insurance.
+
+**Why positive is necessary:** the Seeker gives up BTC upside appreciation.
+Without compensation, rational Seekers won't participate. The Provider benefits
+from 1.67x leverage; the funding rate is their cost for it.
+
+**Reference rate:** 10 sats/block ≈ 0.5% APY on a $100k position. Providers
+posting offers at 5–20 sats/block give Seekers 0.25–1% APY — meaningful yield
+for a product with no exchange or issuer risk.
 
 The off-chain matching marketplace discovers the rate. The contract enforces
 whatever was agreed. Neither party can change it after open without closing and
 reopening.
+
+### The MoC lesson
+Money on Chain (MoC) on RSK used 6x overcollateralisation with zero yield.
+Result: no users. The lesson: collateral alone is not enough. Seekers need
+yield to compensate for giving up BTC upside. StabilityVault addresses both:
+adequate collateral (2.5x, covering 60% drops) plus a positive funding rate
+paid by the Provider to the Seeker.
 
 ---
 
@@ -287,8 +320,8 @@ gives the Seeker a window to act.
 The wallet UI must surface the following before a user opens a position:
 
 1. **Coverage ceiling:** "Your USD balance is fully protected unless BTC drops
-   more than 50% from your deposit price in a single day. If that happens, you
-   receive all available collateral, which may be worth less than your deposit."
+   more than 60% from your deposit price. If that happens, you receive all
+   available collateral, which may be worth less than your original deposit."
 
 2. **No FDIC / no issuer:** "This is not a bank account. Your balance is backed
    by Bitcoin locked in a smart contract, not by a company's reserves."
@@ -301,8 +334,9 @@ The wallet UI must surface the following before a user opens a position:
    forced close without your cooperation, you have 24 hours (≈144 blocks) to
    act before it settles automatically at the oracle price."
 
-5. **Funding rate:** "The cost or yield on your position is [X% APY / zero /
-   X% cost], fixed at deposit time. It may change if you close and re-open."
+5. **Funding rate:** "You are earning [X% APY] on your USD balance, paid by
+   your counterparty in exchange for their leveraged BTC position. This rate
+   is fixed at deposit time and may differ if you close and re-open."
 
 ---
 
