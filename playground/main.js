@@ -23,7 +23,6 @@ const examples = {
     htlc: { name: 'HTLC', code: contracts.htlc },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
-    beacon: { name: 'Beacon', code: contracts.beacon },
 };
 
 // Global state
