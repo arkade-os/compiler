@@ -8,11 +8,11 @@ import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 const projects = {
     stability: {
         name: 'Stability',
-        description: 'Synthetic USD stablecoins with on-chain price beacon',
+        description: 'USD-denominated BTC positions with on-chain price beacon',
         files: {
-            'beacon.ark': contracts.price_beacon,
-            'offer.ark': contracts.stability_offer,
-            'position.ark': contracts.stable_position,
+            'price_beacon.ark': contracts.price_beacon,
+            'stability_vault.ark': contracts.stability_vault,
+            'stability_offer.ark': contracts.stability_offer,
         }
     }
 };
