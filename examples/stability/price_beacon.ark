@@ -16,8 +16,11 @@
 // Security properties:
 //   - Only oraclePk can update price or timestamp.
 //   - Timestamps are monotonically non-decreasing (enforced on-chain).
-//   - Consumers verify the beacon script to authenticate ticker and oracle:
-//        tx.inputs[N].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit)
+//   - Consumers authenticate the beacon by its ticker and clock asset IDs.
+//     Those bytes32 values commit to the oracle's genesis issuance and are
+//     globally unique — the assets cannot be forged. Consumers do NOT bake
+//     oraclePk into their own contracts; oracle key rotation via migrate()
+//     keeps the asset IDs stable, so existing consumers remain valid.
 
 options {
   server = server;

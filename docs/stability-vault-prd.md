@@ -321,9 +321,11 @@ settlement branch is restored automatically with no on-chain action.
   block height is enforced to advance monotonically (no back-dating)
 - Any transaction that reads the price must include the beacon as an input
   and pass it through as an output (enforced by the beacon's `passthrough`)
-- Consumers verify the beacon's script
-  (`tx.inputs[N].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit)`)
-  to authenticate the feed
+- Consumers authenticate the beacon by its `ticker` and `clock` asset IDs.
+  The `bytes32` asset IDs commit to the oracle's genesis issuance transaction
+  and are globally unique. Consumers do NOT bake `oraclePk` into their own
+  contracts; oracle key rotation via `migrate()` leaves the asset IDs stable,
+  so existing positions remain valid across rotations.
 
 ### Trust model (v1)
 - Single oracle; trust is reputation-based and publicly verifiable on-chain

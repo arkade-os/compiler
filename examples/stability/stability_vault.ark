@@ -24,10 +24,14 @@
 //   providerPayout = totalCollateral - seekerPayout
 //
 // Oracle: A PriceBeacon UTXO must be passed as input[1] in all settlement
-// and transfer transactions. The beacon's script is verified on-chain to
-// authenticate the ticker and oracle. Staleness is enforced at 144 blocks
-// (≈ 24 hours). The ticker asset quantity encodes BTC/USD in cents; the clock
-// asset quantity encodes the last update as a block height.
+// and transfer transactions. The beacon is authenticated by its ticker and
+// clock asset IDs — those `bytes32` values commit to the oracle's genesis
+// issuance transaction and are globally unique. The vault does not need to
+// bake in the oracle's pubkey: oracle key rotation via PriceBeacon.migrate()
+// keeps the asset IDs stable, so existing vaults remain valid. Staleness is
+// enforced at 144 blocks (≈ 24 hours). The ticker asset quantity encodes
+// BTC/USD in cents; the clock asset quantity encodes the last update as a
+// block height.
 //
 // Re-collateralization: if BTC drops beyond the coverage ceiling and the
 // Provider does not call providerExit, the position remains live. When the
@@ -35,7 +39,6 @@
 // no on-chain action required.
 
 import "single_sig.ark";
-import "price_beacon.ark";
 
 options {
   server = server;
@@ -45,7 +48,6 @@ options {
 contract StabilityVault(
   pubkey  seekerPk,           // current holder of the USD claim
   pubkey  providerPk,         // collateral provider, holds the long side
-  pubkey  oraclePk,           // PriceBeacon oracle key (authenticates the feed)
   bytes32 ticker,             // PriceBeacon ticker asset: quantity = BTC/USD in cents
   bytes32 clock,              // PriceBeacon clock asset: quantity = block height
   int     targetUSD,          // seeker's USD claim in cents (immutable across transfers)
@@ -64,12 +66,8 @@ contract StabilityVault(
   function transfer(signature seekerSig, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
 
-    // Authenticate beacon: correct oracle and ticker
-    require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
-      "wrong beacon"
-    );
-
+    // Authenticate beacon by asset IDs only — ticker and clock are globally
+    // unique and committed at vault open time.
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 
@@ -81,7 +79,7 @@ contract StabilityVault(
     // Position output: identical contract with new seekerPk
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, oraclePk, ticker, clock,
+        newSeekerPk, providerPk, ticker, clock,
         targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit
       ),
       "invalid transfer output"
@@ -111,12 +109,7 @@ contract StabilityVault(
     require(amountUSD > 0, "zero amount");
     require(amountUSD < targetUSD, "amount exceeds balance");
 
-    // Authenticate beacon
-    require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
-      "wrong beacon"
-    );
-
+    // Authenticate beacon by asset IDs only.
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 
@@ -137,7 +130,7 @@ contract StabilityVault(
     // output[0]: recipient receives amountUSD slice
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, oraclePk, ticker, clock,
+        newSeekerPk, providerPk, ticker, clock,
         amountUSD, collateralA, fundingSatPerBlock, openHeight, exit
       ),
       "invalid split output 0"
@@ -147,7 +140,7 @@ contract StabilityVault(
     // output[1]: seeker retains remainder
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk, ticker, clock,
+        seekerPk, providerPk, ticker, clock,
         remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit
       ),
       "invalid split output 1"
@@ -177,12 +170,7 @@ contract StabilityVault(
   function seekerRedeem(signature seekerSig) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
 
-    // Authenticate beacon
-    require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
-      "wrong beacon"
-    );
-
+    // Authenticate beacon by asset IDs only.
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 
@@ -282,12 +270,7 @@ contract StabilityVault(
   function providerExit(signature providerSig) {
     require(checkSig(providerSig, providerPk), "invalid provider sig");
 
-    // Authenticate beacon
-    require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
-      "wrong beacon"
-    );
-
+    // Authenticate beacon by asset IDs only.
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 

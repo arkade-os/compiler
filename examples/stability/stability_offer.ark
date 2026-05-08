@@ -33,7 +33,6 @@ options {
 
 contract StabilityOffer(
   pubkey  providerPk,          // offer creator and collateral provider
-  pubkey  oraclePk,            // must match the PriceBeacon oracle
   bytes32 ticker,              // PriceBeacon ticker asset: quantity = BTC/USD in cents
   bytes32 clock,               // PriceBeacon clock asset: quantity = block height
   int     fundingSatPerBlock,  // signed; positive = provider pays seeker
@@ -62,13 +61,8 @@ contract StabilityOffer(
     require(userBTC <= maxExposureBTC, "exceeds offer capacity");
     require(collateralRatioPct >= 100, "collateral ratio below minimum");
 
-    // Authenticate beacon: correct oracle and ticker
-    require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
-      "wrong beacon"
-    );
-
-    // Read entry price from beacon
+    // Authenticate beacon by asset IDs only — ticker and clock commit to
+    // the oracle's genesis issuance and are globally unique.
     int entryPrice = tx.inputs[1].assets.lookup(ticker);
     require(entryPrice > 0, "invalid beacon price");
 
@@ -87,7 +81,7 @@ contract StabilityOffer(
     // output[0]: new StabilityVault for the Seeker
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk, ticker, clock,
+        seekerPk, providerPk, ticker, clock,
         targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit
       ),
       "invalid vault output"
@@ -99,7 +93,7 @@ contract StabilityOffer(
     if (remainingCapacity > 0) {
       require(
         tx.outputs[1].scriptPubKey == new StabilityOffer(
-          providerPk, oraclePk, ticker, clock,
+          providerPk, ticker, clock,
           fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit
         ),
         "invalid remaining offer"
