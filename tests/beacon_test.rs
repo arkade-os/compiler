@@ -59,7 +59,7 @@ contract PriceBeacon(
     require(newPrice > 0, "price must be positive");
 
     int currentHeight = tx.inputs[0].assets.lookup(clock);
-    require(newBlockHeight > currentHeight, "block height must advance");
+    require(newBlockHeight >= currentHeight, "block height must not regress");
 
     require(
       tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),

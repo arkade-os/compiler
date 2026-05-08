@@ -318,7 +318,8 @@ settlement branch is restored automatically with no on-chain action.
 - Asset quantity of `ticker` encodes the BTC/USD price in cents
 - Asset quantity of `clock` encodes the block height of the last update
 - Oracle updates both values atomically via the beacon's `update` function;
-  block height is enforced to advance monotonically (no back-dating)
+  block height is enforced to be non-decreasing (no back-dating across
+  blocks; same-height updates are permitted for sub-block cadence)
 - Update cadence is not constrained by Bitcoin's ~10-minute block time. The
   beacon lives off-chain on Arkade, so the oracle may publish updates at
   sub-second frequency. The `clock` field still records the block height at

@@ -37,14 +37,16 @@ contract PriceBeacon(
   // -------------------------------------------------------------------------
   // UPDATE
   // Oracle publishes a new price and block height.
-  // newBlockHeight must exceed the stored height — back-dating is impossible.
+  // newBlockHeight must not regress — back-dating across blocks is impossible.
+  // Same-height updates are permitted to support sub-block cadence on Arkade
+  // (the oracle may publish multiple prices within the same Bitcoin block).
   // -------------------------------------------------------------------------
   function update(signature oracleSig, int newPrice, int newBlockHeight) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
     require(newPrice > 0, "price must be positive");
 
     int currentHeight = tx.inputs[0].assets.lookup(clock);
-    require(newBlockHeight > currentHeight, "block height must advance");
+    require(newBlockHeight >= currentHeight, "block height must not regress");
 
     require(
       tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
