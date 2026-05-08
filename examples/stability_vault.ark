@@ -242,10 +242,10 @@ contract StabilityVault(
   // Economically identical to seekerRedeem — same beacon read, same payout
   // split. Provider signs instead of Seeker.
   //
-  // Cooperative variant (with ASP): instant settlement.
-  // Exit variant (unilateral): requires 144-block CSV. During this window
-  // the Seeker can independently call seekerRedeem at the same beacon price,
-  // so there is no adversarial price-picking opportunity.
+  // This is a unilateral settlement path that both parties can use. Either
+  // party can initiate settlement first; the contract enforces identical
+  // payout math. This is a "first come, first served" design — no artificial
+  // delays or precedence.
   //
   // The Provider is under no obligation to call this function. If BTC has
   // dropped beyond the coverage ceiling, the Provider can hold the position
