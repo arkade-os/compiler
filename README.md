@@ -58,7 +58,7 @@ Then open [http://localhost:8080](http://localhost:8080) in your browser.
   arkadec contract.ark
 ```
 
-This compiles your Arkade Language contract to a JSON artifact for use with Ark libraries.
+This compiles your Arkade Language contract to a JSON artifact for use with Arkade libraries.
 
 ```bash
 # Specify output file
@@ -140,11 +140,11 @@ The simplest VTXO: a single public key controls spending.
 ```solidity
 options {
   server = server;
-  renew = 1008;
-  exit = 144;
+  renew = renew;
+  exit = exit;
 }
 
-contract SingleSig(pubkey user) {
+contract SingleSig(pubkey user, int renew, int exit) {
   function spend(signature userSig) {
     require(checkSig(userSig, user));
   }
@@ -154,18 +154,25 @@ contract SingleSig(pubkey user) {
 Each function compiles to two variants automatically:
 
 - **Cooperative** (`serverVariant: true`): `checkSig(user) && checkSig(server)`
-- **Exit** (`serverVariant: false`): `checkSig(user) && after 144 blocks`
+- **Exit** (`serverVariant: false`): `checkSig(user) && after exit blocks`
 
 ### HTLC — Hash Time-Locked Contract
 
 ```solidity
 options {
   server = server;
-  renew = 1008;
-  exit = 144;
+  renew = renew;
+  exit = exit;
 }
 
-contract HTLC(pubkey sender, pubkey receiver, bytes hash, int refundTime) {
+contract HTLC(
+  pubkey sender,
+  pubkey receiver,
+  bytes hash,
+  int refundTime,
+  int renew,
+  int exit
+) {
   function together(signature senderSig, signature receiverSig) {
     require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
   }
@@ -190,11 +197,11 @@ Use `import` and `new ContractName(args)` to enforce that a transaction output c
 import "single_sig.ark";
 
 options {
-  server = operator;
-  exit = 144;
+  server = server;
+  exit = exit;
 }
 
-contract RecursiveVtxo(pubkey ownerPk) {
+contract RecursiveVtxo(pubkey ownerPk, int exit) {
   // Forward ownership to output 0, maintaining the SingleSig VTXO shape.
   function send() {
     require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
@@ -202,7 +209,7 @@ contract RecursiveVtxo(pubkey ownerPk) {
 }
 ```
 
-The `new SingleSig(ownerPk)` expression compiles to a `<VTXO:SingleSig(<ownerPk>)>` placeholder. At runtime the Ark server resolves this placeholder to the actual Taproot scriptPubKey of the child contract, so the introspection check is pure Bitcoin Script.
+The `new SingleSig(ownerPk)` expression compiles to a `<VTXO:SingleSig(<ownerPk>)>` placeholder. At runtime the Arkade Operator resolves this placeholder to the actual Taproot scriptPubKey of the child contract, so the introspection check is pure Bitcoin Script.
 
 **Cooperative path ASM:**
 
@@ -215,7 +222,7 @@ The `new SingleSig(ownerPk)` expression compiles to a `<VTXO:SingleSig(<ownerPk>
 
 ```text
 <ownerPk> <ownerPkSig> OP_CHECKSIG
-144 OP_CHECKSEQUENCEVERIFY OP_DROP
+<exit> OP_CHECKSEQUENCEVERIFY OP_DROP
 ```
 
 #### Splitting to two outputs
@@ -224,11 +231,11 @@ The `new SingleSig(ownerPk)` expression compiles to a `<VTXO:SingleSig(<ownerPk>
 import "single_sig.ark";
 
 options {
-  server = operator;
-  exit = 144;
+  server = server;
+  exit = exit;
 }
 
-contract Splitter(pubkey alicePk, pubkey bobPk) {
+contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
   function split() {
     require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk));
     require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk));
@@ -242,8 +249,8 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 import "self.ark";
 
 options {
-  server = operator;
-  exit = 144;
+  server = server;
+  exit = exit;
 }
 
 contract FujiSafe(
@@ -255,7 +262,8 @@ contract FujiSafe(
   int priceLevel,
   int setupTimestamp,
   pubkey oraclePk,
-  bytes assetPair
+  bytes assetPair,
+  int exit
 ) {
   // Treasury can renew the VTXO without changing any parameters.
   function renew(signature treasurySig) {
@@ -295,12 +303,12 @@ An Arkade Language file may start with zero or more `import` declarations, follo
 import "other_contract.ark";   // optional — imports for contract instantiation
 
 options {
-  server = operator;  // Ark operator key
-  renew = 1008;       // renewal timelock in blocks (optional)
-  exit = 144;         // exit timelock in blocks
+  server = server;    // Arkade Operator co-signing capability (auto-injected as <SERVER_KEY>)
+  renew = renew;      // renewal timelock in blocks (optional)
+  exit = exit;        // exit timelock in blocks
 }
 
-contract MyContract(pubkey user) {
+contract MyContract(pubkey user, int renew, int exit) {
   function spend(signature userSig) {
     require(checkSig(userSig, user));
   }
@@ -309,11 +317,11 @@ contract MyContract(pubkey user) {
 
 ### Options Block
 
-| Field    | Required | Description                                        |
-|----------|----------|----------------------------------------------------|
-| `server` | yes      | Parameter name holding the Ark operator public key |
-| `exit`   | yes      | Unilateral exit timelock in blocks                 |
-| `renew`  | no       | Cooperative renewal timelock in blocks             |
+| Field    | Required | Description                                                                          |
+|----------|----------|--------------------------------------------------------------------------------------|
+| `server` | yes      | Always `server = server`; Arkade Operator key is auto-injected as `<SERVER_KEY>`     |
+| `exit`   | yes      | Unilateral exit timelock in blocks; bind to an `int exit` constructor parameter      |
+| `renew`  | no       | Cooperative renewal timelock in blocks; bind to an `int renew` constructor parameter |
 
 ### Functions
 
@@ -416,7 +424,7 @@ require(tx.time >= expirationTimeout, "Expiration timeout not reached");
 
 ## Artifact Format
 
-Arkade Language compiles to Arkade Script and produces a JSON artifact for use with Ark libraries.
+Arkade Language compiles to Arkade Script and produces a JSON artifact for use with Arkade libraries.
 
 ### Key Fields
 

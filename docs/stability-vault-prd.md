@@ -41,7 +41,7 @@ never need to think about Bitcoin price or funding mechanics.
 | **Provider** | BTC holder taking the leveraged long side | Open offers, hold position, exit for profit |
 | **Swap Service** | Bridges USDT/USDC ↔ StabilityVault positions | Holds inventory float, quotes spreads |
 | **Oracle** | Operates the PriceBeacon, publishes BTC/USD price | Update beacon every block |
-| **ASP** | Ark Service Provider, co-signs cooperative transactions | Facilitate cooperative paths |
+| **Arkade Operator** | Co-signs cooperative transactions on the Arkade network | Facilitate cooperative paths |
 
 ### Seeker motivations
 - Wants USD stability without leaving Bitcoin
@@ -211,18 +211,23 @@ may receive less than your original USD value."
 ### 5.6 Provider: Exit a position
 
 ```
-Cooperative (instant, with ASP co-sign):
+Cooperative (instant, Arkade Operator co-signs):
   1. Provider calls providerExit(providerSig) — cooperative variant
-  2. Contract reads beacon, splits collateral
+  2. Contract reads the live beacon price, splits collateral
   3. Current Seeker/holder receives their USD equivalent in BTC
-  4. Provider receives remainder
+  4. Provider receives the remainder
 
-Unilateral (no ASP, after 144-block timelock):
+Unilateral (operator offline, after exit timelock):
   1. Provider broadcasts providerExit — exit variant
-  2. 144 blocks elapse (≈24h)
-  3. During this window, Seeker can call seekerRedeem themselves
-  4. If Seeker does nothing, providerExit settles at block-144 beacon price
+  2. After `exit` blocks elapse (CLTV), Provider can spend without operator co-sign
+  3. Settlement math is identical: live beacon read, payouts split per the
+     same formula the cooperative variant enforces
 ```
+
+There is no counterparty-challenge window. Either party can settle instantly
+via the cooperative variant at any time — first come, first served. The exit
+timelock is purely a fallback for when the Arkade Operator is offline; it
+does not delay settlement when the Operator is available.
 
 ---
 
@@ -247,11 +252,14 @@ without trusting the spender).
 |---|---|---|---|
 | `transfer` | seekerSig | Yes | Assign full position to new owner |
 | `split` | seekerSig | Yes (×2) | Divide USD claim, proportional collateral |
-| `seekerRedeem` | seekerSig | No | Settle to BTC at oracle price |
-| `providerExit` | providerSig | No | Provider-initiated settlement at oracle price |
+| `seekerRedeem` | seekerSig | No | Seeker settles to BTC at the live oracle price |
+| `providerExit` | providerSig | No | Provider settles to BTC at the live oracle price |
 
-Each function compiles to two tapleaves: cooperative (+ ASP co-sign, instant)
-and exit (+ 144-block CSV, no ASP needed).
+Each function compiles to two tapleaves: cooperative (Arkade Operator co-signs,
+instant) and exit (CLTV at the `exit` block height, operator co-sign not
+required). Both variants enforce identical settlement math. The exit variant
+exists only so a unilateral close is always possible when the Operator is
+offline; it is not a counterparty-challenge window.
 
 **Total tapleaves: 8** (4 functions × 2 variants).
 
@@ -283,18 +291,24 @@ seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
 providerPayout = totalCollateral − seekerPayout
 ```
 
-Dust threshold: if `providerPayout < 547 sats`, no provider output is created.
+Dust threshold: if `providerPayout <= 330 sats` (Taproot dust), no provider
+output is created and the seeker output absorbs the residual.
 
 ### Why no liquidation
 
 There is no liquidation mechanism. No bots, no margin calls, no race conditions.
-Either party triggers settlement voluntarily by reading the public beacon at that
-moment. The contract enforces the math; neither party can choose a different price.
+Either party triggers settlement voluntarily by reading the public beacon at
+that moment. The contract enforces the math; neither party can choose a
+different price.
 
-The Provider's only incentive to time their exit is to maximise their own payout
-(exit when BTC is high). The Seeker is protected because they can always exit
-first via `seekerRedeem`. The 144-block timelock on Provider's unilateral exit
-gives the Seeker a window to act.
+`seekerRedeem` and `providerExit` are economically symmetric — same beacon
+read, same payout formula, same outputs. Whichever party broadcasts first wins
+the race. There is no settlement delay and no challenge window: the live
+beacon price is the only price either side can claim.
+
+If BTC has dropped beyond the coverage ceiling, the Provider can simply hold
+the position. There is no forced liquidation; when BTC recovers, the normal
+settlement branch is restored automatically with no on-chain action.
 
 ---
 
@@ -302,14 +316,21 @@ gives the Seeker a window to act.
 
 ### PriceBeacon design
 - One persistent on-chain UTXO per currency pair
-- Asset quantity of `priceAssetId` encodes the BTC/USD price in cents
-- Oracle updates the price by spending the beacon through its `update` function
-- Any transaction that reads the price must include the beacon as an input and
-  pass it through as an output (enforced by the beacon's own `passthrough` function)
+- Asset quantity of `ticker` encodes the BTC/USD price in cents
+- Asset quantity of `clock` encodes the block height of the last update
+- Oracle updates both values atomically via the beacon's `update` function;
+  block height is enforced to advance monotonically (no back-dating)
+- Any transaction that reads the price must include the beacon as an input
+  and pass it through as an output (enforced by the beacon's `passthrough`)
+- Consumers verify the beacon's script
+  (`tx.inputs[N].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit)`)
+  to authenticate the feed
 
 ### Trust model (v1)
 - Single oracle; trust is reputation-based and publicly verifiable on-chain
-- Stale beacon (oracle offline) blocks settlement — price reads revert on `> 0` check
+- Freshness is enforced on every read:
+  `tx.time - tx.inputs[N].assets.lookup(clock) <= 144` (≈ 24 hours).
+  A stale beacon blocks settlement until the oracle resumes.
 - **v2 requirement (must ship before scale):** threshold-of-N oracle using the
   existing `ThresholdOracle` pattern. Target: 3-of-5 oracle quorum.
 
@@ -330,9 +351,11 @@ The wallet UI must surface the following before a user opens a position:
    public price oracle. In the unlikely event the oracle is offline, you cannot
    settle until it resumes."
 
-4. **24-hour exit delay (unilateral only):** "If your counterparty initiates a
-   forced close without your cooperation, you have 24 hours (≈144 blocks) to
-   act before it settles automatically at the oracle price."
+4. **Either party can settle at any time:** "Your counterparty (the BTC
+   collateral provider) can settle the position at any time using the live
+   oracle price. The same is true for you — neither side can force a
+   different price. There is no delay or challenge period; whoever settles
+   first locks in the live oracle price for both sides."
 
 5. **Funding rate:** "You are earning [X% APY] on your USD balance, paid by
    your counterparty in exchange for their leveraged BTC position. This rate
@@ -343,10 +366,10 @@ The wallet UI must surface the following before a user opens a position:
 ## 10. Build Scope
 
 ### In scope (v1)
-- `stability_vault.ark`: transfer, split, seekerRedeem, providerExit
-- `stability_offer.ark`: updated to create StabilityVault outputs (already exists, minor update)
-- `price_beacon.ark`: no changes required (already exists)
-- Integration tests: `tests/stability_vault_test.rs`
+- `examples/stability/stability_vault.ark`: transfer, split, seekerRedeem, providerExit
+- `examples/stability/stability_offer.ark`: creates StabilityVault outputs at the live beacon price
+- `examples/stability/price_beacon.ark`: dual-asset oracle (ticker + clock) with monotone block-height enforcement
+- Integration tests covering parsing, ABI shape, and ASM emission for each contract
 - Wallet UX flows 5.1–5.6 above
 
 ### Out of scope (tracked separately)
