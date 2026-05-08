@@ -1,24 +1,23 @@
 // PriceBeacon Contract
 //
-// On-chain price oracle. The BTC/USD price is encoded as the quantity of
-// priceAssetId. A second asset, timestampAssetId, records the block height
-// of the last update — enabling consumers to enforce freshness on-chain.
+// On-chain price oracle. Three values are maintained:
+//   - ticker     (bytes32): identifies the price feed (e.g. commitment to "BTC/USD")
+//   - price      (int):     BTC/USD in cents; encoded as the quantity of the ticker asset
+//   - timestamp  (int):     unix seconds of the last update; encoded as quantity of the clock asset
 //
 // Oracle flow:
 //   1. Oracle deploys a PriceBeacon UTXO with an initial price and timestamp.
-//   2. Oracle calls update() each block (or on significant price movement).
-//   3. Settlement contracts read both assets atomically via introspection and
-//      verify the beacon's script to authenticate the feed.
-//   4. Staleness is enforced by consumers:
-//        int beaconAge = tx.time - tx.inputs[N].assets.lookup(timestampAssetId);
-//        require(beaconAge <= maxStalenessBlocks, "stale oracle");
+//   2. Oracle calls update() with each new price and the current unix timestamp.
+//   3. Settlement contracts read price and timestamp atomically via introspection.
+//   4. Consumers enforce freshness:
+//        int age = tx.time - tx.inputs[N].assets.lookup(clock);
+//        require(age <= 86400, "stale oracle");  // 86400 = 24 hours
 //
 // Security properties:
-//   - Only oraclePk can update the price.
-//   - Timestamps advance monotonically (enforced on-chain); back-dating is impossible.
-//   - Every consumer must passthrough both assets; neither can decrease.
-//   - Verifying tx.inputs[N].scriptPubKey == new PriceBeacon(...) authenticates
-//     the ticker and oracle in one check.
+//   - Only oraclePk can update price or timestamp.
+//   - Timestamps are monotonically non-decreasing (enforced on-chain).
+//   - Consumers verify the beacon script to authenticate ticker and oracle:
+//        tx.inputs[N].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk)
 
 options {
   server = oraclePk;
@@ -26,58 +25,58 @@ options {
 }
 
 contract PriceBeacon(
-  bytes32 priceAssetId,      // quantity = BTC/USD in cents (e.g. 10_000_000_00 = $100,000.00)
-  bytes32 timestampAssetId,  // quantity = block height of last update
-  pubkey  oraclePk           // authorized updater
+  bytes32 ticker,   // asset whose quantity = BTC/USD price in cents
+  bytes32 clock,    // asset whose quantity = unix timestamp of last update (seconds)
+  pubkey  oraclePk  // authorized updater
 ) {
 
   // -------------------------------------------------------------------------
   // UPDATE
-  // Oracle publishes a new price and the current block height as timestamp.
-  // newTimestamp must exceed the stored timestamp — prevents back-dating.
+  // Oracle publishes a new price and unix timestamp.
+  // newTimestamp must exceed the stored timestamp — back-dating is impossible.
   // -------------------------------------------------------------------------
   function update(signature oracleSig, int newPrice, int newTimestamp) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
     require(newPrice > 0, "price must be positive");
 
-    int currentTimestamp = tx.inputs[0].assets.lookup(timestampAssetId);
+    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
     require(newTimestamp > currentTimestamp, "timestamp must advance");
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(priceAssetId, timestampAssetId, oraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
       "beacon script must survive"
     );
     require(
-      tx.outputs[0].assets.lookup(priceAssetId) == newPrice,
+      tx.outputs[0].assets.lookup(ticker) == newPrice,
       "price not updated correctly"
     );
     require(
-      tx.outputs[0].assets.lookup(timestampAssetId) == newTimestamp,
+      tx.outputs[0].assets.lookup(clock) == newTimestamp,
       "timestamp not updated correctly"
     );
   }
 
   // -------------------------------------------------------------------------
   // PASSTHROUGH
-  // Any transaction reading the beacon includes it as a pass-through input.
-  // Both price and timestamp assets must survive at or above their current value.
+  // Any transaction reading the beacon routes it through passthrough.
+  // Both ticker and clock assets must be preserved.
   // -------------------------------------------------------------------------
   function passthrough() {
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(priceAssetId, timestampAssetId, oraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
       "beacon script must survive"
     );
 
-    int currentPrice = tx.inputs[0].assets.lookup(priceAssetId);
+    int currentPrice = tx.inputs[0].assets.lookup(ticker);
     require(
-      tx.outputs[0].assets.lookup(priceAssetId) >= currentPrice,
+      tx.outputs[0].assets.lookup(ticker) >= currentPrice,
       "price asset must survive"
     );
 
-    int currentTimestamp = tx.inputs[0].assets.lookup(timestampAssetId);
+    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
     require(
-      tx.outputs[0].assets.lookup(timestampAssetId) >= currentTimestamp,
-      "timestamp asset must survive"
+      tx.outputs[0].assets.lookup(clock) >= currentTimestamp,
+      "clock asset must survive"
     );
   }
 
@@ -88,19 +87,19 @@ contract PriceBeacon(
   function migrate(signature oracleSig, pubkey newOraclePk) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
 
-    int currentPrice     = tx.inputs[0].assets.lookup(priceAssetId);
-    int currentTimestamp = tx.inputs[0].assets.lookup(timestampAssetId);
+    int currentPrice     = tx.inputs[0].assets.lookup(ticker);
+    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(priceAssetId, timestampAssetId, newOraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, newOraclePk),
       "invalid new beacon"
     );
     require(
-      tx.outputs[0].assets.lookup(priceAssetId) == currentPrice,
+      tx.outputs[0].assets.lookup(ticker) == currentPrice,
       "price must be preserved"
     );
     require(
-      tx.outputs[0].assets.lookup(timestampAssetId) == currentTimestamp,
+      tx.outputs[0].assets.lookup(clock) == currentTimestamp,
       "timestamp must be preserved"
     );
   }
