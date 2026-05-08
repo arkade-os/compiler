@@ -1,32 +1,40 @@
 // StabilityVault Contract
 //
-// A USD-denominated claim backed by 1.5:1 BTC collateral.
-// Seeker locks BTC and holds a fixed USD value. Provider matches 1.5x the
-// Seeker's BTC as collateral, taking a 1.67x leveraged BTC long position.
-// Provider pays Seeker a funding rate (fundingSatPerBlock > 0 by default)
-// as the cost of self-custodied leverage.
+// A USD-denominated claim backed by BTC collateral.
+// Seeker locks BTC and holds a fixed USD value. Provider matches the Seeker's
+// BTC with additional collateral, taking a leveraged BTC long position.
+// Provider pays Seeker a funding rate (fundingSatPerBlock > 0) as the cost
+// of self-custodied leverage.
 //
 // Primary flow: Seeker transfers the position to a swap service in exchange
 // for USDT/USDC. The swap service holds positions as USD inventory float.
 // seekerRedeem/providerExit are settlement valves, not the normal exit path.
 //
-// Settlement math (no liquidation mechanism):
-//   seekerBase     = targetUSD * 1e8 / currentPrice
-//   fundingAccrued = fundingSatPerBlock * (tx.time - openHeight)
+// Collateral structure:
+//   totalCollateral = seekerBTC + (collateralRatioPct/100) × seekerBTC
+//   At collateralRatioPct = 150 (1.5:1): totalCollateral = 2.5 × seekerBTC
+//   Coverage ceiling: 60% price drop from entry
+//   Provider leverage: 1.67×
+//
+// Settlement math:
+//   seekerBase     = targetUSD × 1e8 / currentPrice
+//   fundingAccrued = fundingSatPerBlock × (tx.time - openHeight)
 //   seekerRaw      = seekerBase + fundingAccrued
 //   seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
 //   providerPayout = totalCollateral - seekerPayout
 //
-// Coverage: Seeker is fully protected up to a 60% price drop from entry.
-//   totalCollateral = 2.5 * seekerBTC; at -60% BTC, seekerPayout = 2.5 BTC = cap.
-// Beyond that, Seeker receives all available collateral (the contract does
-// not revert; it pays out what exists).
+// Oracle: A PriceBeacon UTXO must be passed as input[1] in all settlement
+// and transfer transactions. The beacon's script is verified on-chain to
+// authenticate the ticker and oracle. Staleness is enforced at 144 blocks
+// (~24 hours). Asset quantity of priceAssetId encodes BTC/USD in cents.
 //
-// Oracle: PriceBeacon UTXO must be passed as input[1] in all settlement
-// and transfer transactions. Asset quantity of priceAssetId encodes the
-// BTC/USD price in cents (e.g. 10_000_000_00 = $100,000.00).
+// Re-collateralization: if BTC drops beyond the coverage ceiling and the
+// Provider does not call providerExit, the position remains live. When the
+// BTC price recovers, the normal settlement branch is restored automatically —
+// no on-chain action required.
 
 import "single_sig.ark";
+import "price_beacon.ark";
 
 options {
   server = serverPk;
@@ -37,11 +45,13 @@ contract StabilityVault(
   pubkey  seekerPk,            // current holder of the USD claim
   pubkey  providerPk,          // collateral provider, holds the long side
   pubkey  serverPk,            // ASP co-signing key for cooperative paths
+  pubkey  oraclePk,            // PriceBeacon oracle key (authenticates the feed)
   bytes32 priceAssetId,        // PriceBeacon asset: quantity = BTC/USD in cents
+  bytes32 timestampAssetId,    // PriceBeacon asset: quantity = block height of last update
   int     targetUSD,           // seeker's USD claim in cents (immutable across transfers)
-  int     totalCollateral,     // sats locked; always 2.5 * seekerBTC at open (1.5:1 Provider ratio)
-  int     fundingSatPerBlock,  // signed: >0 provider pays seeker (expected default), <0 seeker pays
-  int     openHeight           // block height at last open or split; basis for funding accrual
+  int     totalCollateral,     // sats locked
+  int     fundingSatPerBlock,  // signed: >0 provider pays seeker, <0 seeker pays
+  int     openHeight           // block height at position open; basis for funding accrual
 ) {
 
   // -------------------------------------------------------------------------
@@ -49,29 +59,42 @@ contract StabilityVault(
   // Seeker assigns the entire position to a new owner, pubkey newSeekerPk.
   // All economic parameters are preserved. openHeight is unchanged so funding
   // accrues continuously across transfers.
-  //
-  // Primary use: Seeker hands position to a swap service for USDT/USDC,
-  // or sends their full USD balance to another wallet.
   // -------------------------------------------------------------------------
   function transfer(signature seekerSig, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
 
+    // Authenticate beacon: correct oracle and feed
+    require(
+      tx.inputs[1].scriptPubKey == new PriceBeacon(priceAssetId, timestampAssetId, oraclePk),
+      "wrong beacon"
+    );
+
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    // Enforce freshness (144 blocks ≈ 24 hours)
+    int beaconTimestamp = tx.inputs[1].assets.lookup(timestampAssetId);
+    int beaconAge = tx.time - beaconTimestamp;
+    require(beaconAge <= 144, "stale oracle");
+
     // Position output: identical contract with new seekerPk
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, serverPk, priceAssetId,
+        newSeekerPk, providerPk, serverPk, oraclePk, priceAssetId, timestampAssetId,
         targetUSD, totalCollateral, fundingSatPerBlock, openHeight
       ),
       "invalid transfer output"
     );
     require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
 
-    // Beacon must survive as output[1]
-    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
-    require(currentPrice > 0, "beacon missing or stale");
+    // Beacon must survive — both assets preserved
     require(
       tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
       "beacon must survive"
+    );
+    require(
+      tx.outputs[1].assets.lookup(timestampAssetId) >= beaconTimestamp,
+      "beacon timestamp must survive"
     );
   }
 
@@ -80,20 +103,29 @@ contract StabilityVault(
   // Seeker divides the USD claim into two independent positions.
   // amountUSD goes to newSeekerPk; the remainder stays with seekerPk.
   // Collateral splits proportionally to the USD claim ratio.
-  // openHeight resets to tx.time on both outputs so funding restarts cleanly.
-  //
-  // Primary use: "send $50 of my $5,000 balance to a friend" — one tx,
-  // no cooperation from Provider needed.
+  // openHeight is preserved on both outputs so funding accrues continuously.
   // -------------------------------------------------------------------------
   function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
     require(amountUSD > 0, "zero amount");
     require(amountUSD < targetUSD, "amount exceeds balance");
 
+    // Authenticate beacon
+    require(
+      tx.inputs[1].scriptPubKey == new PriceBeacon(priceAssetId, timestampAssetId, oraclePk),
+      "wrong beacon"
+    );
+
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    int beaconTimestamp = tx.inputs[1].assets.lookup(timestampAssetId);
+    int beaconAge = tx.time - beaconTimestamp;
+    require(beaconAge <= 144, "stale oracle");
+
     int remainingUSD = targetUSD - amountUSD;
 
-    // Proportional collateral split (integer division; dust risk is negligible
-    // at minimum position sizes; remainder goes to the retained slice)
+    // Proportional collateral split
     int collateralA = totalCollateral * amountUSD / targetUSD;
     int collateralB = totalCollateral - collateralA;
 
@@ -103,7 +135,7 @@ contract StabilityVault(
     // output[0]: recipient receives amountUSD slice
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, serverPk, priceAssetId,
+        newSeekerPk, providerPk, serverPk, oraclePk, priceAssetId, timestampAssetId,
         amountUSD, collateralA, fundingSatPerBlock, openHeight
       ),
       "invalid split output 0"
@@ -113,7 +145,7 @@ contract StabilityVault(
     // output[1]: seeker retains remainder
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, serverPk, priceAssetId,
+        seekerPk, providerPk, serverPk, oraclePk, priceAssetId, timestampAssetId,
         remainingUSD, collateralB, fundingSatPerBlock, openHeight
       ),
       "invalid split output 1"
@@ -121,37 +153,47 @@ contract StabilityVault(
     require(tx.outputs[1].value >= collateralB, "insufficient collateral B");
 
     // output[2]: beacon passthrough
-    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
-    require(currentPrice > 0, "beacon missing or stale");
     require(
       tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
       "beacon must survive"
+    );
+    require(
+      tx.outputs[2].assets.lookup(timestampAssetId) >= beaconTimestamp,
+      "beacon timestamp must survive"
     );
   }
 
   // -------------------------------------------------------------------------
   // SEEKER REDEEM
-  // Current position holder exits to BTC at the live oracle price.
-  // Handles the undercollateralised case: if BTC has dropped beyond coverage,
-  // seeker takes all available collateral (contract does not revert).
+  // Seeker exits to BTC at the live oracle price.
+  // In the undercollateralised case (BTC dropped beyond coverage ceiling),
+  // seeker receives all available collateral — the contract never reverts.
   //
-  // Normal use: swap service rebalancing inventory back to BTC.
-  // Emergency use: Seeker converting to BTC directly.
+  // Provider re-collateralization: if BTC has dropped beyond the coverage
+  // ceiling and providerExit has not been called, the position stays live.
+  // When BTC recovers, the normal settlement branch is restored automatically.
   // -------------------------------------------------------------------------
   function seekerRedeem(signature seekerSig) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
 
-    // Read live price from beacon (input[1])
+    // Authenticate beacon
+    require(
+      tx.inputs[1].scriptPubKey == new PriceBeacon(priceAssetId, timestampAssetId, oraclePk),
+      "wrong beacon"
+    );
+
     int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
     require(currentPrice > 0, "invalid beacon price");
 
-    // Compute seeker's BTC payout
+    int beaconTimestamp = tx.inputs[1].assets.lookup(timestampAssetId);
+    int beaconAge = tx.time - beaconTimestamp;
+    require(beaconAge <= 144, "stale oracle");
+
     int blocksElapsed = tx.time - openHeight;
     int seekerBase    = targetUSD * 100000000 / currentPrice;
     int funding       = fundingSatPerBlock * blocksElapsed;
     int seekerRaw     = seekerBase + funding;
 
-    // Clamped settlement: seeker gets [0, totalCollateral]
     if (seekerRaw >= totalCollateral) {
       // Undercollateralised: seeker takes everything, provider gets nothing.
       // Only 1 payout output → beacon at output[1].
@@ -199,16 +241,31 @@ contract StabilityVault(
   // Economically identical to seekerRedeem — same beacon read, same payout
   // split. Provider signs instead of Seeker.
   //
-  // Cooperative variant (with ASP): instant.
+  // Cooperative variant (with ASP): instant settlement.
   // Exit variant (unilateral): requires 144-block CSV. During this window
   // the Seeker can independently call seekerRedeem at the same beacon price,
   // so there is no adversarial price-picking opportunity.
+  //
+  // The Provider is under no obligation to call this function. If BTC has
+  // dropped beyond the coverage ceiling, the Provider can hold the position
+  // and allow BTC to recover naturally — re-collateralization is automatic
+  // when the price rises back above the coverage threshold.
   // -------------------------------------------------------------------------
   function providerExit(signature providerSig) {
     require(checkSig(providerSig, providerPk), "invalid provider sig");
 
-    int currentPrice  = tx.inputs[1].assets.lookup(priceAssetId);
+    // Authenticate beacon
+    require(
+      tx.inputs[1].scriptPubKey == new PriceBeacon(priceAssetId, timestampAssetId, oraclePk),
+      "wrong beacon"
+    );
+
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
     require(currentPrice > 0, "invalid beacon price");
+
+    int beaconTimestamp = tx.inputs[1].assets.lookup(timestampAssetId);
+    int beaconAge = tx.time - beaconTimestamp;
+    require(beaconAge <= 144, "stale oracle");
 
     int blocksElapsed = tx.time - openHeight;
     int seekerBase    = targetUSD * 100000000 / currentPrice;
