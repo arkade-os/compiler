@@ -128,12 +128,11 @@ The off-chain matching marketplace discovers the rate. The contract enforces
 whatever was agreed. Neither party can change it after open without closing and
 reopening.
 
-### The MoC lesson
-Money on Chain (MoC) on RSK used 6x overcollateralisation with zero yield.
-Result: no users. The lesson: collateral alone is not enough. Seekers need
-yield to compensate for giving up BTC upside. StabilityVault addresses both:
-adequate collateral (2.5x, covering 60% drops) plus a positive funding rate
-paid by the Provider to the Seeker.
+### Why both collateral and yield are required
+Collateral alone is not enough. Seekers give up BTC upside to hold a USD
+balance, so without compensation rational Seekers do not participate.
+StabilityVault addresses both sides: 2.5x collateral coverage (60% price-drop
+protection) plus a positive funding rate paid by the Provider to the Seeker.
 
 ---
 
