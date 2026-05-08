@@ -316,16 +316,19 @@ settlement branch is restored automatically with no on-chain action.
 ### PriceBeacon design
 - One persistent Arkade UTXO per currency pair
 - Asset quantity of `ticker` encodes the BTC/USD price in cents
-- Asset quantity of `clock` encodes the block height of the last update
-- Oracle updates both values atomically via the beacon's `update` function;
-  block height is enforced to be non-decreasing (no back-dating across
-  blocks; same-height updates are permitted for sub-block cadence)
-- Update cadence is not constrained by Bitcoin's ~10-minute block time. The
-  beacon lives off-chain on Arkade, so the oracle may publish updates at
-  sub-second frequency. The `clock` field still records the block height at
-  which the update was issued, so multiple intra-block updates share that
-  block height — that is correct: any update within the freshness window
-  reads as fresh.
+- Asset quantity of `clock` encodes the Bitcoin block height of the last
+  update. Block height is used (not unix time) because Arkade's `tx.time`
+  introspection primitive maps to Bitcoin's nLockTime block height —
+  both operands of the staleness check must be in the same unit.
+- The oracle may publish at any frequency. Arkade is an off-chain network;
+  oracle updates are not gated on Bitcoin's ~10-minute block confirmation
+  time. The oracle can publish multiple prices within a single Bitcoin block
+  — each carrying the same `clock` value (the current block height). That
+  is intentional and correct: within-block updates are valid refreshes.
+- Block-height monotonicity: `update()` enforces `newBlockHeight >= currentHeight`
+  (non-decreasing). Same-block updates are permitted; back-dating to a prior
+  block is rejected on-chain. This prevents timestamp rollback while supporting
+  continuous sub-second price publication between Bitcoin blocks.
 - Any transaction that reads the price must include the beacon as an input
   and pass it through as an output (enforced by the beacon's `passthrough`)
 - Consumers authenticate the beacon by its `ticker` and `clock` asset IDs.
@@ -338,7 +341,10 @@ settlement branch is restored automatically with no on-chain action.
 - Single oracle; trust is reputation-based and publicly verifiable on-chain
 - Freshness is enforced on every read:
   `tx.time - tx.inputs[N].assets.lookup(clock) <= 144` (≈ 24 hours).
-  A stale beacon blocks settlement until the oracle resumes.
+  Both `tx.time` and `clock` are Bitcoin block heights so the arithmetic
+  is unit-consistent. A stale beacon blocks settlement until the oracle
+  resumes — the staleness window applies to the most recent published
+  update, not to any individual intra-block update.
 - **v2 requirement (must ship before scale):** threshold-of-N oracle using the
   existing `ThresholdOracle` pattern. Target: 3-of-5 oracle quorum.
 
