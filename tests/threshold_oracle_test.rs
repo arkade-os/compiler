@@ -12,14 +12,13 @@ use arkade_compiler::opcodes::{
 /// - Loop iteration over arrays
 const THRESHOLD_ORACLE_CODE: &str = r#"
 options {
-  server = serverPk;
+  server = server;
   exit = 288;
 }
 
 contract ThresholdOracle(
   bytes32 tokenAssetId,
   bytes32 ctrlAssetId,
-  pubkey serverPk,
   pubkey[] oracles,
   int threshold
 ) {
@@ -42,7 +41,7 @@ contract ThresholdOracle(
     require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
     require(tx.outputs[1].assets.lookup(tokenAssetId) >= amount, "short");
     require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
-    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetId, ctrlAssetId, serverPk, oracles, threshold), "broken");
+    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetId, ctrlAssetId, oracles, threshold), "broken");
   }
 }
 "#;
