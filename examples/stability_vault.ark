@@ -97,11 +97,14 @@ contract StabilityVault(
     int collateralA = totalCollateral * amountUSD / targetUSD;
     int collateralB = totalCollateral - collateralA;
 
+    // Prevent zero-collateral positions from integer truncation on tiny splits
+    require(collateralA >= 546, "split amount too small");
+
     // output[0]: recipient receives amountUSD slice
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, serverPk, priceAssetId,
-        amountUSD, collateralA, fundingSatPerBlock, tx.time
+        amountUSD, collateralA, fundingSatPerBlock, openHeight
       ),
       "invalid split output 0"
     );
@@ -111,7 +114,7 @@ contract StabilityVault(
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, serverPk, priceAssetId,
-        remainingUSD, collateralB, fundingSatPerBlock, tx.time
+        remainingUSD, collateralB, fundingSatPerBlock, openHeight
       ),
       "invalid split output 1"
     );
@@ -150,11 +153,16 @@ contract StabilityVault(
 
     // Clamped settlement: seeker gets [0, totalCollateral]
     if (seekerRaw >= totalCollateral) {
-      // Undercollateralised: seeker takes everything, provider gets nothing
+      // Undercollateralised: seeker takes everything, provider gets nothing.
+      // Only 1 payout output → beacon at output[1].
       require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
       require(
         tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
         "output 0 not seeker"
+      );
+      require(
+        tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+        "beacon must survive"
       );
     } else {
       // Normal settlement: split proportionally
@@ -165,20 +173,24 @@ contract StabilityVault(
       );
       int providerPayout = totalCollateral - seekerRaw;
       if (providerPayout > 546) {
+        // Two payout outputs → beacon at output[2]
         require(tx.outputs[1].value >= providerPayout, "provider underpaid");
         require(
           tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
           "output 1 not provider"
         );
+        require(
+          tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
+          "beacon must survive"
+        );
+      } else {
+        // Provider dust: only seeker output → beacon at output[1]
+        require(
+          tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+          "beacon must survive"
+        );
       }
     }
-
-    // Beacon passthrough (index shifts based on branch output count,
-    // but beacon is always the final output in the transaction)
-    require(
-      tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
-      "beacon must survive"
-    );
   }
 
   // -------------------------------------------------------------------------
@@ -204,11 +216,16 @@ contract StabilityVault(
     int seekerRaw     = seekerBase + funding;
 
     if (seekerRaw >= totalCollateral) {
-      // Undercollateralised: seeker still receives everything
+      // Undercollateralised: seeker still receives everything.
+      // Only 1 payout output → beacon at output[1].
       require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
       require(
         tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
         "output 0 not seeker"
+      );
+      require(
+        tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+        "beacon must survive"
       );
     } else {
       require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
@@ -218,17 +235,23 @@ contract StabilityVault(
       );
       int providerPayout = totalCollateral - seekerRaw;
       if (providerPayout > 546) {
+        // Two payout outputs → beacon at output[2]
         require(tx.outputs[1].value >= providerPayout, "provider underpaid");
         require(
           tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
           "output 1 not provider"
         );
+        require(
+          tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
+          "beacon must survive"
+        );
+      } else {
+        // Provider dust: only seeker output → beacon at output[1]
+        require(
+          tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+          "beacon must survive"
+        );
       }
     }
-
-    require(
-      tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
-      "beacon must survive"
-    );
   }
 }
