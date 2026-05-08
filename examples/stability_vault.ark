@@ -1,0 +1,231 @@
+// StabilityVault Contract
+//
+// A USD-denominated claim backed by 1:1 BTC collateral.
+// Seeker locks BTC and holds a fixed USD value. Provider matches collateral
+// 1:1 and holds a 2x leveraged BTC long. No funding fee by default.
+//
+// Primary flow: Seeker transfers the position to a swap service in exchange
+// for USDT/USDC. The swap service holds positions as USD inventory float.
+// seekerRedeem/providerExit are settlement valves, not the normal exit path.
+//
+// Settlement math (no liquidation mechanism):
+//   seekerBase     = targetUSD * 1e8 / currentPrice
+//   fundingAccrued = fundingSatPerBlock * (tx.time - openHeight)
+//   seekerRaw      = seekerBase + fundingAccrued
+//   seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
+//   providerPayout = totalCollateral - seekerPayout
+//
+// Coverage: Seeker is fully protected up to a 50% price drop from entry.
+// Beyond that, Seeker receives all available collateral (the contract does
+// not revert; it pays out what exists).
+//
+// Oracle: PriceBeacon UTXO must be passed as input[1] in all settlement
+// and transfer transactions. Asset quantity of priceAssetId encodes the
+// BTC/USD price in cents (e.g. 10_000_000_00 = $100,000.00).
+
+import "single_sig.ark";
+
+options {
+  server = serverPk;
+  exit = 144;
+}
+
+contract StabilityVault(
+  pubkey  seekerPk,            // current holder of the USD claim
+  pubkey  providerPk,          // collateral provider, holds the long side
+  pubkey  serverPk,            // ASP co-signing key for cooperative paths
+  bytes32 priceAssetId,        // PriceBeacon asset: quantity = BTC/USD in cents
+  int     targetUSD,           // seeker's USD claim in cents (immutable across transfers)
+  int     totalCollateral,     // sats locked; always 2 * seekerBTC at open (1:1 invariant)
+  int     fundingSatPerBlock,  // signed: >0 provider pays seeker, 0 default, <0 seeker pays
+  int     openHeight           // block height at last open or split; basis for funding accrual
+) {
+
+  // -------------------------------------------------------------------------
+  // TRANSFER
+  // Seeker assigns the entire position to a new owner, pubkey newSeekerPk.
+  // All economic parameters are preserved. openHeight is unchanged so funding
+  // accrues continuously across transfers.
+  //
+  // Primary use: Seeker hands position to a swap service for USDT/USDC,
+  // or sends their full USD balance to another wallet.
+  // -------------------------------------------------------------------------
+  function transfer(signature seekerSig, pubkey newSeekerPk) {
+    require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
+
+    // Position output: identical contract with new seekerPk
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        newSeekerPk, providerPk, serverPk, priceAssetId,
+        targetUSD, totalCollateral, fundingSatPerBlock, openHeight
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+
+    // Beacon must survive as output[1]
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "beacon missing or stale");
+    require(
+      tx.outputs[1].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // SPLIT
+  // Seeker divides the USD claim into two independent positions.
+  // amountUSD goes to newSeekerPk; the remainder stays with seekerPk.
+  // Collateral splits proportionally to the USD claim ratio.
+  // openHeight resets to tx.time on both outputs so funding restarts cleanly.
+  //
+  // Primary use: "send $50 of my $5,000 balance to a friend" — one tx,
+  // no cooperation from Provider needed.
+  // -------------------------------------------------------------------------
+  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {
+    require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
+    require(amountUSD > 0, "zero amount");
+    require(amountUSD < targetUSD, "amount exceeds balance");
+
+    int remainingUSD = targetUSD - amountUSD;
+
+    // Proportional collateral split (integer division; dust risk is negligible
+    // at minimum position sizes; remainder goes to the retained slice)
+    int collateralA = totalCollateral * amountUSD / targetUSD;
+    int collateralB = totalCollateral - collateralA;
+
+    // output[0]: recipient receives amountUSD slice
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        newSeekerPk, providerPk, serverPk, priceAssetId,
+        amountUSD, collateralA, fundingSatPerBlock, tx.time
+      ),
+      "invalid split output 0"
+    );
+    require(tx.outputs[0].value >= collateralA, "insufficient collateral A");
+
+    // output[1]: seeker retains remainder
+    require(
+      tx.outputs[1].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, serverPk, priceAssetId,
+        remainingUSD, collateralB, fundingSatPerBlock, tx.time
+      ),
+      "invalid split output 1"
+    );
+    require(tx.outputs[1].value >= collateralB, "insufficient collateral B");
+
+    // output[2]: beacon passthrough
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "beacon missing or stale");
+    require(
+      tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // SEEKER REDEEM
+  // Current position holder exits to BTC at the live oracle price.
+  // Handles the undercollateralised case: if BTC has dropped beyond coverage,
+  // seeker takes all available collateral (contract does not revert).
+  //
+  // Normal use: swap service rebalancing inventory back to BTC.
+  // Emergency use: Seeker converting to BTC directly.
+  // -------------------------------------------------------------------------
+  function seekerRedeem(signature seekerSig) {
+    require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
+
+    // Read live price from beacon (input[1])
+    int currentPrice = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    // Compute seeker's BTC payout
+    int blocksElapsed = tx.time - openHeight;
+    int seekerBase    = targetUSD * 100000000 / currentPrice;
+    int funding       = fundingSatPerBlock * blocksElapsed;
+    int seekerRaw     = seekerBase + funding;
+
+    // Clamped settlement: seeker gets [0, totalCollateral]
+    if (seekerRaw >= totalCollateral) {
+      // Undercollateralised: seeker takes everything, provider gets nothing
+      require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+        "output 0 not seeker"
+      );
+    } else {
+      // Normal settlement: split proportionally
+      require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+        "output 0 not seeker"
+      );
+      int providerPayout = totalCollateral - seekerRaw;
+      if (providerPayout > 546) {
+        require(tx.outputs[1].value >= providerPayout, "provider underpaid");
+        require(
+          tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
+          "output 1 not provider"
+        );
+      }
+    }
+
+    // Beacon passthrough (index shifts based on branch output count,
+    // but beacon is always the final output in the transaction)
+    require(
+      tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // PROVIDER EXIT
+  // Provider initiates settlement at the live oracle price.
+  // Economically identical to seekerRedeem — same beacon read, same payout
+  // split. Provider signs instead of Seeker.
+  //
+  // Cooperative variant (with ASP): instant.
+  // Exit variant (unilateral): requires 144-block CSV. During this window
+  // the Seeker can independently call seekerRedeem at the same beacon price,
+  // so there is no adversarial price-picking opportunity.
+  // -------------------------------------------------------------------------
+  function providerExit(signature providerSig) {
+    require(checkSig(providerSig, providerPk), "invalid provider sig");
+
+    int currentPrice  = tx.inputs[1].assets.lookup(priceAssetId);
+    require(currentPrice > 0, "invalid beacon price");
+
+    int blocksElapsed = tx.time - openHeight;
+    int seekerBase    = targetUSD * 100000000 / currentPrice;
+    int funding       = fundingSatPerBlock * blocksElapsed;
+    int seekerRaw     = seekerBase + funding;
+
+    if (seekerRaw >= totalCollateral) {
+      // Undercollateralised: seeker still receives everything
+      require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+        "output 0 not seeker"
+      );
+    } else {
+      require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+        "output 0 not seeker"
+      );
+      int providerPayout = totalCollateral - seekerRaw;
+      if (providerPayout > 546) {
+        require(tx.outputs[1].value >= providerPayout, "provider underpaid");
+        require(
+          tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
+          "output 1 not provider"
+        );
+      }
+    }
+
+    require(
+      tx.outputs[2].assets.lookup(priceAssetId) >= currentPrice,
+      "beacon must survive"
+    );
+  }
+}
