@@ -496,7 +496,7 @@ fn generate_function(
                 message: None,
             });
         }
-    } else if let Some(exit_timelock) = contract.exit_timelock {
+    } else if let Some(ref exit_timelock) = contract.exit_timelock {
         require.push(RequireStatement {
             req_type: "older".to_string(),
             message: Some(format!("Exit timelock of {} blocks", exit_timelock)),
@@ -521,8 +521,13 @@ fn generate_function(
             asm.push("<serverSig>".to_string());
             asm.push(OP_CHECKSIG.to_string());
         }
-    } else if let Some(exit_timelock) = contract.exit_timelock {
-        asm.push(format!("{}", exit_timelock));
+    } else if let Some(ref exit_timelock) = contract.exit_timelock {
+        // Emit integer literal directly, or <param> placeholder for identifier references
+        if exit_timelock.parse::<u64>().is_ok() {
+            asm.push(exit_timelock.clone());
+        } else {
+            asm.push(format!("<{}>", exit_timelock));
+        }
         asm.push(OP_CHECKSEQUENCEVERIFY.to_string());
         asm.push(OP_DROP.to_string());
     }

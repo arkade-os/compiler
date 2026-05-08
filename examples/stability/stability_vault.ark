@@ -25,9 +25,9 @@
 //
 // Oracle: A PriceBeacon UTXO must be passed as input[1] in all settlement
 // and transfer transactions. The beacon's script is verified on-chain to
-// authenticate the ticker and oracle. Staleness is enforced at 86400 seconds
-// (24 hours). The ticker asset quantity encodes BTC/USD in cents; the clock
-// asset quantity encodes the last update as a unix timestamp.
+// authenticate the ticker and oracle. Staleness is enforced at 144 blocks
+// (≈ 24 hours). The ticker asset quantity encodes BTC/USD in cents; the clock
+// asset quantity encodes the last update as a block height.
 //
 // Re-collateralization: if BTC drops beyond the coverage ceiling and the
 // Provider does not call providerExit, the position remains live. When the
@@ -38,21 +38,21 @@ import "single_sig.ark";
 import "price_beacon.ark";
 
 options {
-  server = serverPk;
-  exit = 144;
+  server = server;
+  exit = exit;
 }
 
 contract StabilityVault(
   pubkey  seekerPk,           // current holder of the USD claim
   pubkey  providerPk,         // collateral provider, holds the long side
-  pubkey  serverPk,           // Arkade Operator co-signing key for cooperative paths
   pubkey  oraclePk,           // PriceBeacon oracle key (authenticates the feed)
   bytes32 ticker,             // PriceBeacon ticker asset: quantity = BTC/USD in cents
-  bytes32 clock,              // PriceBeacon clock asset: quantity = unix timestamp (seconds)
+  bytes32 clock,              // PriceBeacon clock asset: quantity = block height
   int     targetUSD,          // seeker's USD claim in cents (immutable across transfers)
   int     totalCollateral,    // sats locked
   int     fundingSatPerBlock, // signed: >0 provider pays seeker, <0 seeker pays
-  int     openHeight          // block height at position open; basis for funding accrual
+  int     openHeight,         // block height at position open; basis for funding accrual
+  int     exit                // exit timelock in blocks
 ) {
 
   // -------------------------------------------------------------------------
@@ -66,23 +66,23 @@ contract StabilityVault(
 
     // Authenticate beacon: correct oracle and ticker
     require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "wrong beacon"
     );
 
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 
-    // Enforce freshness (86400 seconds = 24 hours)
-    int beaconTime = tx.inputs[1].assets.lookup(clock);
-    int beaconAge = tx.time - beaconTime;
-    require(beaconAge <= 86400, "stale oracle");
+    // Enforce freshness (144 blocks ≈ 24 hours)
+    int beaconHeight = tx.inputs[1].assets.lookup(clock);
+    int beaconAge = tx.time - beaconHeight;
+    require(beaconAge <= 144, "stale oracle");
 
     // Position output: identical contract with new seekerPk
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, serverPk, oraclePk, ticker, clock,
-        targetUSD, totalCollateral, fundingSatPerBlock, openHeight
+        newSeekerPk, providerPk, oraclePk, ticker, clock,
+        targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit
       ),
       "invalid transfer output"
     );
@@ -94,7 +94,7 @@ contract StabilityVault(
       "beacon must survive"
     );
     require(
-      tx.outputs[1].assets.lookup(clock) >= beaconTime,
+      tx.outputs[1].assets.lookup(clock) >= beaconHeight,
       "beacon clock must survive"
     );
   }
@@ -113,16 +113,16 @@ contract StabilityVault(
 
     // Authenticate beacon
     require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "wrong beacon"
     );
 
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 
-    int beaconTime = tx.inputs[1].assets.lookup(clock);
-    int beaconAge = tx.time - beaconTime;
-    require(beaconAge <= 86400, "stale oracle");
+    int beaconHeight = tx.inputs[1].assets.lookup(clock);
+    int beaconAge = tx.time - beaconHeight;
+    require(beaconAge <= 144, "stale oracle");
 
     int remainingUSD = targetUSD - amountUSD;
 
@@ -130,14 +130,15 @@ contract StabilityVault(
     int collateralA = totalCollateral * amountUSD / targetUSD;
     int collateralB = totalCollateral - collateralA;
 
-    // Prevent zero-collateral positions from integer truncation on tiny splits
-    require(collateralA >= 546, "split amount too small");
+    // Both halves must be above Taproot dust (330 sats)
+    require(collateralA >= 330, "split amount too small");
+    require(collateralB >= 330, "remainder too small");
 
     // output[0]: recipient receives amountUSD slice
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, serverPk, oraclePk, ticker, clock,
-        amountUSD, collateralA, fundingSatPerBlock, openHeight
+        newSeekerPk, providerPk, oraclePk, ticker, clock,
+        amountUSD, collateralA, fundingSatPerBlock, openHeight, exit
       ),
       "invalid split output 0"
     );
@@ -146,8 +147,8 @@ contract StabilityVault(
     // output[1]: seeker retains remainder
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, serverPk, oraclePk, ticker, clock,
-        remainingUSD, collateralB, fundingSatPerBlock, openHeight
+        seekerPk, providerPk, oraclePk, ticker, clock,
+        remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit
       ),
       "invalid split output 1"
     );
@@ -159,7 +160,7 @@ contract StabilityVault(
       "beacon must survive"
     );
     require(
-      tx.outputs[2].assets.lookup(clock) >= beaconTime,
+      tx.outputs[2].assets.lookup(clock) >= beaconHeight,
       "beacon clock must survive"
     );
   }
@@ -167,8 +168,7 @@ contract StabilityVault(
   // -------------------------------------------------------------------------
   // SEEKER REDEEM
   // Seeker exits to BTC at the live oracle price.
-  // In the undercollateralised case (BTC dropped beyond coverage ceiling),
-  // seeker receives all available collateral — the contract never reverts.
+  // seekerPayout = clamp(seekerRaw, 0, totalCollateral)
   //
   // Provider re-collateralization: if BTC has dropped beyond the coverage
   // ceiling and providerExit has not been called, the position stays live.
@@ -179,59 +179,87 @@ contract StabilityVault(
 
     // Authenticate beacon
     require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "wrong beacon"
     );
 
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 
-    int beaconTime = tx.inputs[1].assets.lookup(clock);
-    int beaconAge = tx.time - beaconTime;
-    require(beaconAge <= 86400, "stale oracle");
+    int beaconHeight = tx.inputs[1].assets.lookup(clock);
+    int beaconAge = tx.time - beaconHeight;
+    require(beaconAge <= 144, "stale oracle");
 
     int blocksElapsed = tx.time - openHeight;
     int seekerBase    = targetUSD * 100000000 / currentPrice;
     int funding       = fundingSatPerBlock * blocksElapsed;
     int seekerRaw     = seekerBase + funding;
 
-    if (seekerRaw >= totalCollateral) {
-      // Undercollateralised: seeker takes everything, provider gets nothing.
-      // Only 1 payout output → beacon at output[1].
-      require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
+    if (seekerRaw <= 0) {
+      // Funding depleted seeker's claim: provider takes everything.
+      require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
       require(
-        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-        "output 0 not seeker"
+        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),
+        "output 0 not provider"
       );
       require(
         tx.outputs[1].assets.lookup(ticker) >= currentPrice,
         "beacon must survive"
       );
-    } else {
-      // Normal settlement: split proportionally
-      require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
       require(
-        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-        "output 0 not seeker"
+        tx.outputs[1].assets.lookup(clock) >= beaconHeight,
+        "beacon clock must survive"
       );
-      int providerPayout = totalCollateral - seekerRaw;
-      if (providerPayout > 330) {
-        // Two payout outputs → beacon at output[2]
-        require(tx.outputs[1].value >= providerPayout, "provider underpaid");
+    } else {
+      if (seekerRaw >= totalCollateral) {
+        // Undercollateralised: seeker takes everything, provider gets nothing.
+        require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
         require(
-          tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
-          "output 1 not provider"
+          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+          "output 0 not seeker"
         );
-        require(
-          tx.outputs[2].assets.lookup(ticker) >= currentPrice,
-          "beacon must survive"
-        );
-      } else {
-        // Provider payout below Taproot dust: only seeker output → beacon at output[1]
         require(
           tx.outputs[1].assets.lookup(ticker) >= currentPrice,
           "beacon must survive"
         );
+        require(
+          tx.outputs[1].assets.lookup(clock) >= beaconHeight,
+          "beacon clock must survive"
+        );
+      } else {
+        // Normal settlement: split proportionally
+        require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
+        require(
+          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+          "output 0 not seeker"
+        );
+        int providerPayout = totalCollateral - seekerRaw;
+        if (providerPayout > 330) {
+          // Two payout outputs → beacon at output[2]
+          require(tx.outputs[1].value >= providerPayout, "provider underpaid");
+          require(
+            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
+            "output 1 not provider"
+          );
+          require(
+            tx.outputs[2].assets.lookup(ticker) >= currentPrice,
+            "beacon must survive"
+          );
+          require(
+            tx.outputs[2].assets.lookup(clock) >= beaconHeight,
+            "beacon clock must survive"
+          );
+        } else {
+          // Provider payout below Taproot dust: only seeker output → beacon at output[1]
+          require(
+            tx.outputs[1].assets.lookup(ticker) >= currentPrice,
+            "beacon must survive"
+          );
+          require(
+            tx.outputs[1].assets.lookup(clock) >= beaconHeight,
+            "beacon clock must survive"
+          );
+        }
       }
     }
   }
@@ -242,8 +270,7 @@ contract StabilityVault(
   // Economically identical to seekerRedeem — same beacon read, same payout
   // split. Provider signs instead of Seeker.
   //
-  // This is a unilateral settlement path that both parties can use. Either
-  // party can initiate settlement first; the contract enforces identical
+  // Either party can initiate settlement first; the contract enforces identical
   // payout math. This is a "first come, first served" design — no artificial
   // delays or precedence.
   //
@@ -257,58 +284,86 @@ contract StabilityVault(
 
     // Authenticate beacon
     require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "wrong beacon"
     );
 
     int currentPrice = tx.inputs[1].assets.lookup(ticker);
     require(currentPrice > 0, "invalid beacon price");
 
-    int beaconTime = tx.inputs[1].assets.lookup(clock);
-    int beaconAge = tx.time - beaconTime;
-    require(beaconAge <= 86400, "stale oracle");
+    int beaconHeight = tx.inputs[1].assets.lookup(clock);
+    int beaconAge = tx.time - beaconHeight;
+    require(beaconAge <= 144, "stale oracle");
 
     int blocksElapsed = tx.time - openHeight;
     int seekerBase    = targetUSD * 100000000 / currentPrice;
     int funding       = fundingSatPerBlock * blocksElapsed;
     int seekerRaw     = seekerBase + funding;
 
-    if (seekerRaw >= totalCollateral) {
-      // Undercollateralised: seeker still receives everything.
-      // Only 1 payout output → beacon at output[1].
-      require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
+    if (seekerRaw <= 0) {
+      // Funding depleted seeker's claim: provider takes everything.
+      require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
       require(
-        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-        "output 0 not seeker"
+        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),
+        "output 0 not provider"
       );
       require(
         tx.outputs[1].assets.lookup(ticker) >= currentPrice,
         "beacon must survive"
       );
-    } else {
-      require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
       require(
-        tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-        "output 0 not seeker"
+        tx.outputs[1].assets.lookup(clock) >= beaconHeight,
+        "beacon clock must survive"
       );
-      int providerPayout = totalCollateral - seekerRaw;
-      if (providerPayout > 330) {
-        // Two payout outputs → beacon at output[2]
-        require(tx.outputs[1].value >= providerPayout, "provider underpaid");
+    } else {
+      if (seekerRaw >= totalCollateral) {
+        // Undercollateralised: seeker still receives everything.
+        require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
         require(
-          tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
-          "output 1 not provider"
+          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+          "output 0 not seeker"
         );
-        require(
-          tx.outputs[2].assets.lookup(ticker) >= currentPrice,
-          "beacon must survive"
-        );
-      } else {
-        // Provider payout below Taproot dust: only seeker output → beacon at output[1]
         require(
           tx.outputs[1].assets.lookup(ticker) >= currentPrice,
           "beacon must survive"
         );
+        require(
+          tx.outputs[1].assets.lookup(clock) >= beaconHeight,
+          "beacon clock must survive"
+        );
+      } else {
+        require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
+        require(
+          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
+          "output 0 not seeker"
+        );
+        int providerPayout = totalCollateral - seekerRaw;
+        if (providerPayout > 330) {
+          // Two payout outputs → beacon at output[2]
+          require(tx.outputs[1].value >= providerPayout, "provider underpaid");
+          require(
+            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
+            "output 1 not provider"
+          );
+          require(
+            tx.outputs[2].assets.lookup(ticker) >= currentPrice,
+            "beacon must survive"
+          );
+          require(
+            tx.outputs[2].assets.lookup(clock) >= beaconHeight,
+            "beacon clock must survive"
+          );
+        } else {
+          // Provider payout below Taproot dust: only seeker output → beacon at output[1]
+          require(
+            tx.outputs[1].assets.lookup(ticker) >= currentPrice,
+            "beacon must survive"
+          );
+          require(
+            tx.outputs[1].assets.lookup(clock) >= beaconHeight,
+            "beacon clock must survive"
+          );
+        }
       }
     }
   }

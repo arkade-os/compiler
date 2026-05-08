@@ -13,7 +13,7 @@
 // - Breeding creates a new kitty with isFresh=1
 
 options {
-    server = serverPk;
+    server = server;
     exit = 576;  // ~4 days for breeding timeout
 }
 

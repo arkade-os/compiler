@@ -1,49 +1,50 @@
 // PriceBeacon Contract
 //
-// On-chain price oracle. Three values are maintained:
+// On-chain price oracle. Two values are maintained:
 //   - ticker     (bytes32): identifies the price feed (e.g. commitment to "BTC/USD")
 //   - price      (int):     BTC/USD in cents; encoded as the quantity of the ticker asset
-//   - timestamp  (int):     unix seconds of the last update; encoded as quantity of the clock asset
+//   - timestamp  (int):     block height of the last update; encoded as quantity of the clock asset
 //
 // Oracle flow:
-//   1. Oracle deploys a PriceBeacon UTXO with an initial price and timestamp.
-//   2. Oracle calls update() with each new price and the current unix timestamp.
+//   1. Oracle deploys a PriceBeacon UTXO with an initial price and block height.
+//   2. Oracle calls update() with each new price and the current block height.
 //   3. Settlement contracts read price and timestamp atomically via introspection.
 //   4. Consumers enforce freshness:
 //        int age = tx.time - tx.inputs[N].assets.lookup(clock);
-//        require(age <= 86400, "stale oracle");  // 86400 = 24 hours
+//        require(age <= 144, "stale oracle");  // 144 blocks ≈ 24 hours
 //
 // Security properties:
 //   - Only oraclePk can update price or timestamp.
 //   - Timestamps are monotonically non-decreasing (enforced on-chain).
 //   - Consumers verify the beacon script to authenticate ticker and oracle:
-//        tx.inputs[N].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk)
+//        tx.inputs[N].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit)
 
 options {
-  server = oraclePk;
-  exit = 144;
+  server = server;
+  exit = exit;
 }
 
 contract PriceBeacon(
   bytes32 ticker,   // asset whose quantity = BTC/USD price in cents
-  bytes32 clock,    // asset whose quantity = unix timestamp of last update (seconds)
-  pubkey  oraclePk  // authorized updater
+  bytes32 clock,    // asset whose quantity = block height of last update
+  pubkey  oraclePk, // authorized updater
+  int     exit      // exit timelock in blocks
 ) {
 
   // -------------------------------------------------------------------------
   // UPDATE
-  // Oracle publishes a new price and unix timestamp.
-  // newTimestamp must exceed the stored timestamp — back-dating is impossible.
+  // Oracle publishes a new price and block height.
+  // newBlockHeight must exceed the stored height — back-dating is impossible.
   // -------------------------------------------------------------------------
-  function update(signature oracleSig, int newPrice, int newTimestamp) {
+  function update(signature oracleSig, int newPrice, int newBlockHeight) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
     require(newPrice > 0, "price must be positive");
 
-    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
-    require(newTimestamp > currentTimestamp, "timestamp must advance");
+    int currentHeight = tx.inputs[0].assets.lookup(clock);
+    require(newBlockHeight > currentHeight, "block height must advance");
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "beacon script must survive"
     );
     require(
@@ -51,8 +52,8 @@ contract PriceBeacon(
       "price not updated correctly"
     );
     require(
-      tx.outputs[0].assets.lookup(clock) == newTimestamp,
-      "timestamp not updated correctly"
+      tx.outputs[0].assets.lookup(clock) == newBlockHeight,
+      "block height not updated correctly"
     );
   }
 
@@ -63,7 +64,7 @@ contract PriceBeacon(
   // -------------------------------------------------------------------------
   function passthrough() {
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "beacon script must survive"
     );
 
@@ -73,25 +74,25 @@ contract PriceBeacon(
       "price asset must survive"
     );
 
-    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
+    int currentHeight = tx.inputs[0].assets.lookup(clock);
     require(
-      tx.outputs[0].assets.lookup(clock) >= currentTimestamp,
+      tx.outputs[0].assets.lookup(clock) >= currentHeight,
       "clock asset must survive"
     );
   }
 
   // -------------------------------------------------------------------------
   // MIGRATE
-  // Transfers oracle authority to a new key. Price and timestamp are preserved.
+  // Transfers oracle authority to a new key. Price and block height are preserved.
   // -------------------------------------------------------------------------
   function migrate(signature oracleSig, pubkey newOraclePk) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
 
-    int currentPrice     = tx.inputs[0].assets.lookup(ticker);
-    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
+    int currentPrice  = tx.inputs[0].assets.lookup(ticker);
+    int currentHeight = tx.inputs[0].assets.lookup(clock);
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, newOraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, newOraclePk, exit),
       "invalid new beacon"
     );
     require(
@@ -99,8 +100,8 @@ contract PriceBeacon(
       "price must be preserved"
     );
     require(
-      tx.outputs[0].assets.lookup(clock) == currentTimestamp,
-      "timestamp must be preserved"
+      tx.outputs[0].assets.lookup(clock) == currentHeight,
+      "block height must be preserved"
     );
   }
 }

@@ -13,7 +13,7 @@
 
 options {
   // Server key is injected from getInfo(), not passed in constructor
-  server = serverPk;
+  server = server;
   // Exit delay: 144 blocks (~24 hours) for unilateral recovery
   exit = 144;
 }

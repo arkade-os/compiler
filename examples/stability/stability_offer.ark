@@ -6,7 +6,7 @@
 //
 // Flow:
 //   1. Provider deploys StabilityOffer with their BTC collateral.
-//   2. Swap service calls take(seekerPk, serverPk, userBTC) when a user deposits.
+//   2. Swap service calls take(userBTC, seekerPk) when a user deposits.
 //   3. take() reads the current beacon price, creates a StabilityVault for the user,
 //      and returns a reduced-capacity offer (or nothing if fully consumed).
 //   4. Provider calls withdraw() to reclaim unused collateral at any time.
@@ -27,18 +27,19 @@
 import "stability_vault.ark";
 
 options {
-  server = providerPk;
-  exit = 144;
+  server = server;
+  exit = exit;
 }
 
 contract StabilityOffer(
   pubkey  providerPk,          // offer creator and collateral provider
   pubkey  oraclePk,            // must match the PriceBeacon oracle
   bytes32 ticker,              // PriceBeacon ticker asset: quantity = BTC/USD in cents
-  bytes32 clock,               // PriceBeacon clock asset: quantity = unix timestamp (seconds)
+  bytes32 clock,               // PriceBeacon clock asset: quantity = block height
   int     fundingSatPerBlock,  // signed; positive = provider pays seeker
   int     maxExposureBTC,      // remaining capacity: max total seekerBTC this offer accepts
-  int     collateralRatioPct   // provider collateral as % of seekerBTC (e.g. 150 = 1.5:1, min 100)
+  int     collateralRatioPct,  // provider collateral as % of seekerBTC (e.g. 150 = 1.5:1, min 100)
+  int     exit                 // exit timelock in blocks
 ) {
 
   // -------------------------------------------------------------------------
@@ -54,16 +55,16 @@ contract StabilityOffer(
   //   input[2]:  taker's BTC input (userBTC sats for the Seeker side)
   //   output[0]: StabilityVault ((1 + collateralRatioPct/100)*userBTC collateral)
   //   output[1]: remaining StabilityOffer (capacity reduced), if any
-  //   output[2]: PriceBeacon pass-through
+  //   output[N]: PriceBeacon pass-through (output[1] if fully consumed, output[2] otherwise)
   // -------------------------------------------------------------------------
-  function take(int userBTC, pubkey seekerPk, pubkey serverPk) {
+  function take(int userBTC, pubkey seekerPk) {
     require(userBTC > 0, "zero deposit");
     require(userBTC <= maxExposureBTC, "exceeds offer capacity");
     require(collateralRatioPct >= 100, "collateral ratio below minimum");
 
     // Authenticate beacon: correct oracle and ticker
     require(
-      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.inputs[1].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "wrong beacon"
     );
 
@@ -71,10 +72,10 @@ contract StabilityOffer(
     int entryPrice = tx.inputs[1].assets.lookup(ticker);
     require(entryPrice > 0, "invalid beacon price");
 
-    // Enforce freshness (86400 seconds = 24 hours)
-    int beaconTime = tx.inputs[1].assets.lookup(clock);
-    int beaconAge = tx.time - beaconTime;
-    require(beaconAge <= 86400, "stale oracle");
+    // Enforce freshness (144 blocks ≈ 24 hours)
+    int beaconHeight = tx.inputs[1].assets.lookup(clock);
+    int beaconAge = tx.time - beaconHeight;
+    require(beaconAge <= 144, "stale oracle");
 
     // USD claim for the seeker (in cents)
     int targetUSD = userBTC * entryPrice / 100000000;
@@ -86,37 +87,46 @@ contract StabilityOffer(
     // output[0]: new StabilityVault for the Seeker
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, serverPk, oraclePk, ticker, clock,
-        targetUSD, totalCollateral, fundingSatPerBlock, tx.time
+        seekerPk, providerPk, oraclePk, ticker, clock,
+        targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit
       ),
       "invalid vault output"
     );
     require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
 
-    // output[1]: reduced-capacity offer (omitted if fully consumed)
+    // Beacon index depends on whether output[1] holds the remaining offer
     int remainingCapacity = maxExposureBTC - userBTC;
     if (remainingCapacity > 0) {
       require(
         tx.outputs[1].scriptPubKey == new StabilityOffer(
           providerPk, oraclePk, ticker, clock,
-          fundingSatPerBlock, remainingCapacity, collateralRatioPct
+          fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit
         ),
         "invalid remaining offer"
       );
-      // Remaining offer holds provider's proportional collateral
       int remainingCollateral = remainingCapacity * collateralRatioPct / 100;
       require(tx.outputs[1].value >= remainingCollateral, "insufficient offer collateral");
-    }
 
-    // Beacon must survive — both assets preserved
-    require(
-      tx.outputs[2].assets.lookup(ticker) >= entryPrice,
-      "beacon must survive"
-    );
-    require(
-      tx.outputs[2].assets.lookup(clock) >= beaconTime,
-      "beacon clock must survive"
-    );
+      // Beacon at output[2] when remaining offer present
+      require(
+        tx.outputs[2].assets.lookup(ticker) >= entryPrice,
+        "beacon must survive"
+      );
+      require(
+        tx.outputs[2].assets.lookup(clock) >= beaconHeight,
+        "beacon clock must survive"
+      );
+    } else {
+      // Fully consumed: no output[1] offer — beacon at output[1]
+      require(
+        tx.outputs[1].assets.lookup(ticker) >= entryPrice,
+        "beacon must survive"
+      );
+      require(
+        tx.outputs[1].assets.lookup(clock) >= beaconHeight,
+        "beacon clock must survive"
+      );
+    }
   }
 
   // -------------------------------------------------------------------------

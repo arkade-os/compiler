@@ -44,24 +44,25 @@ contract PriceBeacon(
 // ---------------------------------------------------------------------------
 const PRICE_BEACON_CODE: &str = r#"
 options {
-  server = oraclePk;
-  exit = 144;
+  server = server;
+  exit = exit;
 }
 
 contract PriceBeacon(
   bytes32 ticker,
   bytes32 clock,
-  pubkey  oraclePk
+  pubkey  oraclePk,
+  int     exit
 ) {
-  function update(signature oracleSig, int newPrice, int newTimestamp) {
+  function update(signature oracleSig, int newPrice, int newBlockHeight) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
     require(newPrice > 0, "price must be positive");
 
-    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
-    require(newTimestamp > currentTimestamp, "timestamp must advance");
+    int currentHeight = tx.inputs[0].assets.lookup(clock);
+    require(newBlockHeight > currentHeight, "block height must advance");
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "beacon script must survive"
     );
     require(
@@ -69,14 +70,14 @@ contract PriceBeacon(
       "price not updated correctly"
     );
     require(
-      tx.outputs[0].assets.lookup(clock) == newTimestamp,
-      "timestamp not updated correctly"
+      tx.outputs[0].assets.lookup(clock) == newBlockHeight,
+      "block height not updated correctly"
     );
   }
 
   function passthrough() {
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
       "beacon script must survive"
     );
 
@@ -86,9 +87,9 @@ contract PriceBeacon(
       "price asset must survive"
     );
 
-    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
+    int currentHeight = tx.inputs[0].assets.lookup(clock);
     require(
-      tx.outputs[0].assets.lookup(clock) >= currentTimestamp,
+      tx.outputs[0].assets.lookup(clock) >= currentHeight,
       "clock asset must survive"
     );
   }
@@ -96,11 +97,11 @@ contract PriceBeacon(
   function migrate(signature oracleSig, pubkey newOraclePk) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
 
-    int currentPrice     = tx.inputs[0].assets.lookup(ticker);
-    int currentTimestamp = tx.inputs[0].assets.lookup(clock);
+    int currentPrice  = tx.inputs[0].assets.lookup(ticker);
+    int currentHeight = tx.inputs[0].assets.lookup(clock);
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, newOraclePk),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, newOraclePk, exit),
       "invalid new beacon"
     );
     require(
@@ -108,8 +109,8 @@ contract PriceBeacon(
       "price must be preserved"
     );
     require(
-      tx.outputs[0].assets.lookup(clock) == currentTimestamp,
-      "timestamp must be preserved"
+      tx.outputs[0].assets.lookup(clock) == currentHeight,
+      "block height must be preserved"
     );
   }
 }

@@ -116,19 +116,17 @@ fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), 
 
             match option_name {
                 "server" => {
-                    // The Arkade operator key is always injected externally.
-                    // The RHS value is ignored — it must never be a constructor parameter.
+                    // The Arkade operator key is always injected externally as <SERVER_KEY>.
+                    // The RHS value is a naming convention only and is never emitted to ASM.
                     contract.has_server_key = true;
                 }
                 "renew" => {
-                    if let Ok(value) = option_value.parse::<u64>() {
-                        contract.renewal_timelock = Some(value);
-                    }
+                    // Accept integer literal ("1008") or constructor param name ("renew")
+                    contract.renewal_timelock = Some(option_value.to_string());
                 }
                 "exit" => {
-                    if let Ok(value) = option_value.parse::<u64>() {
-                        contract.exit_timelock = Some(value);
-                    }
+                    // Accept integer literal ("144") or constructor param name ("exit")
+                    contract.exit_timelock = Some(option_value.to_string());
                 }
                 _ => {} // Ignore unknown options
             }

@@ -9,7 +9,7 @@
 // opcodes with sentinel-guard patterns for safe balance verification.
 
 options {
-  server = serverPk;
+  server = server;
   exit = 144;
 }
 
