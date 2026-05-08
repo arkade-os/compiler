@@ -129,7 +129,7 @@ const arkadeCompletions = [
     // Keywords
     { label: 'contract', kind: 'Keyword', insertText: 'contract ${1:Name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
     { label: 'function', kind: 'Keyword', insertText: 'function ${1:name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
-    { label: 'options', kind: 'Keyword', insertText: 'options {\n\tserver = ${1:server};\n\texit = ${2:144};\n}', insertTextRules: 4 },
+    { label: 'options', kind: 'Keyword', insertText: 'options {\n\tserver = ${1:server};\n\texit = ${2:exit};\n}', insertTextRules: 4 },
     { label: 'require', kind: 'Keyword', insertText: 'require(${1:condition});', insertTextRules: 4 },
     { label: 'if', kind: 'Keyword', insertText: 'if (${1:condition}) {\n\t$0\n}', insertTextRules: 4 },
     { label: 'for', kind: 'Keyword', insertText: 'for (${1:i}, ${2:item}) in ${3:array} {\n\t$0\n}', insertTextRules: 4 },
