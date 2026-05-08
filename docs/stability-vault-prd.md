@@ -40,7 +40,7 @@ never need to think about Bitcoin price or funding mechanics.
 | **Seeker** | Wallet user holding the USD claim | Open, send, or hand off to swap service |
 | **Provider** | BTC holder taking the leveraged long side | Open offers, hold position, exit for profit |
 | **Swap Service** | Bridges USDT/USDC ↔ StabilityVault positions | Holds inventory float, quotes spreads |
-| **Oracle** | Operates the PriceBeacon, publishes BTC/USD price | Update beacon every block |
+| **Oracle** | Operates the PriceBeacon, publishes BTC/USD price | Update beacon as often as desired — sub-block (sub-second) cadence is supported off-chain |
 | **Arkade Operator** | Co-signs cooperative transactions on the Arkade network | Facilitate cooperative paths |
 
 ### Seeker motivations
@@ -314,11 +314,17 @@ settlement branch is restored automatically with no on-chain action.
 ## 8. Oracle
 
 ### PriceBeacon design
-- One persistent on-chain UTXO per currency pair
+- One persistent Arkade UTXO per currency pair
 - Asset quantity of `ticker` encodes the BTC/USD price in cents
 - Asset quantity of `clock` encodes the block height of the last update
 - Oracle updates both values atomically via the beacon's `update` function;
   block height is enforced to advance monotonically (no back-dating)
+- Update cadence is not constrained by Bitcoin's ~10-minute block time. The
+  beacon lives off-chain on Arkade, so the oracle may publish updates at
+  sub-second frequency. The `clock` field still records the block height at
+  which the update was issued, so multiple intra-block updates share that
+  block height — that is correct: any update within the freshness window
+  reads as fresh.
 - Any transaction that reads the price must include the beacon as an input
   and pass it through as an output (enforced by the beacon's `passthrough`)
 - Consumers authenticate the beacon by its `ticker` and `clock` asset IDs.
