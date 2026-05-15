@@ -488,6 +488,15 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
+        // Byte-string manipulation
+        Rule::substr_func => parse_substr(pair),
+        Rule::cat_func => parse_cat(pair),
+        Rule::bin2num_func => parse_bin2num(pair),
+        Rule::num2bin_func => parse_num2bin(pair),
+        Rule::size_func => parse_size(pair),
+        // Packet introspection
+        Rule::packet_inspect => parse_packet_inspect(pair),
+        Rule::input_packet_inspect => parse_input_packet_inspect(pair),
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
@@ -598,6 +607,63 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             })
         }
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
+        // Byte-string manipulation — wrap as truthy assertions in require contexts.
+        Rule::substr_func => {
+            let expr = parse_substr(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::cat_func => {
+            let expr = parse_cat(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::bin2num_func => {
+            let expr = parse_bin2num(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::num2bin_func => {
+            let expr = parse_num2bin(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::size_func => {
+            let expr = parse_size(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::packet_inspect => {
+            let expr = parse_packet_inspect(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::input_packet_inspect => {
+            let expr = parse_input_packet_inspect(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
         Rule::constructor => {
             let expr = parse_constructor_to_expression(pair)?;
             Ok(Requirement::Comparison {
@@ -1730,6 +1796,107 @@ fn parse_check_sig_from_stack_verify_expr(pair: Pair<Rule>) -> Result<Expression
         signature,
         pubkey,
         message,
+    })
+}
+
+// ─── Byte-string Manipulation Parsing ──────────────────────────────────
+
+/// Helper: convert an inner pair to an Expression for the byte-string
+/// and packet primitives. Identifiers → Variable, numbers → Literal,
+/// everything else → Property.
+fn parse_atom_pair(pair: Pair<Rule>) -> Expression {
+    match pair.as_rule() {
+        Rule::identifier => Expression::Variable(pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(pair.as_str().to_string()),
+        _ => Expression::Property(pair.as_str().to_string()),
+    }
+}
+
+/// Parse substr(data, offset, size) → Expression::Substr
+fn parse_substr(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_atom_pair(inner.next().ok_or("Missing data in substr")?);
+    let offset = parse_atom_pair(inner.next().ok_or("Missing offset in substr")?);
+    let size = parse_atom_pair(inner.next().ok_or("Missing size in substr")?);
+    Ok(Expression::Substr {
+        data: Box::new(data),
+        offset: Box::new(offset),
+        size: Box::new(size),
+    })
+}
+
+/// Parse cat(a, b) → Expression::Cat
+fn parse_cat(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let left = parse_atom_pair(inner.next().ok_or("Missing first argument in cat")?);
+    let right = parse_atom_pair(inner.next().ok_or("Missing second argument in cat")?);
+    Ok(Expression::Cat {
+        left: Box::new(left),
+        right: Box::new(right),
+    })
+}
+
+/// Parse bin2num(data) → Expression::Bin2Num
+fn parse_bin2num(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_atom_pair(inner.next().ok_or("Missing data in bin2num")?);
+    Ok(Expression::Bin2Num {
+        data: Box::new(data),
+    })
+}
+
+/// Parse num2bin(value, size) → Expression::Num2Bin
+fn parse_num2bin(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let value = parse_atom_pair(inner.next().ok_or("Missing value in num2bin")?);
+    let size = parse_atom_pair(inner.next().ok_or("Missing size in num2bin")?);
+    Ok(Expression::Num2Bin {
+        value: Box::new(value),
+        size: Box::new(size),
+    })
+}
+
+/// Parse size(data) → Expression::SizeOf
+fn parse_size(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_atom_pair(inner.next().ok_or("Missing data in size")?);
+    Ok(Expression::SizeOf {
+        data: Box::new(data),
+    })
+}
+
+/// Parse tx.packet(packetType) → Expression::PacketInspect
+fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let packet_type = parse_atom_pair(inner.next().ok_or("Missing packet type in tx.packet()")?);
+    Ok(Expression::PacketInspect {
+        packet_type: Box::new(packet_type),
+    })
+}
+
+/// Parse tx.inputs[i].packet(packetType) → Expression::InputPacketInspect
+fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // First child: array_access — extract the index expression
+    let array_access = inner
+        .next()
+        .ok_or("Missing input index in tx.inputs[i].packet()")?;
+    let index_pair = array_access
+        .into_inner()
+        .next()
+        .ok_or("Empty array access in tx.inputs[i].packet()")?;
+    let index = parse_atom_pair(index_pair);
+
+    let packet_type = parse_atom_pair(
+        inner
+            .next()
+            .ok_or("Missing packet type in tx.inputs[i].packet()")?,
+    );
+
+    Ok(Expression::InputPacketInspect {
+        index: Box::new(index),
+        packet_type: Box::new(packet_type),
     })
 }
 

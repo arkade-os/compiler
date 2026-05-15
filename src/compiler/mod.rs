@@ -4,23 +4,25 @@ use crate::models::{
     WitnessElement, DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG,
-    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_CHECKSIGVERIFY, OP_DIV64,
-    OP_DROP, OP_DUP, OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_FALSE,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
-    OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE,
-    OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
-    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTISSUANCE,
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
-    OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS,
-    OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP,
-    OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION,
+    OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_BIN2NUM, OP_CAT, OP_CHECKLOCKTIMEVERIFY,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK,
+    OP_CHECKSIGFROMSTACKVERIFY, OP_CHECKSIGVERIFY, OP_DIV64, OP_DROP, OP_DUP, OP_ECMULSCALARVERIFY,
+    OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FALSE, OP_FINDASSETGROUPBYASSETID,
+    OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL, OP_GREATERTHANOREQUAL64, OP_IF,
+    OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE, OP_INPUTVALUE, OP_INSPECTASSETGROUP,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
+    OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET,
+    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME,
+    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
+    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION,
     OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL,
-    OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT, OP_NUMEQUAL,
+    OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL,
     OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SUB64, OP_TWEAKVERIFY, OP_TXHASH, OP_TXWEIGHT,
-    OP_VERIFY,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIZE, OP_SUB64, OP_SUBSTR, OP_TWEAKVERIFY, OP_TXHASH,
+    OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::parser;
 use crate::typechecker::{self, ArkType};
@@ -132,6 +134,25 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
 
         // Contract instantiation resolves to a scriptPubKey via introspection
         Expression::ContractInstance { .. } => true,
+
+        // Packet introspection — always uses introspection opcodes.
+        Expression::PacketInspect { .. } => true,
+        Expression::InputPacketInspect { .. } => true,
+
+        // Byte-string ops are introspection-aware iff their inputs are.
+        Expression::Substr { data, offset, size } => {
+            expression_uses_introspection(data)
+                || expression_uses_introspection(offset)
+                || expression_uses_introspection(size)
+        }
+        Expression::Cat { left, right } => {
+            expression_uses_introspection(left) || expression_uses_introspection(right)
+        }
+        Expression::Bin2Num { data } => expression_uses_introspection(data),
+        Expression::Num2Bin { value, size } => {
+            expression_uses_introspection(value) || expression_uses_introspection(size)
+        }
+        Expression::SizeOf { data } => expression_uses_introspection(data),
 
         // Non-introspection expressions
         Expression::Property(_) => false,
@@ -1125,6 +1146,50 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_contract_instance_asm(contract_name, args, asm);
         }
+        // Byte-string manipulation (introspector extensions)
+        Expression::Substr { data, offset, size } => {
+            generate_expression_asm(data, asm);
+            generate_expression_asm(offset, asm);
+            generate_expression_asm(size, asm);
+            asm.push(OP_SUBSTR.to_string());
+        }
+        Expression::Cat { left, right } => {
+            generate_expression_asm(left, asm);
+            generate_expression_asm(right, asm);
+            asm.push(OP_CAT.to_string());
+        }
+        Expression::Bin2Num { data } => {
+            generate_expression_asm(data, asm);
+            asm.push(OP_BIN2NUM.to_string());
+        }
+        Expression::Num2Bin { value, size } => {
+            generate_expression_asm(value, asm);
+            generate_expression_asm(size, asm);
+            asm.push(OP_NUM2BIN.to_string());
+        }
+        Expression::SizeOf { data } => {
+            generate_expression_asm(data, asm);
+            // OP_SIZE pushes len next to original bytes; OP_NIP drops the
+            // original so only the size remains on the stack.
+            asm.push(OP_SIZE.to_string());
+            asm.push(OP_NIP.to_string());
+        }
+        // Packet introspection
+        Expression::PacketInspect { packet_type } => {
+            generate_expression_asm(packet_type, asm);
+            asm.push(OP_INSPECTPACKET.to_string());
+            // OP_INSPECTPACKET returns (content, 1) on hit, () then 0 on miss.
+            // Assert present and discard the bool, leaving content on the stack.
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
+        }
+        Expression::InputPacketInspect { index, packet_type } => {
+            generate_expression_asm(packet_type, asm);
+            generate_expression_asm(index, asm);
+            asm.push(OP_INSPECTINPUTPACKET.to_string());
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
+        }
     }
 }
 
@@ -1545,6 +1610,46 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
         }
+        // Byte-string manipulation (introspector extensions)
+        Expression::Substr { data, offset, size } => {
+            emit_expression_asm(data, asm);
+            emit_expression_asm(offset, asm);
+            emit_expression_asm(size, asm);
+            asm.push(OP_SUBSTR.to_string());
+        }
+        Expression::Cat { left, right } => {
+            emit_expression_asm(left, asm);
+            emit_expression_asm(right, asm);
+            asm.push(OP_CAT.to_string());
+        }
+        Expression::Bin2Num { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_BIN2NUM.to_string());
+        }
+        Expression::Num2Bin { value, size } => {
+            emit_expression_asm(value, asm);
+            emit_expression_asm(size, asm);
+            asm.push(OP_NUM2BIN.to_string());
+        }
+        Expression::SizeOf { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_SIZE.to_string());
+            asm.push(OP_NIP.to_string());
+        }
+        // Packet introspection
+        Expression::PacketInspect { packet_type } => {
+            emit_expression_asm(packet_type, asm);
+            asm.push(OP_INSPECTPACKET.to_string());
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
+        }
+        Expression::InputPacketInspect { index, packet_type } => {
+            emit_expression_asm(packet_type, asm);
+            emit_expression_asm(index, asm);
+            asm.push(OP_INSPECTINPUTPACKET.to_string());
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
+        }
     }
 }
 
@@ -1718,6 +1823,7 @@ fn emit_tx_introspection_asm(property: &str, asm: &mut Vec<String>) {
         "numInputs" => asm.push(OP_INSPECTNUMINPUTS.to_string()),
         "numOutputs" => asm.push(OP_INSPECTNUMOUTPUTS.to_string()),
         "weight" => asm.push(OP_TXWEIGHT.to_string()),
+        "id" => asm.push(OP_TXID.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.{}>", property));
@@ -1737,6 +1843,8 @@ fn emit_input_introspection_asm(index: &Expression, property: &str, asm: &mut Ve
         "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
         "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
         "issuance" => asm.push(OP_INSPECTINPUTISSUANCE.to_string()),
+        "arkadeScriptHash" => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
+        "arkadeWitnessHash" => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.inputs[?].{}>", property));

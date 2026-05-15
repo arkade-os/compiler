@@ -386,4 +386,36 @@ pub enum Expression {
         /// Constructor arguments (typically Variable or Literal)
         args: Vec<Expression>,
     },
+    // ─── Byte-string Manipulation (introspector extensions) ────────────
+    /// Substring extraction: substr(data, offset, size) → OP_SUBSTR
+    Substr {
+        data: Box<Expression>,
+        offset: Box<Expression>,
+        size: Box<Expression>,
+    },
+    /// Byte concatenation: cat(a, b) → OP_CAT
+    Cat {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    /// Bytes-to-number (little-endian, leading-zero-stripped BigNum): bin2num(bytes) → OP_BIN2NUM
+    Bin2Num { data: Box<Expression> },
+    /// Number-to-bytes (little-endian, zero-padded): num2bin(num, size) → OP_NUM2BIN
+    Num2Bin {
+        value: Box<Expression>,
+        size: Box<Expression>,
+    },
+    /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
+    SizeOf { data: Box<Expression> },
+    // ─── Packet Introspection ──────────────────────────────────────────
+    /// Current-tx packet content: tx.packet(packetType)
+    /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
+    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`.
+    PacketInspect { packet_type: Box<Expression> },
+    /// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
+    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`.
+    InputPacketInspect {
+        index: Box<Expression>,
+        packet_type: Box<Expression>,
+    },
 }

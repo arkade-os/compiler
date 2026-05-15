@@ -72,16 +72,109 @@ pub const OP_ELSE: &str = "OP_ELSE";
 // Condition verification
 pub const OP_VERIFY: &str = "OP_VERIFY";
 
-// Arithmetic
+// Arithmetic (64-bit BigNum)
 pub const OP_ADD64: &str = "OP_ADD64";
 pub const OP_SUB64: &str = "OP_SUB64";
 pub const OP_MUL64: &str = "OP_MUL64";
 pub const OP_DIV64: &str = "OP_DIV64";
 pub const OP_NEG64: &str = "OP_NEG64";
 
-// Introspection
+// Standard Bitcoin arithmetic (scriptNum)
+pub const OP_1ADD: &str = "OP_1ADD";
+pub const OP_1SUB: &str = "OP_1SUB";
+pub const OP_NEGATE: &str = "OP_NEGATE";
+pub const OP_ABS: &str = "OP_ABS";
+pub const OP_0NOTEQUAL: &str = "OP_0NOTEQUAL";
+pub const OP_ADD: &str = "OP_ADD";
+pub const OP_SUB: &str = "OP_SUB";
+pub const OP_MUL: &str = "OP_MUL";
+pub const OP_DIV: &str = "OP_DIV";
+pub const OP_MOD: &str = "OP_MOD";
+pub const OP_LSHIFT: &str = "OP_LSHIFT";
+pub const OP_RSHIFT: &str = "OP_RSHIFT";
+pub const OP_2MUL: &str = "OP_2MUL";
+pub const OP_2DIV: &str = "OP_2DIV";
+pub const OP_MIN: &str = "OP_MIN";
+pub const OP_MAX: &str = "OP_MAX";
+
+// Verify variants
+pub const OP_EQUALVERIFY: &str = "OP_EQUALVERIFY";
+pub const OP_NUMEQUALVERIFY: &str = "OP_NUMEQUALVERIFY";
+pub const OP_NUMNOTEQUAL: &str = "OP_NUMNOTEQUAL";
+pub const OP_BOOLAND: &str = "OP_BOOLAND";
+pub const OP_BOOLOR: &str = "OP_BOOLOR";
+
+// Stack manipulation (extended)
+pub const OP_SWAP: &str = "OP_SWAP";
+pub const OP_ROT: &str = "OP_ROT";
+pub const OP_OVER: &str = "OP_OVER";
+pub const OP_PICK: &str = "OP_PICK";
+pub const OP_ROLL: &str = "OP_ROLL";
+pub const OP_TUCK: &str = "OP_TUCK";
+pub const OP_IFDUP: &str = "OP_IFDUP";
+pub const OP_DEPTH: &str = "OP_DEPTH";
+pub const OP_2DROP: &str = "OP_2DROP";
+pub const OP_2DUP: &str = "OP_2DUP";
+pub const OP_3DUP: &str = "OP_3DUP";
+pub const OP_2OVER: &str = "OP_2OVER";
+pub const OP_2ROT: &str = "OP_2ROT";
+pub const OP_2SWAP: &str = "OP_2SWAP";
+
+// Byte-string manipulation (introspector extensions)
+pub const OP_CAT: &str = "OP_CAT";
+pub const OP_SUBSTR: &str = "OP_SUBSTR";
+pub const OP_LEFT: &str = "OP_LEFT";
+pub const OP_RIGHT: &str = "OP_RIGHT";
+pub const OP_SIZE: &str = "OP_SIZE";
+
+// Bitwise (introspector extensions)
+pub const OP_INVERT: &str = "OP_INVERT";
+pub const OP_AND: &str = "OP_AND";
+pub const OP_OR: &str = "OP_OR";
+pub const OP_XOR: &str = "OP_XOR";
+
+// Numeric conversion (introspector extensions)
+pub const OP_BIN2NUM: &str = "OP_BIN2NUM";
+pub const OP_NUM2BIN: &str = "OP_NUM2BIN";
+
+// Hashing (additional)
+pub const OP_RIPEMD160: &str = "OP_RIPEMD160";
+pub const OP_SHA1: &str = "OP_SHA1";
+pub const OP_HASH160: &str = "OP_HASH160";
+pub const OP_HASH256: &str = "OP_HASH256";
+
+// Merkle proof verification (introspector extension)
+pub const OP_MERKLEBRANCHVERIFY: &str = "OP_MERKLEBRANCHVERIFY";
+
+// Introspection (transaction global)
 pub const OP_TXHASH: &str = "OP_TXHASH";
+pub const OP_TXID: &str = "OP_TXID";
 pub const OP_TXWEIGHT: &str = "OP_TXWEIGHT";
+pub const OP_INSPECTVERSION: &str = "OP_INSPECTVERSION";
+pub const OP_INSPECTLOCKTIME: &str = "OP_INSPECTLOCKTIME";
+pub const OP_INSPECTNUMINPUTS: &str = "OP_INSPECTNUMINPUTS";
+pub const OP_INSPECTNUMOUTPUTS: &str = "OP_INSPECTNUMOUTPUTS";
+
+// Introspection (input metadata)
+pub const OP_PUSHCURRENTINPUTINDEX: &str = "OP_PUSHCURRENTINPUTINDEX";
+pub const OP_INSPECTINPUTOUTPOINT: &str = "OP_INSPECTINPUTOUTPOINT";
+pub const OP_INSPECTINPUTSCRIPTPUBKEY: &str = "OP_INSPECTINPUTSCRIPTPUBKEY";
+pub const OP_INSPECTINPUTVALUE: &str = "OP_INSPECTINPUTVALUE";
+pub const OP_INSPECTINPUTSEQUENCE: &str = "OP_INSPECTINPUTSEQUENCE";
+pub const OP_INSPECTINPUTISSUANCE: &str = "OP_INSPECTINPUTISSUANCE";
+pub const OP_INSPECTINPUTARKADESCRIPTHASH: &str = "OP_INSPECTINPUTARKADESCRIPTHASH";
+pub const OP_INSPECTINPUTARKADEWITNESSHASH: &str = "OP_INSPECTINPUTARKADEWITNESSHASH";
+
+// Introspection (output metadata)
+pub const OP_INSPECTOUTPUTVALUE: &str = "OP_INSPECTOUTPUTVALUE";
+pub const OP_INSPECTOUTPUTSCRIPTPUBKEY: &str = "OP_INSPECTOUTPUTSCRIPTPUBKEY";
+pub const OP_INSPECTOUTPUTNONCE: &str = "OP_INSPECTOUTPUTNONCE";
+
+// Introspection (packet)
+pub const OP_INSPECTPACKET: &str = "OP_INSPECTPACKET";
+pub const OP_INSPECTINPUTPACKET: &str = "OP_INSPECTINPUTPACKET";
+
+// Introspection (asset groups)
 pub const OP_INSPECTASSETGROUP: &str = "OP_INSPECTASSETGROUP";
 pub const OP_INSPECTASSETGROUPNUM: &str = "OP_INSPECTASSETGROUPNUM";
 pub const OP_INSPECTASSETGROUPSUM: &str = "OP_INSPECTASSETGROUPSUM";
@@ -90,25 +183,16 @@ pub const OP_FINDASSETGROUPBYASSETID: &str = "OP_FINDASSETGROUPBYASSETID";
 pub const OP_INSPECTASSETGROUPCTRL: &str = "OP_INSPECTASSETGROUPCTRL";
 pub const OP_INSPECTASSETGROUPMETADATAHASH: &str = "OP_INSPECTASSETGROUPMETADATAHASH";
 pub const OP_INSPECTASSETGROUPASSETID: &str = "OP_INSPECTASSETGROUPASSETID";
-pub const OP_PUSHCURRENTINPUTINDEX: &str = "OP_PUSHCURRENTINPUTINDEX";
-pub const OP_INSPECTINPUTSCRIPTPUBKEY: &str = "OP_INSPECTINPUTSCRIPTPUBKEY";
-pub const OP_INSPECTINPUTVALUE: &str = "OP_INSPECTINPUTVALUE";
-pub const OP_INSPECTINPUTSEQUENCE: &str = "OP_INSPECTINPUTSEQUENCE";
-pub const OP_INSPECTINPUTOUTPOINT: &str = "OP_INSPECTINPUTOUTPOINT";
+
+// Introspection (asset cross-input/output)
 pub const OP_INSPECTINASSETLOOKUP: &str = "OP_INSPECTINASSETLOOKUP";
 pub const OP_INSPECTOUTASSETLOOKUP: &str = "OP_INSPECTOUTASSETLOOKUP";
 pub const OP_INSPECTINASSETCOUNT: &str = "OP_INSPECTINASSETCOUNT";
 pub const OP_INSPECTOUTASSETCOUNT: &str = "OP_INSPECTOUTASSETCOUNT";
 pub const OP_INSPECTINASSETAT: &str = "OP_INSPECTINASSETAT";
 pub const OP_INSPECTOUTASSETAT: &str = "OP_INSPECTOUTASSETAT";
-pub const OP_INSPECTVERSION: &str = "OP_INSPECTVERSION";
-pub const OP_INSPECTLOCKTIME: &str = "OP_INSPECTLOCKTIME";
-pub const OP_INSPECTNUMINPUTS: &str = "OP_INSPECTNUMINPUTS";
-pub const OP_INSPECTNUMOUTPUTS: &str = "OP_INSPECTNUMOUTPUTS";
-pub const OP_INSPECTINPUTISSUANCE: &str = "OP_INSPECTINPUTISSUANCE";
-pub const OP_INSPECTOUTPUTVALUE: &str = "OP_INSPECTOUTPUTVALUE";
-pub const OP_INSPECTOUTPUTSCRIPTPUBKEY: &str = "OP_INSPECTOUTPUTSCRIPTPUBKEY";
-pub const OP_INSPECTOUTPUTNONCE: &str = "OP_INSPECTOUTPUTNONCE";
+
+// Tapscript helpers (legacy aliases preserved)
 pub const OP_INPUTBYTECODE: &str = "OP_INPUTBYTECODE";
 pub const OP_INPUTVALUE: &str = "OP_INPUTVALUE";
 pub const OP_INPUTSEQUENCE: &str = "OP_INPUTSEQUENCE";

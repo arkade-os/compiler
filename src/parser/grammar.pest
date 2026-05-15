@@ -138,6 +138,13 @@ primary_expr = {
     le32_to_le64 |
     ec_mul_scalar_verify |
     tweak_verify |
+    substr_func |
+    cat_func |
+    bin2num_func |
+    num2bin_func |
+    size_func |
+    input_packet_inspect |
+    packet_inspect |
     asset_at |
     asset_count |
     asset_lookup |
@@ -192,6 +199,13 @@ complex_expression = _{
     le32_to_le64 |
     ec_mul_scalar_verify |
     tweak_verify |
+    substr_func |
+    cat_func |
+    bin2num_func |
+    num2bin_func |
+    size_func |
+    input_packet_inspect |
+    packet_inspect |
     asset_at |
     asset_count |
     asset_lookup |
@@ -264,8 +278,10 @@ tx_introspection = {
     "tx" ~ "." ~ tx_introspection_property
 }
 
-// Transaction introspection properties
-tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" }
+// Transaction introspection properties.
+// Note: "id" is the introspector OP_TXID; do not rename to "txid" (matches
+// the SDK convention used in docs/arkade-script-with-assets.md).
+tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" | "id" }
 
 // Transaction introspection comparison: tx_introspection op expression
 tx_introspection_comparison = {
@@ -279,8 +295,14 @@ input_introspection = {
     "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ input_introspection_property
 }
 
-// Input introspection properties (excluding asset - use .assets.* API instead)
-input_introspection_property = { "value" | "scriptPubKey" | "sequence" | "outpoint" | "issuance" }
+// Input introspection properties (excluding asset - use .assets.* API instead).
+// arkadeScriptHash / arkadeWitnessHash compile to the introspector hash
+// opcodes and are used by invocation-marker contracts to pin themselves to
+// a specific consuming Arkade closure.
+input_introspection_property = {
+    "value" | "scriptPubKey" | "sequence" | "outpoint" | "issuance" |
+    "arkadeScriptHash" | "arkadeWitnessHash"
+}
 
 // Output introspection: tx.outputs[o].property (value, scriptPubKey, nonce)
 output_introspection = {
@@ -547,6 +569,52 @@ tweak_verify = {
 // CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACKVERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
+}
+
+// ─── Byte-string Manipulation ──────────────────────────────────────────
+// These map to the introspector's byte-string opcodes and are used to slice,
+// concat, and parse fixed-width fields out of extension packets.
+
+// Substring extraction: substr(data, offset, size) → OP_SUBSTR
+substr_func = {
+    "substr" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Byte concatenation: cat(a, b) → OP_CAT
+cat_func = {
+    "cat" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Bytes → BigNum: bin2num(bytes) → OP_BIN2NUM
+bin2num_func = {
+    "bin2num" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// BigNum → fixed-width bytes: num2bin(num, size) → OP_NUM2BIN
+num2bin_func = {
+    "num2bin" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Byte-array length: size(bytes) → OP_SIZE OP_NIP (returns size only)
+size_func = {
+    "size" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// ─── Packet Introspection ──────────────────────────────────────────────
+// Extension-packet introspection over the current transaction or a previous
+// Arkade transaction referenced by an input. Returns the raw packet bytes;
+// presence is enforced by OP_INSPECTPACKET's bool flag — emission verifies
+// it. Use substr / bin2num / sha256 to parse fields.
+
+// Current-tx packet: tx.packet(packetType) → <packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY
+packet_inspect = {
+    "tx" ~ "." ~ "packet" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
+// → <packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY
+input_packet_inspect = {
+    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────
