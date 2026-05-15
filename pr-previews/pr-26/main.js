@@ -8,20 +8,18 @@ import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 const projects = {
     stability: {
         name: 'Stability',
-        description: 'Synthetic USD stablecoins with on-chain price beacon',
+        description: 'USD-denominated BTC positions with on-chain price beacon',
         files: {
-            'beacon.ark': contracts.price_beacon,
-            'offer.ark': contracts.stability_offer,
-            'position.ark': contracts.stable_position,
+            'price_beacon.ark': contracts.price_beacon,
+            'stability_vault.ark': contracts.stability_vault,
+            'stability_offer.ark': contracts.stability_offer,
         }
     },
     vault_lending: {
         name: 'Vault + Lending',
-        description: 'ERC-4626 vault with yield strategies and an exogenous lending market',
+        description: 'Morpho-style lending pool: ERC-4626 vault with isolated per-borrower lending markets',
         files: {
             'vault_covenant.ark': contracts.vault_lending_vault_covenant,
-            'strategy_fragment.ark': contracts.vault_lending_strategy_fragment,
-            'composite_router.ark': contracts.vault_lending_composite_router,
             'lending_market.ark': contracts.vault_lending_lending_market,
             'supply_flow.ark': contracts.vault_lending_supply_flow,
             'repay_flow.ark': contracts.vault_lending_repay_flow,
@@ -35,7 +33,6 @@ const examples = {
     htlc: { name: 'HTLC', code: contracts.htlc },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
-    beacon: { name: 'Beacon', code: contracts.beacon },
 };
 
 // Global state
