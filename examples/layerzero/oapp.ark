@@ -1,0 +1,163 @@
+// OApp Contract — USDT0 mint / burn application
+//
+// Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go
+//       BuildOAppReceiveScript + BuildOAppSendScript.
+//
+// The OApp owns the application-level token effects. It mints USDT0 from
+// Endpoint-authenticated receive invocations and burns USDT0 to create
+// authenticated send invocations back to the Endpoint.
+//
+//   receive()  — consumes a receive-invocation marker, mints USDT0 to the
+//                recipient committed in the inbound CreditMessage.
+//   send()     — burns USDT0, emits a send-invocation marker for
+//                Endpoint.send() to consume.
+//
+// Asset roles:
+//   - oappCtrlAssetId      : OApp control singleton — pinned to this state.
+//   - oappIDAssetId        : Send-invocation marker token (1 minted per send).
+//   - usdt0AssetId         : Prototype USDT0 token — minted on receive, burned on send.
+//   - endpointCtrlAssetId  : Endpoint control singleton — referenced by markers.
+//   - endpointIDAssetId    : Receive-invocation marker token (consumed on receive).
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract OApp(
+  bytes32 oappCtrlAssetId,
+  bytes32 oappIDAssetId,
+  bytes32 usdt0AssetId,
+  bytes32 endpointCtrlAssetId,
+  bytes32 endpointIDAssetId,
+  int     exit
+) {
+
+  // -------------------------------------------------------------------------
+  // OAPP RECEIVE
+  // Consume a receive-invocation marker and mint the credited USDT0 amount
+  // to the recipient committed by the inbound CreditMessage.
+  //
+  // Asset-level invariants enforced here (mirror builders.go ~ lines 859-1131):
+  //   - Receive-invocation marker input carries exactly 1 EndpointID asset
+  //     and is fully burned (total output sum of EndpointID == 0).
+  //   - USDT0 delta (output sum - input sum) == credited amount.
+  //   - Recipient output (output 1) receives exactly `amount` USDT0.
+  //   - Recipient output scriptPubKey == new SingleSig(recipient).
+  //   - OApp control asset + OAppID asset both survive on output 0.
+  //   - Output[0] scriptPubKey == this OApp contract with identical params.
+  //
+  // Packet-level invariants delegated to the introspector layer:
+  //   - LzReceive packet is v1 with fixed credit-message size.
+  //   - LzReceive route fields match the configured remote.
+  //   - sha256(CreditMessage) == LzReceive.messageHash.
+  //   - CreditMessage.remoteSender == LzReceive.sender.
+  //   - CreditMessage.toScriptPubKey is P2TR and equals the recipient output's
+  //     scriptPubKey; CreditMessage.amount equals the on-chain delta.
+  //
+  // The `amount` and `recipient` witnesses are the values committed by the
+  // already-DVN-attested LzReceivePacket on the marker input; the introspector
+  // layer binds them to the packet, so this contract treats them as
+  // authenticated inputs.
+  // -------------------------------------------------------------------------
+  function receive(int amount, pubkey recipient) {
+    require(amount > 0, "amount must be positive");
+
+    // The receive-invocation marker is consumed (input 0) and fully burned.
+    require(
+      tx.inputs[0].assets.lookup(endpointIDAssetId) == 1,
+      "marker asset not on input 0"
+    );
+    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);
+    require(endpointIDGroup.sumOutputs == 0, "marker not burned");
+
+    // USDT0 delta equals the credited amount (mint of `amount` units).
+    let usdt0Group = tx.assetGroups.find(usdt0AssetId);
+    require(usdt0Group.delta == amount, "usdt0 delta mismatch");
+
+    // Recipient output receives exactly `amount` USDT0 and is P2TR over recipient.
+    require(
+      tx.outputs[1].assets.lookup(usdt0AssetId) == amount,
+      "recipient amount mismatch"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(recipient),
+      "recipient pkScript wrong"
+    );
+
+    // OApp state continues at output 0 with control + ID assets intact.
+    require(
+      tx.outputs[0].scriptPubKey == new OApp(
+        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
+        endpointCtrlAssetId, endpointIDAssetId, exit
+      ),
+      "oapp state must continue"
+    );
+    require(
+      tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1,
+      "oapp control missing"
+    );
+    require(
+      tx.outputs[0].assets.lookup(oappIDAssetId) == 1,
+      "oapp id missing"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // OAPP SEND
+  // Burn the outbound USDT0 amount and emit a send-invocation marker for
+  // Endpoint.send() to consume.
+  //
+  // Asset-level invariants enforced here (mirror builders.go ~ lines 1135-1300):
+  //   - USDT0 input sum - output sum == burn amount.
+  //   - Send-invocation marker emitted at output 1, carries 1 OAppID asset,
+  //     and uses the canonical SendMarker pkScript.
+  //   - Exactly one OAppID asset is minted in this transition.
+  //   - OApp control asset survives on output 0.
+  //   - Output[0] scriptPubKey == this OApp contract with identical params.
+  //
+  // Packet-level invariants delegated to the introspector layer:
+  //   - OAppSendInvocation is v1 with the fixed layout and points
+  //     invocation_vout at the marker output index.
+  //   - OAppID/EndpointID fields match constructor route.
+  //   - dstEID and remoteRecipient match the configured remote.
+  //   - sender signs the outbound send (off-chain coordination).
+  //
+  // `amount` is the burn amount as committed in the OAppSendInvocation packet
+  // produced by the same transaction; the introspector layer binds it.
+  // -------------------------------------------------------------------------
+  function send(int amount, signature ownerSig, pubkey ownerPk) {
+    require(amount > 0, "amount must be positive");
+    require(checkSig(ownerSig, ownerPk), "owner sig invalid");
+
+    // USDT0 was burned in `amount`: outputs are short by `amount` vs. inputs.
+    let usdt0Group = tx.assetGroups.find(usdt0AssetId);
+    require(usdt0Group.sumInputs >= usdt0Group.sumOutputs + amount, "burn short");
+
+    // Send-invocation marker emitted at output 1.
+    require(
+      tx.outputs[1].assets.lookup(oappIDAssetId) == 1,
+      "send marker asset missing"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new SendMarker(endpointCtrlAssetId, exit),
+      "send marker pkScript not canonical"
+    );
+
+    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);
+    require(oappIDGroup.sumOutputs == 1, "extra send marker");
+
+    // OApp state continues at output 0.
+    require(
+      tx.outputs[0].scriptPubKey == new OApp(
+        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
+        endpointCtrlAssetId, endpointIDAssetId, exit
+      ),
+      "oapp state must continue"
+    );
+    require(
+      tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1,
+      "oapp control missing"
+    );
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "contractName": "ReceiveMarker",
+  "constructorInputs": [
+    {
+      "name": "oappCtrlAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "oappCtrlAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "consume",
+      "functionInputs": [],
+      "witnessSchema": [
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "1",
+        "<oappCtrlAssetId_txid>",
+        "<oappCtrlAssetId_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "consume",
+      "functionInputs": [],
+      "witnessSchema": [],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "0-of-0 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract ReceiveMarker(\n  bytes32 oappCtrlAssetId,\n  int     exit\n) {\n  function consume() {\n    require(\n      tx.inputs[1].assets.lookup(oappCtrlAssetId) == 1,\n      \"oapp state input missing control asset\"\n    );\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-05-15T16:59:10.759796594+00:00",
+  "warnings": [
+    "warning[type]: fn consume: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
+}

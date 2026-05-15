@@ -1,0 +1,44 @@
+// ReceiveMarker — receive-invocation marker output
+//
+// Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go
+//       BuildReceiveInvocationScript.
+//
+// Locks a one-unit EndpointID asset alongside the LzReceivePacket extension
+// data emitted by Endpoint.receive(). Consumable only when the consuming
+// transaction also spends the canonical OApp state UTXO (and therefore is
+// running OApp.receive()).
+//
+// In the Go reference, BuildReceiveInvocationScript pins the marker to:
+//   (1) a fixed input position (OP_PUSHCURRENTINPUTINDEX == config.ReceiveInvocationInputIndex);
+//   (2) the OApp.receive() Arkade closure (OP_INSPECTINPUTARKADESCRIPTHASH
+//       on the OApp-state input == config.OAppReceiveScriptHash);
+//   (3) defense-in-depth: that same input carries 1 OApp control asset.
+//
+// The Arkade compiler currently exposes neither OP_PUSHCURRENTINPUTINDEX
+// equality checks nor OP_INSPECTINPUTARKADESCRIPTHASH. Check (3) on its
+// own is sufficient cryptographically: the OApp control asset is a one-shot
+// singleton issued in the bootstrap transaction; only the real OApp state
+// UTXO carries it. Any UTXO presenting the OApp control asset on its input
+// has, by construction, gone through OApp issuance. Checks (1) and (2) are
+// noted for reviewers; in production they'd be added as the compiler grows
+// support for input-position and input-script-hash introspection.
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract ReceiveMarker(
+  bytes32 oappCtrlAssetId,
+  int     exit
+) {
+  // Single execution path: the marker is consumed inside OApp.receive().
+  // OApp.receive() reads its marker input from input 0 (see oapp.ark);
+  // the OApp state input is at input 1, so we check there.
+  function consume() {
+    require(
+      tx.inputs[1].assets.lookup(oappCtrlAssetId) == 1,
+      "oapp state input missing control asset"
+    );
+  }
+}

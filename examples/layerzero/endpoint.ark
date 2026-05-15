@@ -1,0 +1,146 @@
+// Endpoint Contract — LayerZero / USDT0 pathway state
+//
+// Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go
+//       BuildEndpointReceiveScript + BuildEndpointSendScript.
+//
+// The Endpoint owns LayerZero pathway state: local Endpoint identity, linked
+// OApp identity, remote endpoint id, remote OApp id, DVN set, and the two
+// invocation marker mints/burns. The Arkade compiler renders the asset-flow
+// and signature invariants of those Go scripts. Packet-level invariants
+// (LzReceivePacket field parsing, DvnAttestationPacket layout, nonce
+// monotonicity over OP_INSPECTPACKET) are enforced by the introspector
+// runtime around this contract — see the contract-system.md doc in the demo.
+//
+//   receive()  — validates a DVN-attested inbound packet and emits one
+//                receive-invocation marker for OApp.receive() to consume.
+//   send()     — consumes an OApp send-invocation marker and emits an
+//                outbound LzSendPacket.
+//
+// Asset roles:
+//   - endpointCtrlAssetId : Endpoint control singleton — pinned to this state.
+//   - endpointIDAssetId   : Receive-invocation marker token (1 minted per recv).
+//   - oappCtrlAssetId     : OApp control singleton — referenced by markers.
+//   - oappIDAssetId       : Send-invocation marker token (consumed per send).
+//
+// DVN attestation:
+//   The two DVN pubkeys are fixed by the route configuration and committed
+//   as constructor parameters. A receive transition requires Schnorr sigs
+//   from BOTH DVNs over the canonical receive hash. The receive hash is the
+//   sha256 of (receiver || srcEID || sender || nonce || GUID || messageHash);
+//   it is computed off-chain by the LayerZero relayer and presented here as
+//   a witness so the Arkade contract verifies the cryptographic commitment
+//   without reconstructing the packet on-chain.
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract Endpoint(
+  bytes32 endpointCtrlAssetId,
+  bytes32 endpointIDAssetId,
+  bytes32 oappCtrlAssetId,
+  bytes32 oappIDAssetId,
+  pubkey  dvn0Pk,
+  pubkey  dvn1Pk,
+  int     exit
+) {
+
+  // -------------------------------------------------------------------------
+  // ENDPOINT RECEIVE
+  // Validate a DVN-attested LzReceive packet and emit a receive-invocation
+  // marker for OApp.receive() to consume.
+  //
+  // Asset-level invariants enforced here (mirror builders.go ~ lines 417-477):
+  //   - Endpoint control asset survives on output[0] (the next Endpoint state).
+  //   - Output[0] scriptPubKey == this Endpoint contract with identical
+  //     constructor parameters (route preservation).
+  //   - Output[1] is the canonical ReceiveMarker pkScript and carries exactly
+  //     one freshly-minted EndpointID asset.
+  //   - Exactly one EndpointID asset is created in this transition.
+  //
+  // Packet-level invariants delegated to the introspector layer:
+  //   - LzReceive / DvnAttestation / EndpointState are v1 with fixed sizes.
+  //   - LzReceive route fields match constructor route (EndpointID, OAppID,
+  //     RemoteEID, RemoteOApp).
+  //   - Inbound nonce in the next-state packet = previous inbound nonce + 1.
+  //   - Outbound nonce and route prefix carry over verbatim.
+  // -------------------------------------------------------------------------
+  function receive(
+    bytes32 receiveHash,
+    signature dvn0Sig,
+    signature dvn1Sig
+  ) {
+    // 2-of-2 DVN attestation over the canonical receive hash.
+    require(checkSigFromStack(dvn0Sig, dvn0Pk, receiveHash), "dvn0 sig invalid");
+    require(checkSigFromStack(dvn1Sig, dvn1Pk, receiveHash), "dvn1 sig invalid");
+
+    // Endpoint state continues at output 0 with route preserved.
+    require(
+      tx.outputs[0].scriptPubKey == new Endpoint(
+        endpointCtrlAssetId, endpointIDAssetId,
+        oappCtrlAssetId,     oappIDAssetId,
+        dvn0Pk, dvn1Pk, exit
+      ),
+      "endpoint state must continue"
+    );
+    require(
+      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,
+      "endpoint control missing"
+    );
+
+    // Receive-invocation marker emitted at output 1.
+    require(
+      tx.outputs[1].assets.lookup(endpointIDAssetId) == 1,
+      "marker asset missing"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new ReceiveMarker(oappCtrlAssetId, exit),
+      "marker pkScript not canonical"
+    );
+
+    // Exactly one EndpointID asset minted (no extra markers).
+    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);
+    require(endpointIDGroup.sumOutputs == 1, "extra marker minted");
+  }
+
+  // -------------------------------------------------------------------------
+  // ENDPOINT SEND
+  // Consume an OApp-emitted send-invocation marker and emit an outbound
+  // LzSendPacket. Endpoint state continues on output 0; the OAppID marker is
+  // fully burned (no output unit) to prevent replay.
+  //
+  // Asset-level invariants enforced here (mirror builders.go ~ lines 802-853):
+  //   - OAppID marker carries 1 unit on the consumed input; total output sum
+  //     of OAppID is 0 (marker is destroyed).
+  //   - Endpoint control asset survives on output[0].
+  //   - Output[0] scriptPubKey == this Endpoint contract with identical
+  //     constructor parameters.
+  //
+  // Packet-level invariants delegated to the introspector layer:
+  //   - LzSendPacket and OAppSendInvocation packets are v1 with fixed sizes.
+  //   - Route fields match Endpoint state; inbound nonce preserved.
+  //   - Outbound nonce in LzSend = previous outbound nonce + 1.
+  //   - sha256(OAppSendInvocation) == LzSend.guid; per-field equalities
+  //     between invocation and LzSend (sender, dstEID, receiver, amount,
+  //     remoteRecipient, messageHash).
+  // -------------------------------------------------------------------------
+  function send() {
+    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);
+    require(oappIDGroup.sumInputs == 1, "send marker missing");
+    require(oappIDGroup.sumOutputs == 0, "send marker not burned");
+
+    require(
+      tx.outputs[0].scriptPubKey == new Endpoint(
+        endpointCtrlAssetId, endpointIDAssetId,
+        oappCtrlAssetId,     oappIDAssetId,
+        dvn0Pk, dvn1Pk, exit
+      ),
+      "endpoint state must continue"
+    );
+    require(
+      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,
+      "endpoint control missing"
+    );
+  }
+}

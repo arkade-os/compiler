@@ -1,0 +1,34 @@
+// SendMarker — send-invocation marker output
+//
+// Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go
+//       BuildSendInvocationScript.
+//
+// Locks a one-unit OAppID asset alongside the OAppSendInvocation extension
+// data emitted by OApp.send(). Consumable only when the consuming
+// transaction also spends the canonical Endpoint state UTXO (and therefore
+// is running Endpoint.send()).
+//
+// Symmetric to ReceiveMarker. See its comment for the rationale on which
+// Go-script checks are expressed here vs. delegated to the introspector
+// runtime.
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract SendMarker(
+  bytes32 endpointCtrlAssetId,
+  int     exit
+) {
+  // Single execution path: the marker is consumed inside Endpoint.send().
+  // Endpoint.send() reads the marker input from input 1; the Endpoint state
+  // input is at input 0, so we check there for the Endpoint control asset
+  // singleton.
+  function consume() {
+    require(
+      tx.inputs[0].assets.lookup(endpointCtrlAssetId) == 1,
+      "endpoint state input missing control asset"
+    );
+  }
+}

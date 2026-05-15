@@ -1,0 +1,349 @@
+{
+  "contractName": "Endpoint",
+  "constructorInputs": [
+    {
+      "name": "endpointCtrlAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "endpointCtrlAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "endpointIDAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "endpointIDAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "oappCtrlAssetId",
+      "type": "bytes32"
+    },
+    {
+      "name": "oappIDAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "oappIDAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "dvn0Pk",
+      "type": "pubkey"
+    },
+    {
+      "name": "dvn1Pk",
+      "type": "pubkey"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "receive",
+      "functionInputs": [
+        {
+          "name": "receiveHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "dvn0Sig",
+          "type": "signature"
+        },
+        {
+          "name": "dvn1Sig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "receiveHash",
+          "type": "bytes32",
+          "encoding": "raw-32"
+        },
+        {
+          "name": "dvn0Sig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "dvn1Sig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<receiveHash>",
+        "<dvn0Pk>",
+        "<dvn0Sig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<receiveHash>",
+        "<dvn1Pk>",
+        "<dvn1Sig>",
+        "OP_CHECKSIGFROMSTACK",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:Endpoint(<endpointCtrlAssetId>,<endpointIDAssetId>,<oappCtrlAssetId>,<oappIDAssetId>,<dvn0Pk>,<dvn1Pk>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<endpointCtrlAssetId_txid>",
+        "<endpointCtrlAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "1",
+        "<endpointIDAssetId_txid>",
+        "<endpointIDAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:ReceiveMarker(<oappCtrlAssetId>,<exit>)>",
+        "OP_EQUAL",
+        "<endpointIDAssetId_txid>",
+        "<endpointIDAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<endpointIDGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "1",
+        "OP_EQUAL",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "receive",
+      "functionInputs": [
+        {
+          "name": "receiveHash",
+          "type": "bytes32"
+        },
+        {
+          "name": "dvn0Sig",
+          "type": "signature"
+        },
+        {
+          "name": "dvn1Sig",
+          "type": "signature"
+        },
+        {
+          "name": "dvn0PkSig",
+          "type": "signature"
+        },
+        {
+          "name": "dvn1PkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "dvn0PkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "dvn1PkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<dvn0Pk>",
+        "<dvn0PkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<dvn1Pk>",
+        "<dvn1PkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "send",
+      "functionInputs": [],
+      "witnessSchema": [
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<oappIDAssetId_txid>",
+        "<oappIDAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<oappIDGroup>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "1",
+        "OP_EQUAL",
+        "<oappIDGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "0",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:Endpoint(<endpointCtrlAssetId>,<endpointIDAssetId>,<oappCtrlAssetId>,<oappIDAssetId>,<dvn0Pk>,<dvn1Pk>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<endpointCtrlAssetId_txid>",
+        "<endpointCtrlAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "send",
+      "functionInputs": [
+        {
+          "name": "dvn0PkSig",
+          "type": "signature"
+        },
+        {
+          "name": "dvn1PkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "dvn0PkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "dvn1PkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<dvn0Pk>",
+        "<dvn0PkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<dvn1Pk>",
+        "<dvn1PkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract Endpoint(\n  bytes32 endpointCtrlAssetId,\n  bytes32 endpointIDAssetId,\n  bytes32 oappCtrlAssetId,\n  bytes32 oappIDAssetId,\n  pubkey  dvn0Pk,\n  pubkey  dvn1Pk,\n  int     exit\n) {\n\n  function receive(\n    bytes32 receiveHash,\n    signature dvn0Sig,\n    signature dvn1Sig\n  ) {\n    require(checkSigFromStack(dvn0Sig, dvn0Pk, receiveHash), \"dvn0 sig invalid\");\n    require(checkSigFromStack(dvn1Sig, dvn1Pk, receiveHash), \"dvn1 sig invalid\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new Endpoint(\n        endpointCtrlAssetId, endpointIDAssetId,\n        oappCtrlAssetId,     oappIDAssetId,\n        dvn0Pk, dvn1Pk, exit\n      ),\n      \"endpoint state must continue\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,\n      \"endpoint control missing\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(endpointIDAssetId) == 1,\n      \"marker asset missing\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new ReceiveMarker(oappCtrlAssetId, exit),\n      \"marker pkScript not canonical\"\n    );\n\n    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);\n    require(endpointIDGroup.sumOutputs == 1, \"extra marker minted\");\n  }\n\n  function send() {\n    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);\n    require(oappIDGroup.sumInputs == 1, \"send marker missing\");\n    require(oappIDGroup.sumOutputs == 0, \"send marker not burned\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new Endpoint(\n        endpointCtrlAssetId, endpointIDAssetId,\n        oappCtrlAssetId,     oappIDAssetId,\n        dvn0Pk, dvn1Pk, exit\n      ),\n      \"endpoint state must continue\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,\n      \"endpoint control missing\"\n    );\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-05-15T16:59:10.616373952+00:00",
+  "warnings": [
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
+}
