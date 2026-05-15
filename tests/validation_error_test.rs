@@ -229,17 +229,14 @@ contract A(pubkey o, pubkey server) {
     ];
 
     for source in bad_inputs {
+        let preview: String = source.chars().take(60).collect();
         let result = compile(source);
-        assert!(
-            result.is_err(),
-            "expected error for source: {}",
-            &source[..60]
-        );
+        assert!(result.is_err(), "expected error for source: {}", preview);
         let msg = result.unwrap_err().to_string();
         assert!(
             !msg.is_empty(),
             "error message must be non-empty for source: {}",
-            &source[..60]
+            preview
         );
         assert!(
             msg.len() > 5,

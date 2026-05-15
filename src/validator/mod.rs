@@ -137,20 +137,31 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         ));
     }
 
+    // Timelocks may be a literal integer ("144") or a constructor param name
+    // ("exit"). Param names are resolved at deploy time and cannot be checked
+    // here. For literal values, reject zero and negatives — the grammar
+    // (number_literal = ASCII_DIGIT+) already rejects negative literals at parse
+    // time, but the validator double-checks as defense-in-depth in case the
+    // grammar ever permits signed integers.
     if let Some(ref exit) = contract.exit_timelock {
-        // Only check literal zero; parameter names are resolved at runtime
-        if exit.parse::<i64>().map(|v| v == 0).unwrap_or(false) {
-            issues.push(ValidationIssue::error(
-                "options.exit timelock must be greater than 0",
-            ));
+        if let Ok(v) = exit.parse::<i64>() {
+            if v <= 0 {
+                issues.push(ValidationIssue::error(format!(
+                    "options.exit timelock must be a positive block count; got {}",
+                    v
+                )));
+            }
         }
     }
 
     if let Some(ref renewal) = contract.renewal_timelock {
-        if renewal.parse::<i64>().map(|v| v == 0).unwrap_or(false) {
-            issues.push(ValidationIssue::warning(
-                "options.renew timelock is 0; a positive block count is recommended",
-            ));
+        if let Ok(v) = renewal.parse::<i64>() {
+            if v <= 0 {
+                issues.push(ValidationIssue::warning(format!(
+                    "options.renew timelock should be a positive block count; got {}",
+                    v
+                )));
+            }
         }
     }
 
@@ -543,7 +554,23 @@ mod tests {
         let contract = make_contract("ZeroExit", true, Some("0"));
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
-        assert!(issues.iter().any(|i| i.message.contains("greater than 0")));
+        assert!(issues.iter().any(|i| i.message.contains("positive")));
+    }
+
+    #[test]
+    fn negative_exit_timelock_is_error() {
+        let contract = make_contract("NegExit", true, Some("-1"));
+        let issues = validate_ast(&contract);
+        assert!(has_errors(&issues));
+        assert!(issues.iter().any(|i| i.message.contains("positive")));
+    }
+
+    #[test]
+    fn param_name_exit_timelock_is_not_checked_for_value() {
+        // "exit" is a constructor param name, value not known at compile time
+        let contract = make_contract("ParamExit", true, Some("exit"));
+        let issues = validate_ast(&contract);
+        assert!(!has_errors(&issues));
     }
 
     #[test]

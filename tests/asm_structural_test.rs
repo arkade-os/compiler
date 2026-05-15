@@ -159,15 +159,15 @@ fn all_examples_have_well_formed_placeholders() {
 /// tested separately below.
 #[test]
 fn simple_contracts_have_fully_resolvable_placeholders() {
-    let simple = ["single_sig.ark", "htlc.ark", "bare_vtxo.ark"];
-    // Note: htlc.ark uses checkMultisig with explicit sig arrays; those are
+    // bare_vtxo has its own dedicated test in tests/bare_vtxo_test.rs and no
+    // example file in examples/, so it's not listed here.
+    // htlc.ark uses checkMultisig with explicit sig arrays; those are
     // emitted as compound-expression placeholders and are also tested.
+    let simple = ["single_sig.ark", "htlc.ark"];
     for filename in &simple {
         let path = examples_dir().join(filename);
-        if !path.exists() {
-            continue;
-        }
-        let source = fs::read_to_string(&path).unwrap();
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{} must exist in examples/: {}", filename, e));
         let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
         for func in &output.functions {
