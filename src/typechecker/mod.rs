@@ -473,8 +473,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             _ => ArkType::Unknown,
         },
 
-        // Streaming SHA256 — all produce a 32-byte digest or midstate
-        Expression::Sha256Initialize { .. }
+        // SHA256 — all produce a 32-byte digest or midstate
+        Expression::Sha256 { .. }
+        | Expression::Sha256Initialize { .. }
         | Expression::Sha256Update { .. }
         | Expression::Sha256Finalize { .. } => ArkType::Bytes32,
 

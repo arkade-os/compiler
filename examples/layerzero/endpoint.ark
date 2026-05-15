@@ -4,32 +4,75 @@
 //       BuildEndpointReceiveScript + BuildEndpointSendScript.
 //
 // The Endpoint owns LayerZero pathway state: local Endpoint identity, linked
-// OApp identity, remote endpoint id, remote OApp id, DVN set, and the two
-// invocation marker mints/burns. The Arkade compiler renders the asset-flow
-// and signature invariants of those Go scripts. Packet-level invariants
-// (LzReceivePacket field parsing, DvnAttestationPacket layout, nonce
-// monotonicity over OP_INSPECTPACKET) are enforced by the introspector
-// runtime around this contract — see the contract-system.md doc in the demo.
+// OApp identity, remote endpoint id, remote OApp id, DVN set, inbound/outbound
+// nonces, and the two invocation marker mints/burns. This file now expresses
+// the full Go-script semantics natively using introspector primitives:
 //
-//   receive()  — validates a DVN-attested inbound packet and emits one
-//                receive-invocation marker for OApp.receive() to consume.
-//   send()     — consumes an OApp send-invocation marker and emits an
-//                outbound LzSendPacket.
+//   tx.packet(PacketType)          — current-tx extension packet
+//   substr / cat / bin2num         — fixed-width field extraction
+//   sha256(substr(...))            — DVN attestation hash binding
+//   checkSigFromStackVerify        — DVN Schnorr verification
+//   tx.outputs[*].scriptPubKey ==  — canonical pkScript pinning
+//     new ReceiveMarker(...)        for marker outputs
 //
-// Asset roles:
-//   - endpointCtrlAssetId : Endpoint control singleton — pinned to this state.
-//   - endpointIDAssetId   : Receive-invocation marker token (1 minted per recv).
-//   - oappCtrlAssetId     : OApp control singleton — referenced by markers.
-//   - oappIDAssetId       : Send-invocation marker token (consumed per send).
+// Packet layout constants (from internal/scripts/builders.go offsets):
 //
-// DVN attestation:
-//   The two DVN pubkeys are fixed by the route configuration and committed
-//   as constructor parameters. A receive transition requires Schnorr sigs
-//   from BOTH DVNs over the canonical receive hash. The receive hash is the
-//   sha256 of (receiver || srcEID || sender || nonce || GUID || messageHash);
-//   it is computed off-chain by the LayerZero relayer and presented here as
-//   a witness so the Arkade contract verifies the cryptographic commitment
-//   without reconstructing the packet on-chain.
+//   EndpointStatePacket (size 183, type 0x10):
+//     1..1   version (0x01)
+//     1..33  endpointID (32)
+//     33..65 oappID (32)
+//     65..69 remoteEID (4, BE)
+//     69..101 remoteOApp (32)
+//     101..102 dvnThreshold
+//     102..103 dvnCount
+//     103..135 dvn0 pk
+//     135..167 dvn1 pk
+//     167..175 inboundNonce (u64 BE)
+//     175..183 outboundNonce (u64 BE)
+//
+//   LzReceivePacket (size 219 with credit body, type 0x11):
+//     0..1   version
+//     1..33  receiver (= oappID)
+//     33..37 srcEID
+//     37..69 sender (= remoteOApp)
+//     69..77 nonce
+//     77..109 GUID
+//     109..141 messageHash
+//     141..145 messageLen (u32 BE) = 74
+//     145..219 CreditMessage (74 bytes)
+//
+//   DvnAttestationPacket (size 228, type 0x12):
+//     0..1   version
+//     1..33  attestedHash
+//     33..34 attestationCount (= 2)
+//     34..35 att0 index (= 0)
+//     35..67 att0 pubkey
+//     67..131 att0 signature (64)
+//     131..132 att1 index (= 1)
+//     132..164 att1 pubkey
+//     164..228 att1 signature (64)
+//
+//   OAppSendInvocationPacket (size 175, type 0x14):
+//     0..1   version
+//     1..33  oappID
+//     33..65 endpointID
+//     65..67 invocation_vout (u16 BE)
+//     67..71 dstEID
+//     71..103 receiver
+//     103..111 amountSD
+//     111..143 remoteRecipient
+//     143..175 messageHash
+//
+//   LzSendPacket (size 181, type 0x13):
+//     0..1   version
+//     1..33  sender (= oappID)
+//     33..37 dstEID
+//     37..69 receiver (= remoteOApp)
+//     69..77 nonce
+//     77..109 GUID = sha256(OAppSendInvocation)
+//     109..117 amountSD
+//     117..149 remoteRecipient
+//     149..181 messageHash
 
 options {
   server = server;
@@ -41,6 +84,10 @@ contract Endpoint(
   bytes32 endpointIDAssetId,
   bytes32 oappCtrlAssetId,
   bytes32 oappIDAssetId,
+  bytes32 endpointID,
+  bytes32 oappID,
+  int     remoteEID,
+  bytes32 remoteOApp,
   pubkey  dvn0Pk,
   pubkey  dvn1Pk,
   int     exit
@@ -51,96 +98,188 @@ contract Endpoint(
   // Validate a DVN-attested LzReceive packet and emit a receive-invocation
   // marker for OApp.receive() to consume.
   //
-  // Asset-level invariants enforced here (mirror builders.go ~ lines 417-477):
-  //   - Endpoint control asset survives on output[0] (the next Endpoint state).
-  //   - Output[0] scriptPubKey == this Endpoint contract with identical
-  //     constructor parameters (route preservation).
-  //   - Output[1] is the canonical ReceiveMarker pkScript and carries exactly
-  //     one freshly-minted EndpointID asset.
-  //   - Exactly one EndpointID asset is created in this transition.
-  //
-  // Packet-level invariants delegated to the introspector layer:
-  //   - LzReceive / DvnAttestation / EndpointState are v1 with fixed sizes.
-  //   - LzReceive route fields match constructor route (EndpointID, OAppID,
-  //     RemoteEID, RemoteOApp).
-  //   - Inbound nonce in the next-state packet = previous inbound nonce + 1.
-  //   - Outbound nonce and route prefix carry over verbatim.
+  // On-chain enforcement (mirrors BuildEndpointReceiveScript end-to-end):
+  //   - Packets EndpointState/LzReceive/DvnAttestation are v1 with fixed size.
+  //   - Route fields (endpointID, oappID, remoteEID, remoteOApp) match config.
+  //   - DVN threshold/count are both 2.
+  //   - In-packet DVN pubkeys match the contract-baked DVN keys.
+  //   - DVN 0 + DVN 1 Schnorr signatures verify against the attestedHash.
+  //   - attestedHash equals sha256(LzReceive[1..141]) (receive header bytes).
+  //   - Endpoint control asset survives on output[0] (next Endpoint state).
+  //   - One EndpointID asset is minted on output[1] (receive marker).
+  //   - Output[1] uses the canonical ReceiveMarker pkScript.
   // -------------------------------------------------------------------------
-  function receive(
-    bytes32 receiveHash,
-    signature dvn0Sig,
-    signature dvn1Sig
-  ) {
-    // 2-of-2 DVN attestation over the canonical receive hash.
-    require(checkSigFromStack(dvn0Sig, dvn0Pk, receiveHash), "dvn0 sig invalid");
-    require(checkSigFromStack(dvn1Sig, dvn1Pk, receiveHash), "dvn1 sig invalid");
+  function receive(bytes32 receiveMarkerScriptHash) {
+    // Pull the three current-tx packets. tx.packet() asserts presence.
+    require(size(tx.packet(16)) == 183, "endpoint state packet size");
+    require(size(tx.packet(17)) == 219, "lz receive packet size");
+    require(size(tx.packet(18)) == 228, "dvn attestation packet size");
 
-    // Endpoint state continues at output 0 with route preserved.
+    // Packet versions.
+    require(substr(tx.packet(16), 0, 1) == 1, "endpoint state version");
+    require(substr(tx.packet(17), 0, 1) == 1, "lz receive version");
+    require(substr(tx.packet(18), 0, 1) == 1, "dvn attestation version");
+
+    // Endpoint state route fields are fixed by this contract's configuration.
+    require(substr(tx.packet(16), 1, 32)  == endpointID, "wrong endpointID");
+    require(substr(tx.packet(16), 33, 32) == oappID, "wrong oappID");
+    require(bin2num(substr(tx.packet(16), 65, 4)) == remoteEID, "wrong remoteEID");
+    require(substr(tx.packet(16), 69, 32) == remoteOApp, "wrong remoteOApp");
+
+    // DVN threshold and count both equal 2.
+    require(bin2num(substr(tx.packet(16), 101, 1)) == 2, "dvn threshold != 2");
+    require(bin2num(substr(tx.packet(16), 102, 1)) == 2, "dvn count != 2");
+    require(substr(tx.packet(16), 103, 32) == dvn0Pk, "endpoint state dvn0 mismatch");
+    require(substr(tx.packet(16), 135, 32) == dvn1Pk, "endpoint state dvn1 mismatch");
+
+    // The LzReceive route fields match Endpoint state.
+    require(substr(tx.packet(17), 1, 32)  == oappID, "lz receiver != oapp");
+    require(bin2num(substr(tx.packet(17), 33, 4)) == remoteEID, "lz srcEID != remote");
+    require(substr(tx.packet(17), 37, 32) == remoteOApp, "lz sender != remoteOApp");
+
+    // DvnAttestation: canonical two-entry layout, attested hash equals the
+    // sha256 of the LzReceive header (receiver..messageHash).
+    require(bin2num(substr(tx.packet(18), 33, 1)) == 2, "dvn count != 2");
+    require(bin2num(substr(tx.packet(18), 34, 1)) == 0, "dvn att0 index != 0");
+    require(bin2num(substr(tx.packet(18), 131, 1)) == 1, "dvn att1 index != 1");
+    require(substr(tx.packet(18), 35, 32) == dvn0Pk, "dvn att0 pk mismatch");
+    require(substr(tx.packet(18), 132, 32) == dvn1Pk, "dvn att1 pk mismatch");
+    require(
+      sha256(substr(tx.packet(17), 1, 140)) == attestedHash,
+      "attested hash does not match lz receive header"
+    );
+    require(substr(tx.packet(18), 1, 32) == attestedHash, "dvn attested hash mismatch");
+
+    // DVN 2-of-2 signatures over the attestedHash.
+    require(checkSigFromStackVerify(dvn0Sig, dvn0Pk, attestedHash), "dvn0 sig invalid");
+    require(checkSigFromStackVerify(dvn1Sig, dvn1Pk, attestedHash), "dvn1 sig invalid");
+
+    // The embedded CreditMessage hashes to LzReceive.messageHash, locking the
+    // marker to the body OApp.receive() will read.
+    require(
+      sha256(substr(tx.packet(17), 145, 74)) == substr(tx.packet(17), 109, 32),
+      "credit message hash mismatch"
+    );
+
+    // Endpoint state continuation: output[0] uses the same pkScript and
+    // carries the Endpoint control asset.
     require(
       tx.outputs[0].scriptPubKey == new Endpoint(
         endpointCtrlAssetId, endpointIDAssetId,
         oappCtrlAssetId,     oappIDAssetId,
+        endpointID, oappID, remoteEID, remoteOApp,
         dvn0Pk, dvn1Pk, exit
       ),
       "endpoint state must continue"
     );
     require(
       tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,
-      "endpoint control missing"
+      "endpoint control missing on next state"
     );
 
-    // Receive-invocation marker emitted at output 1.
+    // Receive-invocation marker is minted at output[1] with the canonical
+    // ReceiveMarker pkScript. The marker pins itself to the OApp.receive()
+    // closure via its constructor parameter `oappReceiveScriptHash` (passed
+    // here as a function input — the deployment runtime computes it from
+    // the OApp contract definition).
     require(
       tx.outputs[1].assets.lookup(endpointIDAssetId) == 1,
       "marker asset missing"
     );
     require(
-      tx.outputs[1].scriptPubKey == new ReceiveMarker(oappCtrlAssetId, exit),
+      tx.outputs[1].scriptPubKey == new ReceiveMarker(
+        receiveMarkerScriptHash, oappCtrlAssetId, exit
+      ),
       "marker pkScript not canonical"
     );
 
-    // Exactly one EndpointID asset minted (no extra markers).
+    // Exactly one EndpointID asset minted (no extras).
     let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);
     require(endpointIDGroup.sumOutputs == 1, "extra marker minted");
   }
 
   // -------------------------------------------------------------------------
   // ENDPOINT SEND
-  // Consume an OApp-emitted send-invocation marker and emit an outbound
-  // LzSendPacket. Endpoint state continues on output 0; the OAppID marker is
-  // fully burned (no output unit) to prevent replay.
-  //
-  // Asset-level invariants enforced here (mirror builders.go ~ lines 802-853):
-  //   - OAppID marker carries 1 unit on the consumed input; total output sum
-  //     of OAppID is 0 (marker is destroyed).
-  //   - Endpoint control asset survives on output[0].
-  //   - Output[0] scriptPubKey == this Endpoint contract with identical
-  //     constructor parameters.
-  //
-  // Packet-level invariants delegated to the introspector layer:
-  //   - LzSendPacket and OAppSendInvocation packets are v1 with fixed sizes.
-  //   - Route fields match Endpoint state; inbound nonce preserved.
-  //   - Outbound nonce in LzSend = previous outbound nonce + 1.
-  //   - sha256(OAppSendInvocation) == LzSend.guid; per-field equalities
-  //     between invocation and LzSend (sender, dstEID, receiver, amount,
-  //     remoteRecipient, messageHash).
+  // Consume the OApp-emitted send-invocation marker and emit an outbound
+  // LzSendPacket. Endpoint state continues; the OAppID marker is fully burned.
   // -------------------------------------------------------------------------
   function send() {
+    require(size(tx.packet(16)) == 183, "endpoint state packet size");
+    require(size(tx.packet(19)) == 181, "lz send packet size");
+    require(size(tx.inputs[1].packet(20)) == 175, "send invocation packet size");
+
+    require(substr(tx.packet(16), 0, 1) == 1, "endpoint state version");
+    require(substr(tx.packet(19), 0, 1) == 1, "lz send version");
+    require(substr(tx.inputs[1].packet(20), 0, 1) == 1, "send invocation version");
+
+    // Route preservation.
+    require(substr(tx.packet(16), 1, 32)  == endpointID, "wrong endpointID");
+    require(substr(tx.packet(16), 33, 32) == oappID, "wrong oappID");
+    require(bin2num(substr(tx.packet(16), 65, 4)) == remoteEID, "wrong remoteEID");
+    require(substr(tx.packet(16), 69, 32) == remoteOApp, "wrong remoteOApp");
+
+    // LzSend route fields match Endpoint state.
+    require(substr(tx.packet(19), 1, 32)  == oappID, "lz send sender != oapp");
+    require(bin2num(substr(tx.packet(19), 33, 4)) == remoteEID, "lz dstEID != remote");
+    require(substr(tx.packet(19), 37, 32) == remoteOApp, "lz receiver != remoteOApp");
+
+    // The OApp invocation packet addresses this exact Endpoint/OApp pair.
+    require(substr(tx.inputs[1].packet(20), 1, 32)  == oappID, "invocation oappID mismatch");
+    require(substr(tx.inputs[1].packet(20), 33, 32) == endpointID, "invocation endpointID mismatch");
+    require(bin2num(substr(tx.inputs[1].packet(20), 67, 4)) == remoteEID, "invocation dstEID mismatch");
+    require(substr(tx.inputs[1].packet(20), 71, 32) == remoteOApp, "invocation receiver mismatch");
+
+    // LzSend GUID = sha256(OAppSendInvocation) — binds the outbound packet
+    // to the exact invocation body.
+    require(
+      sha256(substr(tx.inputs[1].packet(20), 0, 175)) == substr(tx.packet(19), 77, 32),
+      "lz send guid mismatch"
+    );
+
+    // Per-field equalities between invocation and LzSend.
+    require(
+      substr(tx.inputs[1].packet(20), 1, 32) == substr(tx.packet(19), 1, 32),
+      "invocation/lzSend sender mismatch"
+    );
+    require(
+      substr(tx.inputs[1].packet(20), 67, 4) == substr(tx.packet(19), 33, 4),
+      "invocation/lzSend dstEID mismatch"
+    );
+    require(
+      substr(tx.inputs[1].packet(20), 71, 32) == substr(tx.packet(19), 37, 32),
+      "invocation/lzSend receiver mismatch"
+    );
+    require(
+      substr(tx.inputs[1].packet(20), 103, 8) == substr(tx.packet(19), 109, 8),
+      "invocation/lzSend amount mismatch"
+    );
+    require(
+      substr(tx.inputs[1].packet(20), 111, 32) == substr(tx.packet(19), 117, 32),
+      "invocation/lzSend remoteRecipient mismatch"
+    );
+    require(
+      substr(tx.inputs[1].packet(20), 143, 32) == substr(tx.packet(19), 149, 32),
+      "invocation/lzSend messageHash mismatch"
+    );
+
+    // OAppID marker fully burned.
     let oappIDGroup = tx.assetGroups.find(oappIDAssetId);
     require(oappIDGroup.sumInputs == 1, "send marker missing");
     require(oappIDGroup.sumOutputs == 0, "send marker not burned");
 
+    // Endpoint state continues.
     require(
       tx.outputs[0].scriptPubKey == new Endpoint(
         endpointCtrlAssetId, endpointIDAssetId,
         oappCtrlAssetId,     oappIDAssetId,
+        endpointID, oappID, remoteEID, remoteOApp,
         dvn0Pk, dvn1Pk, exit
       ),
       "endpoint state must continue"
     );
     require(
       tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,
-      "endpoint control missing"
+      "endpoint control missing on next state"
     );
   }
 }

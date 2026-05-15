@@ -336,6 +336,9 @@ pub enum Expression {
         message: String,
     },
     // ─── Streaming SHA256 ──────────────────────────────────────────────
+    /// Plain SHA256: sha256(data) → emits `<data> OP_SHA256`.
+    /// Used for inline hashing of byte-string expressions like substr.
+    Sha256 { data: Box<Expression> },
     /// Streaming SHA256 initialize: sha256Initialize(data)
     Sha256Initialize { data: Box<Expression> },
     /// Streaming SHA256 update: sha256Update(ctx, chunk)

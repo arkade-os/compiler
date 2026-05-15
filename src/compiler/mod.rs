@@ -102,6 +102,7 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
         Expression::ArrayIndex { array, index } => {
             expression_uses_introspection(array) || expression_uses_introspection(index)
         }
+        Expression::Sha256 { data } => expression_uses_introspection(data),
         Expression::Sha256Initialize { data } => expression_uses_introspection(data),
         Expression::Sha256Update { context, chunk } => {
             expression_uses_introspection(context) || expression_uses_introspection(chunk)
@@ -897,7 +898,14 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(lit.clone());
         }
         Expression::Property(prop) => {
-            asm.push(format!("<{}>", prop));
+            // Map the introspector "this" properties to their dedicated opcodes
+            // (the parser stores them as Property strings; resolving them here
+            // keeps the placeholder pipeline untouched for everything else).
+            match prop.as_str() {
+                "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                _ => asm.push(format!("<{}>", prop)),
+            }
         }
         Expression::BinaryOp { left, op, right } => {
             // Emit left operand
@@ -995,6 +1003,10 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         // Streaming SHA256
+        Expression::Sha256 { data } => {
+            generate_expression_asm(data, asm);
+            asm.push(OP_SHA256.to_string());
+        }
         Expression::Sha256Initialize { data } => {
             generate_expression_asm(data, asm);
             asm.push(OP_SHA256INITIALIZE.to_string());
@@ -1262,7 +1274,12 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
             asm.push(format!("<{}>", var));
         }
         (Expression::Property(prop), "==", Expression::Literal(value)) => {
-            asm.push(format!("<{}>", prop));
+            // Mirror generate_expression_asm: map "this" properties to opcodes.
+            match prop.as_str() {
+                "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                _ => asm.push(format!("<{}>", prop)),
+            }
             asm.push(OP_EQUAL.to_string());
             asm.push(value.clone());
         }
@@ -1429,7 +1446,14 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(lit.clone());
         }
         Expression::Property(prop) => {
-            asm.push(format!("<{}>", prop));
+            // Map the introspector "this" properties to their dedicated opcodes
+            // (the parser stores them as Property strings; resolving them here
+            // keeps the placeholder pipeline untouched for everything else).
+            match prop.as_str() {
+                "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                _ => asm.push(format!("<{}>", prop)),
+            }
         }
         Expression::CurrentInput(property) => {
             emit_current_input_asm(property.as_deref(), asm);
@@ -1549,6 +1573,10 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         // Streaming SHA256
+        Expression::Sha256 { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_SHA256.to_string());
+        }
         Expression::Sha256Initialize { data } => {
             emit_expression_asm(data, asm);
             asm.push(OP_SHA256INITIALIZE.to_string());

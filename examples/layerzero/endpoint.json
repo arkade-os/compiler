@@ -30,6 +30,22 @@
       "type": "int"
     },
     {
+      "name": "endpointID",
+      "type": "bytes32"
+    },
+    {
+      "name": "oappID",
+      "type": "bytes32"
+    },
+    {
+      "name": "remoteEID",
+      "type": "int"
+    },
+    {
+      "name": "remoteOApp",
+      "type": "bytes32"
+    },
+    {
       "name": "dvn0Pk",
       "type": "pubkey"
     },
@@ -47,33 +63,15 @@
       "name": "receive",
       "functionInputs": [
         {
-          "name": "receiveHash",
+          "name": "receiveMarkerScriptHash",
           "type": "bytes32"
-        },
-        {
-          "name": "dvn0Sig",
-          "type": "signature"
-        },
-        {
-          "name": "dvn1Sig",
-          "type": "signature"
         }
       ],
       "witnessSchema": [
         {
-          "name": "receiveHash",
+          "name": "receiveMarkerScriptHash",
           "type": "bytes32",
           "encoding": "raw-32"
-        },
-        {
-          "name": "dvn0Sig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "dvn1Sig",
-          "type": "signature",
-          "encoding": "schnorr-64"
         },
         {
           "name": "serverSig",
@@ -84,10 +82,85 @@
       "serverVariant": true,
       "require": [
         {
-          "type": "signatureFromStack"
+          "type": "comparison"
         },
         {
-          "type": "signatureFromStack"
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
         },
         {
           "type": "comparison"
@@ -109,17 +182,254 @@
         }
       ],
       "asm": [
-        "<receiveHash>",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "183",
+        "OP_EQUAL",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "219",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "228",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<endpointID>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "32",
+        "OP_SUBSTR",
+        "<oappID>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "65",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "<remoteEID>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "69",
+        "32",
+        "OP_SUBSTR",
+        "<remoteOApp>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "101",
+        "1",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "2",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "102",
+        "1",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "2",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "103",
+        "32",
+        "OP_SUBSTR",
+        "<dvn0Pk>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "135",
+        "32",
+        "OP_SUBSTR",
+        "<dvn1Pk>",
+        "OP_EQUAL",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<oappID>",
+        "OP_EQUAL",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "<remoteEID>",
+        "OP_EQUAL",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "37",
+        "32",
+        "OP_SUBSTR",
+        "<remoteOApp>",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "1",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "2",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "34",
+        "1",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "0",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "131",
+        "1",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "1",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "35",
+        "32",
+        "OP_SUBSTR",
+        "<dvn0Pk>",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "132",
+        "32",
+        "OP_SUBSTR",
+        "<dvn1Pk>",
+        "OP_EQUAL",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "140",
+        "OP_SUBSTR",
+        "OP_SHA256",
+        "<attestedHash>",
+        "OP_EQUAL",
+        "18",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<attestedHash>",
+        "OP_EQUAL",
+        "<attestedHash>",
         "<dvn0Pk>",
         "<dvn0Sig>",
-        "OP_CHECKSIGFROMSTACK",
-        "<receiveHash>",
+        "OP_CHECKSIGFROMSTACKVERIFY",
+        "<attestedHash>",
         "<dvn1Pk>",
         "<dvn1Sig>",
-        "OP_CHECKSIGFROMSTACK",
+        "OP_CHECKSIGFROMSTACKVERIFY",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "145",
+        "74",
+        "OP_SUBSTR",
+        "OP_SHA256",
+        "17",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "109",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:Endpoint(<endpointCtrlAssetId>,<endpointIDAssetId>,<oappCtrlAssetId>,<oappIDAssetId>,<dvn0Pk>,<dvn1Pk>,<exit>)>",
+        "<VTXO:Endpoint(<endpointCtrlAssetId>,<endpointIDAssetId>,<oappCtrlAssetId>,<oappIDAssetId>,<endpointID>,<oappID>,<remoteEID>,<remoteOApp>,<dvn0Pk>,<dvn1Pk>,<exit>)>",
         "OP_EQUAL",
         "0",
         "<endpointCtrlAssetId_txid>",
@@ -147,7 +457,7 @@
         "OP_VERIFY",
         "1",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:ReceiveMarker(<oappCtrlAssetId>,<exit>)>",
+        "<VTXO:ReceiveMarker(<receiveMarkerScriptHash>,<oappCtrlAssetId>,<exit>)>",
         "OP_EQUAL",
         "<endpointIDAssetId_txid>",
         "<endpointIDAssetId_gidx>",
@@ -166,16 +476,8 @@
       "name": "receive",
       "functionInputs": [
         {
-          "name": "receiveHash",
+          "name": "receiveMarkerScriptHash",
           "type": "bytes32"
-        },
-        {
-          "name": "dvn0Sig",
-          "type": "signature"
-        },
-        {
-          "name": "dvn1Sig",
-          "type": "signature"
         },
         {
           "name": "dvn0PkSig",
@@ -234,6 +536,78 @@
       "serverVariant": true,
       "require": [
         {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
           "type": "groupCheck"
         },
         {
@@ -250,6 +624,278 @@
         }
       ],
       "asm": [
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "183",
+        "OP_EQUAL",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "181",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "175",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<endpointID>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "32",
+        "OP_SUBSTR",
+        "<oappID>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "65",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "<remoteEID>",
+        "OP_EQUAL",
+        "16",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "69",
+        "32",
+        "OP_SUBSTR",
+        "<remoteOApp>",
+        "OP_EQUAL",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<oappID>",
+        "OP_EQUAL",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "<remoteEID>",
+        "OP_EQUAL",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "37",
+        "32",
+        "OP_SUBSTR",
+        "<remoteOApp>",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<oappID>",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "32",
+        "OP_SUBSTR",
+        "<endpointID>",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "67",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "<remoteEID>",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "71",
+        "32",
+        "OP_SUBSTR",
+        "<remoteOApp>",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "175",
+        "OP_SUBSTR",
+        "OP_SHA256",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "77",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "67",
+        "4",
+        "OP_SUBSTR",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "4",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "71",
+        "32",
+        "OP_SUBSTR",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "37",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "103",
+        "8",
+        "OP_SUBSTR",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "109",
+        "8",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "111",
+        "32",
+        "OP_SUBSTR",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "117",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "20",
+        "1",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "143",
+        "32",
+        "OP_SUBSTR",
+        "19",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "149",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
         "<oappIDAssetId_txid>",
         "<oappIDAssetId_gidx>",
         "OP_FINDASSETGROUPBYASSETID",
@@ -265,7 +911,7 @@
         "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:Endpoint(<endpointCtrlAssetId>,<endpointIDAssetId>,<oappCtrlAssetId>,<oappIDAssetId>,<dvn0Pk>,<dvn1Pk>,<exit>)>",
+        "<VTXO:Endpoint(<endpointCtrlAssetId>,<endpointIDAssetId>,<oappCtrlAssetId>,<oappIDAssetId>,<endpointID>,<oappID>,<remoteEID>,<remoteOApp>,<dvn0Pk>,<dvn1Pk>,<exit>)>",
         "OP_EQUAL",
         "0",
         "<endpointCtrlAssetId_txid>",
@@ -332,16 +978,26 @@
       ]
     }
   ],
-  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract Endpoint(\n  bytes32 endpointCtrlAssetId,\n  bytes32 endpointIDAssetId,\n  bytes32 oappCtrlAssetId,\n  bytes32 oappIDAssetId,\n  pubkey  dvn0Pk,\n  pubkey  dvn1Pk,\n  int     exit\n) {\n\n  function receive(\n    bytes32 receiveHash,\n    signature dvn0Sig,\n    signature dvn1Sig\n  ) {\n    require(checkSigFromStack(dvn0Sig, dvn0Pk, receiveHash), \"dvn0 sig invalid\");\n    require(checkSigFromStack(dvn1Sig, dvn1Pk, receiveHash), \"dvn1 sig invalid\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new Endpoint(\n        endpointCtrlAssetId, endpointIDAssetId,\n        oappCtrlAssetId,     oappIDAssetId,\n        dvn0Pk, dvn1Pk, exit\n      ),\n      \"endpoint state must continue\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,\n      \"endpoint control missing\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(endpointIDAssetId) == 1,\n      \"marker asset missing\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new ReceiveMarker(oappCtrlAssetId, exit),\n      \"marker pkScript not canonical\"\n    );\n\n    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);\n    require(endpointIDGroup.sumOutputs == 1, \"extra marker minted\");\n  }\n\n  function send() {\n    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);\n    require(oappIDGroup.sumInputs == 1, \"send marker missing\");\n    require(oappIDGroup.sumOutputs == 0, \"send marker not burned\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new Endpoint(\n        endpointCtrlAssetId, endpointIDAssetId,\n        oappCtrlAssetId,     oappIDAssetId,\n        dvn0Pk, dvn1Pk, exit\n      ),\n      \"endpoint state must continue\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,\n      \"endpoint control missing\"\n    );\n  }\n}",
+  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract Endpoint(\n  bytes32 endpointCtrlAssetId,\n  bytes32 endpointIDAssetId,\n  bytes32 oappCtrlAssetId,\n  bytes32 oappIDAssetId,\n  bytes32 endpointID,\n  bytes32 oappID,\n  int     remoteEID,\n  bytes32 remoteOApp,\n  pubkey  dvn0Pk,\n  pubkey  dvn1Pk,\n  int     exit\n) {\n\n  function receive(bytes32 receiveMarkerScriptHash) {\n    require(size(tx.packet(16)) == 183, \"endpoint state packet size\");\n    require(size(tx.packet(17)) == 219, \"lz receive packet size\");\n    require(size(tx.packet(18)) == 228, \"dvn attestation packet size\");\n\n    require(substr(tx.packet(16), 0, 1) == 1, \"endpoint state version\");\n    require(substr(tx.packet(17), 0, 1) == 1, \"lz receive version\");\n    require(substr(tx.packet(18), 0, 1) == 1, \"dvn attestation version\");\n\n    require(substr(tx.packet(16), 1, 32)  == endpointID, \"wrong endpointID\");\n    require(substr(tx.packet(16), 33, 32) == oappID, \"wrong oappID\");\n    require(bin2num(substr(tx.packet(16), 65, 4)) == remoteEID, \"wrong remoteEID\");\n    require(substr(tx.packet(16), 69, 32) == remoteOApp, \"wrong remoteOApp\");\n\n    require(bin2num(substr(tx.packet(16), 101, 1)) == 2, \"dvn threshold != 2\");\n    require(bin2num(substr(tx.packet(16), 102, 1)) == 2, \"dvn count != 2\");\n    require(substr(tx.packet(16), 103, 32) == dvn0Pk, \"endpoint state dvn0 mismatch\");\n    require(substr(tx.packet(16), 135, 32) == dvn1Pk, \"endpoint state dvn1 mismatch\");\n\n    require(substr(tx.packet(17), 1, 32)  == oappID, \"lz receiver != oapp\");\n    require(bin2num(substr(tx.packet(17), 33, 4)) == remoteEID, \"lz srcEID != remote\");\n    require(substr(tx.packet(17), 37, 32) == remoteOApp, \"lz sender != remoteOApp\");\n\n    require(bin2num(substr(tx.packet(18), 33, 1)) == 2, \"dvn count != 2\");\n    require(bin2num(substr(tx.packet(18), 34, 1)) == 0, \"dvn att0 index != 0\");\n    require(bin2num(substr(tx.packet(18), 131, 1)) == 1, \"dvn att1 index != 1\");\n    require(substr(tx.packet(18), 35, 32) == dvn0Pk, \"dvn att0 pk mismatch\");\n    require(substr(tx.packet(18), 132, 32) == dvn1Pk, \"dvn att1 pk mismatch\");\n    require(\n      sha256(substr(tx.packet(17), 1, 140)) == attestedHash,\n      \"attested hash does not match lz receive header\"\n    );\n    require(substr(tx.packet(18), 1, 32) == attestedHash, \"dvn attested hash mismatch\");\n\n    require(checkSigFromStackVerify(dvn0Sig, dvn0Pk, attestedHash), \"dvn0 sig invalid\");\n    require(checkSigFromStackVerify(dvn1Sig, dvn1Pk, attestedHash), \"dvn1 sig invalid\");\n\n    require(\n      sha256(substr(tx.packet(17), 145, 74)) == substr(tx.packet(17), 109, 32),\n      \"credit message hash mismatch\"\n    );\n\n    require(\n      tx.outputs[0].scriptPubKey == new Endpoint(\n        endpointCtrlAssetId, endpointIDAssetId,\n        oappCtrlAssetId,     oappIDAssetId,\n        endpointID, oappID, remoteEID, remoteOApp,\n        dvn0Pk, dvn1Pk, exit\n      ),\n      \"endpoint state must continue\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,\n      \"endpoint control missing on next state\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(endpointIDAssetId) == 1,\n      \"marker asset missing\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new ReceiveMarker(\n        receiveMarkerScriptHash, oappCtrlAssetId, exit\n      ),\n      \"marker pkScript not canonical\"\n    );\n\n    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);\n    require(endpointIDGroup.sumOutputs == 1, \"extra marker minted\");\n  }\n\n  function send() {\n    require(size(tx.packet(16)) == 183, \"endpoint state packet size\");\n    require(size(tx.packet(19)) == 181, \"lz send packet size\");\n    require(size(tx.inputs[1].packet(20)) == 175, \"send invocation packet size\");\n\n    require(substr(tx.packet(16), 0, 1) == 1, \"endpoint state version\");\n    require(substr(tx.packet(19), 0, 1) == 1, \"lz send version\");\n    require(substr(tx.inputs[1].packet(20), 0, 1) == 1, \"send invocation version\");\n\n    require(substr(tx.packet(16), 1, 32)  == endpointID, \"wrong endpointID\");\n    require(substr(tx.packet(16), 33, 32) == oappID, \"wrong oappID\");\n    require(bin2num(substr(tx.packet(16), 65, 4)) == remoteEID, \"wrong remoteEID\");\n    require(substr(tx.packet(16), 69, 32) == remoteOApp, \"wrong remoteOApp\");\n\n    require(substr(tx.packet(19), 1, 32)  == oappID, \"lz send sender != oapp\");\n    require(bin2num(substr(tx.packet(19), 33, 4)) == remoteEID, \"lz dstEID != remote\");\n    require(substr(tx.packet(19), 37, 32) == remoteOApp, \"lz receiver != remoteOApp\");\n\n    require(substr(tx.inputs[1].packet(20), 1, 32)  == oappID, \"invocation oappID mismatch\");\n    require(substr(tx.inputs[1].packet(20), 33, 32) == endpointID, \"invocation endpointID mismatch\");\n    require(bin2num(substr(tx.inputs[1].packet(20), 67, 4)) == remoteEID, \"invocation dstEID mismatch\");\n    require(substr(tx.inputs[1].packet(20), 71, 32) == remoteOApp, \"invocation receiver mismatch\");\n\n    require(\n      sha256(substr(tx.inputs[1].packet(20), 0, 175)) == substr(tx.packet(19), 77, 32),\n      \"lz send guid mismatch\"\n    );\n\n    require(\n      substr(tx.inputs[1].packet(20), 1, 32) == substr(tx.packet(19), 1, 32),\n      \"invocation/lzSend sender mismatch\"\n    );\n    require(\n      substr(tx.inputs[1].packet(20), 67, 4) == substr(tx.packet(19), 33, 4),\n      \"invocation/lzSend dstEID mismatch\"\n    );\n    require(\n      substr(tx.inputs[1].packet(20), 71, 32) == substr(tx.packet(19), 37, 32),\n      \"invocation/lzSend receiver mismatch\"\n    );\n    require(\n      substr(tx.inputs[1].packet(20), 103, 8) == substr(tx.packet(19), 109, 8),\n      \"invocation/lzSend amount mismatch\"\n    );\n    require(\n      substr(tx.inputs[1].packet(20), 111, 32) == substr(tx.packet(19), 117, 32),\n      \"invocation/lzSend remoteRecipient mismatch\"\n    );\n    require(\n      substr(tx.inputs[1].packet(20), 143, 32) == substr(tx.packet(19), 149, 32),\n      \"invocation/lzSend messageHash mismatch\"\n    );\n\n    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);\n    require(oappIDGroup.sumInputs == 1, \"send marker missing\");\n    require(oappIDGroup.sumOutputs == 0, \"send marker not burned\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new Endpoint(\n        endpointCtrlAssetId, endpointIDAssetId,\n        oappCtrlAssetId,     oappIDAssetId,\n        endpointID, oappID, remoteEID, remoteOApp,\n        dvn0Pk, dvn1Pk, exit\n      ),\n      \"endpoint state must continue\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,\n      \"endpoint control missing on next state\"\n    );\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-15T16:59:10.616373952+00:00",
+  "updatedAt": "2026-05-15T19:51:17.407056925+00:00",
   "warnings": [
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"

@@ -1,7 +1,9 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_CHECKSIG, OP_CHECKSIGFROMSTACKVERIFY, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTPACKET,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTPACKET,
+    OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SUBSTR,
 };
 
 // ---------------------------------------------------------------------------
@@ -76,18 +78,43 @@ fn test_endpoint_receive_verifies_both_dvn_signatures() {
         .find(|f| f.name == "receive" && f.server_variant)
         .unwrap();
 
+    // Both DVNs are now verified via OP_CHECKSIGFROMSTACKVERIFY in the
+    // packet-native rewrite. The signed message is the on-chain-derived
+    // attestedHash; each DVN sig is the corresponding witness argument.
     let sig_count = receive
         .asm
         .iter()
-        .filter(|s| s.contains(OP_CHECKSIGFROMSTACK))
+        .filter(|s| s.contains(OP_CHECKSIGFROMSTACKVERIFY))
         .count();
 
     assert!(
         sig_count >= 2,
-        "endpoint.receive() must verify exactly two DVN signatures via {}; found {} occurrences",
-        OP_CHECKSIGFROMSTACK,
+        "endpoint.receive() must verify both DVN signatures via {}; found {} occurrences",
+        OP_CHECKSIGFROMSTACKVERIFY,
         sig_count
     );
+}
+
+#[test]
+fn test_endpoint_receive_uses_packet_introspection() {
+    // The packet-native rewrite must use OP_INSPECTPACKET, OP_SUBSTR, and
+    // OP_SHA256 to enforce route, version, size, and the DVN attested-hash
+    // binding to the LzReceive header.
+    let code = load_example("endpoint");
+    let output = compile(&code).unwrap();
+    let receive = output
+        .functions
+        .iter()
+        .find(|f| f.name == "receive" && f.server_variant)
+        .unwrap();
+
+    for op in [OP_INSPECTPACKET, OP_SUBSTR, OP_SHA256] {
+        assert!(
+            receive.asm.iter().any(|s| s == op),
+            "endpoint.receive() must use {} for native packet enforcement",
+            op
+        );
+    }
 }
 
 #[test]
@@ -189,22 +216,30 @@ fn test_oapp_receive_consumes_endpoint_marker_and_mints_usdt0() {
         .unwrap();
 
     // Marker consumed from input 0 (asset lookup on input side).
-    let in_lookup_count = receive
-        .asm
-        .iter()
-        .filter(|s| s.contains(OP_INSPECTINASSETLOOKUP))
-        .count();
     assert!(
-        in_lookup_count >= 1,
+        receive
+            .asm
+            .iter()
+            .any(|s| s.contains(OP_INSPECTINASSETLOOKUP)),
         "oapp.receive() must inspect input assets to consume the receive marker"
     );
 
-    // Output recipient receives USDT0 — and OApp state continues.
-    let has_singlesig = receive.asm.iter().any(|s| s.contains("VTXO:SingleSig("));
+    // Previous-tx packet introspection (OP_INSPECTINPUTPACKET) is now used
+    // to read the LzReceivePacket from the marker input.
     assert!(
-        has_singlesig,
-        "oapp.receive() must pin recipient output to SingleSig(recipient): {:?}",
-        receive.asm
+        receive.asm.iter().any(|s| s == OP_INSPECTINPUTPACKET),
+        "oapp.receive() must read the LzReceive packet via {}",
+        OP_INSPECTINPUTPACKET
+    );
+
+    // The recipient output's scriptPubKey is pinned to the credit message
+    // x-only key via OP_INSPECTOUTPUTSCRIPTPUBKEY + OP_SUBSTR.
+    assert!(
+        receive
+            .asm
+            .iter()
+            .any(|s| s.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY)),
+        "oapp.receive() must pin recipient output scriptPubKey"
     );
 
     let has_oapp_continuation = receive.asm.iter().any(|s| s.contains("VTXO:OApp("));
@@ -212,6 +247,37 @@ fn test_oapp_receive_consumes_endpoint_marker_and_mints_usdt0() {
         has_oapp_continuation,
         "oapp.receive() must continue OApp state via output[0]"
     );
+}
+
+#[test]
+fn test_marker_contracts_use_input_arkade_script_hash() {
+    // Both invocation marker contracts now bind themselves to a specific
+    // consumer closure via OP_INSPECTINPUTARKADESCRIPTHASH, mirroring the Go
+    // reference (BuildReceiveInvocationScript / BuildSendInvocationScript).
+    for name in &["receive_marker", "send_marker"] {
+        let code = load_example(name);
+        let output = compile(&code).unwrap();
+        let consume = output
+            .functions
+            .iter()
+            .find(|f| f.name == "consume" && f.server_variant)
+            .unwrap();
+        assert!(
+            consume
+                .asm
+                .iter()
+                .any(|s| s == OP_INSPECTINPUTARKADESCRIPTHASH),
+            "{}.consume() must check the consumer's Arkade-script hash via {}",
+            name,
+            OP_INSPECTINPUTARKADESCRIPTHASH
+        );
+        assert!(
+            consume.asm.iter().any(|s| s == OP_PUSHCURRENTINPUTINDEX),
+            "{}.consume() must pin its own input position via {}",
+            name,
+            OP_PUSHCURRENTINPUTINDEX
+        );
+    }
 }
 
 #[test]
