@@ -137,16 +137,17 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         ));
     }
 
-    if let Some(exit) = contract.exit_timelock {
-        if exit == 0 {
+    if let Some(ref exit) = contract.exit_timelock {
+        // Only check literal zero; parameter names are resolved at runtime
+        if exit.parse::<i64>().map(|v| v == 0).unwrap_or(false) {
             issues.push(ValidationIssue::error(
                 "options.exit timelock must be greater than 0",
             ));
         }
     }
 
-    if let Some(renewal) = contract.renewal_timelock {
-        if renewal == 0 {
+    if let Some(ref renewal) = contract.renewal_timelock {
+        if renewal.parse::<i64>().map(|v| v == 0).unwrap_or(false) {
             issues.push(ValidationIssue::warning(
                 "options.renew timelock is 0; a positive block count is recommended",
             ));
@@ -458,7 +459,7 @@ mod tests {
     use super::*;
     use crate::models::{AbiFunction, Contract, Function, Parameter, WitnessElement};
 
-    fn make_contract(name: &str, has_server_key: bool, exit_timelock: Option<u64>) -> Contract {
+    fn make_contract(name: &str, has_server_key: bool, exit_timelock: Option<&str>) -> Contract {
         Contract {
             name: name.to_string(),
             parameters: vec![Parameter {
@@ -466,7 +467,7 @@ mod tests {
                 param_type: "pubkey".to_string(),
             }],
             renewal_timelock: None,
-            exit_timelock,
+            exit_timelock: exit_timelock.map(|s| s.to_string()),
             has_server_key,
             functions: vec![Function {
                 name: "spend".to_string(),
@@ -480,14 +481,14 @@ mod tests {
 
     #[test]
     fn valid_contract_has_no_issues() {
-        let contract = make_contract("Simple", true, Some(144));
+        let contract = make_contract("Simple", true, Some("144"));
         let issues = validate_ast(&contract);
         assert!(!has_errors(&issues));
     }
 
     #[test]
     fn empty_contract_name_is_error() {
-        let contract = make_contract("", true, Some(144));
+        let contract = make_contract("", true, Some("144"));
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("name")));
@@ -495,7 +496,7 @@ mod tests {
 
     #[test]
     fn no_functions_is_error() {
-        let mut contract = make_contract("Empty", true, Some(144));
+        let mut contract = make_contract("Empty", true, Some("144"));
         contract.functions.clear();
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
@@ -506,7 +507,7 @@ mod tests {
 
     #[test]
     fn only_internal_functions_is_error() {
-        let mut contract = make_contract("AllInternal", true, Some(144));
+        let mut contract = make_contract("AllInternal", true, Some("144"));
         contract.functions[0].is_internal = true;
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
@@ -514,7 +515,7 @@ mod tests {
 
     #[test]
     fn duplicate_function_name_is_error() {
-        let mut contract = make_contract("Dup", true, Some(144));
+        let mut contract = make_contract("Dup", true, Some("144"));
         contract.functions.push(contract.functions[0].clone());
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
@@ -523,7 +524,7 @@ mod tests {
 
     #[test]
     fn duplicate_constructor_param_is_error() {
-        let mut contract = make_contract("Dup", true, Some(144));
+        let mut contract = make_contract("Dup", true, Some("144"));
         contract.parameters.push(contract.parameters[0].clone());
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
@@ -539,7 +540,7 @@ mod tests {
 
     #[test]
     fn zero_exit_timelock_is_error() {
-        let contract = make_contract("ZeroExit", true, Some(0));
+        let contract = make_contract("ZeroExit", true, Some("0"));
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("greater than 0")));

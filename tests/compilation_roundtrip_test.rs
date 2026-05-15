@@ -118,12 +118,6 @@ fn roundtrip_htlc() {
 }
 
 #[test]
-fn roundtrip_beacon() {
-    let output = compile_example("beacon.ark");
-    assert_output_invariants(&output, "beacon.ark");
-}
-
-#[test]
 fn roundtrip_token_vault() {
     let output = compile_example("token_vault.ark");
     assert_output_invariants(&output, "token_vault.ark");
@@ -149,8 +143,14 @@ fn roundtrip_fuji_safe() {
 
 #[test]
 fn roundtrip_price_beacon() {
-    let output = compile_example("price_beacon.ark");
-    assert_output_invariants(&output, "price_beacon.ark");
+    let output = compile_example("stability/price_beacon.ark");
+    assert_output_invariants(&output, "stability/price_beacon.ark");
+}
+
+#[test]
+fn roundtrip_stability_vault() {
+    let output = compile_example("stability/stability_vault.ark");
+    assert_output_invariants(&output, "stability/stability_vault.ark");
 }
 
 #[test]
@@ -172,12 +172,6 @@ fn roundtrip_non_interactive_swap() {
 }
 
 #[test]
-fn roundtrip_stable_position() {
-    let output = compile_example("stable_position.ark");
-    assert_output_invariants(&output, "stable_position.ark");
-}
-
-#[test]
 fn roundtrip_fee_adapter() {
     let output = compile_example("fee_adapter.ark");
     assert_output_invariants(&output, "fee_adapter.ark");
@@ -185,8 +179,8 @@ fn roundtrip_fee_adapter() {
 
 #[test]
 fn roundtrip_stability_offer() {
-    let output = compile_example("stability_offer.ark");
-    assert_output_invariants(&output, "stability_offer.ark");
+    let output = compile_example("stability/stability_offer.ark");
+    assert_output_invariants(&output, "stability/stability_offer.ark");
 }
 
 #[test]
@@ -203,34 +197,45 @@ fn roundtrip_payment_auth() {
 
 // ─── Cross-cutting invariant: scan ALL examples ───────────────────────────────
 
-/// Compile every .ark file in the examples/ directory and assert invariants.
+/// Recursively collect all .ark files under a directory.
+fn collect_ark_files(dir: &PathBuf) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        sorted.sort_by_key(|e| e.path());
+        for entry in sorted {
+            let path = entry.path();
+            if path.is_dir() {
+                paths.extend(collect_ark_files(&path));
+            } else if path.extension().map(|x| x == "ark").unwrap_or(false) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+/// Compile every .ark file in examples/ (recursively) and assert invariants.
 /// This catches any new example added without a dedicated test.
 #[test]
 fn all_examples_compile_and_satisfy_invariants() {
     let dir = examples_dir();
-    let mut count = 0;
-    let mut entries: Vec<_> = fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("failed to read examples dir: {}", e))
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map(|x| x == "ark").unwrap_or(false))
-        .collect();
-    // Sort for deterministic test output
-    entries.sort_by_key(|e| e.path());
+    let paths = collect_ark_files(&dir);
+    let count = paths.len();
 
-    for entry in entries {
-        let path = entry.path();
-        let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-        let source = fs::read_to_string(&path)
+    for path in &paths {
+        let rel = path.strip_prefix(&dir).unwrap_or(path);
+        let label = rel.display().to_string();
+        let source = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
         let output =
-            compile(&source).unwrap_or_else(|e| panic!("failed to compile {}: {}", filename, e));
-        assert_output_invariants(&output, &filename);
-        count += 1;
+            compile(&source).unwrap_or_else(|e| panic!("failed to compile {}: {}", label, e));
+        assert_output_invariants(&output, &label);
     }
 
     assert!(
-        count >= 16,
-        "expected at least 16 example contracts, found {}",
+        count >= 15,
+        "expected at least 15 example contracts, found {}",
         count
     );
 }
