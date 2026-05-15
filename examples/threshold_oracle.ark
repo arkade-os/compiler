@@ -11,7 +11,7 @@
 // N oracles, require M valid signatures over a message.
 
 options {
-  server = serverPk;
+  server = server;
   exit = 288;
 }
 

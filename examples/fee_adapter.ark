@@ -9,7 +9,7 @@
 // comparisons for balance verification.
 
 options {
-  server = operatorPk;
+  server = server;
   exit = 144;
 }
 

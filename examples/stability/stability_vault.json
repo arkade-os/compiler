@@ -1,0 +1,1258 @@
+{
+  "contractName": "StabilityVault",
+  "constructorInputs": [
+    {
+      "name": "seekerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "providerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "ticker_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "ticker_gidx",
+      "type": "int"
+    },
+    {
+      "name": "clock_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "clock_gidx",
+      "type": "int"
+    },
+    {
+      "name": "targetUSD",
+      "type": "int"
+    },
+    {
+      "name": "totalCollateral",
+      "type": "int"
+    },
+    {
+      "name": "fundingSatPerBlock",
+      "type": "int"
+    },
+    {
+      "name": "openHeight",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSeekerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newSeekerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerSig>",
+        "OP_CHECKSIG",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<beaconHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<beaconAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<ticker>,<clock>,<targetUSD>,<totalCollateral>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSeekerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSeekerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newSeekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newSeekerPk>",
+        "<newSeekerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "split",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        },
+        {
+          "name": "amountUSD",
+          "type": "int"
+        },
+        {
+          "name": "newSeekerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "amountUSD",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "newSeekerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerSig>",
+        "OP_CHECKSIG",
+        "<amountUSD>",
+        "0",
+        "OP_GREATERTHAN",
+        "<amountUSD>",
+        "<targetUSD>",
+        "OP_LESSTHAN",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<beaconHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<beaconAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<amountUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<amountUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<collateralA>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<collateralA>",
+        "OP_GREATERTHANOREQUAL",
+        "330",
+        "<collateralB>",
+        "OP_GREATERTHANOREQUAL",
+        "330",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<ticker>,<clock>,<amountUSD>,<collateralA>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<collateralA>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<ticker>,<clock>,<remainingUSD>,<collateralB>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
+        "OP_EQUAL",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<collateralB>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "split",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        },
+        {
+          "name": "amountUSD",
+          "type": "int"
+        },
+        {
+          "name": "newSeekerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSeekerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newSeekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newSeekerPk>",
+        "<newSeekerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "seekerRedeem",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerSig>",
+        "OP_CHECKSIG",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<beaconHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<beaconAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<tx.time >",
+        "<openHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "100000000",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<fundingSatPerBlock>",
+        "OP_SCRIPTNUMTOLE64",
+        "<blocksElapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<seekerBase>",
+        "OP_SCRIPTNUMTOLE64",
+        "<funding>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<seekerRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "0",
+        "OP_LESSTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<providerPk>)>",
+        "OP_EQUAL",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ELSE",
+        "<seekerRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<seekerPk>)>",
+        "OP_EQUAL",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ELSE",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<seekerRaw>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<seekerPk>)>",
+        "OP_EQUAL",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<seekerRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<providerPayout>",
+        "OP_SCRIPTNUMTOLE64",
+        "330",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<providerPayout>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<providerPk>)>",
+        "OP_EQUAL",
+        "2",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ELSE",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "seekerRedeem",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "providerExit",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "providerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<providerPk>",
+        "<providerSig>",
+        "OP_CHECKSIG",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<beaconHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<beaconAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<tx.time >",
+        "<openHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "100000000",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<fundingSatPerBlock>",
+        "OP_SCRIPTNUMTOLE64",
+        "<blocksElapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<seekerBase>",
+        "OP_SCRIPTNUMTOLE64",
+        "<funding>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<seekerRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "0",
+        "OP_LESSTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<providerPk>)>",
+        "OP_EQUAL",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ELSE",
+        "<seekerRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<seekerPk>)>",
+        "OP_EQUAL",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ELSE",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<seekerRaw>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<seekerPk>)>",
+        "OP_EQUAL",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<seekerRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<providerPayout>",
+        "OP_SCRIPTNUMTOLE64",
+        "330",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<providerPayout>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<providerPk>)>",
+        "OP_EQUAL",
+        "2",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ELSE",
+        "1",
+        "<ticker_txid>",
+        "<ticker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<clock_txid>",
+        "<clock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<beaconHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "providerExit",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityVault(\n  pubkey  seekerPk,\n  pubkey  providerPk,\n  bytes32 ticker,\n  bytes32 clock,\n  int     targetUSD,\n  int     totalCollateral,\n  int     fundingSatPerBlock,\n  int     openHeight,\n  int     exit\n) {\n\n  function transfer(signature seekerSig, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    int currentPrice = tx.inputs[1].assets.lookup(ticker);\n    require(currentPrice > 0, \"invalid beacon price\");\n\n    int beaconHeight = tx.inputs[1].assets.lookup(clock);\n    int beaconAge = tx.time - beaconHeight;\n    require(beaconAge <= 144, \"stale oracle\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, ticker, clock,\n        targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n\n    require(\n      tx.outputs[1].assets.lookup(ticker) >= currentPrice,\n      \"beacon must survive\"\n    );\n    require(\n      tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n      \"beacon clock must survive\"\n    );\n  }\n\n  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(amountUSD > 0, \"zero amount\");\n    require(amountUSD < targetUSD, \"amount exceeds balance\");\n\n    int currentPrice = tx.inputs[1].assets.lookup(ticker);\n    require(currentPrice > 0, \"invalid beacon price\");\n\n    int beaconHeight = tx.inputs[1].assets.lookup(clock);\n    int beaconAge = tx.time - beaconHeight;\n    require(beaconAge <= 144, \"stale oracle\");\n\n    int remainingUSD = targetUSD - amountUSD;\n\n    int collateralA = totalCollateral * amountUSD / targetUSD;\n    int collateralB = totalCollateral - collateralA;\n\n    require(collateralA >= 330, \"split amount too small\");\n    require(collateralB >= 330, \"remainder too small\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, ticker, clock,\n        amountUSD, collateralA, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid split output 0\"\n    );\n    require(tx.outputs[0].value >= collateralA, \"insufficient collateral A\");\n\n    require(\n      tx.outputs[1].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, ticker, clock,\n        remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid split output 1\"\n    );\n    require(tx.outputs[1].value >= collateralB, \"insufficient collateral B\");\n\n    require(\n      tx.outputs[2].assets.lookup(ticker) >= currentPrice,\n      \"beacon must survive\"\n    );\n    require(\n      tx.outputs[2].assets.lookup(clock) >= beaconHeight,\n      \"beacon clock must survive\"\n    );\n  }\n\n  function seekerRedeem(signature seekerSig) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    int currentPrice = tx.inputs[1].assets.lookup(ticker);\n    require(currentPrice > 0, \"invalid beacon price\");\n\n    int beaconHeight = tx.inputs[1].assets.lookup(clock);\n    int beaconAge = tx.time - beaconHeight;\n    require(beaconAge <= 144, \"stale oracle\");\n\n    int blocksElapsed = tx.time - openHeight;\n    int seekerBase    = targetUSD * 100000000 / currentPrice;\n    int funding       = fundingSatPerBlock * blocksElapsed;\n    int seekerRaw     = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(\n        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),\n        \"output 0 not provider\"\n      );\n      require(\n        tx.outputs[1].assets.lookup(ticker) >= currentPrice,\n        \"beacon must survive\"\n      );\n      require(\n        tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n        \"beacon clock must survive\"\n      );\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n        require(\n          tx.outputs[1].assets.lookup(ticker) >= currentPrice,\n          \"beacon must survive\"\n        );\n        require(\n          tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n          \"beacon clock must survive\"\n        );\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(\n            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),\n            \"output 1 not provider\"\n          );\n          require(\n            tx.outputs[2].assets.lookup(ticker) >= currentPrice,\n            \"beacon must survive\"\n          );\n          require(\n            tx.outputs[2].assets.lookup(clock) >= beaconHeight,\n            \"beacon clock must survive\"\n          );\n        } else {\n          require(\n            tx.outputs[1].assets.lookup(ticker) >= currentPrice,\n            \"beacon must survive\"\n          );\n          require(\n            tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n            \"beacon clock must survive\"\n          );\n        }\n      }\n    }\n  }\n\n  function providerExit(signature providerSig) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n\n    int currentPrice = tx.inputs[1].assets.lookup(ticker);\n    require(currentPrice > 0, \"invalid beacon price\");\n\n    int beaconHeight = tx.inputs[1].assets.lookup(clock);\n    int beaconAge = tx.time - beaconHeight;\n    require(beaconAge <= 144, \"stale oracle\");\n\n    int blocksElapsed = tx.time - openHeight;\n    int seekerBase    = targetUSD * 100000000 / currentPrice;\n    int funding       = fundingSatPerBlock * blocksElapsed;\n    int seekerRaw     = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(\n        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),\n        \"output 0 not provider\"\n      );\n      require(\n        tx.outputs[1].assets.lookup(ticker) >= currentPrice,\n        \"beacon must survive\"\n      );\n      require(\n        tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n        \"beacon clock must survive\"\n      );\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n        require(\n          tx.outputs[1].assets.lookup(ticker) >= currentPrice,\n          \"beacon must survive\"\n        );\n        require(\n          tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n          \"beacon clock must survive\"\n        );\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(\n            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),\n            \"output 1 not provider\"\n          );\n          require(\n            tx.outputs[2].assets.lookup(ticker) >= currentPrice,\n            \"beacon must survive\"\n          );\n          require(\n            tx.outputs[2].assets.lookup(clock) >= beaconHeight,\n            \"beacon clock must survive\"\n          );\n        } else {\n          require(\n            tx.outputs[1].assets.lookup(ticker) >= currentPrice,\n            \"beacon must survive\"\n          );\n          require(\n            tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n            \"beacon clock must survive\"\n          );\n        }\n      }\n    }\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-05-08T16:25:59.784336521+00:00",
+  "warnings": [
+    "warning[type]: fn transfer: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn transfer: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn transfer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn split: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn split: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn seekerRedeem: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn seekerRedeem: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn seekerRedeem: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn seekerRedeem: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerExit: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerExit: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerExit: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerExit: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
+}

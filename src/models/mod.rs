@@ -141,10 +141,10 @@ pub struct Contract {
     pub name: String,
     /// Contract parameters
     pub parameters: Vec<Parameter>,
-    /// Ark-specific renewal timelock (in blocks)
-    pub renewal_timelock: Option<u64>,
-    /// Ark-specific exit timelock (in blocks, typically 48 hours worth of blocks)
-    pub exit_timelock: Option<u64>,
+    /// Arkade renewal timelock — integer literal (e.g. "1008") or constructor param name (e.g. "renew")
+    pub renewal_timelock: Option<String>,
+    /// Arkade exit timelock — integer literal (e.g. "144") or constructor param name (e.g. "exit")
+    pub exit_timelock: Option<String>,
     /// Whether this contract uses the Arkade operator key for the cooperative path.
     /// The operator key is always injected externally — it is never a constructor parameter.
     pub has_server_key: bool,
