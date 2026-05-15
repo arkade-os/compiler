@@ -47,6 +47,23 @@
           "type": "signature"
         }
       ],
+      "witnessSchema": [
+        {
+          "name": "takerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "takerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
       "serverVariant": true,
       "require": [
         {
@@ -86,7 +103,7 @@
         "OP_VERIFY",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<new P2TR(makerPk)>",
+        "<VTXO:SingleSig(<makerPk>)>",
         "OP_EQUAL",
         "1",
         "<offerAssetId_txid>",
@@ -102,7 +119,7 @@
         "OP_VERIFY",
         "1",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<new P2TR(takerPk)>",
+        "<VTXO:SingleSig(<takerPk>)>",
         "OP_EQUAL",
         "<SERVER_KEY>",
         "<serverSig>",
@@ -127,6 +144,18 @@
         {
           "name": "takerPkSig",
           "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "makerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "takerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
         }
       ],
       "serverVariant": false,
@@ -158,6 +187,18 @@
         {
           "name": "makerSig",
           "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "makerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
         }
       ],
       "serverVariant": true,
@@ -193,6 +234,13 @@
           "type": "signature"
         }
       ],
+      "witnessSchema": [
+        {
+          "name": "makerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
       "serverVariant": false,
       "require": [
         {
@@ -220,10 +268,14 @@
       ]
     }
   ],
-  "source": "// Non-Interactive Swap Contract\n// Allows users to exchange assets without requiring both parties to be online simultaneously.\n//\n// VTXO\n// - Cooperative path: Server emulates/validates introspection, co-signs for fast settlement\n// - Exit path: N-of-N user signatures when introspection is used (pure Bitcoin fallback)\n//\n// Paths:\n// - swap cooperative: takerSig + serverSig + OP_INSPECT* (trustless via introspection)\n// - swap exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin)\n// - cancel cooperative: makerSig + serverSig + after(expiration)\n// - cancel exit: makerSig + after(expiration) + CSV (normal exit)\n\noptions {\n  // Server key is injected from getInfo(), not passed in constructor\n  server = serverPk;\n  // Exit delay: 144 blocks (~24 hours) for unilateral recovery\n  exit = 144;\n}\n\ncontract NonInteractiveSwap(\n  // Maker's public key (creator of the swap offer)\n  pubkey makerPk,\n  // Asset ID the maker is offering (locked in this contract)\n  bytes32 offerAssetId,\n  // Amount of offer asset locked\n  int offerAmount,\n  // Asset ID the maker wants to receive\n  bytes32 wantAssetId,\n  // Amount of want asset required for the swap\n  int wantAmount,\n  // Expiration timestamp (block height) after which maker can cancel\n  int expirationTime\n) {\n  // Swap: Any taker can fulfill - introspection makes cooperative path trustless\n  // Cooperative: takerSig + serverSig + OP_INSPECT* (server validates outputs)\n  // Exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin - no introspection)\n  function swap(pubkey takerPk, signature takerSig) {\n    // Taker must sign to authorize spending their wantAsset\n    require(checkSig(takerSig, takerPk), \"invalid taker signature\");\n\n    // Introspection verifies the atomic exchange:\n    // Output 0: maker receives wantAsset\n    require(\n      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,\n      \"insufficient want asset for maker\"\n    );\n    require(\n      tx.outputs[0].scriptPubKey == new P2TR(makerPk),\n      \"output 0 not spendable by maker\"\n    );\n\n    // Output 1: taker receives offerAsset\n    require(\n      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,\n      \"insufficient offer asset for taker\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new P2TR(takerPk),\n      \"output 1 not spendable by taker\"\n    );\n  }\n\n  // Cancel: Maker reclaims after expiration if no taker\n  // No introspection used, so normal exit path applies\n  // Cooperative: makerSig + serverSig + after(expiration)\n  // Exit: makerSig + after(expiration) + CSV\n  function cancel(signature makerSig) {\n    require(tx.time >= expirationTime, \"swap not expired\");\n    require(checkSig(makerSig, makerPk), \"invalid maker signature\");\n  }\n}\n",
+  "source": "\noptions {\n  server = server;\n  exit = 144;\n}\n\ncontract NonInteractiveSwap(\n  pubkey makerPk,\n  bytes32 offerAssetId,\n  int offerAmount,\n  bytes32 wantAssetId,\n  int wantAmount,\n  int expirationTime\n) {\n  function swap(pubkey takerPk, signature takerSig) {\n    require(checkSig(takerSig, takerPk), \"invalid taker signature\");\n\n    require(\n      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,\n      \"insufficient want asset for maker\"\n    );\n    require(\n      tx.outputs[0].scriptPubKey == new SingleSig(makerPk),\n      \"output 0 not spendable by maker\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,\n      \"insufficient offer asset for taker\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new SingleSig(takerPk),\n      \"output 1 not spendable by taker\"\n    );\n  }\n\n  function cancel(signature makerSig) {\n    require(tx.time >= expirationTime, \"swap not expired\");\n    require(checkSig(makerSig, makerPk), \"invalid maker signature\");\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-02-12T10:17:23.023383684+00:00"
+  "updatedAt": "2026-05-08T15:43:11.207072223+00:00",
+  "warnings": [
+    "warning[type]: fn swap: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn swap: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
 }

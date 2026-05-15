@@ -71,12 +71,18 @@ project-root/
       - Validate both function variants (`serverVariant=true/false`) for non-internal functions.
       - Strip or ignore `updatedAt` when comparing expected vs actual JSON in tests.
       - Keep placeholder format `<name>` in emitted ASM.
+      - ALL contracts: use `options { server = server; exit = exit; }` (plus `renew = renew;` if needed). Add `int exit` (and `int renew`) as constructor parameters so the playground can set them.
+      - Taproot dust: use 330 sats for all minimum output value checks (`>= 330` for viable outputs, `> 330` for dust branch decisions).
     </do>
     <dont>
       - Do not trust README CLI flags blindly; source of truth is `src/main.rs` clap args.
       - Do not edit generated playground artifacts manually (`playground/contracts.js`, `playground/pkg/*`); regenerate.
       - Do not change grammar ordering casually; PEG alternative order changes parse behavior.
       - Do not add new Expression/Requirement variants without compiler emission and tests.
+      - NEVER put `pubkey serverPk`, `pubkey operatorPk`, or any Arkade Operator key in a constructor. The server key is injected automatically via `options.server` / `<SERVER_KEY>`.
+      - NEVER write `server = oraclePk`, `server = providerPk`, or any non-`server` binding; always `server = server`.
+      - NEVER use "ASP" or "ARK" — always "Arkade".
+      - NEVER hardcode exit delay as a literal in options (e.g. `exit = 144`); always `exit = exit` backed by a constructor `int exit` parameter.
     </dont>
   </patterns>
 
@@ -180,6 +186,11 @@ Load only the skill required for the active task domain.
     - [2026-03-02] Introspection exit paths use N-of-N CHECKSIG fallback - avoids introspection opcodes in unilateral path.
     - [2026-03-02] `options.server` is treated as a boolean capability flag, not a constructor parameter binding.
     - [2026-03-02] Array parameters are flattened with `DEFAULT_ARRAY_LENGTH=3` in ABI/function input generation.
+    - [2026-05-08] Taproot dust threshold is 330 sats — use for ALL minimum output value checks.
+    - [2026-05-08] Server key NEVER goes in constructors. It is auto-injected by Arkade infrastructure as `<SERVER_KEY>` in ASM. The `options.server` binding is a documentation convention only.
+    - [2026-05-08] `exit` and `renew` are `int` constructor parameters so the playground can parameterize them. `options { server = server; exit = exit; }` is the canonical form.
+    - [2026-05-08] `tx.time` is block height throughout (Bitcoin nLockTime). Beacon `clock` asset quantity = block height of last update. Staleness check = 144 blocks (≈ 24 hours), not 86400 seconds.
+    - [2026-05-08] Always "Arkade" — never "ARK" or "ASP" in comments, docs, or contract code.
   </project_decisions>
 
   <lessons_learned>

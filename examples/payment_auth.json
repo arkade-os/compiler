@@ -43,6 +43,18 @@
           "type": "signature"
         }
       ],
+      "witnessSchema": [
+        {
+          "name": "merchantSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
       "serverVariant": true,
       "require": [
         {
@@ -273,15 +285,31 @@
           "type": "signature"
         },
         {
+          "name": "serverSig",
+          "type": "signature"
+        },
+        {
           "name": "merchantPubkeySig",
           "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "merchantPubkeySig",
+          "type": "signature",
+          "encoding": "schnorr-64"
         }
       ],
       "serverVariant": false,
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "1-of-1 signatures required (introspection fallback)"
+          "message": "2-of-2 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -289,6 +317,9 @@
         }
       ],
       "asm": [
+        "<server>",
+        "<serverSig>",
+        "OP_CHECKSIGVERIFY",
         "<merchantPubkey>",
         "<merchantPubkeySig>",
         "OP_CHECKSIG",
@@ -300,10 +331,17 @@
     {
       "name": "refund",
       "functionInputs": [],
+      "witnessSchema": [
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
       "serverVariant": true,
       "require": [
         {
-          "type": "older",
+          "type": "after",
           "message": "Timelock of 0 blocks"
         },
         {
@@ -345,15 +383,31 @@
       "name": "refund",
       "functionInputs": [
         {
+          "name": "serverSig",
+          "type": "signature"
+        },
+        {
           "name": "merchantPubkeySig",
           "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "merchantPubkeySig",
+          "type": "signature",
+          "encoding": "schnorr-64"
         }
       ],
       "serverVariant": false,
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "1-of-1 signatures required (introspection fallback)"
+          "message": "2-of-2 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -361,6 +415,9 @@
         }
       ],
       "asm": [
+        "<server>",
+        "<serverSig>",
+        "OP_CHECKSIGVERIFY",
         "<merchantPubkey>",
         "<merchantPubkeySig>",
         "OP_CHECKSIG",
@@ -370,10 +427,17 @@
       ]
     }
   ],
-  "source": "// Payment Authorization Contract\n// Authorization-based escrow with timelocked refunds using transaction introspection\n//\n// This contract implements a credit card-like payment flow:\n// 1. Customer locks funds in escrow\n// 2. Merchant can capture (authorize and settle) the payment\n// 3. If not captured, customer can refund after timelock expires\n//\n// The contract validates the full payout structure:\n// - Merchant receives payment minus processor fee\n// - Processor receives fee (basis points of payment)\n// - Customer receives change if overpayment\n\noptions {\n  server = server;\n  exit = 144;\n}\n\ncontract PaymentAuthorization(\n  // Server key for cooperative path\n  pubkey server,\n\n  // Payment terms\n  int invoiceAmount,\n  int feeRateBasisPoints,\n\n  // Output scripts (P2TR scriptPubKeys)\n  bytes merchantScript,\n  bytes processorScript,\n  bytes customerScript,\n\n  // Refund timelock (block height)\n  int refundBlockHeight,\n\n  // Authorization key\n  pubkey merchantPubkey\n) {\n\n  // Capture: merchant-authorized settlement\n  // Validates payout structure based on payment amount vs invoice\n  function capture(signature merchantSig) {\n    require(checkSig(merchantSig, merchantPubkey), \"Invalid merchant signature\");\n\n    // Get the current input value (amount locked in escrow)\n    let vtxoValue = tx.input.current.value;\n\n    // Case 1: Underpayment (vtxoValue < invoiceAmount)\n    // Pay merchant (minus fee) + processor fee\n    if (vtxoValue < invoiceAmount) {\n      require(vtxoValue >= 10000, \"Payment below dust threshold\");\n      require(tx.numOutputs == 2, \"Expected 2 outputs for underpayment\");\n\n      // Fee = vtxoValue * feeRateBasisPoints / 10000\n      let processorFee = (vtxoValue * feeRateBasisPoints) / 10000;\n      let merchantAmount = vtxoValue - processorFee;\n\n      require(tx.outputs[0].value == merchantAmount, \"Merchant amount incorrect\");\n      require(tx.outputs[0].scriptPubKey == merchantScript, \"Merchant script incorrect\");\n\n      require(tx.outputs[1].value == processorFee, \"Processor fee incorrect\");\n      require(tx.outputs[1].scriptPubKey == processorScript, \"Processor script incorrect\");\n    }\n\n    // Case 2: Exact payment (vtxoValue == invoiceAmount)\n    // Pay merchant (minus fee) + processor fee\n    if (vtxoValue == invoiceAmount) {\n      require(tx.numOutputs == 2, \"Expected 2 outputs for exact payment\");\n\n      // Fee = invoiceAmount * feeRateBasisPoints / 10000\n      let processorFee = (invoiceAmount * feeRateBasisPoints) / 10000;\n      let merchantAmount = invoiceAmount - processorFee;\n\n      require(tx.outputs[0].value == merchantAmount, \"Merchant amount incorrect\");\n      require(tx.outputs[0].scriptPubKey == merchantScript, \"Merchant script incorrect\");\n\n      require(tx.outputs[1].value == processorFee, \"Processor fee incorrect\");\n      require(tx.outputs[1].scriptPubKey == processorScript, \"Processor script incorrect\");\n    }\n\n    // Case 3: Overpayment (vtxoValue > invoiceAmount)\n    // Pay merchant (minus fee) + processor fee + customer change\n    if (vtxoValue > invoiceAmount) {\n      require(tx.numOutputs == 3, \"Expected 3 outputs for overpayment\");\n\n      // Fee = invoiceAmount * feeRateBasisPoints / 10000\n      let processorFee = (invoiceAmount * feeRateBasisPoints) / 10000;\n      let merchantAmount = invoiceAmount - processorFee;\n      let changeAmount = vtxoValue - invoiceAmount;\n\n      require(tx.outputs[0].value == merchantAmount, \"Merchant amount incorrect\");\n      require(tx.outputs[0].scriptPubKey == merchantScript, \"Merchant script incorrect\");\n\n      require(tx.outputs[1].value == processorFee, \"Processor fee incorrect\");\n      require(tx.outputs[1].scriptPubKey == processorScript, \"Processor script incorrect\");\n\n      require(tx.outputs[2].value == changeAmount, \"Change amount incorrect\");\n      require(tx.outputs[2].scriptPubKey == customerScript, \"Change script incorrect\");\n    }\n  }\n\n  // Refund: timelocked fallback back to customer\n  // Becomes valid after refundBlockHeight - effectively anyone-can-spend into customerScript\n  function refund() {\n    require(tx.time >= refundBlockHeight, \"Refund timelock not reached\");\n\n    let vtxoValue = tx.input.current.value;\n\n    require(tx.numOutputs == 1, \"Expected 1 output for refund\");\n    require(tx.outputs[0].value == vtxoValue, \"Refund amount incorrect\");\n    require(tx.outputs[0].scriptPubKey == customerScript, \"Refund script incorrect\");\n  }\n}\n",
+  "source": "\noptions {\n  server = server;\n  exit = 144;\n}\n\ncontract PaymentAuthorization(\n  pubkey server,\n\n  int invoiceAmount,\n  int feeRateBasisPoints,\n\n  bytes merchantScript,\n  bytes processorScript,\n  bytes customerScript,\n\n  int refundBlockHeight,\n\n  pubkey merchantPubkey\n) {\n\n  function capture(signature merchantSig) {\n    require(checkSig(merchantSig, merchantPubkey), \"Invalid merchant signature\");\n\n    let vtxoValue = tx.input.current.value;\n\n    if (vtxoValue < invoiceAmount) {\n      require(vtxoValue >= 10000, \"Payment below dust threshold\");\n      require(tx.numOutputs == 2, \"Expected 2 outputs for underpayment\");\n\n      let processorFee = (vtxoValue * feeRateBasisPoints) / 10000;\n      let merchantAmount = vtxoValue - processorFee;\n\n      require(tx.outputs[0].value == merchantAmount, \"Merchant amount incorrect\");\n      require(tx.outputs[0].scriptPubKey == merchantScript, \"Merchant script incorrect\");\n\n      require(tx.outputs[1].value == processorFee, \"Processor fee incorrect\");\n      require(tx.outputs[1].scriptPubKey == processorScript, \"Processor script incorrect\");\n    }\n\n    if (vtxoValue == invoiceAmount) {\n      require(tx.numOutputs == 2, \"Expected 2 outputs for exact payment\");\n\n      let processorFee = (invoiceAmount * feeRateBasisPoints) / 10000;\n      let merchantAmount = invoiceAmount - processorFee;\n\n      require(tx.outputs[0].value == merchantAmount, \"Merchant amount incorrect\");\n      require(tx.outputs[0].scriptPubKey == merchantScript, \"Merchant script incorrect\");\n\n      require(tx.outputs[1].value == processorFee, \"Processor fee incorrect\");\n      require(tx.outputs[1].scriptPubKey == processorScript, \"Processor script incorrect\");\n    }\n\n    if (vtxoValue > invoiceAmount) {\n      require(tx.numOutputs == 3, \"Expected 3 outputs for overpayment\");\n\n      let processorFee = (invoiceAmount * feeRateBasisPoints) / 10000;\n      let merchantAmount = invoiceAmount - processorFee;\n      let changeAmount = vtxoValue - invoiceAmount;\n\n      require(tx.outputs[0].value == merchantAmount, \"Merchant amount incorrect\");\n      require(tx.outputs[0].scriptPubKey == merchantScript, \"Merchant script incorrect\");\n\n      require(tx.outputs[1].value == processorFee, \"Processor fee incorrect\");\n      require(tx.outputs[1].scriptPubKey == processorScript, \"Processor script incorrect\");\n\n      require(tx.outputs[2].value == changeAmount, \"Change amount incorrect\");\n      require(tx.outputs[2].scriptPubKey == customerScript, \"Change script incorrect\");\n    }\n  }\n\n  function refund() {\n    require(tx.time >= refundBlockHeight, \"Refund timelock not reached\");\n\n    let vtxoValue = tx.input.current.value;\n\n    require(tx.numOutputs == 1, \"Expected 1 output for refund\");\n    require(tx.outputs[0].value == vtxoValue, \"Refund amount incorrect\");\n    require(tx.outputs[0].scriptPubKey == customerScript, \"Refund script incorrect\");\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-02-10T21:56:38.764020+00:00"
+  "updatedAt": "2026-05-08T15:43:11.273395743+00:00",
+  "warnings": [
+    "warning[type]: fn capture: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn capture: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn capture: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn capture: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn capture: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
 }

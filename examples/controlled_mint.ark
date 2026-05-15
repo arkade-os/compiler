@@ -10,7 +10,7 @@
 // enabling balance verification without iterating individual UTXOs.
 
 options {
-  server = serverPk;
+  server = server;
   exit = 288;
 }
 

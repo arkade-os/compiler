@@ -12,7 +12,7 @@
 // - group.control: Verifies collection membership
 
 options {
-    server = serverPk;
+    server = server;
     exit = 288;
 }
 
