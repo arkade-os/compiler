@@ -32,11 +32,14 @@ fn test_vault_covenant_compiles() {
     );
     let abi = result.unwrap();
     assert_eq!(abi.name, "VaultCovenant");
-    assert_eq!(abi.parameters.len(), 4);
+    // lpAssetId is used in assets.lookup() → compiler splits into _txid (bytes32) + _gidx (int)
+    assert_eq!(abi.parameters.len(), 6);
     assert_eq!(abi.parameters[0].name, "keeperPk");
     assert_eq!(abi.parameters[0].param_type, "pubkey");
-    assert_eq!(abi.parameters[2].name, "totalAssets");
-    assert_eq!(abi.parameters[2].param_type, "int");
+    assert_eq!(abi.parameters[2].name, "lpAssetId_txid");
+    assert_eq!(abi.parameters[2].param_type, "bytes32");
+    assert_eq!(abi.parameters[4].name, "totalAssets");
+    assert_eq!(abi.parameters[4].param_type, "int");
 }
 
 #[test]
@@ -86,6 +89,68 @@ fn test_vault_covenant_report_yield_uses_checksig_from_stack() {
     );
 }
 
+#[test]
+fn test_vault_covenant_deposit_mints_lp_tokens() {
+    // deposit() must verify LP tokens minted to output[1] via OP_INSPECTOUTASSETLOOKUP.
+    let abi = compile(VAULT_COVENANT_SRC).unwrap();
+    let deposit = abi
+        .functions
+        .iter()
+        .find(|f| f.name == "deposit" && f.server_variant)
+        .unwrap();
+    assert!(
+        deposit
+            .asm
+            .iter()
+            .any(|op| op == "OP_INSPECTOUTASSETLOOKUP"),
+        "deposit() must check LP token output via OP_INSPECTOUTASSETLOOKUP, got {:?}",
+        deposit.asm
+    );
+}
+
+#[test]
+fn test_vault_covenant_withdraw_burns_lp_tokens() {
+    // withdraw() must verify LP tokens burned from input[1] via OP_INSPECTINASSETLOOKUP.
+    let abi = compile(VAULT_COVENANT_SRC).unwrap();
+    let withdraw = abi
+        .functions
+        .iter()
+        .find(|f| f.name == "withdraw" && f.server_variant)
+        .unwrap();
+    assert!(
+        withdraw
+            .asm
+            .iter()
+            .any(|op| op == "OP_INSPECTINASSETLOOKUP"),
+        "withdraw() must check LP token burn via OP_INSPECTINASSETLOOKUP, got {:?}",
+        withdraw.asm
+    );
+}
+
+#[test]
+fn test_vault_covenant_withdraw_has_no_owner_sig() {
+    // withdraw() is authenticated by LP token burn, not ownerSig.
+    let abi = compile(VAULT_COVENANT_SRC).unwrap();
+    let withdraw = abi
+        .functions
+        .iter()
+        .find(|f| f.name == "withdraw" && f.server_variant)
+        .unwrap();
+    assert_eq!(
+        withdraw.function_inputs.len(),
+        2,
+        "withdraw() must have exactly 2 inputs (newTotalAssets, newTotalShares), got {:?}",
+        withdraw.function_inputs
+    );
+    assert!(
+        withdraw
+            .function_inputs
+            .iter()
+            .all(|i| i.param_type != "signature"),
+        "withdraw() must not require a signature — LP token burn is the auth"
+    );
+}
+
 // ─── RepayFlow ────────────────────────────────────────────────────────────────
 
 #[test]
@@ -98,7 +163,12 @@ fn test_repay_flow_compiles() {
     );
     let abi = result.unwrap();
     assert_eq!(abi.name, "RepayFlow");
-    assert_eq!(abi.parameters.len(), 4);
+    // lpAssetId is passed through (not used in assets.lookup) → stays as single bytes32
+    assert_eq!(abi.parameters.len(), 6);
+    assert_eq!(abi.parameters[2].name, "lpAssetId");
+    assert_eq!(abi.parameters[2].param_type, "bytes32");
+    assert_eq!(abi.parameters[5].name, "supplyAmount");
+    assert_eq!(abi.parameters[5].param_type, "int");
 }
 
 #[test]
@@ -163,6 +233,34 @@ fn test_repay_flow_produces_vault_covenant_successor() {
         assert!(
             f.asm.iter().any(|op| op.contains("VTXO:VaultCovenant")),
             "{} must produce VaultCovenant successor, got {:?}",
+            fn_name,
+            f.asm
+        );
+    }
+}
+
+#[test]
+fn test_repay_flow_interest_accounting() {
+    // reclaim() and reclaimExpired() must compute interest = returnAmount - supplyAmount
+    // and add only interest to totalAssets (not the full returnAmount).
+    // ASM pattern: <returnAmount> <supplyAmount> OP_SUB  (interest = returnAmount - supplyAmount)
+    //              <totalAssets> <interest> OP_ADD        (newVaultAssets = totalAssets + interest)
+    let abi = compile(REPAY_FLOW_SRC).unwrap();
+    for fn_name in &["reclaim", "reclaimExpired"] {
+        let f = abi
+            .functions
+            .iter()
+            .find(|f| f.name == *fn_name && f.server_variant)
+            .unwrap();
+        assert!(
+            f.asm.iter().any(|op| op == "OP_SUB64"),
+            "{} must subtract supplyAmount from returnAmount (OP_SUB64) to isolate interest, got {:?}",
+            fn_name,
+            f.asm
+        );
+        assert!(
+            f.asm.iter().any(|op| op == "OP_ADD64"),
+            "{} must add interest to totalAssets (OP_ADD64), got {:?}",
             fn_name,
             f.asm
         );
