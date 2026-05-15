@@ -200,5 +200,4 @@ sequenceDiagram
 | RepayFlow script committed at supply time | Off-chain: `creditHolder = scriptPubKey(RepayFlow(keeperPk, ownerPk, totalAssets − supplyAmount, totalShares))` |
 | Vault accounting bound to actual settled value | `returnAmount = tx.input.current.value` in RepayFlow — no caller input |
 | Collateral ratio enforced on every borrow | `collateral × price / 10000 >= borrowAmount × 10000 / lltv` |
-| Strategy weights sum to 10000 | `weightSum == 10000` on-chain in CompositeRouter |
 | Liquidation waterfall is solvent | `residual >= 0` guard before distributing outputs |

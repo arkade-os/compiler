@@ -4,10 +4,8 @@ use arkade_compiler::compile;
 // Tests compile the real example files rather than hand-maintained snapshots.
 
 const VAULT_COVENANT_SRC: &str = include_str!("../examples/vault_lending/vault_covenant.ark");
-const STRATEGY_FRAGMENT_SRC: &str = include_str!("../examples/vault_lending/strategy_fragment.ark");
 const REPAY_FLOW_SRC: &str = include_str!("../examples/vault_lending/repay_flow.ark");
 const LENDING_MARKET_SRC: &str = include_str!("../examples/vault_lending/lending_market.ark");
-const COMPOSITE_ROUTER_SRC: &str = include_str!("../examples/vault_lending/composite_router.ark");
 const SUPPLY_FLOW_SRC: &str = include_str!("../examples/vault_lending/supply_flow.ark");
 
 /// Returns true if `needle` appears as a contiguous subsequence in `haystack`.
@@ -84,83 +82,6 @@ fn test_vault_covenant_report_yield_uses_checksig_from_stack() {
     assert!(
         report.asm.iter().any(|op| op == "OP_CHECKSIGFROMSTACK"),
         "reportYield() must verify keeper via OP_CHECKSIGFROMSTACK, got {:?}",
-        report.asm
-    );
-}
-
-// ─── StrategyFragment ─────────────────────────────────────────────────────────
-
-#[test]
-fn test_strategy_fragment_compiles() {
-    let result = compile(STRATEGY_FRAGMENT_SRC);
-    assert!(
-        result.is_ok(),
-        "StrategyFragment compile failed: {:?}",
-        result.err()
-    );
-    let abi = result.unwrap();
-    assert_eq!(abi.name, "StrategyFragment");
-    assert_eq!(abi.parameters.len(), 3);
-}
-
-#[test]
-fn test_strategy_fragment_allocate_preserves_value() {
-    // allocate() must include an output value check equal to current input value.
-    // ASM pattern: OP_INSPECTOUTPUTVALUE … OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE OP_EQUAL
-    let abi = compile(STRATEGY_FRAGMENT_SRC).unwrap();
-    let allocate = abi
-        .functions
-        .iter()
-        .find(|f| f.name == "allocate" && f.server_variant)
-        .unwrap();
-    assert!(
-        asm_contains_sequence(
-            &allocate.asm,
-            &[
-                "OP_PUSHCURRENTINPUTINDEX",
-                "OP_INSPECTINPUTVALUE",
-                "OP_EQUAL"
-            ]
-        ),
-        "allocate() must verify output value == input value, got {:?}",
-        allocate.asm
-    );
-}
-
-#[test]
-fn test_strategy_fragment_report_uses_checksig_from_stack() {
-    let abi = compile(STRATEGY_FRAGMENT_SRC).unwrap();
-    let report = abi
-        .functions
-        .iter()
-        .find(|f| f.name == "report" && f.server_variant)
-        .unwrap();
-    assert!(
-        report.asm.iter().any(|op| op == "OP_CHECKSIGFROMSTACK"),
-        "report() must verify keeper via OP_CHECKSIGFROMSTACK, got {:?}",
-        report.asm
-    );
-}
-
-#[test]
-fn test_strategy_fragment_report_preserves_value() {
-    // report() must also preserve value — consistent with allocate()
-    let abi = compile(STRATEGY_FRAGMENT_SRC).unwrap();
-    let report = abi
-        .functions
-        .iter()
-        .find(|f| f.name == "report" && f.server_variant)
-        .unwrap();
-    assert!(
-        asm_contains_sequence(
-            &report.asm,
-            &[
-                "OP_PUSHCURRENTINPUTINDEX",
-                "OP_INSPECTINPUTVALUE",
-                "OP_EQUAL"
-            ]
-        ),
-        "report() must verify output value == input value, got {:?}",
         report.asm
     );
 }
@@ -486,10 +407,8 @@ fn test_all_vault_lending_contracts_compile() {
     // Smoke test: every contract in the vault+lending system compiles without error.
     let contracts = [
         ("VaultCovenant", VAULT_COVENANT_SRC),
-        ("StrategyFragment", STRATEGY_FRAGMENT_SRC),
         ("RepayFlow", REPAY_FLOW_SRC),
         ("LendingMarket", LENDING_MARKET_SRC),
-        ("CompositeRouter", COMPOSITE_ROUTER_SRC),
         ("SupplyFlow", SUPPLY_FLOW_SRC),
     ];
     for (name, src) in &contracts {
