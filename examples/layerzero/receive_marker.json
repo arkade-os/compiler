@@ -14,6 +14,10 @@
       "type": "int"
     },
     {
+      "name": "operatorPk",
+      "type": "pubkey"
+    },
+    {
       "name": "exit",
       "type": "int"
     }
@@ -71,13 +75,24 @@
     },
     {
       "name": "consume",
-      "functionInputs": [],
-      "witnessSchema": [],
+      "functionInputs": [
+        {
+          "name": "operatorPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "operatorPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
       "serverVariant": false,
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "0-of-0 signatures required (introspection fallback)"
+          "message": "1-of-1 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -85,18 +100,21 @@
         }
       ],
       "asm": [
+        "<operatorPk>",
+        "<operatorPkSig>",
+        "OP_CHECKSIG",
         "<exit>",
         "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
       ]
     }
   ],
-  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract ReceiveMarker(\n  bytes32 oappReceiveScriptHash,\n  bytes32 oappCtrlAssetId,\n  int     exit\n) {\n  function consume() {\n    require(this.activeInputIndex == 0, \"marker input position\");\n\n    require(\n      tx.inputs[1].arkadeScriptHash == oappReceiveScriptHash,\n      \"oapp state not via receive closure\"\n    );\n\n    require(\n      tx.inputs[1].assets.lookup(oappCtrlAssetId) == 1,\n      \"oapp state input missing control asset\"\n    );\n  }\n}",
+  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract ReceiveMarker(\n  bytes32 oappReceiveScriptHash,\n  bytes32 oappCtrlAssetId,\n  pubkey  operatorPk,\n  int     exit\n) {\n  function consume() {\n    require(this.activeInputIndex == 0, \"marker input position\");\n\n    require(\n      tx.inputs[1].arkadeScriptHash == oappReceiveScriptHash,\n      \"oapp state not via receive closure\"\n    );\n\n    require(\n      tx.inputs[1].assets.lookup(oappCtrlAssetId) == 1,\n      \"oapp state input missing control asset\"\n    );\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-15T19:51:17.546947453+00:00",
+  "updatedAt": "2026-05-16T12:37:48.805549741+00:00",
   "warnings": [
     "warning[type]: fn consume: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
   ]

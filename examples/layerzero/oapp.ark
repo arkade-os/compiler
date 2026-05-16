@@ -46,6 +46,13 @@ contract OApp(
   bytes32 oappID,
   int     remoteEID,
   bytes32 remoteOApp,
+  // Operator key — authorises the unilateral exit path only. The cooperative
+  // server-cosigned path does not require this signature; permissioning of
+  // OApp.receive / OApp.send still comes entirely from packet introspection
+  // and the OApp control singleton (mirrors the Go reference). The operator
+  // exists solely so the N-of-N exit witness has a signer; without it,
+  // anyone could force-spend the OApp state after the CSV timelock.
+  pubkey  operatorPk,
   int     exit
 ) {
 
@@ -134,7 +141,8 @@ contract OApp(
       tx.outputs[0].scriptPubKey == new OApp(
         oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
         endpointCtrlAssetId, endpointIDAssetId,
-        endpointID, oappID, remoteEID, remoteOApp, exit
+        endpointID, oappID, remoteEID, remoteOApp,
+        operatorPk, exit
       ),
       "oapp state must continue"
     );
@@ -189,7 +197,7 @@ contract OApp(
     );
     require(
       tx.outputs[1].scriptPubKey == new SendMarker(
-        sendMarkerScriptHash, endpointCtrlAssetId, exit
+        sendMarkerScriptHash, endpointCtrlAssetId, operatorPk, exit
       ),
       "send marker pkScript not canonical"
     );
@@ -201,7 +209,8 @@ contract OApp(
       tx.outputs[0].scriptPubKey == new OApp(
         oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
         endpointCtrlAssetId, endpointIDAssetId,
-        endpointID, oappID, remoteEID, remoteOApp, exit
+        endpointID, oappID, remoteEID, remoteOApp,
+        operatorPk, exit
       ),
       "oapp state must continue"
     );
