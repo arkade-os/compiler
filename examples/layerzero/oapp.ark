@@ -146,10 +146,18 @@ contract OApp(
   // OAPP SEND
   // Burn the outbound USDT0 amount and emit an OAppSendInvocation packet
   // alongside a send-invocation marker for Endpoint.send() to consume.
+  //
+  // Authorisation: this function takes no signatures. Mirroring the Go
+  // reference (BuildOAppSendScript), authority comes from
+  //   (a) the OApp control singleton, which only sits on the real OApp state;
+  //   (b) the USDT0 input UTXOs, each requiring their own owner sig under
+  //       their per-UTXO scripts;
+  //   (c) the Arkade server cosign on the cooperative path (added
+  //       automatically by serverVariant=true) or the exit CSV on the
+  //       fallback path. No contract-level owner signature exists or is
+  //       needed.
   // -------------------------------------------------------------------------
-  function send(bytes32 sendMarkerScriptHash, signature ownerSig, pubkey ownerPk) {
-    require(checkSig(ownerSig, ownerPk), "owner sig invalid");
-
+  function send(bytes32 sendMarkerScriptHash) {
     // Current-tx OAppSendInvocation packet: v1, fixed size.
     require(size(tx.packet(20)) == 175, "send invocation packet size");
     require(substr(tx.packet(20), 0, 1) == 1, "send invocation version");

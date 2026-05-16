@@ -297,11 +297,26 @@ fn test_oapp_send_emits_send_marker() {
         "oapp.send() must pin output[1] to the canonical SendMarker pkScript"
     );
 
-    let has_sig = send.asm.iter().any(|s| s == OP_CHECKSIG);
-    assert!(
-        has_sig,
-        "oapp.send() must verify the OApp owner's signature via {}",
-        OP_CHECKSIG
+    // The only OP_CHECKSIG in the server variant must be the server cosign
+    // added by the compiler — there is NO contract-level owner sig (mirrors
+    // BuildOAppSendScript). Authority comes from the OApp control singleton
+    // and the per-UTXO USDT0 input scripts.
+    let server_key_pos = send
+        .asm
+        .iter()
+        .position(|s| s == "<SERVER_KEY>")
+        .expect("server variant must contain <SERVER_KEY>");
+    let checksigs_before_server: usize = send
+        .asm
+        .iter()
+        .take(server_key_pos)
+        .filter(|s| *s == OP_CHECKSIG)
+        .count();
+    assert_eq!(
+        checksigs_before_server, 0,
+        "oapp.send() must not perform a contract-level owner signature check; \
+         found {} OP_CHECKSIG before <SERVER_KEY>",
+        checksigs_before_server
     );
 }
 
