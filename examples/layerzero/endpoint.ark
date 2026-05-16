@@ -90,11 +90,6 @@ contract Endpoint(
   bytes32 remoteOApp,
   pubkey  dvn0Pk,
   pubkey  dvn1Pk,
-  // Operator key — shared across the four LayerZero contracts so that all
-  // their unilateral exit paths are governed by the same off-chain entity.
-  // It is *not* a contract-level authoriser for the cooperative path; DVN
-  // attestations + packet introspection do that work.
-  pubkey  operatorPk,
   int     exit
 ) {
 
@@ -173,7 +168,7 @@ contract Endpoint(
         endpointCtrlAssetId, endpointIDAssetId,
         oappCtrlAssetId,     oappIDAssetId,
         endpointID, oappID, remoteEID, remoteOApp,
-        dvn0Pk, dvn1Pk, operatorPk, exit
+        dvn0Pk, dvn1Pk, exit
       ),
       "endpoint state must continue"
     );
@@ -193,7 +188,7 @@ contract Endpoint(
     );
     require(
       tx.outputs[1].scriptPubKey == new ReceiveMarker(
-        receiveMarkerScriptHash, oappCtrlAssetId, operatorPk, exit
+        receiveMarkerScriptHash, oappCtrlAssetId, exit
       ),
       "marker pkScript not canonical"
     );
@@ -278,7 +273,7 @@ contract Endpoint(
         endpointCtrlAssetId, endpointIDAssetId,
         oappCtrlAssetId,     oappIDAssetId,
         endpointID, oappID, remoteEID, remoteOApp,
-        dvn0Pk, dvn1Pk, operatorPk, exit
+        dvn0Pk, dvn1Pk, exit
       ),
       "endpoint state must continue"
     );

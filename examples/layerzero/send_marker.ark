@@ -22,10 +22,6 @@ options {
 contract SendMarker(
   bytes32 endpointSendScriptHash,
   bytes32 endpointCtrlAssetId,
-  // Operator key for the unilateral exit witness only — see oapp.ark for
-  // rationale. Cooperative consumption requires only the server cosign and
-  // the on-chain checks below.
-  pubkey  operatorPk,
   int     exit
 ) {
   // Single execution path: consumed inside Endpoint.send().

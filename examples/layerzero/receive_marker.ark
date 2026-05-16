@@ -21,10 +21,6 @@ options {
 contract ReceiveMarker(
   bytes32 oappReceiveScriptHash,
   bytes32 oappCtrlAssetId,
-  // Operator key for the unilateral exit witness only — see oapp.ark for
-  // rationale. Cooperative consumption requires only the server cosign and
-  // the on-chain checks below.
-  pubkey  operatorPk,
   int     exit
 ) {
   // Single execution path: consumed inside OApp.receive().
