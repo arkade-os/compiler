@@ -71,24 +71,13 @@
     },
     {
       "name": "consume",
-      "functionInputs": [
-        {
-          "name": "operatorSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "operatorSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
+      "functionInputs": [],
+      "witnessSchema": [],
       "serverVariant": false,
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "operator signature required (auto-injected exit fallback)"
+          "message": "0-of-0 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -96,9 +85,6 @@
         }
       ],
       "asm": [
-        "<OPERATOR_KEY>",
-        "<operatorSig>",
-        "OP_CHECKSIG",
         "<exit>",
         "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
@@ -110,7 +96,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-16T13:05:48.258210439+00:00",
+  "updatedAt": "2026-05-15T19:51:17.612660169+00:00",
   "warnings": [
     "warning[type]: fn consume: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
   ]

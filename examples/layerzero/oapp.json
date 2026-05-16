@@ -327,24 +327,13 @@
     },
     {
       "name": "receive",
-      "functionInputs": [
-        {
-          "name": "operatorSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "operatorSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
+      "functionInputs": [],
+      "witnessSchema": [],
       "serverVariant": false,
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "operator signature required (auto-injected exit fallback)"
+          "message": "0-of-0 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -352,9 +341,6 @@
         }
       ],
       "asm": [
-        "<OPERATOR_KEY>",
-        "<operatorSig>",
-        "OP_CHECKSIG",
         "<exit>",
         "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
@@ -561,24 +547,14 @@
         {
           "name": "sendMarkerScriptHash",
           "type": "bytes32"
-        },
-        {
-          "name": "operatorSig",
-          "type": "signature"
         }
       ],
-      "witnessSchema": [
-        {
-          "name": "operatorSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
+      "witnessSchema": [],
       "serverVariant": false,
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "operator signature required (auto-injected exit fallback)"
+          "message": "0-of-0 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -586,9 +562,6 @@
         }
       ],
       "asm": [
-        "<OPERATOR_KEY>",
-        "<operatorSig>",
-        "OP_CHECKSIG",
         "<exit>",
         "OP_CHECKSEQUENCEVERIFY",
         "OP_DROP"
@@ -600,7 +573,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-16T13:05:48.328378498+00:00",
+  "updatedAt": "2026-05-16T10:41:23.223384951+00:00",
   "warnings": [
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
