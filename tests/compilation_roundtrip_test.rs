@@ -6,7 +6,12 @@
 //! - `contractName` is non-empty.
 //! - `functions` array is non-empty.
 //! - Every function variant (server and exit) has non-empty `asm`.
-//! - Every function variant has non-empty `witnessSchema`.
+//! - The **cooperative** variant (`serverVariant=true`) has non-empty
+//!   `witnessSchema` — at minimum the auto-injected `serverSig`. The **exit**
+//!   variant may be empty when the contract has zero constructor pubkeys
+//!   (fully-permissionless contracts whose unilateral path is pure CSV; this
+//!   is the N-of-N CHECKSIG fallback degenerating to N=0 — see CLAUDE.md
+//!   "Introspection exit paths use N-of-N CHECKSIG fallback").
 //! - For every unique function name, both `serverVariant=true` and
 //!   `serverVariant=false` entries are present.
 //!
@@ -53,13 +58,18 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
             func.name,
             func.server_variant
         );
-        assert!(
-            !func.witness_schema.is_empty(),
-            "{}: function '{}' (serverVariant={}) must have non-empty witnessSchema",
-            filename,
-            func.name,
-            func.server_variant
-        );
+        // Cooperative path always carries at least the auto-injected serverSig.
+        // The exit path is the N-of-N CHECKSIG over constructor pubkeys; a
+        // contract with zero constructor pubkeys collapses that to pure CSV,
+        // and an empty witness for that variant is the intended shape.
+        if func.server_variant {
+            assert!(
+                !func.witness_schema.is_empty(),
+                "{}: function '{}' cooperative variant must have non-empty witnessSchema",
+                filename,
+                func.name,
+            );
+        }
     }
 
     // Both variants (server + exit) should be present for every function name

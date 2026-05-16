@@ -220,7 +220,10 @@ fn statement_has_require(stmt: &Statement) -> bool {
 /// - `contractName` is non-empty.
 /// - `functions` array is non-empty.
 /// - Every function variant has non-empty `asm`.
-/// - Every function variant has non-empty `witnessSchema`.
+/// - The cooperative variant (`serverVariant=true`) has non-empty
+///   `witnessSchema`. The exit variant may legitimately be empty when the
+///   contract has no constructor pubkeys (N-of-N CHECKSIG fallback
+///   collapsed to a pure-CSV unilateral path).
 /// - Every unique function name has both a `serverVariant=true` and
 ///   `serverVariant=false` entry.
 /// - **BSST-style ASM structure**: OP_IF/OP_ELSE/OP_ENDIF are balanced, no empty
@@ -254,10 +257,14 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 func.name, func.server_variant
             )));
         }
-        if func.witness_schema.is_empty() {
+        // Empty witnessSchema is only suspicious on the cooperative variant.
+        // The exit variant is the N-of-N CHECKSIG over constructor pubkeys —
+        // a contract with zero pubkeys legitimately collapses it to pure CSV,
+        // producing an empty witness (the unilateral path is permissionless).
+        if func.server_variant && func.witness_schema.is_empty() {
             issues.push(ValidationIssue::warning(format!(
-                "function '{}' (serverVariant={}) has empty witnessSchema",
-                func.name, func.server_variant
+                "function '{}' cooperative variant has empty witnessSchema",
+                func.name
             )));
         }
 

@@ -983,7 +983,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-15T19:51:17.407056925+00:00",
+  "updatedAt": "2026-05-16T13:12:04.840225430+00:00",
   "warnings": [
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
@@ -1000,6 +1000,15 @@
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <attestedHash> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'attestedHash'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <attestedHash> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'attestedHash'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <attestedHash> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'attestedHash'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <dvn0Sig> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'dvn0Sig'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <attestedHash> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'attestedHash'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <dvn1Sig> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'dvn1Sig'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <endpointIDGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'endpointIDGroup'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <oappIDGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oappIDGroup'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <oappIDGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oappIDGroup'"
   ]
 }

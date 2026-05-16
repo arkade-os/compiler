@@ -573,7 +573,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-16T10:41:23.223384951+00:00",
+  "updatedAt": "2026-05-16T13:12:04.911511643+00:00",
   "warnings": [
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
@@ -585,6 +585,12 @@
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <endpointIDGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'endpointIDGroup'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <oappIDGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oappIDGroup'"
   ]
 }
