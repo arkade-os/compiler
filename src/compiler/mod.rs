@@ -390,12 +390,24 @@ fn generate_witness_schema(
 
     if !server_variant && uses_introspection {
         // N-of-N exit path: one signature per constructor pubkey.
-        for pk in all_pubkeys {
+        // Empty-pubkey case is fronted by the auto-injected operator key (see
+        // generate_nofn_checksig_asm). Surface the matching `operatorSig`
+        // witness entry so the schema is non-empty and tooling can prompt for
+        // a signature.
+        if all_pubkeys.is_empty() {
             schema.push(WitnessElement {
-                name: format!("{}Sig", pk),
+                name: "operatorSig".to_string(),
                 elem_type: "signature".to_string(),
                 encoding: ArkType::Signature.encoding().to_string(),
             });
+        } else {
+            for pk in all_pubkeys {
+                schema.push(WitnessElement {
+                    name: format!("{}Sig", pk),
+                    elem_type: "signature".to_string(),
+                    encoding: ArkType::Signature.encoding().to_string(),
+                });
+            }
         }
     } else {
         // Normal path: function parameters form the witness elements.
@@ -482,30 +494,45 @@ fn generate_function(
             .map(|i| i.name.clone())
             .collect();
 
-        for pk in &all_pubkeys {
-            let sig_name = format!("{}Sig", pk);
-            let has_sig = existing_sig_names
-                .iter()
-                .any(|s| s.contains(pk) || s == &sig_name);
-            if !has_sig {
-                function_inputs.push(FunctionInput {
-                    name: sig_name,
-                    param_type: "signature".to_string(),
-                });
+        if all_pubkeys.is_empty() {
+            // Auto-injected operator-key fallback (mirrors the asm emission in
+            // generate_nofn_checksig_asm).
+            function_inputs.push(FunctionInput {
+                name: "operatorSig".to_string(),
+                param_type: "signature".to_string(),
+            });
+        } else {
+            for pk in &all_pubkeys {
+                let sig_name = format!("{}Sig", pk);
+                let has_sig = existing_sig_names
+                    .iter()
+                    .any(|s| s.contains(pk) || s == &sig_name);
+                if !has_sig {
+                    function_inputs.push(FunctionInput {
+                        name: sig_name,
+                        param_type: "signature".to_string(),
+                    });
+                }
             }
         }
     }
 
     let mut require = if !server_variant && uses_introspection {
-        // Exit path with any introspection: N-of-N multisig fallback.
-        // No non-Bitcoin-Script opcodes are allowed on the exit path.
-        vec![RequireStatement {
-            req_type: "nOfNMultisig".to_string(),
-            message: Some(format!(
+        // Exit path with any introspection: N-of-N multisig fallback (or the
+        // auto-injected operator-key singleton when there are no constructor
+        // pubkeys).
+        let req_message = if all_pubkeys.is_empty() {
+            "operator signature required (auto-injected exit fallback)".to_string()
+        } else {
+            format!(
                 "{}-of-{} signatures required (introspection fallback)",
                 all_pubkeys.len(),
                 all_pubkeys.len()
-            )),
+            )
+        };
+        vec![RequireStatement {
+            req_type: "nOfNMultisig".to_string(),
+            message: Some(req_message),
         }]
     } else {
         generate_requirements(function)
@@ -586,6 +613,19 @@ fn generate_function(
 /// All parties must agree to spend - no introspection opcodes are included.
 fn generate_nofn_checksig_asm(pubkeys: &[String], _function: &Function) -> Vec<String> {
     let mut asm = Vec::new();
+
+    // Empty case: the contract has no constructor- or function-supplied pubkeys
+    // for the exit N-of-N, which would leave the exit witness empty (and the
+    // unilateral exit path would be "anyone after the CSV timelock"). Inject
+    // the operator key — the same auto-injection pattern as <SERVER_KEY> for
+    // the cooperative path. The placeholder is resolved by the runtime; it
+    // never surfaces in `.ark` source.
+    if pubkeys.is_empty() {
+        asm.push("<OPERATOR_KEY>".to_string());
+        asm.push("<operatorSig>".to_string());
+        asm.push(OP_CHECKSIG.to_string());
+        return asm;
+    }
 
     // Generate ONLY N-of-N CHECKSIG chain - no original requirements
     // This is pure Bitcoin script with no Arkade-specific opcodes

@@ -983,7 +983,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-15T19:51:17.407056925+00:00",
+  "updatedAt": "2026-05-16T13:05:48.398836759+00:00",
   "warnings": [
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
