@@ -59,9 +59,7 @@ contract StabilityOffer(
     int oracleAge = tx.time - oracleTime;
     require(oracleAge <= 144, "stale oracle");
 
-    let ctx1 = sha256Initialize(ticker);
-    let ctx2 = sha256Update(ctx1, oraclePrice);
-    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int targetUSD      = userBTC * oraclePrice / 100000000;

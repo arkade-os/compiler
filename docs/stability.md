@@ -98,16 +98,15 @@ Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, tota
 
 ## Oracle model
 
-The oracle signs BTC/USD prices off-chain as `sha256(ticker || price || timestamp)`. At settlement the caller provides `(oraclePrice, oracleTime, oracleSig)` as witness arguments. The contract:
+The oracle signs BTC/USD prices off-chain as `sha256(ticker || price || timestamp)` — `price` and `timestamp` are 8-byte little-endian unsigned ints. At settlement the caller provides `(oraclePrice, oracleTime, oracleSig)` as witness arguments. The contract:
 
 1. Enforces freshness: `tx.time - oracleTime <= 144` blocks (≈24 hours).
-2. Reconstructs the message hash on-stack using streaming SHA256:
+2. Reconstructs the message hash on-stack with `+` (OP_CAT) and one-shot `sha256` (OP_SHA256):
    ```ark
-   let ctx1 = sha256Initialize(ticker);
-   let ctx2 = sha256Update(ctx1, oraclePrice);
-   let oracleMsg = sha256Finalize(ctx2, oracleTime);
+   let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
    ```
+   `+` dispatches on type: when at least one operand is bytes-like the compiler emits OP_CAT, auto-coercing int sides via OP_SCRIPTNUMTOLE64 to keep on-chain and off-chain hashing byte-identical.
 
 Three layers of replay protection are baked into the signed message:
 

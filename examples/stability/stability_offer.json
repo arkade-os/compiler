@@ -148,13 +148,13 @@
         "144",
         "OP_LESSTHANOREQUAL",
         "<ticker>",
-        "OP_SHA256INITIALIZE",
-        "<ctx1>",
         "<oraclePrice>",
-        "OP_SHA256UPDATE",
-        "<ctx2>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
         "<oracleTime>",
-        "OP_SHA256FINALIZE",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "OP_SHA256",
         "<oracleMsg>",
         "<oraclePk>",
         "<oracleSig>",
@@ -380,12 +380,12 @@
       ]
     }
   ],
-  "source": "\nimport \"stability_vault.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityOffer(\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     fundingSatPerBlock,\n  int     maxExposureBTC,\n  int     collateralRatioPct,\n  int     exit\n) {\n\n  function take(\n    int       userBTC,\n    pubkey    seekerPk,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(userBTC > 0, \"zero deposit\");\n    require(userBTC <= maxExposureBTC, \"exceeds offer capacity\");\n    require(collateralRatioPct >= 100, \"collateral ratio below minimum\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.time - oracleTime;\n    require(oracleAge <= 144, \"stale oracle\");\n\n    let ctx1 = sha256Initialize(ticker);\n    let ctx2 = sha256Update(ctx1, oraclePrice);\n    let oracleMsg = sha256Finalize(ctx2, oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int targetUSD      = userBTC * oraclePrice / 100000000;\n    require(targetUSD > 0, \"position too small\");\n\n    int totalCollateral = userBTC * (100 + collateralRatioPct) / 100;\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit\n      ),\n      \"invalid vault output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"insufficient vault collateral\");\n\n    int remainingCapacity = maxExposureBTC - userBTC;\n    if (remainingCapacity > 0) {\n      require(\n        tx.outputs[1].scriptPubKey == new StabilityOffer(\n          providerPk, oraclePk, ticker,\n          fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit\n        ),\n        \"invalid remaining offer\"\n      );\n      int remainingCollateral = remainingCapacity * collateralRatioPct / 100;\n      require(tx.outputs[1].value >= remainingCollateral, \"insufficient offer collateral\");\n    }\n  }\n\n  function withdraw(signature providerSig) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n  }\n}",
+  "source": "\nimport \"stability_vault.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityOffer(\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     fundingSatPerBlock,\n  int     maxExposureBTC,\n  int     collateralRatioPct,\n  int     exit\n) {\n\n  function take(\n    int       userBTC,\n    pubkey    seekerPk,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(userBTC > 0, \"zero deposit\");\n    require(userBTC <= maxExposureBTC, \"exceeds offer capacity\");\n    require(collateralRatioPct >= 100, \"collateral ratio below minimum\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.time - oracleTime;\n    require(oracleAge <= 144, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int targetUSD      = userBTC * oraclePrice / 100000000;\n    require(targetUSD > 0, \"position too small\");\n\n    int totalCollateral = userBTC * (100 + collateralRatioPct) / 100;\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit\n      ),\n      \"invalid vault output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"insufficient vault collateral\");\n\n    int remainingCapacity = maxExposureBTC - userBTC;\n    if (remainingCapacity > 0) {\n      require(\n        tx.outputs[1].scriptPubKey == new StabilityOffer(\n          providerPk, oraclePk, ticker,\n          fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit\n        ),\n        \"invalid remaining offer\"\n      );\n      int remainingCollateral = remainingCapacity * collateralRatioPct / 100;\n      require(tx.outputs[1].value >= remainingCollateral, \"insufficient offer collateral\");\n    }\n  }\n\n  function withdraw(signature providerSig) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-19T21:10:36.799178058+00:00",
+  "updatedAt": "2026-05-19T21:32:41.289314548+00:00",
   "warnings": [
     "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"

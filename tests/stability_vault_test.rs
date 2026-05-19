@@ -1,7 +1,5 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{
-    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE,
-};
+use arkade_compiler::opcodes::{OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_SHA256};
 
 // StabilityVault: Fuji-style signed price feed. The oracle signs
 //   msg = sha256(ticker || price || time)
@@ -72,9 +70,7 @@ contract StabilityVault(
     int oracleAge = tx.time - oracleTime;
     require(oracleAge <= 144, "stale oracle");
 
-    let ctx1 = sha256Initialize(ticker);
-    let ctx2 = sha256Update(ctx1, oraclePrice);
-    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
     int seekerRaw = targetUSD * 100000000 / oraclePrice
@@ -109,9 +105,7 @@ contract StabilityVault(
     int oracleAge = tx.time - oracleTime;
     require(oracleAge <= 144, "stale oracle");
 
-    let ctx1 = sha256Initialize(ticker);
-    let ctx2 = sha256Update(ctx1, oraclePrice);
-    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
     int seekerRaw = targetUSD * 100000000 / oraclePrice
@@ -168,9 +162,7 @@ contract StabilityOffer(
     int oracleAge = tx.time - oracleTime;
     require(oracleAge <= 144, "stale oracle");
 
-    let ctx1 = sha256Initialize(ticker);
-    let ctx2 = sha256Update(ctx1, oraclePrice);
-    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
     int targetUSD       = userBTC * oraclePrice / 100000000;
@@ -210,8 +202,8 @@ fn test_vault_compiles_with_8_tapleaves() {
 
 #[test]
 fn test_vault_settlement_verifies_full_oracle_message() {
-    // seekerExit and providerExit must reconstruct sha256(ticker||price||time)
-    // and verify the oracle sig against it.
+    // seekerExit and providerExit must reconstruct sha256(ticker || price || time)
+    // via OP_CAT + OP_SHA256 and verify the oracle sig against it.
     let out = compile(VAULT_CODE).unwrap();
     for name in &["seekerExit", "providerExit"] {
         let f = out
@@ -220,18 +212,12 @@ fn test_vault_settlement_verifies_full_oracle_message() {
             .find(|f| &f.name == name && f.server_variant)
             .unwrap();
         let asm = f.asm.join(" ");
+        let cat_count = f.asm.iter().filter(|s| s.as_str() == OP_CAT).count();
         assert!(
-            asm.contains(OP_SHA256INITIALIZE),
-            "{name}: missing SHA256INIT"
+            cat_count >= 2,
+            "{name}: expected >=2 OP_CAT (ticker+price, +time), found {cat_count}"
         );
-        assert!(
-            asm.contains(OP_SHA256UPDATE),
-            "{name}: missing SHA256UPDATE"
-        );
-        assert!(
-            asm.contains(OP_SHA256FINALIZE),
-            "{name}: missing SHA256FINALIZE"
-        );
+        assert!(asm.contains(OP_SHA256), "{name}: missing OP_SHA256");
         assert!(
             asm.contains(OP_CHECKSIGFROMSTACK),
             "{name}: missing oracle sig verify"
@@ -256,7 +242,11 @@ fn test_vault_transfer_is_pure_keyswap() {
         !asm.contains(OP_CHECKSIGFROMSTACK),
         "transfer must not call oracle"
     );
-    assert!(!asm.contains(OP_SHA256INITIALIZE), "transfer must not hash");
+    assert!(
+        !t.asm.iter().any(|s| s.as_str() == OP_CAT),
+        "transfer must not concatenate"
+    );
+    assert!(!asm.contains(OP_SHA256), "transfer must not hash");
     assert!(t.asm.iter().any(|s| s == OP_CHECKSIG));
 }
 
@@ -276,15 +266,12 @@ fn test_offer_take_verifies_full_oracle_message() {
         .find(|f| f.name == "take" && f.server_variant)
         .unwrap();
     let asm = take.asm.join(" ");
+    let cat_count = take.asm.iter().filter(|s| s.as_str() == OP_CAT).count();
     assert!(
-        asm.contains(OP_SHA256INITIALIZE),
-        "take: missing SHA256INIT"
+        cat_count >= 2,
+        "take: expected >=2 OP_CAT for ticker+price+time, found {cat_count}"
     );
-    assert!(asm.contains(OP_SHA256UPDATE), "take: missing SHA256UPDATE");
-    assert!(
-        asm.contains(OP_SHA256FINALIZE),
-        "take: missing SHA256FINALIZE"
-    );
+    assert!(asm.contains(OP_SHA256), "take: missing OP_SHA256");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
         "take: missing oracle sig verify"

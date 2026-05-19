@@ -8,10 +8,14 @@
 //   Oracle off-chain produces:
 //     msg = sha256(ticker || price || timestamp)
 //     sig = sign(oraclePk, msg)
+//   where price and timestamp are encoded as 8-byte little-endian ints.
 //   At settlement the caller supplies (oraclePrice, oracleTime, oracleSig).
 //   The contract:
 //     1. Verifies freshness:  tx.time - oracleTime <= 144 blocks
-//     2. Reconstructs msg via streaming SHA256 on-chain
+//     2. Reconstructs msg on-chain via `sha256(ticker + price + time)`
+//        — the `+` operator concatenates (OP_CAT) when at least one side
+//        is bytes-like; int sides are auto-coerced to fixed 8-byte LE so
+//        the on-chain hash matches the off-chain one.
 //     3. Verifies the oracle signature against the reconstructed hash
 //
 //   Three pieces of replay protection are baked in:
@@ -115,9 +119,7 @@ contract StabilityVault(
     int oracleAge = tx.time - oracleTime;
     require(oracleAge <= 144, "stale oracle");
 
-    let ctx1 = sha256Initialize(ticker);
-    let ctx2 = sha256Update(ctx1, oraclePrice);
-    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int blocksElapsed = tx.time - openHeight;
@@ -160,9 +162,7 @@ contract StabilityVault(
     int oracleAge = tx.time - oracleTime;
     require(oracleAge <= 144, "stale oracle");
 
-    let ctx1 = sha256Initialize(ticker);
-    let ctx2 = sha256Update(ctx1, oraclePrice);
-    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int blocksElapsed = tx.time - openHeight;
