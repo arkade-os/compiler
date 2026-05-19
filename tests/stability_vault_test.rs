@@ -61,7 +61,7 @@ contract StabilityVault(
     );
   }
 
-  function seekerRedeem(
+  function seekerExit(
     signature seekerSig,
     int       oraclePrice,
     int       oracleTime,
@@ -210,10 +210,10 @@ fn test_vault_compiles_with_8_tapleaves() {
 
 #[test]
 fn test_vault_settlement_verifies_full_oracle_message() {
-    // seekerRedeem and providerExit must reconstruct sha256(ticker||price||time)
+    // seekerExit and providerExit must reconstruct sha256(ticker||price||time)
     // and verify the oracle sig against it.
     let out = compile(VAULT_CODE).unwrap();
-    for name in &["seekerRedeem", "providerExit"] {
+    for name in &["seekerExit", "providerExit"] {
         let f = out
             .functions
             .iter()

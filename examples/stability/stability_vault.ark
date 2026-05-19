@@ -99,11 +99,11 @@ contract StabilityVault(
   }
 
   // -------------------------------------------------------------------------
-  // SEEKER REDEEM
+  // SEEKER EXIT
   // Seeker exits to BTC at the oracle-attested price.
   // Oracle message: sha256(ticker || oraclePrice || oracleTime)
   // -------------------------------------------------------------------------
-  function seekerRedeem(
+  function seekerExit(
     signature seekerSig,
     int       oraclePrice,
     int       oracleTime,

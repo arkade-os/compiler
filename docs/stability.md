@@ -82,9 +82,9 @@ Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, tota
 
 **`split(seekerSig, amountUSD, newSeekerPk)`** — divides the USD claim proportionally into two independent vaults. Both halves must be above the 330-sat Taproot dust threshold.
 
-**`seekerRedeem(seekerSig, oraclePrice, oracleTime, oracleSig)`** — Seeker exits to BTC at the oracle-attested price.
+**`seekerExit(seekerSig, oraclePrice, oracleTime, oracleSig)`** — Seeker exits to BTC at the oracle-attested price.
 
-**`providerExit(providerSig, oraclePrice, oracleTime, oracleSig)`** — Provider initiates settlement. Identical payout math to `seekerRedeem`. First-come, first-served — no challenge window.
+**`providerExit(providerSig, oraclePrice, oracleTime, oracleSig)`** — Provider exits to collateral at the oracle-attested price. Identical payout math to `seekerExit`. First-come, first-served — no challenge window.
 
 ### Settlement branches
 
@@ -146,7 +146,7 @@ Total tapleaves: **4** (StabilityOffer) + **8** (StabilityVault) = 12.
      transfer → swap service (USDT/USDC out)
      split    → send partial balance to a friend
 4. Settlement (either party, any time):
-     seekerRedeem or providerExit with a fresh oracle-signed (price, time)
+     seekerExit or providerExit with a fresh oracle-signed (price, time)
      → two SingleSig outputs, vault consumed
 ```
 
