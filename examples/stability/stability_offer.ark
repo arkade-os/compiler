@@ -2,20 +2,18 @@
 //
 // Provider pre-commits BTC liquidity into a standing offer.
 // Any swap service (or direct Seeker) can claim it non-interactively by
-// supplying a fresh oracle-signed price — no Provider signature required.
+// supplying a fresh oracle-signed price.
 //
 // Flow:
 //   1. Provider deploys StabilityOffer with their BTC collateral.
-//   2. Taker calls take(userBTC, seekerPk, oraclePrice, oracleSig).
-//   3. Contract verifies the oracle signature and opens a StabilityVault.
+//   2. Taker calls take(userBTC, seekerPk, oraclePrice, oracleTime, oracleSig).
+//   3. Contract verifies the oracle signature over sha256(ticker||price||time),
+//      enforces freshness, and opens a StabilityVault bound to this ticker.
 //   4. Provider calls withdraw() to reclaim unused collateral at any time.
 //
-// Collateral structure:
-//   Provider collateral per unit = (collateralRatioPct / 100) × seekerBTC
-//   Total vault collateral       = seekerBTC × (100 + collateralRatioPct) / 100
-//   collateralRatioPct = 150 → 2.5× total, 60% drop coverage
-//   collateralRatioPct = 200 → 3.0× total, 67% drop coverage
-//   Minimum enforced at 100. Market discovers the equilibrium rate.
+// Replay protection: the oracle message embeds ticker, price, and timestamp.
+// Same-signature reuse across feeds is impossible (ticker mismatch); stale
+// signatures fail the 144-block freshness check.
 
 import "stability_vault.ark";
 
@@ -25,31 +23,46 @@ options {
 }
 
 contract StabilityOffer(
-  pubkey  providerPk,         // offer creator and collateral provider
-  pubkey  oraclePk,           // oracle key: must match the StabilityVault oracle
-  int     fundingSatPerBlock, // signed; positive = provider pays seeker
-  int     maxExposureBTC,     // remaining capacity in sats
-  int     collateralRatioPct, // provider collateral as % of seekerBTC (min 100)
-  int     exit                // exit timelock in blocks
+  pubkey  providerPk,
+  pubkey  oraclePk,
+  bytes32 ticker,             // feed identifier; propagates into every vault
+  int     fundingSatPerBlock,
+  int     maxExposureBTC,
+  int     collateralRatioPct, // min 100
+  int     exit
 ) {
 
   // -------------------------------------------------------------------------
   // TAKE
-  // Non-interactive: no provider signature required.
-  // Taker supplies oracle-signed price; contract verifies and opens a vault.
+  // Non-interactive: no provider signature.
+  // Caller supplies oracle-signed price; contract verifies the full message
+  // and opens a StabilityVault at the attested price.
   //
   // Transaction layout:
   //   input[0]:  this StabilityOffer UTXO
   //   input[1]:  taker's BTC (userBTC sats)
   //   output[0]: StabilityVault
-  //   output[1]: remaining StabilityOffer (if partial fill, omitted if fully consumed)
+  //   output[1]: remaining StabilityOffer (if partial fill)
   // -------------------------------------------------------------------------
-  function take(int userBTC, pubkey seekerPk, int oraclePrice, signature oracleSig) {
+  function take(
+    int       userBTC,
+    pubkey    seekerPk,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
     require(userBTC > 0, "zero deposit");
     require(userBTC <= maxExposureBTC, "exceeds offer capacity");
     require(collateralRatioPct >= 100, "collateral ratio below minimum");
     require(oraclePrice > 0, "invalid oracle price");
-    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), "invalid oracle signature");
+
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge <= 144, "stale oracle");
+
+    let ctx1 = sha256Initialize(ticker);
+    let ctx2 = sha256Update(ctx1, oraclePrice);
+    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int targetUSD      = userBTC * oraclePrice / 100000000;
     require(targetUSD > 0, "position too small");
@@ -58,7 +71,7 @@ contract StabilityOffer(
 
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk,
+        seekerPk, providerPk, oraclePk, ticker,
         targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit
       ),
       "invalid vault output"
@@ -69,7 +82,7 @@ contract StabilityOffer(
     if (remainingCapacity > 0) {
       require(
         tx.outputs[1].scriptPubKey == new StabilityOffer(
-          providerPk, oraclePk,
+          providerPk, oraclePk, ticker,
           fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit
         ),
         "invalid remaining offer"

@@ -14,6 +14,10 @@
       "type": "pubkey"
     },
     {
+      "name": "ticker",
+      "type": "bytes32"
+    },
+    {
       "name": "targetUSD",
       "type": "int"
     },
@@ -85,7 +89,7 @@
         "OP_CHECKSIG",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<targetUSD>,<totalCollateral>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
+        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<ticker>,<targetUSD>,<totalCollateral>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
         "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTVALUE",
@@ -287,7 +291,7 @@
         "330",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<amountUSD>,<collateralA>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
+        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<ticker>,<amountUSD>,<collateralA>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
         "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTVALUE",
@@ -296,7 +300,7 @@
         "OP_VERIFY",
         "1",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<remainingUSD>,<collateralB>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<remainingUSD>,<collateralB>,<fundingSatPerBlock>,<openHeight>,<exit>)>",
         "OP_EQUAL",
         "1",
         "OP_INSPECTOUTPUTVALUE",
@@ -403,6 +407,10 @@
           "type": "int"
         },
         {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
           "name": "oracleSig",
           "type": "signature"
         }
@@ -415,6 +423,11 @@
         },
         {
           "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
           "type": "int",
           "encoding": "scriptnum"
         },
@@ -433,6 +446,9 @@
       "require": [
         {
           "type": "signature"
+        },
+        {
+          "type": "comparison"
         },
         {
           "type": "comparison"
@@ -475,7 +491,23 @@
         "<oraclePrice>",
         "0",
         "OP_GREATERTHAN",
+        "<tx.time >",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<oracleAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "OP_SHA256INITIALIZE",
+        "<ctx1>",
         "<oraclePrice>",
+        "OP_SHA256UPDATE",
+        "<ctx2>",
+        "<oracleTime>",
+        "OP_SHA256FINALIZE",
+        "<oracleMsg>",
         "<oraclePk>",
         "<oracleSig>",
         "OP_CHECKSIGFROMSTACK",
@@ -588,6 +620,10 @@
           "type": "int"
         },
         {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
           "name": "oracleSig",
           "type": "signature"
         },
@@ -659,6 +695,10 @@
           "type": "int"
         },
         {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
           "name": "oracleSig",
           "type": "signature"
         }
@@ -671,6 +711,11 @@
         },
         {
           "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
           "type": "int",
           "encoding": "scriptnum"
         },
@@ -689,6 +734,9 @@
       "require": [
         {
           "type": "signature"
+        },
+        {
+          "type": "comparison"
         },
         {
           "type": "comparison"
@@ -731,7 +779,23 @@
         "<oraclePrice>",
         "0",
         "OP_GREATERTHAN",
+        "<tx.time >",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<oracleAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "OP_SHA256INITIALIZE",
+        "<ctx1>",
         "<oraclePrice>",
+        "OP_SHA256UPDATE",
+        "<ctx2>",
+        "<oracleTime>",
+        "OP_SHA256FINALIZE",
+        "<oracleMsg>",
         "<oraclePk>",
         "<oracleSig>",
         "OP_CHECKSIGFROMSTACK",
@@ -844,6 +908,10 @@
           "type": "int"
         },
         {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
           "name": "oracleSig",
           "type": "signature"
         },
@@ -904,12 +972,12 @@
       ]
     }
   ],
-  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityVault(\n  pubkey  seekerPk,\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  int     targetUSD,\n  int     totalCollateral,\n  int     fundingSatPerBlock,\n  int     openHeight,\n  int     exit\n) {\n\n  function transfer(signature seekerSig, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk,\n        targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(amountUSD > 0, \"zero amount\");\n    require(amountUSD < targetUSD, \"amount exceeds balance\");\n\n    int remainingUSD = targetUSD - amountUSD;\n\n    int collateralA = totalCollateral * amountUSD / targetUSD;\n    int collateralB = totalCollateral - collateralA;\n\n    require(collateralA >= 330, \"split amount too small\");\n    require(collateralB >= 330, \"remainder too small\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk,\n        amountUSD, collateralA, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid split output 0\"\n    );\n    require(tx.outputs[0].value >= collateralA, \"insufficient collateral A\");\n\n    require(\n      tx.outputs[1].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk,\n        remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid split output 1\"\n    );\n    require(tx.outputs[1].value >= collateralB, \"insufficient collateral B\");\n  }\n\n  function seekerRedeem(signature seekerSig, int oraclePrice, signature oracleSig) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), \"invalid oracle signature\");\n\n    int blocksElapsed = tx.time - openHeight;\n    int seekerBase    = targetUSD * 100000000 / oraclePrice;\n    int funding       = fundingSatPerBlock * blocksElapsed;\n    int seekerRaw     = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(\n        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),\n        \"output 0 not provider\"\n      );\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(\n            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),\n            \"output 1 not provider\"\n          );\n        }\n      }\n    }\n  }\n\n  function providerExit(signature providerSig, int oraclePrice, signature oracleSig) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), \"invalid oracle signature\");\n\n    int blocksElapsed = tx.time - openHeight;\n    int seekerBase    = targetUSD * 100000000 / oraclePrice;\n    int funding       = fundingSatPerBlock * blocksElapsed;\n    int seekerRaw     = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(\n        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),\n        \"output 0 not provider\"\n      );\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(\n          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),\n          \"output 0 not seeker\"\n        );\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(\n            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),\n            \"output 1 not provider\"\n          );\n        }\n      }\n    }\n  }\n}",
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityVault(\n  pubkey  seekerPk,\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     targetUSD,\n  int     totalCollateral,\n  int     fundingSatPerBlock,\n  int     openHeight,\n  int     exit\n) {\n\n  function transfer(signature seekerSig, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(amountUSD > 0, \"zero amount\");\n    require(amountUSD < targetUSD, \"amount exceeds balance\");\n\n    int remainingUSD = targetUSD - amountUSD;\n    int collateralA  = totalCollateral * amountUSD / targetUSD;\n    int collateralB  = totalCollateral - collateralA;\n\n    require(collateralA >= 330, \"split amount too small\");\n    require(collateralB >= 330, \"remainder too small\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        amountUSD, collateralA, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid split output 0\"\n    );\n    require(tx.outputs[0].value >= collateralA, \"insufficient collateral A\");\n\n    require(\n      tx.outputs[1].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit\n      ),\n      \"invalid split output 1\"\n    );\n    require(tx.outputs[1].value >= collateralB, \"insufficient collateral B\");\n  }\n\n  function seekerRedeem(\n    signature seekerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.time - oracleTime;\n    require(oracleAge <= 144, \"stale oracle\");\n\n    let ctx1 = sha256Initialize(ticker);\n    let ctx2 = sha256Update(ctx1, oraclePrice);\n    let oracleMsg = sha256Finalize(ctx2, oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int blocksElapsed = tx.time - openHeight;\n    int seekerBase    = targetUSD * 100000000 / oraclePrice;\n    int funding       = fundingSatPerBlock * blocksElapsed;\n    int seekerRaw     = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n\n  function providerExit(\n    signature providerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.time - oracleTime;\n    require(oracleAge <= 144, \"stale oracle\");\n\n    let ctx1 = sha256Initialize(ticker);\n    let ctx2 = sha256Update(ctx1, oraclePrice);\n    let oracleMsg = sha256Finalize(ctx2, oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int blocksElapsed = tx.time - openHeight;\n    int seekerBase    = targetUSD * 100000000 / oraclePrice;\n    int funding       = fundingSatPerBlock * blocksElapsed;\n    int seekerRaw     = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-19T14:25:14.840010158+00:00",
+  "updatedAt": "2026-05-19T21:10:36.729633804+00:00",
   "warnings": [
     "warning[type]: fn transfer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",

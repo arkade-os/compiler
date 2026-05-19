@@ -4,12 +4,21 @@
 // Seeker holds a fixed USD value; Provider locks additional collateral and
 // takes a leveraged BTC long. Provider pays Seeker a funding rate.
 //
-// Oracle model:
-//   No on-chain beacon UTXO. At settlement the caller supplies a fresh
-//   oracle-signed price as a witness argument:
-//     require(checkSigFromStack(oracleSig, oraclePk, oraclePrice))
-//   oraclePk is baked into the vault constructor. The oracle signs the
-//   price integer directly; the signature is verified on-stack.
+// Oracle model (Fuji-style signed price feed):
+//   Oracle off-chain produces:
+//     msg = sha256(ticker || price || timestamp)
+//     sig = sign(oraclePk, msg)
+//   At settlement the caller supplies (oraclePrice, oracleTime, oracleSig).
+//   The contract:
+//     1. Verifies freshness:  tx.time - oracleTime <= 144 blocks
+//     2. Reconstructs msg via streaming SHA256 on-chain
+//     3. Verifies the oracle signature against the reconstructed hash
+//
+//   Three pieces of replay protection are baked in:
+//     - ticker     → binds the signature to this feed (e.g. BTC/USD vs ETH/USD)
+//     - price      → the value being attested
+//     - timestamp  → makes each oracle update unique; combined with the
+//                    144-block freshness check, stale signatures are rejected
 //
 // Settlement math:
 //   seekerBase     = targetUSD × 1e8 / oraclePrice
@@ -29,6 +38,7 @@ contract StabilityVault(
   pubkey  seekerPk,           // current holder of the USD claim
   pubkey  providerPk,         // collateral provider, holds the long side
   pubkey  oraclePk,           // oracle: only signatures from this key accepted
+  bytes32 ticker,             // feed identifier (e.g. sha256("BTC/USD"))
   int     targetUSD,          // seeker's USD claim in cents (immutable across transfers)
   int     totalCollateral,    // sats locked (immutable across transfers)
   int     fundingSatPerBlock, // signed: >0 provider pays seeker, <0 seeker pays
@@ -38,15 +48,14 @@ contract StabilityVault(
 
   // -------------------------------------------------------------------------
   // TRANSFER
-  // Seeker assigns the entire position to a new owner.
-  // No oracle price needed — purely a key swap, no payout computed.
+  // Pure key swap — no oracle involvement.
   // -------------------------------------------------------------------------
   function transfer(signature seekerSig, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
 
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, oraclePk,
+        newSeekerPk, providerPk, oraclePk, ticker,
         targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit
       ),
       "invalid transfer output"
@@ -56,9 +65,7 @@ contract StabilityVault(
 
   // -------------------------------------------------------------------------
   // SPLIT
-  // Seeker divides the USD claim into two independent positions.
-  // Collateral splits proportional to the USD claim ratio.
-  // openHeight preserved on both so funding accrues continuously.
+  // Proportional USD-claim split into two independent positions.
   // -------------------------------------------------------------------------
   function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
@@ -66,16 +73,15 @@ contract StabilityVault(
     require(amountUSD < targetUSD, "amount exceeds balance");
 
     int remainingUSD = targetUSD - amountUSD;
-
-    int collateralA = totalCollateral * amountUSD / targetUSD;
-    int collateralB = totalCollateral - collateralA;
+    int collateralA  = totalCollateral * amountUSD / targetUSD;
+    int collateralB  = totalCollateral - collateralA;
 
     require(collateralA >= 330, "split amount too small");
     require(collateralB >= 330, "remainder too small");
 
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, oraclePk,
+        newSeekerPk, providerPk, oraclePk, ticker,
         amountUSD, collateralA, fundingSatPerBlock, openHeight, exit
       ),
       "invalid split output 0"
@@ -84,7 +90,7 @@ contract StabilityVault(
 
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk,
+        seekerPk, providerPk, oraclePk, ticker,
         remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit
       ),
       "invalid split output 1"
@@ -95,12 +101,24 @@ contract StabilityVault(
   // -------------------------------------------------------------------------
   // SEEKER REDEEM
   // Seeker exits to BTC at the oracle-attested price.
-  // oraclePrice is the BTC/USD price in cents, signed by oraclePk.
+  // Oracle message: sha256(ticker || oraclePrice || oracleTime)
   // -------------------------------------------------------------------------
-  function seekerRedeem(signature seekerSig, int oraclePrice, signature oracleSig) {
+  function seekerRedeem(
+    signature seekerSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
     require(oraclePrice > 0, "invalid oracle price");
-    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), "invalid oracle signature");
+
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge <= 144, "stale oracle");
+
+    let ctx1 = sha256Initialize(ticker);
+    let ctx2 = sha256Update(ctx1, oraclePrice);
+    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int blocksElapsed = tx.time - openHeight;
     int seekerBase    = targetUSD * 100000000 / oraclePrice;
@@ -108,34 +126,19 @@ contract StabilityVault(
     int seekerRaw     = seekerBase + funding;
 
     if (seekerRaw <= 0) {
-      // Funding depleted seeker's claim: provider takes everything.
       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
-      require(
-        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),
-        "output 0 not provider"
-      );
+      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "output 0 not provider");
     } else {
       if (seekerRaw >= totalCollateral) {
-        // Undercollateralised: seeker takes everything.
         require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
-        require(
-          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-          "output 0 not seeker"
-        );
+        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
       } else {
-        // Normal: proportional split.
         require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
-        require(
-          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-          "output 0 not seeker"
-        );
+        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
         int providerPayout = totalCollateral - seekerRaw;
         if (providerPayout > 330) {
           require(tx.outputs[1].value >= providerPayout, "provider underpaid");
-          require(
-            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
-            "output 1 not provider"
-          );
+          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
         }
       }
     }
@@ -143,14 +146,24 @@ contract StabilityVault(
 
   // -------------------------------------------------------------------------
   // PROVIDER EXIT
-  // Provider initiates settlement at the oracle-attested price.
-  // Identical payout math to seekerRedeem — provider signs instead of seeker.
-  // First-come, first-served: no challenge window, no settlement delay.
+  // Identical settlement math; provider signs. First-come, first-served.
   // -------------------------------------------------------------------------
-  function providerExit(signature providerSig, int oraclePrice, signature oracleSig) {
+  function providerExit(
+    signature providerSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
     require(checkSig(providerSig, providerPk), "invalid provider sig");
     require(oraclePrice > 0, "invalid oracle price");
-    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), "invalid oracle signature");
+
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge <= 144, "stale oracle");
+
+    let ctx1 = sha256Initialize(ticker);
+    let ctx2 = sha256Update(ctx1, oraclePrice);
+    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int blocksElapsed = tx.time - openHeight;
     int seekerBase    = targetUSD * 100000000 / oraclePrice;
@@ -159,30 +172,18 @@ contract StabilityVault(
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
-      require(
-        tx.outputs[0].scriptPubKey == new SingleSig(providerPk),
-        "output 0 not provider"
-      );
+      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "output 0 not provider");
     } else {
       if (seekerRaw >= totalCollateral) {
         require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
-        require(
-          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-          "output 0 not seeker"
-        );
+        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
       } else {
         require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
-        require(
-          tx.outputs[0].scriptPubKey == new SingleSig(seekerPk),
-          "output 0 not seeker"
-        );
+        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
         int providerPayout = totalCollateral - seekerRaw;
         if (providerPayout > 330) {
           require(tx.outputs[1].value >= providerPayout, "provider underpaid");
-          require(
-            tx.outputs[1].scriptPubKey == new SingleSig(providerPk),
-            "output 1 not provider"
-          );
+          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
         }
       }
     }

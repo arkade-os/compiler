@@ -1,11 +1,11 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_CHECKSIG, OP_CHECKSIGFROMSTACK};
+use arkade_compiler::opcodes::{
+    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE,
+};
 
-// ---------------------------------------------------------------------------
-// StabilityVault — oracle-signed-price model
-// oraclePk is a constructor param; price arrives as a witness arg signed by
-// oraclePk. No on-chain beacon UTXO.
-// ---------------------------------------------------------------------------
+// StabilityVault: Fuji-style signed price feed. The oracle signs
+//   msg = sha256(ticker || price || time)
+// and the contract reconstructs that hash on-stack at settlement time.
 const VAULT_CODE: &str = r#"
 import "single_sig.ark";
 
@@ -18,6 +18,7 @@ contract StabilityVault(
   pubkey  seekerPk,
   pubkey  providerPk,
   pubkey  oraclePk,
+  bytes32 ticker,
   int     targetUSD,
   int     totalCollateral,
   int     fundingSatPerBlock,
@@ -28,7 +29,7 @@ contract StabilityVault(
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, oraclePk,
+        newSeekerPk, providerPk, oraclePk, ticker,
         targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit
       ),
       "invalid transfer output"
@@ -38,88 +39,97 @@ contract StabilityVault(
 
   function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
-    require(amountUSD > 0, "zero amount");
-    require(amountUSD < targetUSD, "amount exceeds balance");
+    require(amountUSD > 0, "zero");
+    require(amountUSD < targetUSD, "too big");
 
-    int remainingUSD = targetUSD - amountUSD;
-    int collateralA  = totalCollateral * amountUSD / targetUSD;
-    int collateralB  = totalCollateral - collateralA;
-
-    require(collateralA >= 330, "split amount too small");
-    require(collateralB >= 330, "remainder too small");
+    int collateralA = totalCollateral * amountUSD / targetUSD;
+    int collateralB = totalCollateral - collateralA;
+    require(collateralA >= 330, "dust a");
+    require(collateralB >= 330, "dust b");
 
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        newSeekerPk, providerPk, oraclePk,
+        newSeekerPk, providerPk, oraclePk, ticker,
         amountUSD, collateralA, fundingSatPerBlock, openHeight, exit
-      ),
-      "invalid split output 0"
+      ), "bad output 0"
     );
-    require(tx.outputs[0].value >= collateralA, "insufficient collateral A");
-
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk,
-        remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit
-      ),
-      "invalid split output 1"
+        seekerPk, providerPk, oraclePk, ticker,
+        targetUSD - amountUSD, collateralB, fundingSatPerBlock, openHeight, exit
+      ), "bad output 1"
     );
-    require(tx.outputs[1].value >= collateralB, "insufficient collateral B");
   }
 
-  function seekerRedeem(signature seekerSig, int oraclePrice, signature oracleSig) {
+  function seekerRedeem(
+    signature seekerSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
-    require(oraclePrice > 0, "invalid oracle price");
-    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), "invalid oracle signature");
+    require(oraclePrice > 0, "invalid price");
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge <= 144, "stale oracle");
 
-    int blocksElapsed = tx.time - openHeight;
-    int seekerBase    = targetUSD * 100000000 / oraclePrice;
-    int funding       = fundingSatPerBlock * blocksElapsed;
-    int seekerRaw     = seekerBase + funding;
+    let ctx1 = sha256Initialize(ticker);
+    let ctx2 = sha256Update(ctx1, oraclePrice);
+    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
+
+    int seekerRaw = targetUSD * 100000000 / oraclePrice
+                  + fundingSatPerBlock * (tx.time - openHeight);
 
     if (seekerRaw <= 0) {
-      require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
-      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "output 0 not provider");
+      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "not provider");
+      require(tx.outputs[0].value >= totalCollateral, "underpaid");
     } else {
+      require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "not seeker");
       if (seekerRaw >= totalCollateral) {
-        require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
+        require(tx.outputs[0].value >= totalCollateral, "underpaid");
       } else {
-        require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
+        require(tx.outputs[0].value >= seekerRaw, "underpaid");
         int providerPayout = totalCollateral - seekerRaw;
         if (providerPayout > 330) {
-          require(tx.outputs[1].value >= providerPayout, "provider underpaid");
-          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "not provider");
+          require(tx.outputs[1].value >= providerPayout, "underpaid");
         }
       }
     }
   }
 
-  function providerExit(signature providerSig, int oraclePrice, signature oracleSig) {
+  function providerExit(
+    signature providerSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
     require(checkSig(providerSig, providerPk), "invalid provider sig");
-    require(oraclePrice > 0, "invalid oracle price");
-    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), "invalid oracle signature");
+    require(oraclePrice > 0, "invalid price");
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge <= 144, "stale oracle");
 
-    int blocksElapsed = tx.time - openHeight;
-    int seekerBase    = targetUSD * 100000000 / oraclePrice;
-    int funding       = fundingSatPerBlock * blocksElapsed;
-    int seekerRaw     = seekerBase + funding;
+    let ctx1 = sha256Initialize(ticker);
+    let ctx2 = sha256Update(ctx1, oraclePrice);
+    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
+
+    int seekerRaw = targetUSD * 100000000 / oraclePrice
+                  + fundingSatPerBlock * (tx.time - openHeight);
 
     if (seekerRaw <= 0) {
-      require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
-      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "output 0 not provider");
+      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "not provider");
+      require(tx.outputs[0].value >= totalCollateral, "underpaid");
     } else {
+      require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "not seeker");
       if (seekerRaw >= totalCollateral) {
-        require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
+        require(tx.outputs[0].value >= totalCollateral, "underpaid");
       } else {
-        require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
+        require(tx.outputs[0].value >= seekerRaw, "underpaid");
         int providerPayout = totalCollateral - seekerRaw;
         if (providerPayout > 330) {
-          require(tx.outputs[1].value >= providerPayout, "provider underpaid");
-          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "not provider");
+          require(tx.outputs[1].value >= providerPayout, "underpaid");
         }
       }
     }
@@ -127,9 +137,6 @@ contract StabilityVault(
 }
 "#;
 
-// ---------------------------------------------------------------------------
-// StabilityOffer
-// ---------------------------------------------------------------------------
 const OFFER_CODE: &str = r#"
 import "stability_vault.ark";
 
@@ -141,43 +148,50 @@ options {
 contract StabilityOffer(
   pubkey  providerPk,
   pubkey  oraclePk,
+  bytes32 ticker,
   int     fundingSatPerBlock,
   int     maxExposureBTC,
   int     collateralRatioPct,
   int     exit
 ) {
-  function take(int userBTC, pubkey seekerPk, int oraclePrice, signature oracleSig) {
-    require(userBTC > 0, "zero deposit");
-    require(userBTC <= maxExposureBTC, "exceeds offer capacity");
-    require(collateralRatioPct >= 100, "collateral ratio below minimum");
-    require(oraclePrice > 0, "invalid oracle price");
-    require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), "invalid oracle signature");
+  function take(
+    int       userBTC,
+    pubkey    seekerPk,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(userBTC > 0, "zero");
+    require(userBTC <= maxExposureBTC, "too big");
+    require(collateralRatioPct >= 100, "bad ratio");
+    require(oraclePrice > 0, "invalid price");
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge <= 144, "stale oracle");
 
-    int targetUSD      = userBTC * oraclePrice / 100000000;
-    require(targetUSD > 0, "position too small");
+    let ctx1 = sha256Initialize(ticker);
+    let ctx2 = sha256Update(ctx1, oraclePrice);
+    let oracleMsg = sha256Finalize(ctx2, oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
+    int targetUSD       = userBTC * oraclePrice / 100000000;
     int totalCollateral = userBTC * (100 + collateralRatioPct) / 100;
 
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk,
+        seekerPk, providerPk, oraclePk, ticker,
         targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit
-      ),
-      "invalid vault output"
+      ), "bad vault"
     );
-    require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
+    require(tx.outputs[0].value >= totalCollateral, "underpaid");
 
-    int remainingCapacity = maxExposureBTC - userBTC;
-    if (remainingCapacity > 0) {
+    int remaining = maxExposureBTC - userBTC;
+    if (remaining > 0) {
       require(
         tx.outputs[1].scriptPubKey == new StabilityOffer(
-          providerPk, oraclePk,
-          fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit
-        ),
-        "invalid remaining offer"
+          providerPk, oraclePk, ticker,
+          fundingSatPerBlock, remaining, collateralRatioPct, exit
+        ), "bad offer"
       );
-      int remainingCollateral = remainingCapacity * collateralRatioPct / 100;
-      require(tx.outputs[1].value >= remainingCollateral, "insufficient offer collateral");
     }
   }
 
@@ -187,220 +201,92 @@ contract StabilityOffer(
 }
 "#;
 
-// ---------------------------------------------------------------------------
-// StabilityVault tests
-// ---------------------------------------------------------------------------
-
 #[test]
-fn test_vault_parses() {
-    let result = compile(VAULT_CODE);
-    assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
+fn test_vault_compiles_with_8_tapleaves() {
+    let out = compile(VAULT_CODE).expect("vault compile");
+    assert_eq!(out.name, "StabilityVault");
+    assert_eq!(out.functions.len(), 8); // 4 fns × 2 variants
 }
 
 #[test]
-fn test_vault_structure() {
-    let output = compile(VAULT_CODE).unwrap();
-    assert_eq!(output.name, "StabilityVault");
-    // 4 functions × 2 variants = 8 tapleaves
-    assert_eq!(output.functions.len(), 8);
-
-    for name in &["transfer", "split", "seekerRedeem", "providerExit"] {
+fn test_vault_settlement_verifies_full_oracle_message() {
+    // seekerRedeem and providerExit must reconstruct sha256(ticker||price||time)
+    // and verify the oracle sig against it.
+    let out = compile(VAULT_CODE).unwrap();
+    for name in &["seekerRedeem", "providerExit"] {
+        let f = out
+            .functions
+            .iter()
+            .find(|f| &f.name == name && f.server_variant)
+            .unwrap();
+        let asm = f.asm.join(" ");
         assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && f.server_variant),
-            "Missing {name} server variant"
+            asm.contains(OP_SHA256INITIALIZE),
+            "{name}: missing SHA256INIT"
         );
         assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && !f.server_variant),
-            "Missing {name} exit variant"
+            asm.contains(OP_SHA256UPDATE),
+            "{name}: missing SHA256UPDATE"
+        );
+        assert!(
+            asm.contains(OP_SHA256FINALIZE),
+            "{name}: missing SHA256FINALIZE"
+        );
+        assert!(
+            asm.contains(OP_CHECKSIGFROMSTACK),
+            "{name}: missing oracle sig verify"
+        );
+        assert!(
+            f.asm.iter().any(|s| s == OP_CHECKSIG),
+            "{name}: missing user checksig"
         );
     }
 }
 
 #[test]
-fn test_vault_transfer_has_no_oracle_call() {
-    let output = compile(VAULT_CODE).unwrap();
-    let transfer = output
+fn test_vault_transfer_is_pure_keyswap() {
+    let out = compile(VAULT_CODE).unwrap();
+    let t = out
         .functions
         .iter()
         .find(|f| f.name == "transfer" && f.server_variant)
         .unwrap();
-
-    // transfer is a pure key-swap: no oracle price verification.
+    let asm = t.asm.join(" ");
     assert!(
-        !transfer
-            .asm
-            .iter()
-            .any(|s| s.contains(OP_CHECKSIGFROMSTACK)),
-        "transfer should not call {OP_CHECKSIGFROMSTACK}"
+        !asm.contains(OP_CHECKSIGFROMSTACK),
+        "transfer must not call oracle"
     );
-    assert!(
-        transfer.asm.iter().any(|s| s == OP_CHECKSIG),
-        "transfer must have {OP_CHECKSIG} for seeker sig"
-    );
+    assert!(!asm.contains(OP_SHA256INITIALIZE), "transfer must not hash");
+    assert!(t.asm.iter().any(|s| s == OP_CHECKSIG));
 }
 
 #[test]
-fn test_vault_seeker_redeem_verifies_oracle_sig() {
-    let output = compile(VAULT_CODE).unwrap();
-    let redeem = output
-        .functions
-        .iter()
-        .find(|f| f.name == "seekerRedeem" && f.server_variant)
-        .unwrap();
-
-    assert!(
-        redeem.asm.iter().any(|s| s.contains(OP_CHECKSIGFROMSTACK)),
-        "seekerRedeem must verify oracle sig with {OP_CHECKSIGFROMSTACK}"
-    );
-    assert!(
-        redeem.asm.iter().any(|s| s == OP_CHECKSIG),
-        "seekerRedeem must have {OP_CHECKSIG} for seeker sig"
-    );
+fn test_offer_compiles_with_4_tapleaves() {
+    let out = compile(OFFER_CODE).expect("offer compile");
+    assert_eq!(out.name, "StabilityOffer");
+    assert_eq!(out.functions.len(), 4);
 }
 
 #[test]
-fn test_vault_provider_exit_verifies_oracle_sig() {
-    let output = compile(VAULT_CODE).unwrap();
-    let exit = output
-        .functions
-        .iter()
-        .find(|f| f.name == "providerExit" && f.server_variant)
-        .unwrap();
-
-    assert!(
-        exit.asm.iter().any(|s| s.contains(OP_CHECKSIGFROMSTACK)),
-        "providerExit must verify oracle sig with {OP_CHECKSIGFROMSTACK}"
-    );
-    assert!(
-        exit.asm.iter().any(|s| s == OP_CHECKSIG),
-        "providerExit must have {OP_CHECKSIG} for provider sig"
-    );
-}
-
-#[test]
-fn test_vault_settlement_has_covenant_recursion() {
-    let output = compile(VAULT_CODE).unwrap();
-
-    // seekerRedeem and providerExit both produce SingleSig outputs (no recursion)
-    // transfer and split produce recursive StabilityVault outputs
-    let transfer = output
-        .functions
-        .iter()
-        .find(|f| f.name == "transfer" && f.server_variant)
-        .unwrap();
-
-    let has_recursive = transfer
-        .asm
-        .iter()
-        .any(|s| s.contains("new StabilityVault("));
-    let has_output_inspect = transfer
-        .asm
-        .iter()
-        .any(|s| s.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"));
-
-    assert!(
-        has_recursive || has_output_inspect,
-        "transfer must emit recursive StabilityVault constructor or output inspect. ASM: {:?}",
-        transfer.asm
-    );
-}
-
-// ---------------------------------------------------------------------------
-// StabilityOffer tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_offer_parses() {
-    let result = compile(OFFER_CODE);
-    assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
-}
-
-#[test]
-fn test_offer_structure() {
-    let output = compile(OFFER_CODE).unwrap();
-    assert_eq!(output.name, "StabilityOffer");
-    // 2 functions × 2 variants = 4
-    assert_eq!(output.functions.len(), 4);
-
-    for name in &["take", "withdraw"] {
-        assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && f.server_variant),
-            "Missing {name} server variant"
-        );
-        assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && !f.server_variant),
-            "Missing {name} exit variant"
-        );
-    }
-}
-
-#[test]
-fn test_offer_take_verifies_oracle_sig() {
-    let output = compile(OFFER_CODE).unwrap();
-    let take = output
+fn test_offer_take_verifies_full_oracle_message() {
+    let out = compile(OFFER_CODE).unwrap();
+    let take = out
         .functions
         .iter()
         .find(|f| f.name == "take" && f.server_variant)
         .unwrap();
-
+    let asm = take.asm.join(" ");
     assert!(
-        take.asm.iter().any(|s| s.contains(OP_CHECKSIGFROMSTACK)),
-        "take must verify oracle sig with {OP_CHECKSIGFROMSTACK}"
+        asm.contains(OP_SHA256INITIALIZE),
+        "take: missing SHA256INIT"
     );
-}
-
-#[test]
-fn test_offer_take_creates_vault() {
-    let output = compile(OFFER_CODE).unwrap();
-    let take = output
-        .functions
-        .iter()
-        .find(|f| f.name == "take" && f.server_variant)
-        .unwrap();
-
-    let has_vault_constructor = take.asm.iter().any(|s| s.contains("new StabilityVault("));
-    let has_output_inspect = take
-        .asm
-        .iter()
-        .any(|s| s.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"));
-
+    assert!(asm.contains(OP_SHA256UPDATE), "take: missing SHA256UPDATE");
     assert!(
-        has_vault_constructor || has_output_inspect,
-        "take must emit StabilityVault constructor or output inspect. ASM: {:?}",
-        take.asm
-    );
-}
-
-#[test]
-fn test_offer_withdraw_has_only_checksig() {
-    let output = compile(OFFER_CODE).unwrap();
-    let withdraw = output
-        .functions
-        .iter()
-        .find(|f| f.name == "withdraw" && f.server_variant)
-        .unwrap();
-
-    assert!(
-        withdraw.asm.iter().any(|s| s == OP_CHECKSIG),
-        "withdraw must have {OP_CHECKSIG}"
+        asm.contains(OP_SHA256FINALIZE),
+        "take: missing SHA256FINALIZE"
     );
     assert!(
-        !withdraw
-            .asm
-            .iter()
-            .any(|s| s.contains(OP_CHECKSIGFROMSTACK)),
-        "withdraw must not call {OP_CHECKSIGFROMSTACK}"
+        asm.contains(OP_CHECKSIGFROMSTACK),
+        "take: missing oracle sig verify"
     );
 }

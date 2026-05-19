@@ -19,7 +19,7 @@ The Seeker's balance looks and feels like a dollar account. The BTC mechanics ar
 | `StabilityOffer` | Provider pre-commits collateral as a standing offer. Anyone can claim it non-interactively. |
 | `StabilityVault` | The live position: Seeker's USD claim + Provider's collateral in one UTXO. |
 
-The on-chain beacon UTXO is gone. Price arrives as a witness argument at settlement time, signed by an oracle key baked into the vault.
+The on-chain beacon UTXO is gone. Price arrives as a witness argument at settlement time, signed by an oracle key baked into the vault. The signed message is `sha256(ticker || price || timestamp)` — Fuji-style replay protection across feeds and time.
 
 ---
 
@@ -64,7 +64,7 @@ At 1.5:1, a +20% BTC move yields ~+33% for the Provider (1.67× leverage). No fo
 
 Provider deploys an offer with their collateral locked. No signature is required to claim it — the offer is fully pre-committed.
 
-**`take(userBTC, seekerPk, oraclePrice, oracleSig)`** — opens a StabilityVault at the oracle-signed price. Reduces remaining offer capacity. If fully consumed, the offer UTXO is spent.
+**`take(userBTC, seekerPk, oraclePrice, oracleTime, oracleSig)`** — opens a StabilityVault at the oracle-signed price. Reduces remaining offer capacity. If fully consumed, the offer UTXO is spent.
 
 **`withdraw(providerSig)`** — Provider reclaims unused collateral at any time.
 
@@ -72,9 +72,9 @@ Provider deploys an offer with their collateral locked. No signature is required
 
 ## StabilityVault
 
-Constructor parameters: `seekerPk, providerPk, oraclePk, targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit`
+Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit`
 
-`targetUSD` and `totalCollateral` are invariant across transfers.
+`targetUSD`, `totalCollateral`, `oraclePk`, and `ticker` are invariant across transfers.
 
 ### Functions
 
@@ -82,9 +82,9 @@ Constructor parameters: `seekerPk, providerPk, oraclePk, targetUSD, totalCollate
 
 **`split(seekerSig, amountUSD, newSeekerPk)`** — divides the USD claim proportionally into two independent vaults. Both halves must be above the 330-sat Taproot dust threshold.
 
-**`seekerRedeem(seekerSig, oraclePrice, oracleSig)`** — Seeker exits to BTC at the oracle-attested price.
+**`seekerRedeem(seekerSig, oraclePrice, oracleTime, oracleSig)`** — Seeker exits to BTC at the oracle-attested price.
 
-**`providerExit(providerSig, oraclePrice, oracleSig)`** — Provider initiates settlement. Identical payout math to `seekerRedeem`. First-come, first-served — no challenge window.
+**`providerExit(providerSig, oraclePrice, oracleTime, oracleSig)`** — Provider initiates settlement. Identical payout math to `seekerRedeem`. First-come, first-served — no challenge window.
 
 ### Settlement branches
 
@@ -98,13 +98,26 @@ Constructor parameters: `seekerPk, providerPk, oraclePk, targetUSD, totalCollate
 
 ## Oracle model
 
-The oracle signs BTC/USD prices off-chain using `oraclePk`. At settlement the caller provides `(oraclePrice, oracleSig)` as witness arguments. The contract verifies:
+The oracle signs BTC/USD prices off-chain as `sha256(ticker || price || timestamp)`. At settlement the caller provides `(oraclePrice, oracleTime, oracleSig)` as witness arguments. The contract:
 
-```ark
-require(checkSigFromStack(oracleSig, oraclePk, oraclePrice), "invalid oracle signature");
-```
+1. Enforces freshness: `tx.time - oracleTime <= 144` blocks (≈24 hours).
+2. Reconstructs the message hash on-stack using streaming SHA256:
+   ```ark
+   let ctx1 = sha256Initialize(ticker);
+   let ctx2 = sha256Update(ctx1, oraclePrice);
+   let oracleMsg = sha256Finalize(ctx2, oracleTime);
+   require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+   ```
 
-`oraclePk` is baked into the vault at creation time. There is no on-chain beacon UTXO to maintain, pass through, or go stale. Clients are responsible for using a sufficiently fresh oracle update; the Arkade Operator enforces freshness on the cooperative path.
+Three layers of replay protection are baked into the signed message:
+
+| Field | Replay it would prevent |
+|---|---|
+| `ticker` | A signature for one feed (e.g. ETH/USD) cannot be reused on another (BTC/USD). The vault binds to one ticker at creation. |
+| `price` | The value being attested. |
+| `timestamp` | Makes each oracle update unique. Combined with the 144-block freshness check, stale signatures are rejected. |
+
+`oraclePk` and `ticker` are baked into the vault at creation time. There is no on-chain beacon UTXO to maintain, pass through, or go stale.
 
 ---
 
@@ -126,14 +139,14 @@ Total tapleaves: **4** (StabilityOffer) + **8** (StabilityVault) = 12.
 ## Lifecycle
 
 ```
-1. Provider deploys StabilityOffer (locks BTC collateral)
-2. Swap service calls take(userBTC, seekerPk, oraclePrice, oracleSig)
-   → StabilityVault created at the oracle price
+1. Provider deploys StabilityOffer (locks BTC collateral, binds to a ticker)
+2. Swap service calls take(userBTC, seekerPk, oraclePrice, oracleTime, oracleSig)
+   → StabilityVault created at the oracle price, inheriting the ticker
 3. Seeker circulates the vault:
      transfer → swap service (USDT/USDC out)
      split    → send partial balance to a friend
 4. Settlement (either party, any time):
-     seekerRedeem or providerExit with a fresh oracle-signed price
+     seekerRedeem or providerExit with a fresh oracle-signed (price, time)
      → two SingleSig outputs, vault consumed
 ```
 
