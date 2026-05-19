@@ -8,9 +8,8 @@ import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 const projects = {
     stability: {
         name: 'Stability',
-        description: 'USD-denominated BTC positions with on-chain price beacon',
+        description: 'USD-denominated BTC positions with oracle-signed price witness',
         files: {
-            'price_beacon.ark': contracts.price_beacon,
             'stability_vault.ark': contracts.stability_vault,
             'stability_offer.ark': contracts.stability_offer,
         }
