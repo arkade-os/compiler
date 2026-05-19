@@ -335,6 +335,21 @@ pub enum Expression {
         pubkey: String,
         message: String,
     },
+    // ─── Byte-string operations ────────────────────────────────────────
+    /// Byte-string concatenation: produced by the rewrite pass when `+`
+    /// has at least one bytes-like operand. `coerce_left` / `coerce_right`
+    /// tell the emitter to insert `OP_SCRIPTNUMTOLE64` on a side that is
+    /// an integer (mixed `bytes + int` writes the int as fixed 8-byte LE
+    /// before OP_CAT, so off-chain hashing matches deterministically).
+    Concat {
+        left: Box<Expression>,
+        right: Box<Expression>,
+        coerce_left: bool,
+        coerce_right: bool,
+    },
+    /// One-shot SHA256: sha256(data) → 32-byte digest. Used for small
+    /// fixed messages where streaming would be overkill.
+    Sha256 { data: Box<Expression> },
     // ─── Streaming SHA256 ──────────────────────────────────────────────
     /// Streaming SHA256 initialize: sha256Initialize(data)
     Sha256Initialize { data: Box<Expression> },

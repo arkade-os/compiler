@@ -142,12 +142,6 @@ fn roundtrip_fuji_safe() {
 }
 
 #[test]
-fn roundtrip_price_beacon() {
-    let output = compile_example("stability/price_beacon.ark");
-    assert_output_invariants(&output, "stability/price_beacon.ark");
-}
-
-#[test]
 fn roundtrip_stability_vault() {
     let output = compile_example("stability/stability_vault.ark");
     assert_output_invariants(&output, "stability/stability_vault.ark");
@@ -234,8 +228,8 @@ fn all_examples_compile_and_satisfy_invariants() {
     }
 
     assert!(
-        count >= 15,
-        "expected at least 15 example contracts, found {}",
+        count >= 14,
+        "expected at least 14 example contracts, found {}",
         count
     );
 }

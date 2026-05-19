@@ -493,9 +493,11 @@ array = {
     "[" ~ identifier ~ ("," ~ identifier)* ~ "]"
 }
 
-// SHA256 function
+// SHA256 function. Accepts any additive expression so concatenation chains
+// like `sha256(a + b + c)` parse (`additive_expr` cascades down to primary,
+// which still accepts a bare identifier for the legacy `sha256(preimage)` form).
 sha256_func = {
-    "sha256" ~ "(" ~ complex_expression ~ ")"
+    "sha256" ~ "(" ~ additive_expr ~ ")"
 }
 
 // ─── Streaming SHA256 ──────────────────────────────────────────────────

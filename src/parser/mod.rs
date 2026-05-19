@@ -473,8 +473,12 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
             })
         }
         Rule::sha256_func => {
-            // For now, represent as property
-            Ok(Expression::Property(pair.as_str().to_string()))
+            // sha256(data) → one-shot OP_SHA256 over the inner expression.
+            let inner = pair.into_inner().next().ok_or("Missing sha256 argument")?;
+            let data = parse_additive_expr(inner)?;
+            Ok(Expression::Sha256 {
+                data: Box::new(data),
+            })
         }
         // Streaming SHA256
         Rule::sha256_initialize => parse_sha256_initialize(pair),

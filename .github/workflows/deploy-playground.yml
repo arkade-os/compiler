@@ -37,7 +37,9 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: 'latest'
 
       - name: Generate contracts.js
         run: ./playground/generate_contracts.sh
