@@ -117,6 +117,7 @@ contract StabilityVault(
     require(oraclePrice > 0, "invalid oracle price");
 
     int oracleAge = tx.time - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 144, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
@@ -160,6 +161,7 @@ contract StabilityVault(
     require(oraclePrice > 0, "invalid oracle price");
 
     int oracleAge = tx.time - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 144, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);

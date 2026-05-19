@@ -251,6 +251,30 @@ fn test_vault_transfer_is_pure_keyswap() {
 }
 
 #[test]
+fn test_vault_split_is_pure_keyswap() {
+    let out = compile(VAULT_CODE).unwrap();
+    let s = out
+        .functions
+        .iter()
+        .find(|f| f.name == "split" && f.server_variant)
+        .unwrap();
+    let asm = s.asm.join(" ");
+    assert!(
+        !asm.contains(OP_CHECKSIGFROMSTACK),
+        "split must not call oracle"
+    );
+    assert!(
+        !s.asm.iter().any(|op| op.as_str() == OP_CAT),
+        "split must not concatenate"
+    );
+    assert!(!asm.contains(OP_SHA256), "split must not hash");
+    assert!(
+        s.asm.iter().any(|op| op == OP_CHECKSIG),
+        "split must keep user checksig"
+    );
+}
+
+#[test]
 fn test_offer_compiles_with_4_tapleaves() {
     let out = compile(OFFER_CODE).expect("offer compile");
     assert_eq!(out.name, "StabilityOffer");
