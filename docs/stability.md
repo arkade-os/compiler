@@ -57,15 +57,17 @@ The on-chain compute is interleaved (`/1e6` twice) to keep the intermediate prod
 
 ### Settlement
 
-At exit with oracle price `P`:
+At exit with oracle price `P`, the same `newTargetUSD` shape is used everywhere (settle, seekerExit, providerExit, removeCapital):
 
 ```
-currentTargetUSD = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
-seekerRaw        = currentTargetUSD × 1e8 / P
-seekerNet        = seekerRaw − seekerExitFee   (only on seekerExit)
-seekerPayout     = clamp(seekerNet, 0, totalCollateral)
-providerPayout   = totalCollateral − seekerPayout
+newTargetUSD  = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
+seekerRaw     = newTargetUSD × (1 − seekerExitFee/1e4) × 1e8 / P   [seekerExit]
+seekerRaw     = newTargetUSD × 1e8 / P                              [providerExit]
+seekerPayout  = clamp(seekerRaw, 0, totalCollateral)
+providerPayout = totalCollateral − seekerPayout
 ```
+
+The exit fee is applied in USD before conversion to sats, so it scales with position size (same shape as `fundingRatePerSec`). `seekerExitFee` is in basis points: `100` = 1%, `10000` = 100%.
 
 The 60% single-period drop is the coverage ceiling. Beyond it the Seeker absorbs the residual — this must be disclosed in wallet UX.
 
@@ -75,10 +77,12 @@ At 1.5:1, a +20% BTC move yields ~+33% for the Provider (1.67× leverage). No fo
 
 ### Fees
 
-Fixed at offer creation, immutable across takes:
+Both fees are basis-point fractions, fixed at offer creation and immutable across takes:
 
-- `takeFee` — sats paid from the taker's deposit to the Provider when an offer is consumed.
-- `seekerExitFee` — sats carved out of the Seeker's payout when `seekerExit` settles, paid to the Provider. Propagates into every vault opened from the offer.
+- `takeFee` — applied as `takeFee × userBTC / 1e4` sats, paid from the taker's deposit to the Provider when an offer is consumed.
+- `seekerExitFee` — applied in USD as `(1 − seekerExitFee/1e4) × newTargetUSD` when `seekerExit` settles, with the difference flowing to the Provider. Propagates into every vault opened from the offer.
+
+Both scale with position size, matching the % shape of `fundingRatePerSec`. Example: `seekerExitFee = 100` charges 1% of the USD claim on exit.
 
 ---
 

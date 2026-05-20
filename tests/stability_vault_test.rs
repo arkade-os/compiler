@@ -115,8 +115,8 @@ contract StabilityVault(
     int elapsed           = tx.offchainTime - lastUpdate;
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
-    int currentTargetUSD  = targetUSD + delta;
-    int currentSeekerBase = currentTargetUSD * 100000000 / oraclePrice;
+    int newTargetUSD      = targetUSD + delta;
+    int currentSeekerBase = newTargetUSD * 100000000 / oraclePrice;
     int minCollateral     = currentSeekerBase * (100 + collateralRatioPct) / 100;
     int newTotalCollateral = totalCollateral - amount;
     require(newTotalCollateral >= minCollateral, "would breach ratio");
@@ -150,20 +150,20 @@ contract StabilityVault(
     int elapsed           = tx.offchainTime - lastUpdate;
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
-    int currentTargetUSD  = targetUSD + delta;
-    int seekerRaw         = currentTargetUSD * 100000000 / oraclePrice;
-    int seekerNet         = seekerRaw - seekerExitFee;
+    int newTargetUSD      = targetUSD + delta;
+    int netTargetUSD      = newTargetUSD * (10000 - seekerExitFee) / 10000;
+    int seekerRaw         = netTargetUSD * 100000000 / oraclePrice;
 
-    if (seekerNet <= 0) {
+    if (seekerRaw <= 0) {
       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "not provider");
       require(tx.outputs[0].value >= totalCollateral, "underpaid");
     } else {
       require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "not seeker");
-      if (seekerNet >= totalCollateral) {
+      if (seekerRaw >= totalCollateral) {
         require(tx.outputs[0].value >= totalCollateral, "underpaid");
       } else {
-        require(tx.outputs[0].value >= seekerNet, "underpaid");
-        int providerPayout = totalCollateral - seekerNet;
+        require(tx.outputs[0].value >= seekerRaw, "underpaid");
+        int providerPayout = totalCollateral - seekerRaw;
         if (providerPayout > 330) {
           require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "not provider");
           require(tx.outputs[1].value >= providerPayout, "underpaid");
@@ -189,8 +189,8 @@ contract StabilityVault(
     int elapsed           = tx.offchainTime - lastUpdate;
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
-    int currentTargetUSD  = targetUSD + delta;
-    int seekerRaw         = currentTargetUSD * 100000000 / oraclePrice;
+    int newTargetUSD      = targetUSD + delta;
+    int seekerRaw         = newTargetUSD * 100000000 / oraclePrice;
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "not provider");
@@ -260,9 +260,10 @@ contract StabilityOffer(
     );
     require(tx.outputs[0].value >= totalCollateral, "underpaid");
 
-    if (takeFee > 330) {
+    int takeFeeSats = userBTC * takeFee / 10000;
+    if (takeFeeSats > 330) {
       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "not provider");
-      require(tx.outputs[1].value >= takeFee, "fee underpaid");
+      require(tx.outputs[1].value >= takeFeeSats, "fee underpaid");
     }
 
     int remaining = maxExposureBTC - userBTC;

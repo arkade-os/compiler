@@ -32,8 +32,8 @@ contract StabilityOffer(
   int     fundingRatePerSec,   // signed fixed-point at scale 1e12; seeker accepts this rate on take
   int     maxExposureBTC,
   int     collateralRatioPct,  // min 100 logically; offer guards 50%+ here
-  int     seekerExitFee,       // propagated into every vault
-  int     takeFee,             // sats charged on take, paid to provider
+  int     seekerExitFee,       // basis points; propagated into every vault
+  int     takeFee,             // basis points; takeFee × userBTC / 1e4 sats paid to provider on take
   int     exit
 ) {
 
@@ -84,9 +84,10 @@ contract StabilityOffer(
     );
     require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
 
-    if (takeFee > 330) {
+    int takeFeeSats = userBTC * takeFee / 10000;
+    if (takeFeeSats > 330) {
       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
-      require(tx.outputs[1].value >= takeFee, "provider underpaid take fee");
+      require(tx.outputs[1].value >= takeFeeSats, "provider underpaid take fee");
     }
 
     int remainingCapacity = maxExposureBTC - userBTC;
