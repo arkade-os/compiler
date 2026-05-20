@@ -26,7 +26,7 @@ contract StabilityOffer(
   pubkey  providerPk,
   pubkey  oraclePk,
   bytes32 ticker,              // feed identifier; propagates into every vault
-  int     fundingRatePerBlock, // signed fixed-point at scale 1e10 (see StabilityVault)
+  int     fundingRatePerSec,   // signed fixed-point at scale 1e12 (see StabilityVault)
   int     maxExposureBTC,
   int     collateralRatioPct,  // min 100
   int     exit
@@ -56,9 +56,9 @@ contract StabilityOffer(
     require(collateralRatioPct >= 100, "collateral ratio below minimum");
     require(oraclePrice > 0, "invalid oracle price");
 
-    int oracleAge = tx.time - oracleTime;
+    int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
@@ -71,7 +71,7 @@ contract StabilityOffer(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingRatePerBlock, tx.time, exit
+        targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime, exit
       ),
       "invalid vault output"
     );
@@ -82,7 +82,7 @@ contract StabilityOffer(
       require(
         tx.outputs[1].scriptPubKey == new StabilityOffer(
           providerPk, oraclePk, ticker,
-          fundingRatePerBlock, remainingCapacity, collateralRatioPct, exit
+          fundingRatePerSec, remainingCapacity, collateralRatioPct, exit
         ),
         "invalid remaining offer"
       );

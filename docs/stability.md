@@ -37,27 +37,29 @@ Seeker's USD claim: S × entryPrice / 1e8  (in cents, fixed at open)
 At settlement with oracle price P:
 
 ```
-seekerBase     = targetUSD × 1e8 / P                                    (integer division)
-fundingAccrued = fundingRatePerBlock × seekerBase × (tx.time − openHeight) / 1e10
+seekerBase     = targetUSD × 1e8 / P                                        (integer division)
+fundingAccrued = fundingRatePerSec × seekerBase × (tx.offchainTime − openTime) / 1e12
 seekerRaw      = seekerBase + fundingAccrued
 seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
 providerPayout = totalCollateral − seekerPayout
 ```
 
+`tx.offchainTime` is the TEE-introspector wallclock in unix seconds, distinct from `tx.time` (Bitcoin nLockTime, block height). Funding accrues per second; freshness windows are in seconds.
+
 The 60% single-period drop is the coverage ceiling. Beyond it the Seeker absorbs the residual — this must be disclosed in wallet UX.
 
 ### Funding rate
 
-`fundingRatePerBlock` is a signed fixed-point fraction at scale 1e10, agreed at open. Because funding scales with `seekerBase`, the effective APY is invariant to position size — a Seeker who partially fills a 1 BTC offer pays the same rate as one who consumes it entirely.
+`fundingRatePerSec` is a signed fixed-point fraction at scale 1e12, agreed at open. Because funding scales with `seekerBase`, the effective APY is invariant to position size — a Seeker who partially fills a 1 BTC offer pays the same rate as one who consumes it entirely.
 
 ```
-fundingRatePerBlock = (annual_pct / 100) / 52560 × 1e10
+fundingRatePerSec = (annual_pct / 100) / 31536000 × 1e12
 ```
 
 - `> 0`: Provider pays Seeker (expected default — cost of self-custodied leverage)
 - `< 0`: Seeker pays Provider (discount offer in low-demand periods)
 
-Example values: 0.5% APY → `950`; 5% APY → `9500`. The on-chain divide is interleaved (`/1e5` twice) to keep the intermediate product inside int64 across realistic position sizes.
+Example values: 0.5% APY → `158`; 5% APY → `1585`. The on-chain divide is interleaved (`/1e6` twice) to keep the intermediate product inside int64 across realistic position sizes.
 
 ### Provider leverage
 
@@ -77,7 +79,7 @@ Provider deploys an offer with their collateral locked. No signature is required
 
 ## StabilityVault
 
-Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, totalCollateral, fundingRatePerBlock, openHeight, exit`
+Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, totalCollateral, fundingRatePerSec, openTime, exit`
 
 `targetUSD`, `totalCollateral`, `oraclePk`, and `ticker` are invariant across transfers.
 
@@ -105,7 +107,7 @@ Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, tota
 
 The oracle signs BTC/USD prices off-chain as `sha256(ticker || price || timestamp)` — `price` and `timestamp` are 8-byte little-endian unsigned ints. At settlement the caller provides `(oraclePrice, oracleTime, oracleSig)` as witness arguments. The contract:
 
-1. Enforces freshness: `tx.time - oracleTime <= 144` blocks (≈24 hours).
+1. Enforces freshness: `tx.offchainTime - oracleTime <= 600` seconds (10 minutes).
 2. Reconstructs the message hash on-stack with `+` (OP_CAT) and one-shot `sha256` (OP_SHA256):
    ```ark
    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
@@ -119,7 +121,7 @@ Three layers of replay protection are baked into the signed message:
 |---|---|
 | `ticker` | A signature for one feed (e.g. ETH/USD) cannot be reused on another (BTC/USD). The vault binds to one ticker at creation. |
 | `price` | The value being attested. |
-| `timestamp` | Makes each oracle update unique. Combined with the 144-block freshness check, stale signatures are rejected. |
+| `timestamp` | Makes each oracle update unique. Combined with the 600-second freshness check, stale signatures are rejected. |
 
 `oraclePk` and `ticker` are baked into the vault at creation time. There is no on-chain beacon UTXO to maintain, pass through, or go stale.
 

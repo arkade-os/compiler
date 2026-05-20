@@ -11,33 +11,38 @@
 //   where price and timestamp are encoded as 8-byte little-endian ints.
 //   At settlement the caller supplies (oraclePrice, oracleTime, oracleSig).
 //   The contract:
-//     1. Verifies freshness:  tx.time - oracleTime <= 144 blocks
+//     1. Verifies freshness:  tx.offchainTime - oracleTime <= 600 seconds
 //     2. Reconstructs msg on-chain via `sha256(ticker + price + time)`
 //        — the `+` operator concatenates (OP_CAT) when at least one side
 //        is bytes-like; int sides are auto-coerced to fixed 8-byte LE so
 //        the on-chain hash matches the off-chain one.
 //     3. Verifies the oracle signature against the reconstructed hash
 //
+//   `tx.offchainTime` is the TEE-introspector wallclock (unix seconds),
+//   distinct from `tx.time` (Bitcoin nLockTime, block height). Using it
+//   tightens the freshness window from 144 blocks (≈24h, ±30 min jitter)
+//   to 600 seconds.
+//
 //   Three pieces of replay protection are baked in:
 //     - ticker     → binds the signature to this feed (e.g. BTC/USD vs ETH/USD)
 //     - price      → the value being attested
 //     - timestamp  → makes each oracle update unique; combined with the
-//                    144-block freshness check, stale signatures are rejected
+//                    600-second freshness check, stale signatures are rejected
 //
 // Settlement math:
 //   seekerBase     = targetUSD × 1e8 / oraclePrice
-//   fundingAccrued = fundingRatePerBlock × seekerBase × (tx.time - openHeight) / 1e10
+//   fundingAccrued = fundingRatePerSec × seekerBase × (tx.offchainTime - openTime) / 1e12
 //   seekerRaw      = seekerBase + fundingAccrued
 //   seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
 //   providerPayout = totalCollateral - seekerPayout
 //
-// fundingRatePerBlock is a signed fixed-point fraction at scale 1e10:
-//   value = (annual_pct / 100) / 52560 × 1e10
-//   e.g. 0.5% APY → 950, 5% APY → 9500, negative = seeker pays provider.
+// fundingRatePerSec is a signed fixed-point fraction at scale 1e12:
+//   value = (annual_pct / 100) / 31536000 × 1e12
+//   e.g. 0.5% APY → 158, 5% APY → 1585, negative = seeker pays provider.
 // Making funding proportional to seekerBase keeps the effective APY invariant
-// to partial fills of a StabilityOffer (an absolute sat/block rate would
-// over-charge small takers). The scale divide is interleaved (1e5 × 1e5 = 1e10)
-// to keep the intermediate product inside int64 for realistic position sizes.
+// to partial fills of a StabilityOffer. The scale divide is interleaved
+// (1e6 × 1e6 = 1e12) to keep the intermediate product inside int64 for
+// realistic position sizes.
 
 import "single_sig.ark";
 
@@ -53,8 +58,8 @@ contract StabilityVault(
   bytes32 ticker,              // feed identifier (e.g. sha256("BTC/USD"))
   int     targetUSD,           // seeker's USD claim in cents (immutable across transfers)
   int     totalCollateral,     // sats locked (immutable across transfers)
-  int     fundingRatePerBlock, // signed fixed-point rate at scale 1e10; >0 provider pays seeker
-  int     openHeight,          // block height at position open; basis for funding accrual
+  int     fundingRatePerSec,   // signed fixed-point rate at scale 1e12; >0 provider pays seeker
+  int     openTime,            // unix seconds at position open; basis for funding accrual
   int     exit                 // exit timelock in blocks
 ) {
 
@@ -68,7 +73,7 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingRatePerBlock, openHeight, exit
+        targetUSD, totalCollateral, fundingRatePerSec, openTime, exit
       ),
       "invalid transfer output"
     );
@@ -94,7 +99,7 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        amountUSD, collateralA, fundingRatePerBlock, openHeight, exit
+        amountUSD, collateralA, fundingRatePerSec, openTime, exit
       ),
       "invalid split output 0"
     );
@@ -103,7 +108,7 @@ contract StabilityVault(
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        remainingUSD, collateralB, fundingRatePerBlock, openHeight, exit
+        remainingUSD, collateralB, fundingRatePerSec, openTime, exit
       ),
       "invalid split output 1"
     );
@@ -124,18 +129,18 @@ contract StabilityVault(
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
     require(oraclePrice > 0, "invalid oracle price");
 
-    int oracleAge = tx.time - oracleTime;
+    int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int blocksElapsed  = tx.time - openHeight;
+    int secsElapsed    = tx.offchainTime - openTime;
     int seekerBase     = targetUSD * 100000000 / oraclePrice;
-    // funding = rate × seekerBase × elapsed / 1e10 (split divide to avoid int64 overflow)
-    int fundingPartial = fundingRatePerBlock * seekerBase / 100000;
-    int funding        = fundingPartial * blocksElapsed / 100000;
+    // funding = rate × seekerBase × elapsed / 1e12 (split divide to avoid int64 overflow)
+    int fundingPartial = fundingRatePerSec * seekerBase / 1000000;
+    int funding        = fundingPartial * secsElapsed / 1000000;
     int seekerRaw      = seekerBase + funding;
 
     if (seekerRaw <= 0) {
@@ -170,17 +175,17 @@ contract StabilityVault(
     require(checkSig(providerSig, providerPk), "invalid provider sig");
     require(oraclePrice > 0, "invalid oracle price");
 
-    int oracleAge = tx.time - oracleTime;
+    int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int blocksElapsed  = tx.time - openHeight;
+    int secsElapsed    = tx.offchainTime - openTime;
     int seekerBase     = targetUSD * 100000000 / oraclePrice;
-    int fundingPartial = fundingRatePerBlock * seekerBase / 100000;
-    int funding        = fundingPartial * blocksElapsed / 100000;
+    int fundingPartial = fundingRatePerSec * seekerBase / 1000000;
+    int funding        = fundingPartial * secsElapsed / 1000000;
     int seekerRaw      = seekerBase + funding;
 
     if (seekerRaw <= 0) {
