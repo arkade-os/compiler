@@ -26,10 +26,18 @@
 //
 // Settlement math:
 //   seekerBase     = targetUSD × 1e8 / oraclePrice
-//   fundingAccrued = fundingSatPerBlock × (tx.time - openHeight)
+//   fundingAccrued = fundingRatePerBlock × seekerBase × (tx.time - openHeight) / 1e10
 //   seekerRaw      = seekerBase + fundingAccrued
 //   seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
 //   providerPayout = totalCollateral - seekerPayout
+//
+// fundingRatePerBlock is a signed fixed-point fraction at scale 1e10:
+//   value = (annual_pct / 100) / 52560 × 1e10
+//   e.g. 0.5% APY → 950, 5% APY → 9500, negative = seeker pays provider.
+// Making funding proportional to seekerBase keeps the effective APY invariant
+// to partial fills of a StabilityOffer (an absolute sat/block rate would
+// over-charge small takers). The scale divide is interleaved (1e5 × 1e5 = 1e10)
+// to keep the intermediate product inside int64 for realistic position sizes.
 
 import "single_sig.ark";
 
@@ -40,14 +48,14 @@ options {
 
 contract StabilityVault(
   pubkey  seekerPk,           // current holder of the USD claim
-  pubkey  providerPk,         // collateral provider, holds the long side
-  pubkey  oraclePk,           // oracle: only signatures from this key accepted
-  bytes32 ticker,             // feed identifier (e.g. sha256("BTC/USD"))
-  int     targetUSD,          // seeker's USD claim in cents (immutable across transfers)
-  int     totalCollateral,    // sats locked (immutable across transfers)
-  int     fundingSatPerBlock, // signed: >0 provider pays seeker, <0 seeker pays
-  int     openHeight,         // block height at position open; basis for funding accrual
-  int     exit                // exit timelock in blocks
+  pubkey  providerPk,          // collateral provider, holds the long side
+  pubkey  oraclePk,            // oracle: only signatures from this key accepted
+  bytes32 ticker,              // feed identifier (e.g. sha256("BTC/USD"))
+  int     targetUSD,           // seeker's USD claim in cents (immutable across transfers)
+  int     totalCollateral,     // sats locked (immutable across transfers)
+  int     fundingRatePerBlock, // signed fixed-point rate at scale 1e10; >0 provider pays seeker
+  int     openHeight,          // block height at position open; basis for funding accrual
+  int     exit                 // exit timelock in blocks
 ) {
 
   // -------------------------------------------------------------------------
@@ -60,7 +68,7 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit
+        targetUSD, totalCollateral, fundingRatePerBlock, openHeight, exit
       ),
       "invalid transfer output"
     );
@@ -86,7 +94,7 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        amountUSD, collateralA, fundingSatPerBlock, openHeight, exit
+        amountUSD, collateralA, fundingRatePerBlock, openHeight, exit
       ),
       "invalid split output 0"
     );
@@ -95,7 +103,7 @@ contract StabilityVault(
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit
+        remainingUSD, collateralB, fundingRatePerBlock, openHeight, exit
       ),
       "invalid split output 1"
     );
@@ -123,10 +131,12 @@ contract StabilityVault(
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int blocksElapsed = tx.time - openHeight;
-    int seekerBase    = targetUSD * 100000000 / oraclePrice;
-    int funding       = fundingSatPerBlock * blocksElapsed;
-    int seekerRaw     = seekerBase + funding;
+    int blocksElapsed  = tx.time - openHeight;
+    int seekerBase     = targetUSD * 100000000 / oraclePrice;
+    // funding = rate × seekerBase × elapsed / 1e10 (split divide to avoid int64 overflow)
+    int fundingPartial = fundingRatePerBlock * seekerBase / 100000;
+    int funding        = fundingPartial * blocksElapsed / 100000;
+    int seekerRaw      = seekerBase + funding;
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
@@ -167,10 +177,11 @@ contract StabilityVault(
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int blocksElapsed = tx.time - openHeight;
-    int seekerBase    = targetUSD * 100000000 / oraclePrice;
-    int funding       = fundingSatPerBlock * blocksElapsed;
-    int seekerRaw     = seekerBase + funding;
+    int blocksElapsed  = tx.time - openHeight;
+    int seekerBase     = targetUSD * 100000000 / oraclePrice;
+    int fundingPartial = fundingRatePerBlock * seekerBase / 100000;
+    int funding        = fundingPartial * blocksElapsed / 100000;
+    int seekerRaw      = seekerBase + funding;
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");

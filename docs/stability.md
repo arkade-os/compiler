@@ -37,8 +37,8 @@ Seeker's USD claim: S × entryPrice / 1e8  (in cents, fixed at open)
 At settlement with oracle price P:
 
 ```
-seekerBase     = targetUSD × 1e8 / P          (integer division)
-fundingAccrued = fundingSatPerBlock × (tx.time - openHeight)
+seekerBase     = targetUSD × 1e8 / P                                    (integer division)
+fundingAccrued = fundingRatePerBlock × seekerBase × (tx.time − openHeight) / 1e10
 seekerRaw      = seekerBase + fundingAccrued
 seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
 providerPayout = totalCollateral − seekerPayout
@@ -48,11 +48,16 @@ The 60% single-period drop is the coverage ceiling. Beyond it the Seeker absorbs
 
 ### Funding rate
 
-`fundingSatPerBlock` is signed and agreed at open:
+`fundingRatePerBlock` is a signed fixed-point fraction at scale 1e10, agreed at open. Because funding scales with `seekerBase`, the effective APY is invariant to position size — a Seeker who partially fills a 1 BTC offer pays the same rate as one who consumes it entirely.
+
+```
+fundingRatePerBlock = (annual_pct / 100) / 52560 × 1e10
+```
+
 - `> 0`: Provider pays Seeker (expected default — cost of self-custodied leverage)
 - `< 0`: Seeker pays Provider (discount offer in low-demand periods)
 
-10 sats/block ≈ 0.5% APY on a $100k position.
+Example values: 0.5% APY → `950`; 5% APY → `9500`. The on-chain divide is interleaved (`/1e5` twice) to keep the intermediate product inside int64 across realistic position sizes.
 
 ### Provider leverage
 
@@ -72,7 +77,7 @@ Provider deploys an offer with their collateral locked. No signature is required
 
 ## StabilityVault
 
-Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit`
+Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, totalCollateral, fundingRatePerBlock, openHeight, exit`
 
 `targetUSD`, `totalCollateral`, `oraclePk`, and `ticker` are invariant across transfers.
 

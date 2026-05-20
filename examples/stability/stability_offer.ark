@@ -25,10 +25,10 @@ options {
 contract StabilityOffer(
   pubkey  providerPk,
   pubkey  oraclePk,
-  bytes32 ticker,             // feed identifier; propagates into every vault
-  int     fundingSatPerBlock,
+  bytes32 ticker,              // feed identifier; propagates into every vault
+  int     fundingRatePerBlock, // signed fixed-point at scale 1e10 (see StabilityVault)
   int     maxExposureBTC,
-  int     collateralRatioPct, // min 100
+  int     collateralRatioPct,  // min 100
   int     exit
 ) {
 
@@ -71,7 +71,7 @@ contract StabilityOffer(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit
+        targetUSD, totalCollateral, fundingRatePerBlock, tx.time, exit
       ),
       "invalid vault output"
     );
@@ -82,7 +82,7 @@ contract StabilityOffer(
       require(
         tx.outputs[1].scriptPubKey == new StabilityOffer(
           providerPk, oraclePk, ticker,
-          fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit
+          fundingRatePerBlock, remainingCapacity, collateralRatioPct, exit
         ),
         "invalid remaining offer"
       );

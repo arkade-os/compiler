@@ -19,7 +19,7 @@ contract StabilityVault(
   bytes32 ticker,
   int     targetUSD,
   int     totalCollateral,
-  int     fundingSatPerBlock,
+  int     fundingRatePerBlock,
   int     openHeight,
   int     exit
 ) {
@@ -28,7 +28,7 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit
+        targetUSD, totalCollateral, fundingRatePerBlock, openHeight, exit
       ),
       "invalid transfer output"
     );
@@ -48,13 +48,13 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        amountUSD, collateralA, fundingSatPerBlock, openHeight, exit
+        amountUSD, collateralA, fundingRatePerBlock, openHeight, exit
       ), "bad output 0"
     );
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        targetUSD - amountUSD, collateralB, fundingSatPerBlock, openHeight, exit
+        targetUSD - amountUSD, collateralB, fundingRatePerBlock, openHeight, exit
       ), "bad output 1"
     );
   }
@@ -73,8 +73,10 @@ contract StabilityVault(
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
-    int seekerRaw = targetUSD * 100000000 / oraclePrice
-                  + fundingSatPerBlock * (tx.time - openHeight);
+    int seekerBase     = targetUSD * 100000000 / oraclePrice;
+    int fundingPartial = fundingRatePerBlock * seekerBase / 100000;
+    int funding        = fundingPartial * (tx.time - openHeight) / 100000;
+    int seekerRaw      = seekerBase + funding;
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "not provider");
@@ -108,8 +110,10 @@ contract StabilityVault(
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
-    int seekerRaw = targetUSD * 100000000 / oraclePrice
-                  + fundingSatPerBlock * (tx.time - openHeight);
+    int seekerBase     = targetUSD * 100000000 / oraclePrice;
+    int fundingPartial = fundingRatePerBlock * seekerBase / 100000;
+    int funding        = fundingPartial * (tx.time - openHeight) / 100000;
+    int seekerRaw      = seekerBase + funding;
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "not provider");
@@ -143,7 +147,7 @@ contract StabilityOffer(
   pubkey  providerPk,
   pubkey  oraclePk,
   bytes32 ticker,
-  int     fundingSatPerBlock,
+  int     fundingRatePerBlock,
   int     maxExposureBTC,
   int     collateralRatioPct,
   int     exit
@@ -171,7 +175,7 @@ contract StabilityOffer(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit
+        targetUSD, totalCollateral, fundingRatePerBlock, tx.time, exit
       ), "bad vault"
     );
     require(tx.outputs[0].value >= totalCollateral, "underpaid");
@@ -181,7 +185,7 @@ contract StabilityOffer(
       require(
         tx.outputs[1].scriptPubKey == new StabilityOffer(
           providerPk, oraclePk, ticker,
-          fundingSatPerBlock, remaining, collateralRatioPct, exit
+          fundingRatePerBlock, remaining, collateralRatioPct, exit
         ), "bad offer"
       );
     }
