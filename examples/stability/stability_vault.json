@@ -30,7 +30,15 @@
       "type": "int"
     },
     {
-      "name": "openTime",
+      "name": "lastUpdate",
+      "type": "int"
+    },
+    {
+      "name": "collateralRatioPct",
+      "type": "int"
+    },
+    {
+      "name": "seekerExitFee",
       "type": "int"
     },
     {
@@ -89,7 +97,7 @@
         "OP_CHECKSIG",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<ticker>,<targetUSD>,<totalCollateral>,<fundingRatePerSec>,<openTime>,<exit>)>",
+        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<ticker>,<targetUSD>,<totalCollateral>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
         "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTVALUE",
@@ -291,7 +299,7 @@
         "330",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<ticker>,<amountUSD>,<collateralA>,<fundingRatePerSec>,<openTime>,<exit>)>",
+        "<VTXO:StabilityVault(<newSeekerPk>,<providerPk>,<oraclePk>,<ticker>,<amountUSD>,<collateralA>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
         "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTVALUE",
@@ -300,7 +308,7 @@
         "OP_VERIFY",
         "1",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<remainingUSD>,<collateralB>,<fundingRatePerSec>,<openTime>,<exit>)>",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<remainingUSD>,<collateralB>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
         "OP_EQUAL",
         "1",
         "OP_INSPECTOUTPUTVALUE",
@@ -389,6 +397,606 @@
         "OP_CHECKSIGVERIFY",
         "<newSeekerPk>",
         "<newSeekerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "settleAndUpdateFunding",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newFundingRatePerSec",
+          "type": "int"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "providerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newFundingRatePerSec",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<providerPk>",
+        "<providerSig>",
+        "OP_CHECKSIG",
+        "<newFundingRatePerSec>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<tx.offchainTime >",
+        "<lastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<newTargetUSD>",
+        "0",
+        "OP_GREATERTHAN",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<newTargetUSD>,<totalCollateral>,<newFundingRatePerSec>,<tx.offchainTime>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "settleAndUpdateFunding",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newFundingRatePerSec",
+          "type": "int"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "addCapital",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "providerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "amount",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<providerPk>",
+        "<providerSig>",
+        "OP_CHECKSIG",
+        "<amount>",
+        "0",
+        "OP_GREATERTHAN",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<amount>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<targetUSD>,<newTotalCollateral>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<newTotalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "addCapital",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "removeCapital",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "providerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "amount",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<providerPk>",
+        "<providerSig>",
+        "OP_CHECKSIG",
+        "<amount>",
+        "0",
+        "OP_GREATERTHAN",
+        "<oraclePrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "<tx.offchainTime >",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<oracleAge>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<oracleAge>",
+        "600",
+        "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "OP_SHA256",
+        "<oracleMsg>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<tx.offchainTime >",
+        "<lastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<currentTargetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "100000000",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<currentSeekerBase>",
+        "OP_SCRIPTNUMTOLE64",
+        "100",
+        "<collateralRatioPct>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "100",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<amount>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<newTotalCollateral>",
+        "OP_GREATERTHANOREQUAL",
+        "<minCollateral>",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<targetUSD>,<newTotalCollateral>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<newTotalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<providerPk>)>",
+        "OP_EQUAL",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<amount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "removeCapital",
+      "functionInputs": [
+        {
+          "name": "providerSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
         "OP_CHECKSIG",
         "<exit>",
         "OP_CHECKSEQUENCEVERIFY",
@@ -518,11 +1126,35 @@
         "<oracleSig>",
         "OP_CHECKSIGFROMSTACK",
         "<tx.offchainTime >",
-        "<openTime>",
+        "<lastUpdate>",
         "OP_SCRIPTNUMTOLE64",
         "OP_SUB64",
         "OP_VERIFY",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
         "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<currentTargetUSD>",
         "OP_SCRIPTNUMTOLE64",
         "100000000",
         "OP_MUL64",
@@ -531,31 +1163,13 @@
         "OP_SCRIPTNUMTOLE64",
         "OP_DIV64",
         "OP_VERIFY",
-        "<fundingRatePerSec>",
-        "OP_SCRIPTNUMTOLE64",
-        "<seekerBase>",
-        "OP_SCRIPTNUMTOLE64",
-        "OP_MUL64",
-        "OP_VERIFY",
-        "1000000",
-        "OP_DIV64",
-        "OP_VERIFY",
-        "<fundingPartial>",
-        "OP_SCRIPTNUMTOLE64",
-        "<secsElapsed>",
-        "OP_SCRIPTNUMTOLE64",
-        "OP_MUL64",
-        "OP_VERIFY",
-        "1000000",
-        "OP_DIV64",
-        "OP_VERIFY",
-        "<seekerBase>",
-        "OP_SCRIPTNUMTOLE64",
-        "<funding>",
-        "OP_SCRIPTNUMTOLE64",
-        "OP_ADD64",
-        "OP_VERIFY",
         "<seekerRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "<seekerExitFee>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<seekerNet>",
         "OP_SCRIPTNUMTOLE64",
         "0",
         "OP_LESSTHANOREQUAL64",
@@ -571,7 +1185,7 @@
         "<VTXO:SingleSig(<providerPk>)>",
         "OP_EQUAL",
         "OP_ELSE",
-        "<seekerRaw>",
+        "<seekerNet>",
         "OP_SCRIPTNUMTOLE64",
         "<totalCollateral>",
         "OP_SCRIPTNUMTOLE64",
@@ -590,7 +1204,7 @@
         "OP_ELSE",
         "0",
         "OP_INSPECTOUTPUTVALUE",
-        "<seekerRaw>",
+        "<seekerNet>",
         "OP_GREATERTHANOREQUAL64",
         "OP_VERIFY",
         "0",
@@ -599,7 +1213,7 @@
         "OP_EQUAL",
         "<totalCollateral>",
         "OP_SCRIPTNUMTOLE64",
-        "<seekerRaw>",
+        "<seekerNet>",
         "OP_SCRIPTNUMTOLE64",
         "OP_SUB64",
         "OP_VERIFY",
@@ -824,11 +1438,35 @@
         "<oracleSig>",
         "OP_CHECKSIGFROMSTACK",
         "<tx.offchainTime >",
-        "<openTime>",
+        "<lastUpdate>",
         "OP_SCRIPTNUMTOLE64",
         "OP_SUB64",
         "OP_VERIFY",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
         "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<currentTargetUSD>",
         "OP_SCRIPTNUMTOLE64",
         "100000000",
         "OP_MUL64",
@@ -836,30 +1474,6 @@
         "<oraclePrice>",
         "OP_SCRIPTNUMTOLE64",
         "OP_DIV64",
-        "OP_VERIFY",
-        "<fundingRatePerSec>",
-        "OP_SCRIPTNUMTOLE64",
-        "<seekerBase>",
-        "OP_SCRIPTNUMTOLE64",
-        "OP_MUL64",
-        "OP_VERIFY",
-        "1000000",
-        "OP_DIV64",
-        "OP_VERIFY",
-        "<fundingPartial>",
-        "OP_SCRIPTNUMTOLE64",
-        "<secsElapsed>",
-        "OP_SCRIPTNUMTOLE64",
-        "OP_MUL64",
-        "OP_VERIFY",
-        "1000000",
-        "OP_DIV64",
-        "OP_VERIFY",
-        "<seekerBase>",
-        "OP_SCRIPTNUMTOLE64",
-        "<funding>",
-        "OP_SCRIPTNUMTOLE64",
-        "OP_ADD64",
         "OP_VERIFY",
         "<seekerRaw>",
         "OP_SCRIPTNUMTOLE64",
@@ -1008,16 +1622,20 @@
       ]
     }
   ],
-  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityVault(\n  pubkey  seekerPk,\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     targetUSD,\n  int     totalCollateral,\n  int     fundingRatePerSec,\n  int     openTime,\n  int     exit\n) {\n\n  function transfer(signature seekerSig, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        targetUSD, totalCollateral, fundingRatePerSec, openTime, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(amountUSD > 0, \"zero amount\");\n    require(amountUSD < targetUSD, \"amount exceeds balance\");\n\n    int remainingUSD = targetUSD - amountUSD;\n    int collateralA  = totalCollateral * amountUSD / targetUSD;\n    int collateralB  = totalCollateral - collateralA;\n\n    require(collateralA >= 330, \"split amount too small\");\n    require(collateralB >= 330, \"remainder too small\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        amountUSD, collateralA, fundingRatePerSec, openTime, exit\n      ),\n      \"invalid split output 0\"\n    );\n    require(tx.outputs[0].value >= collateralA, \"insufficient collateral A\");\n\n    require(\n      tx.outputs[1].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        remainingUSD, collateralB, fundingRatePerSec, openTime, exit\n      ),\n      \"invalid split output 1\"\n    );\n    require(tx.outputs[1].value >= collateralB, \"insufficient collateral B\");\n  }\n\n  function seekerExit(\n    signature seekerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int secsElapsed    = tx.offchainTime - openTime;\n    int seekerBase     = targetUSD * 100000000 / oraclePrice;\n    int fundingPartial = fundingRatePerSec * seekerBase / 1000000;\n    int funding        = fundingPartial * secsElapsed / 1000000;\n    int seekerRaw      = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n\n  function providerExit(\n    signature providerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int secsElapsed    = tx.offchainTime - openTime;\n    int seekerBase     = targetUSD * 100000000 / oraclePrice;\n    int fundingPartial = fundingRatePerSec * seekerBase / 1000000;\n    int funding        = fundingPartial * secsElapsed / 1000000;\n    int seekerRaw      = seekerBase + funding;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n}",
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityVault(\n  pubkey  seekerPk,\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     targetUSD,\n  int     totalCollateral,\n  int     fundingRatePerSec,\n  int     lastUpdate,\n  int     collateralRatioPct,\n  int     seekerExitFee,\n  int     exit\n) {\n\n  function transfer(signature seekerSig, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        targetUSD, totalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(amountUSD > 0, \"zero amount\");\n    require(amountUSD < targetUSD, \"amount exceeds balance\");\n\n    int remainingUSD = targetUSD - amountUSD;\n    int collateralA  = totalCollateral * amountUSD / targetUSD;\n    int collateralB  = totalCollateral - collateralA;\n\n    require(collateralA >= 330, \"split amount too small\");\n    require(collateralB >= 330, \"remainder too small\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        amountUSD, collateralA, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid split output 0\"\n    );\n    require(tx.outputs[0].value >= collateralA, \"insufficient collateral A\");\n\n    require(\n      tx.outputs[1].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        remainingUSD, collateralB, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid split output 1\"\n    );\n    require(tx.outputs[1].value >= collateralB, \"insufficient collateral B\");\n  }\n\n  function settleAndUpdateFunding(signature providerSig, int newFundingRatePerSec) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(newFundingRatePerSec >= 0, \"negative funding rate disallowed\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    require(newTargetUSD > 0, \"claim wiped by funding\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        newTargetUSD, totalCollateral, newFundingRatePerSec, tx.offchainTime,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid settle output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function addCapital(signature providerSig, int amount) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(amount > 0, \"zero amount\");\n\n    int newTotalCollateral = totalCollateral + amount;\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"collateral not deposited\");\n  }\n\n  function removeCapital(\n    signature providerSig,\n    int       amount,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(amount > 0, \"zero amount\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int currentTargetUSD  = targetUSD + delta;\n    int currentSeekerBase = currentTargetUSD * 100000000 / oraclePrice;\n    int minCollateral     = currentSeekerBase * (100 + collateralRatioPct) / 100;\n    int newTotalCollateral = totalCollateral - amount;\n    require(newTotalCollateral >= minCollateral, \"would breach collateral ratio\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid vault output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"vault underfunded\");\n    require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n    require(tx.outputs[1].value >= amount, \"provider underpaid\");\n  }\n\n  function seekerExit(\n    signature seekerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int currentTargetUSD  = targetUSD + delta;\n    int seekerRaw         = currentTargetUSD * 100000000 / oraclePrice;\n    int seekerNet         = seekerRaw - seekerExitFee;\n\n    if (seekerNet <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerNet >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerNet, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerNet;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n\n  function providerExit(\n    signature providerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int currentTargetUSD  = targetUSD + delta;\n    int seekerRaw         = currentTargetUSD * 100000000 / oraclePrice;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-20T09:34:34.833638865+00:00",
+  "updatedAt": "2026-05-20T10:14:03.044603243+00:00",
   "warnings": [
     "warning[type]: fn transfer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn settleAndUpdateFunding: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn addCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn removeCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn removeCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn seekerExit: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn seekerExit: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn seekerExit: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
@@ -1033,20 +1651,39 @@
     "warning[output-invariant]: fn 'split' (serverVariant=true): placeholder <collateralA> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'collateralA'",
     "warning[output-invariant]: fn 'split' (serverVariant=true): placeholder <collateralB> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'collateralB'",
     "warning[output-invariant]: fn 'split' (serverVariant=false): placeholder <newSeekerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newSeekerPk'",
+    "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <newTargetUSD> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTargetUSD'",
+    "warning[output-invariant]: fn 'addCapital' (serverVariant=true): placeholder <newTotalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTotalCollateral'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <currentTargetUSD> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'currentTargetUSD'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <currentSeekerBase> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'currentSeekerBase'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <newTotalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTotalCollateral'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <minCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'minCollateral'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <newTotalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTotalCollateral'",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerBase> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerBase'",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <fundingPartial> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'fundingPartial'",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <secsElapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'secsElapsed'",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerBase> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerBase'",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <funding> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'funding'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <currentTargetUSD> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'currentTargetUSD'",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerRaw'",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerRaw'",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerRaw'",
-    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerRaw'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerNet> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerNet'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerNet> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerNet'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerNet> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerNet'",
+    "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <seekerNet> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerNet'",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <providerPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'providerPayout'",
     "warning[output-invariant]: fn 'seekerExit' (serverVariant=true): placeholder <providerPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'providerPayout'",
     "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
@@ -1054,11 +1691,10 @@
     "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
     "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
     "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
-    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <seekerBase> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerBase'",
-    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <fundingPartial> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'fundingPartial'",
-    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <secsElapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'secsElapsed'",
-    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <seekerBase> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerBase'",
-    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <funding> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'funding'",
+    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <currentTargetUSD> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'currentTargetUSD'",
     "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <seekerRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerRaw'",
     "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <seekerRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerRaw'",
     "warning[output-invariant]: fn 'providerExit' (serverVariant=true): placeholder <seekerRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerRaw'",

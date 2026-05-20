@@ -8,12 +8,15 @@
 //   1. Provider deploys StabilityOffer with their BTC collateral.
 //   2. Taker calls take(userBTC, seekerPk, oraclePrice, oracleTime, oracleSig).
 //   3. Contract verifies the oracle signature over sha256(ticker||price||time),
-//      enforces freshness, and opens a StabilityVault bound to this ticker.
+//      enforces freshness, charges takeFee to the provider, and opens a
+//      StabilityVault bound to this ticker.
 //   4. Provider calls withdraw() to reclaim unused collateral at any time.
 //
-// Replay protection: the oracle message embeds ticker, price, and timestamp.
-// Same-signature reuse across feeds is impossible (ticker mismatch); stale
-// signatures fail the 144-block freshness check.
+// Fees committed at offer creation (immutable across takes):
+//   - takeFee:        sats paid to provider from taker's deposit on take
+//   - seekerExitFee:  sats paid to provider when the Seeker later calls
+//                     seekerExit; propagated into every vault created from
+//                     this offer.
 
 import "stability_vault.ark";
 
@@ -26,23 +29,26 @@ contract StabilityOffer(
   pubkey  providerPk,
   pubkey  oraclePk,
   bytes32 ticker,              // feed identifier; propagates into every vault
-  int     fundingRatePerSec,   // signed fixed-point at scale 1e12 (see StabilityVault)
+  int     fundingRatePerSec,   // signed fixed-point at scale 1e12; seeker accepts this rate on take
   int     maxExposureBTC,
-  int     collateralRatioPct,  // min 100
+  int     collateralRatioPct,  // min 100 logically; offer guards 50%+ here
+  int     seekerExitFee,       // propagated into every vault
+  int     takeFee,             // sats charged on take, paid to provider
   int     exit
 ) {
 
   // -------------------------------------------------------------------------
   // TAKE
   // Non-interactive: no provider signature.
-  // Caller supplies oracle-signed price; contract verifies the full message
-  // and opens a StabilityVault at the attested price.
+  // Caller supplies oracle-signed price; contract verifies the full message,
+  // charges takeFee, and opens a StabilityVault at the attested price.
   //
   // Transaction layout:
   //   input[0]:  this StabilityOffer UTXO
   //   input[1]:  taker's BTC (userBTC sats)
   //   output[0]: StabilityVault
-  //   output[1]: remaining StabilityOffer (if partial fill)
+  //   output[1]: takeFee → provider           (only if takeFee > 330)
+  //   output[2]: remaining StabilityOffer     (only if partial fill)
   // -------------------------------------------------------------------------
   function take(
     int       userBTC,
@@ -63,7 +69,7 @@ contract StabilityOffer(
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int targetUSD      = userBTC * oraclePrice / 100000000;
+    int targetUSD = userBTC * oraclePrice / 100000000;
     require(targetUSD > 0, "position too small");
 
     int totalCollateral = userBTC * (100 + collateralRatioPct) / 100;
@@ -71,29 +77,35 @@ contract StabilityOffer(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime, exit
+        targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
+        collateralRatioPct, seekerExitFee, exit
       ),
       "invalid vault output"
     );
     require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
 
+    if (takeFee > 330) {
+      require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
+      require(tx.outputs[1].value >= takeFee, "provider underpaid take fee");
+    }
+
     int remainingCapacity = maxExposureBTC - userBTC;
     if (remainingCapacity > 0) {
       require(
-        tx.outputs[1].scriptPubKey == new StabilityOffer(
+        tx.outputs[2].scriptPubKey == new StabilityOffer(
           providerPk, oraclePk, ticker,
-          fundingRatePerSec, remainingCapacity, collateralRatioPct, exit
+          fundingRatePerSec, remainingCapacity, collateralRatioPct,
+          seekerExitFee, takeFee, exit
         ),
         "invalid remaining offer"
       );
       int remainingCollateral = remainingCapacity * collateralRatioPct / 100;
-      require(tx.outputs[1].value >= remainingCollateral, "insufficient offer collateral");
+      require(tx.outputs[2].value >= remainingCollateral, "insufficient offer collateral");
     }
   }
 
   // -------------------------------------------------------------------------
-  // WITHDRAW
-  // Provider reclaims unclaimed collateral from the offer.
+  // WITHDRAW — Provider reclaims unclaimed collateral from the offer.
   // -------------------------------------------------------------------------
   function withdraw(signature providerSig) {
     require(checkSig(providerSig, providerPk), "invalid provider sig");
