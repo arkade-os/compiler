@@ -158,6 +158,42 @@ fn test_settle_has_both_itm_and_otm_branches() {
 }
 
 #[test]
+fn test_exit_leaf_excludes_oracle_pubkey() {
+    // oraclePk is only used as the key in checkSigFromStack — it verifies an
+    // oracle-signed price, not a Bitcoin transaction. The N-of-N exit leaf
+    // must NOT require oraclePk's runtime signature, or the unilateral exit
+    // path would be unreachable (Stork-style oracles don't co-sign L1 txs
+    // on demand). Regression test for the compiler enhancement that filters
+    // checkSigFromStack-only pubkeys out of the exit-leaf N-of-N.
+    let out = compile(CALL_CODE).unwrap();
+    for fn_name in ["settle", "transferSeller", "transferBuyer"] {
+        let exit = out
+            .functions
+            .iter()
+            .find(|f| f.name == fn_name && !f.server_variant)
+            .unwrap();
+        let asm = exit.asm.join(" ");
+        assert!(
+            !asm.contains("<oraclePk>"),
+            "{fn_name} exit leaf must not embed oraclePk"
+        );
+        assert!(
+            !asm.contains("<oraclePkSig>"),
+            "{fn_name} exit leaf must not require oraclePkSig"
+        );
+        let witness_names: Vec<&str> = exit
+            .function_inputs
+            .iter()
+            .map(|i| i.name.as_str())
+            .collect();
+        assert!(
+            !witness_names.contains(&"oraclePkSig"),
+            "{fn_name} exit witness schema must not include oraclePkSig"
+        );
+    }
+}
+
+#[test]
 fn test_transfers_preserve_both_legs() {
     // Each transfer continuation output must keep both BTC value and the
     // stablecoin asset balance.

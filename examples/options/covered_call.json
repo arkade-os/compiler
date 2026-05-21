@@ -247,10 +247,6 @@
         {
           "name": "buyerPkSig",
           "type": "signature"
-        },
-        {
-          "name": "oraclePkSig",
-          "type": "signature"
         }
       ],
       "witnessSchema": [
@@ -263,18 +259,13 @@
           "name": "buyerPkSig",
           "type": "signature",
           "encoding": "schnorr-64"
-        },
-        {
-          "name": "oraclePkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
         }
       ],
       "serverVariant": false,
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "3-of-3 signatures required (introspection fallback)"
+          "message": "2-of-2 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -287,9 +278,6 @@
         "OP_CHECKSIGVERIFY",
         "<buyerPk>",
         "<buyerPkSig>",
-        "OP_CHECKSIGVERIFY",
-        "<oraclePk>",
-        "<oraclePkSig>",
         "OP_CHECKSIG",
         "<exit>",
         "OP_CHECKSEQUENCEVERIFY",
@@ -393,10 +381,6 @@
           "type": "signature"
         },
         {
-          "name": "oraclePkSig",
-          "type": "signature"
-        },
-        {
           "name": "newSellerPkSig",
           "type": "signature"
         }
@@ -413,11 +397,6 @@
           "encoding": "schnorr-64"
         },
         {
-          "name": "oraclePkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
           "name": "newSellerPkSig",
           "type": "signature",
           "encoding": "schnorr-64"
@@ -427,7 +406,7 @@
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "4-of-4 signatures required (introspection fallback)"
+          "message": "3-of-3 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -440,9 +419,6 @@
         "OP_CHECKSIGVERIFY",
         "<buyerPk>",
         "<buyerPkSig>",
-        "OP_CHECKSIGVERIFY",
-        "<oraclePk>",
-        "<oraclePkSig>",
         "OP_CHECKSIGVERIFY",
         "<newSellerPk>",
         "<newSellerPkSig>",
@@ -549,10 +525,6 @@
           "type": "signature"
         },
         {
-          "name": "oraclePkSig",
-          "type": "signature"
-        },
-        {
           "name": "newBuyerPkSig",
           "type": "signature"
         }
@@ -569,11 +541,6 @@
           "encoding": "schnorr-64"
         },
         {
-          "name": "oraclePkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
           "name": "newBuyerPkSig",
           "type": "signature",
           "encoding": "schnorr-64"
@@ -583,7 +550,7 @@
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "4-of-4 signatures required (introspection fallback)"
+          "message": "3-of-3 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -596,9 +563,6 @@
         "OP_CHECKSIGVERIFY",
         "<buyerPk>",
         "<buyerPkSig>",
-        "OP_CHECKSIGVERIFY",
-        "<oraclePk>",
-        "<oraclePkSig>",
         "OP_CHECKSIGVERIFY",
         "<newBuyerPk>",
         "<newBuyerPkSig>",
@@ -614,7 +578,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-21T23:01:38.460546529+00:00",
+  "updatedAt": "2026-05-21T23:35:09.196168743+00:00",
   "warnings": [
     "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",

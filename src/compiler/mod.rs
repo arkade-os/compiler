@@ -149,16 +149,209 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
     }
 }
 
-/// Collect all pubkey parameters from constructor and function for N-of-N fallback.
-/// The Arkade operator key is always external and never appears as a constructor parameter,
-/// so no exclusion is needed here.
+/// Walk an expression tree, recording the names of pubkey identifiers that
+/// appear as the `pubkey` operand of `checkSig` (transaction-signing
+/// context) vs `checkSigFromStack` / `checkSigFromStackVerify` (data-signing
+/// context — verifies a signature over an arbitrary byte string).
+fn collect_pubkey_usage_in_expr(
+    expr: &Expression,
+    tx_sigs: &mut std::collections::HashSet<String>,
+    data_sigs: &mut std::collections::HashSet<String>,
+) {
+    match expr {
+        Expression::CheckSigExpr { pubkey, .. } => {
+            tx_sigs.insert(pubkey.clone());
+        }
+        Expression::CheckSigFromStackExpr { pubkey, .. }
+        | Expression::CheckSigFromStackVerify { pubkey, .. } => {
+            data_sigs.insert(pubkey.clone());
+        }
+        Expression::AssetLookup { index, .. } | Expression::AssetCount { index, .. } => {
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::AssetAt {
+            io_index,
+            asset_index,
+            ..
+        } => {
+            collect_pubkey_usage_in_expr(io_index, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(asset_index, tx_sigs, data_sigs);
+        }
+        Expression::InputIntrospection { index, .. }
+        | Expression::OutputIntrospection { index, .. } => {
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::BinaryOp { left, right, .. } => {
+            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
+        }
+        Expression::GroupSum { index, .. } | Expression::GroupNumIO { index, .. } => {
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => {
+            collect_pubkey_usage_in_expr(group_index, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(io_index, tx_sigs, data_sigs);
+        }
+        Expression::ArrayIndex { array, index } => {
+            collect_pubkey_usage_in_expr(array, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::Concat { left, right, .. } => {
+            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
+        }
+        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => {
+            collect_pubkey_usage_in_expr(data, tx_sigs, data_sigs);
+        }
+        Expression::Sha256Update { context, chunk } => {
+            collect_pubkey_usage_in_expr(context, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(chunk, tx_sigs, data_sigs);
+        }
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => {
+            collect_pubkey_usage_in_expr(context, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(last_chunk, tx_sigs, data_sigs);
+        }
+        Expression::Neg64 { value }
+        | Expression::Le64ToScriptNum { value }
+        | Expression::Le32ToLe64 { value } => {
+            collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
+        }
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => {
+            collect_pubkey_usage_in_expr(scalar, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(point_p, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(point_q, tx_sigs, data_sigs);
+        }
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => {
+            collect_pubkey_usage_in_expr(point_p, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(tweak, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(point_q, tx_sigs, data_sigs);
+        }
+        Expression::ContractInstance { args, .. } => {
+            for arg in args {
+                collect_pubkey_usage_in_expr(arg, tx_sigs, data_sigs);
+            }
+        }
+        // Leaves with no nested expressions / no pubkey usage
+        Expression::Variable(_)
+        | Expression::Literal(_)
+        | Expression::Property(_)
+        | Expression::CurrentInput(_)
+        | Expression::TxIntrospection { .. }
+        | Expression::GroupFind { .. }
+        | Expression::GroupProperty { .. }
+        | Expression::AssetGroupsLength
+        | Expression::ArrayLength(_) => {}
+    }
+}
+
+/// Walk a requirement, recording pubkey usage. CheckMultisig keys are
+/// transaction-signing (they go into OP_CHECKSIGADD / OP_CHECKMULTISIG).
+fn collect_pubkey_usage_in_req(
+    req: &Requirement,
+    tx_sigs: &mut std::collections::HashSet<String>,
+    data_sigs: &mut std::collections::HashSet<String>,
+) {
+    match req {
+        Requirement::CheckSig { pubkey, .. } => {
+            tx_sigs.insert(pubkey.clone());
+        }
+        Requirement::CheckSigFromStack { pubkey, .. } => {
+            data_sigs.insert(pubkey.clone());
+        }
+        Requirement::CheckMultisig { pubkeys, .. } => {
+            for pk in pubkeys {
+                tx_sigs.insert(pk.clone());
+            }
+        }
+        Requirement::Comparison { left, right, .. } => {
+            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
+        }
+        Requirement::After { .. } | Requirement::HashEqual { .. } => {}
+    }
+}
+
+/// Walk a statement list, recursing into bodies and conditions.
+fn collect_pubkey_usage_in_stmts(
+    stmts: &[Statement],
+    tx_sigs: &mut std::collections::HashSet<String>,
+    data_sigs: &mut std::collections::HashSet<String>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::Require(req) => collect_pubkey_usage_in_req(req, tx_sigs, data_sigs),
+            Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
+                collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                collect_pubkey_usage_in_expr(condition, tx_sigs, data_sigs);
+                collect_pubkey_usage_in_stmts(then_body, tx_sigs, data_sigs);
+                if let Some(eb) = else_body {
+                    collect_pubkey_usage_in_stmts(eb, tx_sigs, data_sigs);
+                }
+            }
+            Statement::ForIn { iterable, body, .. } => {
+                collect_pubkey_usage_in_expr(iterable, tx_sigs, data_sigs);
+                collect_pubkey_usage_in_stmts(body, tx_sigs, data_sigs);
+            }
+        }
+    }
+}
+
+/// Compute the set of pubkey identifiers that appear **only** in
+/// `checkSigFromStack` contexts across every function in the contract,
+/// never in `checkSig`. These keys verify oracle-signed data, not Bitcoin
+/// transactions — an off-chain price oracle (Stork, Pyth, …) publishes
+/// signatures over byte strings, it does not co-sign individual L1 spends.
+/// Including such a key in the N-of-N exit leaf would make the exit path
+/// unreachable in practice. Filtering them out here lets the exit leaf
+/// stay broadcastable by the remaining transaction signers.
+fn collect_data_only_pubkeys(
+    contract: &crate::models::Contract,
+) -> std::collections::HashSet<String> {
+    let mut tx_sigs = std::collections::HashSet::new();
+    let mut data_sigs = std::collections::HashSet::new();
+    for function in &contract.functions {
+        collect_pubkey_usage_in_stmts(&function.statements, &mut tx_sigs, &mut data_sigs);
+    }
+    data_sigs.difference(&tx_sigs).cloned().collect()
+}
+
+/// Collect pubkey parameters from constructor and function for the N-of-N
+/// exit fallback. Excludes pubkeys that only ever appear as the key in a
+/// `checkSigFromStack` call — those verify oracle-signed data and have no
+/// runtime tx-signing role.
+///
+/// The Arkade operator key is always external and never appears as a
+/// constructor parameter, so no further exclusion is needed.
 fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) -> Vec<String> {
+    let excluded = collect_data_only_pubkeys(contract);
     contract
         .parameters
         .iter()
         .chain(function.parameters.iter())
         .filter(|p| p.param_type == "pubkey")
         .map(|p| p.name.clone())
+        .filter(|name| !excluded.contains(name))
         .collect()
 }
 

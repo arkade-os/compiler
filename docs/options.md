@@ -104,7 +104,7 @@ Every function compiles to two tapleaves:
 
 Arkade-wide design constraint: introspection opcodes (`OP_INSPECTOUT*`, `OP_INSPECTOUTASSETLOOKUP`, …) only live in the cooperative layer where the Operator validates them. The exit path must settle as a pure Bitcoin script, so it falls back to N-of-N consent.
 
-For `settle` the N is **seller + buyer + oracle**. All three runtime signatures plus the timelock. The cooperative path uses `checkSigFromStack` (verifying the oracle's signature on the reconstructed message hash); the exit path uses a plain `OP_CHECKSIG` over the live oracle key. Either way the oracle must participate when the Operator is down.
+For `settle` the N is **seller + buyer**. The oracle key is *not* included in the exit-leaf N-of-N: the compiler distinguishes pubkeys used in `checkSig` (transaction signers) from those used only in `checkSigFromStack` (data signers — verifying off-chain oracle signatures over byte strings). The Stork-style oracle never co-signs individual L1 transactions; including it in the N-of-N would make the unilateral exit unreachable. Filtered out by `collect_data_only_pubkeys` in the compiler, so the exit leaf stays broadcastable by the two parties alone.
 
 Total tapleaves: **6** (CoveredCall) + **6** (CashSecuredPut) = 12.
 
@@ -113,6 +113,8 @@ Total tapleaves: **6** (CoveredCall) + **6** (CashSecuredPut) = 12.
 ## L1 unilateral exit and the pre-signed OTM unwind
 
 The cooperative path covers ~all normal settlement. The script-level N-of-N exit covers the case where the Operator is down but the oracle and counterparty are reachable. The remaining catastrophic case — Operator **and** oracle down past expiry — needs an additional layer, because without the oracle signature the script can't reach the settle branch and without the Operator the cooperative path is closed.
+
+The compiler-level exclusion of the oracle key from the N-of-N (see "Cooperative vs exit paths" above) is what makes this layer feasible. With seller + buyer as the only N-of-N signers, a pre-signed template needs only their two signatures captured at funding time — no oracle co-signature, which would be impossible to obtain.
 
 ### Why pre-signed ITM templates don't work
 
@@ -152,10 +154,15 @@ This is the standard "stuck funds protection" pattern from Lightning: a fallback
 
 ### What the SDK has to do at funding
 
-1. Construct the OTM unwind template with `nLockTime = expiryHeight + STUCK_FUNDS_TIMELOCK`.
-2. Both parties sign with `SIGHASH_ALL`.
-3. Both parties (and ideally Arkade backup infra) store the signed template.
-4. After `nLockTime` matures, either party can broadcast.
+1. Wait for the funding tx to confirm so the vault outpoint is fixed.
+2. Construct the OTM unwind template with `nLockTime = expiryHeight + STUCK_FUNDS_TIMELOCK`.
+3. Both parties sign with `SIGHASH_ALL`. The two-of-two N-of-N signatures (`<sellerPkSig>` + `<buyerPkSig>`) are exactly what the exit leaf consumes — no oracle key needed because the compiler filters checkSigFromStack-only pubkeys out of the N-of-N.
+4. Both parties (and ideally Arkade backup infra) store the signed template.
+5. After `nLockTime` matures, either party can broadcast.
+
+### Fee handling for the pre-signed template
+
+`SIGHASH_ALL` commits to every output, including any fee-bearing output, so on-chain fee bumping (CPFP via an anchor output, RBF) isn't available against the signed template. The mitigation is **out-of-band fee payment**: direct submission to a miner / accelerator service (e.g. Mempool.space accelerator, MARA Slipstream, Slipstream-style direct-to-miner endpoints). The static on-chain fee in the template can be set to zero or near-zero; the OOB payment covers the actual mining cost at broadcast time. This keeps the pre-signed template valid indefinitely regardless of how the on-chain fee market moves.
 
 For the cooperative + N-of-N exit paths the SDK does its usual thing — no pre-signing required.
 
