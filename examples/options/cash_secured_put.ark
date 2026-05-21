@@ -1,35 +1,27 @@
 // CashSecuredPut Contract
 //
-// Bitcoin-native, physically-settled cash-secured put inspired by
-// Rysk Finance v12 (https://app.rysk.finance/earn). Mirror of CoveredCall.
+// Bitcoin-native, oracle-triggered, physically-settled European cash-secured
+// put. Mirror of CoveredCall. Faithful structural match to Rysk Finance v12.
 //
-// European-style put option:
-//   - Seller (writer) locks `stableAmount` of `stableAssetId` (USDT/USDC)
-//     as the cash backing — enough to buy `btcSats` of BTC at the strike.
-//   - Buyer holds the long put; premium paid off-contract in the
-//     funding transaction.
-//   - At `expiryHeight` the buyer's exercise window opens. Within
-//     `graceBlocks` they may exercise by delivering `btcSats` of BTC to
-//     the seller and receiving the `stableAmount` stablecoin (i.e.
-//     "putting" BTC to the seller at strike).
-//   - After `expiryHeight + graceBlocks` the seller reclaims the
-//     stablecoin if the put was not exercised (i.e. it expired OTM and
-//     the buyer rationally walked away).
+// Both sides pre-commit liquidity at trade execution:
+//   - Seller deposits `stableAmount` of `stableAssetId` (the strike cash).
+//   - Buyer deposits `btcSats` of BTC (the underlying they may put).
+//   - Premium flows MM->seller off-contract in the same funding tx.
+// All collateral remains escrowed in this vault until expiry.
 //
-// No oracle dependency: the buyer's exercise decision is the settlement
-// signal. Counterpart product to CoveredCall — together they cover
-// Rysk's full lineup.
+// At expiry, anyone supplies a fresh oracle-signed BTC/USD reference price.
+// The contract branches:
+//   - OTM (oraclePrice >= strikePrice): unwind. Seller reclaims the
+//     stablecoin, buyer reclaims the BTC.
+//   - ITM (oraclePrice <  strikePrice): physical swap at strike. Seller
+//     receives `btcSats` of BTC (buying at strike), buyer receives
+//     `stableAmount` of `stableAssetId` (selling at strike).
 //
-// Transaction layout for exercise:
-//   input[0]:  this CashSecuredPut UTXO     (stableAmount stableAssetId)
-//   input[1+]: buyer's BTC inputs           (>= btcSats + buyer's fees)
-//   output[0]: seller receives the BTC      (btcSats BTC, locked to sellerPk)
-//   output[1]: buyer receives the cash      (stableAmount stableAssetId, locked to buyerPk)
-//   output[2+]: buyer's BTC change          (unconstrained)
+// settle() takes no party signature - the outcome is fully determined by
+// the oracle's attested price. Any keeper or either party can trigger it.
 //
-// Either party may re-assign their leg at any time before reclaim via
-// `transferSeller` / `transferBuyer` (pure key swaps preserving
-// collateral and contract terms).
+// Oracle model and transfer functions are identical to CoveredCall;
+// see that file for details.
 
 import "single_sig.ark";
 
@@ -39,95 +31,114 @@ options {
 }
 
 contract CashSecuredPut(
-  pubkey  sellerPk,         // option writer; locks the cash collateral
+  pubkey  sellerPk,         // option writer; locks the cash
   pubkey  buyerPk,          // option holder
+  pubkey  oraclePk,         // BTC/USD oracle
+  bytes32 ticker,           // feed identifier, e.g. sha256("BTC/USD")
   bytes32 stableAssetId,    // USDT / USDC asset id
-  int     stableAmount,     // total stablecoin locked (= strike × notional)
-  int     btcSats,          // BTC buyer must deliver to exercise
-  int     expiryHeight,     // exercise window opens at this block height
-  int     graceBlocks,      // length of the exercise window
+  int     stableAmount,     // seller's deposit = strikePrice * btcSats / 1e8
+  int     btcSats,          // buyer's deposit
+  int     strikePrice,      // strike in stableAssetId base units per 1 BTC
+  int     expiryHeight,     // settle unlocks at this block height
   int     exit              // exit timelock in blocks
 ) {
 
   // -------------------------------------------------------------------------
-  // EXERCISE
-  // Buyer exercises by delivering `btcSats` of BTC to the seller and
-  // receiving the locked stablecoin. Only valid inside the exercise window.
+  // SETTLE
+  // Anyone may settle after expiry by supplying a fresh oracle-signed price.
+  // No party signature is needed.
   // -------------------------------------------------------------------------
-  function exercise(signature buyerSig) {
-    int windowClose = expiryHeight + graceBlocks;
+  function settle(
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
     require(tx.time >= expiryHeight, "before expiry");
-    require(tx.time < windowClose, "exercise window closed");
-    require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
+    require(oraclePrice > 0, "invalid oracle price");
 
-    // Output 0: seller receives the BTC delivered by the buyer.
-    require(tx.outputs[0].value >= btcSats, "seller underpaid");
-    require(
-      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
-      "output 0 not seller"
-    );
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 144, "stale oracle");
 
-    // Output 1: buyer receives the stablecoin collateral.
-    require(
-      tx.outputs[1].assets.lookup(stableAssetId) >= stableAmount,
-      "buyer underpaid"
-    );
-    require(
-      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
-      "output 1 not buyer"
-    );
-  }
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-  // -------------------------------------------------------------------------
-  // RECLAIM
-  // Seller reclaims the stablecoin after the exercise window closes (put
-  // went OTM and the buyer did not exercise).
-  // -------------------------------------------------------------------------
-  function reclaim(signature sellerSig) {
-    int reclaimHeight = expiryHeight + graceBlocks;
-    require(tx.time >= reclaimHeight, "reclaim window not open");
-    require(checkSig(sellerSig, sellerPk), "invalid seller sig");
+    if (oraclePrice < strikePrice) {
+      // ITM: physical swap at strike.
+      // Output 0: seller receives the BTC (buying at strike).
+      // Output 1: buyer receives the stablecoin (selling at strike).
+      require(tx.outputs[0].value >= btcSats, "seller underpaid");
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
+        "output 0 not seller"
+      );
+      require(
+        tx.outputs[1].assets.lookup(stableAssetId) >= stableAmount,
+        "buyer underpaid"
+      );
+      require(
+        tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
+        "output 1 not buyer"
+      );
+    } else {
+      // OTM: unwind. Each side reclaims original collateral.
+      // Output 0: seller receives stablecoin back.
+      // Output 1: buyer receives BTC back.
+      require(
+        tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,
+        "seller underpaid"
+      );
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
+        "output 0 not seller"
+      );
+      require(tx.outputs[1].value >= btcSats, "buyer underpaid");
+      require(
+        tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
+        "output 1 not buyer"
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
   // TRANSFER_SELLER
-  // Writer re-assigns the short leg to a new seller. Collateral & terms
-  // preserved; buyer leg unchanged.
+  // Re-assigns the short leg to a new seller. Both collateral legs are
+  // preserved on the continuation output.
   // -------------------------------------------------------------------------
   function transferSeller(signature sellerSig, pubkey newSellerPk) {
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
-
     require(
       tx.outputs[0].scriptPubKey == new CashSecuredPut(
-        newSellerPk, buyerPk, stableAssetId,
-        stableAmount, btcSats, expiryHeight, graceBlocks, exit
+        newSellerPk, buyerPk, oraclePk, ticker, stableAssetId,
+        stableAmount, btcSats, strikePrice, expiryHeight, exit
       ),
       "invalid transfer output"
     );
+    require(tx.outputs[0].value >= btcSats, "BTC not preserved");
     require(
       tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,
-      "collateral not preserved"
+      "stablecoin not preserved"
     );
   }
 
   // -------------------------------------------------------------------------
   // TRANSFER_BUYER
-  // Holder re-assigns the long leg to a new buyer. Collateral & terms
-  // preserved; seller leg unchanged.
+  // Re-assigns the long leg to a new buyer. Both collateral legs are
+  // preserved on the continuation output.
   // -------------------------------------------------------------------------
   function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
-
     require(
       tx.outputs[0].scriptPubKey == new CashSecuredPut(
-        sellerPk, newBuyerPk, stableAssetId,
-        stableAmount, btcSats, expiryHeight, graceBlocks, exit
+        sellerPk, newBuyerPk, oraclePk, ticker, stableAssetId,
+        stableAmount, btcSats, strikePrice, expiryHeight, exit
       ),
       "invalid transfer output"
     );
+    require(tx.outputs[0].value >= btcSats, "BTC not preserved");
     require(
       tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,
-      "collateral not preserved"
+      "stablecoin not preserved"
     );
   }
 }
