@@ -4,32 +4,41 @@
 // Seeker holds a fixed USD value; Provider locks additional collateral and
 // takes a leveraged BTC long. Provider pays Seeker a funding rate.
 //
+// Funding model (USD-compound):
+//   At every settlement boundary the USD claim is rolled forward:
+//     elapsed       = tx.offchainTime - lastUpdate
+//     newTargetUSD  = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
+//   targetUSD compounds in USD terms. fundingRatePerSec is a signed
+//   fixed-point fraction at scale 1e12.
+//
+// Settlement math (single shape across settleAndUpdateFunding,
+// seekerExit, providerExit, removeCapital):
+//   newTargetUSD = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
+//   seekerRaw    = newTargetUSD × (1 - seekerExitFee/1e4) × 1e8 / P   [seekerExit]
+//   seekerRaw    = newTargetUSD × 1e8 / P                              [providerExit]
+//   seekerPayout = clamp(seekerRaw, 0, totalCollateral)
+//   providerPayout = totalCollateral − seekerPayout
+//
+// seekerExitFee is a basis-point fraction (1e4 scale): 100 = 1%, 10000 = 100%.
+// It applies in USD terms, before conversion to sats — so the fee scales
+// with position size and matches the % shape of fundingRatePerSec.
+//
 // Oracle model (Fuji-style signed price feed):
 //   Oracle off-chain produces:
 //     msg = sha256(ticker || price || timestamp)
 //     sig = sign(oraclePk, msg)
-//   where price and timestamp are encoded as 8-byte little-endian ints.
+//   where price and timestamp are 8-byte little-endian unsigned ints.
 //   At settlement the caller supplies (oraclePrice, oracleTime, oracleSig).
-//   The contract:
-//     1. Verifies freshness:  tx.time - oracleTime <= 144 blocks
-//     2. Reconstructs msg on-chain via `sha256(ticker + price + time)`
-//        — the `+` operator concatenates (OP_CAT) when at least one side
-//        is bytes-like; int sides are auto-coerced to fixed 8-byte LE so
-//        the on-chain hash matches the off-chain one.
-//     3. Verifies the oracle signature against the reconstructed hash
+//   Freshness: tx.offchainTime - oracleTime <= 600 seconds.
 //
-//   Three pieces of replay protection are baked in:
-//     - ticker     → binds the signature to this feed (e.g. BTC/USD vs ETH/USD)
-//     - price      → the value being attested
-//     - timestamp  → makes each oracle update unique; combined with the
-//                    144-block freshness check, stale signatures are rejected
+//   `tx.offchainTime` is the TEE-introspector wallclock (unix seconds),
+//   distinct from `tx.time` (Bitcoin nLockTime, block height).
 //
-// Settlement math:
-//   seekerBase     = targetUSD × 1e8 / oraclePrice
-//   fundingAccrued = fundingSatPerBlock × (tx.time - openHeight)
-//   seekerRaw      = seekerBase + fundingAccrued
-//   seekerPayout   = clamp(seekerRaw, 0, totalCollateral)
-//   providerPayout = totalCollateral - seekerPayout
+// Three pieces of oracle replay protection are baked into the message:
+//   - ticker     → binds the signature to this feed
+//   - price      → the value being attested
+//   - timestamp  → unique per update; combined with the freshness window,
+//                  stale signatures are rejected.
 
 import "single_sig.ark";
 
@@ -41,18 +50,19 @@ options {
 contract StabilityVault(
   pubkey  seekerPk,           // current holder of the USD claim
   pubkey  providerPk,         // collateral provider, holds the long side
-  pubkey  oraclePk,           // oracle: only signatures from this key accepted
+  pubkey  oraclePk,           // only signatures from this key accepted
   bytes32 ticker,             // feed identifier (e.g. sha256("BTC/USD"))
-  int     targetUSD,          // seeker's USD claim in cents (immutable across transfers)
-  int     totalCollateral,    // sats locked (immutable across transfers)
-  int     fundingSatPerBlock, // signed: >0 provider pays seeker, <0 seeker pays
-  int     openHeight,         // block height at position open; basis for funding accrual
+  int     targetUSD,          // seeker's USD claim in cents; mutates on settle
+  int     totalCollateral,    // sats locked; mutates on add/removeCapital
+  int     fundingRatePerSec,  // signed fixed-point at scale 1e12; mutates on settle
+  int     lastUpdate,         // unix seconds; basis for funding accrual
+  int     collateralRatioPct, // min collateral ratio for removeCapital (e.g. 50 = 1.5:1)
+  int     seekerExitFee,      // basis points (1e4 scale); seekerExit pays fee × targetUSD to provider
   int     exit                // exit timelock in blocks
 ) {
 
   // -------------------------------------------------------------------------
-  // TRANSFER
-  // Pure key swap — no oracle involvement.
+  // TRANSFER — pure key swap, no oracle.
   // -------------------------------------------------------------------------
   function transfer(signature seekerSig, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
@@ -60,7 +70,8 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingSatPerBlock, openHeight, exit
+        targetUSD, totalCollateral, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, seekerExitFee, exit
       ),
       "invalid transfer output"
     );
@@ -68,8 +79,7 @@ contract StabilityVault(
   }
 
   // -------------------------------------------------------------------------
-  // SPLIT
-  // Proportional USD-claim split into two independent positions.
+  // SPLIT — proportional USD-claim split into two independent positions.
   // -------------------------------------------------------------------------
   function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
@@ -86,7 +96,8 @@ contract StabilityVault(
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
         newSeekerPk, providerPk, oraclePk, ticker,
-        amountUSD, collateralA, fundingSatPerBlock, openHeight, exit
+        amountUSD, collateralA, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, seekerExitFee, exit
       ),
       "invalid split output 0"
     );
@@ -95,7 +106,8 @@ contract StabilityVault(
     require(
       tx.outputs[1].scriptPubKey == new StabilityVault(
         seekerPk, providerPk, oraclePk, ticker,
-        remainingUSD, collateralB, fundingSatPerBlock, openHeight, exit
+        remainingUSD, collateralB, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, seekerExitFee, exit
       ),
       "invalid split output 1"
     );
@@ -103,9 +115,201 @@ contract StabilityVault(
   }
 
   // -------------------------------------------------------------------------
-  // SEEKER EXIT
-  // Seeker exits to BTC at the oracle-attested price.
-  // Oracle message: sha256(ticker || oraclePrice || oracleTime)
+  // MERGE — Seeker combines two of their own vaults into one.
+  //
+  // Both vaults must share: seekerPk, providerPk, oraclePk, ticker,
+  // collateralRatioPct, exit. They may differ on targetUSD, totalCollateral,
+  // fundingRatePerSec, lastUpdate, seekerExitFee.
+  //
+  // Merged values:
+  //   - targetUSD          = accruedA + accruedB  (funding rolled in per side)
+  //   - totalCollateral    = totalCollateralA + totalCollateralB
+  //   - fundingRatePerSec  = max(rateA, rateB)         — provider's higher rate wins
+  //   - lastUpdate         = tx.offchainTime
+  //   - seekerExitFee      = max(exitFeeA, exitFeeB)   — higher exit fee wins
+  //
+  // Position-agnostic: this script runs on both spent vaults. `otherIdx` is a
+  // witness pointing to the OTHER vault input; activeInputIndex distinguishes
+  // self from sibling. Both scripts agree on the merged output by symmetry
+  // (sum and max are commutative), so output[0] passes in both verifications.
+  // -------------------------------------------------------------------------
+  function merge(
+    signature seekerSig,
+    int       otherIdx,
+    int       otherTargetUSD,
+    int       otherTotalCollateral,
+    int       otherFundingRatePerSec,
+    int       otherLastUpdate,
+    int       otherSeekerExitFee,
+    int       mergedFundingRatePerSec,
+    int       mergedSeekerExitFee
+  ) {
+    require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
+    require(this.activeInputIndex != otherIdx, "self-merge disallowed");
+
+    // The other input must be a sibling vault: same seeker, provider, oracle,
+    // ticker, collateralRatioPct, exit; only state fields may differ.
+    require(
+      tx.inputs[otherIdx].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        otherTargetUSD, otherTotalCollateral, otherFundingRatePerSec, otherLastUpdate,
+        collateralRatioPct, otherSeekerExitFee, exit
+      ),
+      "input not matching vault"
+    );
+
+    // Enforce mergedFundingRatePerSec = max(this, other).
+    if (fundingRatePerSec >= otherFundingRatePerSec) {
+      require(mergedFundingRatePerSec == fundingRatePerSec, "merged rate != max");
+    } else {
+      require(mergedFundingRatePerSec == otherFundingRatePerSec, "merged rate != max");
+    }
+
+    // Enforce mergedSeekerExitFee = max(this, other).
+    if (seekerExitFee >= otherSeekerExitFee) {
+      require(mergedSeekerExitFee == seekerExitFee, "merged exit fee != max");
+    } else {
+      require(mergedSeekerExitFee == otherSeekerExitFee, "merged exit fee != max");
+    }
+
+    // Accrue funding on each side at its own rate before summing.
+    int elapsedA      = tx.offchainTime - lastUpdate;
+    require(elapsedA >= 0, "clock regression A");
+    int rateElapsedA  = fundingRatePerSec * elapsedA / 1000000;
+    int deltaA        = targetUSD * rateElapsedA / 1000000;
+    int accruedA      = targetUSD + deltaA;
+
+    int elapsedB      = tx.offchainTime - otherLastUpdate;
+    require(elapsedB >= 0, "clock regression B");
+    int rateElapsedB  = otherFundingRatePerSec * elapsedB / 1000000;
+    int deltaB        = otherTargetUSD * rateElapsedB / 1000000;
+    int accruedB      = otherTargetUSD + deltaB;
+
+    int mergedTargetUSD       = accruedA + accruedB;
+    int mergedTotalCollateral = totalCollateral + otherTotalCollateral;
+
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        mergedTargetUSD, mergedTotalCollateral, mergedFundingRatePerSec, tx.offchainTime,
+        collateralRatioPct, mergedSeekerExitFee, exit
+      ),
+      "invalid merged vault output"
+    );
+    require(tx.outputs[0].value >= mergedTotalCollateral, "merged collateral underfunded");
+  }
+
+  // -------------------------------------------------------------------------
+  // SETTLE & UPDATE FUNDING
+  // Provider rolls accrued funding into targetUSD and sets a new rate.
+  // newFundingRatePerSec must be >= 0: a negative rate would let the Provider
+  // unilaterally drain the Seeker. The Seeker's consent at offer-accept time
+  // is the only point where a negative initial rate is allowed.
+  //
+  // Worst case for the Seeker: Provider sets rate to 0, suspending further
+  // interest. They can react by calling seekerExit.
+  // -------------------------------------------------------------------------
+  function settleAndUpdateFunding(signature providerSig, int newFundingRatePerSec) {
+    require(checkSig(providerSig, providerPk), "invalid provider sig");
+    require(newFundingRatePerSec >= 0, "negative funding rate disallowed");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = targetUSD * rateElapsedScaled / 1000000;
+    int newTargetUSD      = targetUSD + delta;
+    require(newTargetUSD > 0, "claim wiped by funding");
+
+    // Anti-grief: if rate > 0 and delta truncates to 0, provider would be
+    // calling settle with no accrual while advancing lastUpdate, which
+    // suppresses funding owed to the seeker. Allow no-accrual settles only
+    // when current rate is already 0 (legitimate "resume from pause").
+    if (fundingRatePerSec != 0) {
+      require(delta > 0, "no accrual; wait longer");
+    }
+
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        newTargetUSD, totalCollateral, newFundingRatePerSec, tx.offchainTime,
+        collateralRatioPct, seekerExitFee, exit
+      ),
+      "invalid settle output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // ADD CAPITAL — Provider tops up collateral. No ratio check needed (more
+  // collateral is always strictly better for the Seeker).
+  // -------------------------------------------------------------------------
+  function addCapital(signature providerSig, int amount) {
+    require(checkSig(providerSig, providerPk), "invalid provider sig");
+    require(amount > 0, "zero amount");
+
+    int newTotalCollateral = totalCollateral + amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, seekerExitFee, exit
+      ),
+      "invalid output"
+    );
+    require(tx.outputs[0].value >= newTotalCollateral, "collateral not deposited");
+  }
+
+  // -------------------------------------------------------------------------
+  // REMOVE CAPITAL — Provider reclaims excess collateral, but the remaining
+  // position must still cover seekerBase at the offer's collateral ratio.
+  // Funding accrued to-date is included in the check (without rolling it into
+  // the vault — provider can call settleAndUpdateFunding first if desired).
+  // -------------------------------------------------------------------------
+  function removeCapital(
+    signature providerSig,
+    int       amount,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(providerSig, providerPk), "invalid provider sig");
+    require(amount > 0, "zero amount");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = targetUSD * rateElapsedScaled / 1000000;
+    int newTargetUSD      = targetUSD + delta;
+    int currentSeekerBase = newTargetUSD * 100000000 / oraclePrice;
+    int minCollateral     = currentSeekerBase * (100 + collateralRatioPct) / 100;
+    int newTotalCollateral = totalCollateral - amount;
+    require(newTotalCollateral >= minCollateral, "would breach collateral ratio");
+
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, seekerExitFee, exit
+      ),
+      "invalid vault output"
+    );
+    require(tx.outputs[0].value >= newTotalCollateral, "vault underfunded");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
+    require(tx.outputs[1].value >= amount, "provider underpaid");
+  }
+
+  // -------------------------------------------------------------------------
+  // SEEKER EXIT — Seeker exits to BTC at the oracle-attested price.
+  // Pays seekerExitFee out of own payout to provider (set at offer creation).
   // -------------------------------------------------------------------------
   function seekerExit(
     signature seekerSig,
@@ -116,17 +320,22 @@ contract StabilityVault(
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
     require(oraclePrice > 0, "invalid oracle price");
 
-    int oracleAge = tx.time - oracleTime;
+    int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int blocksElapsed = tx.time - openHeight;
-    int seekerBase    = targetUSD * 100000000 / oraclePrice;
-    int funding       = fundingSatPerBlock * blocksElapsed;
-    int seekerRaw     = seekerBase + funding;
+    // newTargetUSD = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
+    // seekerRaw    = newTargetUSD × (1 - seekerExitFee/1e4) × 1e8 / oraclePrice
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = targetUSD * rateElapsedScaled / 1000000;
+    int newTargetUSD      = targetUSD + delta;
+    int netTargetUSD      = newTargetUSD * (10000 - seekerExitFee) / 10000;
+    int seekerRaw         = netTargetUSD * 100000000 / oraclePrice;
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
@@ -148,8 +357,7 @@ contract StabilityVault(
   }
 
   // -------------------------------------------------------------------------
-  // PROVIDER EXIT
-  // Identical settlement math; provider signs. First-come, first-served.
+  // PROVIDER EXIT — Identical settlement math; no exit fee charged to provider.
   // -------------------------------------------------------------------------
   function providerExit(
     signature providerSig,
@@ -160,17 +368,21 @@ contract StabilityVault(
     require(checkSig(providerSig, providerPk), "invalid provider sig");
     require(oraclePrice > 0, "invalid oracle price");
 
-    int oracleAge = tx.time - oracleTime;
+    int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int blocksElapsed = tx.time - openHeight;
-    int seekerBase    = targetUSD * 100000000 / oraclePrice;
-    int funding       = fundingSatPerBlock * blocksElapsed;
-    int seekerRaw     = seekerBase + funding;
+    // newTargetUSD = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
+    // seekerRaw    = newTargetUSD × 1e8 / oraclePrice  (no exit fee on provider-driven exit)
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = targetUSD * rateElapsedScaled / 1000000;
+    int newTargetUSD      = targetUSD + delta;
+    int seekerRaw         = newTargetUSD * 100000000 / oraclePrice;
 
     if (seekerRaw <= 0) {
       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
