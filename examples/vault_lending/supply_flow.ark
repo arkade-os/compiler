@@ -1,0 +1,66 @@
+// supply_flow.ark
+// One-shot atomic template. Moves BTC from VaultCovenant into a fresh LendingMarket.
+//
+// Pool accounting: vault.totalAssets stays FLAT on capital deployment.
+// Only the vault's physical BTC value (idle capital) decreases; totalAssets continues
+// to count deployed capital. This mirrors Morpho's accounting model: LP share price
+// does not decrease when capital is deployed to a healthy loan.
+//
+// creditHolder must be supplied by the caller as the precomputed scriptPubKey of:
+//   RepayFlow(vaultKeeperPk, ownerPk, lpAssetId, totalAssets, totalShares, supplyAmount)
+// supplyAmount is baked into RepayFlow so interest accounting is correct on return:
+//   interest = returnAmount - supplyAmount; vault.totalAssets += interest only.
+//
+// Value split: vault output receives inputVal - supplyAmount; market output receives supplyAmount.
+
+import "vault_covenant.ark";
+import "lending_market.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract SupplyFlow(
+  pubkey  vaultKeeperPk,
+  pubkey  ownerPk,
+  pubkey  borrowerPk,
+  pubkey  oraclePk,
+  bytes32 lpAssetId,
+  bytes32 creditHolder,       // scriptPubKey of RepayFlow(vaultKeeperPk, ownerPk, lpAssetId, totalAssets, totalShares, supplyAmount)
+  int     supplyAmount,
+  int     lltv,
+  int     totalAssets,
+  int     totalShares,
+  bytes32 collateralAssetId,
+  bytes32 loanAssetId,
+  bytes32 oracleHash
+) {
+  function supply(signature vaultKeeperSig) {
+    require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid vault keeper");
+    require(supplyAmount <= totalAssets, "supply amount exceeds vault assets");
+
+    int inputVal = tx.input.current.value;
+    int vaultOut = inputVal - supplyAmount;
+
+    // Output 0: VaultCovenant with same totalAssets (deployed capital still counted)
+    require(tx.outputs[0].value == vaultOut, "vault output value mismatch");
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        vaultKeeperPk, ownerPk, lpAssetId, totalAssets, totalShares
+      ),
+      "vault successor mismatch"
+    );
+
+    // Output 1: fresh LendingMarket seeded with supplyAmount, ready for borrower
+    require(tx.outputs[1].value == supplyAmount, "market output value mismatch");
+    require(
+      tx.outputs[1].scriptPubKey == new LendingMarket(
+        borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
+        0, 0, lltv,
+        collateralAssetId, loanAssetId, oracleHash
+      ),
+      "market successor mismatch"
+    );
+  }
+}

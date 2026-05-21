@@ -1,0 +1,198 @@
+// lending_market.ark
+// Lending market covenant. Manages collateral and debt for one borrower position.
+//
+// Debt is supplied externally via SupplyFlow from VaultCovenant (exogenous path only).
+// Collateral locks in this covenant; borrowed funds flow to the borrower at borrow time.
+//
+// Repayment and liquidation:
+//   repay      — partial or full. Credit holder receives proceeds; full repay releases collateral.
+//   liquidate  — keeper-only. Waterfall: fee to keeper | face value to creditHolder | residual to borrower.
+//   transferCredit — updates creditHolder for secondary market settlement (e.g. NonInteractiveSwap).
+//
+// Division note: all ratio checks use integer arithmetic scaled to basis points.
+// OP_DIV64 floors toward zero. Both sides of the LLTV check are consistently floored,
+// so no systematic bias exists. Ratio boundaries are very slightly borrower-favourable.
+// Liquidation fee truncates down (keeper receives marginally less at fee boundary values).
+//
+// Oracle trust assumption: checkSigFromStack(oracleSig, oraclePk, priceHash) verifies
+// the oracle signed priceHash, but the contract cannot verify that priceHash == hash(price)
+// because the Arkade language has no on-chain hash opcode for this binding. Security relies
+// on the oracle signing a message that commits to a specific price value (e.g. the oracle
+// message format includes the price as a fixed-width field that the verifier checks off-chain).
+// A compromised or colluding caller could replay a stale oracle signature with a different
+// price value. Deployments must ensure the oracle message format is unambiguous and that
+// priceHash commits to a canonical encoding of price.
+
+import "lending_market.ark";
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract LendingMarket(
+  pubkey  borrowerPk,
+  pubkey  oraclePk,
+  pubkey  vaultKeeperPk,
+  bytes32 creditHolder,       // repayment script (RepayFlow scriptPubKey); updated by transferCredit
+  int     collateralAmount,
+  int     debtAmount,
+  int     lltv,               // basis points, e.g. 8500 = 85%
+  bytes32 collateralAssetId,
+  bytes32 loanAssetId,
+  bytes32 oracleHash
+) {
+  // ─── Borrow ───────────────────────────────────────────────────────────────────
+  // Debt was supplied by VaultCovenant via SupplyFlow.
+  // Borrower provides collateral; borrowed funds flow out to borrower on output 1.
+  // Anti-reborrow: borrow() is only valid on a fresh position (debtAmount == 0).
+  // Value conservation: input value (available liquidity) must equal borrowAmount.
+  function borrow(
+    signature borrowerSig,
+    bytes32 priceHash,
+    signature oracleSig,
+    int price,
+    int borrowAmount,
+    int collateral
+  ) {
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower");
+    require(checkSigFromStack(oracleSig, oraclePk, priceHash), "invalid oracle");
+
+    // Guard against re-borrowing over an existing position
+    require(debtAmount == 0, "position already open");
+    require(collateralAmount == 0, "position already has collateral");
+
+    // Value conservation: the market input holds exactly the available liquidity;
+    // borrower must draw the full amount (partial draws leave unaccounted value).
+    require(tx.input.current.value == borrowAmount, "borrow amount must equal available liquidity");
+
+    // Collateral ratio check: (collateral * price / 10000) >= (borrowAmount * 10000 / lltv)
+    // Division floors toward zero — see contract header note.
+    int lhs = collateral * price / 10000;
+    int rhs = borrowAmount * 10000 / lltv;
+    require(lhs >= rhs, "insufficient collateral ratio");
+
+    // Output 0: updated LendingMarket holding the collateral
+    require(tx.outputs[0].value == collateral, "collateral must be locked in output 0");
+    require(
+      tx.outputs[0].scriptPubKey == new LendingMarket(
+        borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
+        collateral, borrowAmount, lltv,
+        collateralAssetId, loanAssetId, oracleHash
+      ),
+      "successor mismatch"
+    );
+    // Output 1: borrowed funds flow to borrower
+    require(tx.outputs[1].value == borrowAmount, "borrower must receive borrow amount");
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk),
+      "borrower output mismatch"
+    );
+  }
+
+  // ─── Repay ────────────────────────────────────────────────────────────────────
+  // Borrower repays partial or full debt.
+  // Credit holder receives repayment proceeds on output 1.
+  // Full repay: collateral released to borrower on output 0.
+  // Partial repay: recursive covenant on output 0 with updated debtAmount.
+  function repay(
+    signature borrowerSig,
+    int repayAmount,
+    int newDebtAmount
+  ) {
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower");
+    require(repayAmount > 0, "repayAmount must be positive");
+
+    // Verify accounting: newDebtAmount + repayAmount == debtAmount
+    int verifySum = newDebtAmount + repayAmount;
+    require(verifySum == debtAmount, "invalid repay amounts");
+
+    // Repayment flows directly to the pre-committed RepayFlow covenant
+    require(tx.outputs[1].value == repayAmount, "repayment value must match repay amount");
+    require(tx.outputs[1].scriptPubKey == creditHolder, "repayment must go to credit script");
+
+    if (newDebtAmount == 0) {
+      // Full repay: release collateral to borrower
+      require(tx.outputs[0].value == collateralAmount, "full collateral must be released");
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(borrowerPk),
+        "collateral must be returned to borrower"
+      );
+    } else {
+      // Partial repay: recursive covenant with reduced debt; collateral stays locked
+      require(tx.outputs[0].value == collateralAmount, "partial repay must preserve collateral value");
+      require(
+        tx.outputs[0].scriptPubKey == new LendingMarket(
+          borrowerPk, oraclePk, vaultKeeperPk, creditHolder,
+          collateralAmount, newDebtAmount, lltv,
+          collateralAssetId, loanAssetId, oracleHash
+        ),
+        "successor mismatch"
+      );
+    }
+  }
+
+  // ─── Liquidate ────────────────────────────────────────────────────────────────
+  // Keeper-only. Position must be underwater (threshold < debtAmount).
+  // Liquidation waterfall:
+  //   output 0: liquidation fee (5% of collateral) to keeper
+  //   output 1: face value (debtAmount) to credit holder
+  //   output 2: residual (collateral - fee - debtAmount) to borrower
+  //
+  // Division note: fee = collateralAmount * 500 / 10000 floors toward zero.
+  // residual = collateralAmount - fee - debtAmount (chained subtraction).
+  // Caller is responsible for ensuring collateralAmount >= fee + debtAmount.
+  function liquidate(
+    signature vaultKeeperSig,
+    bytes32 priceHash,
+    signature oracleSig,
+    int price
+  ) {
+    require(checkSig(vaultKeeperSig, vaultKeeperPk), "invalid keeper");
+    require(checkSigFromStack(oracleSig, oraclePk, priceHash), "invalid oracle");
+
+    // Position is underwater: collateral value * lltv < debt * 10000
+    int ratio = collateralAmount * price / 10000;
+    int threshold = ratio * lltv / 10000;
+    require(threshold < debtAmount, "position is not underwater");
+
+    // Liquidation waterfall
+    int fee = collateralAmount * 500 / 10000;
+    int residual = collateralAmount - fee - debtAmount;
+    require(residual >= 0, "residual must be non-negative");
+
+    require(tx.outputs[0].value == fee, "liquidation fee must be exact");
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(vaultKeeperPk),
+      "fee must go to keeper"
+    );
+    require(tx.outputs[1].value == debtAmount, "credit holder payout must be exact");
+    require(tx.outputs[1].scriptPubKey == creditHolder, "face value must go to credit script");
+    require(tx.outputs[2].value >= residual, "residual to borrower too low");
+    require(
+      tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk),
+      "residual must go to borrower"
+    );
+  }
+
+  // ─── Transfer credit ──────────────────────────────────────────────────────────
+  // Keeper rotates creditHolder to a new RepayFlow script (e.g. to update vault
+  // snapshot after other vault activity before the position is opened).
+  // Only callable on a fresh position (debtAmount == 0) — once a borrower has
+  // drawn against the market the creditHolder is immutable, preventing the keeper
+  // from redirecting repay()/liquidate() proceeds after the fact.
+  function transferCredit(signature keeperSig, bytes32 newHolder) {
+    require(checkSig(keeperSig, vaultKeeperPk), "invalid keeper");
+    require(debtAmount == 0, "cannot rotate credit on open position");
+    require(
+      tx.outputs[0].scriptPubKey == new LendingMarket(
+        borrowerPk, oraclePk, vaultKeeperPk, newHolder,
+        collateralAmount, debtAmount, lltv,
+        collateralAssetId, loanAssetId, oracleHash
+      ),
+      "successor mismatch"
+    );
+    require(tx.outputs[0].value == tx.input.current.value, "value must be preserved");
+  }
+}

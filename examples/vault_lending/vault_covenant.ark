@@ -1,0 +1,95 @@
+// vault_covenant.ark
+// Recursive ERC-4626-style vault. Tracks share accounting and price-per-share (PPS).
+// Only reportYield() can increase totalAssets relative to totalShares.
+// PPS is monotonically non-decreasing: reportYield enforces newTotalAssets >= totalAssets.
+//
+// LP shares are issued as Arkade Assets (lpAssetId) on deposit and burned on withdrawal.
+// This makes LP positions transferable: an LP can sell their shares on a secondary market
+// without touching the vault covenant, providing exit liquidity even at full utilization.
+//
+// Deposit: LP tokens minted to caller (output[1]) proportional to sharesIssued.
+// Withdraw: LP tokens burned from caller (input[1]) proportional to sharesBurned.
+//   Authentication on withdraw is the LP token burn — no ownerSig required.
+//
+// totalAssets invariant: totalAssets = vault.value + deployedCapital.
+// SupplyFlow does NOT decrement totalAssets on capital deployment; RepayFlow
+// accretes only interest (returnAmount - supplyAmount) when capital returns.
+//
+// Division note: all arithmetic uses OP_DIV64 (floor toward zero).
+// PPS ratios are computed off-chain; the covenant enforces state transitions only.
+
+import "vault_covenant.ark";
+
+options {
+  server = server;
+  exit = 144;
+}
+
+contract VaultCovenant(
+  pubkey  keeperPk,
+  pubkey  ownerPk,
+  bytes32 lpAssetId,   // Arkade Asset ID for LP share tokens
+  int     totalAssets,
+  int     totalShares
+) {
+  // Deposit: LP provides BTC; LP tokens minted to output[1].
+  // ownerSig gates deposits — keeper controls who can enter the pool.
+  function deposit(signature ownerSig, int newTotalAssets, int newTotalShares) {
+    require(checkSig(ownerSig, ownerPk), "invalid owner");
+    require(newTotalShares > totalShares, "shares must increase");
+    require(newTotalAssets > totalAssets, "assets must increase");
+
+    // Mint LP tokens to the depositor (output[1])
+    int sharesIssued = newTotalShares - totalShares;
+    require(
+      tx.outputs[1].assets.lookup(lpAssetId) == sharesIssued,
+      "LP tokens must be minted to depositor"
+    );
+
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        keeperPk, ownerPk, lpAssetId, newTotalAssets, newTotalShares
+      ),
+      "successor mismatch"
+    );
+  }
+
+  // Withdraw: LP burns their LP tokens (input[1]); vault releases proportional BTC.
+  // LP token burn is the authentication — no separate signature required.
+  // Withdrawal is bounded by the vault's idle BTC (vault UTXO value).
+  function withdraw(int newTotalAssets, int newTotalShares) {
+    require(newTotalShares < totalShares, "shares must decrease");
+    require(newTotalAssets < totalAssets, "assets must decrease");
+
+    // Burn LP tokens from the LP's input (input[1])
+    int sharesBurned = totalShares - newTotalShares;
+    require(
+      tx.inputs[1].assets.lookup(lpAssetId) == sharesBurned,
+      "LP tokens must be burned"
+    );
+
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        keeperPk, ownerPk, lpAssetId, newTotalAssets, newTotalShares
+      ),
+      "successor mismatch"
+    );
+  }
+
+  // Only path that can increase PPS.
+  // keeperSig over reportHash prevents intra-block replay.
+  function reportYield(
+    signature keeperSig,
+    bytes32 reportHash,
+    int newTotalAssets
+  ) {
+    require(newTotalAssets >= totalAssets, "PPS decrease forbidden");
+    require(checkSigFromStack(keeperSig, keeperPk, reportHash), "invalid keeper");
+    require(
+      tx.outputs[0].scriptPubKey == new VaultCovenant(
+        keeperPk, ownerPk, lpAssetId, newTotalAssets, totalShares
+      ),
+      "successor mismatch"
+    );
+  }
+}
