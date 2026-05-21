@@ -13,6 +13,14 @@ const projects = {
             'stability_vault.ark': contracts.stability_vault,
             'stability_offer.ark': contracts.stability_offer,
         }
+    },
+    options: {
+        name: 'Options',
+        description: 'European covered call + cash-secured put, physically settled, oracle-free',
+        files: {
+            'covered_call.ark': contracts.covered_call,
+            'cash_secured_put.ark': contracts.cash_secured_put,
+        }
     }
 };
 
