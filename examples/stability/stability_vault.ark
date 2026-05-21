@@ -115,6 +115,91 @@ contract StabilityVault(
   }
 
   // -------------------------------------------------------------------------
+  // MERGE — Seeker combines two of their own vaults into one.
+  //
+  // Both vaults must share: seekerPk, providerPk, oraclePk, ticker,
+  // collateralRatioPct, exit. They may differ on targetUSD, totalCollateral,
+  // fundingRatePerSec, lastUpdate, seekerExitFee.
+  //
+  // Merged values:
+  //   - targetUSD          = accruedA + accruedB  (funding rolled in per side)
+  //   - totalCollateral    = totalCollateralA + totalCollateralB
+  //   - fundingRatePerSec  = max(rateA, rateB)         — provider's higher rate wins
+  //   - lastUpdate         = tx.offchainTime
+  //   - seekerExitFee      = max(exitFeeA, exitFeeB)   — higher exit fee wins
+  //
+  // Position-agnostic: this script runs on both spent vaults. `otherIdx` is a
+  // witness pointing to the OTHER vault input; activeInputIndex distinguishes
+  // self from sibling. Both scripts agree on the merged output by symmetry
+  // (sum and max are commutative), so output[0] passes in both verifications.
+  // -------------------------------------------------------------------------
+  function merge(
+    signature seekerSig,
+    int       otherIdx,
+    int       otherTargetUSD,
+    int       otherTotalCollateral,
+    int       otherFundingRatePerSec,
+    int       otherLastUpdate,
+    int       otherSeekerExitFee,
+    int       mergedFundingRatePerSec,
+    int       mergedSeekerExitFee
+  ) {
+    require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
+    require(this.activeInputIndex != otherIdx, "self-merge disallowed");
+
+    // The other input must be a sibling vault: same seeker, provider, oracle,
+    // ticker, collateralRatioPct, exit; only state fields may differ.
+    require(
+      tx.inputs[otherIdx].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        otherTargetUSD, otherTotalCollateral, otherFundingRatePerSec, otherLastUpdate,
+        collateralRatioPct, otherSeekerExitFee, exit
+      ),
+      "input not matching vault"
+    );
+
+    // Enforce mergedFundingRatePerSec = max(this, other).
+    if (fundingRatePerSec >= otherFundingRatePerSec) {
+      require(mergedFundingRatePerSec == fundingRatePerSec, "merged rate != max");
+    } else {
+      require(mergedFundingRatePerSec == otherFundingRatePerSec, "merged rate != max");
+    }
+
+    // Enforce mergedSeekerExitFee = max(this, other).
+    if (seekerExitFee >= otherSeekerExitFee) {
+      require(mergedSeekerExitFee == seekerExitFee, "merged exit fee != max");
+    } else {
+      require(mergedSeekerExitFee == otherSeekerExitFee, "merged exit fee != max");
+    }
+
+    // Accrue funding on each side at its own rate before summing.
+    int elapsedA      = tx.offchainTime - lastUpdate;
+    require(elapsedA >= 0, "clock regression A");
+    int rateElapsedA  = fundingRatePerSec * elapsedA / 1000000;
+    int deltaA        = targetUSD * rateElapsedA / 1000000;
+    int accruedA      = targetUSD + deltaA;
+
+    int elapsedB      = tx.offchainTime - otherLastUpdate;
+    require(elapsedB >= 0, "clock regression B");
+    int rateElapsedB  = otherFundingRatePerSec * elapsedB / 1000000;
+    int deltaB        = otherTargetUSD * rateElapsedB / 1000000;
+    int accruedB      = otherTargetUSD + deltaB;
+
+    int mergedTargetUSD       = accruedA + accruedB;
+    int mergedTotalCollateral = totalCollateral + otherTotalCollateral;
+
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        mergedTargetUSD, mergedTotalCollateral, mergedFundingRatePerSec, tx.offchainTime,
+        collateralRatioPct, mergedSeekerExitFee, exit
+      ),
+      "invalid merged vault output"
+    );
+    require(tx.outputs[0].value >= mergedTotalCollateral, "merged collateral underfunded");
+  }
+
+  // -------------------------------------------------------------------------
   // SETTLE & UPDATE FUNDING
   // Provider rolls accrued funding into targetUSD and sets a new rate.
   // newFundingRatePerSec must be >= 0: a negative rate would let the Provider

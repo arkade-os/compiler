@@ -917,7 +917,11 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(lit.clone());
         }
         Expression::Property(prop) => {
-            asm.push(format!("<{}>", prop));
+            if prop == "this.activeInputIndex" {
+                asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            } else {
+                asm.push(format!("<{}>", prop));
+            }
         }
         Expression::BinaryOp { left, op, right } => {
             // Emit left operand
@@ -1429,7 +1433,11 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(lit.clone());
         }
         Expression::Property(prop) => {
-            asm.push(format!("<{}>", prop));
+            if prop == "this.activeInputIndex" {
+                asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            } else {
+                asm.push(format!("<{}>", prop));
+            }
         }
         Expression::CurrentInput(property) => {
             emit_current_input_asm(property.as_deref(), asm);

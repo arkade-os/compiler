@@ -108,6 +108,15 @@ Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, tota
 
 **`split(seekerSig, amountUSD, newSeekerPk)`** — divides the USD claim proportionally into two independent vaults. Both halves must be above the 330-sat Taproot dust threshold.
 
+**`merge(seekerSig, otherIdx, …)`** — combines two of the Seeker's own vaults into one. Both must share `seekerPk`, `providerPk`, `oraclePk`, `ticker`, `collateralRatioPct`, and `exit`. The merged vault receives:
+- `targetUSD` = sum of both sides' accrued targetUSD (funding rolled in per side at each side's own rate)
+- `totalCollateral` = sum of both collaterals
+- `fundingRatePerSec` = `max(rateA, rateB)` — the higher rate prevails
+- `seekerExitFee` = `max(exitFeeA, exitFeeB)` — the higher exit fee prevails
+- `lastUpdate` = `tx.offchainTime`
+
+Two-vault only. Both vault scripts run their own `merge` tapleaf; `this.activeInputIndex` distinguishes self from sibling and `otherIdx` (witness) points at the other input. Both verifications converge on the same merged output by symmetry (sum and max are commutative).
+
 **`settleAndUpdateFunding(providerSig, newFundingRatePerSec)`** — Provider rolls accrued funding into `targetUSD` and sets a new rate going forward. Enforces `newFundingRatePerSec >= 0`: a negative update would let the Provider unilaterally drain the Seeker. Worst case for the Seeker is rate = 0 (Provider suspends new interest); the Seeker can react with `seekerExit`.
 
 **`addCapital(providerSig, amount)`** — Provider tops up collateral. No oracle required (more collateral is always strictly better for the Seeker).
@@ -163,7 +172,7 @@ Every function compiles to two tapleaves:
 
 Both paths enforce identical settlement math. The exit path is not a challenge window — it exists only so unilateral close is always possible.
 
-Total tapleaves: **4** (StabilityOffer) + **14** (StabilityVault) = 18.
+Total tapleaves: **4** (StabilityOffer) + **16** (StabilityVault) = 20.
 
 ---
 

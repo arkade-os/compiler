@@ -62,6 +62,66 @@ contract StabilityVault(
     );
   }
 
+  function merge(
+    signature seekerSig,
+    int       otherIdx,
+    int       otherTargetUSD,
+    int       otherTotalCollateral,
+    int       otherFundingRatePerSec,
+    int       otherLastUpdate,
+    int       otherSeekerExitFee,
+    int       mergedFundingRatePerSec,
+    int       mergedSeekerExitFee
+  ) {
+    require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
+    require(this.activeInputIndex != otherIdx, "self-merge disallowed");
+
+    require(
+      tx.inputs[otherIdx].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        otherTargetUSD, otherTotalCollateral, otherFundingRatePerSec, otherLastUpdate,
+        collateralRatioPct, otherSeekerExitFee, exit
+      ),
+      "input not matching vault"
+    );
+
+    if (fundingRatePerSec >= otherFundingRatePerSec) {
+      require(mergedFundingRatePerSec == fundingRatePerSec, "rate != max");
+    } else {
+      require(mergedFundingRatePerSec == otherFundingRatePerSec, "rate != max");
+    }
+
+    if (seekerExitFee >= otherSeekerExitFee) {
+      require(mergedSeekerExitFee == seekerExitFee, "fee != max");
+    } else {
+      require(mergedSeekerExitFee == otherSeekerExitFee, "fee != max");
+    }
+
+    int elapsedA      = tx.offchainTime - lastUpdate;
+    require(elapsedA >= 0, "clock regression A");
+    int rateElapsedA  = fundingRatePerSec * elapsedA / 1000000;
+    int deltaA        = targetUSD * rateElapsedA / 1000000;
+    int accruedA      = targetUSD + deltaA;
+
+    int elapsedB      = tx.offchainTime - otherLastUpdate;
+    require(elapsedB >= 0, "clock regression B");
+    int rateElapsedB  = otherFundingRatePerSec * elapsedB / 1000000;
+    int deltaB        = otherTargetUSD * rateElapsedB / 1000000;
+    int accruedB      = otherTargetUSD + deltaB;
+
+    int mergedTargetUSD       = accruedA + accruedB;
+    int mergedTotalCollateral = totalCollateral + otherTotalCollateral;
+
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityVault(
+        seekerPk, providerPk, oraclePk, ticker,
+        mergedTargetUSD, mergedTotalCollateral, mergedFundingRatePerSec, tx.offchainTime,
+        collateralRatioPct, mergedSeekerExitFee, exit
+      ), "bad merged output"
+    );
+    require(tx.outputs[0].value >= mergedTotalCollateral, "underfunded");
+  }
+
   function settleAndUpdateFunding(signature providerSig, int newFundingRatePerSec) {
     require(checkSig(providerSig, providerPk), "invalid provider sig");
     require(newFundingRatePerSec >= 0, "negative funding rate disallowed");
@@ -318,10 +378,29 @@ contract StabilityOffer(
 "#;
 
 #[test]
-fn test_vault_compiles_with_14_tapleaves() {
+fn test_vault_compiles_with_16_tapleaves() {
     let out = compile(VAULT_CODE).expect("vault compile");
     assert_eq!(out.name, "StabilityVault");
-    assert_eq!(out.functions.len(), 14); // 7 fns × 2 variants
+    assert_eq!(out.functions.len(), 16); // 8 fns × 2 variants
+}
+
+#[test]
+fn test_merge_emits_active_input_index_opcode() {
+    use arkade_compiler::opcodes::OP_PUSHCURRENTINPUTINDEX;
+    let out = compile(VAULT_CODE).unwrap();
+    let f = out
+        .functions
+        .iter()
+        .find(|f| f.name == "merge" && f.server_variant)
+        .unwrap();
+    assert!(
+        f.asm.iter().any(|s| s == OP_PUSHCURRENTINPUTINDEX),
+        "merge must emit OP_PUSHCURRENTINPUTINDEX for this.activeInputIndex"
+    );
+    assert!(
+        f.asm.iter().any(|s| s == "OP_INSPECTINPUTSCRIPTPUBKEY"),
+        "merge must inspect the other input's scriptPubKey"
+    );
 }
 
 #[test]

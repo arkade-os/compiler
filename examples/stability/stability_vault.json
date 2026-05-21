@@ -404,6 +404,364 @@
       ]
     },
     {
+      "name": "merge",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        },
+        {
+          "name": "otherIdx",
+          "type": "int"
+        },
+        {
+          "name": "otherTargetUSD",
+          "type": "int"
+        },
+        {
+          "name": "otherTotalCollateral",
+          "type": "int"
+        },
+        {
+          "name": "otherFundingRatePerSec",
+          "type": "int"
+        },
+        {
+          "name": "otherLastUpdate",
+          "type": "int"
+        },
+        {
+          "name": "otherSeekerExitFee",
+          "type": "int"
+        },
+        {
+          "name": "mergedFundingRatePerSec",
+          "type": "int"
+        },
+        {
+          "name": "mergedSeekerExitFee",
+          "type": "int"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "otherIdx",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "otherTargetUSD",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "otherTotalCollateral",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "otherFundingRatePerSec",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "otherLastUpdate",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "otherSeekerExitFee",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "mergedFundingRatePerSec",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "mergedSeekerExitFee",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerSig>",
+        "OP_CHECKSIG",
+        "OP_PUSHCURRENTINPUTINDEX",
+        "<otherIdx>",
+        "OP_EQUAL",
+        "OP_NOT",
+        "<otherIdx>",
+        "OP_INSPECTINPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<otherTargetUSD>,<otherTotalCollateral>,<otherFundingRatePerSec>,<otherLastUpdate>,<collateralRatioPct>,<otherSeekerExitFee>,<exit>)>",
+        "OP_EQUAL",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<otherFundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "<mergedFundingRatePerSec>",
+        "OP_EQUAL",
+        "<fundingRatePerSec>",
+        "OP_ELSE",
+        "<mergedFundingRatePerSec>",
+        "OP_EQUAL",
+        "<otherFundingRatePerSec>",
+        "OP_ENDIF",
+        "<seekerExitFee>",
+        "OP_SCRIPTNUMTOLE64",
+        "<otherSeekerExitFee>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "<mergedSeekerExitFee>",
+        "OP_EQUAL",
+        "<seekerExitFee>",
+        "OP_ELSE",
+        "<mergedSeekerExitFee>",
+        "OP_EQUAL",
+        "<otherSeekerExitFee>",
+        "OP_ENDIF",
+        "<tx.offchainTime >",
+        "<lastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<elapsedA>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsedA>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedA>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<deltaA>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<tx.offchainTime >",
+        "<otherLastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<elapsedB>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<otherFundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsedB>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<otherTargetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedB>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<otherTargetUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<deltaB>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<accruedA>",
+        "OP_SCRIPTNUMTOLE64",
+        "<accruedB>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<otherTotalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<mergedTargetUSD>,<mergedTotalCollateral>,<mergedFundingRatePerSec>,<tx.offchainTime>,<collateralRatioPct>,<mergedSeekerExitFee>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<mergedTotalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "merge",
+      "functionInputs": [
+        {
+          "name": "seekerSig",
+          "type": "signature"
+        },
+        {
+          "name": "otherIdx",
+          "type": "int"
+        },
+        {
+          "name": "otherTargetUSD",
+          "type": "int"
+        },
+        {
+          "name": "otherTotalCollateral",
+          "type": "int"
+        },
+        {
+          "name": "otherFundingRatePerSec",
+          "type": "int"
+        },
+        {
+          "name": "otherLastUpdate",
+          "type": "int"
+        },
+        {
+          "name": "otherSeekerExitFee",
+          "type": "int"
+        },
+        {
+          "name": "mergedFundingRatePerSec",
+          "type": "int"
+        },
+        {
+          "name": "mergedSeekerExitFee",
+          "type": "int"
+        },
+        {
+          "name": "seekerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "seekerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<seekerPk>",
+        "<seekerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
       "name": "settleAndUpdateFunding",
       "functionInputs": [
         {
@@ -1665,16 +2023,17 @@
       ]
     }
   ],
-  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityVault(\n  pubkey  seekerPk,\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     targetUSD,\n  int     totalCollateral,\n  int     fundingRatePerSec,\n  int     lastUpdate,\n  int     collateralRatioPct,\n  int     seekerExitFee,\n  int     exit\n) {\n\n  function transfer(signature seekerSig, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        targetUSD, totalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(amountUSD > 0, \"zero amount\");\n    require(amountUSD < targetUSD, \"amount exceeds balance\");\n\n    int remainingUSD = targetUSD - amountUSD;\n    int collateralA  = totalCollateral * amountUSD / targetUSD;\n    int collateralB  = totalCollateral - collateralA;\n\n    require(collateralA >= 330, \"split amount too small\");\n    require(collateralB >= 330, \"remainder too small\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        amountUSD, collateralA, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid split output 0\"\n    );\n    require(tx.outputs[0].value >= collateralA, \"insufficient collateral A\");\n\n    require(\n      tx.outputs[1].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        remainingUSD, collateralB, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid split output 1\"\n    );\n    require(tx.outputs[1].value >= collateralB, \"insufficient collateral B\");\n  }\n\n  function settleAndUpdateFunding(signature providerSig, int newFundingRatePerSec) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(newFundingRatePerSec >= 0, \"negative funding rate disallowed\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    require(newTargetUSD > 0, \"claim wiped by funding\");\n\n    if (fundingRatePerSec != 0) {\n      require(delta > 0, \"no accrual; wait longer\");\n    }\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        newTargetUSD, totalCollateral, newFundingRatePerSec, tx.offchainTime,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid settle output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function addCapital(signature providerSig, int amount) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(amount > 0, \"zero amount\");\n\n    int newTotalCollateral = totalCollateral + amount;\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"collateral not deposited\");\n  }\n\n  function removeCapital(\n    signature providerSig,\n    int       amount,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(amount > 0, \"zero amount\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    int currentSeekerBase = newTargetUSD * 100000000 / oraclePrice;\n    int minCollateral     = currentSeekerBase * (100 + collateralRatioPct) / 100;\n    int newTotalCollateral = totalCollateral - amount;\n    require(newTotalCollateral >= minCollateral, \"would breach collateral ratio\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid vault output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"vault underfunded\");\n    require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n    require(tx.outputs[1].value >= amount, \"provider underpaid\");\n  }\n\n  function seekerExit(\n    signature seekerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    int netTargetUSD      = newTargetUSD * (10000 - seekerExitFee) / 10000;\n    int seekerRaw         = netTargetUSD * 100000000 / oraclePrice;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n\n  function providerExit(\n    signature providerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    int seekerRaw         = newTargetUSD * 100000000 / oraclePrice;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n}",
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityVault(\n  pubkey  seekerPk,\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     targetUSD,\n  int     totalCollateral,\n  int     fundingRatePerSec,\n  int     lastUpdate,\n  int     collateralRatioPct,\n  int     seekerExitFee,\n  int     exit\n) {\n\n  function transfer(signature seekerSig, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        targetUSD, totalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function split(signature seekerSig, int amountUSD, pubkey newSeekerPk) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(amountUSD > 0, \"zero amount\");\n    require(amountUSD < targetUSD, \"amount exceeds balance\");\n\n    int remainingUSD = targetUSD - amountUSD;\n    int collateralA  = totalCollateral * amountUSD / targetUSD;\n    int collateralB  = totalCollateral - collateralA;\n\n    require(collateralA >= 330, \"split amount too small\");\n    require(collateralB >= 330, \"remainder too small\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        newSeekerPk, providerPk, oraclePk, ticker,\n        amountUSD, collateralA, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid split output 0\"\n    );\n    require(tx.outputs[0].value >= collateralA, \"insufficient collateral A\");\n\n    require(\n      tx.outputs[1].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        remainingUSD, collateralB, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid split output 1\"\n    );\n    require(tx.outputs[1].value >= collateralB, \"insufficient collateral B\");\n  }\n\n  function merge(\n    signature seekerSig,\n    int       otherIdx,\n    int       otherTargetUSD,\n    int       otherTotalCollateral,\n    int       otherFundingRatePerSec,\n    int       otherLastUpdate,\n    int       otherSeekerExitFee,\n    int       mergedFundingRatePerSec,\n    int       mergedSeekerExitFee\n  ) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(this.activeInputIndex != otherIdx, \"self-merge disallowed\");\n\n    require(\n      tx.inputs[otherIdx].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        otherTargetUSD, otherTotalCollateral, otherFundingRatePerSec, otherLastUpdate,\n        collateralRatioPct, otherSeekerExitFee, exit\n      ),\n      \"input not matching vault\"\n    );\n\n    if (fundingRatePerSec >= otherFundingRatePerSec) {\n      require(mergedFundingRatePerSec == fundingRatePerSec, \"merged rate != max\");\n    } else {\n      require(mergedFundingRatePerSec == otherFundingRatePerSec, \"merged rate != max\");\n    }\n\n    if (seekerExitFee >= otherSeekerExitFee) {\n      require(mergedSeekerExitFee == seekerExitFee, \"merged exit fee != max\");\n    } else {\n      require(mergedSeekerExitFee == otherSeekerExitFee, \"merged exit fee != max\");\n    }\n\n    int elapsedA      = tx.offchainTime - lastUpdate;\n    require(elapsedA >= 0, \"clock regression A\");\n    int rateElapsedA  = fundingRatePerSec * elapsedA / 1000000;\n    int deltaA        = targetUSD * rateElapsedA / 1000000;\n    int accruedA      = targetUSD + deltaA;\n\n    int elapsedB      = tx.offchainTime - otherLastUpdate;\n    require(elapsedB >= 0, \"clock regression B\");\n    int rateElapsedB  = otherFundingRatePerSec * elapsedB / 1000000;\n    int deltaB        = otherTargetUSD * rateElapsedB / 1000000;\n    int accruedB      = otherTargetUSD + deltaB;\n\n    int mergedTargetUSD       = accruedA + accruedB;\n    int mergedTotalCollateral = totalCollateral + otherTotalCollateral;\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        mergedTargetUSD, mergedTotalCollateral, mergedFundingRatePerSec, tx.offchainTime,\n        collateralRatioPct, mergedSeekerExitFee, exit\n      ),\n      \"invalid merged vault output\"\n    );\n    require(tx.outputs[0].value >= mergedTotalCollateral, \"merged collateral underfunded\");\n  }\n\n  function settleAndUpdateFunding(signature providerSig, int newFundingRatePerSec) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(newFundingRatePerSec >= 0, \"negative funding rate disallowed\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    require(newTargetUSD > 0, \"claim wiped by funding\");\n\n    if (fundingRatePerSec != 0) {\n      require(delta > 0, \"no accrual; wait longer\");\n    }\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        newTargetUSD, totalCollateral, newFundingRatePerSec, tx.offchainTime,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid settle output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function addCapital(signature providerSig, int amount) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(amount > 0, \"zero amount\");\n\n    int newTotalCollateral = totalCollateral + amount;\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"collateral not deposited\");\n  }\n\n  function removeCapital(\n    signature providerSig,\n    int       amount,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(amount > 0, \"zero amount\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    int currentSeekerBase = newTargetUSD * 100000000 / oraclePrice;\n    int minCollateral     = currentSeekerBase * (100 + collateralRatioPct) / 100;\n    int newTotalCollateral = totalCollateral - amount;\n    require(newTotalCollateral >= minCollateral, \"would breach collateral ratio\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, oraclePk, ticker,\n        targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, seekerExitFee, exit\n      ),\n      \"invalid vault output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"vault underfunded\");\n    require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n    require(tx.outputs[1].value >= amount, \"provider underpaid\");\n  }\n\n  function seekerExit(\n    signature seekerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(seekerSig, seekerPk), \"invalid seeker sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    int netTargetUSD      = newTargetUSD * (10000 - seekerExitFee) / 10000;\n    int seekerRaw         = netTargetUSD * 100000000 / oraclePrice;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n\n  function providerExit(\n    signature providerSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetUSD * rateElapsedScaled / 1000000;\n    int newTargetUSD      = targetUSD + delta;\n    int seekerRaw         = newTargetUSD * 100000000 / oraclePrice;\n\n    if (seekerRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"provider underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), \"output 0 not provider\");\n    } else {\n      if (seekerRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n      } else {\n        require(tx.outputs[0].value >= seekerRaw, \"seeker underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), \"output 0 not seeker\");\n        int providerPayout = totalCollateral - seekerRaw;\n        if (providerPayout > 330) {\n          require(tx.outputs[1].value >= providerPayout, \"provider underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n        }\n      }\n    }\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-21T21:40:06.420001777+00:00",
+  "updatedAt": "2026-05-21T21:49:37.242463161+00:00",
   "warnings": [
     "warning[type]: fn transfer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn merge: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn settleAndUpdateFunding: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn addCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn removeCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
@@ -1694,6 +2053,19 @@
     "warning[output-invariant]: fn 'split' (serverVariant=true): placeholder <collateralA> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'collateralA'",
     "warning[output-invariant]: fn 'split' (serverVariant=true): placeholder <collateralB> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'collateralB'",
     "warning[output-invariant]: fn 'split' (serverVariant=false): placeholder <newSeekerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newSeekerPk'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <elapsedA> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsedA'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <elapsedA> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsedA'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <rateElapsedA> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedA'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <deltaA> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'deltaA'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <elapsedB> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsedB'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <elapsedB> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsedB'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <rateElapsedB> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedB'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <deltaB> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'deltaB'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <accruedA> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'accruedA'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <accruedB> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'accruedB'",
+    "warning[output-invariant]: fn 'merge' (serverVariant=true): placeholder <mergedTotalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'mergedTotalCollateral'",
     "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
     "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
     "warning[output-invariant]: fn 'settleAndUpdateFunding' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
