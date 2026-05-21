@@ -1,0 +1,130 @@
+// RyskPhysicalCall Contract
+//
+// Bitcoin-native, physically-settled covered call inspired by
+// Rysk Finance v12 (https://app.rysk.finance/earn) — now feasible on
+// Arkade thanks to wrapped USDT/USDC as native assets.
+//
+// European-style call option with physical settlement:
+//   - Seller (writer) locks `btcSats` of BTC collateral.
+//   - Buyer holds the long call; premium paid off-contract in the
+//     funding transaction.
+//   - At `expiryHeight` the buyer's exercise window opens. Within
+//     `graceBlocks` they may exercise by paying `strikeAmount` units of
+//     `stableAssetId` (USDT or USDC) to the seller and receiving the BTC.
+//   - After `expiryHeight + graceBlocks` the seller reclaims the BTC if
+//     the option was not exercised (i.e. it expired OTM and the buyer
+//     rationally walked away).
+//
+// Compared to RyskCall (inverse cash-settled in BTC):
+//   - No oracle dependency; the buyer's exercise decision is the
+//     settlement signal.
+//   - Strike payment is a real USDT transfer, not a computed BTC split.
+//   - Requires the buyer to be online during the grace window. Rysk
+//     hides this behind RFQ-matched market makers; here the buyer has
+//     the direct economic incentive to exercise iff ITM.
+//
+// Transaction layout for exercise:
+//   input[0]:  this RyskPhysicalCall UTXO   (btcSats BTC)
+//   input[1+]: buyer's USDT inputs           (>= strikeAmount + buyer's BTC fees)
+//   output[0]: seller receives the strike    (strikeAmount stableAssetId, locked to sellerPk)
+//   output[1]: buyer receives the BTC        (btcSats BTC, locked to buyerPk)
+//   output[2+]: buyer's USDT change          (unconstrained)
+//
+// Either party may re-assign their leg at any time before reclaim via
+// `transferSeller` / `transferBuyer` (pure key swaps preserving
+// collateral and contract terms).
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract RyskPhysicalCall(
+  pubkey  sellerPk,         // option writer
+  pubkey  buyerPk,          // option holder
+  bytes32 stableAssetId,    // USDT / USDC asset id
+  int     btcSats,          // BTC quantity locked
+  int     strikeAmount,     // total USDT the buyer must pay to exercise
+  int     expiryHeight,     // exercise window opens at this block height
+  int     graceBlocks,      // length of the exercise window
+  int     exit              // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // EXERCISE
+  // Buyer exercises by paying `strikeAmount` of `stableAssetId` to the seller
+  // and receiving the locked BTC. Only valid inside the exercise window.
+  // -------------------------------------------------------------------------
+  function exercise(signature buyerSig) {
+    int windowClose = expiryHeight + graceBlocks;
+    require(tx.time >= expiryHeight, "before expiry");
+    require(tx.time < windowClose, "exercise window closed");
+    require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
+
+    // Output 0: seller receives the strike payment in stablecoin.
+    require(
+      tx.outputs[0].assets.lookup(stableAssetId) >= strikeAmount,
+      "seller underpaid"
+    );
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
+      "output 0 not seller"
+    );
+
+    // Output 1: buyer receives the BTC collateral.
+    require(tx.outputs[1].value >= btcSats, "buyer underpaid");
+    require(
+      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
+      "output 1 not buyer"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // RECLAIM
+  // Seller reclaims the BTC after the exercise window closes (option went
+  // OTM and the buyer did not exercise).
+  // -------------------------------------------------------------------------
+  function reclaim(signature sellerSig) {
+    int reclaimHeight = expiryHeight + graceBlocks;
+    require(tx.time >= reclaimHeight, "reclaim window not open");
+    require(checkSig(sellerSig, sellerPk), "invalid seller sig");
+  }
+
+  // -------------------------------------------------------------------------
+  // TRANSFER_SELLER
+  // Writer re-assigns the short leg to a new seller. Collateral & terms
+  // preserved; buyer leg unchanged.
+  // -------------------------------------------------------------------------
+  function transferSeller(signature sellerSig, pubkey newSellerPk) {
+    require(checkSig(sellerSig, sellerPk), "invalid seller sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(
+        newSellerPk, buyerPk, stableAssetId,
+        btcSats, strikeAmount, expiryHeight, graceBlocks, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= btcSats, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // TRANSFER_BUYER
+  // Holder re-assigns the long leg to a new buyer. Collateral & terms
+  // preserved; seller leg unchanged.
+  // -------------------------------------------------------------------------
+  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
+    require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(
+        sellerPk, newBuyerPk, stableAssetId,
+        btcSats, strikeAmount, expiryHeight, graceBlocks, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= btcSats, "collateral not preserved");
+  }
+}
