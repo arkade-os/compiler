@@ -20,6 +20,15 @@ Two paired contracts for selling and buying volatility on Bitcoin, faithful to R
 
 The premium is paid MM→seller upfront, off-contract, in the same atomic funding transaction. Just like Rysk pays premium in USD upfront; here it's in stablecoin (or BTC).
 
+### Terminology
+
+- **ITM** = *In The Money*. The option has intrinsic value — the buyer would profit by exercising. For a call, ITM means spot is above strike (the buyer wants to buy BTC at the cheaper strike price). For a put, ITM means spot is below strike (the buyer wants to sell BTC at the higher strike price).
+- **OTM** = *Out of The Money*. The option has no intrinsic value at expiry — the buyer would lose by exercising vs. transacting at spot. For a call, OTM means spot ≤ strike. For a put, OTM means spot ≥ strike.
+- **ATM** = *At The Money*. Spot equals strike. In this contract ATM is bundled into the OTM branch (`>=` / `<=` boundaries) because there's no economic reason to swap at parity.
+- **Strike** = the agreed reference price. For a call, the price at which the buyer can buy BTC; for a put, the price at which the buyer can sell BTC.
+- **Premium** = the price the buyer paid upfront for the option, kept by the seller regardless of outcome.
+- **Notional** = the BTC quantity the option is written on (`btcSats` in both contracts).
+
 ---
 
 ## Economics
