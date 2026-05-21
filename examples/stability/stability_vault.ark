@@ -129,10 +129,19 @@ contract StabilityVault(
     require(newFundingRatePerSec >= 0, "negative funding rate disallowed");
 
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;
     require(newTargetUSD > 0, "claim wiped by funding");
+
+    // Anti-grief: if rate > 0 and delta truncates to 0, provider would be
+    // calling settle with no accrual while advancing lastUpdate, which
+    // suppresses funding owed to the seeker. Allow no-accrual settles only
+    // when current rate is already 0 (legitimate "resume from pause").
+    if (fundingRatePerSec != 0) {
+      require(delta > 0, "no accrual; wait longer");
+    }
 
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
@@ -191,6 +200,7 @@ contract StabilityVault(
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;
@@ -235,6 +245,7 @@ contract StabilityVault(
     // newTargetUSD = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
     // seekerRaw    = newTargetUSD × (1 - seekerExitFee/1e4) × 1e8 / oraclePrice
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;
@@ -282,6 +293,7 @@ contract StabilityVault(
     // newTargetUSD = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
     // seekerRaw    = newTargetUSD × 1e8 / oraclePrice  (no exit fee on provider-driven exit)
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;

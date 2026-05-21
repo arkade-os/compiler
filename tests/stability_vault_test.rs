@@ -67,10 +67,14 @@ contract StabilityVault(
     require(newFundingRatePerSec >= 0, "negative funding rate disallowed");
 
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;
     require(newTargetUSD > 0, "claim wiped");
+    if (fundingRatePerSec != 0) {
+      require(delta > 0, "no accrual; wait longer");
+    }
 
     require(
       tx.outputs[0].scriptPubKey == new StabilityVault(
@@ -107,12 +111,14 @@ contract StabilityVault(
     require(amount > 0, "zero amount");
     require(oraclePrice > 0, "invalid price");
     int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;
@@ -142,12 +148,14 @@ contract StabilityVault(
     require(checkSig(seekerSig, seekerPk), "invalid seeker sig");
     require(oraclePrice > 0, "invalid price");
     int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;
@@ -181,12 +189,14 @@ contract StabilityVault(
     require(checkSig(providerSig, providerPk), "invalid provider sig");
     require(oraclePrice > 0, "invalid price");
     int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
     int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
     int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
     int delta             = targetUSD * rateElapsedScaled / 1000000;
     int newTargetUSD      = targetUSD + delta;
@@ -243,38 +253,61 @@ contract StabilityOffer(
     require(collateralRatioPct >= 100, "bad ratio");
     require(oraclePrice > 0, "invalid price");
     int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 600, "stale oracle");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "bad oracle sig");
 
+    require(seekerExitFee >= 0, "negative exit fee");
+    require(seekerExitFee <= 10000, "exit fee > 100%");
+    require(takeFee >= 0, "negative take fee");
+    require(takeFee <= 10000, "take fee > 100%");
+
     int targetUSD       = userBTC * oraclePrice / 100000000;
     int totalCollateral = userBTC * (100 + collateralRatioPct) / 100;
+    int takeFeeSats     = userBTC * takeFee / 10000;
+    int remaining       = maxExposureBTC - userBTC;
 
-    require(
-      tx.outputs[0].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
-        collateralRatioPct, seekerExitFee, exit
-      ), "bad vault"
-    );
-    require(tx.outputs[0].value >= totalCollateral, "underpaid");
-
-    int takeFeeSats = userBTC * takeFee / 10000;
     if (takeFeeSats > 330) {
+      require(
+        tx.outputs[0].scriptPubKey == new StabilityVault(
+          seekerPk, providerPk, oraclePk, ticker,
+          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
+          collateralRatioPct, seekerExitFee, exit
+        ), "bad vault"
+      );
+      require(tx.outputs[0].value >= totalCollateral, "underpaid");
       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "not provider");
       require(tx.outputs[1].value >= takeFeeSats, "fee underpaid");
-    }
-
-    int remaining = maxExposureBTC - userBTC;
-    if (remaining > 0) {
+      if (remaining > 0) {
+        require(
+          tx.outputs[2].scriptPubKey == new StabilityOffer(
+            providerPk, oraclePk, ticker,
+            fundingRatePerSec, remaining, collateralRatioPct,
+            seekerExitFee, takeFee, exit
+          ), "bad offer"
+        );
+      }
+    } else {
       require(
-        tx.outputs[2].scriptPubKey == new StabilityOffer(
-          providerPk, oraclePk, ticker,
-          fundingRatePerSec, remaining, collateralRatioPct,
-          seekerExitFee, takeFee, exit
-        ), "bad offer"
+        tx.outputs[0].scriptPubKey == new StabilityVault(
+          seekerPk, providerPk, oraclePk, ticker,
+          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
+          collateralRatioPct, seekerExitFee, exit
+        ), "bad vault"
       );
+      int dustVaultValue = totalCollateral + takeFeeSats;
+      require(tx.outputs[0].value >= dustVaultValue, "underpaid");
+      if (remaining > 0) {
+        require(
+          tx.outputs[1].scriptPubKey == new StabilityOffer(
+            providerPk, oraclePk, ticker,
+            fundingRatePerSec, remaining, collateralRatioPct,
+            seekerExitFee, takeFee, exit
+          ), "bad offer"
+        );
+      }
     }
   }
 

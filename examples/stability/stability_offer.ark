@@ -12,11 +12,14 @@
 //      StabilityVault bound to this ticker.
 //   4. Provider calls withdraw() to reclaim unused collateral at any time.
 //
-// Fees committed at offer creation (immutable across takes):
-//   - takeFee:        sats paid to provider from taker's deposit on take
-//   - seekerExitFee:  sats paid to provider when the Seeker later calls
-//                     seekerExit; propagated into every vault created from
-//                     this offer.
+// Fees committed at offer creation (immutable across takes), expressed in
+// basis points (1e4 scale: 100 = 1%):
+//   - takeFee:        takeFee × userBTC / 1e4 sats; rolled into the vault
+//                     when below the 330-sat dust threshold (provider
+//                     reclaims it on their exit), otherwise emitted as a
+//                     separate output.
+//   - seekerExitFee:  applied in USD as (1 − seekerExitFee/1e4) × newTargetUSD
+//                     when seekerExit settles. Propagates into every vault.
 
 import "stability_vault.ark";
 
@@ -61,6 +64,10 @@ contract StabilityOffer(
     require(userBTC <= maxExposureBTC, "exceeds offer capacity");
     require(collateralRatioPct >= 100, "collateral ratio below minimum");
     require(oraclePrice > 0, "invalid oracle price");
+    require(seekerExitFee >= 0, "negative exit fee");
+    require(seekerExitFee <= 10000, "exit fee > 100%");
+    require(takeFee >= 0, "negative take fee");
+    require(takeFee <= 10000, "take fee > 100%");
 
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
@@ -72,36 +79,62 @@ contract StabilityOffer(
     int targetUSD = userBTC * oraclePrice / 100000000;
     require(targetUSD > 0, "position too small");
 
-    int totalCollateral = userBTC * (100 + collateralRatioPct) / 100;
+    int totalCollateral       = userBTC * (100 + collateralRatioPct) / 100;
+    int takeFeeSats           = userBTC * takeFee / 10000;
+    int remainingCapacity     = maxExposureBTC - userBTC;
+    int remainingCollateral   = remainingCapacity * collateralRatioPct / 100;
 
-    require(
-      tx.outputs[0].scriptPubKey == new StabilityVault(
-        seekerPk, providerPk, oraclePk, ticker,
-        targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
-        collateralRatioPct, seekerExitFee, exit
-      ),
-      "invalid vault output"
-    );
-    require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
-
-    int takeFeeSats = userBTC * takeFee / 10000;
+    // takeFeeSats > 330  → fee is its own output (output[1]); remaining offer
+    //                       (if any) goes at output[2].
+    // takeFeeSats ≤ 330  → fee is rolled into the vault output (provider
+    //                       reclaims it on exit since vault.value > totalCollateral
+    //                       always flows to provider). Remaining offer at output[1].
     if (takeFeeSats > 330) {
+      require(
+        tx.outputs[0].scriptPubKey == new StabilityVault(
+          seekerPk, providerPk, oraclePk, ticker,
+          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
+          collateralRatioPct, seekerExitFee, exit
+        ),
+        "invalid vault output"
+      );
+      require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
       require(tx.outputs[1].value >= takeFeeSats, "provider underpaid take fee");
-    }
-
-    int remainingCapacity = maxExposureBTC - userBTC;
-    if (remainingCapacity > 0) {
+      if (remainingCapacity > 0) {
+        require(
+          tx.outputs[2].scriptPubKey == new StabilityOffer(
+            providerPk, oraclePk, ticker,
+            fundingRatePerSec, remainingCapacity, collateralRatioPct,
+            seekerExitFee, takeFee, exit
+          ),
+          "invalid remaining offer"
+        );
+        require(tx.outputs[2].value >= remainingCollateral, "insufficient offer collateral");
+      }
+    } else {
+      // Dust fee rolled into the vault — vault collects totalCollateral + takeFeeSats.
       require(
-        tx.outputs[2].scriptPubKey == new StabilityOffer(
-          providerPk, oraclePk, ticker,
-          fundingRatePerSec, remainingCapacity, collateralRatioPct,
-          seekerExitFee, takeFee, exit
+        tx.outputs[0].scriptPubKey == new StabilityVault(
+          seekerPk, providerPk, oraclePk, ticker,
+          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
+          collateralRatioPct, seekerExitFee, exit
         ),
-        "invalid remaining offer"
+        "invalid vault output"
       );
-      int remainingCollateral = remainingCapacity * collateralRatioPct / 100;
-      require(tx.outputs[2].value >= remainingCollateral, "insufficient offer collateral");
+      int dustVaultValue = totalCollateral + takeFeeSats;
+      require(tx.outputs[0].value >= dustVaultValue, "insufficient vault collateral");
+      if (remainingCapacity > 0) {
+        require(
+          tx.outputs[1].scriptPubKey == new StabilityOffer(
+            providerPk, oraclePk, ticker,
+            fundingRatePerSec, remainingCapacity, collateralRatioPct,
+            seekerExitFee, takeFee, exit
+          ),
+          "invalid remaining offer"
+        );
+        require(tx.outputs[1].value >= remainingCollateral, "insufficient offer collateral");
+      }
     }
   }
 
