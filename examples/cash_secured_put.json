@@ -1,0 +1,576 @@
+{
+  "contractName": "CashSecuredPut",
+  "constructorInputs": [
+    {
+      "name": "sellerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "buyerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "stableAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "stableAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "stableAmount",
+      "type": "int"
+    },
+    {
+      "name": "btcSats",
+      "type": "int"
+    },
+    {
+      "name": "expiryHeight",
+      "type": "int"
+    },
+    {
+      "name": "graceBlocks",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "exercise",
+      "functionInputs": [
+        {
+          "name": "buyerSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "buyerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "after",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<expiryHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "<graceBlocks>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<expiryHeight>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<tx.time >",
+        "<windowClose>",
+        "OP_LESSTHAN",
+        "<buyerPk>",
+        "<buyerSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<btcSats>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<sellerPk>)>",
+        "OP_EQUAL",
+        "1",
+        "<stableAssetId_txid>",
+        "<stableAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<stableAmount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<buyerPk>)>",
+        "OP_EQUAL",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "exercise",
+      "functionInputs": [
+        {
+          "name": "buyerSig",
+          "type": "signature"
+        },
+        {
+          "name": "sellerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<buyerPk>",
+        "<buyerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "reclaim",
+      "functionInputs": [
+        {
+          "name": "sellerSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "after",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<expiryHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "<graceBlocks>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<reclaimHeight>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<sellerPk>",
+        "<sellerSig>",
+        "OP_CHECKSIG",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "reclaim",
+      "functionInputs": [
+        {
+          "name": "sellerSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "after",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "signature"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<expiryHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "<graceBlocks>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<reclaimHeight>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<sellerPk>",
+        "<sellerSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "transferSeller",
+      "functionInputs": [
+        {
+          "name": "sellerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSellerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newSellerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:CashSecuredPut(<newSellerPk>,<buyerPk>,<stableAssetId>,<stableAmount>,<btcSats>,<expiryHeight>,<graceBlocks>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<stableAssetId_txid>",
+        "<stableAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<stableAmount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transferSeller",
+      "functionInputs": [
+        {
+          "name": "sellerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSellerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "sellerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSellerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newSellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<buyerPk>",
+        "<buyerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newSellerPk>",
+        "<newSellerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "transferBuyer",
+      "functionInputs": [
+        {
+          "name": "buyerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newBuyerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "buyerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newBuyerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<buyerPk>",
+        "<buyerSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:CashSecuredPut(<sellerPk>,<newBuyerPk>,<stableAssetId>,<stableAmount>,<btcSats>,<expiryHeight>,<graceBlocks>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<stableAssetId_txid>",
+        "<stableAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<stableAmount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transferBuyer",
+      "functionInputs": [
+        {
+          "name": "buyerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newBuyerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "sellerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newBuyerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newBuyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<buyerPk>",
+        "<buyerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newBuyerPk>",
+        "<newBuyerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract CashSecuredPut(\n  pubkey  sellerPk,\n  pubkey  buyerPk,\n  bytes32 stableAssetId,\n  int     stableAmount,\n  int     btcSats,\n  int     expiryHeight,\n  int     graceBlocks,\n  int     exit\n) {\n\n  function exercise(signature buyerSig) {\n    int windowClose = expiryHeight + graceBlocks;\n    require(tx.time >= expiryHeight, \"before expiry\");\n    require(tx.time < windowClose, \"exercise window closed\");\n    require(checkSig(buyerSig, buyerPk), \"invalid buyer sig\");\n\n    require(tx.outputs[0].value >= btcSats, \"seller underpaid\");\n    require(\n      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),\n      \"output 0 not seller\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(stableAssetId) >= stableAmount,\n      \"buyer underpaid\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),\n      \"output 1 not buyer\"\n    );\n  }\n\n  function reclaim(signature sellerSig) {\n    int reclaimHeight = expiryHeight + graceBlocks;\n    require(tx.time >= reclaimHeight, \"reclaim window not open\");\n    require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n  }\n\n  function transferSeller(signature sellerSig, pubkey newSellerPk) {\n    require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new CashSecuredPut(\n        newSellerPk, buyerPk, stableAssetId,\n        stableAmount, btcSats, expiryHeight, graceBlocks, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,\n      \"collateral not preserved\"\n    );\n  }\n\n  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {\n    require(checkSig(buyerSig, buyerPk), \"invalid buyer sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new CashSecuredPut(\n        sellerPk, newBuyerPk, stableAssetId,\n        stableAmount, btcSats, expiryHeight, graceBlocks, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,\n      \"collateral not preserved\"\n    );\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-05-21T22:22:23.357694502+00:00",
+  "warnings": [
+    "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn transferSeller: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn transferBuyer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'exercise' (serverVariant=true): placeholder <tx.time > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.time '",
+    "warning[output-invariant]: fn 'exercise' (serverVariant=true): placeholder <windowClose> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'windowClose'",
+    "warning[output-invariant]: fn 'reclaim' (serverVariant=true): placeholder <reclaimHeight> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'reclaimHeight'",
+    "warning[output-invariant]: fn 'reclaim' (serverVariant=false): placeholder <reclaimHeight> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'reclaimHeight'",
+    "warning[output-invariant]: fn 'transferSeller' (serverVariant=false): placeholder <newSellerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newSellerPk'",
+    "warning[output-invariant]: fn 'transferBuyer' (serverVariant=false): placeholder <newBuyerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newBuyerPk'"
+  ]
+}

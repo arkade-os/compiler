@@ -1,10 +1,10 @@
-// RyskPhysicalCall Contract
+// CoveredCall Contract
 //
 // Bitcoin-native, physically-settled covered call inspired by
-// Rysk Finance v12 (https://app.rysk.finance/earn) — now feasible on
-// Arkade thanks to wrapped USDT/USDC as native assets.
+// Rysk Finance v12 (https://app.rysk.finance/earn). Pairs with
+// CashSecuredPut to cover Rysk's full product lineup.
 //
-// European-style call option with physical settlement:
+// European-style call option:
 //   - Seller (writer) locks `btcSats` of BTC collateral.
 //   - Buyer holds the long call; premium paid off-contract in the
 //     funding transaction.
@@ -15,20 +15,17 @@
 //     the option was not exercised (i.e. it expired OTM and the buyer
 //     rationally walked away).
 //
-// Compared to RyskCall (inverse cash-settled in BTC):
-//   - No oracle dependency; the buyer's exercise decision is the
-//     settlement signal.
-//   - Strike payment is a real USDT transfer, not a computed BTC split.
-//   - Requires the buyer to be online during the grace window. Rysk
-//     hides this behind RFQ-matched market makers; here the buyer has
-//     the direct economic incentive to exercise iff ITM.
+// No oracle dependency: the buyer's exercise decision is the settlement
+// signal. The strike payment is a real on-chain stablecoin transfer.
+// Rysk hides "buyer must exercise" behind RFQ-matched market makers;
+// here the buyer has the direct economic incentive to exercise iff ITM.
 //
 // Transaction layout for exercise:
-//   input[0]:  this RyskPhysicalCall UTXO   (btcSats BTC)
-//   input[1+]: buyer's USDT inputs           (>= strikeAmount + buyer's BTC fees)
-//   output[0]: seller receives the strike    (strikeAmount stableAssetId, locked to sellerPk)
-//   output[1]: buyer receives the BTC        (btcSats BTC, locked to buyerPk)
-//   output[2+]: buyer's USDT change          (unconstrained)
+//   input[0]:  this CoveredCall UTXO        (btcSats BTC)
+//   input[1+]: buyer's stablecoin inputs    (>= strikeAmount + buyer's BTC fees)
+//   output[0]: seller receives the strike   (strikeAmount stableAssetId, locked to sellerPk)
+//   output[1]: buyer receives the BTC       (btcSats BTC, locked to buyerPk)
+//   output[2+]: buyer's stablecoin change   (unconstrained)
 //
 // Either party may re-assign their leg at any time before reclaim via
 // `transferSeller` / `transferBuyer` (pure key swaps preserving
@@ -41,12 +38,12 @@ options {
   exit = exit;
 }
 
-contract RyskPhysicalCall(
+contract CoveredCall(
   pubkey  sellerPk,         // option writer
   pubkey  buyerPk,          // option holder
   bytes32 stableAssetId,    // USDT / USDC asset id
   int     btcSats,          // BTC quantity locked
-  int     strikeAmount,     // total USDT the buyer must pay to exercise
+  int     strikeAmount,     // total stablecoin amount buyer pays to exercise
   int     expiryHeight,     // exercise window opens at this block height
   int     graceBlocks,      // length of the exercise window
   int     exit              // exit timelock in blocks
@@ -101,7 +98,7 @@ contract RyskPhysicalCall(
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
 
     require(
-      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(
+      tx.outputs[0].scriptPubKey == new CoveredCall(
         newSellerPk, buyerPk, stableAssetId,
         btcSats, strikeAmount, expiryHeight, graceBlocks, exit
       ),
@@ -119,7 +116,7 @@ contract RyskPhysicalCall(
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
 
     require(
-      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(
+      tx.outputs[0].scriptPubKey == new CoveredCall(
         sellerPk, newBuyerPk, stableAssetId,
         btcSats, strikeAmount, expiryHeight, graceBlocks, exit
       ),

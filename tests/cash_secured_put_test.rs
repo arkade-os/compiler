@@ -1,11 +1,11 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTOUTASSETLOOKUP};
 
-// RyskPhysicalCall: physically-settled covered call. No oracle.
+// CashSecuredPut: physically-settled European cash-secured put. No oracle.
 // Buyer exercises within [expiryHeight, expiryHeight + graceBlocks) by
-// paying the strike in a stablecoin asset and receiving the locked BTC.
-// After the window, seller reclaims.
-const CALL_CODE: &str = r#"
+// delivering `btcSats` BTC to the seller and receiving the locked
+// stablecoin. After the window, seller reclaims the cash.
+const PUT_CODE: &str = r#"
 import "single_sig.ark";
 
 options {
@@ -13,12 +13,12 @@ options {
   exit = exit;
 }
 
-contract RyskPhysicalCall(
+contract CashSecuredPut(
   pubkey  sellerPk,
   pubkey  buyerPk,
   bytes32 stableAssetId,
+  int     stableAmount,
   int     btcSats,
-  int     strikeAmount,
   int     expiryHeight,
   int     graceBlocks,
   int     exit
@@ -29,16 +29,16 @@ contract RyskPhysicalCall(
     require(tx.time < windowClose, "exercise window closed");
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
 
-    require(
-      tx.outputs[0].assets.lookup(stableAssetId) >= strikeAmount,
-      "seller underpaid"
-    );
+    require(tx.outputs[0].value >= btcSats, "seller underpaid");
     require(
       tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
       "output 0 not seller"
     );
 
-    require(tx.outputs[1].value >= btcSats, "buyer underpaid");
+    require(
+      tx.outputs[1].assets.lookup(stableAssetId) >= stableAmount,
+      "buyer underpaid"
+    );
     require(
       tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
       "output 1 not buyer"
@@ -54,25 +54,31 @@ contract RyskPhysicalCall(
   function transferSeller(signature sellerSig, pubkey newSellerPk) {
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
     require(
-      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(
+      tx.outputs[0].scriptPubKey == new CashSecuredPut(
         newSellerPk, buyerPk, stableAssetId,
-        btcSats, strikeAmount, expiryHeight, graceBlocks, exit
+        stableAmount, btcSats, expiryHeight, graceBlocks, exit
       ),
       "invalid transfer output"
     );
-    require(tx.outputs[0].value >= btcSats, "collateral not preserved");
+    require(
+      tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,
+      "collateral not preserved"
+    );
   }
 
   function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
     require(
-      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(
+      tx.outputs[0].scriptPubKey == new CashSecuredPut(
         sellerPk, newBuyerPk, stableAssetId,
-        btcSats, strikeAmount, expiryHeight, graceBlocks, exit
+        stableAmount, btcSats, expiryHeight, graceBlocks, exit
       ),
       "invalid transfer output"
     );
-    require(tx.outputs[0].value >= btcSats, "collateral not preserved");
+    require(
+      tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,
+      "collateral not preserved"
+    );
   }
 }
 "#;
@@ -80,15 +86,16 @@ contract RyskPhysicalCall(
 #[test]
 fn test_compiles_with_8_tapleaves() {
     // 4 functions × 2 variants (cooperative + exit) = 8 leaves
-    let out = compile(CALL_CODE).expect("compile");
-    assert_eq!(out.name, "RyskPhysicalCall");
+    let out = compile(PUT_CODE).expect("compile");
+    assert_eq!(out.name, "CashSecuredPut");
     assert_eq!(out.functions.len(), 8);
 }
 
 #[test]
 fn test_exercise_uses_asset_lookup_no_oracle() {
-    // exercise pays USDT to seller and BTC to buyer; physical, no oracle.
-    let out = compile(CALL_CODE).unwrap();
+    // exercise checks the stablecoin payout to buyer via asset lookup, and
+    // the BTC payout to seller via tx.outputs[0].value. No oracle.
+    let out = compile(PUT_CODE).unwrap();
     let ex = out
         .functions
         .iter()
@@ -97,7 +104,7 @@ fn test_exercise_uses_asset_lookup_no_oracle() {
     let asm = ex.asm.join(" ");
     assert!(
         asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "exercise must look up output 0 asset balance for the strike payment"
+        "exercise must look up output 1 asset balance for the cash payout"
     );
     assert!(
         !asm.contains(OP_CHECKSIGFROMSTACK),
@@ -111,9 +118,7 @@ fn test_exercise_uses_asset_lookup_no_oracle() {
 
 #[test]
 fn test_exercise_is_buyer_gated() {
-    // Only the buyer signature should appear (besides the cooperative
-    // server co-sign in the server variant).
-    let out = compile(CALL_CODE).unwrap();
+    let out = compile(PUT_CODE).unwrap();
     let ex = out
         .functions
         .iter()
@@ -129,7 +134,7 @@ fn test_exercise_is_buyer_gated() {
 
 #[test]
 fn test_reclaim_is_seller_only() {
-    let out = compile(CALL_CODE).unwrap();
+    let out = compile(PUT_CODE).unwrap();
     let r = out
         .functions
         .iter()
@@ -141,7 +146,6 @@ fn test_reclaim_is_seller_only() {
         !names.contains(&"buyerSig"),
         "reclaim must not require buyerSig"
     );
-    // reclaim is a pure unlock, no asset introspection.
     let asm = r.asm.join(" ");
     assert!(
         !asm.contains(OP_INSPECTOUTASSETLOOKUP),
@@ -150,39 +154,24 @@ fn test_reclaim_is_seller_only() {
 }
 
 #[test]
-fn test_transfer_seller_preserves_collateral() {
-    let out = compile(CALL_CODE).unwrap();
-    let t = out
-        .functions
-        .iter()
-        .find(|f| f.name == "transferSeller" && f.server_variant)
-        .unwrap();
-    let asm = t.asm.join(" ");
-    assert!(
-        !asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "transferSeller is a pure key swap, no asset lookup"
-    );
-    assert!(
-        t.asm.iter().any(|s| s == OP_CHECKSIG),
-        "transferSeller must require seller signature"
-    );
-}
-
-#[test]
-fn test_transfer_buyer_preserves_collateral() {
-    let out = compile(CALL_CODE).unwrap();
-    let t = out
-        .functions
-        .iter()
-        .find(|f| f.name == "transferBuyer" && f.server_variant)
-        .unwrap();
-    let asm = t.asm.join(" ");
-    assert!(
-        !asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "transferBuyer is a pure key swap, no asset lookup"
-    );
-    assert!(
-        t.asm.iter().any(|s| s == OP_CHECKSIG),
-        "transferBuyer must require buyer signature"
-    );
+fn test_transfers_preserve_stablecoin_collateral() {
+    // Unlike the call (which preserves BTC value), the put preserves the
+    // stablecoin asset balance — that's the collateral.
+    let out = compile(PUT_CODE).unwrap();
+    for name in ["transferSeller", "transferBuyer"] {
+        let t = out
+            .functions
+            .iter()
+            .find(|f| f.name == name && f.server_variant)
+            .unwrap();
+        let asm = t.asm.join(" ");
+        assert!(
+            asm.contains(OP_INSPECTOUTASSETLOOKUP),
+            "{name}: must verify stablecoin balance on continuation output"
+        );
+        assert!(
+            t.asm.iter().any(|s| s == OP_CHECKSIG),
+            "{name}: must require party signature"
+        );
+    }
 }

@@ -1,5 +1,5 @@
 {
-  "contractName": "RyskPhysicalCall",
+  "contractName": "CoveredCall",
   "constructorInputs": [
     {
       "name": "sellerPk",
@@ -332,7 +332,7 @@
         "OP_CHECKSIG",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:RyskPhysicalCall(<newSellerPk>,<buyerPk>,<stableAssetId>,<btcSats>,<strikeAmount>,<expiryHeight>,<graceBlocks>,<exit>)>",
+        "<VTXO:CoveredCall(<newSellerPk>,<buyerPk>,<stableAssetId>,<btcSats>,<strikeAmount>,<expiryHeight>,<graceBlocks>,<exit>)>",
         "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTVALUE",
@@ -461,7 +461,7 @@
         "OP_CHECKSIG",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:RyskPhysicalCall(<sellerPk>,<newBuyerPk>,<stableAssetId>,<btcSats>,<strikeAmount>,<expiryHeight>,<graceBlocks>,<exit>)>",
+        "<VTXO:CoveredCall(<sellerPk>,<newBuyerPk>,<stableAssetId>,<btcSats>,<strikeAmount>,<expiryHeight>,<graceBlocks>,<exit>)>",
         "OP_EQUAL",
         "0",
         "OP_INSPECTOUTPUTVALUE",
@@ -541,12 +541,12 @@
       ]
     }
   ],
-  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract RyskPhysicalCall(\n  pubkey  sellerPk,\n  pubkey  buyerPk,\n  bytes32 stableAssetId,\n  int     btcSats,\n  int     strikeAmount,\n  int     expiryHeight,\n  int     graceBlocks,\n  int     exit\n) {\n\n  function exercise(signature buyerSig) {\n    int windowClose = expiryHeight + graceBlocks;\n    require(tx.time >= expiryHeight, \"before expiry\");\n    require(tx.time < windowClose, \"exercise window closed\");\n    require(checkSig(buyerSig, buyerPk), \"invalid buyer sig\");\n\n    require(\n      tx.outputs[0].assets.lookup(stableAssetId) >= strikeAmount,\n      \"seller underpaid\"\n    );\n    require(\n      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),\n      \"output 0 not seller\"\n    );\n\n    require(tx.outputs[1].value >= btcSats, \"buyer underpaid\");\n    require(\n      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),\n      \"output 1 not buyer\"\n    );\n  }\n\n  function reclaim(signature sellerSig) {\n    int reclaimHeight = expiryHeight + graceBlocks;\n    require(tx.time >= reclaimHeight, \"reclaim window not open\");\n    require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n  }\n\n  function transferSeller(signature sellerSig, pubkey newSellerPk) {\n    require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(\n        newSellerPk, buyerPk, stableAssetId,\n        btcSats, strikeAmount, expiryHeight, graceBlocks, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= btcSats, \"collateral not preserved\");\n  }\n\n  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {\n    require(checkSig(buyerSig, buyerPk), \"invalid buyer sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new RyskPhysicalCall(\n        sellerPk, newBuyerPk, stableAssetId,\n        btcSats, strikeAmount, expiryHeight, graceBlocks, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= btcSats, \"collateral not preserved\");\n  }\n}",
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract CoveredCall(\n  pubkey  sellerPk,\n  pubkey  buyerPk,\n  bytes32 stableAssetId,\n  int     btcSats,\n  int     strikeAmount,\n  int     expiryHeight,\n  int     graceBlocks,\n  int     exit\n) {\n\n  function exercise(signature buyerSig) {\n    int windowClose = expiryHeight + graceBlocks;\n    require(tx.time >= expiryHeight, \"before expiry\");\n    require(tx.time < windowClose, \"exercise window closed\");\n    require(checkSig(buyerSig, buyerPk), \"invalid buyer sig\");\n\n    require(\n      tx.outputs[0].assets.lookup(stableAssetId) >= strikeAmount,\n      \"seller underpaid\"\n    );\n    require(\n      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),\n      \"output 0 not seller\"\n    );\n\n    require(tx.outputs[1].value >= btcSats, \"buyer underpaid\");\n    require(\n      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),\n      \"output 1 not buyer\"\n    );\n  }\n\n  function reclaim(signature sellerSig) {\n    int reclaimHeight = expiryHeight + graceBlocks;\n    require(tx.time >= reclaimHeight, \"reclaim window not open\");\n    require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n  }\n\n  function transferSeller(signature sellerSig, pubkey newSellerPk) {\n    require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new CoveredCall(\n        newSellerPk, buyerPk, stableAssetId,\n        btcSats, strikeAmount, expiryHeight, graceBlocks, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= btcSats, \"collateral not preserved\");\n  }\n\n  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {\n    require(checkSig(buyerSig, buyerPk), \"invalid buyer sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new CoveredCall(\n        sellerPk, newBuyerPk, stableAssetId,\n        btcSats, strikeAmount, expiryHeight, graceBlocks, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= btcSats, \"collateral not preserved\");\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-21T22:13:38.943962685+00:00",
+  "updatedAt": "2026-05-21T22:22:23.269861567+00:00",
   "warnings": [
     "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
