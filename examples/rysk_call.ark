@@ -1,0 +1,141 @@
+// RyskCall Contract
+//
+// Bitcoin-native, BTC-collateralized, cash-settled covered call inspired by
+// Rysk Finance v12 (https://app.rysk.finance/earn).
+//
+// European-style call option:
+//   - Seller (writer) locks `notionalSats` of BTC collateral.
+//   - Buyer holds the long call; the premium is paid off-contract in the
+//     atomic transaction that funds this vault (matches Rysk's "premium
+//     paid upfront in USD" — here paid upfront in BTC).
+//   - At `expiryHeight` the position settles non-interactively: anyone may
+//     submit a fresh oracle-signed BTC/USD price and the contract splits
+//     the locked sats between seller and buyer.
+//
+// Payoff at expiry (spot P, strike S, notional Q sats):
+//   P <= S  ->  out-of-the-money. Seller receives the full Q sats.
+//   P  > S  ->  in-the-money. Seller receives Q * S / P sats;
+//               buyer receives Q - Q * S / P sats.
+//
+// Worked example (quant spec): spot $120k, strike $90k, notional 1 BTC.
+//   sellerPayout = 1 BTC * 90/120 = 0.75 BTC
+//   buyerPayout  = 1 BTC - 0.75   = 0.25 BTC
+// This is structurally identical to a Deribit-style inverse call: the call
+// pays in the underlying, no USD ever needs to move on-chain.
+//
+// Oracle model: reuses the Fuji-style signed price feed pattern from
+// StabilityVault. The oracle off-chain computes
+//     msg = sha256(ticker || price || time)
+//     sig = sign(oraclePk, msg)
+// with `price` and `time` as 8-byte little-endian ints. The contract
+// reconstructs the hash via `sha256(ticker + price + time)` (where `+`
+// is type-dispatched to OP_CAT with int operands auto-coerced to 8-byte
+// LE), then verifies the oracle signature with checkSigFromStack.
+//
+// Replay protection:
+//   - ticker  binds the signature to BTC/USD specifically
+//   - price   is the value being attested
+//   - time    + the 144-block freshness check rejects stale snapshots
+//
+// Either party may also re-assign their leg before expiry via the
+// `transferSeller` / `transferBuyer` functions — these are pure key swaps
+// that preserve collateral and contract terms.
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract RyskCall(
+  pubkey  sellerPk,         // option writer
+  pubkey  buyerPk,          // option holder
+  pubkey  oraclePk,         // BTC/USD price oracle
+  bytes32 ticker,           // feed identifier, e.g. sha256("BTC/USD")
+  int     notionalSats,     // BTC quantity the call is written on
+  int     strikeUSDCents,   // strike price in USD cents per BTC
+  int     expiryHeight,     // settlement unlocks at this block height
+  int     exit              // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // SETTLE
+  // After expiry, anyone may settle by supplying a fresh oracle-signed price.
+  // No party signature required — settlement is deterministic from the price.
+  // -------------------------------------------------------------------------
+  function settle(
+    int       oraclePrice,    // BTC/USD in USD cents
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(tx.time >= expiryHeight, "before expiry");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.time - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 144, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    if (oraclePrice <= strikeUSDCents) {
+      // OTM: seller reclaims full collateral, buyer's call expires worthless.
+      require(tx.outputs[0].value >= notionalSats, "seller underpaid");
+      require(tx.outputs[0].scriptPubKey == new SingleSig(sellerPk), "output 0 not seller");
+    } else {
+      // ITM: split notional. sellerPayout = Q * S / P, buyerPayout = Q - sellerPayout.
+      int sellerPayout = notionalSats * strikeUSDCents / oraclePrice;
+      int buyerPayout  = notionalSats - sellerPayout;
+
+      if (sellerPayout >= 330) {
+        require(tx.outputs[0].value >= sellerPayout, "seller underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(sellerPk), "output 0 not seller");
+        if (buyerPayout > 330) {
+          require(tx.outputs[1].value >= buyerPayout, "buyer underpaid");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(buyerPk), "output 1 not buyer");
+        }
+      } else {
+        // Extreme spot move dusts the seller; entire notional goes to buyer.
+        require(tx.outputs[0].value >= notionalSats, "buyer underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(buyerPk), "output 0 not buyer");
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // TRANSFER_SELLER
+  // Writer re-assigns the short leg to a new seller. Collateral & terms
+  // preserved; buyer leg unchanged.
+  // -------------------------------------------------------------------------
+  function transferSeller(signature sellerSig, pubkey newSellerPk) {
+    require(checkSig(sellerSig, sellerPk), "invalid seller sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new RyskCall(
+        newSellerPk, buyerPk, oraclePk, ticker,
+        notionalSats, strikeUSDCents, expiryHeight, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= notionalSats, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // TRANSFER_BUYER
+  // Holder re-assigns the long leg to a new buyer. Collateral & terms
+  // preserved; seller leg unchanged.
+  // -------------------------------------------------------------------------
+  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
+    require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new RyskCall(
+        sellerPk, newBuyerPk, oraclePk, ticker,
+        notionalSats, strikeUSDCents, expiryHeight, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= notionalSats, "collateral not preserved");
+  }
+}

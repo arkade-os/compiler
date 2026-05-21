@@ -1,0 +1,612 @@
+{
+  "contractName": "RyskCall",
+  "constructorInputs": [
+    {
+      "name": "sellerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "buyerPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "oraclePk",
+      "type": "pubkey"
+    },
+    {
+      "name": "ticker",
+      "type": "bytes32"
+    },
+    {
+      "name": "notionalSats",
+      "type": "int"
+    },
+    {
+      "name": "strikeUSDCents",
+      "type": "int"
+    },
+    {
+      "name": "expiryHeight",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "settle",
+      "functionInputs": [
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "after",
+          "message": "Timelock of 0 blocks"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<expiryHeight>",
+        "OP_CHECKLOCKTIMEVERIFY",
+        "OP_DROP",
+        "<oraclePrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "<tx.time >",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<oracleAge>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<oracleAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "OP_SHA256",
+        "<oracleMsg>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "<strikeUSDCents>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_LESSTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<notionalSats>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<sellerPk>)>",
+        "OP_EQUAL",
+        "OP_ELSE",
+        "<notionalSats>",
+        "OP_SCRIPTNUMTOLE64",
+        "<strikeUSDCents>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<notionalSats>",
+        "OP_SCRIPTNUMTOLE64",
+        "<sellerPayout>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<sellerPayout>",
+        "OP_SCRIPTNUMTOLE64",
+        "330",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<sellerPayout>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<sellerPk>)>",
+        "OP_EQUAL",
+        "<buyerPayout>",
+        "OP_SCRIPTNUMTOLE64",
+        "330",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<buyerPayout>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<buyerPk>)>",
+        "OP_EQUAL",
+        "OP_ENDIF",
+        "OP_ELSE",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<notionalSats>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<buyerPk>)>",
+        "OP_EQUAL",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "settle",
+      "functionInputs": [
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "sellerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<buyerPk>",
+        "<buyerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "transferSeller",
+      "functionInputs": [
+        {
+          "name": "sellerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSellerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newSellerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:RyskCall(<newSellerPk>,<buyerPk>,<oraclePk>,<ticker>,<notionalSats>,<strikeUSDCents>,<expiryHeight>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<notionalSats>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transferSeller",
+      "functionInputs": [
+        {
+          "name": "sellerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSellerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "sellerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newSellerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newSellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "4-of-4 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<buyerPk>",
+        "<buyerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newSellerPk>",
+        "<newSellerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "transferBuyer",
+      "functionInputs": [
+        {
+          "name": "buyerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newBuyerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "buyerSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newBuyerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<buyerPk>",
+        "<buyerSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:RyskCall(<sellerPk>,<newBuyerPk>,<oraclePk>,<ticker>,<notionalSats>,<strikeUSDCents>,<expiryHeight>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<notionalSats>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transferBuyer",
+      "functionInputs": [
+        {
+          "name": "buyerSig",
+          "type": "signature"
+        },
+        {
+          "name": "newBuyerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "sellerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newBuyerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sellerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "buyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newBuyerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "4-of-4 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<sellerPk>",
+        "<sellerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<buyerPk>",
+        "<buyerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newBuyerPk>",
+        "<newBuyerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract RyskCall(\n  pubkey  sellerPk,\n  pubkey  buyerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     notionalSats,\n  int     strikeUSDCents,\n  int     expiryHeight,\n  int     exit\n) {\n\n  function settle(\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(tx.time >= expiryHeight, \"before expiry\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.time - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 144, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    if (oraclePrice <= strikeUSDCents) {\n      require(tx.outputs[0].value >= notionalSats, \"seller underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(sellerPk), \"output 0 not seller\");\n    } else {\n      int sellerPayout = notionalSats * strikeUSDCents / oraclePrice;\n      int buyerPayout  = notionalSats - sellerPayout;\n\n      if (sellerPayout >= 330) {\n        require(tx.outputs[0].value >= sellerPayout, \"seller underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(sellerPk), \"output 0 not seller\");\n        if (buyerPayout > 330) {\n          require(tx.outputs[1].value >= buyerPayout, \"buyer underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(buyerPk), \"output 1 not buyer\");\n        }\n      } else {\n        require(tx.outputs[0].value >= notionalSats, \"buyer underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(buyerPk), \"output 0 not buyer\");\n      }\n    }\n  }\n\n  function transferSeller(signature sellerSig, pubkey newSellerPk) {\n    require(checkSig(sellerSig, sellerPk), \"invalid seller sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new RyskCall(\n        newSellerPk, buyerPk, oraclePk, ticker,\n        notionalSats, strikeUSDCents, expiryHeight, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= notionalSats, \"collateral not preserved\");\n  }\n\n  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {\n    require(checkSig(buyerSig, buyerPk), \"invalid buyer sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new RyskCall(\n        sellerPk, newBuyerPk, oraclePk, ticker,\n        notionalSats, strikeUSDCents, expiryHeight, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= notionalSats, \"collateral not preserved\");\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-05-21T22:02:14.306796079+00:00",
+  "warnings": [
+    "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn transferSeller: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn transferBuyer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <tx.time > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.time '",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <sellerPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'sellerPayout'",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <sellerPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'sellerPayout'",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <sellerPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'sellerPayout'",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <buyerPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'buyerPayout'",
+    "warning[output-invariant]: fn 'settle' (serverVariant=true): placeholder <buyerPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'buyerPayout'",
+    "warning[output-invariant]: fn 'transferSeller' (serverVariant=false): placeholder <newSellerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newSellerPk'",
+    "warning[output-invariant]: fn 'transferBuyer' (serverVariant=false): placeholder <newBuyerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newBuyerPk'"
+  ]
+}
