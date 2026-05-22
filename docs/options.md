@@ -1,6 +1,6 @@
 # Options — How It Works
 
-**Status:** v1 design complete
+**Status:** v2 — single-locked Rysk-faithful design (supersedes the earlier dual-locked variant in PR #33)
 
 ---
 
@@ -9,97 +9,116 @@
 Two paired contracts for selling and buying volatility on Bitcoin, faithful to Rysk Finance v12's covered call and cash-secured put. Both contracts are:
 
 - **European** — settleable only at `expiryHeight`.
-- **Physically settled** — at expiry the actual underlying changes hands (BTC ↔ stablecoin), not a cash-equivalent.
-- **Dual-collateralized** — both sides escrow their full obligation at trade execution. Counterparty risk is zero because both legs of the potential swap are already locked in the same vault.
-- **Oracle-triggered** — settlement is a deterministic function of one Stork-style signed price. No party needs to act at expiry; any keeper can broadcast the settle.
+- **Physically settled** — at exercise the actual underlying changes hands (BTC ↔ stablecoin), not a cash-equivalent.
+- **Single-collateralized** — *only the seller* escrows their full obligation. The buyer brings the strike payment at exercise time if and only if they choose to exercise. This is the capital-efficient MM model — Rysk's RFQ counterparties don't tie up the strike value of every option they write.
+- **No oracle** — the buyer's voluntary exercise decision *is* the settlement signal. A rational buyer exercises iff in-the-money; if they don't show up, the seller reclaims after a grace window.
 
-| Contract | Seller locks | Buyer locks | ITM condition | ITM outcome |
-|---|---|---|---|---|
-| `CoveredCall` | `btcSats` BTC | `strikeAmount` stablecoin | `oraclePrice > strikePrice` | Swap: seller ← stablecoin, buyer ← BTC |
-| `CashSecuredPut` | `stableAmount` stablecoin | `btcSats` BTC | `oraclePrice < strikePrice` | Swap: seller ← BTC, buyer ← stablecoin |
+| Contract | Seller locks | Buyer brings at exercise | ITM condition |
+|---|---|---|---|
+| `CoveredCall` | `btcSats` BTC | `strikeAmount` stablecoin | spot > strike (buyer wants to buy BTC at the cheaper strike) |
+| `CashSecuredPut` | `stableAmount` stablecoin | `btcSats` BTC | spot < strike (buyer wants to sell BTC at the higher strike) |
 
-The premium is paid MM→seller upfront, off-contract, in the same atomic funding transaction. Just like Rysk pays premium in USD upfront; here it's in stablecoin (or BTC).
+The premium is paid MM→seller upfront, off-contract, in the same atomic funding transaction. Same model as Rysk pays premium in USD upfront.
 
 ### Terminology
 
-- **ITM** = *In The Money*. The option has intrinsic value — the buyer would profit by exercising. For a call, ITM means spot is above strike (the buyer wants to buy BTC at the cheaper strike price). For a put, ITM means spot is below strike (the buyer wants to sell BTC at the higher strike price).
-- **OTM** = *Out of The Money*. The option has no intrinsic value at expiry — the buyer would lose by exercising vs. transacting at spot. For a call, OTM means spot ≤ strike. For a put, OTM means spot ≥ strike.
-- **ATM** = *At The Money*. Spot equals strike. In this contract ATM is bundled into the OTM branch (`>=` / `<=` boundaries) because there's no economic reason to swap at parity.
-- **Strike** = the agreed reference price. For a call, the price at which the buyer can buy BTC; for a put, the price at which the buyer can sell BTC.
-- **Premium** = the price the buyer paid upfront for the option, kept by the seller regardless of outcome.
-- **Notional** = the BTC quantity the option is written on (`btcSats` in both contracts).
+- **ITM** = *In The Money*. The option has intrinsic value — the buyer profits by exercising.
+- **OTM** = *Out of The Money*. No intrinsic value. The buyer rationally walks away.
+- **Strike** = the agreed reference price. The amount of stablecoin the buyer pays (call) or receives (put) per unit of BTC.
+- **Premium** = the price the buyer paid upfront. Seller keeps it regardless of outcome.
+- **Notional** = the BTC quantity the option is written on (`btcSats`).
+- **Grace window** = `[expiryHeight, expiryHeight + graceBlocks)` — the buyer's exercise opportunity.
 
-### Asset ID encoding
+---
 
-Arkade Asset IDs are `(txid32, gidx_u16)` pairs, not a single 32-byte value. The source-level `bytes32 stableAssetId` is automatically decomposed by the compiler into two ABI inputs — `stableAssetId_txid: bytes32` and `stableAssetId_gidx: int` — that the wallet provides separately at funding. So a USDT or USDC issuance with `gidx != 0` is fully supported; the writer just passes the correct pair.
+## Why this design vs. the previous dual-locked variant
+
+The earlier `CoveredCall` / `CashSecuredPut` (PR #33, master commit `501193a`) had both parties pre-lock their full exposure: seller's BTC *and* buyer's strike payment, settled deterministically by an oracle. That was a misread of Rysk's mechanics — confirmed by the quant after merge.
+
+Rysk's actual model has only the seller locked. The MM commits no capital until exercise (they only ever pay strike if the option is ITM and they choose to exercise). This is what makes the RFQ market work: MMs can write many options against the same float because most expire OTM and never need a payout.
+
+The dual-locked variant has its own merits (zero counterparty risk, fully autonomous settlement, no buyer liveness required), but it's not Rysk and it's not capital-efficient enough for production MM use. This PR replaces it with the faithful design.
 
 ---
 
 ## Economics
 
-The quant's worked example: spot $77k at open, strike $90k, notional 1 BTC, expiry Jun 26.
+Worked example: 1 BTC notional, $90k strike, expiry Jun 26. MM pays seller $1,500 premium upfront.
 
-| Spot at expiry | Branch | Seller receives | Buyer receives |
+| Spot at expiry | Exercise? | Seller ends with | Buyer ends with |
 |---|---|---|---|
-| $80k | OTM | 1 BTC back | strike (90,000 USDT) back |
-| $90k | OTM (boundary) | 1 BTC back | strike back |
-| $120k | ITM | strike (90,000 USDT) | 1 BTC |
+| $80k (OTM) | No | 1 BTC + $1,500 premium | nothing besides their lost premium |
+| $90k (ATM) | Indifferent | ~1 BTC + premium | $0 PnL net of premium |
+| $120k (ITM, exercised) | Yes | $90,000 USDT + premium | 1 BTC (worth $120k now) for $90k strike — $28,500 PnL net of premium |
+| $120k (ITM, **buyer ghosts**) | No | 1 BTC + premium (free upside) | −premium (gave up ITM gain) |
 
-Seller capped their upside at $90k for the premium. If BTC rallies to $120k, the seller would have made $43k holding spot; instead they keep $90k strike + the premium. The premium is the compensation for ceding the upside tail.
+Last row is the seller's "Christmas morning" outcome from the quant's note: ITM + buyer fails to exercise = seller keeps the appreciated BTC plus the premium. The buyer's only protection against this is showing up at expiry.
 
-Symmetric story for the put: seller obligated to buy BTC at $90k strike if buyer wants to sell. Spot at $60k → put ITM → seller pays $90k strike, receives 1 BTC (now worth $60k). Seller's loss is offset (partially) by the premium they collected upfront.
+Mirror story for the put. If buyer holds 1 BTC put at $90k strike and spot drops to $60k: rational buyer exercises (delivers BTC, takes $90k cash, net $30k gain less premium); if they don't exercise, seller keeps the cash plus the premium.
 
 ---
 
 ## CoveredCall
 
-Constructor: `sellerPk, buyerPk, oraclePk, ticker, stableAssetId, btcSats, strikeAmount, strikePrice, expiryHeight, exit`
+Constructor: `sellerPk, buyerPk, stableAssetId, btcSats, strikeAmount, expiryHeight, graceBlocks, exit`
 
-The vault holds **both** `btcSats` BTC and `strikeAmount` of `stableAssetId`. `strikeAmount` and `strikePrice` MUST satisfy `strikeAmount × 1e8 == strikePrice × btcSats`.
-
-The two are passed as separate constructor parameters and the contract does **not** verify the equality on-chain: the cross-multiplication `strikePrice × btcSats` reaches ~1e22 for routine USDT-6-decimal positions ($100k strike × 1 BTC = 1e11 × 1e8 = 1e19), which exceeds int64 (~9.2e18). The wallet must enforce consistency at funding; both parties sign the funding tx and therefore consent to the exact values baked into the tapscript. The contract uses `strikePrice` for the ITM branch decision and `strikeAmount` for the asset-balance payout; an inconsistent pair would produce a wrong economic outcome, not a vault drain — but the misconfigured side would still lose value, so wallet enforcement is the integrity boundary. Sanity checks (`strikePrice > 0`, `oraclePrice > 0`) are emitted by `settle()`.
+Vault holds **only** `btcSats` BTC. `strikeAmount` is the total stablecoin payment due at exercise (strike × notional, in base units of the chosen stablecoin).
 
 ### Functions
 
-**`settle(oraclePrice, oracleTime, oracleSig)`** — permissionless. Anyone supplies a fresh oracle-signed price; the contract branches on `oraclePrice > strikePrice`. ITM → physical swap at strike (output 0 = stablecoin to seller, output 1 = BTC to buyer). OTM → unwind (output 0 = BTC back to seller, output 1 = stablecoin back to buyer).
+**`exercise(buyerSig)`** — buyer pays `strikeAmount` of `stableAssetId` to seller and takes the BTC. Valid from `expiryHeight` onward. The buyer brings their stablecoin inputs at this point — no pre-lock.
 
-### Funding buffer (don't skip this)
+**`reclaim(sellerSig)`** — seller takes the BTC back after `expiryHeight + graceBlocks`. Once this height is reached, seller and any pending buyer exercise are in a race; rational seller broadcasts immediately to capture the windfall if the buyer didn't show up.
 
-The vault must be funded with **`btcSats + 330` sats** of BTC, not just `btcSats`. The +330 covers the P2TR dust carrier on the asset-bearing output at settle (every settle branch has one BTC-only output and one stablecoin-carrying output). The contract checks `outputs[i].value >= btcSats` for the BTC-only output and assumes the 330-sat carrier is available. Fund with exactly `btcSats` and no buffer → vault is unspendable. Mining fees are handled out-of-band via direct miner submission (see the OTM unwind section), so they don't eat further into the vault. The same +330 buffer applies to `CashSecuredPut`.
+**`transferSeller(sellerSig, newSellerPk)`** / **`transferBuyer(buyerSig, newBuyerPk)`** — pure key swap, pre-expiry only. BTC collateral preserved on the continuation output.
 
-**`transferSeller(sellerSig, newSellerPk)`** / **`transferBuyer(buyerSig, newBuyerPk)`** — pure key swap for either leg. The continuation output preserves both legs of collateral (BTC value *and* stablecoin asset balance).
+### Exercise transaction layout
+
+```
+input[0]:   CoveredCall UTXO         (btcSats BTC)
+input[1+]:  buyer's stablecoin inputs (>= strikeAmount + buyer's BTC fee)
+output[0]:  SingleSig(sellerPk)      (strikeAmount of stableAssetId)
+output[1]:  SingleSig(buyerPk)       (btcSats BTC)
+output[2+]: buyer's change           (unconstrained)
+```
 
 ---
 
 ## CashSecuredPut
 
-Constructor: `sellerPk, buyerPk, oraclePk, ticker, stableAssetId, stableAmount, btcSats, strikePrice, expiryHeight, exit`
+Constructor: `sellerPk, buyerPk, stableAssetId, stableAmount, btcSats, expiryHeight, graceBlocks, exit`
 
-Same shape, sides reversed. Vault holds both `stableAmount` of `stableAssetId` and `btcSats` BTC.
+Vault holds **only** `stableAmount` of `stableAssetId` (and a dust BTC carrier for L1). Same shape as the call, sides reversed.
 
 ### Functions
 
-**`settle(oraclePrice, oracleTime, oracleSig)`** — branches on `oraclePrice < strikePrice`. ITM → output 0 = BTC to seller, output 1 = stablecoin to buyer. OTM → unwind.
+Same four — `exercise`, `reclaim`, `transferSeller`, `transferBuyer`. In `exercise`, output 0 collects the buyer's BTC delivery and output 1 takes the locked stablecoin. Transfers preserve the **stablecoin asset balance** on the continuation (not BTC value — vault holds the asset).
 
-**`transferSeller`** / **`transferBuyer`** — same as the call: both legs preserved on continuation.
+### Exercise transaction layout
+
+```
+input[0]:   CashSecuredPut UTXO      (stableAmount of stableAssetId)
+input[1+]:  buyer's BTC inputs       (>= btcSats + buyer's BTC fee)
+output[0]:  SingleSig(sellerPk)      (btcSats BTC)
+output[1]:  SingleSig(buyerPk)       (stableAmount of stableAssetId)
+output[2+]: buyer's BTC change       (unconstrained)
+```
 
 ---
 
-## Oracle model
+## Funding buffer
 
-Identical to `StabilityVault`. The oracle signs `sha256(ticker || price || timestamp)` off-chain — `price` and `timestamp` as 8-byte little-endian unsigned ints. `timestamp` is the **block height** the oracle observed the price at (Arkade's nLockTime-based clock convention), **not** a Unix timestamp. At settle, the caller provides `(oraclePrice, oracleTime, oracleSig)` as witness arguments. The contract:
+The vault must hold the seller's collateral **plus a dust carrier for the L1 spend output that needs to carry the asset**:
 
-1. Enforces freshness: `tx.time - oracleTime <= 6` blocks (~1h).
-2. Rebuilds the message hash on stack with `+` (OP_CAT, with int sides auto-coerced via OP_SCRIPTNUMTOLE64 so on-chain and off-chain hashing agree).
-3. Verifies the signature via `checkSigFromStack`.
+- `CoveredCall`: fund the vault with `btcSats + 330` sats. At exercise, the BTC-only output to the buyer takes `btcSats`; the stablecoin payment output to the seller takes the 330-sat dust carrier from the vault.
 
-Three layers of replay protection:
+  *Wait — that's not right for this design*. In the single-locked model, the buyer is providing the stablecoin **and** is constructing the tx. The buyer can fund the carrier from their own input. The vault only ever needs to provide `btcSats` to one output. So:
 
-| Field | What it prevents |
-|---|---|
-| `ticker` | Reusing a signature meant for one feed (BTC/USD) on a different feed (ETH/USD). The vault binds `ticker` at creation. |
-| `price` | The attested value itself. |
-| `timestamp` | Stale signatures fail the 6-block freshness check (tightened from the 144-block default to bound the post-expiry oracle MEV race in volatile markets). |
+  **Fund the vault with exactly `btcSats`.** The buyer's tx construction handles all carriers and fees. The contract's `>= btcSats` check works against the vault-input amount directly.
+
+- `CashSecuredPut`: vault holds `stableAmount` of `stableAssetId` plus a 330-sat dust carrier (the bare minimum BTC to make the asset-carrying UTXO non-dust). At exercise, the buyer brings BTC; the 330-sat carrier just rides along into one of the output dust carriers.
+
+Mining fees: handled out-of-band via direct miner submission for pre-signed paths; the cooperative path is fee-subsidized by the Operator. Vault sizing doesn't have to absorb fees.
 
 ---
 
@@ -109,114 +128,69 @@ Every function compiles to two tapleaves:
 
 | Path | How it unlocks | What it enforces |
 |---|---|---|
-| Cooperative | Arkade Operator co-signs | The full `require()` chain, including the oracle verification and the ITM/OTM branch |
-| Exit | N-of-N (all involved keys) + CSV after `exit` blocks | Signatures and timelock only — **no introspection** |
+| Cooperative | party-sig + Arkade Operator co-sig | Full `require()` chain including time guards and asset lookups |
+| Exit | N-of-N party-sigs + CSV after `exit` blocks | Signatures + relative timelock only — **no introspection** |
 
-Arkade-wide design constraint: introspection opcodes (`OP_INSPECTOUT*`, `OP_INSPECTOUTASSETLOOKUP`, …) only live in the cooperative layer where the Operator validates them. The exit path must settle as a pure Bitcoin script, so it falls back to N-of-N consent.
+For `exercise` the exit-leaf N is **seller + buyer**. For `reclaim` it's **seller**. For transfers it's **seller + buyer + new party**. The compiler also emits CLTV (`OP_CHECKLOCKTIMEVERIFY`) in the exit variant of `reclaim` because that's pure Bitcoin script — `expiryHeight + graceBlocks` is checked on the exit path too.
 
-For `settle` the N is **seller + buyer**. The oracle key is *not* included in the exit-leaf N-of-N: the compiler distinguishes pubkeys used in `checkSig` (transaction signers) from those used only in `checkSigFromStack` (data signers — verifying off-chain oracle signatures over byte strings). The Stork-style oracle never co-signs individual L1 transactions; including it in the N-of-N would make the unilateral exit unreachable. Filtered out by `collect_data_only_pubkeys` in the compiler, so the exit leaf stays broadcastable by the two parties alone.
+Total tapleaves: **8** (CoveredCall) + **8** (CashSecuredPut) = 16.
 
-### Time guards are cooperative-only
+### Known compiler limitations
 
-The `require(tx.time < expiryHeight)` guard on the transfer functions (M8 fix) is enforced **only on the cooperative tapleaf**. The exit tapleaf strips all introspection opcodes (Arkade-wide design constraint, since the exit path must settle as pure Bitcoin script). On the exit variant, transfers fall back to N-of-N consent: seller + buyer + new party must all sign.
+Two minor codegen quirks surface in the compiled ASM:
 
-This is safe by *consent rather than script*. A post-expiry transfer through the exit path would require both seller and buyer to actively sign — but a buyer would never sign a transfer that revokes their pending settle right, and a seller wanting to grief can't act unilaterally. The script-level guard would be belt-and-suspenders nice-to-have, but the N-of-N requirement already provides equivalent protection against any single-party attack. Same pattern applies to `settle`'s `tx.time >= expiryHeight` lower bound: cooperative-enforced, exit-path N-of-N-enforced.
+1. **`tx.time < expiryHeight` on transfers compiles to non-functional placeholders** in the exit variant. The cooperative path Operator validates this off-chain, but the script doesn't enforce the upper bound on the exit path. Mitigation: the exit-path transfer requires N-of-N (seller + buyer + new party); a post-expiry transfer would need both parties' active consent, which removes the unilateral griefing vector.
 
-Total tapleaves: **6** (CoveredCall) + **6** (CashSecuredPut) = 12.
+2. **`reclaimHeight = expiryHeight + graceBlocks` is computed but pushed as a separate `<reclaimHeight>` placeholder for `OP_CHECKLOCKTIMEVERIFY`.** The SDK has to substitute `reclaimHeight = expiryHeight + graceBlocks` when building the witness. Documented for SDK authors; the OP_ADD64 + OP_VERIFY chain validates the arithmetic, the placeholder carries the value to CLTV.
+
+Both are upstream compiler issues, not contract bugs. They don't affect security; the cooperative path remains fully validated and the exit path remains broadcastable.
 
 ---
 
-## L1 unilateral exit and the pre-signed OTM unwind
+## Why the buyer is incentivized to exercise (and the unilateral-exit question)
 
-The cooperative path covers ~all normal settlement. The script-level N-of-N exit covers the case where the Operator is down but the oracle and counterparty are reachable. The remaining catastrophic case — Operator **and** oracle down past expiry — needs an additional layer, because without the oracle signature the script can't reach the settle branch and without the Operator the cooperative path is closed.
+The buyer has paid the premium upfront. If the option is ITM at expiry, the buyer's expected profit from exercise is `(spot − strike) × notional − fees − premium`. If positive, they exercise. If the buyer doesn't broadcast within the grace window, the seller's reclaim path matures and the buyer loses both the premium and the ITM gain.
 
-The compiler-level exclusion of the oracle key from the N-of-N (see "Cooperative vs exit paths" above) is what makes this layer feasible. With seller + buyer as the only N-of-N signers, a pre-signed template needs only their two signatures captured at funding time — no oracle co-signature, which would be impossible to obtain.
+This makes the design self-policing in the happy case: economically rational buyers always exercise when ITM, regardless of which path is available. The Operator-down case is the only edge:
 
-### Why pre-signed ITM templates don't work
+- **Operator down + option ITM + buyer wants to exercise**: the cooperative path is closed. The exit path requires seller + buyer + CSV — but the seller has every incentive NOT to sign, since they keep the BTC if exercise fails. The buyer cannot unilaterally exercise on L1.
 
-A naive plan is: at funding, both parties pre-sign the two outcome transactions (OTM-unwind and ITM-swap) with `SIGHASH_ALL`. Each template is fully specified — both parties' collateral is in the vault, both parties' payouts are known, no buyer-side UTXO contribution is needed because both legs were locked at funding.
+The mitigations are off-contract:
+- **Pre-signed exit-path exercise template**: at funding, both parties pre-sign a canonical exercise tx with `SIGHASH_ALL`. The seller's signature is captured while they're online; the buyer assembles their stablecoin inputs and broadcasts at exercise time. Requires the buyer to commit to specific stablecoin UTXOs at funding (or use `SIGHASH_ANYONECANPAY` to add inputs later — but then the asset packet binding output 0 to the seller is at risk if not at the same index as the signed input).
+- **Operator commit**: trust the Operator to be live. Realistically, this is what Rysk does on Hyperliquid — protocol liveness is the integrity boundary.
 
-The trap: on L1 the script can't verify the oracle, so it can't gate which template is broadcastable. Either party could broadcast whichever template favors them, regardless of the actual oracle price. There's no on-chain referee.
-
-### What does work: pre-sign OTM only
-
-Pre-sign **only the OTM unwind template** at funding. The template:
-
-```
-input[0]:   vault outpoint              (both parties' collateral)
-output[0]:  SingleSig(sellerPk)         (btcSats BTC)
-output[1]:  SingleSig(buyerPk)          (strikeAmount of stableAssetId, via OP_RETURN packet)
-nLockTime:  expiryHeight + STUCK_FUNDS_TIMELOCK   (long delay - see below)
-```
-
-Both parties sign with `SIGHASH_ALL`. Everything is fully known at funding time:
-- input 0 is the vault outpoint
-- output 0/1 layouts are fixed by contract terms (collateral amounts, party pubkeys)
-- the OP_RETURN asset packet binding stablecoin to output 1 is part of the signed template — `SIGHASH_ALL` covers all outputs including the OP_RETURN, so the asset assignment is genuinely locked
-
-Either party can broadcast this template once `nLockTime` matures. The outcome: each side gets back their original collateral. The premium stays with the seller (already paid out off-contract at funding). The trade is **canceled**, not settled.
-
-### Why this is acceptable as a stuck-funds fallback
-
-OTM-unwind is the seller-favoring outcome when the option is actually ITM (seller reclaims BTC instead of paying out the strike). So there's a real worst case: if Operator + oracle stay down long enough for the pre-sig timelock to mature **and** the option would have settled ITM, the seller can broadcast the OTM template and pocket the BTC the buyer should have received.
-
-The mitigations are timelock and trust assumptions:
-
-1. **Long `STUCK_FUNDS_TIMELOCK`.** Set it to, say, 1008 blocks (~1 week) past expiry. This gives the Operator + oracle ample time to come back online and trigger the correct settle. Pre-signed OTM activates only as a *last resort* when the protocol has been catastrophically offline for a week.
-2. **Oracle independence.** Stork and the Arkade Operator are independent third parties. Both failing simultaneously for >1 week is unlikely.
-3. **Bounded loss.** Even in the worst case, the buyer loses only their *potential ITM gain*, not their principal. The strike cash they locked is returned in full. They paid the premium upfront knowing this; the OTM unwind is equivalent to the option expiring worthless from their side.
-
-This is the standard "stuck funds protection" pattern from Lightning: a fallback state that's not always the *correct* outcome but ensures funds aren't permanently locked.
-
-### What the SDK has to do at funding
-
-1. Wait for the funding tx to confirm so the vault outpoint is fixed.
-2. Construct the OTM unwind template with `nLockTime = expiryHeight + STUCK_FUNDS_TIMELOCK`.
-3. Both parties sign with `SIGHASH_ALL`. The two-of-two N-of-N signatures (`<sellerPkSig>` + `<buyerPkSig>`) are exactly what the exit leaf consumes — no oracle key needed because the compiler filters checkSigFromStack-only pubkeys out of the N-of-N.
-4. Both parties (and ideally Arkade backup infra) store the signed template.
-5. After `nLockTime` matures, either party can broadcast.
-
-### Fee handling for the pre-signed template
-
-`SIGHASH_ALL` commits to every output, including any fee-bearing output, so on-chain fee bumping (CPFP via an anchor output, RBF) isn't available against the signed template. The mitigation is **out-of-band fee payment**: direct submission to a miner / accelerator service (e.g. Mempool.space accelerator, MARA Slipstream, Slipstream-style direct-to-miner endpoints). The static on-chain fee in the template can be set to zero or near-zero; the OOB payment covers the actual mining cost at broadcast time. This keeps the pre-signed template valid indefinitely regardless of how the on-chain fee market moves.
-
-For the cooperative + N-of-N exit paths the SDK does its usual thing — no pre-signing required.
-
-### Why not pre-sign transfers
-
-Transfers are interactive secondary-market trades. The next-holder's pubkey doesn't exist at funding time, so there's nothing to pre-sign. Both parties have to be online for the trade anyway.
+The original dual-locked design avoided this by making settlement oracle-triggered and party-agnostic. It traded capital efficiency for liveness independence. Trade-off the user picks.
 
 ---
 
 ## Lifecycle
 
 ```
-1. Pricing & match (off-chain): buyer and seller agree on premium,
-   strike, expiry via RFQ or direct quote.
-2. Funding tx (atomic, both parties online):
+1. Off-chain pricing & match: buyer and seller agree on strike, expiry,
+   graceBlocks, premium.
+2. Funding tx (both parties online):
      - Seller's collateral  -> vault
-     - Buyer's collateral   -> vault
      - Premium              -> seller's wallet (off-contract)
-     - Both parties sign the OTM unwind template (SIGHASH_ALL,
-       nLockTime = expiryHeight + STUCK_FUNDS_TIMELOCK), store the
-       signed template.
+     - (Optional) Both parties pre-sign exit-path exercise template
 3. Pre-expiry: vault sits. Either party may transfer their leg via the
-   cooperative path (the next-holder is the variable, so transfers can't
-   be pre-signed in advance).
-4. At/after expiryHeight: anyone supplies an oracle-signed price and
-   broadcasts settle() — cooperative if Operator is up, N-of-N exit
-   otherwise.
-5. Stuck-funds path: if expiryHeight + STUCK_FUNDS_TIMELOCK passes with
-   no settlement, either party broadcasts the OTM unwind template. Each
-   side gets back their original collateral.
+   cooperative path; transfers locked at expiryHeight.
+4. At expiryHeight: exercise window opens.
+   - Buyer evaluates ITM/OTM at live spot.
+   - If ITM: buyer constructs and broadcasts exercise tx, paying strike,
+     taking the underlying. Cooperative (fast) or exit-path with pre-sig.
+   - If OTM: buyer does nothing.
+5. At expiryHeight + graceBlocks: reclaim window opens.
+   - Seller broadcasts reclaim, taking back whatever's in the vault.
+   - Race between seller's reclaim and any belated buyer exercise; seller
+     wins by default (rational broadcast is at the first valid block).
 ```
 
 ---
 
 ## Risk disclosures (wallet UX)
 
-1. **European exercise.** Settlement only happens at or after `expiryHeight`, triggered by the oracle. Before then the vault is locked.
-2. **Premium is non-refundable.** Paid in the funding tx, off-contract. Seller keeps it regardless of how the option settles.
-3. **Oracle dependency.** Settlement requires a fresh oracle signature. If the oracle is offline at expiry the cooperative and N-of-N exit paths are both blocked until it resumes.
-4. **Stuck-funds fallback unwinds, not settles.** If both the Operator and the oracle stay offline for `STUCK_FUNDS_TIMELOCK` past expiry, the pre-signed OTM template can be broadcast by either party. This returns original collateral to each side regardless of what the actual settlement outcome should have been. The buyer can lose their ITM gain in this rare case; their principal (strike cash) is not at risk.
-5. **Counterparty risk = zero (by design).** Both sides' obligations are escrowed in the vault from funding. There is no scenario where one side defaults on their delivery — the assets are already on-chain.
+1. **Buyer must show up at expiry.** Unlike fully-automated derivatives, the buyer has to actively exercise. A buyer who's offline during the grace window forfeits both their premium and any ITM gain. Wallets MUST surface this prominently and ideally automate the exercise broadcast.
+2. **Premium is non-refundable.** Paid upfront, off-contract.
+3. **No oracle dependency.** Pricing is the buyer's responsibility at exercise time. Wallets should integrate spot price feeds for the ITM/OTM decision but the contract itself doesn't need one.
+4. **Seller liveness asymmetry on operator-down.** If the Operator is offline at expiry and the option is ITM, the buyer cannot force exercise via the exit path alone (it requires seller co-sig, which they have every reason to withhold). Pre-signed exit templates mitigate but don't fully solve. For high-value positions, prefer the dual-locked variant (PR #33) which has fully autonomous oracle-triggered settlement at the cost of capital efficiency.
+5. **Counterparty risk is asymmetric.** Seller's BTC delivery is trustless (collateral is escrowed). Buyer's strike payment is a "soft" obligation — they only pay if they exercise. The seller's worst case is that the buyer fails to exercise when ITM, which is good for the seller, not bad.
