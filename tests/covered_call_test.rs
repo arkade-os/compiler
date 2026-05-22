@@ -38,6 +38,7 @@ contract CoveredCall(
     int oracleAge = tx.time - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 144, "stale oracle");
+    require(oracleTime >= expiryHeight, "oracle predates expiry");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
@@ -154,6 +155,31 @@ fn test_settle_has_both_itm_and_otm_branches() {
     assert!(
         lookups >= 2,
         "settle: expected an asset lookup in each branch, found {lookups}"
+    );
+}
+
+#[test]
+fn test_settle_binds_oracle_time_to_expiry() {
+    // Regression for audit finding C1: oracleTime must not be allowed to
+    // predate expiryHeight. Without this check, an attacker could submit
+    // a stale signed price from before expiry that favors them. We assert
+    // the compiled settle ASM has TWO greater-or-equal time comparisons:
+    // one for `tx.time >= expiryHeight` and one for `oracleTime >= expiryHeight`.
+    let out = compile(CALL_CODE).unwrap();
+    let s = out
+        .functions
+        .iter()
+        .find(|f| f.name == "settle" && f.server_variant)
+        .unwrap();
+    // Two literal `<expiryHeight>` placeholder pushes — one for each guard.
+    let expiry_pushes = s
+        .asm
+        .iter()
+        .filter(|op| op.as_str() == "<expiryHeight>")
+        .count();
+    assert!(
+        expiry_pushes >= 2,
+        "settle must push <expiryHeight> at least twice (tx.time + oracleTime guards), found {expiry_pushes}"
     );
 }
 
