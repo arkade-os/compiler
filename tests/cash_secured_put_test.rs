@@ -94,6 +94,100 @@ fn test_compiles_with_6_tapleaves() {
 }
 
 #[test]
+fn test_asset_id_decomposes_to_txid_and_gidx() {
+    // Mirror of the CoveredCall test for M9 — locks in `bytes32` asset id
+    // decomposition into (_txid, _gidx) constructor inputs for the put.
+    let out = compile(PUT_CODE).unwrap();
+    let names: Vec<&str> = out.parameters.iter().map(|p| p.name.as_str()).collect();
+    assert!(
+        names.contains(&"stableAssetId_txid"),
+        "constructorInputs must include stableAssetId_txid"
+    );
+    assert!(
+        names.contains(&"stableAssetId_gidx"),
+        "constructorInputs must include stableAssetId_gidx"
+    );
+    assert!(
+        !names.contains(&"stableAssetId"),
+        "raw bytes32 stableAssetId should NOT appear in ABI; it must be decomposed"
+    );
+}
+
+#[test]
+fn test_settle_binds_oracle_time_to_expiry() {
+    // Mirror of the CoveredCall test for C1 — require(oracleTime >= expiryHeight)
+    // must be present so a stale pre-expiry oracle price cannot be replayed.
+    let out = compile(PUT_CODE).unwrap();
+    let s = out
+        .functions
+        .iter()
+        .find(|f| f.name == "settle" && f.server_variant)
+        .unwrap();
+    let expiry_pushes = s
+        .asm
+        .iter()
+        .filter(|op| op.as_str() == "<expiryHeight>")
+        .count();
+    assert!(
+        expiry_pushes >= 2,
+        "settle must push <expiryHeight> at least twice (tx.time + oracleTime guards), found {expiry_pushes}"
+    );
+}
+
+#[test]
+fn test_exit_leaf_excludes_oracle_pubkey() {
+    // Mirror of the CoveredCall test for C2 — the compiler must filter
+    // checkSigFromStack-only pubkeys (oraclePk) out of the N-of-N exit leaf.
+    let out = compile(PUT_CODE).unwrap();
+    for fn_name in ["settle", "transferSeller", "transferBuyer"] {
+        let exit = out
+            .functions
+            .iter()
+            .find(|f| f.name == fn_name && !f.server_variant)
+            .unwrap();
+        let asm = exit.asm.join(" ");
+        assert!(
+            !asm.contains("<oraclePk>"),
+            "{fn_name} exit leaf must not embed oraclePk"
+        );
+        assert!(
+            !asm.contains("<oraclePkSig>"),
+            "{fn_name} exit leaf must not require oraclePkSig"
+        );
+        let witness_names: Vec<&str> = exit
+            .function_inputs
+            .iter()
+            .map(|i| i.name.as_str())
+            .collect();
+        assert!(
+            !witness_names.contains(&"oraclePkSig"),
+            "{fn_name} exit witness schema must not include oraclePkSig"
+        );
+    }
+}
+
+#[test]
+fn test_transfers_guarded_by_expiry() {
+    // Mirror of the CoveredCall test for M8 — transfer functions must
+    // reject any tx mined at or after expiryHeight (cooperative variant
+    // only; the exit variant cannot carry the guard because the compiler
+    // strips introspection from exit paths — known limitation, see
+    // docs/options.md).
+    let out = compile(PUT_CODE).unwrap();
+    for name in ["transferSeller", "transferBuyer"] {
+        let t = out
+            .functions
+            .iter()
+            .find(|f| f.name == name && f.server_variant)
+            .unwrap();
+        assert!(
+            t.asm.iter().any(|op| op.as_str() == "<expiryHeight>"),
+            "{name}: cooperative variant must reference <expiryHeight> for the transfer-after-expiry guard"
+        );
+    }
+}
+
+#[test]
 fn test_settle_takes_no_party_signature() {
     let out = compile(PUT_CODE).unwrap();
     let s = out
