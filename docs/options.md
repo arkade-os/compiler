@@ -87,9 +87,9 @@ Same shape, sides reversed. Vault holds both `stableAmount` of `stableAssetId` a
 
 ## Oracle model
 
-Identical to `StabilityVault`. The oracle signs `sha256(ticker || price || timestamp)` off-chain — `price` and `timestamp` as 8-byte little-endian unsigned ints. At settle, the caller provides `(oraclePrice, oracleTime, oracleSig)` as witness arguments. The contract:
+Identical to `StabilityVault`. The oracle signs `sha256(ticker || price || timestamp)` off-chain — `price` and `timestamp` as 8-byte little-endian unsigned ints. `timestamp` is the **block height** the oracle observed the price at (Arkade's nLockTime-based clock convention), **not** a Unix timestamp. At settle, the caller provides `(oraclePrice, oracleTime, oracleSig)` as witness arguments. The contract:
 
-1. Enforces freshness: `tx.time - oracleTime <= 144` blocks (~24h).
+1. Enforces freshness: `tx.time - oracleTime <= 6` blocks (~1h).
 2. Rebuilds the message hash on stack with `+` (OP_CAT, with int sides auto-coerced via OP_SCRIPTNUMTOLE64 so on-chain and off-chain hashing agree).
 3. Verifies the signature via `checkSigFromStack`.
 

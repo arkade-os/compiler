@@ -602,7 +602,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-22T14:20:08.550620064+00:00",
+  "updatedAt": "2026-05-22T14:21:52.922776889+00:00",
   "warnings": [
     "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn settle: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",

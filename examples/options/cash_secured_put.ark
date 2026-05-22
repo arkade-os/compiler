@@ -61,7 +61,8 @@ contract CashSecuredPut(
   // -------------------------------------------------------------------------
   function settle(
     int       oraclePrice,
-    int       oracleTime,
+    int       oracleTime,     // BLOCK HEIGHT (Arkade nLockTime convention,
+                              // NOT a Unix timestamp). See CoveredCall.
     signature oracleSig
   ) {
     require(tx.time >= expiryHeight, "before expiry");

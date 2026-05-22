@@ -82,7 +82,9 @@ contract CoveredCall(
   // -------------------------------------------------------------------------
   function settle(
     int       oraclePrice,    // stableAssetId base units per 1 BTC
-    int       oracleTime,
+    int       oracleTime,     // BLOCK HEIGHT (Arkade nLockTime convention,
+                              // NOT a Unix timestamp). Stork signs the
+                              // block height it observed the price at.
     signature oracleSig
   ) {
     require(tx.time >= expiryHeight, "before expiry");
