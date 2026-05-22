@@ -27,7 +27,7 @@
 // Oracle model: sha256(ticker || price || time) signed by oraclePk. The
 // contract reconstructs the hash on-stack via `sha256(ticker + price + time)`
 // and verifies with checkSigFromStack. Replay protection: ticker binding
-// to feed (e.g. BTC/USD), price as attested value, timestamp + 144-block
+// to feed (e.g. BTC/USD), price as attested value, timestamp + 6-block
 // freshness window.
 //
 // Two convenience functions allow either party to reassign their leg
