@@ -172,6 +172,7 @@ Canonical skills directory: `.codex/skills/`.
 Compatibility symlinks: `.claude/skills -> ../.codex/skills`, `.agents/skills -> ../.codex/skills`.
 
 Available project skills:
+- `writing-arkade-contracts.md`: Patterns and gotchas for authoring `.ark` contracts (constructors, tapleaves, output layout, oracle pattern, fixed-point arithmetic, grammar workarounds).
 - `language-feature-development.md`: Add or change Arkade syntax/AST/compiler semantics safely.
 - `testing-and-regressions.md`: Author and maintain integration/CLI regression tests.
 - `wasm-playground-workflow.md`: Build/debug/deploy playground and WASM bridge.
