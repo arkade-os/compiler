@@ -169,7 +169,7 @@ These will burn you if you don't know them. All confirmed against `src/parser/gr
 - **Always "Arkade"** — never "ASP" or "ARK" in code, comments, or error messages.
 - 330-sat dust threshold is the universal Taproot floor — use `>= 330` for viability, `> 330` for emit decisions.
 - Error messages: lowercase, short, action-describing. "underpaid", "stale oracle", "invalid seeker sig".
-- Variable names: snake_case for locals, camelCase for constructor params (matches existing examples).
+- Variable names: camelCase throughout (constructor params and locals alike), matching the existing examples. Multi-letter suffixes for sibling variables (`collateralA`/`collateralB`, `elapsedA`/`elapsedB`) are a useful convention when a function handles two parallel cases.
 - Group related `require`s at the top of a function (precondition validation), then derive intermediate values, then assert outputs.
 
 </style_conventions>

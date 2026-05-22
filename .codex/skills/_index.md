@@ -1,6 +1,6 @@
 # Skill Registry
 
-Last updated: 2026-05-20
+Last updated: 2026-05-22
 
 | Skill | File | Triggers | Priority |
 |---|---|---|---|
