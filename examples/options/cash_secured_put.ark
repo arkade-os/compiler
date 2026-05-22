@@ -35,6 +35,11 @@ options {
 // See CoveredCall for the design rationale (int64 overflow / precision
 // tradeoff). The funding wallet is responsible for enforcing consistency
 // at trade execution; both parties sign the funding transaction.
+//
+// FUNDING BUFFER: the vault must hold at least `btcSats + 330` sats of BTC
+// in addition to `stableAmount` of `stableAssetId`. The +330 covers the
+// P2TR dust carrier for the asset-bearing output at settle. Fees are
+// handled out-of-band per docs/options.md.
 
 contract CashSecuredPut(
   pubkey  sellerPk,         // option writer; locks the cash

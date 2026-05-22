@@ -50,6 +50,17 @@ options {
 // The funding wallet is responsible for enforcing consistency at trade
 // execution; both parties sign the funding transaction and therefore
 // consent to the exact values baked into the tapscript.
+//
+// FUNDING BUFFER: the vault must be funded with at least `btcSats + 330` sats
+// of BTC, not just `btcSats`. At settle, the stablecoin-bearing output
+// requires a 330-sat dust carrier (P2TR dust threshold) which is consumed
+// from the vault's BTC supply. The contract checks `outputs[i].value >=
+// btcSats` for the BTC-only output, assuming the 330-sat carrier has been
+// allocated for the asset output. If the wallet funds the vault with
+// exactly `btcSats` sats and no buffer, the vault becomes unspendable —
+// every spend path needs the dust carrier. Mining fees are handled
+// out-of-band (direct miner submission) per docs/options.md, so they do
+// not eat further into the vault.
 
 contract CoveredCall(
   pubkey  sellerPk,         // option writer

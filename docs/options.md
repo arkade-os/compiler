@@ -59,6 +59,10 @@ The two are passed as separate constructor parameters and the contract does **no
 
 **`settle(oraclePrice, oracleTime, oracleSig)`** — permissionless. Anyone supplies a fresh oracle-signed price; the contract branches on `oraclePrice > strikePrice`. ITM → physical swap at strike (output 0 = stablecoin to seller, output 1 = BTC to buyer). OTM → unwind (output 0 = BTC back to seller, output 1 = stablecoin back to buyer).
 
+### Funding buffer (don't skip this)
+
+The vault must be funded with **`btcSats + 330` sats** of BTC, not just `btcSats`. The +330 covers the P2TR dust carrier on the asset-bearing output at settle (every settle branch has one BTC-only output and one stablecoin-carrying output). The contract checks `outputs[i].value >= btcSats` for the BTC-only output and assumes the 330-sat carrier is available. Fund with exactly `btcSats` and no buffer → vault is unspendable. Mining fees are handled out-of-band via direct miner submission (see the OTM unwind section), so they don't eat further into the vault. The same +330 buffer applies to `CashSecuredPut`.
+
 **`transferSeller(sellerSig, newSellerPk)`** / **`transferBuyer(buyerSig, newBuyerPk)`** — pure key swap for either leg. The continuation output preserves both legs of collateral (BTC value *and* stablecoin asset balance).
 
 ---
