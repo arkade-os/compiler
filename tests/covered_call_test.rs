@@ -58,6 +58,7 @@ contract CoveredCall(
   }
 
   function transferSeller(signature sellerSig, pubkey newSellerPk) {
+    require(tx.time < expiryHeight, "no transfers after expiry");
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
     require(
       tx.outputs[0].scriptPubKey == new CoveredCall(
@@ -71,6 +72,7 @@ contract CoveredCall(
   }
 
   function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
+    require(tx.time < expiryHeight, "no transfers after expiry");
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
     require(
       tx.outputs[0].scriptPubKey == new CoveredCall(
@@ -216,6 +218,25 @@ fn test_exit_leaf_excludes_oracle_pubkey() {
         assert!(
             !witness_names.contains(&"oraclePkSig"),
             "{fn_name} exit witness schema must not include oraclePkSig"
+        );
+    }
+}
+
+#[test]
+fn test_transfers_guarded_by_expiry() {
+    // Regression for audit finding M8: transfer functions must reject any
+    // tx mined at or after expiryHeight. The compiled cooperative variant
+    // must push <expiryHeight> as part of the guard.
+    let out = compile(CALL_CODE).unwrap();
+    for name in ["transferSeller", "transferBuyer"] {
+        let t = out
+            .functions
+            .iter()
+            .find(|f| f.name == name && f.server_variant)
+            .unwrap();
+        assert!(
+            t.asm.iter().any(|op| op.as_str() == "<expiryHeight>"),
+            "{name}: cooperative variant must reference <expiryHeight> for the transfer-after-expiry guard"
         );
     }
 }

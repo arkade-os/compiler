@@ -57,6 +57,7 @@ contract CashSecuredPut(
   }
 
   function transferSeller(signature sellerSig, pubkey newSellerPk) {
+    require(tx.time < expiryHeight, "no transfers after expiry");
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
     require(
       tx.outputs[0].scriptPubKey == new CashSecuredPut(
@@ -70,6 +71,7 @@ contract CashSecuredPut(
   }
 
   function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
+    require(tx.time < expiryHeight, "no transfers after expiry");
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
     require(
       tx.outputs[0].scriptPubKey == new CashSecuredPut(
