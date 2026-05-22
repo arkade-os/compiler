@@ -30,6 +30,12 @@ options {
   exit = exit;
 }
 
+// IMPORTANT: stableAmount and strikePrice MUST be consistent, satisfying
+//   stableAmount * 1e8 == strikePrice * btcSats
+// See CoveredCall for the design rationale (int64 overflow / precision
+// tradeoff). The funding wallet is responsible for enforcing consistency
+// at trade execution; both parties sign the funding transaction.
+
 contract CashSecuredPut(
   pubkey  sellerPk,         // option writer; locks the cash
   pubkey  buyerPk,          // option holder
@@ -55,6 +61,7 @@ contract CashSecuredPut(
   ) {
     require(tx.time >= expiryHeight, "before expiry");
     require(oraclePrice > 0, "invalid oracle price");
+    require(strikePrice > 0, "invalid strike price");
 
     int oracleAge = tx.time - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");

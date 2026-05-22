@@ -41,6 +41,16 @@ options {
   exit = exit;
 }
 
+// IMPORTANT: strikeAmount and strikePrice MUST be consistent, satisfying
+//   strikeAmount * 1e8 == strikePrice * btcSats
+// The contract uses strikePrice for the ITM/OTM branch and strikeAmount for
+// the asset payout. They are passed separately because verifying the
+// equality on-chain would either overflow int64 (the product reaches ~1e22
+// for typical USDT-6-decimal positions) or lose precision via division.
+// The funding wallet is responsible for enforcing consistency at trade
+// execution; both parties sign the funding transaction and therefore
+// consent to the exact values baked into the tapscript.
+
 contract CoveredCall(
   pubkey  sellerPk,         // option writer
   pubkey  buyerPk,          // option holder (MM in Rysk's model)
@@ -66,6 +76,7 @@ contract CoveredCall(
   ) {
     require(tx.time >= expiryHeight, "before expiry");
     require(oraclePrice > 0, "invalid oracle price");
+    require(strikePrice > 0, "invalid strike price");
 
     int oracleAge = tx.time - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");

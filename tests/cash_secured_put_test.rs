@@ -33,6 +33,7 @@ contract CashSecuredPut(
   ) {
     require(tx.time >= expiryHeight, "before expiry");
     require(oraclePrice > 0, "invalid oracle price");
+    require(strikePrice > 0, "invalid strike price");
 
     int oracleAge = tx.time - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");

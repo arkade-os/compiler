@@ -51,7 +51,9 @@ Symmetric story for the put: seller obligated to buy BTC at $90k strike if buyer
 
 Constructor: `sellerPk, buyerPk, oraclePk, ticker, stableAssetId, btcSats, strikeAmount, strikePrice, expiryHeight, exit`
 
-The vault holds **both** `btcSats` BTC and `strikeAmount` of `stableAssetId`. `strikeAmount` and `strikePrice` are related by `strikeAmount = strikePrice × btcSats / 1e8` — the wallet enforces consistency at funding.
+The vault holds **both** `btcSats` BTC and `strikeAmount` of `stableAssetId`. `strikeAmount` and `strikePrice` MUST satisfy `strikeAmount × 1e8 == strikePrice × btcSats`.
+
+The two are passed as separate constructor parameters and the contract does **not** verify the equality on-chain: the cross-multiplication `strikePrice × btcSats` reaches ~1e22 for routine USDT-6-decimal positions ($100k strike × 1 BTC = 1e11 × 1e8 = 1e19), which exceeds int64 (~9.2e18). The wallet must enforce consistency at funding; both parties sign the funding tx and therefore consent to the exact values baked into the tapscript. The contract uses `strikePrice` for the ITM branch decision and `strikeAmount` for the asset-balance payout; an inconsistent pair would produce a wrong economic outcome, not a vault drain — but the misconfigured side would still lose value, so wallet enforcement is the integrity boundary. Sanity checks (`strikePrice > 0`, `oraclePrice > 0`) are emitted by `settle()`.
 
 ### Functions
 
