@@ -1,9 +1,10 @@
 # Skill Registry
 
-Last updated: 2026-03-02
+Last updated: 2026-05-22
 
 | Skill | File | Triggers | Priority |
 |---|---|---|---|
+| Writing Arkade Contracts | [writing-arkade-contracts.md](./writing-arkade-contracts.md) | new contract, .ark file, constructor design, tapleaf, output assertion, oracle pattern, grammar gotcha | Core |
 | Language Feature Development | [language-feature-development.md](./language-feature-development.md) | grammar, parser, syntax, AST, opcode, new expression, new requirement | Core |
 | Testing and Regressions | [testing-and-regressions.md](./testing-and-regressions.md) | test, regression, fixture, assertion, CLI parity, coverage | Core |
 | WASM Playground Workflow | [wasm-playground-workflow.md](./wasm-playground-workflow.md) | playground, wasm-pack, contracts.js, GitHub Pages, browser demo | Core |
