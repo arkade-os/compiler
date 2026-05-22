@@ -16,7 +16,7 @@ const projects = {
     },
     options: {
         name: 'Options',
-        description: 'European covered call + cash-secured put, physically settled, oracle-free',
+        description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
         files: {
             'covered_call.ark': contracts.covered_call,
             'cash_secured_put.ark': contracts.cash_secured_put,
