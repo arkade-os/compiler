@@ -37,7 +37,7 @@ contract CashSecuredPut(
 
     int oracleAge = tx.time - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 6, "stale oracle");
     require(oracleTime >= expiryHeight, "oracle predates expiry");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);

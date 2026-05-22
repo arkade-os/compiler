@@ -68,9 +68,10 @@ contract CashSecuredPut(
     require(oraclePrice > 0, "invalid oracle price");
     require(strikePrice > 0, "invalid strike price");
 
+    // Tight freshness window — see CoveredCall for rationale.
     int oracleAge = tx.time - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 6, "stale oracle");
     require(oracleTime >= expiryHeight, "oracle predates expiry");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);

@@ -95,7 +95,7 @@ Three layers of replay protection:
 |---|---|
 | `ticker` | Reusing a signature meant for one feed (BTC/USD) on a different feed (ETH/USD). The vault binds `ticker` at creation. |
 | `price` | The attested value itself. |
-| `timestamp` | Stale signatures fail the 144-block freshness check. |
+| `timestamp` | Stale signatures fail the 6-block freshness check (tightened from the 144-block default to bound the post-expiry oracle MEV race in volatile markets). |
 
 ---
 

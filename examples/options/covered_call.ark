@@ -89,9 +89,15 @@ contract CoveredCall(
     require(oraclePrice > 0, "invalid oracle price");
     require(strikePrice > 0, "invalid strike price");
 
+    // Tight freshness window (6 blocks ~= 1 hour) to bound the post-expiry
+    // oracle MEV race. With C1's `oracleTime >= expiryHeight` constraint,
+    // the price used for settlement is from [expiryHeight, expiryHeight+6].
+    // A wider window would let either party broadcast settle() with whichever
+    // signed price in [expiry, expiry+24h] favored them — meaningful in
+    // volatile markets.
     int oracleAge = tx.time - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 144, "stale oracle");
+    require(oracleAge <= 6, "stale oracle");
     require(oracleTime >= expiryHeight, "oracle predates expiry");
 
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
