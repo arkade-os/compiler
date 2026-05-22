@@ -162,6 +162,30 @@ fn test_settle_has_both_itm_and_otm_branches() {
 }
 
 #[test]
+fn test_asset_id_decomposes_to_txid_and_gidx() {
+    // Regression for audit finding M9 (initial misread): `bytes32 stableAssetId`
+    // in the contract source is automatically decomposed by the compiler into
+    // two ABI inputs — `stableAssetId_txid: bytes32` and `stableAssetId_gidx: int` —
+    // so the wallet correctly supplies the (txid32, gidx_u16) pair that
+    // OP_INSPECTOUTASSETLOOKUP expects. Lock in the behavior here so any
+    // future compiler refactor that drops decomposition gets caught.
+    let out = compile(CALL_CODE).unwrap();
+    let names: Vec<&str> = out.parameters.iter().map(|p| p.name.as_str()).collect();
+    assert!(
+        names.contains(&"stableAssetId_txid"),
+        "constructorInputs must include stableAssetId_txid"
+    );
+    assert!(
+        names.contains(&"stableAssetId_gidx"),
+        "constructorInputs must include stableAssetId_gidx"
+    );
+    assert!(
+        !names.contains(&"stableAssetId"),
+        "raw bytes32 stableAssetId should NOT appear in ABI; it must be decomposed"
+    );
+}
+
+#[test]
 fn test_settle_binds_oracle_time_to_expiry() {
     // Regression for audit finding C1: oracleTime must not be allowed to
     // predate expiryHeight. Without this check, an attacker could submit

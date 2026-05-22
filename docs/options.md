@@ -29,6 +29,10 @@ The premium is paid MM→seller upfront, off-contract, in the same atomic fundin
 - **Premium** = the price the buyer paid upfront for the option, kept by the seller regardless of outcome.
 - **Notional** = the BTC quantity the option is written on (`btcSats` in both contracts).
 
+### Asset ID encoding
+
+Arkade Asset IDs are `(txid32, gidx_u16)` pairs, not a single 32-byte value. The source-level `bytes32 stableAssetId` is automatically decomposed by the compiler into two ABI inputs — `stableAssetId_txid: bytes32` and `stableAssetId_gidx: int` — that the wallet provides separately at funding. So a USDT or USDC issuance with `gidx != 0` is fully supported; the writer just passes the correct pair.
+
 ---
 
 ## Economics
