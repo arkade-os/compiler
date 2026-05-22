@@ -116,6 +116,12 @@ Arkade-wide design constraint: introspection opcodes (`OP_INSPECTOUT*`, `OP_INSP
 
 For `settle` the N is **seller + buyer**. The oracle key is *not* included in the exit-leaf N-of-N: the compiler distinguishes pubkeys used in `checkSig` (transaction signers) from those used only in `checkSigFromStack` (data signers — verifying off-chain oracle signatures over byte strings). The Stork-style oracle never co-signs individual L1 transactions; including it in the N-of-N would make the unilateral exit unreachable. Filtered out by `collect_data_only_pubkeys` in the compiler, so the exit leaf stays broadcastable by the two parties alone.
 
+### Time guards are cooperative-only
+
+The `require(tx.time < expiryHeight)` guard on the transfer functions (M8 fix) is enforced **only on the cooperative tapleaf**. The exit tapleaf strips all introspection opcodes (Arkade-wide design constraint, since the exit path must settle as pure Bitcoin script). On the exit variant, transfers fall back to N-of-N consent: seller + buyer + new party must all sign.
+
+This is safe by *consent rather than script*. A post-expiry transfer through the exit path would require both seller and buyer to actively sign — but a buyer would never sign a transfer that revokes their pending settle right, and a seller wanting to grief can't act unilaterally. The script-level guard would be belt-and-suspenders nice-to-have, but the N-of-N requirement already provides equivalent protection against any single-party attack. Same pattern applies to `settle`'s `tx.time >= expiryHeight` lower bound: cooperative-enforced, exit-path N-of-N-enforced.
+
 Total tapleaves: **6** (CoveredCall) + **6** (CashSecuredPut) = 12.
 
 ---
