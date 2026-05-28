@@ -1,43 +1,47 @@
-// LendingPool Contract
+// LendingPool Contract (consolidated)
 //
-// A recursive-covenant lender liquidity pool for fixed-maturity, fixed-rate
-// lending (Morpho "Midnight" style), encoded UTXO-natively in Arkade Script.
+// One recursive-covenant pool that BOTH earns yield AND issues fixed-maturity
+// bonds, UTXO-natively (Morpho "Midnight" style). It merges what were two
+// layers — a variable-rate yield pool and a fixed-rate bond order book — into a
+// single covenant whose `fillBond` does the whole thing atomically.
 //
-// THE IDEA
-//   Instead of one idle UTXO per lender order, a single covenant-controlled UTXO
-//   holds the pooled USDT liquidity. The covenant is RECURSIVE: every spend must
-//   re-create the pool at output[0] with updated `liquidity`, so the pool is a
-//   chain of UTXOs carrying its running balance forward (same self-replacement
-//   pattern as StabilityVault).
+// WHAT THE POOL HOLDS / TRACKS (carried forward on every spend = recursion):
+//   totalIdle   - USDT physically in the pool (lendable / withdrawable)
+//   totalLent   - principal currently deployed into bond loans; ACCRUES the
+//                 borrower interest rate over time (this is the yield)
+//   totalShares - LP shares outstanding (lenders' pro-rata claim)
+//   lastAccrual - unix seconds of the last interest accrual
 //
-//   FAN-IN  (liquidity grows):
-//     - deposit : pool UTXO + a lender's USDT UTXO  -> one larger pool UTXO
-//     - merge   : two pool UTXOs                     -> one combined pool UTXO
-//   FAN-OUT (liquidity is drawn / leaves):
-//     - borrow  : pool UTXO -> residual pool + borrower's loan + LoanVault
-//     - withdraw: pool UTXO -> residual pool + keeper payout
+//   totalAssets = totalIdle + totalLent      (basis for share price)
+//   sharePrice  = totalAssets / totalShares
 //
-// "FIRST FILL WINS, THE REST CANCEL" — FOR FREE
-//   The pool is exactly one UTXO. The first `borrow` to confirm consumes it and
-//   emits the residual pool as a NEW UTXO (new outpoint). Any competing borrow
-//   built against the now-spent pool is rejected by consensus as a double-spend.
-//   No `consumed[group]` bookkeeping is needed — the ledger is the accounting.
-//   A losing-but-honest borrower simply rebuilds against the fresh residual.
+// The pool also custodies two control assets (shareCtrlId, bondCtrlId) that gate
+// minting of the LP-share and bond assets. Issuance is enforced entirely by THIS
+// covenant — non-interactively, as part of execution — never by an operator.
 //
-// HONEST CAVEATS (this is a UTXO model, not the EVM)
-//   - No external yield. Bitcoin Script cannot lend the pooled capital out to an
-//     external venue while it rests. The ONLY yield is the bond discount the
-//     borrower pays (par - principal). The efficiency claim here is shared
-//     liquidity + consensus-driven auto-cancel, nothing more.
-//   - Liquidity is commingled: this MVP does not mint per-lender LP-share tokens,
-//     so lender exit is governed by `poolKeeperPk` (a lender-cohort / operator
-//     key). Per-lender shares are a follow-up (needs a second issued asset).
-//   - Collateral valuation is deferred: `borrow` enforces a flat `minCollateral`
-//     sats floor, not an oracle-priced ratio. Oracle-priced liquidation with a
-//     Dutch-auction incentive is the planned follow-up.
+// LIFECYCLE:
+//   deposit   (FAN-IN)  lender supplies USDT, mints LP shares at share price
+//   withdraw  (FAN-OUT) lender burns shares for pro-rata USDT (idle-bounded)
+//   fillBond  (FAN-OUT) THE ATOMIC FILL: in one tx, accrue interest, draw
+//                       principal out of the (yield-earning) idle balance, mint
+//                       the bond to the lender side, lock collateral in a
+//                       LoanVault, and re-create the residual pool
+//   settle    (FAN-IN)  keeper folds a repaid loan's USDT back into idle and
+//                       removes its principal from totalLent
 //
-// USDT is an Arkade Asset (`usdtAssetId`); `liquidity` is the USDT amount the
-// pool holds. Collateral is plain sats locked in each LoanVault.
+// "FIRST FILL WINS, THE REST CANCEL": the pool is one UTXO. The first fillBond
+// to confirm spends it; competing fills against the stale pool are rejected as
+// double-spends. Consensus is the accounting — no consumed/group bookkeeping.
+//
+// THE YIELD/LIQUIDITY TRADEOFF (enforced on-chain): yield exists because idle
+// capital is lent out. `withdraw` and `fillBond` both require the amount be
+// <= totalIdle, so a withdrawal or a fill can fail when utilization is high —
+// the phantom-depth risk, made a script invariant.
+//
+// MVP simplifications (documented): ratePerSec is fixed (a utilization IRM is a
+// follow-up); per-loan accrual reconciliation at `settle` is keeper-managed (the
+// pool tracks aggregates); bond repayments route to the keeper, who re-folds
+// them via `settle`; the pool is bootstrapped with totalShares>0, totalIdle>0.
 
 import "loan_vault.ark";
 
@@ -47,138 +51,204 @@ options {
 }
 
 contract LendingPool(
-  bytes32 usdtAssetId,   // loan / liquidity asset
-  pubkey  poolKeeperPk,  // governs merge/withdraw; collects loan repayments
-  int     discountBps,   // principal = par * (1e4 - discountBps) / 1e4
-  int     maturity,      // block height at/after which loans from this pool mature
-  int     minCollateral, // minimum collateral sats a borrower must lock per loan
-  int     liquidity,     // USDT currently available to lend (mutable pool balance)
+  bytes32 usdtAssetId,   // supply / loan / repayment asset
+  bytes32 shareAssetId,  // LP share token (pro-rata claim on total assets)
+  bytes32 shareCtrlId,   // control asset (in pool) gating share minting
+  bytes32 bondAssetId,   // fixed-maturity bond / pool token
+  bytes32 bondCtrlId,    // control asset (in pool) gating bond minting
+  pubkey  poolKeeperPk,  // lender cohort: holds bonds, runs settle/withdraw
+  int     ratePerSec,    // borrower interest rate, signed fixed-point scale 1e12
+  int     discountBps,   // principal = bondUnits * (1e4 - discountBps) / 1e4
+  int     maturity,      // block height at/after which bonds mature
+  int     minCollateral, // minimum collateral sats per bond loan
+  int     totalIdle,     // USDT physically in the pool (mutable)
+  int     totalLent,     // principal deployed in bonds; accrues interest (mutable)
+  int     totalShares,   // LP shares outstanding (mutable)
+  int     lastAccrual,   // unix seconds; basis for accrual (mutable)
   int     exit           // unilateral exit timelock in blocks
 ) {
 
   // ---------------------------------------------------------------------------
-  // DEPOSIT  (FAN-IN) — a lender adds USDT capital to the pool.
-  //
-  //   input[0]: this pool UTXO (holds `liquidity` USDT)
-  //   input[*]: depositor's USDT UTXO (>= `amount`)
-  //   output[0]: pool re-created with liquidity + amount
-  //
-  // Asset conservation guarantees the depositor actually supplied `amount`:
-  // output[0] can only hold `liquidity + amount` USDT if the inputs did.
+  // DEPOSIT  (FAN-IN) — supply USDT, receive LP shares at the post-accrual price.
+  //   output[0]: pool re-created (idle + amount, shares + minted)
+  //   output[1]: minted LP shares → lender
   // ---------------------------------------------------------------------------
-  function deposit(int amount, pubkey depositorPk, signature depositorSig) {
+  function deposit(int amount, pubkey lenderPk, signature lenderSig) {
     require(amount > 0, "zero deposit");
-    require(checkSig(depositorSig, depositorPk), "invalid depositor sig");
+    require(checkSig(lenderSig, lenderPk), "invalid lender sig");
 
-    int liquidityNext = liquidity + amount;
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int growth      = totalLent * rateElapsed / 1000000;
+    int lentNext    = totalLent + growth;
+    int assetsNext  = totalIdle + lentNext;
+    require(assetsNext > 0, "empty pool");
+
+    int sharesMinted = amount * totalShares / assetsNext;
+    require(sharesMinted > 0, "deposit too small");
+
+    let shareGroup = tx.assetGroups.find(shareAssetId);
+    require(shareGroup.delta == sharesMinted, "share delta mismatch");
+    require(shareGroup.control == shareCtrlId, "wrong share control");
+    let scGroup = tx.assetGroups.find(shareCtrlId);
+    require(scGroup.delta == 0, "share control changed");
+
+    int idleNext   = totalIdle + amount;
+    int sharesNext = totalShares + sharesMinted;
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
-        usdtAssetId, poolKeeperPk, discountBps, maturity, minCollateral,
-        liquidityNext, exit
+        usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, poolKeeperPk,
+        ratePerSec, discountBps, maturity, minCollateral,
+        idleNext, lentNext, sharesNext, tx.offchainTime, exit
       ),
       "invalid pool recreation"
     );
-    require(tx.outputs[0].assets.lookup(usdtAssetId) >= liquidityNext, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "share control not retained");
+    require(tx.outputs[0].assets.lookup(bondCtrlId) >= 1, "bond control not retained");
+
+    require(tx.outputs[1].assets.lookup(shareAssetId) >= sharesMinted, "shares not delivered");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(lenderPk), "shares dest not lender");
   }
 
   // ---------------------------------------------------------------------------
-  // MERGE  (FAN-IN) — keeper combines two pool UTXOs into one.
-  //
-  // Position-agnostic: this script runs on BOTH pool inputs. `otherIdx` points
-  // to the sibling; activeInputIndex distinguishes self from sibling. The merged
-  // liquidity is a sum, which is commutative, so output[0] matches under both
-  // executions.
+  // WITHDRAW  (FAN-OUT) — burn LP shares for pro-rata USDT, bounded by idle.
+  //   output[0]: residual pool (idle - amount, shares - burned)
+  //   output[1]: amount USDT → lender
   // ---------------------------------------------------------------------------
-  function merge(int otherIdx, int otherLiquidity, signature keeperSig) {
-    require(checkSig(keeperSig, poolKeeperPk), "invalid keeper sig");
-    require(this.activeInputIndex != otherIdx, "self-merge disallowed");
+  function withdraw(int shares, pubkey lenderPk, signature lenderSig) {
+    require(shares > 0, "zero shares");
+    require(checkSig(lenderSig, lenderPk), "invalid lender sig");
 
-    require(
-      tx.inputs[otherIdx].scriptPubKey == new LendingPool(
-        usdtAssetId, poolKeeperPk, discountBps, maturity, minCollateral,
-        otherLiquidity, exit
-      ),
-      "input not matching pool"
-    );
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int growth      = totalLent * rateElapsed / 1000000;
+    int lentNext    = totalLent + growth;
+    int assetsNext  = totalIdle + lentNext;
 
-    int mergedLiquidity = liquidity + otherLiquidity;
+    int amount = shares * assetsNext / totalShares;
+    require(amount > 0, "withdraw too small");
+    require(amount <= totalIdle, "insufficient idle liquidity");
+
+    let shareGroup = tx.assetGroups.find(shareAssetId);
+    require(shareGroup.sumInputs >= shareGroup.sumOutputs + shares, "shares not burned");
+
+    int idleNext   = totalIdle - amount;
+    int sharesNext = totalShares - shares;
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
-        usdtAssetId, poolKeeperPk, discountBps, maturity, minCollateral,
-        mergedLiquidity, exit
+        usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, poolKeeperPk,
+        ratePerSec, discountBps, maturity, minCollateral,
+        idleNext, lentNext, sharesNext, tx.offchainTime, exit
       ),
-      "invalid merged pool"
+      "invalid residual pool"
     );
-    require(tx.outputs[0].assets.lookup(usdtAssetId) >= mergedLiquidity, "merged usdt short");
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "residual usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "share control not retained");
+    require(tx.outputs[0].assets.lookup(bondCtrlId) >= 1, "bond control not retained");
+
+    require(tx.outputs[1].assets.lookup(usdtAssetId) >= amount, "lender underpaid");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(lenderPk), "payout dest not lender");
   }
 
   // ---------------------------------------------------------------------------
-  // BORROW  (FAN-OUT) — non-interactive: a borrower draws principal below par,
-  // posts collateral, and opens a LoanVault. No lender/keeper signature: the
-  // pool's consent is the covenant itself (correct residual re-creation).
+  // FILL BOND  (FAN-OUT) — THE ATOMIC FILL. Non-interactive for the pool: only
+  // the borrower signs. In one transaction: accrue interest, draw `principal`
+  // out of idle (the yield-earning balance), mint the bond to the lender side,
+  // lock collateral in a LoanVault, and re-create the residual pool.
   //
-  //   output[0]: residual pool (liquidity - principal)
-  //   output[1]: borrower's loan proceeds (principal USDT)
-  //   output[2]: LoanVault holding the collateral (owes par at maturity)
+  //   output[0]: residual pool (idle - principal, lent + principal)
+  //   output[1]: principal USDT → borrower
+  //   output[2]: bondUnits bond  → pool keeper (lender claim)
+  //   output[3]: LoanVault holding the collateral
   // ---------------------------------------------------------------------------
-  function borrow(int par, int collateral, pubkey borrowerPk, signature borrowerSig) {
-    require(par > 0, "zero loan");
+  function fillBond(int bondUnits, int collateral, pubkey borrowerPk, signature borrowerSig) {
+    require(bondUnits > 0, "zero bond");
     require(collateral >= minCollateral, "collateral below minimum");
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
 
-    int netBps    = 10000 - discountBps;
-    int principal = par * netBps / 10000;
-    require(principal > 0, "loan too small");
-    require(principal <= liquidity, "exceeds pool liquidity");
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int growth      = totalLent * rateElapsed / 1000000;
+    int lentNext    = totalLent + growth;
 
-    int liquidityNext = liquidity - principal;
+    int netBps    = 10000 - discountBps;
+    int principal = bondUnits * netBps / 10000;
+    require(principal > 0, "principal too small");
+    require(principal <= totalIdle, "insufficient idle liquidity");
+
+    let bondGroup = tx.assetGroups.find(bondAssetId);
+    require(bondGroup.delta == bondUnits, "bond delta mismatch");
+    require(bondGroup.control == bondCtrlId, "wrong bond control");
+    let bcGroup = tx.assetGroups.find(bondCtrlId);
+    require(bcGroup.delta == 0, "bond control changed");
+
+    int idleNext  = totalIdle - principal;
+    int lentAfter = lentNext + principal;
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
-        usdtAssetId, poolKeeperPk, discountBps, maturity, minCollateral,
-        liquidityNext, exit
+        usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, poolKeeperPk,
+        ratePerSec, discountBps, maturity, minCollateral,
+        idleNext, lentAfter, totalShares, tx.offchainTime, exit
       ),
       "invalid residual pool"
     );
-    require(tx.outputs[0].assets.lookup(usdtAssetId) >= liquidityNext, "residual usdt short");
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "residual usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "share control not retained");
+    require(tx.outputs[0].assets.lookup(bondCtrlId) >= 1, "bond control not retained");
 
-    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
     require(tx.outputs[1].assets.lookup(usdtAssetId) >= principal, "borrower underpaid");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "loan dest not borrower");
+
+    require(tx.outputs[2].assets.lookup(bondAssetId) >= bondUnits, "bond not delivered");
+    require(tx.outputs[2].scriptPubKey == new SingleSig(poolKeeperPk), "bond dest not lender");
 
     require(
-      tx.outputs[2].scriptPubKey == new LoanVault(
-        borrowerPk, poolKeeperPk, usdtAssetId, par, collateral, maturity, exit
+      tx.outputs[3].scriptPubKey == new LoanVault(
+        borrowerPk, poolKeeperPk, usdtAssetId, bondAssetId, bondUnits, collateral, maturity, exit
       ),
       "invalid loan vault"
     );
-    require(tx.outputs[2].value >= collateral, "collateral not locked");
+    require(tx.outputs[3].value >= collateral, "collateral not locked");
   }
 
   // ---------------------------------------------------------------------------
-  // WITHDRAW  (FAN-OUT) — keeper pulls USDT out of the pool.
-  //
-  //   output[0]: residual pool (liquidity - amount)
-  //   output[1]: keeper payout (amount USDT)
+  // SETTLE  (FAN-IN) — keeper folds a repaid loan back into the pool: returns
+  // `repayAmount` USDT to idle and removes `principalAmount` from totalLent. Any
+  // surplus (repayAmount - principalAmount) is realized yield for share holders.
+  //   output[0]: pool re-created (idle + repayAmount, lent - principalAmount)
   // ---------------------------------------------------------------------------
-  function withdraw(int amount, signature keeperSig) {
+  function settle(int principalAmount, int repayAmount, signature keeperSig) {
     require(checkSig(keeperSig, poolKeeperPk), "invalid keeper sig");
-    require(amount > 0, "zero amount");
-    require(amount <= liquidity, "exceeds liquidity");
+    require(principalAmount > 0, "zero principal");
+    require(repayAmount >= principalAmount, "repay below principal");
 
-    int liquidityNext = liquidity - amount;
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int growth      = totalLent * rateElapsed / 1000000;
+    int lentNext    = totalLent + growth;
+    require(principalAmount <= lentNext, "exceeds outstanding");
+
+    int idleNext  = totalIdle + repayAmount;
+    int lentAfter = lentNext - principalAmount;
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
-        usdtAssetId, poolKeeperPk, discountBps, maturity, minCollateral,
-        liquidityNext, exit
+        usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, poolKeeperPk,
+        ratePerSec, discountBps, maturity, minCollateral,
+        idleNext, lentAfter, totalShares, tx.offchainTime, exit
       ),
-      "invalid residual pool"
+      "invalid pool recreation"
     );
-    require(tx.outputs[0].assets.lookup(usdtAssetId) >= liquidityNext, "residual usdt short");
-
-    require(tx.outputs[1].scriptPubKey == new SingleSig(poolKeeperPk), "output 1 not keeper");
-    require(tx.outputs[1].assets.lookup(usdtAssetId) >= amount, "keeper underpaid");
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "share control not retained");
+    require(tx.outputs[0].assets.lookup(bondCtrlId) >= 1, "bond control not retained");
   }
 }

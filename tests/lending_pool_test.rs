@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD64, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_MUL64,
-    OP_PUSHCURRENTINPUTINDEX, OP_SUB64,
+    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64, OP_FINDASSETGROUPBYASSETID,
+    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHANOREQUAL, OP_MUL64,
 };
 
 const CODE: &str = include_str!("../examples/lending/lending_pool.ark");
@@ -21,89 +21,133 @@ fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String 
 fn test_lending_pool_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "LendingPool");
-    // 4 functions (deposit, merge, borrow, withdraw) x 2 variants = 8
+    // 4 functions (deposit, withdraw, fillBond, settle) x 2 variants = 8
     assert_eq!(output.functions.len(), 8, "expected 8 functions");
-}
 
-#[test]
-fn test_usdt_asset_id_decomposed() {
-    let output = compile(CODE).expect("compilation failed");
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
-    assert!(
-        names.contains(&"usdtAssetId_txid") && names.contains(&"usdtAssetId_gidx"),
-        "usdtAssetId not decomposed into _txid/_gidx, got: {names:?}"
-    );
+    for id in [
+        "usdtAssetId",
+        "shareAssetId",
+        "shareCtrlId",
+        "bondAssetId",
+        "bondCtrlId",
+    ] {
+        assert!(
+            names.contains(&format!("{id}_txid").as_str())
+                && names.contains(&format!("{id}_gidx").as_str()),
+            "{id} not decomposed into _txid/_gidx, got: {names:?}"
+        );
+    }
 }
 
 #[test]
-fn test_deposit_is_fan_in_recreation() {
-    // deposit grows liquidity (OP_ADD64) and re-creates the pool scriptPubKey,
-    // asserting the residual holds the new USDT balance.
+fn test_deposit_accrues_and_mints_shares() {
+    // deposit accrues interest (OP_MUL64), prices shares (OP_DIV64), and mints
+    // shares gated by the control asset.
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "deposit");
-    assert!(asm.contains(OP_ADD64), "deposit should add to liquidity");
-    assert!(
-        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "deposit should re-create the pool output"
-    );
-    assert!(
-        asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "deposit should assert the pool's USDT balance"
-    );
-    assert!(asm.contains(OP_CHECKSIG), "deposit needs depositor sig");
-}
-
-#[test]
-fn test_merge_is_fan_in_of_two_pools() {
-    // merge sums two pool balances and uses activeInputIndex to identify the
-    // sibling pool input.
-    let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "merge");
-    assert!(
-        asm.contains(OP_PUSHCURRENTINPUTINDEX),
-        "merge should reference this.activeInputIndex"
-    );
-    assert!(
-        asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
-        "merge should verify the sibling pool input"
-    );
-    assert!(asm.contains(OP_ADD64), "merge should sum liquidity");
-}
-
-#[test]
-fn test_borrow_is_fan_out_with_pricing() {
-    // borrow prices principal = par * (1e4 - discount) / 1e4, draws down the
-    // pool (OP_SUB64), and emits residual pool + borrower payout + loan vault.
-    let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "borrow");
     assert!(
         asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
-        "borrow pricing math"
+        "accrual + share pricing"
     );
-    assert!(asm.contains(OP_SUB64), "borrow draws down liquidity");
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPCTRL),
+        "deposit enforces the share control asset"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "deposit re-creates the pool covenant"
+    );
+    assert!(asm.contains(OP_CHECKSIG), "deposit needs lender sig");
+}
+
+#[test]
+fn test_withdraw_conditional_on_idle_liquidity() {
+    // Yield/liquidity tradeoff: withdrawal bounded by idle (OP_LESSTHANOREQUAL),
+    // shares burned (OP_INSPECTASSETGROUPSUM).
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "withdraw");
+    assert!(asm.contains(OP_LESSTHANOREQUAL), "withdraw bounded by idle");
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "withdraw burns shares"
+    );
+    assert!(asm.contains(OP_INSPECTOUTASSETLOOKUP), "withdraw pays USDT");
+}
+
+#[test]
+fn test_fill_bond_is_atomic() {
+    // The centerpiece: fillBond atomically (1) accrues interest + draws principal
+    // out of idle (OP_MUL64/OP_DIV64 + OP_LESSTHANOREQUAL), (2) mints the bond
+    // gated by control (OP_FINDASSETGROUPBYASSETID + OP_INSPECTASSETGROUPCTRL),
+    // (3) pays the borrower in USDT + delivers the bond (OP_INSPECTOUTASSETLOOKUP),
+    // (4) locks collateral (OP_INSPECTOUTPUTVALUE), and (5) re-creates the residual
+    // pool + LoanVault (OP_INSPECTOUTPUTSCRIPTPUBKEY) — all in one function.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "fillBond");
+    assert!(
+        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        "accrual + pricing"
+    );
+    assert!(
+        asm.contains(OP_LESSTHANOREQUAL),
+        "fillBond draws from idle, bounded by available liquidity"
+    );
+    assert!(
+        asm.contains(OP_FINDASSETGROUPBYASSETID) && asm.contains(OP_INSPECTASSETGROUPCTRL),
+        "fillBond mints the bond gated by its control asset"
+    );
     assert!(
         asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "borrow should pay borrower in USDT"
+        "fillBond pays borrower USDT and delivers the bond"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTVALUE),
-        "borrow should lock collateral value in the loan vault"
+        "fillBond locks collateral in the loan vault"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "borrow should pin residual pool + payout + loan vault scripts"
+        "fillBond pins residual pool + borrower + bond dest + loan vault"
     );
+    assert!(asm.contains(OP_CHECKSIG), "fillBond needs borrower sig");
 }
 
 #[test]
-fn test_no_oracle_anywhere() {
-    // This MVP defers oracle-priced liquidation; no function should verify an
-    // oracle-signed message.
+fn test_settle_folds_repayment_back() {
+    // settle returns repaid USDT to idle and removes principal from totalLent,
+    // re-creating the pool; surplus is realized lender yield.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "settle");
+    assert!(
+        asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "settle restores pool USDT"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "settle re-creates the pool covenant"
+    );
+    assert!(asm.contains(OP_CHECKSIG), "settle needs keeper sig");
+}
+
+#[test]
+fn test_all_functions_accrue_interest() {
+    let output = compile(CODE).expect("compilation failed");
+    for name in ["deposit", "withdraw", "fillBond", "settle"] {
+        assert!(
+            asm_of(&output, name).contains(OP_MUL64),
+            "{name} should accrue interest"
+        );
+    }
+}
+
+#[test]
+fn test_no_oracle_in_mvp() {
+    // Oracle-priced liquidation is the deferred follow-up; nothing here verifies
+    // an oracle-signed message yet.
     let output = compile(CODE).expect("compilation failed");
     for f in &output.functions {
-        let asm = f.asm.join(" ");
         assert!(
-            !asm.contains(OP_CHECKSIGFROMSTACK),
+            !f.asm.join(" ").contains(OP_CHECKSIGFROMSTACK),
             "{} unexpectedly uses an oracle signature",
             f.name
         );
@@ -116,8 +160,7 @@ fn test_lending_pool_cli() {
     use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
-    // The contract imports loan_vault.ark; place both side by side so the
-    // import resolves the same way the examples directory is laid out.
+    // The contract imports loan_vault.ark; place both side by side.
     fs::write(
         dir.path().join("loan_vault.ark"),
         include_str!("../examples/lending/loan_vault.ark"),

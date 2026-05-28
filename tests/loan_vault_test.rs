@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
+    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
 };
 
 const CODE: &str = include_str!("../examples/lending/loan_vault.ark");
@@ -24,54 +24,66 @@ fn test_loan_vault_compiles() {
     assert_eq!(output.functions.len(), 4, "expected 4 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
-    assert!(
-        names.contains(&"usdtAssetId_txid") && names.contains(&"usdtAssetId_gidx"),
-        "usdtAssetId not decomposed, got: {names:?}"
-    );
+    for id in ["usdtAssetId", "bondAssetId"] {
+        assert!(
+            names.contains(&format!("{id}_txid").as_str())
+                && names.contains(&format!("{id}_gidx").as_str()),
+            "{id} not decomposed, got: {names:?}"
+        );
+    }
 }
 
 #[test]
-fn test_repay_before_maturity_pays_par_and_returns_collateral() {
-    // repay is gated on tx.time < maturity (OP_LESSTHAN), pays `par` USDT to the
-    // keeper, and returns the collateral sats to the borrower.
+fn test_repay_before_maturity_burns_bond_pays_par_returns_collateral() {
+    // repay is gated on tx.time < maturity (OP_LESSTHAN), burns the bond
+    // (OP_INSPECTASSETGROUPSUM), pays par USDT to the keeper, and returns the
+    // collateral sats to the borrower.
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "repay");
     assert!(
         asm.contains(OP_LESSTHAN),
-        "repay should gate on tx.time < maturity"
+        "repay gated on tx.time < maturity"
+    );
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "repay burns the bond"
     );
     assert!(
         asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "repay should pay par USDT"
+        "repay pays par USDT"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTVALUE),
-        "repay should return collateral sats"
+        "repay returns collateral"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "repay should pin keeper + borrower outputs"
+        "repay pins keeper + borrower"
     );
     assert!(asm.contains(OP_CHECKSIG), "repay needs borrower sig");
 }
 
 #[test]
-fn test_claim_default_after_maturity_seizes_collateral() {
-    // claimDefault is gated on tx.time >= maturity (OP_CHECKLOCKTIMEVERIFY) and
-    // sends the collateral to the keeper.
+fn test_claim_default_after_maturity_burns_bond_seizes_collateral() {
+    // claimDefault is gated on tx.time >= maturity (OP_CHECKLOCKTIMEVERIFY),
+    // burns the bond, and sends the collateral to the keeper.
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "claimDefault");
     assert!(
         asm.contains(OP_CHECKLOCKTIMEVERIFY),
-        "claimDefault should enforce tx.time >= maturity"
+        "claimDefault enforces tx.time >= maturity"
+    );
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "claimDefault burns the bond"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTVALUE),
-        "claimDefault should seize collateral value"
+        "claimDefault seizes collateral"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "claimDefault should pin the keeper output"
+        "claimDefault pins keeper output"
     );
     assert!(asm.contains(OP_CHECKSIG), "claimDefault needs keeper sig");
 }
