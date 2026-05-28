@@ -2,19 +2,30 @@
 //
 // The per-loan collateral lockup created atomically by LendingPool.fillBond
 // (see lending_pool.ark). Each loan backs `bondUnits` of the fungible bond
-// asset; the bond is the lender side's transferable claim, held by the pool
-// keeper. Par is bondUnits USDT (1 bond unit redeems for 1 USDT at maturity).
+// asset; par is bondUnits USDT (1 bond unit redeems for 1 USDT at maturity).
 //
-// Settlement (the bond is burned in both paths):
-//   - repay        : borrower pays par USDT to the pool keeper before maturity,
-//                    the bond is burned, and the collateral returns to the
-//                    borrower. The keeper then folds the repayment back into the
-//                    pool via LendingPool.settle.
-//   - claimDefault : after maturity, if unpaid, the keeper burns the bond and
+// Settlement (the bond is burned in every path):
+//   - repay        : ATOMIC with the pool. Co-spent with LendingPool.repayLoan,
+//                    which returns par to the pool and clears the loan's
+//                    principal from totalLent in the SAME transaction; the bond
+//                    is burned and the collateral returns to the borrower. No
+//                    separate keeper "settle" step.
+//   - liquidate    : pre-maturity, an oracle-attested BTC price shows the
+//                    collateral is worth less than liqThresholdBps of par; the
+//                    bond is burned and the keeper seizes the collateral.
+//   - claimDefault : at/after maturity, if unpaid, the keeper burns the bond and
 //                    seizes the collateral.
 //
-// USDT and the bond are Arkade Assets; collateral is plain sats held as the
-// vault output value.
+// repay routes the repayment to the pool atomically. liquidate/claimDefault
+// seize BTC collateral to the keeper, who converts it off-chain and folds the
+// proceeds back via LendingPool.settle (collateral is sats, the pool holds USDT,
+// so that leg cannot be a single on-chain hop).
+//
+// SECURITY NOTE: burning the bond consumes the bond UTXO held by the pool
+// keeper, so repay requires the keeper to co-sign — that participation, plus the
+// co-spend check (the real pool is identified by custody of the unique bond
+// control asset), is what binds the repayment to the genuine pool. The pool's
+// repayLoan does the authoritative accounting.
 
 import "single_sig.ark";
 
@@ -24,40 +35,83 @@ options {
 }
 
 contract LoanVault(
-  pubkey  borrowerPk,    // owner of the collateral; may repay
-  pubkey  poolKeeperPk,  // pool/lender side: holds the bond, receives par / seizes collateral
-  bytes32 usdtAssetId,   // repayment asset
-  bytes32 bondAssetId,   // bond burned on settlement
-  int     bondUnits,     // bond tranche backing this loan; par = bondUnits USDT
-  int     collateral,    // sats locked as collateral
-  int     maturity,      // block height at/after which the loan matures
-  int     exit           // unilateral exit timelock in blocks
+  pubkey  borrowerPk,     // owner of the collateral; may repay
+  pubkey  poolKeeperPk,   // pool/lender side: holds the bond, seizes collateral
+  bytes32 usdtAssetId,    // repayment asset
+  bytes32 bondAssetId,    // bond burned on settlement
+  bytes32 bondCtrlId,     // bond control asset; identifies the genuine pool
+  pubkey  oraclePk,       // price oracle for liquidation
+  bytes32 ticker,         // oracle feed id (e.g. sha256("BTC/USDT"))
+  int     liqThresholdBps, // liquidate when collateralValue < bondUnits * bps/1e4
+  int     oracleMaxAge,   // max oracle-price staleness in seconds (deployment choice)
+  int     bondUnits,      // bond tranche backing this loan; par = bondUnits USDT
+  int     collateral,     // sats locked as collateral
+  int     maturity,       // block height at/after which the loan matures
+  int     exit            // unilateral exit timelock in blocks
 ) {
 
   // ---------------------------------------------------------------------------
-  // REPAY — borrower repays par (= bondUnits USDT) before maturity, the bond is
-  // burned, and the collateral returns to the borrower.
+  // REPAY (atomic with LendingPool.repayLoan) — before maturity, the bond is
+  // burned and the collateral returns to the borrower. par USDT is routed into
+  // the pool by the co-spent repayLoan; this script verifies the genuine pool
+  // is the input at `poolIdx` (it is the sole custodian of the bond control
+  // asset) and protects the borrower's collateral output.
   //
-  //   output[0]: par USDT        → pool keeper
+  //   output[0]: the re-created pool (enforced by LendingPool.repayLoan)
   //   output[1]: collateral sats → borrower
   // ---------------------------------------------------------------------------
-  function repay(signature borrowerSig) {
+  function repay(int poolIdx, signature borrowerSig) {
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(tx.time < maturity, "loan matured");
 
+    require(tx.inputs[poolIdx].assets.lookup(bondCtrlId) >= 1, "genuine pool not co-spent");
+
     let bondGroup = tx.assetGroups.find(bondAssetId);
     require(bondGroup.sumInputs >= bondGroup.sumOutputs + bondUnits, "bond not burned");
-
-    require(tx.outputs[0].assets.lookup(usdtAssetId) >= bondUnits, "repayment short");
-    require(tx.outputs[0].scriptPubKey == new SingleSig(poolKeeperPk), "output 0 not keeper");
 
     require(tx.outputs[1].value >= collateral, "collateral not returned");
     require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
   }
 
   // ---------------------------------------------------------------------------
-  // CLAIM DEFAULT — after maturity, the keeper burns the bond and seizes the
-  // collateral.
+  // LIQUIDATE — pre-maturity, an oracle-attested price shows the collateral is
+  // worth less than liqThresholdBps of par. The bond is burned and the keeper
+  // seizes the collateral.
+  //
+  // Oracle (Fuji-style): msg = sha256(ticker || price || timestamp), signed by
+  // oraclePk; price/timestamp are 8-byte LE. Freshness: <= oracleMaxAge seconds,
+  // a deployment parameter (tighter for volatile collateral).
+  // collateralValue (USDT) = collateral_sats * oraclePrice / 1e8, where
+  // oraclePrice is USDT-base-units per BTC.
+  //
+  //   output[0]: collateral sats → pool keeper
+  // ---------------------------------------------------------------------------
+  function liquidate(int oraclePrice, int oracleTime, signature oracleSig, signature keeperSig) {
+    require(checkSig(keeperSig, poolKeeperPk), "invalid keeper sig");
+    require(tx.time < maturity, "matured; use claimDefault");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= oracleMaxAge, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int collateralValue = collateral * oraclePrice / 100000000;
+    int threshold = bondUnits * liqThresholdBps / 10000;
+    require(collateralValue < threshold, "still healthy");
+
+    let bondGroup = tx.assetGroups.find(bondAssetId);
+    require(bondGroup.sumInputs >= bondGroup.sumOutputs + bondUnits, "bond not burned");
+
+    require(tx.outputs[0].value >= collateral, "collateral not seized");
+    require(tx.outputs[0].scriptPubKey == new SingleSig(poolKeeperPk), "output 0 not keeper");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CLAIM DEFAULT — at/after maturity, if unpaid, the keeper burns the bond and
+  // seizes the collateral.
   //
   //   output[0]: collateral sats → pool keeper
   // ---------------------------------------------------------------------------

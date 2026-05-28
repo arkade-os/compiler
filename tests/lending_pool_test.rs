@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64, OP_FINDASSETGROUPBYASSETID,
-    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP,
+    OP_CHECKSIG, OP_DIV64, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTASSETLOOKUP,
     OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHANOREQUAL, OP_MUL64,
 };
 
@@ -21,8 +21,8 @@ fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String 
 fn test_lending_pool_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "LendingPool");
-    // 4 functions (deposit, withdraw, fillBond, settle) x 2 variants = 8
-    assert_eq!(output.functions.len(), 8, "expected 8 functions");
+    // 5 functions (deposit, withdraw, fillBond, repayLoan, settle) x 2 variants = 10
+    assert_eq!(output.functions.len(), 10, "expected 10 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     for id in [
@@ -113,6 +113,42 @@ fn test_fill_bond_is_atomic() {
 }
 
 #[test]
+fn test_repay_loan_is_atomic() {
+    // Atomic repay+settle: repayLoan validates the LoanVault input by
+    // reconstructing its scriptPubKey (OP_INSPECTINPUTSCRIPTPUBKEY), burns the
+    // bond (OP_INSPECTASSETGROUPSUM), returns par to the pool
+    // (OP_INSPECTOUTASSETLOOKUP) while re-creating it with lent-=principal
+    // (OP_MUL64/OP_DIV64 + OP_INSPECTOUTPUTSCRIPTPUBKEY), and returns collateral
+    // to the borrower (OP_INSPECTOUTPUTVALUE) — all in one transaction.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "repayLoan");
+    assert!(
+        asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
+        "repayLoan validates the LoanVault input"
+    );
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "repayLoan burns the bond"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "repayLoan returns par to the pool"
+    );
+    assert!(
+        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        "repayLoan accrues + computes principal"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTVALUE),
+        "repayLoan returns collateral to the borrower"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "repayLoan re-creates the pool + pins collateral dest"
+    );
+}
+
+#[test]
 fn test_settle_folds_repayment_back() {
     // settle returns repaid USDT to idle and removes principal from totalLent,
     // re-creating the pool; surplus is realized lender yield.
@@ -132,24 +168,10 @@ fn test_settle_folds_repayment_back() {
 #[test]
 fn test_all_functions_accrue_interest() {
     let output = compile(CODE).expect("compilation failed");
-    for name in ["deposit", "withdraw", "fillBond", "settle"] {
+    for name in ["deposit", "withdraw", "fillBond", "repayLoan", "settle"] {
         assert!(
             asm_of(&output, name).contains(OP_MUL64),
             "{name} should accrue interest"
-        );
-    }
-}
-
-#[test]
-fn test_no_oracle_in_mvp() {
-    // Oracle-priced liquidation is the deferred follow-up; nothing here verifies
-    // an oracle-signed message yet.
-    let output = compile(CODE).expect("compilation failed");
-    for f in &output.functions {
-        assert!(
-            !f.asm.join(" ").contains(OP_CHECKSIGFROMSTACK),
-            "{} unexpectedly uses an oracle signature",
-            f.name
         );
     }
 }

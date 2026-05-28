@@ -194,8 +194,8 @@ fn roundtrip_lending_pool() {
     let output = compile_example("lending/lending_pool.ark");
     assert_output_invariants(&output, "lending/lending_pool.ark");
     assert_eq!(output.name, "LendingPool");
-    // 4 functions × 2 variants = 8
-    assert_eq!(output.functions.len(), 8);
+    // 5 functions × 2 variants = 10
+    assert_eq!(output.functions.len(), 10);
 }
 
 #[test]
@@ -203,8 +203,8 @@ fn roundtrip_loan_vault() {
     let output = compile_example("lending/loan_vault.ark");
     assert_output_invariants(&output, "lending/loan_vault.ark");
     assert_eq!(output.name, "LoanVault");
-    // 2 functions × 2 variants = 4
-    assert_eq!(output.functions.len(), 4);
+    // 3 functions × 2 variants = 6
+    assert_eq!(output.functions.len(), 6);
 }
 
 // ─── Cross-cutting invariant: scan ALL examples ───────────────────────────────
