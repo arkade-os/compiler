@@ -1,0 +1,66 @@
+// LoanVault Contract
+//
+// A single fixed-maturity loan drawn from a LendingPool (see lending_pool.ark).
+// This is the UTXO-native "pool token" / zero-coupon bond: the borrower locks
+// BTC collateral here and owes `par` USDT at `maturity`. The vault UTXO itself
+// is the bond — there is no separate fungible bond asset in this MVP.
+//
+// The borrower already received `principal = par * (1 - discount)` USDT up front
+// from the pool, so the lender side earns the discount as fixed-rate interest
+// once the loan is repaid at par.
+//
+// Settlement paths:
+//   - repay        : borrower pays `par` USDT to the pool keeper before maturity
+//                    and reclaims the collateral.
+//   - claimDefault : after maturity, if unpaid, the pool keeper seizes collateral.
+//
+// USDT is an Arkade Asset (`usdtAssetId`); collateral is plain sats held as the
+// vault output value.
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract LoanVault(
+  pubkey  borrowerPk,     // owner of the collateral; may repay
+  pubkey  poolKeeperPk,   // pool side: receives repayment / seizes on default
+  bytes32 usdtAssetId,    // repayment asset (loan token)
+  int     par,            // USDT owed at maturity
+  int     collateral,     // sats locked as collateral
+  int     maturity,       // block height at/after which the loan matures
+  int     exit            // unilateral exit timelock in blocks
+) {
+
+  // ---------------------------------------------------------------------------
+  // REPAY — borrower repays `par` USDT before maturity and reclaims collateral.
+  //
+  //   output[0]: par USDT        → pool keeper
+  //   output[1]: collateral sats → borrower
+  // ---------------------------------------------------------------------------
+  function repay(signature borrowerSig) {
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
+    require(tx.time < maturity, "loan matured");
+
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= par, "repayment short");
+    require(tx.outputs[0].scriptPubKey == new SingleSig(poolKeeperPk), "output 0 not keeper");
+
+    require(tx.outputs[1].value >= collateral, "collateral not returned");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CLAIM DEFAULT — after maturity, the pool keeper seizes the collateral.
+  //
+  //   output[0]: collateral sats → pool keeper
+  // ---------------------------------------------------------------------------
+  function claimDefault(signature keeperSig) {
+    require(checkSig(keeperSig, poolKeeperPk), "invalid keeper sig");
+    require(tx.time >= maturity, "not yet matured");
+
+    require(tx.outputs[0].value >= collateral, "collateral not seized");
+    require(tx.outputs[0].scriptPubKey == new SingleSig(poolKeeperPk), "output 0 not keeper");
+  }
+}
