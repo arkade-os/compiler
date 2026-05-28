@@ -1,0 +1,222 @@
+// YieldPool Contract
+//
+// A recursive-covenant, variable-rate lending pool (Morpho-Blue style) encoded
+// UTXO-natively. THIS is the piece that earns yield: lenders supply USDT and
+// receive LP-share tokens; borrowers draw against the idle balance and pay a
+// time-accruing interest rate; that interest grows the pool's total assets, so
+// each share is worth more over time. A lender's capital is NOT idle while it
+// waits — it is lent out and earning.
+//
+// State carried forward by the recursive covenant (re-created on every spend):
+//   totalIdle   - USDT physically held in the pool (lendable / withdrawable)
+//   totalDebt   - USDT owed by borrowers; GROWS with accrued interest
+//   totalShares - LP shares outstanding
+//   lastAccrual - unix seconds of the last interest accrual
+//
+//   totalAssets = totalIdle + totalDebt   (basis for share price)
+//   sharePrice  = totalAssets / totalShares
+//
+// Interest accrual uses the StabilityVault funding pattern: on every spend we
+// roll `totalDebt` forward by ratePerSec * elapsed before doing anything else.
+//
+// FAN-IN  : deposit  (pool + lender's USDT -> larger pool, shares minted)
+// FAN-OUT : withdraw (pool -> residual pool + lender USDT, shares burned)
+//           borrow   (pool -> residual pool + borrower USDT, debt created)
+//
+// HONEST TRADEOFF (the one that survives from our earlier discussion):
+//   Yield means the capital is lent out, so it is not unconditionally liquid.
+//   `withdraw` and `borrow` REQUIRE `amount <= totalIdle` — a withdrawal or a
+//   standing-order fill can fail if utilization is high. That is exactly the
+//   conditional-liquidity / phantom-depth risk; it is enforced here on-chain.
+//
+// MVP simplifications (documented; not hidden):
+//   - ratePerSec is a fixed constructor parameter. A utilization-driven IRM
+//     (rate = f(totalDebt / totalAssets)) is the follow-up.
+//   - Borrower debt is tracked in aggregate (`totalDebt`), not per-borrower.
+//     `repay` is keeper-gated and reduces aggregate debt. Per-borrower loan
+//     positions (à la LoanVault) are the follow-up.
+//   - The pool is bootstrapped with totalShares > 0 and totalIdle > 0 at
+//     genesis, so deposits never divide by an empty pool.
+//   - The share control asset lives in the pool; functions that must not change
+//     share supply rely on not constructing a mint. Hardened per-function delta
+//     guards depend on find() being safe on absent groups (follow-up).
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract YieldPool(
+  bytes32 usdtAssetId,   // asset lenders supply and borrowers borrow
+  bytes32 shareAssetId,  // LP share token (pro-rata claim on total assets)
+  bytes32 shareCtrlId,   // control asset (held in pool) gating share minting
+  pubkey  poolKeeperPk,  // governs borrow/repay (the borrow-side operator)
+  int     ratePerSec,    // interest rate, signed fixed-point at scale 1e12
+  int     totalIdle,     // USDT physically in the pool (mutable)
+  int     totalDebt,     // USDT owed by borrowers; accrues interest (mutable)
+  int     totalShares,   // LP shares outstanding (mutable)
+  int     lastAccrual,   // unix seconds; basis for interest accrual (mutable)
+  int     exit
+) {
+
+  // ---------------------------------------------------------------------------
+  // DEPOSIT  (FAN-IN) — a lender supplies USDT and receives LP shares minted at
+  // the current (post-accrual) share price.
+  //
+  //   output[0]: pool re-created (idle + amount, debt accrued, shares + minted)
+  //   output[1]: minted LP shares -> lender
+  // ---------------------------------------------------------------------------
+  function deposit(int amount, pubkey lenderPk, signature lenderSig) {
+    require(amount > 0, "zero deposit");
+    require(checkSig(lenderSig, lenderPk), "invalid lender sig");
+
+    // accrue interest into debt first
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int interest    = totalDebt * rateElapsed / 1000000;
+    int debtNext    = totalDebt + interest;
+    int assetsNext  = totalIdle + debtNext;
+    require(assetsNext > 0, "empty pool");
+
+    int sharesMinted = amount * totalShares / assetsNext;
+    require(sharesMinted > 0, "deposit too small");
+
+    int idleNext   = totalIdle + amount;
+    int sharesNext = totalShares + sharesMinted;
+
+    // share mint is enforced by the covenant: exactly `sharesMinted` new shares,
+    // gated by the control asset, which must stay in the pool.
+    let shareGroup = tx.assetGroups.find(shareAssetId);
+    require(shareGroup.delta == sharesMinted, "share delta mismatch");
+    require(shareGroup.control == shareCtrlId, "wrong share control");
+    let ctrlGroup = tx.assetGroups.find(shareCtrlId);
+    require(ctrlGroup.delta == 0, "control supply changed");
+
+    require(
+      tx.outputs[0].scriptPubKey == new YieldPool(
+        usdtAssetId, shareAssetId, shareCtrlId, poolKeeperPk, ratePerSec,
+        idleNext, debtNext, sharesNext, tx.offchainTime, exit
+      ),
+      "invalid pool recreation"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "control not retained");
+
+    require(tx.outputs[1].assets.lookup(shareAssetId) >= sharesMinted, "shares not delivered");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(lenderPk), "shares dest not lender");
+  }
+
+  // ---------------------------------------------------------------------------
+  // WITHDRAW  (FAN-OUT) — a lender burns LP shares for their pro-rata USDT,
+  // bounded by idle liquidity (the conditional-liquidity tradeoff).
+  //
+  //   output[0]: residual pool (idle - amount, shares - burned)
+  //   output[1]: amount USDT -> lender
+  // ---------------------------------------------------------------------------
+  function withdraw(int shares, pubkey lenderPk, signature lenderSig) {
+    require(shares > 0, "zero shares");
+    require(checkSig(lenderSig, lenderPk), "invalid lender sig");
+
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int interest    = totalDebt * rateElapsed / 1000000;
+    int debtNext    = totalDebt + interest;
+    int assetsNext  = totalIdle + debtNext;
+
+    int amount = shares * assetsNext / totalShares;
+    require(amount > 0, "withdraw too small");
+    require(amount <= totalIdle, "insufficient idle liquidity");
+
+    // burn the shares (no control asset needed to burn)
+    let shareGroup = tx.assetGroups.find(shareAssetId);
+    require(shareGroup.sumInputs >= shareGroup.sumOutputs + shares, "shares not burned");
+
+    int idleNext   = totalIdle - amount;
+    int sharesNext = totalShares - shares;
+
+    require(
+      tx.outputs[0].scriptPubKey == new YieldPool(
+        usdtAssetId, shareAssetId, shareCtrlId, poolKeeperPk, ratePerSec,
+        idleNext, debtNext, sharesNext, tx.offchainTime, exit
+      ),
+      "invalid residual pool"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "residual usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "control not retained");
+
+    require(tx.outputs[1].assets.lookup(usdtAssetId) >= amount, "lender underpaid");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(lenderPk), "payout dest not lender");
+  }
+
+  // ---------------------------------------------------------------------------
+  // BORROW  (FAN-OUT) — a borrower draws idle USDT, increasing aggregate debt.
+  // The drawn amount starts accruing interest immediately (next accrual rolls
+  // it into totalDebt). Bounded by idle liquidity.
+  //
+  //   output[0]: residual pool (idle - amount, debt + amount)
+  //   output[1]: amount USDT -> borrower
+  // ---------------------------------------------------------------------------
+  function borrow(int amount, pubkey borrowerPk, signature borrowerSig) {
+    require(amount > 0, "zero borrow");
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
+    require(amount <= totalIdle, "insufficient liquidity");
+
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int interest    = totalDebt * rateElapsed / 1000000;
+    int debtNext    = totalDebt + interest;
+
+    int idleNext = totalIdle - amount;
+    int debtAfter = debtNext + amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new YieldPool(
+        usdtAssetId, shareAssetId, shareCtrlId, poolKeeperPk, ratePerSec,
+        idleNext, debtAfter, totalShares, tx.offchainTime, exit
+      ),
+      "invalid residual pool"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "residual usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "control not retained");
+
+    require(tx.outputs[1].assets.lookup(usdtAssetId) >= amount, "borrower underpaid");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "loan dest not borrower");
+  }
+
+  // ---------------------------------------------------------------------------
+  // REPAY — borrow side returns USDT (principal + accrued interest) to the pool,
+  // moving debt back to idle. The repaid interest is what lenders' shares
+  // appreciate against.
+  //
+  //   output[0]: residual pool (idle + amount, debt - amount)
+  // ---------------------------------------------------------------------------
+  function repay(int amount, signature keeperSig) {
+    require(amount > 0, "zero repay");
+    require(checkSig(keeperSig, poolKeeperPk), "invalid keeper sig");
+
+    int elapsed = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsed = ratePerSec * elapsed / 1000000;
+    int interest    = totalDebt * rateElapsed / 1000000;
+    int debtNext    = totalDebt + interest;
+    require(amount <= debtNext, "overpay");
+
+    int idleNext  = totalIdle + amount;
+    int debtAfter = debtNext - amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new YieldPool(
+        usdtAssetId, shareAssetId, shareCtrlId, poolKeeperPk, ratePerSec,
+        idleNext, debtAfter, totalShares, tx.offchainTime, exit
+      ),
+      "invalid residual pool"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "control not retained");
+  }
+}

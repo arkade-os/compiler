@@ -207,6 +207,15 @@ fn roundtrip_loan_vault() {
     assert_eq!(output.functions.len(), 4);
 }
 
+#[test]
+fn roundtrip_yield_pool() {
+    let output = compile_example("lending/yield_pool.ark");
+    assert_output_invariants(&output, "lending/yield_pool.ark");
+    assert_eq!(output.name, "YieldPool");
+    // 4 functions × 2 variants = 8
+    assert_eq!(output.functions.len(), 8);
+}
+
 // ─── Cross-cutting invariant: scan ALL examples ───────────────────────────────
 
 /// Recursively collect all .ark files under a directory.
