@@ -81,7 +81,7 @@ pub struct Field {
     pub ark_type: String,
     /// Wire encoding descriptor.
     pub encoding: Encoding,
-    /// True if this field is injected by the Ark server (e.g., "serverSig").
+    /// True if this field is injected by the Arkade server (e.g., "serverSig").
     pub is_server_injected: bool,
 }
 

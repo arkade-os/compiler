@@ -1,12 +1,12 @@
-# ArkadeKitties: A Trustless Collectible Game on Ark
+# ArkadeKitties: A Trustless Collectible Game on Arkade
 
-This document outlines the design for ArkadeKitties, a decentralized game for collecting and breeding unique digital cats, built entirely on the Ark protocol using Arkade Assets and Arkade Script.
+This document outlines the design for ArkadeKitties, a decentralized game for collecting and breeding unique digital cats, built entirely on Arkade using Arkade Assets and Arkade Script.
 
 ## 1. Core Concept
 
 ArkadeKitties are unique, collectible digital assets. Each Kitty is a non-fungible Arkade Asset with an amount of 1 and has a distinct set of traits determined by its genetic code (genome), which is stored immutably on-chain as asset metadata. Players can buy, sell, and breed their Kitties to create new, rare offspring.
 
-The entire system is trustless. Ownership is enforced by the Ark protocol, and all game logic, including breeding, is executed by on-chain Arkade Script contracts, eliminating the need for a central server.
+The entire system is trustless. Ownership is enforced by Arkade, and all game logic, including breeding, is executed by on-chain Arkade Script contracts, eliminating the need for a central server.
 
 ## 2. Kitty Asset Representation
 

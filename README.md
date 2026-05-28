@@ -445,4 +445,4 @@ Contract instantiation expressions in ASM use the format:
 <VTXO:ContractName(<arg1>,<arg2>)>
 ```
 
-The Ark runtime resolves this placeholder to the Taproot scriptPubKey of the named contract instantiated with the given arguments. Options (`server`, `exit`, `renew`) are inherited from the enclosing contract.
+The Arkade runtime resolves this placeholder to the Taproot scriptPubKey of the named contract instantiated with the given arguments. Options (`server`, `exit`, `renew`) are inherited from the enclosing contract.
