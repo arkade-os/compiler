@@ -414,7 +414,7 @@ fn orphaned_placeholder_is_warned() {
 
 #[test]
 fn server_key_placeholder_is_always_resolved() {
-    // <SERVER_KEY> is injected at runtime by the Ark operator — it must not be
+    // <SERVER_KEY> is injected at runtime by the Arkade operator — it must not be
     // flagged as unresolvable even though it is not in the schema.
     let asm = vec![
         "<SERVER_KEY>".to_string(),

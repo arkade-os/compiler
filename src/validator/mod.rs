@@ -415,7 +415,7 @@ pub fn validate_asm_structure(
 /// - A name in `witnessSchema` (caller-supplied witness element).
 /// - A name in `constructorInputs` (constructor-bound script parameter).
 /// - A well-known runtime placeholder: `SERVER_KEY` (operator key), or any token
-///   starting with `VTXO:` (contract instance reference resolved by the Ark node).
+///   starting with `VTXO:` (contract instance reference resolved by the Arkade node).
 ///
 /// Orphaned placeholders mean the transaction can never be constructed because
 /// there is no known binding for that name.
@@ -444,7 +444,7 @@ pub fn validate_placeholder_consistency(
             // Compound-expression placeholders like
             // <checkMultisig([a,b],[c,d])> or <sha256(preimage)>
             // are emitted verbatim when the compiler cannot fully inline an
-            // expression.  They are evaluated by the Ark node at spend time —
+            // expression.  They are evaluated by the Arkade node at spend time —
             // not looked up by name — so we skip the name-resolution check.
             if name.contains('(') || name.contains('[') || name.contains(',') {
                 continue;

@@ -138,7 +138,10 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     }
 
     // Contract struct
-    out.push_str(&format!("// {} wraps an Ark contract instance.\n", ir.name));
+    out.push_str(&format!(
+        "// {} wraps an Arkade contract instance.\n",
+        ir.name
+    ));
     out.push_str(&format!(
         "type {} struct {{\n\t*ark.Contract\n}}\n\n",
         ir.name
@@ -242,7 +245,7 @@ fn emit_witness_struct(
     }
 
     if variant_label == "Cooperative" {
-        out.push_str("\t// ServerSig injected by Ark server\n");
+        out.push_str("\t// ServerSig injected by Arkade server\n");
     } else if variant.is_nofn_fallback {
         out.push_str("\t// N-of-N multisig exit fallback\n");
     } else {
