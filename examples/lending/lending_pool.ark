@@ -332,4 +332,51 @@ contract LendingPool(
     require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "share control not retained");
     require(tx.outputs[0].assets.lookup(bondCtrlId) >= 1, "bond control not retained");
   }
+
+  // ---------------------------------------------------------------------------
+  // SETTLE LOSS  (FAN-IN) — record a bad-debt write-down. When seized collateral
+  // sells for LESS than the loan's principal (the common case in the crash that
+  // triggered the liquidation), the keeper returns `repayAmount` USDT and still
+  // clears `principalAmount` from totalLent. The shortfall
+  // (principalAmount - repayAmount) is a realized loss: totalLent drops by more
+  // than totalIdle rises, so totalAssets falls and the loss is socialized pro-rata
+  // across LP shares. Without this path the under-recovered principal would linger
+  // in totalLent as a phantom balance, over-pricing shares (the inflation bug that
+  // repayLoan/settle are careful to avoid).
+  //
+  // TRUST: keeper (same surface as `settle`, extended to markdowns). Because this
+  // can reduce share value, it is bounded by `principalAmount <= totalLent` and is
+  // distinct from `settle` (which forbids `repayAmount < principalAmount`) so a
+  // write-down is always an explicit, auditable action.
+  //
+  //   output[0]: pool re-created (idle + repayAmount, lent - principalAmount)
+  // ---------------------------------------------------------------------------
+  function settleLoss(int principalAmount, int repayAmount, signature keeperSig) {
+    require(checkSig(keeperSig, poolKeeperPk), "invalid keeper sig");
+    require(principalAmount > 0, "zero principal");
+    require(repayAmount >= 0, "negative repay");
+    require(repayAmount < principalAmount, "not a loss; use settle");
+    require(principalAmount <= totalLent, "exceeds outstanding");
+
+    // Lock both control supplies so a write-down cannot mint shares or bonds.
+    let scGroup = tx.assetGroups.find(shareCtrlId);
+    require(scGroup.delta == 0, "share control changed");
+    let bcGroup = tx.assetGroups.find(bondCtrlId);
+    require(bcGroup.delta == 0, "bond control changed");
+
+    int idleNext  = totalIdle + repayAmount;
+    int lentAfter = totalLent - principalAmount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new LendingPool(
+        usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
+        poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
+        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
+      ),
+      "invalid pool recreation"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= idleNext, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(shareCtrlId) >= 1, "share control not retained");
+    require(tx.outputs[0].assets.lookup(bondCtrlId) >= 1, "bond control not retained");
+  }
 }

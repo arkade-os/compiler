@@ -194,8 +194,8 @@ fn roundtrip_lending_pool() {
     let output = compile_example("lending/lending_pool.ark");
     assert_output_invariants(&output, "lending/lending_pool.ark");
     assert_eq!(output.name, "LendingPool");
-    // 5 functions × 2 variants = 10
-    assert_eq!(output.functions.len(), 10);
+    // 6 functions × 2 variants = 12
+    assert_eq!(output.functions.len(), 12);
 }
 
 #[test]

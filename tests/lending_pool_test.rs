@@ -30,8 +30,8 @@ fn asm_variant(output: &arkade_compiler::models::ContractJson, name: &str, serve
 fn test_lending_pool_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "LendingPool");
-    // 5 functions (deposit, withdraw, fillBond, repayLoan, settle) x 2 variants = 10
-    assert_eq!(output.functions.len(), 10, "expected 10 functions");
+    // 6 functions (deposit, withdraw, fillBond, repayLoan, settle, settleLoss) x 2 = 12
+    assert_eq!(output.functions.len(), 12, "expected 12 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     for id in [
@@ -181,6 +181,29 @@ fn test_settle_folds_repayment_back() {
 }
 
 #[test]
+fn test_settle_loss_records_writedown() {
+    // settleLoss is the bad-debt path: it allows repayAmount < principalAmount
+    // (OP_LESSTHAN gate) so an underwater liquidation clears the loan's principal
+    // from totalLent while returning less USDT, socializing the loss across LP
+    // shares, and re-creates the pool.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "settleLoss");
+    assert!(
+        asm.contains(OP_LESSTHAN),
+        "settleLoss gates on repayAmount < principalAmount"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "settleLoss returns recovered USDT to the pool"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "settleLoss re-creates the pool covenant"
+    );
+    assert!(asm.contains(OP_CHECKSIG), "settleLoss needs keeper sig");
+}
+
+#[test]
 fn test_exit_variant_is_unilateral_fallback() {
     // Validates the OTHER (non-server) variant for every function: it is the
     // unilateral exit path — an N-of-N CHECKSIG guarded by the `exit` CSV
@@ -188,7 +211,14 @@ fn test_exit_variant_is_unilateral_fallback() {
     // the same introspection opcodes here (as a naive both-variants loop would)
     // is incorrect for this codebase's two-variant model.
     let output = compile(CODE).expect("compilation failed");
-    for name in ["deposit", "withdraw", "fillBond", "repayLoan", "settle"] {
+    for name in [
+        "deposit",
+        "withdraw",
+        "fillBond",
+        "repayLoan",
+        "settle",
+        "settleLoss",
+    ] {
         let asm = asm_variant(&output, name, false);
         assert!(
             asm.contains(OP_CHECKSEQUENCEVERIFY),
