@@ -2,7 +2,7 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_DIV64, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL,
     OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTASSETLOOKUP,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHANOREQUAL, OP_MUL64,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL64,
 };
 
 const CODE: &str = include_str!("../examples/lending/lending_pool.ark");
@@ -41,14 +41,15 @@ fn test_lending_pool_compiles() {
 }
 
 #[test]
-fn test_deposit_accrues_and_mints_shares() {
-    // deposit accrues interest (OP_MUL64), prices shares (OP_DIV64), and mints
-    // shares gated by the control asset.
+fn test_deposit_mints_shares_at_price() {
+    // deposit prices shares off totalAssets (amount * totalShares / assetsNext ->
+    // OP_MUL64/OP_DIV64) and mints them gated by the control asset. There is no
+    // time-based accrual (yield is the bond discount, realized at repayLoan).
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "deposit");
     assert!(
         asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
-        "accrual + share pricing"
+        "share pricing math"
     );
     assert!(
         asm.contains(OP_INSPECTASSETGROUPCTRL),
@@ -77,17 +78,18 @@ fn test_withdraw_conditional_on_idle_liquidity() {
 
 #[test]
 fn test_fill_bond_is_atomic() {
-    // The centerpiece: fillBond atomically (1) accrues interest + draws principal
-    // out of idle (OP_MUL64/OP_DIV64 + OP_LESSTHANOREQUAL), (2) mints the bond
-    // gated by control (OP_FINDASSETGROUPBYASSETID + OP_INSPECTASSETGROUPCTRL),
-    // (3) pays the borrower in USDT + delivers the bond (OP_INSPECTOUTASSETLOOKUP),
-    // (4) locks collateral (OP_INSPECTOUTPUTVALUE), and (5) re-creates the residual
-    // pool + LoanVault (OP_INSPECTOUTPUTSCRIPTPUBKEY) — all in one function.
+    // The centerpiece: fillBond atomically (1) computes principal from the
+    // discount + draws it out of idle (OP_MUL64/OP_DIV64 + OP_LESSTHANOREQUAL),
+    // (2) mints the bond gated by control (OP_FINDASSETGROUPBYASSETID +
+    // OP_INSPECTASSETGROUPCTRL), (3) pays the borrower in USDT + delivers the bond
+    // (OP_INSPECTOUTASSETLOOKUP), (4) locks collateral (OP_INSPECTOUTPUTVALUE),
+    // and (5) re-creates the residual pool + LoanVault
+    // (OP_INSPECTOUTPUTSCRIPTPUBKEY) — all in one function.
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "fillBond");
     assert!(
         asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
-        "accrual + pricing"
+        "principal-from-discount math"
     );
     assert!(
         asm.contains(OP_LESSTHANOREQUAL),
@@ -108,6 +110,10 @@ fn test_fill_bond_is_atomic() {
     assert!(
         asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
         "fillBond pins residual pool + borrower + bond dest + loan vault"
+    );
+    assert!(
+        asm.contains(OP_LESSTHAN),
+        "fillBond refuses an already-matured pool"
     );
     assert!(asm.contains(OP_CHECKSIG), "fillBond needs borrower sig");
 }
@@ -136,7 +142,7 @@ fn test_repay_loan_is_atomic() {
     );
     assert!(
         asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
-        "repayLoan accrues + computes principal"
+        "repayLoan computes principal from the discount"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTVALUE),
@@ -163,17 +169,6 @@ fn test_settle_folds_repayment_back() {
         "settle re-creates the pool covenant"
     );
     assert!(asm.contains(OP_CHECKSIG), "settle needs keeper sig");
-}
-
-#[test]
-fn test_all_functions_accrue_interest() {
-    let output = compile(CODE).expect("compilation failed");
-    for name in ["deposit", "withdraw", "fillBond", "repayLoan", "settle"] {
-        assert!(
-            asm_of(&output, name).contains(OP_MUL64),
-            "{name} should accrue interest"
-        );
-    }
 }
 
 #[test]

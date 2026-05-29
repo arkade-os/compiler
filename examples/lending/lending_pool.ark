@@ -1,17 +1,24 @@
 // LendingPool Contract (consolidated)
 //
-// One recursive-covenant pool that BOTH earns yield AND issues fixed-maturity
-// bonds, UTXO-natively (Morpho "Midnight" style). It merges a variable-rate
-// yield pool and a fixed-rate bond order book into a single covenant whose
-// `fillBond` does the standing-order fill atomically.
+// One recursive-covenant pool that earns yield AND issues fixed-maturity bonds,
+// UTXO-natively (Morpho "Midnight" style). A single LendingPool UTXO carries
+// pooled USDT forward, re-creating itself on every spend.
 //
 // STATE carried forward on every spend (= recursion):
 //   totalIdle   - USDT physically in the pool (lendable / withdrawable)
-//   totalLent   - principal deployed into bond loans; ACCRUES interest = yield
+//   totalLent   - principal currently deployed in bond loans (NO interest baked
+//                 in; it is exactly the sum of outstanding loan principals)
 //   totalShares - LP shares outstanding (lenders' pro-rata claim)
-//   lastAccrual - unix seconds of the last interest accrual
 //
 //   totalAssets = totalIdle + totalLent      (basis for share price)
+//
+// YIELD MODEL — the bond discount IS the interest. There is deliberately NO
+// separate time-based (ratePerSec) accrual: a borrower draws `principal` =
+// bondUnits*(1-discount) and repays par = bondUnits, so the discount
+// (bondUnits - principal) is realized into `totalIdle` at repayLoan and lifts
+// the share price. Carrying both a discount AND a ratePerSec accrual would
+// double-count the yield and (because repay subtracts only the flat principal)
+// would leave a phantom balance in totalLent — so accrual was removed.
 //
 // The pool custodies two control assets (shareCtrlId, bondCtrlId) that gate
 // minting of the LP-share and bond assets; issuance is enforced entirely by this
@@ -20,16 +27,16 @@
 //
 // LIFECYCLE:
 //   deposit   (FAN-IN)  supply USDT, mint LP shares at share price
-//   withdraw  (FAN-OUT) burn shares for pro-rata USDT (idle-bounded)
-//   fillBond  (FAN-OUT) THE ATOMIC FILL: accrue, draw principal out of idle,
-//                       mint the bond to the lender side, lock collateral in a
-//                       LoanVault, re-create the residual pool — one tx
-//   repayLoan (FAN-IN)  THE ATOMIC REPAY+SETTLE: consume a matured-or-earlier
-//                       LoanVault, burn its bond, return par to idle, clear its
-//                       principal from totalLent, return collateral to borrower
-//                       — one tx, no separate keeper "settle" step
-//   settle    (FAN-IN)  fold OFF-CHAIN proceeds (e.g. sold seized collateral
-//                       after liquidate/claimDefault) back into the pool
+//   withdraw  (FAN-OUT) burn shares for pro-rata USDT (idle-bounded; the last
+//                       share can never be burned, so the pool cannot be bricked)
+//   fillBond  (FAN-OUT) THE ATOMIC FILL: draw principal out of idle, mint the
+//                       bond to the lender side, lock collateral in a LoanVault,
+//                       re-create the residual pool — one tx
+//   repayLoan (FAN-IN)  THE ATOMIC REPAY+SETTLE: consume the LoanVault, burn its
+//                       bond, return par to idle, clear its principal from
+//                       totalLent, return collateral to the borrower — one tx
+//   settle    (FAN-IN)  fold OFF-CHAIN proceeds (sold seized collateral after
+//                       liquidate/claimDefault) back into the pool
 //
 // "FIRST FILL WINS, THE REST CANCEL": the pool is one UTXO; the first fill to
 // confirm spends it and competing fills double-spend.
@@ -38,11 +45,19 @@
 // the amount be <= totalIdle, so a withdrawal or a fill can fail when
 // utilization is high — the phantom-depth risk, as a script invariant.
 //
-// MVP simplifications (documented): ratePerSec is fixed (utilization IRM is a
-// follow-up); repayLoan relies on the keeper co-signing (they hold the bond that
-// must be burned) — that participation plus the bond-control co-spend check bind
-// the repayment to the genuine pool; the pool is bootstrapped with
-// totalShares>0, totalIdle>0.
+// TRUST ASSUMPTIONS / KNOWN LIMITATIONS (MVP):
+//   - TRUST: keeper. `settle` lets the pool keeper set principalAmount/repayAmount
+//     with no on-chain proof the seized collateral was actually sold for that
+//     amount (BTC->USDT conversion cannot be a single on-chain hop). The keeper
+//     is therefore a trusted accounting oracle for the liquidation/default leg
+//     only. `repayLoan` (the normal happy path) is fully trustless.
+//   - minCollateral is a FIXED sats floor checked at origination; it is not
+//     oracle-priced. Ongoing under-collateralization is handled by
+//     LoanVault.liquidate (oracle-priced). Oracle-priced origination sizing is a
+//     follow-up.
+//   - Yield is realized in a lump at repayLoan, so a deposit immediately before a
+//     repay captures a slice of that loan's discount (standard simple-vault
+//     behavior). Pro-rata-over-time accrual is a follow-up.
 
 import "loan_vault.ark";
 
@@ -60,32 +75,26 @@ contract LendingPool(
   bytes32 ticker,        // oracle feed id, injected into each LoanVault
   pubkey  poolKeeperPk,  // lender cohort: holds bonds, runs settle/withdraw
   pubkey  oraclePk,      // price oracle for LoanVault liquidation
-  int     ratePerSec,    // borrower interest rate, signed fixed-point scale 1e12
-  int     discountBps,   // principal = bondUnits * (1e4 - discountBps) / 1e4
+  int     discountBps,   // principal = bondUnits * (1e4 - discountBps) / 1e4; the
+                         // discount is the yield
   int     maturity,      // block height at/after which bonds mature
-  int     minCollateral, // minimum collateral sats per bond loan
+  int     minCollateral, // minimum collateral sats per bond loan (fixed floor)
   int     liqThresholdBps, // injected into LoanVault: liquidation threshold
   int     oracleMaxAge,  // injected into LoanVault: max oracle staleness (seconds)
   int     totalIdle,     // USDT physically in the pool (mutable)
-  int     totalLent,     // principal deployed in bonds; accrues interest (mutable)
+  int     totalLent,     // outstanding loan principal (mutable)
   int     totalShares,   // LP shares outstanding (mutable)
-  int     lastAccrual,   // unix seconds; basis for accrual (mutable)
   int     exit           // unilateral exit timelock in blocks
 ) {
 
   // ---------------------------------------------------------------------------
-  // DEPOSIT  (FAN-IN) — supply USDT, receive LP shares at the post-accrual price.
+  // DEPOSIT  (FAN-IN) — supply USDT, receive LP shares at the current price.
   // ---------------------------------------------------------------------------
   function deposit(int amount, pubkey lenderPk, signature lenderSig) {
     require(amount > 0, "zero deposit");
     require(checkSig(lenderSig, lenderPk), "invalid lender sig");
 
-    int elapsed = tx.offchainTime - lastAccrual;
-    require(elapsed >= 0, "clock regression");
-    int rateElapsed = ratePerSec * elapsed / 1000000;
-    int growth      = totalLent * rateElapsed / 1000000;
-    int lentNext    = totalLent + growth;
-    int assetsNext  = totalIdle + lentNext;
+    int assetsNext = totalIdle + totalLent;
     require(assetsNext > 0, "empty pool");
 
     int sharesMinted = amount * totalShares / assetsNext;
@@ -103,8 +112,8 @@ contract LendingPool(
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
-        poolKeeperPk, oraclePk, ratePerSec, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentNext, sharesNext, tx.offchainTime, exit
+        poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
+        liqThresholdBps, oracleMaxAge, idleNext, totalLent, sharesNext, exit
       ),
       "invalid pool recreation"
     );
@@ -118,17 +127,14 @@ contract LendingPool(
 
   // ---------------------------------------------------------------------------
   // WITHDRAW  (FAN-OUT) — burn LP shares for pro-rata USDT, bounded by idle.
+  // The last share can never be burned (sharesNext > 0), so the pool can never
+  // be bricked with totalShares == 0 while loans are still outstanding.
   // ---------------------------------------------------------------------------
   function withdraw(int shares, pubkey lenderPk, signature lenderSig) {
     require(shares > 0, "zero shares");
     require(checkSig(lenderSig, lenderPk), "invalid lender sig");
 
-    int elapsed = tx.offchainTime - lastAccrual;
-    require(elapsed >= 0, "clock regression");
-    int rateElapsed = ratePerSec * elapsed / 1000000;
-    int growth      = totalLent * rateElapsed / 1000000;
-    int lentNext    = totalLent + growth;
-    int assetsNext  = totalIdle + lentNext;
+    int assetsNext = totalIdle + totalLent;
 
     int amount = shares * assetsNext / totalShares;
     require(amount > 0, "withdraw too small");
@@ -139,12 +145,13 @@ contract LendingPool(
 
     int idleNext   = totalIdle - amount;
     int sharesNext = totalShares - shares;
+    require(sharesNext > 0, "cannot drain last share");
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
-        poolKeeperPk, oraclePk, ratePerSec, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentNext, sharesNext, tx.offchainTime, exit
+        poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
+        liqThresholdBps, oracleMaxAge, idleNext, totalLent, sharesNext, exit
       ),
       "invalid residual pool"
     );
@@ -158,8 +165,9 @@ contract LendingPool(
 
   // ---------------------------------------------------------------------------
   // FILL BOND  (FAN-OUT) — THE ATOMIC FILL. Only the borrower signs. In one tx:
-  // accrue interest, draw `principal` out of idle, mint the bond to the lender
-  // side, lock collateral in a LoanVault, re-create the residual pool.
+  // draw `principal` out of idle, mint the bond to the lender side, lock
+  // collateral in a LoanVault, re-create the residual pool. Refuses to fill an
+  // already-matured bond (which would be immediately default-claimable).
   //
   //   output[0]: residual pool (idle - principal, lent + principal)
   //   output[1]: principal USDT → borrower
@@ -169,13 +177,8 @@ contract LendingPool(
   function fillBond(int bondUnits, int collateral, pubkey borrowerPk, signature borrowerSig) {
     require(bondUnits > 0, "zero bond");
     require(collateral >= minCollateral, "collateral below minimum");
+    require(tx.time < maturity, "pool matured");
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
-
-    int elapsed = tx.offchainTime - lastAccrual;
-    require(elapsed >= 0, "clock regression");
-    int rateElapsed = ratePerSec * elapsed / 1000000;
-    int growth      = totalLent * rateElapsed / 1000000;
-    int lentNext    = totalLent + growth;
 
     int netBps    = 10000 - discountBps;
     int principal = bondUnits * netBps / 10000;
@@ -189,13 +192,13 @@ contract LendingPool(
     require(bcGroup.delta == 0, "bond control changed");
 
     int idleNext  = totalIdle - principal;
-    int lentAfter = lentNext + principal;
+    int lentAfter = totalLent + principal;
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
-        poolKeeperPk, oraclePk, ratePerSec, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, tx.offchainTime, exit
+        poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
+        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
       ),
       "invalid residual pool"
     );
@@ -222,10 +225,11 @@ contract LendingPool(
   // ---------------------------------------------------------------------------
   // REPAY LOAN  (FAN-IN) — THE ATOMIC REPAY+SETTLE. Consumes the borrower's
   // LoanVault (input loanIdx), burns its bond, returns par (= bondUnits USDT) to
-  // idle, clears the loan's principal from totalLent, and returns the collateral
-  // to the borrower — all in one transaction. The LoanVault input is validated
-  // by reconstructing its scriptPubKey from the pool's own parameters plus the
-  // per-loan witnesses, so the witnesses cannot be forged.
+  // idle, clears the loan's principal from totalLent (exactly the amount added at
+  // fillBond — no phantom remainder), and returns the collateral to the borrower
+  // — all in one transaction. The LoanVault input is validated by reconstructing
+  // its scriptPubKey from the pool's own parameters plus the per-loan witnesses,
+  // so the witnesses cannot be forged.
   //
   //   input[loanIdx]: the LoanVault being repaid
   //   output[0]: pool re-created (idle + par, lent - principal)
@@ -243,27 +247,21 @@ contract LendingPool(
     );
     require(tx.time < maturity, "loan matured; use claimDefault");
 
-    int elapsed = tx.offchainTime - lastAccrual;
-    require(elapsed >= 0, "clock regression");
-    int rateElapsed = ratePerSec * elapsed / 1000000;
-    int growth      = totalLent * rateElapsed / 1000000;
-    int lentNext    = totalLent + growth;
-
     int netBps    = 10000 - discountBps;
     int principal = bondUnits * netBps / 10000;
-    require(principal <= lentNext, "principal exceeds outstanding");
+    require(principal <= totalLent, "principal exceeds outstanding");
 
     let bondGroup = tx.assetGroups.find(bondAssetId);
     require(bondGroup.sumInputs >= bondGroup.sumOutputs + bondUnits, "bond not burned");
 
     int idleNext  = totalIdle + bondUnits;
-    int lentAfter = lentNext - principal;
+    int lentAfter = totalLent - principal;
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
-        poolKeeperPk, oraclePk, ratePerSec, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, tx.offchainTime, exit
+        poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
+        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
       ),
       "invalid pool recreation"
     );
@@ -278,8 +276,13 @@ contract LendingPool(
   // ---------------------------------------------------------------------------
   // SETTLE  (FAN-IN) — fold OFF-CHAIN proceeds back into the pool: e.g. after a
   // liquidate/claimDefault the keeper sells the seized BTC collateral and returns
-  // `repayAmount` USDT, clearing `principalAmount` from totalLent. (repayLoan is
-  // the on-chain atomic path; settle handles the legs that cross asset types.)
+  // `repayAmount` USDT, clearing `principalAmount` from totalLent.
+  //
+  // TRUST: keeper. There is no on-chain proof the seized collateral was sold for
+  // `repayAmount`; the keeper is a trusted accounting oracle for THIS leg only.
+  // repayLoan is the trustless happy path. The principalAmount <= totalLent bound
+  // below prevents clearing more debt than exists, but not mis-statement within
+  // that bound.
   //
   //   output[0]: pool re-created (idle + repayAmount, lent - principalAmount)
   // ---------------------------------------------------------------------------
@@ -287,22 +290,16 @@ contract LendingPool(
     require(checkSig(keeperSig, poolKeeperPk), "invalid keeper sig");
     require(principalAmount > 0, "zero principal");
     require(repayAmount >= principalAmount, "repay below principal");
-
-    int elapsed = tx.offchainTime - lastAccrual;
-    require(elapsed >= 0, "clock regression");
-    int rateElapsed = ratePerSec * elapsed / 1000000;
-    int growth      = totalLent * rateElapsed / 1000000;
-    int lentNext    = totalLent + growth;
-    require(principalAmount <= lentNext, "exceeds outstanding");
+    require(principalAmount <= totalLent, "exceeds outstanding");
 
     int idleNext  = totalIdle + repayAmount;
-    int lentAfter = lentNext - principalAmount;
+    int lentAfter = totalLent - principalAmount;
 
     require(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
-        poolKeeperPk, oraclePk, ratePerSec, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, tx.offchainTime, exit
+        poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
+        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
       ),
       "invalid pool recreation"
     );
