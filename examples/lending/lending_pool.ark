@@ -51,10 +51,10 @@
 //     amount (BTC->USDT conversion cannot be a single on-chain hop). The keeper
 //     is therefore a trusted accounting oracle for the liquidation/default leg
 //     only. `repayLoan` (the normal happy path) is fully trustless.
-//   - minCollateral is a FIXED sats floor checked at origination; it is not
-//     oracle-priced. Ongoing under-collateralization is handled by
-//     LoanVault.liquidate (oracle-priced). Oracle-priced origination sizing is a
-//     follow-up.
+//   - Origination is oracle-priced: fillBond verifies the same signed price feed
+//     as liquidation and requires the collateral to cover par at initRatioBps,
+//     with minCollateral as an additional absolute sats floor. Ongoing
+//     under-collateralization is then handled by LoanVault.liquidate.
 //   - Yield is realized in a lump at repayLoan, so a deposit immediately before a
 //     repay captures a slice of that loan's discount (standard simple-vault
 //     behavior). Pro-rata-over-time accrual is a follow-up.
@@ -80,6 +80,7 @@ contract LendingPool(
   int     maturity,      // block height at/after which bonds mature
   int     minCollateral, // minimum collateral sats per bond loan (fixed floor)
   int     liqThresholdBps, // injected into LoanVault: liquidation threshold
+  int     initRatioBps,  // required collateral ratio at origination (bps); e.g. 15000 = 150%
   int     oracleMaxAge,  // injected into LoanVault: max oracle staleness (seconds)
   int     totalIdle,     // USDT physically in the pool (mutable)
   int     totalLent,     // outstanding loan principal (mutable)
@@ -119,7 +120,7 @@ contract LendingPool(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
         poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, totalLent, sharesNext, exit
+        liqThresholdBps, initRatioBps, oracleMaxAge, idleNext, totalLent, sharesNext, exit
       ),
       "invalid pool recreation"
     );
@@ -162,7 +163,7 @@ contract LendingPool(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
         poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, totalLent, sharesNext, exit
+        liqThresholdBps, initRatioBps, oracleMaxAge, idleNext, totalLent, sharesNext, exit
       ),
       "invalid residual pool"
     );
@@ -185,11 +186,25 @@ contract LendingPool(
   //   output[2]: bondUnits bond  → pool keeper (lender claim)
   //   output[3]: LoanVault holding the collateral
   // ---------------------------------------------------------------------------
-  function fillBond(int bondUnits, int collateral, pubkey borrowerPk, signature borrowerSig) {
+  function fillBond(int bondUnits, int collateral, pubkey borrowerPk, signature borrowerSig, int oraclePrice, int oracleTime, signature oracleSig) {
     require(bondUnits > 0, "zero bond");
-    require(collateral >= minCollateral, "collateral below minimum");
+    require(collateral >= minCollateral, "collateral below floor");
     require(tx.time < maturity, "pool matured");
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    // Oracle-priced origination: the collateral must over-cover par at the
+    // required ratio, using the SAME Fuji-style signed price feed as liquidation
+    // (only the borrower signs; the signed price is a witness, not a new signer).
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= oracleMaxAge, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int collateralValue = collateral * oraclePrice / 100000000;
+    int required = bondUnits * initRatioBps / 10000;
+    require(collateralValue >= required, "undercollateralized at origination");
 
     int netBps    = 10000 - discountBps;
     int principal = bondUnits * netBps / 10000;
@@ -212,7 +227,7 @@ contract LendingPool(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
         poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
+        liqThresholdBps, initRatioBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
       ),
       "invalid residual pool"
     );
@@ -280,7 +295,7 @@ contract LendingPool(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
         poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
+        liqThresholdBps, initRatioBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
       ),
       "invalid pool recreation"
     );
@@ -324,7 +339,7 @@ contract LendingPool(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
         poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
+        liqThresholdBps, initRatioBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
       ),
       "invalid pool recreation"
     );
@@ -371,7 +386,7 @@ contract LendingPool(
       tx.outputs[0].scriptPubKey == new LendingPool(
         usdtAssetId, shareAssetId, shareCtrlId, bondAssetId, bondCtrlId, ticker,
         poolKeeperPk, oraclePk, discountBps, maturity, minCollateral,
-        liqThresholdBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
+        liqThresholdBps, initRatioBps, oracleMaxAge, idleNext, lentAfter, totalShares, exit
       ),
       "invalid pool recreation"
     );

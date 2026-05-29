@@ -1,9 +1,9 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DIV64, OP_FINDASSETGROUPBYASSETID,
-    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
-    OP_LESSTHANOREQUAL, OP_MUL64,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64,
+    OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_INSPECTOUTPUTVALUE, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL64, OP_SHA256,
 };
 
 const CODE: &str = include_str!("../examples/lending/lending_pool.ark");
@@ -123,6 +123,10 @@ fn test_fill_bond_is_atomic() {
     assert!(
         asm.contains(OP_LESSTHAN),
         "fillBond refuses an already-matured pool"
+    );
+    assert!(
+        asm.contains(OP_CHECKSIGFROMSTACK) && asm.contains(OP_SHA256),
+        "fillBond is oracle-priced at origination"
     );
     assert!(asm.contains(OP_CHECKSIG), "fillBond needs borrower sig");
 }
