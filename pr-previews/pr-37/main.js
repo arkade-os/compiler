@@ -21,6 +21,14 @@ const projects = {
             'covered_call.ark': contracts.covered_call,
             'cash_secured_put.ark': contracts.cash_secured_put,
         }
+    },
+    lending: {
+        name: 'Lending',
+        description: 'Recursive-covenant pool issuing fixed-maturity bonds: pooled USDT, LP shares, atomic fill/repay, oracle liquidation',
+        files: {
+            'lending_pool.ark': contracts.lending_pool,
+            'loan_vault.ark': contracts.loan_vault,
+        }
     }
 };
 
