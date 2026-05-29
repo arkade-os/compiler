@@ -1,18 +1,27 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIG, OP_DIV64, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTASSETLOOKUP,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL64,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DIV64, OP_FINDASSETGROUPBYASSETID,
+    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
+    OP_LESSTHANOREQUAL, OP_MUL64,
 };
 
 const CODE: &str = include_str!("../examples/lending/lending_pool.ark");
 
+// The covenant logic lives in the server (cooperative) variant; the non-server
+// variant is the unilateral exit path (N-of-N CHECKSIG + CSV), which by design
+// carries NO introspection. Smoke tests therefore assert the server variant for
+// covenant opcodes, and a dedicated test validates the exit variant's shape.
 fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String {
+    asm_variant(output, name, true)
+}
+
+fn asm_variant(output: &arkade_compiler::models::ContractJson, name: &str, server: bool) -> String {
     output
         .functions
         .iter()
-        .find(|f| f.name == name && f.server_variant)
-        .unwrap_or_else(|| panic!("{name} server variant not found"))
+        .find(|f| f.name == name && f.server_variant == server)
+        .unwrap_or_else(|| panic!("{name} (server={server}) variant not found"))
         .asm
         .join(" ")
 }
@@ -169,6 +178,31 @@ fn test_settle_folds_repayment_back() {
         "settle re-creates the pool covenant"
     );
     assert!(asm.contains(OP_CHECKSIG), "settle needs keeper sig");
+}
+
+#[test]
+fn test_exit_variant_is_unilateral_fallback() {
+    // Validates the OTHER (non-server) variant for every function: it is the
+    // unilateral exit path — an N-of-N CHECKSIG guarded by the `exit` CSV
+    // timelock — and deliberately carries NO covenant introspection. Asserting
+    // the same introspection opcodes here (as a naive both-variants loop would)
+    // is incorrect for this codebase's two-variant model.
+    let output = compile(CODE).expect("compilation failed");
+    for name in ["deposit", "withdraw", "fillBond", "repayLoan", "settle"] {
+        let asm = asm_variant(&output, name, false);
+        assert!(
+            asm.contains(OP_CHECKSEQUENCEVERIFY),
+            "{name} exit variant must be CSV-timelocked"
+        );
+        assert!(
+            asm.contains(OP_CHECKSIG),
+            "{name} exit variant must check sigs"
+        );
+        assert!(
+            !asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY) && !asm.contains(OP_INSPECTASSETGROUPSUM),
+            "{name} exit variant must not carry covenant introspection"
+        );
+    }
 }
 
 #[test]

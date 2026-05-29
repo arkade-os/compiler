@@ -1,18 +1,25 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK,
+    OP_DIV64, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
     OP_INSPECTOUTPUTVALUE, OP_LESSTHAN, OP_MUL64, OP_SHA256,
 };
 
 const CODE: &str = include_str!("../examples/lending/loan_vault.ark");
 
+// The covenant logic lives in the server (cooperative) variant; the non-server
+// variant is the unilateral exit path (N-of-N CHECKSIG + CSV) and carries no
+// introspection by design.
 fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String {
+    asm_variant(output, name, true)
+}
+
+fn asm_variant(output: &arkade_compiler::models::ContractJson, name: &str, server: bool) -> String {
     output
         .functions
         .iter()
-        .find(|f| f.name == name && f.server_variant)
-        .unwrap_or_else(|| panic!("{name} server variant not found"))
+        .find(|f| f.name == name && f.server_variant == server)
+        .unwrap_or_else(|| panic!("{name} (server={server}) variant not found"))
         .asm
         .join(" ")
 }
@@ -122,6 +129,29 @@ fn test_claim_default_after_maturity() {
         "claimDefault seizes collateral"
     );
     assert!(asm.contains(OP_CHECKSIG), "claimDefault needs keeper sig");
+}
+
+#[test]
+fn test_exit_variant_is_unilateral_fallback() {
+    // Validates the non-server variant of each function: the unilateral exit
+    // path (N-of-N CHECKSIG under the `exit` CSV timelock), carrying no covenant
+    // introspection — the correct "both variants" check for this codebase.
+    let output = compile(CODE).expect("compilation failed");
+    for name in ["repay", "liquidate", "claimDefault"] {
+        let asm = asm_variant(&output, name, false);
+        assert!(
+            asm.contains(OP_CHECKSEQUENCEVERIFY),
+            "{name} exit variant must be CSV-timelocked"
+        );
+        assert!(
+            asm.contains(OP_CHECKSIG),
+            "{name} exit variant must check sigs"
+        );
+        assert!(
+            !asm.contains(OP_INSPECTOUTPUTVALUE) && !asm.contains(OP_INSPECTASSETGROUPSUM),
+            "{name} exit variant must not carry covenant introspection"
+        );
+    }
 }
 
 #[test]

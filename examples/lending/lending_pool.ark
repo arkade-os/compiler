@@ -105,6 +105,12 @@ contract LendingPool(
     require(shareGroup.control == shareCtrlId, "wrong share control");
     let scGroup = tx.assetGroups.find(shareCtrlId);
     require(scGroup.delta == 0, "share control changed");
+    // The bond control is custodied here too; pin its supply so a deposit cannot
+    // be used to mint bonds. (The bond asset group itself may be absent in a
+    // deposit, and a group's .delta has no not-found guard, so it cannot be
+    // pinned directly — locking the control is the available safe guard.)
+    let bcGroup = tx.assetGroups.find(bondCtrlId);
+    require(bcGroup.delta == 0, "bond control changed");
 
     int idleNext   = totalIdle + amount;
     int sharesNext = totalShares + sharesMinted;
@@ -142,6 +148,11 @@ contract LendingPool(
 
     let shareGroup = tx.assetGroups.find(shareAssetId);
     require(shareGroup.sumInputs >= shareGroup.sumOutputs + shares, "shares not burned");
+    // Lock both control supplies so a withdraw cannot mint shares or bonds.
+    let scGroup = tx.assetGroups.find(shareCtrlId);
+    require(scGroup.delta == 0, "share control changed");
+    let bcGroup = tx.assetGroups.find(bondCtrlId);
+    require(bcGroup.delta == 0, "bond control changed");
 
     int idleNext   = totalIdle - amount;
     int sharesNext = totalShares - shares;
@@ -190,6 +201,9 @@ contract LendingPool(
     require(bondGroup.control == bondCtrlId, "wrong bond control");
     let bcGroup = tx.assetGroups.find(bondCtrlId);
     require(bcGroup.delta == 0, "bond control changed");
+    // Lock the share control so a fillBond cannot also mint LP shares.
+    let scGroup = tx.assetGroups.find(shareCtrlId);
+    require(scGroup.delta == 0, "share control changed");
 
     int idleNext  = totalIdle - principal;
     int lentAfter = totalLent + principal;
@@ -253,6 +267,11 @@ contract LendingPool(
 
     let bondGroup = tx.assetGroups.find(bondAssetId);
     require(bondGroup.sumInputs >= bondGroup.sumOutputs + bondUnits, "bond not burned");
+    // Lock both control supplies so a repay cannot mint shares or extra bonds.
+    let scGroup = tx.assetGroups.find(shareCtrlId);
+    require(scGroup.delta == 0, "share control changed");
+    let bcGroup = tx.assetGroups.find(bondCtrlId);
+    require(bcGroup.delta == 0, "bond control changed");
 
     int idleNext  = totalIdle + bondUnits;
     int lentAfter = totalLent - principal;
@@ -291,6 +310,12 @@ contract LendingPool(
     require(principalAmount > 0, "zero principal");
     require(repayAmount >= principalAmount, "repay below principal");
     require(principalAmount <= totalLent, "exceeds outstanding");
+
+    // Lock both control supplies so a settle cannot mint shares or bonds.
+    let scGroup = tx.assetGroups.find(shareCtrlId);
+    require(scGroup.delta == 0, "share control changed");
+    let bcGroup = tx.assetGroups.find(bondCtrlId);
+    require(bcGroup.delta == 0, "bond control changed");
 
     int idleNext  = totalIdle + repayAmount;
     int lentAfter = totalLent - principalAmount;
