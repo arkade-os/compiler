@@ -24,10 +24,10 @@ const projects = {
     },
     lending: {
         name: 'Lending',
-        description: 'Recursive-covenant pool issuing fixed-maturity bonds: pooled USDT, LP shares, atomic fill/repay, oracle liquidation',
+        description: "Christian's market model: borrowers self-issue 1:1 credit + debit tokens against collateral, sell credit on the order book (no interest rate); credit holders redeem pro-rata from a per-maturity RepaymentPool; defaults oracle-priced auctioned",
         files: {
-            'lending_pool.ark': contracts.lending_pool,
-            'loan_vault.ark': contracts.loan_vault,
+            'repayment_pool.ark': contracts.repayment_pool,
+            'bond_mint.ark': contracts.bond_mint,
         }
     }
 };
