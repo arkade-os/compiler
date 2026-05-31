@@ -38,7 +38,9 @@ fn witness_names(output: &arkade_compiler::models::ContractJson, name: &str) -> 
 fn test_repayment_pool_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "RepaymentPool");
-    assert_eq!(output.functions.len(), 8, "expected 8 functions");
+    // 5 functions (issue, acceptRepayment, liquidate, acceptAuction, redeem)
+    // × 2 variants = 10
+    assert_eq!(output.functions.len(), 10, "expected 10 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     for id in [
@@ -54,7 +56,11 @@ fn test_repayment_pool_compiles() {
             "{id} not decomposed, got: {names:?}"
         );
     }
-    // Phased + auction-incentivized constructor surface.
+    // Phased timeline + margin-call threshold + auction-incentive surface.
+    assert!(
+        names.contains(&"liqThresholdBps"),
+        "liqThresholdBps (margin-call trigger) must be a constructor parameter"
+    );
     assert!(
         names.contains(&"auctionWindow"),
         "auctionWindow must be a constructor parameter"
@@ -62,6 +68,10 @@ fn test_repayment_pool_compiles() {
     assert!(
         names.contains(&"auctionDiscountBps"),
         "auctionDiscountBps must be a constructor parameter"
+    );
+    assert!(
+        names.contains(&"initRatioBps"),
+        "initRatioBps must be a constructor parameter"
     );
 }
 
@@ -196,6 +206,91 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
 }
 
 #[test]
+fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
+    // Margin call (pre-maturity, permissionless): oracle-priced sale of the
+    // collateral when collateralValue < liqThresholdBps × mintedAmount / 10000.
+    // Same two-branch payout as acceptAuction, same auctioneer-discount
+    // incentive — but pre-maturity and triggered by the health threshold.
+    //
+    // Verifies:
+    //   - oracle sig + msg reconstruction
+    //   - BondMint input validated via scriptPubKey reconstruction
+    //   - debit burned
+    //   - integer arithmetic for collateralValue + threshold + payout
+    //   - pre-maturity time gate (tx.time < maturity)
+    //   - exactly one user signature (the oracle); auctioneer is unsigned witness
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "liquidate");
+    assert!(
+        asm.contains(OP_CHECKSIGFROMSTACK),
+        "liquidate verifies oracle sig"
+    );
+    assert!(
+        asm.contains(OP_SHA256) && asm.contains(OP_CAT),
+        "liquidate rebuilds oracle msg"
+    );
+    assert!(
+        asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
+        "liquidate validates the BondMint input"
+    );
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "liquidate burns the debit"
+    );
+    assert!(
+        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        "liquidate computes collateralValue + health-threshold + payout"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTVALUE),
+        "liquidate pays collateral sats out"
+    );
+    assert!(
+        asm.contains(OP_LESSTHAN),
+        "liquidate enforces tx.time < maturity (and collateralValue < healthFloor)"
+    );
+
+    let ws = witness_names(&output, "liquidate");
+    let user_sigs: Vec<&String> = ws
+        .iter()
+        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
+        .collect();
+    assert_eq!(
+        user_sigs.len(),
+        1,
+        "liquidate must have exactly one user signature (the oracle), got: {ws:?}"
+    );
+    assert!(
+        user_sigs[0].to_lowercase().contains("oracle"),
+        "the sole user signature must be the oracle, got: {:?}",
+        user_sigs[0]
+    );
+    assert!(
+        ws.iter().any(|w| w == "auctioneerPk"),
+        "auctioneerPk must be a witness parameter, got: {ws:?}"
+    );
+}
+
+#[test]
+fn test_liquidate_and_accept_auction_are_phase_disjoint() {
+    // Margin-call and post-maturity auction must NEVER both fire on the same
+    // vault in the same block: liquidate is gated on tx.time < maturity,
+    // acceptAuction on tx.time >= maturity. Both gates carry OP_LESSTHAN
+    // comparisons that bind the gate structure.
+    let output = compile(CODE).expect("compilation failed");
+    let liq = asm_of(&output, "liquidate");
+    let auc = asm_of(&output, "acceptAuction");
+    assert!(
+        liq.contains(OP_LESSTHAN),
+        "liquidate must carry an explicit time-comparison opcode"
+    );
+    assert!(
+        auc.contains(OP_LESSTHAN),
+        "acceptAuction must carry an explicit time-comparison opcode"
+    );
+}
+
+#[test]
 fn test_redeem_is_pro_rata_post_window() {
     // redeem only opens AFTER the auction window closes, so the rate
     // (usdtBalance / totalCreditOutstanding) is locked and fair for all orderings.
@@ -228,7 +323,13 @@ fn test_redeem_is_pro_rata_post_window() {
 #[test]
 fn test_exit_variants_are_unilateral_fallback() {
     let output = compile(CODE).expect("compilation failed");
-    for name in ["issue", "acceptRepayment", "acceptAuction", "redeem"] {
+    for name in [
+        "issue",
+        "acceptRepayment",
+        "liquidate",
+        "acceptAuction",
+        "redeem",
+    ] {
         let asm = asm_variant(&output, name, false);
         assert!(
             asm.contains(OP_CHECKSEQUENCEVERIFY),

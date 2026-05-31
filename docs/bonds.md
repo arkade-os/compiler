@@ -6,9 +6,26 @@ A UTXO-native fixed-maturity bond market on Arkade. Borrowers self-issue 1:1
 credit and debit tokens against collateral; credit is sold for USDT on the
 order book (via `non_interactive_swap` — that *is* the borrower's loan and the
 lender's entry point). NO interest rate; the yield is whatever discount the
-market sets at sale time. At maturity, repayments and oracle-priced auctions
-of defaulted collateral fill a per-maturity USDT pool, which credit holders
-redeem pro-rata.
+market sets at sale time.
+
+A vault closes through one of three paths:
+
+1. **`repay`** — voluntary, pre-maturity, borrower-signed.
+2. **`liquidate`** (margin call) — permissionless, pre-maturity, fires as soon
+   as `collateralValue < liqThresholdBps × mintedAmount / 10000`. Oracle-priced
+   sale; collateral → auctioneer; USDT → pool. This is the invariant that
+   keeps every vault in the pool covenant-thresholded healthy at every block,
+   which is what makes credit tokens **genuinely fungible** on the order book:
+   a lender doesn't need to know WHICH vault backs the credit they bought
+   because the covenant guarantees every vault is above the health floor.
+3. **`auction`** — permissionless, post-maturity, in the auction window. For
+   vaults whose borrowers did not repay. Same oracle-priced sale.
+
+After the auction window closes, credit holders redeem pro-rata for the
+accumulated USDT.
+
+A borrower can also **roll** their loan to the next maturity without fronting
+capital — a documented multi-tx pattern (see §Loan roll).
 
 This document is the high-level spec. Source is canonical; comments in the
 `.ark` files are the source of truth for opcode-level invariants.
@@ -19,16 +36,17 @@ This document is the high-level spec. Source is canonical; comments in the
 
 | Role | What they do | On-chain identity |
 |---|---|---|
-| **Borrower** | Mints credit + debit + posts collateral via `issue`; sells credit for USDT on the order book; repays via `repay` before maturity (or defaults). | `borrowerPk` per vault |
+| **Borrower** | Mints credit + debit + posts collateral via `issue`; sells credit for USDT on the order book; repays via `repay` before maturity, or rolls to the next maturity (§Loan roll), or has their vault auctioned. | `borrowerPk` per vault |
 | **Lender** | Buys credit on the order book; redeems credit for pro-rata USDT after the auction window via `redeem`. | `holderPk` per redemption |
-| **Auctioneer** | At/after maturity, runs `acceptAuction` on any defaulted vault, paying USDT for the collateral at the oracle price (minus the discount). Permissionless. | `auctioneerPk` per auction |
+| **Auctioneer** | Runs `liquidate` (margin call) on any vault that drops below the health threshold, OR runs `acceptAuction` on any defaulted vault post-maturity. Paying USDT for the collateral at the oracle price minus the auction discount. Permissionless. | `auctioneerPk` per spend |
 | **Oracle** | Publishes signed BTC/USDT price (Fuji-style). The contract verifies the signature on each oracle-using call. | `oraclePk` (constructor) |
 | **Arkade operator** | Co-signs cooperative-path spends off-chain; supplies the `<SERVER_KEY>` injected by the runtime. Not a trust point in the active covenant — only required for fast off-chain settlement. | `<SERVER_KEY>` |
 
-**Auctions are permissionless.** The phased timeline (below) eliminates
-adversarial co-spend pairings entirely, so no privileged signature is needed
-to bind settlement to the right pool function. Any party may execute an
-auction; incentive is the on-chain `auctionDiscountBps` spread.
+**Margin call and auction are both permissionless.** The phased timeline plus
+each pool function's covenant invariants make the right pairing safe without
+privileged signatures. Any party may execute; incentive is the on-chain
+`auctionDiscountBps` spread (paid on both margin-call liquidations and
+post-maturity auctions).
 
 ---
 
@@ -39,30 +57,51 @@ auction; incentive is the on-chain `auctionDiscountBps` spread.
 ─────────[ REPAY phase ]────────[ AUCTION phase ]──────[ REDEEM phase ]─────►
 issue                            acceptAuction         redeem
 acceptRepayment                  (vault.auction)       (vault disallowed)
-(vault.repay)
+liquidate (margin call)
+(vault.repay, vault.liquidate)
 ```
 
 Each pool function is gated to exactly one phase:
 
-| Function | Time gate | Caller |
-|---|---|---|
-| `issue` | `tx.time < maturity` | borrower (signed) + oracle witness |
-| `acceptRepayment` | `tx.time < maturity` | borrower co-spends `BondMint.repay` |
-| `acceptAuction` | `tx.time >= maturity AND tx.time < maturity + auctionWindow` | any auctioneer + oracle witness |
-| `redeem` | `tx.time >= maturity + auctionWindow` | credit holder (signed) |
+| Function | Time gate | Extra gate | Caller |
+|---|---|---|---|
+| `issue` | `tx.time < maturity` | — | borrower (signed) + oracle witness |
+| `acceptRepayment` | `tx.time < maturity` | — | borrower co-spends `BondMint.repay` |
+| `liquidate` | `tx.time < maturity` | `collateralValue < liqThresholdBps × mintedAmount / 10000` | any auctioneer + oracle witness |
+| `acceptAuction` | `tx.time >= maturity AND tx.time < maturity + auctionWindow` | — | any auctioneer + oracle witness |
+| `redeem` | `tx.time >= maturity + auctionWindow` | — | credit holder (signed) |
 
 Each `BondMint` function is gated to match:
 
 | Function | Time gate | Caller |
 |---|---|---|
 | `repay` | `tx.time < maturity` | borrower (signed) |
+| `liquidate` | `tx.time < maturity` | any auctioneer |
 | `auction` | `tx.time >= maturity AND tx.time < maturity + auctionWindow` | any auctioneer |
 
-The phasing is what binds settlement to the right pool function. During the
-auction window the only pool function that can fire is `acceptAuction`
-(issue / acceptRepayment fail on pre-maturity; redeem fails before window
-end), so `vault.auction`'s "pool co-spent" check is sufficient —
-`acceptAuction` is the only candidate pool function it could be paired with.
+**Pre-maturity co-spend safety.** Three pool functions share the pre-maturity
+phase: `issue`, `acceptRepayment`, `liquidate`. They're safely co-spendable
+with the relevant vault function because each one's covenant invariants
+conflict with the others' in any combined tx:
+
+- `vault.repay` pairs with `pool.acceptRepayment` (intended): borrower-signed,
+  burns debit, returns collateral → borrower. Cannot pair with `pool.issue`
+  (debit-delta arithmetic forces mintedAmount=0 in vault, impossible). Cannot
+  pair with `pool.liquidate` (output[1] script must be both borrower and
+  auctioneer — conflict).
+- `vault.liquidate` pairs with `pool.liquidate` (intended): permissionless,
+  burns debit, collateral → auctioneer, requires `collateralValue < healthFloor`.
+  Cannot pair with `pool.issue` (debit-delta conflict) or
+  `pool.acceptRepayment` (output[1] script conflict).
+
+**In-window co-spend safety.** `vault.auction` pairs only with
+`pool.acceptAuction` — the other four pool functions all fail their time
+gates in the auction window.
+
+**Redeem-phase safety.** Only `redeem` can fire; no vault function applies.
+
+The phasing + the co-spend invariants are what bind settlement to the right
+pool function without any privileged signatures.
 
 ---
 
@@ -72,9 +111,9 @@ end), so `vault.auction`'s "pool co-spent" check is sufficient —
 
 | Field | Meaning | Increases on | Decreases on |
 |---|---|---|---|
-| `usdtBalance` | USDT collected | `acceptRepayment`, `acceptAuction` | `redeem` |
+| `usdtBalance` | USDT collected | `acceptRepayment`, `liquidate`, `acceptAuction` | `redeem` |
 | `totalCreditOutstanding` | Lender claims still outstanding | `issue` | `redeem` |
-| `totalDebitOutstanding` | Borrower obligations still outstanding | `issue` | `acceptRepayment`, `acceptAuction` |
+| `totalDebitOutstanding` | Borrower obligations still outstanding | `issue` | `acceptRepayment`, `liquidate`, `acceptAuction` |
 
 `BondMint` is per-issuance and carries `mintedAmount` + `collateral` +
 `maturity` + `auctionWindow` + `borrowerPk`. It custodies `mintedAmount`
@@ -92,26 +131,49 @@ vault burns     = mintedAmount debit
 collateral      = mintedAmount BTC sats → borrower
 ```
 
-### Auction — over-collateralized branch (`collateralValue >= mintedAmount`)
+### Liquidate (margin call) — same math as auction, pre-maturity, with a health gate
+
+The health gate is the only thing that distinguishes `liquidate` from
+`acceptAuction`. Pre-maturity, `liquidate` is allowed ONLY when
 
 ```
-collateralValue  = collateral * oraclePrice / 1e8
-collateralSold   = mintedAmount * 1e8 / oraclePrice        → auctioneer
-excess           = collateral - collateralSold             → borrower (if ≥ 330 sats)
-auctionUsdt      = mintedAmount * (10000 - auctionDiscountBps) / 10000  → pool
-auctioneer profit = mintedAmount - auctionUsdt = mintedAmount * discountBps / 10000
-vault burns       = mintedAmount debit
+collateralValue < liqThresholdBps × mintedAmount / 10000
 ```
 
-### Auction — shortfall branch (`collateralValue < mintedAmount`)
+i.e. the vault has fallen below the health threshold (e.g. `liqThresholdBps =
+11000` triggers at 110% coverage). Below that gate, the two-branch payout is
+identical to `acceptAuction`:
+
+### Auction / Liquidate — over-collateralized branch (`collateralValue >= mintedAmount`)
 
 ```
-auctionUsdt       = collateralValue * (10000 - auctionDiscountBps) / 10000  → pool
+collateralValue   = collateral * oraclePrice / 1e8
+collateralSold    = mintedAmount * 1e8 / oraclePrice        → auctioneer
+excess            = collateral - collateralSold             → borrower (if ≥ 330 sats)
+poolReceives      = mintedAmount * (10000 - auctionDiscountBps) / 10000  → pool
+auctioneer profit = mintedAmount - poolReceives = mintedAmount * discountBps / 10000
+vault burns        = mintedAmount debit
+```
+
+For `liquidate` the "over-collateralized" branch covers the band between the
+init ratio (e.g. 150%) and the health threshold (e.g. 110%) — the borrower
+has fallen out of the healthy band but the collateral still covers the par.
+
+### Auction / Liquidate — shortfall branch (`collateralValue < mintedAmount`)
+
+```
+poolReceives      = collateralValue * (10000 - auctionDiscountBps) / 10000  → pool
 all collateral                                                              → auctioneer
 auctioneer profit = collateralValue * discountBps / 10000
-shortfall         = mintedAmount - auctionUsdt   ← socialised via redemption rate
-vault burns       = mintedAmount debit (full obligation extinguished)
+shortfall         = mintedAmount - poolReceives   ← socialised via redemption rate
+vault burns        = mintedAmount debit (full obligation extinguished)
 ```
+
+For `liquidate` this branch should be rare in practice — by definition
+`liquidate` is triggered as soon as the health threshold is breached, so
+collateral typically lands somewhere between `mintedAmount` and the threshold
+(in the over-collateralized branch). A shortfall at liquidation means an
+abrupt price move outran the keeper bots.
 
 ### Redeem
 
@@ -126,23 +188,88 @@ ordering of redemption transactions — no late-redeemer advantage.
 
 ---
 
-## Why maturity-only auction (no Aave-style pre-maturity liquidation)
+## Margin call vs. auction (solvency vs. default)
 
-- Fixed-term product. The borrower's covenant is "repay USDT by `maturity`".
-  Pre-maturity margin calls would break the term they paid for via the
-  market discount.
-- Credit token == the right to USDT at maturity. Lenders priced the discount
-  around the H-block payoff; forced early repayment destroys the duration
-  they bought.
-- No interest accrual. Aave-style liquidation exists because debt grows over
-  time and erodes the safety margin. With zero rate the obligation is static
-  — only the spot price moves the collateral ratio, and the only moment that
-  matters is maturity.
-- Simpler ops, no oracle-spike griefing. A transient mid-term BTC dip is not
-  a default.
-- `initRatioBps` (e.g. 15000 = 150%) is the borrower's mid-term-volatility
-  buffer; lender-side downside, if the buffer is exhausted by maturity, is
-  socialised via the auction-proceeds redemption rate.
+The pre-maturity margin call (`liquidate`) and the post-maturity auction
+(`acceptAuction`) are TWO DIFFERENT settlement events triggered by TWO
+DIFFERENT failure modes:
+
+| | Margin call | Auction |
+|---|---|---|
+| **Trigger** | Vault's health: `collateralValue < liqThresholdBps × mintedAmount / 10000`. | Borrower didn't repay by maturity. |
+| **When** | At any block pre-maturity. | In `[maturity, maturity + auctionWindow)`. |
+| **What it does** | Closes an *insolvent* vault before the bad debt can grow. | Closes a *defaulted* vault. |
+| **Why it exists** | Keeps every vault in the pool covenant-thresholded healthy at every block. | Closes positions that didn't voluntarily settle. |
+
+**Both are necessary.** Without `liquidate`, a vault whose collateral has
+crashed mid-term silently degrades the value of every outstanding credit
+token in the pool — credit tokens are fungible by symbol, but unhealthy
+underlying vaults make them mispriced as claims. Lenders can't tell which
+credit came from a healthy vault and which from a sinking one, so the order
+book either misprices uniformly or fragments. `liquidate` removes the bad
+debt before it propagates, so the covenant guarantees a homogeneous, healthy
+underlying pool — and credit tokens trade as a single fungible asset with a
+single price.
+
+Without `acceptAuction`, defaulted vaults sit unsettled past maturity and
+credit holders can't `redeem` while debit remains outstanding.
+
+### Why not just `liquidate` at maturity too?
+
+`acceptAuction` is a *time-triggered* path that doesn't need to check
+collateral health — non-repayment IS the trigger. `liquidate` is a
+*health-triggered* path that requires the oracle to confirm the threshold
+breach. Different triggers, different gates; the two paths are kept distinct
+to keep each function's invariant minimal.
+
+### Mid-term volatility buffer
+
+`initRatioBps` (e.g. 15000 = 150%) is the headroom between origination
+collateral and the health-call trigger (`liqThresholdBps`, e.g. 11000 =
+110%). The bigger the gap, the rarer margin calls are; the smaller the gap,
+the more capital-efficient the loan but the more frequent the margin calls
+on volatile collateral.
+
+---
+
+## Loan roll
+
+A borrower nearing maturity can extend their loan to the next maturity
+without fronting USDT — the order book is the bridge:
+
+```
+Tx 1 (open new + sell new credit, atomic on-chain):
+  inputs:
+    - new pool (state)
+    - swap order(s) on non_interactive_swap matching the roll size
+    - borrower SingleSig sats for new collateral (or sourced separately)
+  outputs:
+    - new pool (state advanced: issue)
+    - new credit → swap-fill destination (the new lender receives credit)
+    - USDT → borrower SingleSig (the bridge cash from the swap fill)
+    - new BondMint vault (newCollateral + newAmount debit)
+
+Tx 2 (close old position):
+  inputs:
+    - borrower SingleSig USDT (from Tx 1)
+    - old BondMint vault
+    - old pool (state)
+  outputs:
+    - old pool (state advanced: acceptRepayment)
+    - old vault's collateral sats → borrower SingleSig
+```
+
+After Tx 2 the borrower has migrated their position from maturity H₁ to H₂.
+Net capital required: zero (the order book provides the USDT bridge); net
+collateral movement: from old to new, plus whatever new collateral the
+borrower added in Tx 1.
+
+If the borrower wants to **reuse** the old vault's collateral as the new
+vault's collateral, they need a brief secondary capital source for Tx 1's
+new vault (e.g. a flashloan, or a position-rolling assistant), then Tx 2
+returns the old collateral to settle. Atomic single-tx loan roll is a
+follow-up (E5 in §Follow-ups) requiring multi-covenant tx composition
+machinery that the Arkade DSL does not currently expose.
 
 ---
 
@@ -150,9 +277,9 @@ ordering of redemption transactions — no late-redeemer advantage.
 
 | Trust | Surface | Notes |
 |---|---|---|
-| **Oracle correctness** | `issue` and `acceptAuction` verify an oracle-signed price (`ticker || price || time` → `checkSigFromStack(sig, oraclePk, sha256(msg))` + freshness check). | A wrong oracle price corrupts both origination (over-/under-collateralisation) and auction proceeds. Mitigate with multisig or threshold oracle. |
+| **Oracle correctness** | `issue`, `liquidate`, and `acceptAuction` verify an oracle-signed price (`ticker || price || time` → `checkSigFromStack(sig, oraclePk, sha256(msg))` + freshness check). | A wrong oracle price corrupts origination (over-/under-collateralisation), the margin-call trigger, AND auction proceeds. Mitigate with multisig or threshold oracle. |
 | **Arkade cooperative path** | `serverSig` co-signs the off-chain cooperative spend. | Standard Arkade liveness assumption. Unilateral fallback via CSV-timelocked exit variant. |
-| **Server auction front-running** | The Arkade server co-signs every cooperative-path tx and sees the auction tx before relaying it. Because `BondMint.auction` requires no auctioneer signature (`auctioneerPk` is a witness pubkey), the server can refuse to co-sign a third party's auction tx and instead submit its own with `auctioneerPk` set to a server-controlled key — pocketing the `auctionDiscountBps` spread on every default. | Mitigated, not eliminated, by the unilateral exit path: after `<exit>` blocks an auctioneer can broadcast on-chain bypassing the server. Within the cooperative window the server has a financial incentive to extract this spread; the magnitude is bounded by `auctionDiscountBps × defaulted-collateral-value` per pool. Acceptable for an MVP with a trusted operator; a self-sovereign deployment would either run its own server or set `auctionDiscountBps` small enough that the extraction surface is negligible. |
+| **Server front-running on settlement** | The Arkade server co-signs every cooperative-path tx and sees both `liquidate` and `acceptAuction` txs before relaying them. Because neither requires an auctioneer signature (`auctioneerPk` is a witness pubkey), the server can refuse to co-sign a third party's settlement tx and submit its own with `auctioneerPk` set to a server-controlled key — capturing the `auctionDiscountBps` spread on every margin call and every default. | Mitigated, not eliminated, by the unilateral exit path: after `<exit>` blocks an auctioneer can broadcast on-chain bypassing the server. Within the cooperative window the server has a financial incentive to extract this spread; the magnitude is bounded by `auctionDiscountBps × (defaulted + margin-called) collateral-value` per pool. Acceptable for an MVP with a trusted operator; a self-sovereign deployment runs its own server or keeps `auctionDiscountBps` small enough that the extraction surface is negligible. |
 
 ---
 
@@ -245,6 +372,7 @@ execute. Inline `// FOLLOW-UP:` notes are at the affected sites.
 | **E2** | Per-holder redemption receipt. | A credit holder who wants to lock in their entitlement BEFORE the redeem phase opens has no on-chain way to do so today. Useful when the auction window is long or the holder is offline. | Add a `RedemptionReceipt` covenant and a `RepaymentPool.lock(amount, holderPk)` (auction-window-gated) that mints a single-owner receipt UTXO representing the holder's deferred claim. |
 | **E3** | Explicit `finalize` snapshot. | The current design's redemption rate is fixed in practice (no late USDT additions can occur in the redeem phase). An explicit `finalize` would make the snapshot immutable in the pool state, hardening against future changes that re-open the auction phase. | One-shot `finalize` callable by anyone post-window; sets immutable `maturedTotalCredit`, `maturedTotalUsdt`; `redeem` then uses those. |
 | **E4** | Configurable dust threshold. | Borrower-excess output is hard-coded to `>= 330` sats. If Bitcoin's dust policy changes or the deployer wants stricter/looser, the contract must be edited. | Add `dustThreshold` constructor param; use `if (excess >= dustThreshold)` instead. |
+| **E5** | Atomic single-tx loan roll. | The documented loan-roll pattern is two transactions, which exposes the borrower to a brief window of holding both positions (or requires temporary capital to reuse old collateral). A single-tx atomic roll would compose new-pool `issue` + old-pool `acceptRepayment` + swap fill in one transaction. | Blocked by Arkade's single-output-index-per-covenant idiom: each pool function expects `output[0]` = self-recreation, and two covenants can't share index 0. Either extend the DSL with a multi-covenant output-discovery primitive, or write a meta-orchestrator covenant that proxies both pool calls and pins outputs to match. |
 
 ### Time-axis clarity
 
@@ -287,8 +415,11 @@ These are deliberate properties of the design, not deferred work:
 ## Files
 
 ```
-examples/bonds/repayment_pool.ark   — per-maturity singleton (4 functions)
-examples/bonds/bond_mint.ark        — per-issuance vault    (2 functions)
+examples/bonds/repayment_pool.ark   — per-maturity singleton (5 functions:
+                                       issue, acceptRepayment, liquidate,
+                                       acceptAuction, redeem)
+examples/bonds/bond_mint.ark        — per-issuance vault    (3 functions:
+                                       repay, liquidate, auction)
 docs/bonds.md                       — this spec
 tests/repayment_pool_test.rs        — ASM-level pool tests
 tests/bond_mint_test.rs             — ASM-level vault tests

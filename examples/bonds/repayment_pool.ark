@@ -1,61 +1,82 @@
 // RepaymentPool Contract
 //
 // Per-maturity singleton implementing a fixed-maturity bond market: borrowers
-// self-issue credit + debit tokens (1:1) against collateral; the credit half is
-// sold by the borrower for USDT on the order book (via non_interactive_swap) —
-// that is the borrower's loan and the lender's entry point. NO interest rate;
-// the yield is whatever discount the market sets at sale time. At/after
-// maturity, the auction window converts defaulted collateral to USDT via a
-// permissionless auctioneer (incentivized by a small `auctionDiscountBps`).
-// After the auction window closes, every credit holder redeems their pro-rata
-// share of the accumulated USDT into their own single-sig wallet.
+// self-issue credit + debit tokens (1:1) against collateral; the credit half
+// is sold by the borrower for USDT on the order book (via non_interactive_swap)
+// — that is the borrower's loan and the lender's entry point. NO interest rate;
+// the yield is whatever discount the market sets at sale time.
 //
-// The phased timeline makes adversarial co-spend pairings impossible: during
-// the auction window only acceptAuction can fire on this pool (issue and
-// acceptRepayment fail on pre-maturity, redeem fails before the window ends),
-// so the vault.auction co-spent check is the only binding needed — settlement
-// is bound to the right pool function purely by time.
+// Two settlement paths close a vault outside of voluntary repayment:
+//
+//   MARGIN CALL (pre-maturity, permissionless)
+//     `liquidate` fires the moment `collateralValue < liqThresholdBps ×
+//     mintedAmount / 10000`. The vault's collateral is sold at the oracle
+//     price, USDT enters the pool, the obligation is extinguished. This keeps
+//     every vault in the pool thresholded healthy at every block, which is
+//     what preserves credit-token fungibility on the order book: a lender
+//     buying credit doesn't need to know WHICH vault backs it because every
+//     vault in the pool is covenant-guaranteed to be above the health floor.
+//
+//   AUCTION (post-maturity default, permissionless)
+//     `acceptAuction` closes vaults whose borrowers did not repay by maturity.
+//     Same oracle-priced sale, same auctioneer-discount incentive. Only fires
+//     in the dedicated auction window so it can't race with redemptions.
 //
 // PHASED TIMELINE
-//   [-, maturity)                              REPAY    phase  issue, acceptRepayment
-//   [maturity, maturity + auctionWindow)        AUCTION  phase  acceptAuction only
-//   [maturity + auctionWindow, +)               REDEEM   phase  redeem only
+//   [-, maturity)                              REPAY    issue, acceptRepayment,
+//                                                       liquidate (margin call)
+//   [maturity, maturity + auctionWindow)        AUCTION  acceptAuction only
+//   [maturity + auctionWindow, +)               REDEEM   redeem only
 //
-// PERMISSIONLESS AUCTION
-//   Any auctioneer constructs a tx with the oracle witness during the auction
-//   window, providing USDT and taking the collateral. Incentive: the
-//   `auctionDiscountBps` haircut on pool income is the auctioneer's profit
-//   (e.g. 50 bps = 0.5% spread). Set to 0 to disable the incentive (auctions
-//   then rely on an aligned credit holder's self-interest to trigger).
+// (issue / acceptRepayment / liquidate share the pre-maturity phase; their
+// covenant invariants make them safely co-spendable. acceptAuction and redeem
+// are mutually time-exclusive with each other and with the pre-maturity
+// functions, so vault.auction binds settlement to acceptAuction purely by
+// time.)
+//
+// PERMISSIONLESS AUCTION + LIQUIDATION
+//   Any auctioneer constructs a tx with the oracle witness, providing USDT
+//   and taking the collateral. Incentive: the `auctionDiscountBps` haircut on
+//   pool income is the auctioneer's profit (e.g. 50 bps = 0.5% spread). The
+//   same discount applies to both margin-call liquidations and post-maturity
+//   auctions, so the same keepers/bots service both.
 //
 // REDEEM
 //   Credit holders convert credit → USDT pro-rata after the auction window
-//   closes. Both usdt and credit are fixed at this point (no more deposits or
-//   issuances), so `usdtBalance / totalCreditOutstanding` is a fixed rate —
-//   fair for all redeem orders, no late-redeemer advantage.
+//   closes. Both usdt and credit are fixed at this point, so the rate
+//   `usdtBalance / totalCreditOutstanding` is fair for all redeem orders, no
+//   late-redeemer advantage.
+//
+// LOAN ROLL (no new function — documented multi-tx pattern)
+//   A borrower nearing maturity can extend their loan to the next maturity
+//   without fronting capital, via the order book:
+//     Tx 1: open new vault at the next maturity (pool.issue) + atomically
+//           sell the new credit for USDT (non_interactive_swap fill). The
+//           USDT lands in the borrower's wallet.
+//     Tx 2: repay the old vault using that USDT (acceptRepayment). Old
+//           collateral returns to the borrower.
+//   The borrower's net position migrates old-maturity → new-maturity. They
+//   need to bring (or briefly source) new collateral in Tx 1; reusing the
+//   old vault's collateral atomically is a follow-up (E5 in docs/bonds.md).
 //
 // UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
 //   - BondMint per-vault: collateral recoverable cooperatively or unilaterally
 //     via N-of-N + CSV; the surviving signer is the borrower
 //     (single-owner-effective on the unilateral path).
-//   - RepaymentPool aggregate: the pool's exit-variant signers come from the
-//     active function's pubkey parameters. The REDEEM phase drains the pool
-//     into per-holder SingleSig UTXOs — each of those has a clean single-owner
-//     exit (see single_sig.ark), so the lasting on-chain state after every
-//     holder redeems is fully self-sovereign and the pool's soft-custody
-//     surface goes to zero. See docs/bonds.md §"Unilateral exits".
+//   - RepaymentPool aggregate: the REDEEM phase drains the pool into
+//     per-holder SingleSig UTXOs — each of those has a clean single-owner
+//     exit, so the lasting on-chain state after every holder redeems is
+//     fully self-sovereign and the pool's aggregate exit surface goes to
+//     zero. See docs/bonds.md §"Unilateral exits".
 //
 // STATE carried forward on every spend:
 //   usdtBalance, totalCreditOutstanding, totalDebitOutstanding
 //
 // MONETIZATION
-//   1. auctionDiscountBps (wired here). Auctioneer's spread on pool income.
-//      Direct cost to credit holders (degrades redemption rate by the haircut
-//      times default fraction); the operational-trustlessness purchase.
-//   Other surfaces enumerated as follow-ups:
-//   2. Origination fee at issue (recommended for protocol revenue).
-//   3. Redemption fee at redeem.
-//   4. Order-book fee in non_interactive_swap.
+//   auctionDiscountBps (wired): auctioneer's spread on pool income, paid on
+//   both margin-call liquidations and post-maturity auctions. Origination
+//   fee, redemption fee, and order-book fee are enumerated follow-ups
+//   (M1–M3 in docs/bonds.md).
 
 import "bond_mint.ark";
 
@@ -73,7 +94,8 @@ contract RepaymentPool(
   bytes32 ticker,                // oracle feed id (e.g. sha256("BTC/USDT"))
   pubkey  oraclePk,              // price oracle (Fuji-style signed feed)
   int     oracleMaxAge,          // max oracle staleness in seconds
-  int     initRatioBps,          // required collateral ratio at issuance (e.g. 15000)
+  int     initRatioBps,          // required collateral ratio at issuance (e.g. 15000 = 150%)
+  int     liqThresholdBps,       // margin-call trigger: liquidate when collateralValue < this × mintedAmount / 10000 (e.g. 11000 = 110%)
   int     maturity,              // block height: settlement boundary
   int     auctionWindow,         // blocks: auction phase length post-maturity
   int     auctionDiscountBps,    // bps: auctioneer's spread on pool income (0..10000)
@@ -103,9 +125,8 @@ contract RepaymentPool(
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     // FOLLOW-UP: `collateral * oraclePrice` overflows int64 above ~92 BTC at
-    // a $1M BTC price; OP_MUL64 fails closed, so the ceiling is enforced —
-    // chunk issuance, or scale the price denominator down (e.g. 1e4 vs 1e8)
-    // when very large vaults are required.
+    // a $1M BTC price; OP_MUL64 fails closed. Chunk issuance or rescale the
+    // price denominator (e.g. 1e4 vs 1e8) for very large vaults.
     int collateralValue = collateral * oraclePrice / 100000000;
     int required = amount * initRatioBps / 10000;
     require(collateralValue >= required, "undercollateralized at issuance");
@@ -127,7 +148,7 @@ contract RepaymentPool(
     require(
       tx.outputs[0].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtBalance, creditNext, debitNext, exit
       ),
       "invalid pool recreation"
@@ -178,7 +199,7 @@ contract RepaymentPool(
     require(
       tx.outputs[0].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtNext, totalCreditOutstanding, debitNext, exit
       ),
       "invalid pool recreation"
@@ -191,10 +212,103 @@ contract RepaymentPool(
     require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "collateral dest not borrower");
   }
 
-  // ACCEPT AUCTION — during the auction window, permissionless. Any auctioneer
-  // provides the USDT and takes the collateral; the discount is their profit.
+  // LIQUIDATE — pre-maturity MARGIN CALL. Permissionless. Anyone can trigger
+  // when `collateralValue < liqThresholdBps × mintedAmount / 10000`. Same
+  // oracle-priced two-branch payout as acceptAuction (over-cover: pool gets
+  // mintedAmount × payRate / 10000 USDT, auctioneer takes obligation-equivalent
+  // collateral, excess → borrower; shortfall: pool gets collateralValue ×
+  // payRate / 10000 USDT, auctioneer takes all collateral, gap socialises via
+  // redemption rate).
   //
-  //   collateralValue = collateral * oraclePrice / 1e8
+  //   input[vaultIdx]: the BondMint being liquidated
+  //   output[0]: pool re-created (usdt + liquidationUsdt, totalDebit - mintedAmount)
+  //   output[1]: collateral sats → auctioneer
+  //   output[2]: excess sats → borrower (over-cover branch only, when > dust)
+  function liquidate(pubkey borrowerPk, int vaultIdx, int mintedAmount, int collateral,
+                     int oraclePrice, int oracleTime, signature oracleSig, pubkey auctioneerPk) {
+    require(auctionDiscountBps >= 0, "negative discount");
+    require(auctionDiscountBps < 10000, "discount >= 100%");
+    require(mintedAmount > 0, "zero amount");
+    require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
+    require(tx.time < maturity, "matured; use acceptAuction");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= oracleMaxAge, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    require(
+      tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+        borrowerPk, debitAssetId, debitCtrlId, mintedAmount, collateral, maturity, auctionWindow, exit
+      ),
+      "vault input mismatch"
+    );
+
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.sumInputs >= debitGroup.sumOutputs + mintedAmount, "debit not burned");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    int collateralValue = collateral * oraclePrice / 100000000;
+    // Health-factor gate: liquidation is allowed ONLY when the vault has
+    // fallen below the threshold. This is the invariant that keeps every
+    // vault in the pool covenant-thresholded healthy and credit tokens
+    // genuinely fungible.
+    int healthFloor = mintedAmount * liqThresholdBps / 10000;
+    require(collateralValue < healthFloor, "vault still healthy");
+
+    int debitNext = totalDebitOutstanding - mintedAmount;
+    int payRate = 10000 - auctionDiscountBps;
+
+    if (collateralValue >= mintedAmount) {
+      int collateralSold  = mintedAmount * 100000000 / oraclePrice;
+      int excess          = collateral - collateralSold;
+      int liquidationUsdt = mintedAmount * payRate / 10000;
+      int usdtNext        = usdtBalance + liquidationUsdt;
+      require(
+        tx.outputs[0].scriptPubKey == new RepaymentPool(
+          usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          usdtNext, totalCreditOutstanding, debitNext, exit
+        ),
+        "invalid pool recreation"
+      );
+      require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "liquidation proceeds short");
+      require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+      require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+      require(tx.outputs[1].value >= collateralSold, "auctioneer underpaid");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+      if (excess >= 330) {
+        require(tx.outputs[2].value >= excess, "borrower underpaid");
+        require(tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk), "output 2 not borrower");
+      }
+    } else {
+      int liquidationUsdt = collateralValue * payRate / 10000;
+      int usdtNext        = usdtBalance + liquidationUsdt;
+      require(
+        tx.outputs[0].scriptPubKey == new RepaymentPool(
+          usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          usdtNext, totalCreditOutstanding, debitNext, exit
+        ),
+        "invalid pool recreation"
+      );
+      require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "liquidation proceeds short");
+      require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+      require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+      require(tx.outputs[1].value >= collateral, "auctioneer underpaid");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+    }
+  }
+
+  // ACCEPT AUCTION — at/after maturity, in the auction window. Permissionless.
+  // Any auctioneer provides the USDT and takes the collateral; the discount
+  // is their profit.
+  //
   //   over-cover  (collateralValue >= mintedAmount):
   //     auctionUsdt    = mintedAmount   * (10000 - auctionDiscountBps) / 10000
   //     collateralSold = mintedAmount   * 1e8 / oraclePrice          → auctioneer
@@ -209,10 +323,6 @@ contract RepaymentPool(
   //   output[2]: excess sats → borrower (over-cover branch only, when > dust)
   function acceptAuction(pubkey borrowerPk, int vaultIdx, int mintedAmount, int collateral,
                          int oraclePrice, int oracleTime, signature oracleSig, pubkey auctioneerPk) {
-    // auctionDiscountBps is immutable per pool; validate at first use so a
-    // misconfigured deployment fails loudly on the first auction attempt
-    // instead of silently producing wrong economics (>= 10000 wipes credit
-    // holders; < 0 makes auctions impossible).
     require(auctionDiscountBps >= 0, "negative discount");
     require(auctionDiscountBps < 10000, "discount >= 100%");
     require(mintedAmount > 0, "zero amount");
@@ -257,7 +367,7 @@ contract RepaymentPool(
       require(
         tx.outputs[0].scriptPubKey == new RepaymentPool(
           usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-          oraclePk, oracleMaxAge, initRatioBps, maturity, auctionWindow, auctionDiscountBps,
+          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
           usdtNext, totalCreditOutstanding, debitNext, exit
         ),
         "invalid pool recreation"
@@ -277,7 +387,7 @@ contract RepaymentPool(
       require(
         tx.outputs[0].scriptPubKey == new RepaymentPool(
           usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-          oraclePk, oracleMaxAge, initRatioBps, maturity, auctionWindow, auctionDiscountBps,
+          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
           usdtNext, totalCreditOutstanding, debitNext, exit
         ),
         "invalid pool recreation"
@@ -291,9 +401,9 @@ contract RepaymentPool(
   }
 
   // REDEEM — after the auction window closes, credit holders burn credit for
-  // pro-rata USDT. Rate `usdtBalance / totalCreditOutstanding` is fixed in
-  // this phase (no auctions add USDT, no issuances mint credit), so the rate
-  // is fair for every redeem ordering.
+  // pro-rata USDT. payout = amount * usdtBalance / totalCreditOutstanding.
+  // The rate is preserved under redemption alone, so fair pro-rata for every
+  // claim ordering.
   //
   //   output[0]: pool re-created (usdt - payout, totalCredit - amount)
   //   output[1]: payout USDT → holder (SingleSig — clean single-owner exit)
@@ -306,10 +416,9 @@ contract RepaymentPool(
     require(totalCreditOutstanding > 0, "no credit outstanding");
     require(usdtBalance > 0, "pool empty");
 
-    // FOLLOW-UP: `amount * usdtBalance` overflows int64 at large pool sizes
-    // (e.g. 1e9 USDT-base × 1e9 credit). Fails closed; chunk redeems or switch
-    // the pro-rata math to do the division before the multiplication (with the
-    // precision loss that implies).
+    // FOLLOW-UP: `amount * usdtBalance` overflows int64 at large pool sizes.
+    // Fails closed; chunk redemptions or rearrange math to divide-before-
+    // multiply with controlled precision loss.
     int payout = amount * usdtBalance / totalCreditOutstanding;
     require(payout > 0, "payout rounds to zero");
 
@@ -326,7 +435,7 @@ contract RepaymentPool(
     require(
       tx.outputs[0].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtNext, creditNext, totalDebitOutstanding, exit
       ),
       "invalid pool recreation"

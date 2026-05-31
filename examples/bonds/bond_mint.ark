@@ -5,27 +5,42 @@
 // `mintedAmount` credit + `mintedAmount` debit (1:1) by a borrower against
 // `collateral` sats, maturing at block height `maturity`.
 //
-// PERMISSIONLESS SETTLEMENT
-//   The phased timeline (REPAY → AUCTION → REDEEM, separated by `maturity`
-//   and `maturity + auctionWindow`) guarantees that during the auction window
-//   the only pool function that can fire is acceptAuction — issue and
-//   acceptRepayment fail on pre-maturity; redeem fails before the window
-//   ends. `vault.auction`'s "pool co-spent" check therefore binds settlement
-//   to the right pool function purely by time. Any party may execute the
-//   auction; auctioneer identity is a witness pubkey and they pin their own
-//   collateral destination by signing the tx they construct.
+// SETTLEMENT PATHS (three; all burn the vault's debit)
+//   repay      — pre-maturity, borrower-signed. The borrower pays par USDT,
+//                takes their collateral back.
+//   liquidate  — pre-maturity MARGIN CALL, permissionless. Triggered when
+//                `collateralValue < liqThresholdBps × mintedAmount / 10000`
+//                at the pool. Oracle-priced sale; collateral → auctioneer;
+//                USDT → pool. This is what keeps every vault in the pool
+//                covenant-thresholded healthy at every block — the invariant
+//                that makes credit tokens genuinely fungible (a lender doesn't
+//                need to know WHICH vault backs the credit they bought).
+//   auction    — post-maturity DEFAULT, permissionless, in the auction window.
+//                Same oracle-priced sale.
 //
-// PHASED TIMELINE (same gates as the pool)
-//   [-, maturity)                              REPAY phase    (vault.repay only)
-//   [maturity, maturity + auctionWindow)        AUCTION phase  (vault.auction only)
-//   [maturity + auctionWindow, +)               REDEEM phase   (no vault function)
+// PHASED TIMELINE
+//   [-, maturity)                              REPAY phase    vault.repay,
+//                                                             vault.liquidate
+//   [maturity, maturity + auctionWindow)        AUCTION phase  vault.auction
+//   [maturity + auctionWindow, +)               REDEEM phase   no vault function
+//
+// PERMISSIONLESS SETTLEMENT
+//   The phased timeline plus the covenant invariants of each pool function
+//   guarantee the right pairing without privileged signatures:
+//     - vault.liquidate co-spent with pool.liquidate is the only viable
+//       pre-maturity pairing for permissionless seizure (vault.repay needs
+//       borrower sig; vault.auction's time gate is post-maturity; pool.issue
+//       and pool.acceptRepayment's covenant checks conflict with
+//       vault.liquidate's debit-burn / output-pin in any combined tx).
+//     - vault.auction co-spent with pool.acceptAuction is the only viable
+//       in-window pairing (other pool functions fail their time gates).
+//   Auctioneer identity is a witness pubkey; they pin their own collateral
+//   destination by signing the tx they construct.
 //
 // UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
-//   The vault's exit-variant signers are derived from the function's pubkey
-//   parameters (borrowerPk + auctioneerPk). In the typical case (no auction
-//   attempted), cooperative-spending always exits cleanly; for unilateral
-//   fallback the borrower's pubkey + N-of-N + CSV applies. See docs/bonds.md
-//   §"Unilateral exits" for the per-function breakdown.
+//   Exit signers come from the function's pubkey parameters. In practice the
+//   borrower is the only relevant signer for unilateral collateral recovery.
+//   See docs/bonds.md §"Unilateral exits".
 
 import "single_sig.ark";
 
@@ -61,13 +76,28 @@ contract BondMint(
     require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
   }
 
+  // LIQUIDATE — pre-maturity MARGIN CALL, permissionless. The pool's liquidate
+  // does the oracle + threshold + payout math; this script authorises the
+  // spend (time gate + pool co-spent + debit burn) and pins the collateral
+  // output to the auctioneer.
+  //   output[0]: pool re-created (enforced by acceptAuction-style pool.liquidate)
+  //   output[1]: collateral (or sold portion) → auctioneer
+  function liquidate(int poolIdx, pubkey auctioneerPk) {
+    require(tx.time < maturity, "matured; use auction");
+
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
+
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.sumInputs >= debitGroup.sumOutputs + mintedAmount, "debit not burned");
+
+    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+  }
+
   // AUCTION — during the auction window, atomic with RepaymentPool.acceptAuction.
   // Permissionless: any auctioneer constructs the tx and specifies their own
-  // collateral destination via `auctioneerPk`. The pool's acceptAuction does
-  // the oracle-priced USDT/sats split + the auction-discount math + the
-  // borrower-excess refund.
+  // collateral destination via `auctioneerPk`.
   //   output[0]: pool re-created (enforced by acceptAuction)
-  //   output[1]: collateral (or the sold portion) → auctioneer
+  //   output[1]: collateral (or sold portion) → auctioneer
   function auction(int poolIdx, pubkey auctioneerPk) {
     require(tx.time >= maturity, "not yet matured");
     int windowEnd = maturity + auctionWindow;

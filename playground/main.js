@@ -24,7 +24,7 @@ const projects = {
     },
     bonds: {
         name: 'Bonds',
-        description: "Fixed-maturity bond market with a phased lifecycle: borrowers self-issue 1:1 credit + debit tokens against collateral and sell credit on the order book for USDT (no interest rate); at maturity an auction window opens for permissionless oracle-priced liquidation of defaulted collateral, incentivized by auctionDiscountBps; after the window, credit holders redeem pro-rata into single-sig wallets",
+        description: "Fixed-maturity bond market with a phased lifecycle: borrowers self-issue 1:1 credit + debit tokens against collateral and sell credit on the order book for USDT (no interest rate); permissionless oracle-priced margin call (pre-maturity, fires when collateralValue < liqThresholdBps × mintedAmount / 10000) keeps every vault thresholded healthy so credit tokens are genuinely fungible; post-maturity auction window settles defaulted collateral; credit holders redeem pro-rata into single-sig wallets",
         files: {
             'repayment_pool.ark': contracts.repayment_pool,
             'bond_mint.ark': contracts.bond_mint,
