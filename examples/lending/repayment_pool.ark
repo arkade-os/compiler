@@ -42,6 +42,45 @@
 // trustless; issue is borrower-driven with a fresh oracle witness. Concurrent
 // auction + redemption post-maturity slightly favors late redeemers — a phased
 // finalize-then-redeem window is a follow-up.
+//
+// MONETIZATION — intentionally absent in this MVP. The contract earns nothing
+// today; the following fee surfaces are enumerated for follow-up:
+//   1. Origination fee at `issue` (recommended): a `originationBps` cut of
+//      `amount` USDT paid by the borrower to a `feeSinkPk` output. Volume-
+//      correlated, doesn't touch lender yield, ~15 LoC to add (one extra
+//      constructor param + one extra output pin).
+//   2. Auction haircut at `acceptAuction`: keeper pays
+//      `oraclePrice * (1 + spreadBps/10000)` and the spread routes to the fee
+//      sink. Default-only revenue, sporadic.
+//   3. Redemption fee at `redeem`: bps cut of `payout` to fee sink. Earns on
+//      every loan but taxes lenders directly (degrades the pure-discount yield
+//      story); generally avoid.
+//   4. Order-book fee in non_interactive_swap: orthogonal to lending; lives in
+//      the swap contract, not here.
+//
+// AUCTION DESIGN — why MATURITY-ONLY (no Aave-style pre-maturity liquidation):
+//   - Fixed-term product. The borrower's covenant is "repay USDT by `maturity`".
+//     Pre-maturity margin calls would break the term the borrower paid for via
+//     the market discount; term-funded loans demand term-locked collateral.
+//   - Credit token == the right to USDT at maturity. Lenders priced the
+//     discount around the H-block payoff; forced early repayment destroys the
+//     duration they bought.
+//   - No interest accrual. Aave-style liquidation exists because debt grows
+//     over time and erodes the safety margin. With zero rate the obligation is
+//     static — only the BTC/USDT spot price moves the collateral ratio, and
+//     the only moment that matters is maturity.
+//   - Simpler ops, no oracle-spike griefing. A transient mid-term BTC dip is
+//     NOT a default; conflating the two would mis-fire liquidations and force
+//     borrowers to over-collateralize for worst-case intraday volatility.
+//   - `initRatioBps` (e.g. 15000 = 150%) is the borrower-bears-mid-term-
+//     volatility buffer at origination; lender-side downside, if the buffer is
+//     exhausted by maturity, is socialized via the auction-proceeds redemption
+//     rate (so the worst case is "credit pays out less than par", never
+//     "credit pays out zero" unless collateralValue at maturity is zero).
+//   A perpetual-collateralized-debt variant WOULD wire pre-maturity
+//   liquidation back in (gated on
+//   `collateralValue < liqThresholdBps * mintedAmount / 10000`) — that is a
+//   different product and is not what Christian's model describes.
 
 import "bond_mint.ark";
 
