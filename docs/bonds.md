@@ -230,13 +230,21 @@ collateral and the health-call trigger (`liqThresholdBps`, e.g. 11000 =
 the more capital-efficient the loan but the more frequent the margin calls
 on volatile collateral.
 
-**Enforced deployment invariant.** `issue` requires
-`initRatioBps > liqThresholdBps`. Without it, a deployer could misconfigure
-the pool so that `liqThresholdBps >= initRatioBps`, in which case a vault
-minted at the minimum collateral would be immediately liquidatable in the
-same block it is created — the borrower would lose their collateral to a
-front-running auctioneer before their credit ever reached the order book.
-The check lives in `issue` (one-time per issuance, not a hot path), so a
+**Enforced deployment invariants.** `issue` requires both
+`initRatioBps > liqThresholdBps` and `liqThresholdBps > 0`:
+
+- `initRatioBps > liqThresholdBps` — without it a deployer could set
+  `liqThresholdBps >= initRatioBps`, in which case a vault minted at the
+  minimum collateral would be immediately liquidatable in the same block it
+  is created, and the borrower would lose their collateral to a front-running
+  auctioneer before their credit ever reached the order book.
+- `liqThresholdBps > 0` — a non-positive threshold makes
+  `healthFloor = mintedAmount * liqThresholdBps / 10000` zero or negative, so
+  `collateralValue < healthFloor` can never hold and the margin call could
+  never fire, silently disabling the health invariant that backs credit
+  fungibility.
+
+Both checks live in `issue` (one-time per issuance, not a hot path), so a
 misconfigured pool can never originate a vault at all.
 
 ---

@@ -136,23 +136,27 @@ fn test_issue_is_oracle_priced_and_dual_mints() {
 }
 
 #[test]
-fn test_issue_enforces_liq_threshold_below_init_ratio() {
-    // Deployment-safety invariant: issue must reject a pool where the
-    // margin-call threshold is not strictly below the origination ratio,
-    // otherwise a freshly-minted vault at minimum collateral would be
-    // immediately liquidatable in the same block (guaranteed borrower loss).
+fn test_issue_enforces_liq_threshold_invariants() {
+    // Deployment-safety invariants: issue must reject a pool where the
+    // margin-call threshold is not strictly below the origination ratio, or is
+    // non-positive — otherwise a freshly-minted vault at minimum collateral
+    // would be immediately liquidatable (guaranteed borrower loss), or the
+    // health gate would be inverted by a negative threshold.
     //
-    // issue carries exactly four strict `>` comparisons that lower to
-    // OP_GREATERTHAN: amount > 0, collateral > 0, oraclePrice > 0, and the
-    // invariant initRatioBps > liqThresholdBps. Without the invariant there
-    // would be three. (OP_GREATERTHANOREQUAL / *_64 are distinct opcodes and
-    // are not counted by the exact-token matcher.)
+    // issue carries exactly five strict `>` comparisons that lower to
+    // OP_GREATERTHAN: amount > 0, collateral > 0, oraclePrice > 0, the invariant
+    // initRatioBps > liqThresholdBps, and liqThresholdBps > 0. The bare `> 0`
+    // guards account for 3; the two threshold invariants add 2. Asserting the
+    // exact count (5) means removing EITHER threshold invariant fails the test —
+    // a `>= 4` lower bound would let one be silently deleted.
+    // (OP_GREATERTHANOREQUAL / *_64 are distinct opcodes, not counted here.)
     let output = compile(CODE).expect("compilation failed");
     let gt = opcode_count(&output, "issue", "OP_GREATERTHAN");
-    assert!(
-        gt >= 4,
-        "issue must carry the initRatioBps > liqThresholdBps invariant \
-         (expected >= 4 OP_GREATERTHAN incl. the 3 `> 0` checks, found {gt})"
+    assert_eq!(
+        gt, 5,
+        "issue must carry BOTH initRatioBps > liqThresholdBps AND \
+         liqThresholdBps > 0 (expected exactly 5 OP_GREATERTHAN incl. the 3 \
+         `> 0` value guards, found {gt})"
     );
 }
 
@@ -273,14 +277,19 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
         asm.contains(OP_INSPECTOUTPUTVALUE),
         "liquidate pays collateral sats out"
     );
-    // liquidate carries TWO strict less-than comparisons: tx.time < maturity
-    // (pre-maturity gate) AND collateralValue < healthFloor (the margin-call
-    // trigger). Both are essential.
+    // liquidate carries exactly THREE strict less-than comparisons:
+    //   1. auctionDiscountBps < 10000  (discount bound)
+    //   2. tx.time < maturity          (pre-maturity gate)
+    //   3. collateralValue < healthFloor (the margin-call trigger)
+    // Asserting the exact count (3) means removing ANY of them — in particular
+    // the health gate, the single most important liquidate invariant — fails
+    // the test. A `>= 2` lower bound would let the health gate be silently
+    // deleted (dropping 3 -> 2 while still passing).
     let lt = opcode_count(&output, "liquidate", "OP_LESSTHAN");
-    assert!(
-        lt >= 2,
-        "liquidate must gate on BOTH tx.time<maturity AND collateralValue<healthFloor \
-         (expected >= 2 OP_LESSTHAN, found {lt})"
+    assert_eq!(
+        lt, 3,
+        "liquidate must gate on discount-bound AND tx.time<maturity AND \
+         collateralValue<healthFloor (expected exactly 3 OP_LESSTHAN, found {lt})"
     );
 
     let ws = witness_names(&output, "liquidate");
@@ -308,14 +317,15 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
 fn test_liquidate_and_accept_auction_are_phase_disjoint() {
     // Margin-call and post-maturity auction must NEVER both fire on the same
     // vault in the same block: liquidate is gated on tx.time < maturity,
-    // acceptAuction on tx.time >= maturity. liquidate therefore carries >= 2
-    // OP_LESSTHAN (time gate + health gate); acceptAuction carries an
-    // OP_LESSTHAN for its window upper bound but its lower bound is a
+    // acceptAuction on tx.time >= maturity. liquidate carries 3 OP_LESSTHAN
+    // (discount bound + pre-maturity gate + health gate); acceptAuction carries
+    // an OP_LESSTHAN for its window upper bound but its lower bound is a
     // >= comparison — so the two paths can never both be valid at one height.
     let output = compile(CODE).expect("compilation failed");
-    assert!(
-        opcode_count(&output, "liquidate", "OP_LESSTHAN") >= 2,
-        "liquidate must carry both its pre-maturity and health-floor comparisons"
+    assert_eq!(
+        opcode_count(&output, "liquidate", "OP_LESSTHAN"),
+        3,
+        "liquidate must carry its discount-bound, pre-maturity, and health-floor comparisons"
     );
     assert!(
         asm_of(&output, "acceptAuction").contains(OP_LESSTHAN),
@@ -346,6 +356,18 @@ fn test_redeem_is_pro_rata_post_window() {
         "redeem re-creates the pool covenant + pins payout destination"
     );
     assert!(asm.contains(OP_CHECKSIG), "redeem needs holder sig");
+
+    // The post-window gate `require(tx.time >= maturity + auctionWindow)` is
+    // what makes the redemption rate (usdtBalance / totalCreditOutstanding)
+    // fixed and fair for all orderings — it is the keystone of the phased
+    // design. It lowers to the function's single OP_GREATERTHANOREQUAL (the
+    // four `> 0` value guards are OP_GREATERTHAN; asset lookups are *_64).
+    // Asserting exactly one means deleting the gate fails the test.
+    assert_eq!(
+        opcode_count(&output, "redeem", "OP_GREATERTHANOREQUAL"),
+        1,
+        "redeem must gate on tx.time >= maturity + auctionWindow (post-window phase)"
+    );
 }
 
 #[test]

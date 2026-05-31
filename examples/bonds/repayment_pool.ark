@@ -120,6 +120,7 @@ contract RepaymentPool(
     // guaranteed loss for the borrower. Checked here (one-time per issuance)
     // so a misconfigured pool can never originate a vault.
     require(initRatioBps > liqThresholdBps, "liq threshold must be below init ratio");
+    require(liqThresholdBps > 0, "liq threshold must be positive");
     require(tx.time < maturity, "pool matured");
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(oraclePrice > 0, "invalid oracle price");
