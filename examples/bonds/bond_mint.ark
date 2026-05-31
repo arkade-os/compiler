@@ -5,15 +5,15 @@
 // `mintedAmount` credit + `mintedAmount` debit (1:1) by a borrower against
 // `collateral` sats, maturing at block height `maturity`.
 //
-// PERMISSIONLESS SETTLEMENT (no keeper)
-//   The phased timeline (REPAY → AUCTION → REDEEM, separated by `maturity` and
-//   `maturity + auctionWindow`) makes vault.auction safely permissionless:
-//   during the auction window the only pool function that can fire is
-//   acceptAuction (issue / acceptRepayment fail on pre-maturity; redeem fails
-//   before window end). So the "pool co-spent" check is the only binding
-//   needed — no keeper signature, no operator privilege. Auctioneer identity
-//   is a witness pubkey; they pin their own collateral destination by signing
-//   the tx they construct.
+// PERMISSIONLESS SETTLEMENT
+//   The phased timeline (REPAY → AUCTION → REDEEM, separated by `maturity`
+//   and `maturity + auctionWindow`) guarantees that during the auction window
+//   the only pool function that can fire is acceptAuction — issue and
+//   acceptRepayment fail on pre-maturity; redeem fails before the window
+//   ends. `vault.auction`'s "pool co-spent" check therefore binds settlement
+//   to the right pool function purely by time. Any party may execute the
+//   auction; auctioneer identity is a witness pubkey and they pin their own
+//   collateral destination by signing the tx they construct.
 //
 // PHASED TIMELINE (same gates as the pool)
 //   [-, maturity)                              REPAY phase    (vault.repay only)

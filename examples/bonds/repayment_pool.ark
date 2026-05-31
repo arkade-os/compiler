@@ -1,4 +1,4 @@
-// RepaymentPool Contract  (v2 — keeper-free, phased, with permissionless auction)
+// RepaymentPool Contract
 //
 // Per-maturity singleton implementing a fixed-maturity bond market: borrowers
 // self-issue credit + debit tokens (1:1) against collateral; the credit half is
@@ -10,11 +10,11 @@
 // After the auction window closes, every credit holder redeems their pro-rata
 // share of the accumulated USDT into their own single-sig wallet.
 //
-// NO KEEPER. The phased timeline makes adversarial co-spend pairings impossible:
-// during the auction window only acceptAuction can fire on this pool (issue /
-// acceptRepayment fail on pre-maturity, redeem fails before window end), so the
-// vault.auction co-spent check is the only binding needed — no operator
-// signature, no privileged role.
+// The phased timeline makes adversarial co-spend pairings impossible: during
+// the auction window only acceptAuction can fire on this pool (issue and
+// acceptRepayment fail on pre-maturity, redeem fails before the window ends),
+// so the vault.auction co-spent check is the only binding needed — settlement
+// is bound to the right pool function purely by time.
 //
 // PHASED TIMELINE
 //   [-, maturity)                              REPAY    phase  issue, acceptRepayment
@@ -36,7 +36,7 @@
 //
 // UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
 //   - BondMint per-vault: collateral recoverable cooperatively or unilaterally
-//     via N-of-N + CSV; with no keeper, the surviving signer is the borrower
+//     via N-of-N + CSV; the surviving signer is the borrower
 //     (single-owner-effective on the unilateral path).
 //   - RepaymentPool aggregate: the pool's exit-variant signers come from the
 //     active function's pubkey parameters. The REDEEM phase drains the pool

@@ -25,10 +25,10 @@ This document is the high-level spec. Source is canonical; comments in the
 | **Oracle** | Publishes signed BTC/USDT price (Fuji-style). The contract verifies the signature on each oracle-using call. | `oraclePk` (constructor) |
 | **Arkade operator** | Co-signs cooperative-path spends off-chain; supplies the `<SERVER_KEY>` injected by the runtime. Not a trust point in the active covenant — only required for fast off-chain settlement. | `<SERVER_KEY>` |
 
-**There is NO keeper.** The phased timeline (below) makes the auction safely
-permissionless: there is no adversarial co-spend pairing for the
-covenants to defend against, so no signature trust is needed to bind the
-right pool function.
+**Auctions are permissionless.** The phased timeline (below) eliminates
+adversarial co-spend pairings entirely, so no privileged signature is needed
+to bind settlement to the right pool function. Any party may execute an
+auction; incentive is the on-chain `auctionDiscountBps` spread.
 
 ---
 
@@ -58,11 +58,11 @@ Each `BondMint` function is gated to match:
 | `repay` | `tx.time < maturity` | borrower (signed) |
 | `auction` | `tx.time >= maturity AND tx.time < maturity + auctionWindow` | any auctioneer |
 
-The phasing is what eliminates the keeper. During the auction window the
-only pool function that can fire is `acceptAuction` (issue / acceptRepayment
-fail on pre-maturity; redeem fails before window end), so `vault.auction`'s
-"pool co-spent" check is sufficient — `acceptAuction` is the only candidate
-pool function it could be paired with.
+The phasing is what binds settlement to the right pool function. During the
+auction window the only pool function that can fire is `acceptAuction`
+(issue / acceptRepayment fail on pre-maturity; redeem fails before window
+end), so `vault.auction`'s "pool co-spent" check is sufficient —
+`acceptAuction` is the only candidate pool function it could be paired with.
 
 ---
 
@@ -152,7 +152,6 @@ ordering of redemption transactions — no late-redeemer advantage.
 |---|---|---|
 | **Oracle correctness** | `issue` and `acceptAuction` verify an oracle-signed price (`ticker || price || time` → `checkSigFromStack(sig, oraclePk, sha256(msg))` + freshness check). | A wrong oracle price corrupts both origination (over-/under-collateralisation) and auction proceeds. Mitigate with multisig or threshold oracle. |
 | **Arkade cooperative path** | `serverSig` co-signs the off-chain cooperative spend. | Standard Arkade liveness assumption. Unilateral fallback via CSV-timelocked exit variant. |
-| **No keeper** | — | Auction is permissionless; phased timeline prevents adversarial pairings without trust signatures. |
 | **Server auction front-running** | The Arkade server co-signs every cooperative-path tx and sees the auction tx before relaying it. Because `BondMint.auction` requires no auctioneer signature (`auctioneerPk` is a witness pubkey), the server can refuse to co-sign a third party's auction tx and instead submit its own with `auctioneerPk` set to a server-controlled key — pocketing the `auctionDiscountBps` spread on every default. | Mitigated, not eliminated, by the unilateral exit path: after `<exit>` blocks an auctioneer can broadcast on-chain bypassing the server. Within the cooperative window the server has a financial incentive to extract this spread; the magnitude is bounded by `auctionDiscountBps × defaulted-collateral-value` per pool. Acceptable for an MVP with a trusted operator; a self-sovereign deployment would either run its own server or set `auctionDiscountBps` small enough that the extraction surface is negligible. |
 
 ---
@@ -166,10 +165,10 @@ variant is the on-chain fallback when the off-chain operator is unavailable.
 
 ### BondMint per-vault — CLEAN
 
-The vault is per-borrower. Its exit signers come from the function's
-pubkey parameters; with the keeper gone, the borrower is the only
-practically-relevant pubkey. After `<exit>` blocks, the borrower can sweep
-the collateral unilaterally. **Lasting state per vault is self-sovereign.**
+The vault is per-borrower. Its exit signers come from the function's pubkey
+parameters; the borrower is the only practically-relevant signer. After
+`<exit>` blocks, the borrower can sweep the collateral unilaterally.
+**Lasting state per vault is self-sovereign.**
 
 ### RepaymentPool aggregate — RESOLVES VIA REDEEM
 
@@ -203,7 +202,7 @@ exit) so holders can lock in their entitlement BEFORE the redeem phase opens
 
 | Surface | Status | Cost borne by | Comment |
 |---|---|---|---|
-| `auctionDiscountBps` | **Wired** | Credit holders (degraded redemption rate proportional to default fraction × discount) | The trustlessness purchase: auctioneer's profit replaces the keeper's off-chain compensation. |
+| `auctionDiscountBps` | **Wired** | Credit holders (degraded redemption rate proportional to default fraction × discount) | The on-chain economic incentive that elicits auction execution from any party — no privileged operator role required. |
 | Origination fee at `issue` | Follow-up | Borrowers | Recommended for protocol revenue. ~15 LoC: add `originationBps` + `feeSinkPk`, pin extra output. |
 | Redemption fee at `redeem` | Follow-up | Lenders (directly) | Degrades the pure-discount yield story; generally avoid. |
 | Order-book fee in `non_interactive_swap` | Orthogonal | Both sides of swap | Lives in the swap contract. |

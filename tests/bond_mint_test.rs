@@ -47,10 +47,6 @@ fn test_bond_mint_compiles() {
         );
     }
     assert!(
-        !names.contains(&"keeperPk"),
-        "keeperPk must not be a constructor parameter"
-    );
-    assert!(
         names.contains(&"auctionWindow"),
         "auctionWindow must be a constructor parameter"
     );
@@ -82,12 +78,12 @@ fn test_repay_is_atomic_with_pool() {
 
 #[test]
 fn test_auction_is_permissionless_and_phased() {
-    // auction has NO keeper signature. The only binding is:
+    // The auction's only bindings are:
     //   - phased time gate (tx.time >= maturity AND tx.time < maturity + auctionWindow)
     //   - pool co-spent (debit control asset lookup)
     //   - debit burn
     //   - auctioneer-pinned collateral output
-    // Auctioneer identity is a pure witness pubkey, no sig required.
+    // Auctioneer identity is a pure witness pubkey; no user signature.
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "auction");
     assert!(
@@ -106,7 +102,7 @@ fn test_auction_is_permissionless_and_phased() {
 
     let ws = witness_names(&output, "auction");
     // serverSig is the Arkade cooperative-path signature, auto-injected on
-    // every server-variant function — it's NOT a keeper or other trust sig.
+    // every server-variant function — not a user trust signature.
     let user_sigs: Vec<&String> = ws
         .iter()
         .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
@@ -122,7 +118,7 @@ fn test_auction_is_permissionless_and_phased() {
 }
 
 #[test]
-fn test_exit_variant_drops_keeper() {
+fn test_exit_variant_is_unilateral_fallback() {
     let output = compile(CODE).expect("compilation failed");
     for name in ["repay", "auction"] {
         let asm = asm_variant(&output, name, false);
@@ -134,10 +130,6 @@ fn test_exit_variant_drops_keeper() {
         assert!(
             !asm.contains(OP_INSPECTOUTPUTVALUE) && !asm.contains(OP_INSPECTASSETGROUPSUM),
             "{name} exit must not carry covenant introspection"
-        );
-        assert!(
-            !asm.contains("<keeperPk>"),
-            "{name} exit must not reference keeperPk"
         );
     }
 }
