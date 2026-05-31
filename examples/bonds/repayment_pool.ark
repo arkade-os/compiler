@@ -209,6 +209,12 @@ contract RepaymentPool(
   //   output[2]: excess sats → borrower (over-cover branch only, when > dust)
   function acceptAuction(pubkey borrowerPk, int vaultIdx, int mintedAmount, int collateral,
                          int oraclePrice, int oracleTime, signature oracleSig, pubkey auctioneerPk) {
+    // auctionDiscountBps is immutable per pool; validate at first use so a
+    // misconfigured deployment fails loudly on the first auction attempt
+    // instead of silently producing wrong economics (>= 10000 wipes credit
+    // holders; < 0 makes auctions impossible).
+    require(auctionDiscountBps >= 0, "negative discount");
+    require(auctionDiscountBps < 10000, "discount >= 100%");
     require(mintedAmount > 0, "zero amount");
     require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
     require(tx.time >= maturity, "not yet matured");
