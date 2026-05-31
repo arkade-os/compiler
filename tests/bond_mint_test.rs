@@ -20,11 +20,22 @@ fn asm_variant(output: &arkade_compiler::models::ContractJson, name: &str, serve
         .join(" ")
 }
 
+fn witness_names(output: &arkade_compiler::models::ContractJson, name: &str) -> Vec<String> {
+    output
+        .functions
+        .iter()
+        .find(|f| f.name == name && f.server_variant)
+        .unwrap()
+        .witness_schema
+        .iter()
+        .map(|w| w.name.clone())
+        .collect()
+}
+
 #[test]
 fn test_bond_mint_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "BondMint");
-    // 2 functions (repay, auction) x 2 variants = 4
     assert_eq!(output.functions.len(), 4, "expected 4 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
@@ -35,32 +46,32 @@ fn test_bond_mint_compiles() {
             "{id} not decomposed, got: {names:?}"
         );
     }
+    assert!(
+        !names.contains(&"keeperPk"),
+        "keeperPk must not be a constructor parameter"
+    );
+    assert!(
+        names.contains(&"auctionWindow"),
+        "auctionWindow must be a constructor parameter"
+    );
 }
 
 #[test]
 fn test_repay_is_atomic_with_pool() {
-    // repay is co-spent with RepaymentPool.acceptRepayment: it identifies the
-    // genuine pool by debitCtrlId custody (OP_INSPECTINASSETLOOKUP on the pool
-    // input), burns the vault's debit (OP_INSPECTASSETGROUPSUM), returns the
-    // collateral (OP_INSPECTOUTPUTVALUE + OP_INSPECTOUTPUTSCRIPTPUBKEY), and is
-    // gated to pre-maturity (OP_LESSTHAN on tx.time).
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "repay");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
-        "repay verifies the pool is co-spent"
+        "repay verifies pool co-spent"
     );
-    assert!(
-        asm.contains(OP_INSPECTASSETGROUPSUM),
-        "repay burns the debit"
-    );
+    assert!(asm.contains(OP_INSPECTASSETGROUPSUM), "repay burns debit");
     assert!(
         asm.contains(OP_INSPECTOUTPUTVALUE),
         "repay returns collateral"
     );
     assert!(
         asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "repay pins the collateral dest"
+        "repay pins collateral dest"
     );
     assert!(
         asm.contains(OP_LESSTHAN),
@@ -70,45 +81,63 @@ fn test_repay_is_atomic_with_pool() {
 }
 
 #[test]
-fn test_auction_is_atomic_with_pool_after_maturity() {
-    // auction co-spends acceptAuction post-maturity, burns the debit, and pins
-    // the collateral output to the keeper. The oracle/USDT math lives on the
-    // pool side; this script authorizes the spend (keeperSig).
+fn test_auction_is_permissionless_and_phased() {
+    // auction has NO keeper signature. The only binding is:
+    //   - phased time gate (tx.time >= maturity AND tx.time < maturity + auctionWindow)
+    //   - pool co-spent (debit control asset lookup)
+    //   - debit burn
+    //   - auctioneer-pinned collateral output
+    // Auctioneer identity is a pure witness pubkey, no sig required.
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "auction");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
-        "auction verifies the pool is co-spent"
+        "auction verifies pool co-spent"
     );
-    assert!(
-        asm.contains(OP_INSPECTASSETGROUPSUM),
-        "auction burns the debit"
-    );
+    assert!(asm.contains(OP_INSPECTASSETGROUPSUM), "auction burns debit");
     assert!(
         asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "auction pins the collateral dest to keeper"
+        "auction pins collateral dest to auctioneer"
     );
-    assert!(asm.contains(OP_CHECKSIG), "auction needs keeper sig");
+    assert!(
+        asm.contains(OP_LESSTHAN),
+        "auction enforces tx.time < maturity + auctionWindow"
+    );
+
+    let ws = witness_names(&output, "auction");
+    // serverSig is the Arkade cooperative-path signature, auto-injected on
+    // every server-variant function — it's NOT a keeper or other trust sig.
+    let user_sigs: Vec<&String> = ws
+        .iter()
+        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
+        .collect();
+    assert!(
+        user_sigs.is_empty(),
+        "auction must not require any user signature (was: {user_sigs:?})"
+    );
+    assert!(
+        ws.iter().any(|w| w == "auctioneerPk"),
+        "auctioneerPk must be a witness parameter (got: {ws:?})"
+    );
 }
 
 #[test]
-fn test_exit_variant_is_unilateral_fallback() {
-    // Non-server variant is the unilateral exit (N-of-N CHECKSIG + CSV),
-    // carries no introspection by design.
+fn test_exit_variant_drops_keeper() {
     let output = compile(CODE).expect("compilation failed");
     for name in ["repay", "auction"] {
         let asm = asm_variant(&output, name, false);
         assert!(
             asm.contains(OP_CHECKSEQUENCEVERIFY),
-            "{name} exit variant must be CSV-timelocked"
+            "{name} exit must be CSV-timelocked"
         );
-        assert!(
-            asm.contains(OP_CHECKSIG),
-            "{name} exit variant must check sigs"
-        );
+        assert!(asm.contains(OP_CHECKSIG), "{name} exit must check sigs");
         assert!(
             !asm.contains(OP_INSPECTOUTPUTVALUE) && !asm.contains(OP_INSPECTASSETGROUPSUM),
-            "{name} exit variant must not carry covenant introspection"
+            "{name} exit must not carry covenant introspection"
+        );
+        assert!(
+            !asm.contains("<keeperPk>"),
+            "{name} exit must not reference keeperPk"
         );
     }
 }

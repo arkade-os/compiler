@@ -5,26 +5,27 @@
 // `mintedAmount` credit + `mintedAmount` debit (1:1) by a borrower against
 // `collateral` sats, maturing at block height `maturity`.
 //
-// The credit half went to the borrower's wallet (they sell it on the order book
-// via non_interactive_swap to receive USDT — that is the borrower's loan and
-// the lender's entry point; no LP pool, no interest rate). The debit half
-// stays HERE as the live proof of obligation: this vault carries `mintedAmount`
-// of the debit token, and consuming the vault burns that debit, extinguishing
-// the obligation. MVP is full-shot settlement (no partial repays).
+// PERMISSIONLESS SETTLEMENT (no keeper)
+//   The phased timeline (REPAY → AUCTION → REDEEM, separated by `maturity` and
+//   `maturity + auctionWindow`) makes vault.auction safely permissionless:
+//   during the auction window the only pool function that can fire is
+//   acceptAuction (issue / acceptRepayment fail on pre-maturity; redeem fails
+//   before window end). So the "pool co-spent" check is the only binding
+//   needed — no keeper signature, no operator privilege. Auctioneer identity
+//   is a witness pubkey; they pin their own collateral destination by signing
+//   the tx they construct.
 //
-// Settlement paths (debit burned in both):
-//   - repay   : before maturity, co-spent with RepaymentPool.acceptRepayment.
-//               The borrower pays mintedAmount USDT into the pool, the vault's
-//               debit is burned, collateral returns to the borrower.
-//   - auction : at/after maturity, co-spent with RepaymentPool.acceptAuction.
-//               The keeper drives an oracle-priced sale of the collateral; this
-//               script authorizes the spend (keeper sig + post-maturity + pool
-//               co-spent + debit burn) and pins the collateral output to the
-//               keeper. The pool's acceptAuction does the USDT/sats math and
-//               returns any excess to the borrower.
+// PHASED TIMELINE (same gates as the pool)
+//   [-, maturity)                              REPAY phase    (vault.repay only)
+//   [maturity, maturity + auctionWindow)        AUCTION phase  (vault.auction only)
+//   [maturity + auctionWindow, +)               REDEEM phase   (no vault function)
 //
-// The genuine RepaymentPool is identified by its custody of the unique
-// debitCtrlId (singleton debit-control asset, custodied in the pool).
+// UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
+//   The vault's exit-variant signers are derived from the function's pubkey
+//   parameters (borrowerPk + auctioneerPk). In the typical case (no auction
+//   attempted), cooperative-spending always exits cleanly; for unilateral
+//   fallback the borrower's pubkey + N-of-N + CSV applies. See docs/bonds.md
+//   §"Unilateral exits" for the per-function breakdown.
 
 import "single_sig.ark";
 
@@ -34,21 +35,19 @@ options {
 }
 
 contract BondMint(
-  pubkey  borrowerPk,    // owner of the collateral; may repay
-  pubkey  keeperPk,      // auction operator
-  bytes32 debitAssetId,  // burned on settlement (custodied in this vault)
-  bytes32 debitCtrlId,   // identifies the genuine RepaymentPool via co-spend
-  int     mintedAmount,  // par owed = USDT obligation at maturity
-  int     collateral,    // sats locked
-  int     maturity,      // block height at/after which the loan matures
+  pubkey  borrowerPk,
+  bytes32 debitAssetId,
+  bytes32 debitCtrlId,
+  int     mintedAmount,
+  int     collateral,
+  int     maturity,
+  int     auctionWindow,
   int     exit
 ) {
 
-  // ---------------------------------------------------------------------------
-  // REPAY — atomic with RepaymentPool.acceptRepayment.
+  // REPAY — pre-maturity, atomic with RepaymentPool.acceptRepayment.
   //   output[0]: pool re-created (enforced by acceptRepayment)
   //   output[1]: collateral sats → borrower
-  // ---------------------------------------------------------------------------
   function repay(signature borrowerSig, int poolIdx) {
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(tx.time < maturity, "loan matured");
@@ -62,20 +61,23 @@ contract BondMint(
     require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
   }
 
-  // ---------------------------------------------------------------------------
-  // AUCTION — at/after maturity, keeper-driven, atomic with acceptAuction.
+  // AUCTION — during the auction window, atomic with RepaymentPool.acceptAuction.
+  // Permissionless: any auctioneer constructs the tx and specifies their own
+  // collateral destination via `auctioneerPk`. The pool's acceptAuction does
+  // the oracle-priced USDT/sats split + the auction-discount math + the
+  // borrower-excess refund.
   //   output[0]: pool re-created (enforced by acceptAuction)
-  //   output[1]: collateral → keeper
-  // ---------------------------------------------------------------------------
-  function auction(signature keeperSig, int poolIdx) {
-    require(checkSig(keeperSig, keeperPk), "invalid keeper sig");
+  //   output[1]: collateral (or the sold portion) → auctioneer
+  function auction(int poolIdx, pubkey auctioneerPk) {
     require(tx.time >= maturity, "not yet matured");
+    int windowEnd = maturity + auctionWindow;
+    require(tx.time < windowEnd, "auction window closed");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
     require(debitGroup.sumInputs >= debitGroup.sumOutputs + mintedAmount, "debit not burned");
 
-    require(tx.outputs[1].scriptPubKey == new SingleSig(keeperPk), "output 1 not keeper");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
   }
 }
