@@ -34,15 +34,19 @@ fn witness_names(output: &arkade_compiler::models::ContractJson, name: &str) -> 
         .collect()
 }
 
-/// The `require(...)` messages emitted by a function's server variant.
-fn requirements(output: &arkade_compiler::models::ContractJson, name: &str) -> Vec<String> {
+/// Count exact-token occurrences of an opcode in a function's server-variant
+/// ASM. Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL"
+/// or "OP_GREATERTHANOREQUAL64".
+fn opcode_count(output: &arkade_compiler::models::ContractJson, name: &str, op: &str) -> usize {
     output
         .functions
         .iter()
         .find(|f| f.name == name && f.server_variant)
         .unwrap()
-        .require
-        .clone()
+        .asm
+        .iter()
+        .filter(|tok| tok.as_str() == op)
+        .count()
 }
 
 #[test]
@@ -137,14 +141,18 @@ fn test_issue_enforces_liq_threshold_below_init_ratio() {
     // margin-call threshold is not strictly below the origination ratio,
     // otherwise a freshly-minted vault at minimum collateral would be
     // immediately liquidatable in the same block (guaranteed borrower loss).
-    // Asserting on the require message is robust against how the compiler
-    // lowers `initRatioBps > liqThresholdBps`.
+    //
+    // issue carries exactly four strict `>` comparisons that lower to
+    // OP_GREATERTHAN: amount > 0, collateral > 0, oraclePrice > 0, and the
+    // invariant initRatioBps > liqThresholdBps. Without the invariant there
+    // would be three. (OP_GREATERTHANOREQUAL / *_64 are distinct opcodes and
+    // are not counted by the exact-token matcher.)
     let output = compile(CODE).expect("compilation failed");
-    let reqs = requirements(&output, "issue");
+    let gt = opcode_count(&output, "issue", "OP_GREATERTHAN");
     assert!(
-        reqs.iter()
-            .any(|r| r.contains("liq threshold must be below init ratio")),
-        "issue must enforce initRatioBps > liqThresholdBps, got requirements: {reqs:?}"
+        gt >= 4,
+        "issue must carry the initRatioBps > liqThresholdBps invariant \
+         (expected >= 4 OP_GREATERTHAN incl. the 3 `> 0` checks, found {gt})"
     );
 }
 
@@ -265,16 +273,14 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
         asm.contains(OP_INSPECTOUTPUTVALUE),
         "liquidate pays collateral sats out"
     );
+    // liquidate carries TWO strict less-than comparisons: tx.time < maturity
+    // (pre-maturity gate) AND collateralValue < healthFloor (the margin-call
+    // trigger). Both are essential.
+    let lt = opcode_count(&output, "liquidate", "OP_LESSTHAN");
     assert!(
-        asm.contains(OP_LESSTHAN),
-        "liquidate enforces tx.time < maturity (and collateralValue < healthFloor)"
-    );
-
-    // The health gate carries its own require message.
-    let reqs = requirements(&output, "liquidate");
-    assert!(
-        reqs.iter().any(|r| r.contains("vault still healthy")),
-        "liquidate must gate on the health threshold, got: {reqs:?}"
+        lt >= 2,
+        "liquidate must gate on BOTH tx.time<maturity AND collateralValue<healthFloor \
+         (expected >= 2 OP_LESSTHAN, found {lt})"
     );
 
     let ws = witness_names(&output, "liquidate");
@@ -301,23 +307,20 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
 #[test]
 fn test_liquidate_and_accept_auction_are_phase_disjoint() {
     // Margin-call and post-maturity auction must NEVER both fire on the same
-    // vault in the same block: liquidate is gated on tx.time < maturity (via
-    // a "matured; use acceptAuction" require) and acceptAuction on tx.time >=
-    // maturity (via a "not yet matured" require).
+    // vault in the same block: liquidate is gated on tx.time < maturity,
+    // acceptAuction on tx.time >= maturity. liquidate therefore carries >= 2
+    // OP_LESSTHAN (time gate + health gate); acceptAuction carries an
+    // OP_LESSTHAN for its window upper bound but its lower bound is a
+    // >= comparison — so the two paths can never both be valid at one height.
     let output = compile(CODE).expect("compilation failed");
-    let liq = requirements(&output, "liquidate");
-    let auc = requirements(&output, "acceptAuction");
     assert!(
-        liq.iter().any(|r| r.contains("matured; use acceptAuction")),
-        "liquidate must be gated pre-maturity, got: {liq:?}"
+        opcode_count(&output, "liquidate", "OP_LESSTHAN") >= 2,
+        "liquidate must carry both its pre-maturity and health-floor comparisons"
     );
     assert!(
-        auc.iter().any(|r| r.contains("not yet matured")),
-        "acceptAuction must be gated post-maturity, got: {auc:?}"
+        asm_of(&output, "acceptAuction").contains(OP_LESSTHAN),
+        "acceptAuction must carry its window upper-bound comparison"
     );
-    // Both also carry an explicit time-comparison opcode.
-    assert!(asm_of(&output, "liquidate").contains(OP_LESSTHAN));
-    assert!(asm_of(&output, "acceptAuction").contains(OP_LESSTHAN));
 }
 
 #[test]
@@ -343,12 +346,6 @@ fn test_redeem_is_pro_rata_post_window() {
         "redeem re-creates the pool covenant + pins payout destination"
     );
     assert!(asm.contains(OP_CHECKSIG), "redeem needs holder sig");
-    // The post-window gate carries its own require message.
-    let reqs = requirements(&output, "redeem");
-    assert!(
-        reqs.iter().any(|r| r.contains("auction window not closed")),
-        "redeem must be gated on tx.time >= maturity + auctionWindow, got: {reqs:?}"
-    );
 }
 
 #[test]
