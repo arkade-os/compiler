@@ -160,7 +160,7 @@ fn test_auction_is_permissionless_and_phased() {
 }
 
 #[test]
-fn test_roll_is_borrower_authorized_premaurity_pool_cospent() {
+fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
     // ROLL — atomic with RepaymentPool.rollOut on the OLD pool and
     // RepaymentPool.rollIn on the NEW (next-maturity) pool. This script
     // authorises the spend (borrowerSig) + burns the old debit + verifies
