@@ -78,6 +78,46 @@ fn test_repay_is_atomic_with_pool() {
 }
 
 #[test]
+fn test_liquidate_is_permissionless_prematurity() {
+    // Margin-call settlement path: permissionless (no user signature),
+    // pre-maturity gated (tx.time < maturity), pool co-spent, debit-burned,
+    // auctioneer-pinned collateral output. The oracle + threshold + payout
+    // math lives on the pool side.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "liquidate");
+    assert!(
+        asm.contains(OP_INSPECTINASSETLOOKUP),
+        "liquidate verifies pool co-spent"
+    );
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "liquidate burns the debit"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "liquidate pins collateral dest to auctioneer"
+    );
+    assert!(
+        asm.contains(OP_LESSTHAN),
+        "liquidate enforces tx.time < maturity"
+    );
+
+    let ws = witness_names(&output, "liquidate");
+    let user_sigs: Vec<&String> = ws
+        .iter()
+        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
+        .collect();
+    assert!(
+        user_sigs.is_empty(),
+        "liquidate must not require any user signature (was: {user_sigs:?})"
+    );
+    assert!(
+        ws.iter().any(|w| w == "auctioneerPk"),
+        "auctioneerPk must be a witness parameter (got: {ws:?})"
+    );
+}
+
+#[test]
 fn test_auction_is_permissionless_and_phased() {
     // The auction's only bindings are:
     //   - phased time gate (tx.time >= maturity AND tx.time < maturity + auctionWindow)
@@ -111,46 +151,6 @@ fn test_auction_is_permissionless_and_phased() {
     assert!(
         user_sigs.is_empty(),
         "auction must not require any user signature (was: {user_sigs:?})"
-    );
-    assert!(
-        ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a witness parameter (got: {ws:?})"
-    );
-}
-
-#[test]
-fn test_liquidate_is_permissionless_prematurity() {
-    // Margin-call settlement path: permissionless (no user signature),
-    // pre-maturity gated (tx.time < maturity), pool co-spent,
-    // debit-burned, auctioneer-pinned collateral output. All the
-    // oracle + threshold + payout math lives on the pool side.
-    let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "liquidate");
-    assert!(
-        asm.contains(OP_INSPECTINASSETLOOKUP),
-        "liquidate verifies pool co-spent"
-    );
-    assert!(
-        asm.contains(OP_INSPECTASSETGROUPSUM),
-        "liquidate burns the debit"
-    );
-    assert!(
-        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "liquidate pins collateral dest to auctioneer"
-    );
-    assert!(
-        asm.contains(OP_LESSTHAN),
-        "liquidate enforces tx.time < maturity"
-    );
-
-    let ws = witness_names(&output, "liquidate");
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
-    assert!(
-        user_sigs.is_empty(),
-        "liquidate must not require any user signature (was: {user_sigs:?})"
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerPk"),
