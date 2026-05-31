@@ -434,7 +434,7 @@ execute. Inline `// FOLLOW-UP:` notes are at the affected sites.
 
 | # | Item | Why | Sketch |
 |---|---|---|---|
-| **T1** | Unify time axis or document the conversion. | `oracleMaxAge` is **seconds** (compared against `tx.offchainTime - oracleTime`); `maturity` / `auctionWindow` are **block heights** (compared against `tx.time`). Two axes invite off-by-one errors when deployers reason about the timeline. | Either gate oracle freshness on block height via a block-anchored attestation, OR rename `oracleMaxAge` → `oracleMaxAgeSeconds` and document the conversion factor prominently. |
+| **T1** | ~~Unify time axis or document the conversion~~ — **PARTIALLY ADDRESSED.** The seconds-valued parameter is now named `oracleMaxAgeSeconds` and its declaration comment states the unit explicitly and contrasts it with the block-height fields (`maturity`, `auctionWindow`). Oracle freshness (`tx.offchainTime`, seconds) and the phase gates (`tx.time`, block height) remain two axes by design — that's inherent to oracle attestations being wall-clock-timestamped while Bitcoin locktime is height-based. Fully unifying (block-anchored oracle attestation) is still open. | A block-anchored oracle attestation would let freshness be gated on `tx.time` too; not pursued for the MVP since Fuji-style oracles timestamp in seconds. |
 
 ### Monetisation surfaces (not yet wired)
 
@@ -455,8 +455,8 @@ execute. Inline `// FOLLOW-UP:` notes are at the affected sites.
 
 | # | Item |
 |---|---|
-| **K1** | Move duplicated test helpers (`asm_of`, `asm_variant`, `witness_names`) from `tests/bond_mint_test.rs` and `tests/repayment_pool_test.rs` into a shared `tests/common/mod.rs`. |
-| **K2** | The `new RepaymentPool(...)` constructor list (16 args) appears in 5 reconstruction sites in `repayment_pool.ark`. The DSL has no parameter-list abstraction, so add a one-line `// All callers of new RepaymentPool(...) must update in lockstep` comment at the constructor declaration to make the maintenance burden discoverable. |
+| **K1** | ~~Move duplicated test helpers into a shared module~~ — **DONE.** `asm_of`, `asm_variant`, `witness_names`, `opcode_count`, and `user_signatures` now live in `tests/common/mod.rs`, pulled into each test binary via `mod common; use common::*`. |
+| **K2** | The `new RepaymentPool(...)` constructor list (17 args) now appears in 9 reconstruction sites in `repayment_pool.ark` (issue, acceptRepayment, rollOut, rollIn, both liquidate branches, both acceptAuction branches, redeem). The DSL has no parameter-list abstraction. Still open: add a lockstep-warning comment at the constructor, or extend the compiler with a struct/record param type. |
 
 ### Intentional scope choices (NOT follow-ups)
 
@@ -472,12 +472,13 @@ These are deliberate properties of the design, not deferred work:
 ## Files
 
 ```
-examples/bonds/repayment_pool.ark   — per-maturity singleton (5 functions:
-                                       issue, acceptRepayment, liquidate,
-                                       acceptAuction, redeem)
-examples/bonds/bond_mint.ark        — per-issuance vault    (3 functions:
-                                       repay, liquidate, auction)
+examples/bonds/repayment_pool.ark   — per-maturity singleton (7 functions:
+                                       issue, acceptRepayment, rollOut, rollIn,
+                                       liquidate, acceptAuction, redeem)
+examples/bonds/bond_mint.ark        — per-issuance vault    (4 functions:
+                                       repay, liquidate, auction, roll)
 docs/bonds.md                       — this spec
+tests/common/mod.rs                 — shared test helpers
 tests/repayment_pool_test.rs        — ASM-level pool tests
 tests/bond_mint_test.rs             — ASM-level vault tests
 ```

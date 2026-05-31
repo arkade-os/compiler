@@ -25,7 +25,7 @@ echo "[1/4] Generating contracts.js from examples..."
 # Build WASM package
 echo "[2/4] Building WASM package..."
 cd "$PROJECT_DIR"
-wasm-pack build --target web --out-dir playground/pkg --features wasm
+wasm-pack build --target web --out-dir playground/pkg -- --features wasm
 
 # Clean up unnecessary files
 echo "[3/4] Cleaning up..."

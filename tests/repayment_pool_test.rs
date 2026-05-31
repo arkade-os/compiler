@@ -6,48 +6,10 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTPUTVALUE, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL64, OP_SHA256,
 };
 
+mod common;
+use common::{asm_of, asm_variant, opcode_count, user_signatures, witness_names};
+
 const CODE: &str = include_str!("../examples/bonds/repayment_pool.ark");
-
-fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String {
-    asm_variant(output, name, true)
-}
-
-fn asm_variant(output: &arkade_compiler::models::ContractJson, name: &str, server: bool) -> String {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant == server)
-        .unwrap_or_else(|| panic!("{name} (server={server}) variant not found"))
-        .asm
-        .join(" ")
-}
-
-fn witness_names(output: &arkade_compiler::models::ContractJson, name: &str) -> Vec<String> {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant)
-        .unwrap()
-        .witness_schema
-        .iter()
-        .map(|w| w.name.clone())
-        .collect()
-}
-
-/// Count exact-token occurrences of an opcode in a function's server-variant
-/// ASM. Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL"
-/// or "OP_GREATERTHANOREQUAL64".
-fn opcode_count(output: &arkade_compiler::models::ContractJson, name: &str, op: &str) -> usize {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant)
-        .unwrap()
-        .asm
-        .iter()
-        .filter(|tok| tok.as_str() == op)
-        .count()
-}
 
 #[test]
 fn test_repayment_pool_compiles() {
@@ -272,10 +234,7 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
     // every server-variant function), exactly ONE signature witness remains:
     // the oracle. No auctioneer signature — auction is permissionless.
     let ws = witness_names(&output, "acceptAuction");
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
+    let user_sigs = user_signatures(&output, "acceptAuction");
     assert_eq!(
         user_sigs.len(),
         1,
@@ -340,10 +299,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     );
 
     let ws = witness_names(&output, "liquidate");
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
+    let user_sigs = user_signatures(&output, "liquidate");
     assert_eq!(
         user_sigs.len(),
         1,
@@ -462,10 +418,7 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
     // No user signature: rollOut authorises the OLD pool spend by virtue of
     // burning the vault's debit + receiving the discharge; the borrower's
     // consent is enforced on the vault side (BondMint.roll).
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
+    let user_sigs = user_signatures(&output, "rollOut");
     assert!(
         user_sigs.is_empty(),
         "rollOut must not require any user signature (consent lives on the vault), got: {user_sigs:?}"
@@ -523,10 +476,7 @@ fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
 
     // Exactly TWO user signatures: the oracle (price attestation) and the
     // borrower (consent to the new obligation). No keeper, no maker sig.
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
+    let user_sigs = user_signatures(&output, "rollIn");
     assert_eq!(
         user_sigs.len(),
         2,

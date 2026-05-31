@@ -4,33 +4,10 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
 };
 
+mod common;
+use common::{asm_of, asm_variant, user_signatures, witness_names};
+
 const CODE: &str = include_str!("../examples/bonds/bond_mint.ark");
-
-fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String {
-    asm_variant(output, name, true)
-}
-
-fn asm_variant(output: &arkade_compiler::models::ContractJson, name: &str, server: bool) -> String {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant == server)
-        .unwrap_or_else(|| panic!("{name} (server={server}) variant not found"))
-        .asm
-        .join(" ")
-}
-
-fn witness_names(output: &arkade_compiler::models::ContractJson, name: &str) -> Vec<String> {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant)
-        .unwrap()
-        .witness_schema
-        .iter()
-        .map(|w| w.name.clone())
-        .collect()
-}
 
 #[test]
 fn test_bond_mint_compiles() {
@@ -104,10 +81,7 @@ fn test_liquidate_is_permissionless_prematurity() {
     );
 
     let ws = witness_names(&output, "liquidate");
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
+    let user_sigs = user_signatures(&output, "liquidate");
     assert!(
         user_sigs.is_empty(),
         "liquidate must not require any user signature (was: {user_sigs:?})"
@@ -143,12 +117,9 @@ fn test_auction_is_permissionless_and_phased() {
     );
 
     let ws = witness_names(&output, "auction");
-    // serverSig is the Arkade cooperative-path signature, auto-injected on
-    // every server-variant function — not a user trust signature.
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
+    // user_signatures excludes serverSig (the Arkade cooperative-path
+    // signature auto-injected on every server variant — not a user sig).
+    let user_sigs = user_signatures(&output, "auction");
     assert!(
         user_sigs.is_empty(),
         "auction must not require any user signature (was: {user_sigs:?})"
@@ -196,10 +167,7 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
     );
 
     let ws = witness_names(&output, "roll");
-    let user_sigs: Vec<&String> = ws
-        .iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
-        .collect();
+    let user_sigs = user_signatures(&output, "roll");
     assert_eq!(
         user_sigs.len(),
         1,

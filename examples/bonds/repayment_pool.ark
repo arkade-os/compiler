@@ -59,8 +59,6 @@
 //   `usdtBalance / totalCreditOutstanding` is fair for all redeem orders, no
 //   late-redeemer advantage.
 //
-// LOAN ROLL — see "PHASED TIMELINE" above and docs/bonds.md §Loan roll.
-//
 // UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
 //   - BondMint per-vault: collateral recoverable cooperatively or unilaterally
 //     via N-of-N + CSV; the surviving signer is the borrower
@@ -95,7 +93,7 @@ contract RepaymentPool(
   bytes32 debitCtrlId,           // control asset gating debit mint
   bytes32 ticker,                // oracle feed id (e.g. sha256("BTC/USDT"))
   pubkey  oraclePk,              // price oracle (Fuji-style signed feed)
-  int     oracleMaxAge,          // max oracle staleness in seconds
+  int     oracleMaxAgeSeconds,   // max oracle staleness, in SECONDS (tx.offchainTime); contrast with maturity/auctionWindow which are BLOCK HEIGHTS (tx.time)
   int     initRatioBps,          // required collateral ratio at issuance (e.g. 15000 = 150%)
   int     liqThresholdBps,       // margin-call trigger: liquidate when collateralValue < this × mintedAmount / 10000 (e.g. 11000 = 110%)
   int     maturity,              // block height: settlement boundary
@@ -129,7 +127,7 @@ contract RepaymentPool(
 
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= oracleMaxAge, "stale oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
@@ -157,7 +155,7 @@ contract RepaymentPool(
     require(
       tx.outputs[0].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtBalance, creditNext, debitNext, exit
       ),
       "invalid pool recreation"
@@ -208,7 +206,7 @@ contract RepaymentPool(
     require(
       tx.outputs[0].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtNext, totalCreditOutstanding, debitNext, exit
       ),
       "invalid pool recreation"
@@ -266,7 +264,7 @@ contract RepaymentPool(
     require(
       tx.outputs[outIdxPool].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtNext, totalCreditOutstanding, debitNext, exit
       ),
       "invalid pool recreation"
@@ -301,7 +299,7 @@ contract RepaymentPool(
 
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= oracleMaxAge, "stale oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
@@ -326,7 +324,7 @@ contract RepaymentPool(
     require(
       tx.outputs[outIdxPool].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtBalance, creditNext, debitNext, exit
       ),
       "invalid pool recreation"
@@ -371,7 +369,7 @@ contract RepaymentPool(
 
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= oracleMaxAge, "stale oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
@@ -408,7 +406,7 @@ contract RepaymentPool(
       require(
         tx.outputs[0].scriptPubKey == new RepaymentPool(
           usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
           usdtNext, totalCreditOutstanding, debitNext, exit
         ),
         "invalid pool recreation"
@@ -428,7 +426,7 @@ contract RepaymentPool(
       require(
         tx.outputs[0].scriptPubKey == new RepaymentPool(
           usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
           usdtNext, totalCreditOutstanding, debitNext, exit
         ),
         "invalid pool recreation"
@@ -470,7 +468,7 @@ contract RepaymentPool(
 
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= oracleMaxAge, "stale oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
@@ -503,7 +501,7 @@ contract RepaymentPool(
       require(
         tx.outputs[0].scriptPubKey == new RepaymentPool(
           usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
           usdtNext, totalCreditOutstanding, debitNext, exit
         ),
         "invalid pool recreation"
@@ -523,7 +521,7 @@ contract RepaymentPool(
       require(
         tx.outputs[0].scriptPubKey == new RepaymentPool(
           usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-          oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
           usdtNext, totalCreditOutstanding, debitNext, exit
         ),
         "invalid pool recreation"
@@ -571,7 +569,7 @@ contract RepaymentPool(
     require(
       tx.outputs[0].scriptPubKey == new RepaymentPool(
         usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
-        oraclePk, oracleMaxAge, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
         usdtNext, creditNext, totalDebitOutstanding, exit
       ),
       "invalid pool recreation"
