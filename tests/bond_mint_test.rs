@@ -119,7 +119,7 @@ fn test_auction_is_permissionless_and_phased() {
 }
 
 #[test]
-fn test_liquidate_is_permissionless_premaurity() {
+fn test_liquidate_is_permissionless_prematurity() {
     // Margin-call settlement path: permissionless (no user signature),
     // pre-maturity gated (tx.time < maturity), pool co-spent,
     // debit-burned, auctioneer-pinned collateral output. All the

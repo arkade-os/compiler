@@ -114,6 +114,12 @@ contract RepaymentPool(
   function issue(int amount, int collateral, pubkey borrowerPk, signature borrowerSig, int oraclePrice, int oracleTime, signature oracleSig) {
     require(amount > 0, "zero issuance");
     require(collateral > 0, "zero collateral");
+    // Deployment-safety invariant: the health-call threshold MUST sit below
+    // the origination ratio, otherwise a vault minted at the minimum
+    // collateral is immediately liquidatable in the same block — a
+    // guaranteed loss for the borrower. Checked here (one-time per issuance)
+    // so a misconfigured pool can never originate a vault.
+    require(initRatioBps > liqThresholdBps, "liq threshold must be below init ratio");
     require(tx.time < maturity, "pool matured");
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(oraclePrice > 0, "invalid oracle price");

@@ -34,6 +34,20 @@ fn witness_names(output: &arkade_compiler::models::ContractJson, name: &str) -> 
         .collect()
 }
 
+/// Count exact-match occurrences of an opcode in a function's server-variant
+/// ASM (exact token match, so OP_LESSTHAN does NOT match OP_LESSTHANOREQUAL).
+fn opcode_count(output: &arkade_compiler::models::ContractJson, name: &str, op: &str) -> usize {
+    output
+        .functions
+        .iter()
+        .find(|f| f.name == name && f.server_variant)
+        .unwrap()
+        .asm
+        .iter()
+        .filter(|tok| tok.as_str() == op)
+        .count()
+}
+
 #[test]
 fn test_repayment_pool_compiles() {
     let output = compile(CODE).expect("compilation failed");
@@ -118,6 +132,25 @@ fn test_issue_is_oracle_priced_and_dual_mints() {
         "issue locks collateral in the vault"
     );
     assert!(asm.contains(OP_CHECKSIG), "issue needs borrower sig");
+}
+
+#[test]
+fn test_issue_enforces_liq_threshold_below_init_ratio() {
+    // Deployment-safety invariant: issue must reject a pool where the
+    // margin-call threshold is not strictly below the origination ratio
+    // (otherwise a freshly-minted vault at minimum collateral is immediately
+    // liquidatable). The check `initRatioBps > liqThresholdBps` compiles to a
+    // strict less-than comparison. issue therefore carries TWO distinct
+    // OP_LESSTHAN comparisons: one for `tx.time < maturity` and one for the
+    // threshold invariant. (OP_LESSTHANOREQUAL — used by the oracle freshness
+    // and origination-ratio checks — is a different opcode and is not counted.)
+    let output = compile(CODE).expect("compilation failed");
+    let lt = opcode_count(&output, "issue", OP_LESSTHAN);
+    assert!(
+        lt >= 2,
+        "issue must carry both tx.time<maturity AND initRatioBps>liqThresholdBps \
+         comparisons (expected >= 2 OP_LESSTHAN, found {lt})"
+    );
 }
 
 #[test]
