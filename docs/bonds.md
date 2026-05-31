@@ -200,30 +200,87 @@ exit) so holders can lock in their entitlement BEFORE the redeem phase opens
 
 ## Monetisation
 
+`auctionDiscountBps` is the only revenue surface wired today. Three more
+are enumerated under §Follow-ups M1–M3.
+
 | Surface | Status | Cost borne by | Comment |
 |---|---|---|---|
-| `auctionDiscountBps` | **Wired** | Credit holders (degraded redemption rate proportional to default fraction × discount) | The on-chain economic incentive that elicits auction execution from any party — no privileged operator role required. |
-| Origination fee at `issue` | Follow-up | Borrowers | Recommended for protocol revenue. ~15 LoC: add `originationBps` + `feeSinkPk`, pin extra output. |
-| Redemption fee at `redeem` | Follow-up | Lenders (directly) | Degrades the pure-discount yield story; generally avoid. |
-| Order-book fee in `non_interactive_swap` | Orthogonal | Both sides of swap | Lives in the swap contract. |
+| `auctionDiscountBps` | **Wired** | Credit holders (degraded redemption rate proportional to default fraction × discount) | On-chain economic incentive that elicits auction execution from any party. |
 
 ---
 
-## Known limitations (MVP)
+## Follow-ups
 
-1. **`int64` overflow ceilings.** `collateral * oraclePrice` (in `issue` and
-   `acceptAuction`) and `amount * usdtBalance` (in `redeem`) cap at ~92 BTC
-   par at a $1M BTC price. OP_MUL64 fails closed; workaround is chunked
-   transactions. See `// FOLLOW-UP:` notes in `repayment_pool.ark`.
-2. **No partial repays.** A borrower must repay the full `mintedAmount` in
-   one transaction, or default. Partial-repay support would split a
-   `BondMint` into two vaults on each repay; not implemented.
-3. **Auctioneer incentive is bounded by `auctionDiscountBps`.** If set to 0,
-   permissionless auctioning relies on a credit holder's self-interest to
-   trigger (otherwise pre-redemption USDT is suboptimal). 50–100 bps is a
-   reasonable default.
-4. **One pool per maturity.** Liquidity fragments across maturity dates;
-   secondary markets (via the order book) compose them.
+Tracked work that is NOT in this MVP but would harden, broaden, or monetise
+the design. None are blocking; each is a concrete piece of work with a
+defined deliverable. Inline `// FOLLOW-UP:` notes in the source mark the
+exact lines where each one would land.
+
+### Robustness / hardening
+
+| # | Item | Why | Sketch |
+|---|---|---|---|
+| **R1** | Add `minCollateral` + `minAmount` constructor params; reject dust-sized issuances. | `issue` today accepts `collateral=1, amount=1`. The `required = amount * initRatioBps / 10000` collateralisation check rounds DOWN, so for `amount=1, initRatioBps=9999` the required floor is silently zero. An attacker can mint 1 credit + 1 debit for 1 sat, polluting the auction window with unprofitable defaults. | Add two int constructor params; `require(amount >= minAmount && collateral >= minCollateral)` at top of `issue`. |
+| **R2** | Ceiling division on the origination collateral check. | Mitigates the rounding floor at the unit boundary even without R1's explicit minimums. | Replace `required = amount * initRatioBps / 10000` with `required = (amount * initRatioBps + 9999) / 10000`. |
+| **R3** | Final-redemption residue path. | `redeem`'s `require(payout > 0)` rejects dust redemptions; the last few USDT are stranded forever once they round below the per-unit rate. | Add a `redeemAll(holderPk, holderSig)` branch gated on `amount == totalCreditOutstanding` that pays the full residual `usdtBalance` regardless of payout rounding. |
+| **R4** | ASM-level assertion of the strict time gate on `redeem`. | `test_redeem_is_pro_rata_post_window` currently relies on the constructor-param surface, not the gate's actual ASM placement. A refactor removing the gate would not be caught by the test. | Pattern-match the comparison sequence in `redeem`'s ASM that proves `tx.time >= maturity + auctionWindow` is enforced. |
+
+### Capacity ceilings (int64 overflow, fail-closed)
+
+`OP_MUL64` aborts on overflow, so each ceiling fails CLOSED — scripts never
+produce wrong outputs, but legitimate transactions above the ceiling cannot
+execute. Inline `// FOLLOW-UP:` notes are at the affected sites.
+
+| # | Site | Ceiling | Workaround |
+|---|---|---|---|
+| **C1** | `collateral * oraclePrice` in `issue` + `acceptAuction` | ~92 BTC at a $1M BTC oracle price | Chunked issuance/auctions, or rescale `oraclePrice` to a smaller denominator (e.g. 1e4 vs 1e8). |
+| **C2** | `mintedAmount * 100000000` in `acceptAuction` over-cover branch | ~92 BTC of par | Chunk auctions, or rescale. |
+| **C3** | `amount * usdtBalance` in `redeem` | Product space ~1e18 (pool size × redemption size) | Chunked redemptions, or divide-before-multiply with controlled precision loss. |
+
+### Capability extensions
+
+| # | Item | Why | Sketch |
+|---|---|---|---|
+| **E1** | Partial repays. | Today a borrower must repay the full `mintedAmount` or default. If their cashflow only covers half, they default and lose all collateral to auction. | `BondMint.repayPartial(amount, sig)`: split the vault into a new vault with `mintedAmount - amount` carrying forward the proportional collateral, and return the rest to the borrower. |
+| **E2** | Per-holder redemption receipt. | A credit holder who wants to lock in their entitlement BEFORE the redeem phase opens has no on-chain way to do so today. Useful when the auction window is long or the holder is offline. | Add a `RedemptionReceipt` covenant and a `RepaymentPool.lock(amount, holderPk)` (auction-window-gated) that mints a single-owner receipt UTXO representing the holder's deferred claim. |
+| **E3** | Explicit `finalize` snapshot. | The current design's redemption rate is fixed in practice (no late USDT additions can occur in the redeem phase). An explicit `finalize` would make the snapshot immutable in the pool state, hardening against future changes that re-open the auction phase. | One-shot `finalize` callable by anyone post-window; sets immutable `maturedTotalCredit`, `maturedTotalUsdt`; `redeem` then uses those. |
+| **E4** | Configurable dust threshold. | Borrower-excess output is hard-coded to `>= 330` sats. If Bitcoin's dust policy changes or the deployer wants stricter/looser, the contract must be edited. | Add `dustThreshold` constructor param; use `if (excess >= dustThreshold)` instead. |
+
+### Time-axis clarity
+
+| # | Item | Why | Sketch |
+|---|---|---|---|
+| **T1** | Unify time axis or document the conversion. | `oracleMaxAge` is **seconds** (compared against `tx.offchainTime - oracleTime`); `maturity` / `auctionWindow` are **block heights** (compared against `tx.time`). Two axes invite off-by-one errors when deployers reason about the timeline. | Either gate oracle freshness on block height via a block-anchored attestation, OR rename `oracleMaxAge` → `oracleMaxAgeSeconds` and document the conversion factor prominently. |
+
+### Monetisation surfaces (not yet wired)
+
+| # | Item | Bearer | Recommendation |
+|---|---|---|---|
+| **M1** | Origination fee at `issue` (`originationBps`). | Borrower. | **Recommended.** Volume-correlated, doesn't touch lender yield. ~15 LoC: add `originationBps` + `feeSinkPk` constructor params, pin an extra output paying the fee. |
+| **M2** | Redemption fee at `redeem`. | Lender. | Avoid — degrades the pure-discount yield story. |
+| **M3** | Order-book fee in `non_interactive_swap`. | Both sides. | Orthogonal to bonds; belongs in the swap contract. |
+
+### Trust hardening
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| **H1** | Server auction front-running. | Documented in §Trust model. | Server can capture `auctionDiscountBps × defaulted-collateral-value` per default by refusing to co-sign third-party auctions and substituting its own `auctioneerPk`. Mitigated by the unilateral exit path (auctioneer can broadcast on-chain after `<exit>` blocks). A self-sovereign deployment runs its own server or keeps `auctionDiscountBps` small. |
+| **H2** | Threshold oracle. | Today a single `oraclePk` per pool. | Replace `checkSigFromStack(sig, oraclePk, msg)` with a k-of-n threshold-oracle check; reduces single-key compromise impact on origination + auction pricing. |
+
+### Test infrastructure cleanup
+
+| # | Item |
+|---|---|
+| **K1** | Move duplicated test helpers (`asm_of`, `asm_variant`, `witness_names`) from `tests/bond_mint_test.rs` and `tests/repayment_pool_test.rs` into a shared `tests/common/mod.rs`. |
+| **K2** | The `new RepaymentPool(...)` constructor list (16 args) appears in 5 reconstruction sites in `repayment_pool.ark`. The DSL has no parameter-list abstraction, so add a one-line `// All callers of new RepaymentPool(...) must update in lockstep` comment at the constructor declaration to make the maintenance burden discoverable. |
+
+### Intentional scope choices (NOT follow-ups)
+
+These are deliberate properties of the design, not deferred work:
+
+- **One pool per maturity.** Liquidity fragmentation is a feature, not a bug; secondary markets (via the order book) compose multiple maturities into the desired yield curve.
+- **`maturity` and `auctionWindow` immutable.** The whole product is a fixed-term bond; making them mutable would re-introduce a privileged role.
+- **Maturity-only auction (no pre-maturity liquidation).** See §"Why maturity-only auction" above.
 
 ---
 
