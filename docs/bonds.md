@@ -251,42 +251,60 @@ misconfigured pool can never originate a vault at all.
 
 ## Loan roll
 
-A borrower nearing maturity can extend their loan to the next maturity
-without fronting USDT — the order book is the bridge:
+A borrower nearing maturity can migrate their position to the next maturity
+in **a single atomic transaction** without fronting USDT and without finding
+new collateral. Three new functions, all using witness output indices so
+they compose with a `non_interactive_swap` fill in the same tx:
+
+| Side | Function | Role |
+|---|---|---|
+| Old vault | `BondMint.roll` | Borrower-signed authorisation; burns the old debit; releases the collateral into the tx for the new vault to claim. |
+| Old pool | `RepaymentPool.rollOut` | Validates the old vault, burns mintedAmount debit, requires `expectedDischarge >= oldMintedAmount` USDT to enter the pool's recreated state. Closes the old obligation in the old pool's accounting. |
+| New pool | `RepaymentPool.rollIn` | Borrower-signed; oracle-priced over-collateralisation on the NEW maturity; mints `newMintedAmount` credit + debit; emits the new `BondMint` vault and pins the new credit to a witness destination (typically the maker buying it via the swap). |
 
 ```
-Tx 1 (open new + sell new credit, atomic on-chain):
+Single-tx atomic roll:
   inputs:
-    - new pool (state)
-    - swap order(s) on non_interactive_swap matching the roll size
-    - borrower SingleSig sats for new collateral (or sourced separately)
+    - old BondMint vault (collateral + mintedAmount old debit)
+    - old RepaymentPool
+    - new RepaymentPool
+    - maker swap UTXO (non_interactive_swap providing USDT)
   outputs:
-    - new pool (state advanced: issue)
-    - new credit → swap-fill destination (the new lender receives credit)
-    - USDT → borrower SingleSig (the bridge cash from the swap fill)
-    - new BondMint vault (newCollateral + newAmount debit)
-
-Tx 2 (close old position):
-  inputs:
-    - borrower SingleSig USDT (from Tx 1)
-    - old BondMint vault
-    - old pool (state)
-  outputs:
-    - old pool (state advanced: acceptRepayment)
-    - old vault's collateral sats → borrower SingleSig
+    - old pool re-created (usdt += discharge, totalDebit -= oldMintedAmount)
+    - new pool re-created (totalCredit + newMintedAmount, totalDebit + newMintedAmount)
+    - new BondMint vault (migrated collateral + newMintedAmount new debit)
+    - new credit → maker (delivered via the swap fill)
+    - swap residual (if partial fill)
 ```
 
-After Tx 2 the borrower has migrated their position from maturity H₁ to H₂.
-Net capital required: zero (the order book provides the USDT bridge); net
-collateral movement: from old to new, plus whatever new collateral the
-borrower added in Tx 1.
+**Net flows.** Maker's USDT flows into the OLD pool's recreated state
+(discharging the old obligation). The borrower's COLLATERAL migrates
+atomically from the old vault input into the new vault output. The borrower
+never holds raw USDT mid-roll; they bring no new sats; the order book
+provides the USDT counterparty. Their cost is the market discount on the
+new credit (typical: ~1–5%, depending on term and risk).
 
-If the borrower wants to **reuse** the old vault's collateral as the new
-vault's collateral, they need a brief secondary capital source for Tx 1's
-new vault (e.g. a flashloan, or a position-rolling assistant), then Tx 2
-returns the old collateral to settle. Atomic single-tx loan roll is a
-follow-up (E5 in §Follow-ups) requiring multi-covenant tx composition
-machinery that the Arkade DSL does not currently expose.
+**Why it works under one tx.** Each new function pins its outputs at
+WITNESS-supplied indices (`outIdxPool`, `outIdxVault`, `outIdxCredit`)
+rather than the hard-coded `output[0]` used by the issuance/settlement
+functions. That removes the cross-covenant index conflict (both pools
+wanting "their" output[0]) that previously blocked composition. The
+underlying compiler primitive — `tx.outputs[witnessIdx].scriptPubKey ==
+new Contract(...)` — works the same way as the witness-indexed input
+lookups (`vaultIdx`, `poolIdx`) the contract already uses.
+
+**Safety.** rollOut and rollIn each enforce their own pool's invariants
+independently:
+
+- rollOut: old pool's USDT must grow by ≥ `oldMintedAmount` (the obligation
+  is actually discharged) and the old vault's debit must be burned
+  **exactly** (no batched seizure of extra vaults — see §"Strict-burn invariant").
+- rollIn: oracle-priced over-collateralisation, dual-mint gated by the new
+  pool's control assets, borrower signature for consent on the new debt.
+- BondMint.roll: borrower signature for consent on collateral release.
+
+If the borrower wanted a two-tx variant (open new vault separately, then
+acceptRepayment to close old), they still can — it just isn't necessary.
 
 ---
 
@@ -297,6 +315,27 @@ machinery that the Arkade DSL does not currently expose.
 | **Oracle correctness** | `issue`, `liquidate`, and `acceptAuction` verify an oracle-signed price (`ticker || price || time` → `checkSigFromStack(sig, oraclePk, sha256(msg))` + freshness check). | A wrong oracle price corrupts origination (over-/under-collateralisation), the margin-call trigger, AND auction proceeds. Mitigate with multisig or threshold oracle. |
 | **Arkade cooperative path** | `serverSig` co-signs the off-chain cooperative spend. | Standard Arkade liveness assumption. Unilateral fallback via CSV-timelocked exit variant. |
 | **Server front-running on settlement** | The Arkade server co-signs every cooperative-path tx and sees both `liquidate` and `acceptAuction` txs before relaying them. Because neither requires an auctioneer signature (`auctioneerPk` is a witness pubkey), the server can refuse to co-sign a third party's settlement tx and submit its own with `auctioneerPk` set to a server-controlled key — capturing the `auctionDiscountBps` spread on every margin call and every default. | Mitigated, not eliminated, by the unilateral exit path: after `<exit>` blocks an auctioneer can broadcast on-chain bypassing the server. Within the cooperative window the server has a financial incentive to extract this spread; the magnitude is bounded by `auctionDiscountBps × (defaulted + margin-called) collateral-value` per pool. Acceptable for an MVP with a trusted operator; a self-sovereign deployment runs its own server or keeps `auctionDiscountBps` small enough that the extraction surface is negligible. |
+
+### Strict-burn invariant
+
+Every settlement-side debit-burn check uses **strict equality**
+(`sumInputs == sumOutputs + N`), never a lower bound (`>=`). This is what
+prevents multi-vault batching attacks: an attacker who tried to co-spend
+the legitimate vault input the pool function processes PLUS extra vault
+inputs would see the global debit delta exceed any single `mintedAmount`,
+and each individual function's strict-equality burn check would fail. The
+pool function only accounts for ONE vault per call, so the legitimate
+single-vault settlement satisfies `delta == mintedAmount` exactly; any
+batched extra collateral seizure fails closed before it reaches the
+output-pin phase.
+
+The same `==` invariant is enforced symmetrically on the vault-side burn
+checks (`BondMint.repay`, `BondMint.liquidate`, `BondMint.auction`,
+`BondMint.roll`) and on the pool-side burn checks (`acceptRepayment`,
+`liquidate`, `acceptAuction`, `rollOut`, `redeem`). A regression test
+(`test_all_burn_checks_are_strict_equality`) source-greps the contract
+files on every CI run and fails if any burn check ever drifts back to a
+loose lower bound.
 
 ---
 
@@ -389,7 +428,7 @@ execute. Inline `// FOLLOW-UP:` notes are at the affected sites.
 | **E2** | Per-holder redemption receipt. | A credit holder who wants to lock in their entitlement BEFORE the redeem phase opens has no on-chain way to do so today. Useful when the auction window is long or the holder is offline. | Add a `RedemptionReceipt` covenant and a `RepaymentPool.lock(amount, holderPk)` (auction-window-gated) that mints a single-owner receipt UTXO representing the holder's deferred claim. |
 | **E3** | Explicit `finalize` snapshot. | The current design's redemption rate is fixed in practice (no late USDT additions can occur in the redeem phase). An explicit `finalize` would make the snapshot immutable in the pool state, hardening against future changes that re-open the auction phase. | One-shot `finalize` callable by anyone post-window; sets immutable `maturedTotalCredit`, `maturedTotalUsdt`; `redeem` then uses those. |
 | **E4** | Configurable dust threshold. | Borrower-excess output is hard-coded to `>= 330` sats. If Bitcoin's dust policy changes or the deployer wants stricter/looser, the contract must be edited. | Add `dustThreshold` constructor param; use `if (excess >= dustThreshold)` instead. |
-| **E5** | Atomic single-tx loan roll. | The documented loan-roll pattern is two transactions, which exposes the borrower to a brief window of holding both positions (or requires temporary capital to reuse old collateral). A single-tx atomic roll would compose new-pool `issue` + old-pool `acceptRepayment` + swap fill in one transaction. | Blocked by Arkade's single-output-index-per-covenant idiom: each pool function expects `output[0]` = self-recreation, and two covenants can't share index 0. Either extend the DSL with a multi-covenant output-discovery primitive, or write a meta-orchestrator covenant that proxies both pool calls and pins outputs to match. |
+| **E5** | ~~Atomic single-tx loan roll~~ — **WIRED** (commit history). | Implemented via three new functions (`BondMint.roll`, `RepaymentPool.rollOut`, `RepaymentPool.rollIn`) using witness output indices to compose with a `non_interactive_swap` fill in one tx. See §Loan roll. | — |
 
 ### Time-axis clarity
 

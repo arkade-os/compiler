@@ -37,7 +37,8 @@ fn test_bond_mint_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "BondMint");
     // 3 functions (repay, liquidate, auction) x 2 variants = 6
-    assert_eq!(output.functions.len(), 6, "expected 6 functions");
+    // 4 functions (repay, liquidate, auction, roll) × 2 variants = 8
+    assert_eq!(output.functions.len(), 8, "expected 8 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     for id in ["debitAssetId", "debitCtrlId"] {
@@ -159,9 +160,62 @@ fn test_auction_is_permissionless_and_phased() {
 }
 
 #[test]
+fn test_roll_is_borrower_authorized_premaurity_pool_cospent() {
+    // ROLL — atomic with RepaymentPool.rollOut on the OLD pool and
+    // RepaymentPool.rollIn on the NEW (next-maturity) pool. This script
+    // authorises the spend (borrowerSig) + burns the old debit + verifies
+    // the genuine old pool is co-spent (debitCtrlId lookup) + enforces
+    // pre-maturity. It does NOT pin any output — outputs are claimed by
+    // the paired rollOut/rollIn/swap covenants at their witness-supplied
+    // indices.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "roll");
+    assert!(
+        asm.contains(OP_INSPECTINASSETLOOKUP),
+        "roll verifies the genuine old pool is co-spent via debitCtrlId"
+    );
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "roll burns the old debit"
+    );
+    assert!(
+        asm.contains(OP_LESSTHAN),
+        "roll gated on tx.time < maturity"
+    );
+    assert!(asm.contains(OP_CHECKSIG), "roll needs borrower sig");
+
+    // No output pin: this function intentionally leaves all outputs free for
+    // the paired pool functions on either side of the roll.
+    assert!(
+        !asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "roll must NOT pin any output's scriptPubKey — that's rollOut/rollIn's job"
+    );
+    assert!(
+        !asm.contains(OP_INSPECTOUTPUTVALUE),
+        "roll must NOT pin any output's value — same reason"
+    );
+
+    let ws = witness_names(&output, "roll");
+    let user_sigs: Vec<&String> = ws
+        .iter()
+        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
+        .collect();
+    assert_eq!(
+        user_sigs.len(),
+        1,
+        "roll must require exactly one user signature (borrower's), got: {ws:?}"
+    );
+    assert!(
+        user_sigs[0].to_lowercase().contains("borrower"),
+        "the sole user signature must be the borrower's, got: {:?}",
+        user_sigs[0]
+    );
+}
+
+#[test]
 fn test_exit_variant_is_unilateral_fallback() {
     let output = compile(CODE).expect("compilation failed");
-    for name in ["repay", "liquidate", "auction"] {
+    for name in ["repay", "liquidate", "auction", "roll"] {
         let asm = asm_variant(&output, name, false);
         assert!(
             asm.contains(OP_CHECKSEQUENCEVERIFY),

@@ -55,7 +55,9 @@ fn test_repayment_pool_compiles() {
     assert_eq!(output.name, "RepaymentPool");
     // 5 functions (issue, acceptRepayment, liquidate, acceptAuction, redeem)
     // × 2 variants = 10
-    assert_eq!(output.functions.len(), 10, "expected 10 functions");
+    // 7 functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
+    // acceptAuction, redeem) × 2 variants = 14
+    assert_eq!(output.functions.len(), 14, "expected 14 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     for id in [
@@ -88,6 +90,51 @@ fn test_repayment_pool_compiles() {
         names.contains(&"initRatioBps"),
         "initRatioBps must be a constructor parameter"
     );
+}
+
+#[test]
+fn test_all_burn_checks_are_strict_equality() {
+    // SECURITY-CRITICAL invariant: every settlement-side burn check must use
+    // strict equality (`sumInputs == sumOutputs + N`), never the loose lower
+    // bound `sumInputs >= sumOutputs + N`.
+    //
+    // The loose form allows multi-vault batching attacks: an attacker
+    // includes the legitimate vault input the pool function processes PLUS
+    // extra vault inputs, all burning their debit globally. With `>=`, every
+    // individual function's burn check passes vacuously because the GLOBAL
+    // delta exceeds any single mintedAmount. The pool only accounts for ONE
+    // vault, but the extra vaults' collateral can be redirected to the
+    // attacker (via output[1]=auctioneerPk pins), and the extra vaults'
+    // debit is silently extinguished without their mintedAmount being
+    // removed from totalDebitOutstanding. Net: collateral theft from
+    // borrowers of the extra vaults + tracked-debt desync that degrades the
+    // future redemption rate.
+    //
+    // Strict equality bounds the global delta to exactly the pool function's
+    // accounted amount, making multi-vault batching impossible to satisfy.
+    let src_pool = include_str!("../examples/bonds/repayment_pool.ark");
+    let src_vault = include_str!("../examples/bonds/bond_mint.ark");
+    for (path, src) in [
+        ("repayment_pool.ark", src_pool),
+        ("bond_mint.ark", src_vault),
+    ] {
+        for (i, line) in src.lines().enumerate() {
+            if line.contains("sumInputs") && (line.contains("debit") || line.contains("credit")) {
+                assert!(
+                    line.contains("=="),
+                    "{path}:{} uses a loose burn check (must be `==`, not `>=`): {}",
+                    i + 1,
+                    line.trim()
+                );
+                assert!(
+                    !line.contains(">="),
+                    "{path}:{} contains `>=` in a burn-check line: {}",
+                    i + 1,
+                    line.trim()
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -360,13 +407,147 @@ fn test_redeem_is_pro_rata_post_window() {
     // The post-window gate `require(tx.time >= maturity + auctionWindow)` is
     // what makes the redemption rate (usdtBalance / totalCreditOutstanding)
     // fixed and fair for all orderings — it is the keystone of the phased
-    // design. It lowers to the function's single OP_GREATERTHANOREQUAL (the
-    // four `> 0` value guards are OP_GREATERTHAN; asset lookups are *_64).
-    // Asserting exactly one means deleting the gate fails the test.
+    // design. The compiler lowers `tx.time >= redeemStart` to the dedicated
+    // Bitcoin time-lock opcode OP_CHECKLOCKTIMEVERIFY (not a generic >=),
+    // because that's exactly the "block height ≥ N" semantic. Asserting on
+    // its presence means deleting the gate fails the test.
     assert_eq!(
-        opcode_count(&output, "redeem", "OP_GREATERTHANOREQUAL"),
+        opcode_count(&output, "redeem", "OP_CHECKLOCKTIMEVERIFY"),
         1,
-        "redeem must gate on tx.time >= maturity + auctionWindow (post-window phase)"
+        "redeem must gate on tx.time >= maturity + auctionWindow (CLTV, post-window phase)"
+    );
+}
+
+#[test]
+fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
+    // ROLL OUT — on the OLD pool. Burns the old vault's debit, requires the
+    // pool's recreated USDT to grow by `expectedDischarge >= oldMintedAmount`,
+    // and uses witness output indices throughout so it composes with rollIn
+    // on the next-maturity pool and a non_interactive_swap fill in one tx.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "rollOut");
+    assert!(
+        asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
+        "rollOut validates the OLD BondMint at input[vaultIdx]"
+    );
+    assert!(
+        asm.contains(OP_INSPECTASSETGROUPSUM),
+        "rollOut burns the old debit"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "rollOut pins the pool recreation at outputs[outIdxPool]"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "rollOut verifies usdt + control retention on the recreated pool"
+    );
+    assert!(
+        asm.contains(OP_LESSTHAN),
+        "rollOut gated on tx.time < maturity (pre-maturity)"
+    );
+
+    // The discharge gate is `expectedDischarge >= oldMintedAmount` — a
+    // witness-to-witness comparison.
+    let ws = witness_names(&output, "rollOut");
+    assert!(
+        ws.iter().any(|w| w == "expectedDischarge"),
+        "expectedDischarge must be a witness, got: {ws:?}"
+    );
+    assert!(
+        ws.iter().any(|w| w == "outIdxPool"),
+        "outIdxPool must be a witness (variable output index), got: {ws:?}"
+    );
+
+    // No user signature: rollOut authorises the OLD pool spend by virtue of
+    // burning the vault's debit + receiving the discharge; the borrower's
+    // consent is enforced on the vault side (BondMint.roll).
+    let user_sigs: Vec<&String> = ws
+        .iter()
+        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
+        .collect();
+    assert!(
+        user_sigs.is_empty(),
+        "rollOut must not require any user signature (consent lives on the vault), got: {user_sigs:?}"
+    );
+}
+
+#[test]
+fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
+    // ROLL IN — on the NEW pool. Borrower-signed; oracle-priced
+    // over-collateralisation; mints credit + debit; pins the new BondMint
+    // vault + the credit destination + the pool recreation, all at witness
+    // output indices.
+    let output = compile(CODE).expect("compilation failed");
+    let asm = asm_of(&output, "rollIn");
+    assert!(
+        asm.contains(OP_CHECKSIGFROMSTACK),
+        "rollIn verifies oracle sig"
+    );
+    assert!(
+        asm.contains(OP_SHA256) && asm.contains(OP_CAT),
+        "rollIn rebuilds oracle msg"
+    );
+    assert!(
+        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        "rollIn computes collateralValue + origination ratio"
+    );
+    assert!(
+        asm.contains(OP_LESSTHANOREQUAL),
+        "rollIn enforces origination ratio (collateralValue >= required)"
+    );
+    assert!(
+        asm.contains(OP_FINDASSETGROUPBYASSETID) && asm.contains(OP_INSPECTASSETGROUPCTRL),
+        "rollIn mints credit + debit gated by their control assets"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "rollIn pins pool + credit + new-vault outputs"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTVALUE),
+        "rollIn locks the migrated collateral in the new vault"
+    );
+    assert!(
+        asm.contains(OP_CHECKSIG),
+        "rollIn needs borrower sig (consent)"
+    );
+
+    let ws = witness_names(&output, "rollIn");
+    for name in ["outIdxPool", "outIdxVault", "outIdxCredit"] {
+        assert!(
+            ws.iter().any(|w| w == name),
+            "{name} must be a witness (variable output index), got: {ws:?}"
+        );
+    }
+
+    // Exactly TWO user signatures: the oracle (price attestation) and the
+    // borrower (consent to the new obligation). No keeper, no maker sig.
+    let user_sigs: Vec<&String> = ws
+        .iter()
+        .filter(|w| w.to_lowercase().ends_with("sig") && w.as_str() != "serverSig")
+        .collect();
+    assert_eq!(
+        user_sigs.len(),
+        2,
+        "rollIn must have exactly two user sigs (oracle + borrower), got: {ws:?}"
+    );
+}
+
+#[test]
+fn test_roll_pair_enforces_both_threshold_invariants() {
+    // The deployment-safety invariants (initRatioBps > liqThresholdBps AND
+    // liqThresholdBps > 0) are re-checked in rollIn because rollIn is an
+    // independent issuance path. Without re-checking, a misconfigured pool
+    // that escaped issue could still mint vaults via rollIn.
+    let output = compile(CODE).expect("compilation failed");
+    let gt = opcode_count(&output, "rollIn", "OP_GREATERTHAN");
+    // 3 `> 0` value guards (newMintedAmount, newCollateral, oraclePrice) +
+    // 2 threshold invariants (initRatioBps > liqThresholdBps, liqThresholdBps > 0)
+    // = 5 OP_GREATERTHAN, same as issue.
+    assert_eq!(
+        gt, 5,
+        "rollIn must replicate issue's invariants (expected 5 OP_GREATERTHAN, found {gt})"
     );
 }
 
@@ -376,6 +557,8 @@ fn test_exit_variants_are_unilateral_fallback() {
     for name in [
         "issue",
         "acceptRepayment",
+        "rollOut",
+        "rollIn",
         "liquidate",
         "acceptAuction",
         "redeem",

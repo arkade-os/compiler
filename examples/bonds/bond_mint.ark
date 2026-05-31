@@ -5,7 +5,7 @@
 // `mintedAmount` credit + `mintedAmount` debit (1:1) by a borrower against
 // `collateral` sats, maturing at block height `maturity`.
 //
-// SETTLEMENT PATHS (three; all burn the vault's debit)
+// SETTLEMENT PATHS (four; all burn the vault's debit exactly)
 //   repay      — pre-maturity, borrower-signed. The borrower pays par USDT,
 //                takes their collateral back.
 //   liquidate  — pre-maturity MARGIN CALL, permissionless. Triggered when
@@ -13,27 +13,37 @@
 //                at the pool. Oracle-priced sale; collateral → auctioneer;
 //                USDT → pool. This is what keeps every vault in the pool
 //                covenant-thresholded healthy at every block — the invariant
-//                that makes credit tokens genuinely fungible (a lender doesn't
-//                need to know WHICH vault backs the credit they bought).
+//                that makes credit tokens genuinely fungible.
 //   auction    — post-maturity DEFAULT, permissionless, in the auction window.
 //                Same oracle-priced sale.
+//   roll       — pre-maturity, borrower-signed. Authorises migration of this
+//                vault to a NEXT-maturity pool in a single atomic tx (paired
+//                with RepaymentPool.rollOut on this pool and rollIn on the
+//                new pool, plus a non_interactive_swap fill that bridges the
+//                USDT discharge). See docs/bonds.md §Loan roll.
 //
 // PHASED TIMELINE
 //   [-, maturity)                              REPAY phase    vault.repay,
-//                                                             vault.liquidate
+//                                                             vault.liquidate,
+//                                                             vault.roll
 //   [maturity, maturity + auctionWindow)        AUCTION phase  vault.auction
 //   [maturity + auctionWindow, +)               REDEEM phase   no vault function
 //
 // PERMISSIONLESS SETTLEMENT
-//   The phased timeline plus the covenant invariants of each pool function
-//   guarantee the right pairing without privileged signatures:
-//     - vault.liquidate co-spent with pool.liquidate is the only viable
-//       pre-maturity pairing for permissionless seizure (vault.repay needs
-//       borrower sig; vault.auction's time gate is post-maturity; pool.issue
-//       and pool.acceptRepayment's covenant checks conflict with
-//       vault.liquidate's debit-burn / output-pin in any combined tx).
-//     - vault.auction co-spent with pool.acceptAuction is the only viable
-//       in-window pairing (other pool functions fail their time gates).
+//   Each settlement-side function's debit-burn check is STRICT equality
+//   (`sumInputs == sumOutputs + mintedAmount`), so an attacker cannot batch
+//   multiple vault inputs into one settlement tx: each vault's individual
+//   check requires the global debit delta to equal THAT vault's mintedAmount
+//   exactly, which fails closed for any multi-vault combination. The pool
+//   side enforces the same strict equality symmetrically.
+//
+//   Within the pre-maturity phase, the right pairing is enforced by
+//   per-function output-pin conflicts: vault.repay pins output[1] to the
+//   borrower; vault.liquidate pins output[1] to an auctioneer; vault.roll
+//   pins NO output (it just authorises the spend, and the paired rollIn
+//   takes the migrating collateral via its own pinned new-vault output at a
+//   witness index).
+//
 //   Auctioneer identity is a witness pubkey; they pin their own collateral
 //   destination by signing the tx they construct.
 //
@@ -70,7 +80,7 @@ contract BondMint(
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
-    require(debitGroup.sumInputs >= debitGroup.sumOutputs + mintedAmount, "debit not burned");
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value >= collateral, "collateral not returned");
     require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
@@ -88,7 +98,7 @@ contract BondMint(
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
-    require(debitGroup.sumInputs >= debitGroup.sumOutputs + mintedAmount, "debit not burned");
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
   }
@@ -106,8 +116,30 @@ contract BondMint(
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
-    require(debitGroup.sumInputs >= debitGroup.sumOutputs + mintedAmount, "debit not burned");
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+  }
+
+  // ROLL — borrower-signed authorisation to migrate this vault to a next-
+  // maturity pool. Pre-maturity, atomic with RepaymentPool.rollOut on the
+  // OLD pool (this vault's pool) and RepaymentPool.rollIn on the NEW pool.
+  // The borrower's signature is the consent gate; the old pool's rollOut
+  // enforces that the obligation is discharged (USDT inflow ≥ mintedAmount);
+  // the new pool's rollIn enforces that the new vault is properly
+  // collateralised. This script just authorises the spend and burns the
+  // old debit. The collateral input is released into the tx — the paired
+  // rollIn must claim it into a new BondMint output, or the tx fails closed.
+  //
+  //   output[0..]: free (rollOut + rollIn + swap pin their own outputs at
+  //                witness-supplied indices)
+  function roll(signature borrowerSig, int poolIdx) {
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
+    require(tx.time < maturity, "vault matured");
+
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
+
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
   }
 }
