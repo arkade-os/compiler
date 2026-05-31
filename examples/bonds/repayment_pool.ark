@@ -129,6 +129,10 @@ contract RepaymentPool(
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
+    // FOLLOW-UP: `collateral * oraclePrice` overflows int64 above ~92 BTC at
+    // a $1M BTC price; OP_MUL64 fails closed, so the ceiling is enforced —
+    // chunk issuance, or scale the price denominator down (e.g. 1e4 vs 1e8)
+    // when very large vaults are required.
     int collateralValue = collateral * oraclePrice / 100000000;
     int required = amount * initRatioBps / 10000;
     require(collateralValue >= required, "undercollateralized at issuance");
@@ -260,6 +264,9 @@ contract RepaymentPool(
     let dcGroup = tx.assetGroups.find(debitCtrlId);
     require(dcGroup.delta == 0, "debit control changed");
 
+    // FOLLOW-UP: same overflow ceiling as `issue` on `collateral * oraclePrice`;
+    // and `mintedAmount * 100000000` overflows above ~92 BTC of par. Both fail
+    // closed; chunked auctions or a rescaled price unit lift the cap.
     int collateralValue = collateral * oraclePrice / 100000000;
     int debitNext = totalDebitOutstanding - mintedAmount;
 
@@ -315,12 +322,23 @@ contract RepaymentPool(
   // ---------------------------------------------------------------------------
   function redeem(int amount, pubkey holderPk, signature holderSig) {
     require(amount > 0, "zero redemption");
+    // FOLLOW-UP: phased finalize. Today acceptAuction and redeem are both
+    // gated on `tx.time >= maturity`, so a credit holder who redeems before
+    // the last auction completes locks in a lower rate than late redeemers.
+    // The fix is a `finalize` function gated on `tx.time >= maturity + auctionWindow`
+    // that snapshots usdtBalance + totalCreditOutstanding into immutable
+    // pool fields, after which acceptAuction is rejected and redeem uses the
+    // snapshot. Add `auctionWindow: int` to the constructor when wiring this.
     require(tx.time >= maturity, "not yet matured");
     require(checkSig(holderSig, holderPk), "invalid holder sig");
     require(amount <= totalCreditOutstanding, "exceeds outstanding");
     require(totalCreditOutstanding > 0, "no credit outstanding");
     require(usdtBalance > 0, "pool empty");
 
+    // FOLLOW-UP: `amount * usdtBalance` overflows int64 at large pool sizes
+    // (e.g. 1e9 USDT-base × 1e9 credit). Fails closed; chunk redemptions or
+    // switch the pro-rata math to do the division before the multiplication
+    // (with the precision loss that implies).
     int payout = amount * usdtBalance / totalCreditOutstanding;
     require(payout > 0, "payout rounds to zero");
 

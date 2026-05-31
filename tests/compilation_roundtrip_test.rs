@@ -191,8 +191,8 @@ fn roundtrip_payment_auth() {
 
 #[test]
 fn roundtrip_repayment_pool() {
-    let output = compile_example("lending/repayment_pool.ark");
-    assert_output_invariants(&output, "lending/repayment_pool.ark");
+    let output = compile_example("bonds/repayment_pool.ark");
+    assert_output_invariants(&output, "bonds/repayment_pool.ark");
     assert_eq!(output.name, "RepaymentPool");
     // 4 functions × 2 variants = 8
     assert_eq!(output.functions.len(), 8);
@@ -200,8 +200,8 @@ fn roundtrip_repayment_pool() {
 
 #[test]
 fn roundtrip_bond_mint() {
-    let output = compile_example("lending/bond_mint.ark");
-    assert_output_invariants(&output, "lending/bond_mint.ark");
+    let output = compile_example("bonds/bond_mint.ark");
+    assert_output_invariants(&output, "bonds/bond_mint.ark");
     assert_eq!(output.name, "BondMint");
     // 2 functions × 2 variants = 4
     assert_eq!(output.functions.len(), 4);

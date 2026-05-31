@@ -4,7 +4,7 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
 };
 
-const CODE: &str = include_str!("../examples/lending/bond_mint.ark");
+const CODE: &str = include_str!("../examples/bonds/bond_mint.ark");
 
 fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String {
     asm_variant(output, name, true)

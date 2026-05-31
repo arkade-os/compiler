@@ -6,7 +6,7 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTPUTVALUE, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL64, OP_SHA256,
 };
 
-const CODE: &str = include_str!("../examples/lending/repayment_pool.ark");
+const CODE: &str = include_str!("../examples/bonds/repayment_pool.ark");
 
 fn asm_of(output: &arkade_compiler::models::ContractJson, name: &str) -> String {
     asm_variant(output, name, true)
@@ -220,7 +220,7 @@ fn test_repayment_pool_cli() {
     let dir = tempdir().unwrap();
     fs::write(
         dir.path().join("bond_mint.ark"),
-        include_str!("../examples/lending/bond_mint.ark"),
+        include_str!("../examples/bonds/bond_mint.ark"),
     )
     .unwrap();
     let input = dir.path().join("repayment_pool.ark");
