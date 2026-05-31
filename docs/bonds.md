@@ -425,7 +425,8 @@ These are deliberate properties of the design, not deferred work:
 
 - **One pool per maturity.** Liquidity fragmentation is a feature, not a bug; secondary markets (via the order book) compose multiple maturities into the desired yield curve.
 - **`maturity` and `auctionWindow` immutable.** The whole product is a fixed-term bond; making them mutable would re-introduce a privileged role.
-- **Maturity-only auction (no pre-maturity liquidation).** See §"Why maturity-only auction" above.
+- **Both margin call AND auction (not one or the other).** Margin call closes insolvent vaults pre-maturity to preserve credit-token fungibility; auction closes defaulted vaults post-maturity. See §"Margin call vs. auction (solvency vs. default)" above — Dmitri-style 1:1 lending could drop margin call (each lender bears their own counterparty risk) but this pooled/fungible design cannot.
+- **No partial liquidation.** `liquidate` closes the WHOLE vault; there is no Aave/Morpho-style close factor. Documented as a sharp edge; a partial-liquidation extension is follow-up E6 (not enumerated above; would parallel partial repays E1).
 
 ---
 
