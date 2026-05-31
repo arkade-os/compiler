@@ -54,7 +54,7 @@
 //      times default fraction); the operational-trustlessness purchase.
 //   Other surfaces enumerated as follow-ups:
 //   2. Origination fee at issue (recommended for protocol revenue).
-//   3. Claim/redemption fee.
+//   3. Redemption fee at redeem.
 //   4. Order-book fee in non_interactive_swap.
 
 import "bond_mint.ark";
@@ -66,7 +66,7 @@ options {
 
 contract RepaymentPool(
   bytes32 usdtAssetId,
-  bytes32 creditAssetId,         // fungible per-maturity credit (lender claim)
+  bytes32 creditAssetId,         // fungible per-maturity credit (lender entitlement)
   bytes32 creditCtrlId,          // control asset gating credit mint
   bytes32 debitAssetId,          // fungible per-maturity debit (borrower obligation)
   bytes32 debitCtrlId,           // control asset gating debit mint
@@ -284,7 +284,7 @@ contract RepaymentPool(
     }
   }
 
-  // CLAIM — after the auction window closes, credit holders burn credit for
+  // REDEEM — after the auction window closes, credit holders burn credit for
   // pro-rata USDT. Rate `usdtBalance / totalCreditOutstanding` is fixed in
   // this phase (no auctions add USDT, no issuances mint credit), so the rate
   // is fair for every redeem ordering.
