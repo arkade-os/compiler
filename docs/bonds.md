@@ -261,8 +261,9 @@ collateral and the health-call trigger (`liqThresholdBps`, e.g. 11000 =
 the more capital-efficient the loan but the more frequent the margin calls
 on volatile collateral.
 
-**Enforced deployment invariants.** `issue` requires both
-`initRatioBps > liqThresholdBps` and `liqThresholdBps > 0`:
+**Enforced deployment invariants.** `issue` (and the alternate issuance
+entry `rollIn`) require FOUR checks on the pool's constructor params before
+any vault can be created:
 
 - `initRatioBps > liqThresholdBps` — without it a deployer could set
   `liqThresholdBps >= initRatioBps`, in which case a vault minted at the
@@ -274,9 +275,33 @@ on volatile collateral.
   `collateralValue < healthFloor` can never hold and the margin call could
   never fire, silently disabling the health invariant that backs credit
   fungibility.
+- `auctionWindow > 0` — a zero-length auction window collapses the
+  `tx.time >= maturity AND tx.time < maturity` gate to the empty set, so no
+  defaulted vault can ever be settled via `acceptAuction`. `mintedAmount`
+  stays in `totalDebitOutstanding` forever and credit holders absorb 100% of
+  every default. Same class of deployment invariant as the ratio checks.
+- `auctionDiscountBps ∈ [0, 10000)` — an out-of-range discount bricks every
+  `liquidate` and `acceptAuction` at the runtime check, leaving the pool
+  unsettleable. The settlement functions also revalidate the bound at
+  runtime (defence-in-depth), but pool issuance MUST fail closed up-front
+  rather than silently producing an unsettleable book.
 
-Both checks live in `issue` (one-time per issuance, not a hot path), so a
-misconfigured pool can never originate a vault at all.
+All four checks live in both `issue` AND `rollIn` (one-time per issuance,
+not a hot path). A misconfigured pool can never originate a vault at all,
+through either issuance entry. Regression tests:
+`test_issue_enforces_deployment_invariants` and
+`test_roll_pair_enforces_all_deployment_invariants`.
+
+**Ceiling division on the origination floor.** `issue` and `rollIn` use
+`required = (amount * initRatioBps + 9999) / 10000` (ceiling), not
+`amount * initRatioBps / 10000` (floor). Floor rounding lets dust-sized
+issuances bypass collateralisation entirely (`amount=1, initRatioBps=14999`
+floors to `required=1`, so 1 sat of collateral mints 1 credit + 1 debit).
+Ceiling rounds UP so `1 * 14999 / 10000` → 2, breaking the dust-mint shape.
+Regression test: `test_issue_uses_ceiling_division_on_required_collateral`.
+A configurable `minAmount` / `minCollateral` floor is follow-up R1 (the
+ceiling alone is not enough to make every very-small vault economically
+liquidatable, but it does close the unit-boundary hole).
 
 ---
 
@@ -442,8 +467,8 @@ exact lines where each one would land.
 
 | # | Item | Why | Sketch |
 |---|---|---|---|
-| **R1** | Add `minCollateral` + `minAmount` constructor params; reject dust-sized issuances. | `issue` today accepts `collateral=1, amount=1`. The `required = amount * initRatioBps / 10000` collateralisation check rounds DOWN, so for `amount=1, initRatioBps=9999` the required floor is silently zero. An attacker can mint 1 credit + 1 debit for 1 sat, polluting the auction window with unprofitable defaults. | Add two int constructor params; `require(amount >= minAmount && collateral >= minCollateral)` at top of `issue`. |
-| **R2** | Ceiling division on the origination collateral check. | Mitigates the rounding floor at the unit boundary even without R1's explicit minimums. | Replace `required = amount * initRatioBps / 10000` with `required = (amount * initRatioBps + 9999) / 10000`. |
+| **R1** | Add `minCollateral` + `minAmount` constructor params; reject dust-sized issuances. | Even with R2 ceiling division landed, very small but non-dust amounts can still produce vaults that are uneconomic to liquidate (auctioneer gas > spread). A configurable floor is the principled fix. | Add two int constructor params; `require(amount >= minAmount && collateral >= minCollateral)` at top of `issue`. |
+| **R2** | ~~Ceiling division on the origination collateral check~~ — **WIRED**. | `required = (amount * initRatioBps + 9999) / 10000` lands in both `issue` and `rollIn` (assert via `test_issue_uses_ceiling_division_on_required_collateral`). Closes the `amount=1, initRatioBps=14999` floor-rounding hole where 1 sat of collateral minted 1 credit + 1 debit. | — |
 | **R3** | Final-redemption residue path. | `redeem`'s `require(payout > 0)` rejects dust redemptions; the last few USDT are stranded forever once they round below the per-unit rate. | Add a `redeemAll(holderPk, holderSig)` branch gated on `amount == totalCreditOutstanding` that pays the full residual `usdtBalance` regardless of payout rounding. |
 | **R4** | ASM-level assertion of the strict time gate on `redeem`. | `test_redeem_is_pro_rata_post_window` currently relies on the constructor-param surface, not the gate's actual ASM placement. A refactor removing the gate would not be caught by the test. | Pattern-match the comparison sequence in `redeem`'s ASM that proves `tx.time >= maturity + auctionWindow` is enforced. |
 

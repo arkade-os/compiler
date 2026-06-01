@@ -237,28 +237,122 @@ fn test_issue_is_oracle_priced_and_dual_mints() {
 }
 
 #[test]
-fn test_issue_enforces_liq_threshold_invariants() {
-    // Deployment-safety invariants: issue must reject a pool where the
-    // margin-call threshold is not strictly below the origination ratio, or is
-    // non-positive — otherwise a freshly-minted vault at minimum collateral
-    // would be immediately liquidatable (guaranteed borrower loss), or the
-    // health gate would be inverted by a negative threshold.
+fn test_issue_enforces_deployment_invariants() {
+    // Deployment-safety invariants: issue must reject a misconfigured pool at
+    // origination, before any vault is created. Specifically:
+    //   - initRatioBps > liqThresholdBps: a vault minted at the minimum
+    //     collateral must not be immediately liquidatable.
+    //   - liqThresholdBps > 0: a non-positive threshold inverts the health
+    //     gate (every vault liquidatable, or none).
+    //   - auctionWindow > 0: a zero-length auction window means no defaulted
+    //     vault can ever be settled (`tx.time >= maturity && tx.time <
+    //     maturity` is empty), so totalDebitOutstanding accumulates forever.
+    //   - auctionDiscountBps ∈ [0, 10000): an out-of-range discount bricks
+    //     every liquidate + acceptAuction at the runtime check, leaving the
+    //     pool unsettleable.
     //
     // issue carries exactly five strict `>` comparisons that lower to
-    // OP_GREATERTHAN: amount > 0, collateral > 0, oraclePrice > 0, the invariant
-    // initRatioBps > liqThresholdBps, and liqThresholdBps > 0. The bare `> 0`
-    // guards account for 3; the two threshold invariants add 2. Asserting the
-    // exact count (5) means removing EITHER threshold invariant fails the test —
-    // a `>= 4` lower bound would let one be silently deleted.
+    // OP_GREATERTHAN sites: amount > 0, collateral > 0, oraclePrice > 0,
+    // initRatioBps > liqThresholdBps, liqThresholdBps > 0, auctionWindow > 0.
+    // Total: 3 `> 0` value guards + 3 deployment invariants = 6. Asserting
+    // the EXACT count means removing any single invariant fails the test —
+    // a `>= 5` lower bound would let one be silently deleted.
     // (OP_GREATERTHANOREQUAL / *_64 are distinct opcodes, not counted here.)
     let output = compile(CODE).expect("compilation failed");
     let gt = opcode_count(&output, "issue", "OP_GREATERTHAN");
     assert_eq!(
-        gt, 5,
-        "issue must carry BOTH initRatioBps > liqThresholdBps AND \
-         liqThresholdBps > 0 (expected exactly 5 OP_GREATERTHAN incl. the 3 \
+        gt, 6,
+        "issue must carry initRatioBps > liqThresholdBps + liqThresholdBps > 0 \
+         + auctionWindow > 0 (expected exactly 6 OP_GREATERTHAN incl. the 3 \
          `> 0` value guards, found {gt})"
     );
+
+    // Targeted check for `auctionDiscountBps >= 0` — must anchor to the
+    // specific guard's tokens, not just count any `>=` opcode. arkanaai O1
+    // and CodeRabbit's review both flagged that a bare `gte >= 1` floor on
+    // OP_GREATERTHANOREQUAL64 would still pass if the discount guard were
+    // deleted, because issue() emits many asset-amount `>=` checks
+    // (`output.assets.lookup(...) >= N`) that satisfy that floor.
+    //
+    // The compiler emits the comparison block with `<auctionDiscountBps>`,
+    // `OP_GREATERTHANOREQUAL`, and `0` clustered within a 3-token window
+    // (display order is `<auctionDiscountBps> OP_GREATERTHANOREQUAL 0` in
+    // the current emitter — execution order may differ; we accept any
+    // permutation to stay robust to that).
+    assert!(
+        contains_window_3(
+            &output,
+            "issue",
+            "<auctionDiscountBps>",
+            "OP_GREATERTHANOREQUAL",
+            "0"
+        ),
+        "issue must carry the `auctionDiscountBps >= 0` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_GREATERTHANOREQUAL, 0 \
+         within 3 consecutive ASM tokens of `issue`)"
+    );
+    assert!(
+        contains_window_3(
+            &output,
+            "issue",
+            "<auctionDiscountBps>",
+            "OP_LESSTHAN",
+            "10000"
+        ),
+        "issue must carry the `auctionDiscountBps < 10000` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_LESSTHAN, 10000 within \
+         3 consecutive ASM tokens of `issue`)"
+    );
+}
+
+/// True iff the function `name`'s server-variant ASM contains three given
+/// tokens in any order within a 3-token sliding window. Used for targeted
+/// regression checks where the compiler may emit a comparison's operands
+/// and opcode in a non-postfix display order — what matters is adjacency,
+/// not exact sequence.
+fn contains_window_3(
+    output: &arkade_compiler::models::ContractJson,
+    name: &str,
+    a: &str,
+    b: &str,
+    c: &str,
+) -> bool {
+    let tokens = asm_tokens(output, name);
+    if tokens.len() < 3 {
+        return false;
+    }
+    let target: std::collections::BTreeSet<&str> = [a, b, c].into_iter().collect();
+    tokens.windows(3).any(|w| {
+        let s: std::collections::BTreeSet<&str> = w.iter().map(|t| t.as_str()).collect();
+        s == target
+    })
+}
+
+#[test]
+fn test_issue_uses_ceiling_division_on_required_collateral() {
+    // Dust-issuance defence: the required-collateral floor is computed via
+    // CEILING division — `(amount * initRatioBps + 9999) / 10000` — not the
+    // naive `amount * initRatioBps / 10000`. Without ceiling, an attacker
+    // can mint 1 credit + 1 debit for 1 sat of collateral (amount=1,
+    // initRatioBps=14999 → required floors to 1), then flood the auction
+    // window with thousands of dust defaults that are unprofitable for
+    // auctioneers to settle.
+    //
+    // The signature of the ceiling form in the emitted ASM is the literal
+    // 9999 pushed before the OP_ADD64 that precedes the OP_DIV64. Asserting
+    // on the presence of `9999` as a token in both issue + rollIn locks in
+    // the fix at the ASM level — a regression to floor division (or to
+    // a different bias like + 5000) trips this test.
+    let output = compile(CODE).expect("compilation failed");
+    for fn_name in ["issue", "rollIn"] {
+        let tokens = asm_tokens(&output, fn_name);
+        assert!(
+            tokens.iter().any(|t| t == "9999"),
+            "{fn_name} must use ceiling division on the required-collateral \
+             floor (expected literal `9999` token in ASM; absent means \
+             dust-issuance defence regressed). Tokens: {tokens:?}"
+        );
+    }
 }
 
 #[test]
@@ -628,19 +722,48 @@ fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
 }
 
 #[test]
-fn test_roll_pair_enforces_both_threshold_invariants() {
-    // The deployment-safety invariants (initRatioBps > liqThresholdBps AND
-    // liqThresholdBps > 0) are re-checked in rollIn because rollIn is an
-    // independent issuance path. Without re-checking, a misconfigured pool
-    // that escaped issue could still mint vaults via rollIn.
+fn test_roll_pair_enforces_all_deployment_invariants() {
+    // rollIn is an alternate issuance entry and must enforce the SAME
+    // deployment-safety invariants as issue (initRatioBps > liqThresholdBps,
+    // liqThresholdBps > 0, auctionWindow > 0, auctionDiscountBps in
+    // [0, 10000)). Without these re-checks a misconfigured pool that
+    // somehow escaped issue could still mint fresh vaults via rollIn.
     let output = compile(CODE).expect("compilation failed");
     let gt = opcode_count(&output, "rollIn", "OP_GREATERTHAN");
     // 3 `> 0` value guards (newMintedAmount, newCollateral, oraclePrice) +
-    // 2 threshold invariants (initRatioBps > liqThresholdBps, liqThresholdBps > 0)
-    // = 5 OP_GREATERTHAN, same as issue.
+    // 3 deployment invariants (initRatioBps > liqThresholdBps,
+    // liqThresholdBps > 0, auctionWindow > 0) = 6 OP_GREATERTHAN, matching
+    // issue.
     assert_eq!(
-        gt, 5,
-        "rollIn must replicate issue's invariants (expected 5 OP_GREATERTHAN, found {gt})"
+        gt, 6,
+        "rollIn must replicate issue's invariants (expected 6 OP_GREATERTHAN, found {gt})"
+    );
+    // Targeted check for `auctionDiscountBps >= 0` AND `< 10000` — see
+    // the parallel test in `test_issue_enforces_deployment_invariants` for
+    // the rationale (arkanaai O1 / CodeRabbit review).
+    assert!(
+        contains_window_3(
+            &output,
+            "rollIn",
+            "<auctionDiscountBps>",
+            "OP_GREATERTHANOREQUAL",
+            "0"
+        ),
+        "rollIn must carry the `auctionDiscountBps >= 0` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_GREATERTHANOREQUAL, 0 \
+         within 3 consecutive ASM tokens of `rollIn`)"
+    );
+    assert!(
+        contains_window_3(
+            &output,
+            "rollIn",
+            "<auctionDiscountBps>",
+            "OP_LESSTHAN",
+            "10000"
+        ),
+        "rollIn must carry the `auctionDiscountBps < 10000` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_LESSTHAN, 10000 within \
+         3 consecutive ASM tokens of `rollIn`)"
     );
 }
 
