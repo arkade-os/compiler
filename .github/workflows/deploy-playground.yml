@@ -45,7 +45,7 @@ jobs:
         run: ./playground/generate_contracts.sh
 
       - name: Build WASM package
-        run: wasm-pack build --target web --out-dir playground/pkg --features wasm
+        run: wasm-pack build --target web --out-dir playground/pkg -- --features wasm
 
       - name: Clean up WASM package artifacts
         run: |

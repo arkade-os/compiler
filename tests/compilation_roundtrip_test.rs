@@ -189,6 +189,25 @@ fn roundtrip_payment_auth() {
     assert_output_invariants(&output, "payment_auth.ark");
 }
 
+#[test]
+fn roundtrip_repayment_pool() {
+    let output = compile_example("bonds/repayment_pool.ark");
+    assert_output_invariants(&output, "bonds/repayment_pool.ark");
+    assert_eq!(output.name, "RepaymentPool");
+    // 7 functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
+    // acceptAuction, redeem) × 2 variants = 14
+    assert_eq!(output.functions.len(), 14);
+}
+
+#[test]
+fn roundtrip_bond_mint() {
+    let output = compile_example("bonds/bond_mint.ark");
+    assert_output_invariants(&output, "bonds/bond_mint.ark");
+    assert_eq!(output.name, "BondMint");
+    // 4 functions (repay, liquidate, auction, roll) × 2 variants = 8
+    assert_eq!(output.functions.len(), 8);
+}
+
 // ─── Cross-cutting invariant: scan ALL examples ───────────────────────────────
 
 /// Recursively collect all .ark files under a directory.
