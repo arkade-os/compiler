@@ -10,7 +10,25 @@
 //! unused by one binary (but used by another) would otherwise warn.
 #![allow(dead_code)]
 
-use arkade_compiler::models::ContractJson;
+use arkade_compiler::models::{AbiFunction, ContractJson};
+
+/// Locate a (name, server_variant) function or panic with a descriptive
+/// message. Centralised so every helper produces the same diagnostic when a
+/// test references a missing/renamed function.
+fn find_fn<'a>(output: &'a ContractJson, name: &str, server: bool) -> &'a AbiFunction {
+    output
+        .functions
+        .iter()
+        .find(|f| f.name == name && f.server_variant == server)
+        .unwrap_or_else(|| {
+            let known: Vec<String> = output
+                .functions
+                .iter()
+                .map(|f| format!("{}(server={})", f.name, f.server_variant))
+                .collect();
+            panic!("function {name} (server_variant={server}) not found; known variants: {known:?}")
+        })
+}
 
 /// The server-variant ASM of a function, joined into one searchable string.
 pub fn asm_of(output: &ContractJson, name: &str) -> String {
@@ -20,22 +38,19 @@ pub fn asm_of(output: &ContractJson, name: &str) -> String {
 /// The ASM of a specific (function, variant) pair, joined into one string.
 /// `server = true` selects the cooperative variant; `false` the exit variant.
 pub fn asm_variant(output: &ContractJson, name: &str, server: bool) -> String {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant == server)
-        .unwrap_or_else(|| panic!("{name} (server={server}) variant not found"))
-        .asm
-        .join(" ")
+    find_fn(output, name, server).asm.join(" ")
+}
+
+/// The ASM of a function's server variant as a token vector — for structural
+/// checks (e.g. "the operand immediately before OP_CHECKLOCKTIMEVERIFY must be
+/// <redeemStart>") that can't be done via substring search.
+pub fn asm_tokens(output: &ContractJson, name: &str) -> Vec<String> {
+    find_fn(output, name, true).asm.clone()
 }
 
 /// The witness-schema parameter names of a function's server variant.
 pub fn witness_names(output: &ContractJson, name: &str) -> Vec<String> {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant)
-        .unwrap()
+    find_fn(output, name, true)
         .witness_schema
         .iter()
         .map(|w| w.name.clone())
@@ -46,11 +61,7 @@ pub fn witness_names(output: &ContractJson, name: &str) -> Vec<String> {
 /// ASM. Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL"
 /// or "OP_GREATERTHANOREQUAL64".
 pub fn opcode_count(output: &ContractJson, name: &str, op: &str) -> usize {
-    output
-        .functions
-        .iter()
-        .find(|f| f.name == name && f.server_variant)
-        .unwrap()
+    find_fn(output, name, true)
         .asm
         .iter()
         .filter(|tok| tok.as_str() == op)

@@ -7,7 +7,7 @@ use arkade_compiler::opcodes::{
 };
 
 mod common;
-use common::{asm_of, asm_variant, opcode_count, user_signatures, witness_names};
+use common::{asm_of, asm_tokens, asm_variant, opcode_count, user_signatures, witness_names};
 
 const CODE: &str = include_str!("../examples/bonds/repayment_pool.ark");
 
@@ -74,39 +74,131 @@ fn test_all_burn_checks_are_strict_equality() {
     //
     // Strict equality bounds the global delta to exactly the pool function's
     // accounted amount, making multi-vault batching impossible to satisfy.
+    //
+    // Source-text grep. Matches any line containing `sumInputs` — the
+    // *only* use of `sumInputs` in either contract is for burn checks
+    // (debit, credit, or any future group), so the filter doesn't depend on
+    // the variable being named `debitGroup`/`creditGroup`. A refactor that
+    // renames the variable to e.g. `let g = tx.assetGroups.find(...)` is
+    // still caught because the access `g.sumInputs` is the matched token.
     let src_pool = include_str!("../examples/bonds/repayment_pool.ark");
     let src_vault = include_str!("../examples/bonds/bond_mint.ark");
+    let mut burn_check_lines = 0usize;
     for (path, src) in [
         ("repayment_pool.ark", src_pool),
         ("bond_mint.ark", src_vault),
     ] {
         for (i, line) in src.lines().enumerate() {
-            if line.contains("sumInputs") && (line.contains("debit") || line.contains("credit")) {
+            // Ignore comments (which legitimately discuss the historical
+            // `>=` form).
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("sumInputs") {
+                burn_check_lines += 1;
                 assert!(
                     line.contains("=="),
-                    "{path}:{} uses a loose burn check (must be `==`, not `>=`): {}",
+                    "{path}:{} uses a sumInputs check WITHOUT `==` (must be strict equality, never `>=`): {}",
                     i + 1,
                     line.trim()
                 );
                 assert!(
                     !line.contains(">="),
-                    "{path}:{} contains `>=` in a burn-check line: {}",
+                    "{path}:{} contains `>=` on a sumInputs line: {}",
                     i + 1,
                     line.trim()
                 );
             }
         }
     }
+    // Floor on burn-check coverage so this test fails CLOSED if someone
+    // refactors burn checks out entirely or moves them to a different
+    // expression shape that doesn't mention sumInputs. Current settlement
+    // surface: pool acceptRepayment + rollOut + liquidate + acceptAuction +
+    // redeem (5) + vault repay + liquidate + auction + roll (4) = 9.
+    assert!(
+        burn_check_lines >= 9,
+        "expected ≥ 9 sumInputs-burn-check lines across pool + vault (one per settlement function), saw {burn_check_lines} — the burn-check pattern may have been refactored into a shape this grep no longer detects."
+    );
+}
+
+#[test]
+fn test_pool_retains_debit_ctrl_in_every_function() {
+    // SECURITY: BondMint authenticates "genuine pool co-spent" only by
+    // `tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1` — no scriptPubKey
+    // reconstruction. The safety of every BondMint settlement therefore
+    // depends on the asset-registry invariant that NO RepaymentPool function
+    // ever lets debitCtrlId leak from its output[0] (or outIdxPool for
+    // variable-output functions).
+    //
+    // If a future function omits the `tx.outputs[*].assets.lookup(debitCtrlId)
+    // >= 1` retention check, the control asset can migrate into a malicious
+    // covenant that the BondMint will then accept as "the pool" on its next
+    // settlement, redirecting collateral to the attacker.
+    //
+    // This test asserts every function that writes to a pool output also
+    // performs the debitCtrlId retention check at the ASM level, by counting
+    // OP_INSPECTOUTASSETLOOKUP opcodes. Every pool-recreating function emits
+    // at least three: usdtAssetId balance + creditCtrlId retention +
+    // debitCtrlId retention. (issue, rollIn additionally check credit/debit
+    // delivery to the borrower output, so they emit more.)
+    let output = compile(CODE).expect("pool compilation failed");
+    let pool_recreating_fns = [
+        "issue",
+        "acceptRepayment",
+        "rollOut",
+        "rollIn",
+        "liquidate",
+        "acceptAuction",
+        "redeem",
+    ];
+    for fn_name in pool_recreating_fns {
+        let lookups = opcode_count(&output, fn_name, OP_INSPECTOUTASSETLOOKUP);
+        assert!(
+            lookups >= 3,
+            "function `{fn_name}` emits only {lookups} OP_INSPECTOUTASSETLOOKUP — at minimum it must check usdtAssetId balance + creditCtrlId retention + debitCtrlId retention on the recreated pool output, or BondMint pool-authentication breaks."
+        );
+    }
 }
 
 #[test]
 fn test_no_interest_rate_anywhere() {
+    // The bond market design is intentionally interest-rate-free: yield is the
+    // discount the market sets at credit-sale time. Adding ratePerSec /
+    // lastAccrual / interestBps / accrualRate-style state would silently
+    // change the contract's economic model.
+    //
+    // This test denies a CLASS of accrual-related identifiers (substring
+    // match, case-insensitive) rather than a hard-coded pair of names — so
+    // a future regression that re-adds interest accrual under any plausible
+    // name is caught.
     let output = compile(CODE).expect("compilation failed");
-    let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
-    assert!(
-        !names.contains(&"ratePerSec") && !names.contains(&"lastAccrual"),
-        "RepaymentPool must not carry interest-rate state, got: {names:?}"
-    );
+    let names: Vec<String> = output
+        .parameters
+        .iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
+    // Substring denylist for accrual-related concepts. Each entry should be
+    // a token that no legitimate non-interest field would contain.
+    const ACCRUAL_TOKENS: &[&str] = &[
+        "interest",
+        "accrual",
+        "accrue",
+        "ratepers", // ratePerSec, ratePerBlock, etc.
+        "apybps",
+        "apr",
+        "yieldrate",
+    ];
+    for tok in ACCRUAL_TOKENS {
+        for n in &names {
+            assert!(
+                !n.contains(tok),
+                "RepaymentPool must remain interest-rate-free; field '{n}' \
+                 contains accrual token '{tok}'. Full params: {names:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -363,23 +455,61 @@ fn test_redeem_is_pro_rata_post_window() {
     // The post-window gate `require(tx.time >= maturity + auctionWindow)` is
     // what makes the redemption rate (usdtBalance / totalCreditOutstanding)
     // fixed and fair for all orderings — it is the keystone of the phased
-    // design. The compiler lowers `tx.time >= redeemStart` to the dedicated
-    // Bitcoin time-lock opcode OP_CHECKLOCKTIMEVERIFY (not a generic >=),
-    // because that's exactly the "block height ≥ N" semantic. Asserting on
-    // its presence means deleting the gate fails the test.
+    // design. The compiler lowers `tx.time >= redeemStart` to
+    // OP_CHECKLOCKTIMEVERIFY (the dedicated Bitcoin time-lock opcode),
+    // because that's exactly the "block height ≥ N" semantic.
     assert_eq!(
         opcode_count(&output, "redeem", "OP_CHECKLOCKTIMEVERIFY"),
         1,
         "redeem must gate on tx.time >= maturity + auctionWindow (CLTV, post-window phase)"
+    );
+
+    // Verify the CLTV operand actually DERIVES FROM the contract's two
+    // time-axis constructor parameters: a future refactor that accidentally
+    // lowered `tx.time >= 0` (or any literal) to a CLTV would pass the
+    // opcode-count check above but bypass the gate semantically. Both
+    // `<maturity>` and `<auctionWindow>` placeholders must appear in the
+    // redeem ASM for the gate's operand to be the intended sum.
+    let tokens = asm_tokens(&output, "redeem");
+    assert!(
+        tokens.iter().any(|t| t == "<maturity>"),
+        "redeem CLTV operand must derive from maturity (placeholder missing)"
+    );
+    assert!(
+        tokens.iter().any(|t| t == "<auctionWindow>"),
+        "redeem CLTV operand must derive from auctionWindow (placeholder missing)"
+    );
+    // Structural check: the token IMMEDIATELY BEFORE OP_CHECKLOCKTIMEVERIFY
+    // must be the redeemStart let-binding placeholder — not a literal, not
+    // an unrelated placeholder. A refactor that accidentally locked CLTV to
+    // a literal (e.g. `tx.time >= 0`) would push something other than
+    // <redeemStart> here and fail the test.
+    let cltv_idx = tokens
+        .iter()
+        .position(|op| op == "OP_CHECKLOCKTIMEVERIFY")
+        .expect("OP_CHECKLOCKTIMEVERIFY missing");
+    assert!(cltv_idx > 0, "OP_CHECKLOCKTIMEVERIFY must have an operand");
+    let operand = &tokens[cltv_idx - 1];
+    assert_eq!(
+        operand, "<redeemStart>",
+        "CLTV operand must be the redeemStart let-binding (= maturity + auctionWindow), got: {operand}"
     );
 }
 
 #[test]
 fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
     // ROLL OUT — on the OLD pool. Burns the old vault's debit, requires the
-    // pool's recreated USDT to grow by `expectedDischarge >= oldMintedAmount`,
-    // and uses witness output indices throughout so it composes with rollIn
-    // on the next-maturity pool and a non_interactive_swap fill in one tx.
+    // pool's recreated USDT to grow by exactly `expectedDischarge ==
+    // oldMintedAmount`, and uses witness output indices throughout so it
+    // composes with rollIn on the next-maturity pool and a non_interactive_swap
+    // fill in one tx.
+    //
+    // SECURITY: rollOut REQUIRES a borrower signature on the pool side, NOT
+    // just on the vault side. Without it, an attacker could pair the
+    // permissionless `vault.liquidate` (no sig) with `pool.rollOut` (no sig)
+    // and force-liquidate a healthy vault at par price, bypassing
+    // pool.liquidate's oracle + healthFloor gate entirely. The pool-side sig
+    // is the gate that blocks that pairing.
     let output = compile(CODE).expect("compilation failed");
     let asm = asm_of(&output, "rollOut");
     assert!(
@@ -402,9 +532,13 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
         asm.contains(OP_LESSTHAN),
         "rollOut gated on tx.time < maturity (pre-maturity)"
     );
+    assert!(
+        asm.contains(OP_CHECKSIG),
+        "rollOut REQUIRES borrower sig (blocks vault.liquidate + rollOut force-liquidation attack)"
+    );
 
-    // The discharge gate is `expectedDischarge >= oldMintedAmount` — a
-    // witness-to-witness comparison.
+    // The discharge gate is `expectedDischarge == oldMintedAmount` — strict
+    // equality, symmetric with the strict-burn invariant. Both are witnesses.
     let ws = witness_names(&output, "rollOut");
     assert!(
         ws.iter().any(|w| w == "expectedDischarge"),
@@ -414,14 +548,23 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
         ws.iter().any(|w| w == "outIdxPool"),
         "outIdxPool must be a witness (variable output index), got: {ws:?}"
     );
-
-    // No user signature: rollOut authorises the OLD pool spend by virtue of
-    // burning the vault's debit + receiving the discharge; the borrower's
-    // consent is enforced on the vault side (BondMint.roll).
-    let user_sigs = user_signatures(&output, "rollOut");
     assert!(
-        user_sigs.is_empty(),
-        "rollOut must not require any user signature (consent lives on the vault), got: {user_sigs:?}"
+        ws.iter().any(|w| w == "borrowerSig"),
+        "borrowerSig must be a witness (blocks force-liquidation attack), got: {ws:?}"
+    );
+
+    // Exactly one user signature: the borrower's. The pool-side sig is the
+    // gate that prevents the permissionless vault.liquidate path from being
+    // paired with rollOut to siphon collateral.
+    let user_sigs = user_signatures(&output, "rollOut");
+    assert_eq!(
+        user_sigs.len(),
+        1,
+        "rollOut must require exactly the borrower sig (P0 force-liquidation defence), got: {user_sigs:?}"
+    );
+    assert!(
+        user_sigs.iter().any(|s| s == "borrowerSig"),
+        "rollOut's user sig must be borrowerSig, got: {user_sigs:?}"
     );
 }
 

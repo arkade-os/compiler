@@ -37,15 +37,37 @@
 //   exactly, which fails closed for any multi-vault combination. The pool
 //   side enforces the same strict equality symmetrically.
 //
-//   Within the pre-maturity phase, the right pairing is enforced by
-//   per-function output-pin conflicts: vault.repay pins output[1] to the
-//   borrower; vault.liquidate pins output[1] to an auctioneer; vault.roll
-//   pins NO output (it just authorises the spend, and the paired rollIn
-//   takes the migrating collateral via its own pinned new-vault output at a
-//   witness index).
+//   Within the pre-maturity phase, the right pairing is enforced by a
+//   combination of per-function output-pin conflicts AND pool-side borrower
+//   signatures on every state-transition pool function:
+//     - vault.repay         pins output[1]=borrower; pool.acceptRepayment
+//                           pins output[1]=borrower (same dest, no conflict)
+//                           — and borrower-signs the spend so non-consensual
+//                           pairings are blocked.
+//     - vault.liquidate     pins output[1]=auctioneer; pool.liquidate pins
+//                           output[1]=auctioneer (same dest, no conflict)
+//                           — pool side health-gates via oracle, so a
+//                           healthy vault cannot be liquidated.
+//     - vault.roll          pins NO output (it just authorises the spend);
+//                           the paired pool.rollOut REQUIRES the borrower's
+//                           signature too. Without the pool-side sig, an
+//                           attacker could pair the permissionless
+//                           vault.liquidate with rollOut and force-liquidate
+//                           a healthy vault at par. rollOut's sig blocks
+//                           that pairing.
 //
 //   Auctioneer identity is a witness pubkey; they pin their own collateral
 //   destination by signing the tx they construct.
+//
+// POOL-AUTHENTICATION CAVEAT
+//   The "genuine pool not co-spent" check verifies only that an input holds
+//   the debit-control asset (`tx.inputs[poolIdx].assets.lookup(debitCtrlId)
+//   >= 1`), not that the input's scriptPubKey is the canonical RepaymentPool
+//   covenant. Safety therefore rests on the asset-registry invariant that
+//   no pool function ever lets debitCtrlId leak from its output[0]. EVERY
+//   future pool function MUST retain debitCtrlId. The regression test
+//   `test_pool_retains_debit_ctrl_in_every_function` enforces this at the
+//   ASM level — do not delete it.
 //
 // UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
 //   Exit signers come from the function's pubkey parameters. In practice the
@@ -92,6 +114,13 @@ contract BondMint(
   // output to the auctioneer.
   //   output[0]: pool re-created (enforced by acceptAuction-style pool.liquidate)
   //   output[1]: collateral (or sold portion) → auctioneer
+  //
+  // DEFENSE-IN-DEPTH: output[1].value > 0 ensures *something* flows to the
+  // auctioneer-pinned output. The exact value (collateralSold or all
+  // collateral, depending on over-cover/shortfall) is enforced by the
+  // co-spent pool.liquidate. If that pool-side check ever regresses, this
+  // vault-side floor still prevents the "1 sat to auctioneer, rest as miner
+  // fee" siphon shape.
   function liquidate(int poolIdx, pubkey auctioneerPk) {
     require(tx.time < maturity, "matured; use auction");
 
@@ -100,6 +129,7 @@ contract BondMint(
     let debitGroup = tx.assetGroups.find(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
+    require(tx.outputs[1].value > 0, "auctioneer output empty");
     require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
   }
 
@@ -118,6 +148,7 @@ contract BondMint(
     let debitGroup = tx.assetGroups.find(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
+    require(tx.outputs[1].value > 0, "auctioneer output empty");
     require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
   }
 

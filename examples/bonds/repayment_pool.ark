@@ -29,12 +29,27 @@
 //   [maturity, maturity + auctionWindow)        AUCTION  acceptAuction only
 //   [maturity + auctionWindow, +)               REDEEM   redeem only
 //
-// (Pre-maturity functions are mutually safe by output-pin conflicts +
-// STRICT debit-burn equality: every settlement-side burn check is
-// `sumInputs == sumOutputs + N`, not `>=`, so multi-vault batching attacks
-// fail closed before the output-pin phase. acceptAuction and redeem are
-// mutually time-exclusive with each other and with the pre-maturity
-// functions, so vault.auction binds settlement to acceptAuction by time.)
+// (Pre-maturity functions are mutually safe by THREE layers:
+//   1. STRICT debit-burn equality on every settlement function — `sumInputs
+//      == sumOutputs + N` (never `>=`) — so multi-vault batching fails
+//      closed before any output-pin phase can be reached. The credit
+//      asset is also constrained on every settlement (delta == 0), so an
+//      adversary cannot co-burn their own credit to dilute remaining
+//      holders.
+//   2. Per-function output-pin conflicts on output[1]: acceptRepayment
+//      pins borrower, liquidate pins auctioneer — incompatible script
+//      pubkeys for the same output index, so the wrong vault function
+//      cannot pair with the wrong pool function.
+//   3. Pool-side borrower signature on every state-mutating user-driven
+//      function: issue, rollOut, rollIn, redeem (and acceptRepayment via
+//      the vault-side BondMint.repay sig). The two settlement functions
+//      that are intentionally permissionless (liquidate, acceptAuction)
+//      gate on the oracle witness + a hard health/time check. rollOut
+//      could NOT be permissionless because vault.liquidate is — pairing
+//      them would let an attacker force-liquidate healthy vaults at par.
+//  acceptAuction and redeem are also mutually time-exclusive with each
+//  other and with the pre-maturity functions, so vault.auction binds
+//  settlement to acceptAuction by time.)
 //
 // LOAN ROLL — single-tx atomic
 //   A borrower migrates their position to the next maturity in one tx using
@@ -195,6 +210,8 @@ contract RepaymentPool(
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move on repayment");
     let ccGroup = tx.assetGroups.find(creditCtrlId);
     require(ccGroup.delta == 0, "credit control changed");
     let dcGroup = tx.assetGroups.find(debitCtrlId);
@@ -231,18 +248,26 @@ contract RepaymentPool(
   // recreation wherever the rollIn / swap / new-vault outputs allow. Inputs
   // are still index-witnessed (vaultIdx) the same way.
   //
+  // SAFETY — pool-side borrower signature is REQUIRED. The vault-side path
+  // pairs vault.roll (borrower-signed) with rollOut; the vault-side path
+  // also exposes vault.liquidate (PERMISSIONLESS, pre-maturity) — without a
+  // pool-side sig, an attacker could pair vault.liquidate with rollOut and
+  // pay par-USDT to take a healthy vault's full collateral, bypassing
+  // pool.liquidate's health gate. The pool-side sig blocks that pairing.
+  //
   //   input[vaultIdx]:    the OLD BondMint being closed
   //   output[outIdxPool]: this pool re-created (usdt += expectedDischarge,
   //                       totalDebit -= oldMintedAmount, totalCredit unchanged)
   //   (collateral and credit outputs are NOT pinned here — they belong to the
   //   paired rollIn / swap; vault.roll authorizes the spend on the borrower
   //   side, rollIn validates the new vault's collateralisation)
-  function rollOut(pubkey borrowerPk, int vaultIdx, int oldMintedAmount, int collateral,
+  function rollOut(pubkey borrowerPk, signature borrowerSig, int vaultIdx, int oldMintedAmount, int collateral,
                    int outIdxPool, int expectedDischarge) {
     require(oldMintedAmount > 0, "zero amount");
     require(oldMintedAmount <= totalDebitOutstanding, "exceeds outstanding");
-    require(expectedDischarge >= oldMintedAmount, "discharge too small");
+    require(expectedDischarge == oldMintedAmount, "discharge must equal par");
     require(tx.time < maturity, "old pool matured");
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
 
     require(
       tx.inputs[vaultIdx].scriptPubKey == new BondMint(
@@ -253,6 +278,8 @@ contract RepaymentPool(
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + oldMintedAmount, "debit not burned exactly oldMintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move during roll");
     let ccGroup = tx.assetGroups.find(creditCtrlId);
     require(ccGroup.delta == 0, "credit control changed");
     let dcGroup = tx.assetGroups.find(debitCtrlId);
@@ -282,13 +309,21 @@ contract RepaymentPool(
   //
   //   output[outIdxPool]:   this pool re-created (totalCredit + newMintedAmount,
   //                         totalDebit + newMintedAmount)
-  //   output[outIdxCredit]: newMintedAmount credit → creditDestPk (typically a
-  //                         non_interactive_swap covenant that will deliver to
-  //                         the maker, or directly the maker's SingleSig)
+  //   output[outIdxCredit]: newMintedAmount credit → arbitrary destination.
+  //                         The scriptPubKey is NOT pinned by this contract:
+  //                         it could be a non_interactive_swap covenant that
+  //                         delivers to the maker, directly the maker's
+  //                         SingleSig, or any other valid destination. The
+  //                         borrower's Schnorr signature (SIGHASH_ALL by
+  //                         default) commits to the entire tx including this
+  //                         output's scriptPubKey, so the destination IS
+  //                         covered at signing time — the script just doesn't
+  //                         dictate its form, which is what makes atomic
+  //                         composition with non_interactive_swap possible.
   //   output[outIdxVault]:  new BondMint vault holding newCollateral + debit
   function rollIn(int newMintedAmount, int newCollateral, pubkey borrowerPk, signature borrowerSig,
                   int oraclePrice, int oracleTime, signature oracleSig,
-                  int outIdxPool, int outIdxVault, int outIdxCredit, pubkey creditDestPk) {
+                  int outIdxPool, int outIdxVault, int outIdxCredit) {
     require(newMintedAmount > 0, "zero issuance");
     require(newCollateral > 0, "zero collateral");
     require(initRatioBps > liqThresholdBps, "liq threshold must be below init ratio");
@@ -334,7 +369,9 @@ contract RepaymentPool(
     require(tx.outputs[outIdxPool].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
 
     require(tx.outputs[outIdxCredit].assets.lookup(creditAssetId) >= newMintedAmount, "credit not delivered");
-    require(tx.outputs[outIdxCredit].scriptPubKey == new SingleSig(creditDestPk), "credit dest mismatch");
+    // No scriptPubKey pin: the borrower's Schnorr sighash covers all outputs,
+    // so the credit destination IS implicitly committed by borrowerSig. This
+    // is what lets rollIn compose with a non_interactive_swap covenant fill.
 
     require(
       tx.outputs[outIdxVault].scriptPubKey == new BondMint(
@@ -382,6 +419,8 @@ contract RepaymentPool(
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move on liquidation");
     let ccGroup = tx.assetGroups.find(creditCtrlId);
     require(ccGroup.delta == 0, "credit control changed");
     let dcGroup = tx.assetGroups.find(debitCtrlId);
@@ -416,7 +455,7 @@ contract RepaymentPool(
       require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
       require(tx.outputs[1].value >= collateralSold, "auctioneer underpaid");
       require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
-      if (excess >= 330) {
+      if (excess > 330) {
         require(tx.outputs[2].value >= excess, "borrower underpaid");
         require(tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk), "output 2 not borrower");
       }
@@ -481,6 +520,8 @@ contract RepaymentPool(
 
     let debitGroup = tx.assetGroups.find(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move on auction");
     let ccGroup = tx.assetGroups.find(creditCtrlId);
     require(ccGroup.delta == 0, "credit control changed");
     let dcGroup = tx.assetGroups.find(debitCtrlId);
@@ -511,7 +552,7 @@ contract RepaymentPool(
       require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
       require(tx.outputs[1].value >= collateralSold, "auctioneer underpaid");
       require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
-      if (excess >= 330) {
+      if (excess > 330) {
         require(tx.outputs[2].value >= excess, "borrower underpaid");
         require(tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk), "output 2 not borrower");
       }

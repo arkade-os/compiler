@@ -259,8 +259,10 @@ they compose with a `non_interactive_swap` fill in the same tx:
 | Side | Function | Role |
 |---|---|---|
 | Old vault | `BondMint.roll` | Borrower-signed authorisation; burns the old debit; releases the collateral into the tx for the new vault to claim. |
-| Old pool | `RepaymentPool.rollOut` | Validates the old vault, burns mintedAmount debit, requires `expectedDischarge >= oldMintedAmount` USDT to enter the pool's recreated state. Closes the old obligation in the old pool's accounting. |
-| New pool | `RepaymentPool.rollIn` | Borrower-signed; oracle-priced over-collateralisation on the NEW maturity; mints `newMintedAmount` credit + debit; emits the new `BondMint` vault and pins the new credit to a witness destination (typically the maker buying it via the swap). |
+| Old pool | `RepaymentPool.rollOut` | **Borrower-signed** (required — see security note); validates the old vault; burns `oldMintedAmount` debit; requires `expectedDischarge == oldMintedAmount` USDT to enter the pool's recreated state (strict equality, symmetric with the strict-burn invariant). Closes the old obligation in the old pool's accounting. |
+| New pool | `RepaymentPool.rollIn` | Borrower-signed; oracle-priced over-collateralisation on the NEW maturity; mints `newMintedAmount` credit + debit; emits the new `BondMint` vault and verifies the new credit lands at the witness-supplied output index. The credit destination's scriptPubKey is NOT pinned by the contract — it is covered by the borrower's Schnorr sighash and can therefore be a `non_interactive_swap` covenant (atomic composition with an order-book maker fill) or any other valid destination. |
+
+**Security note on rollOut's borrower signature** — earlier drafts of this design had rollOut as a permissionless pool function (consent was assumed to live entirely on the vault side, via `BondMint.roll`). That left a P0 force-liquidation attack: pair the permissionless `vault.liquidate` (no sig) with the permissionless `pool.rollOut` (no sig), pay par USDT, take the full collateral of any HEALTHY pre-maturity vault — `vault.liquidate` doesn't oracle-gate (the pool side was supposed to), and `pool.liquidate` doesn't fire because the rollOut path bypasses it. The fix is the pool-side borrower signature on rollOut: vault.liquidate has no borrower sig and now cannot pair with rollOut. See `tests/repayment_pool_test.rs::test_roll_out_extinguishes_old_obligation_at_witness_index` for the regression guard.
 
 ```
 Single-tx atomic roll:
