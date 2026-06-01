@@ -267,18 +267,65 @@ fn test_issue_enforces_deployment_invariants() {
          `> 0` value guards, found {gt})"
     );
 
-    // OP_GREATERTHANOREQUAL64 for auctionDiscountBps >= 0 — exactly one
-    // site in the deployment-safety block. (asset-amount `>=` checks like
-    // `output.assets.lookup(...) >= N` use the same opcode, but those fire
-    // AFTER the deployment checks and aren't counted as deployment guards.
-    // Floor at 1 captures the deployment check without coupling to the
-    // exact count of asset-amount checks.)
-    let gte = opcode_count(&output, "issue", "OP_GREATERTHANOREQUAL64");
+    // Targeted check for `auctionDiscountBps >= 0` — must anchor to the
+    // specific guard's tokens, not just count any `>=` opcode. arkanaai O1
+    // and CodeRabbit's review both flagged that a bare `gte >= 1` floor on
+    // OP_GREATERTHANOREQUAL64 would still pass if the discount guard were
+    // deleted, because issue() emits many asset-amount `>=` checks
+    // (`output.assets.lookup(...) >= N`) that satisfy that floor.
+    //
+    // The compiler emits the comparison block with `<auctionDiscountBps>`,
+    // `OP_GREATERTHANOREQUAL`, and `0` clustered within a 3-token window
+    // (display order is `<auctionDiscountBps> OP_GREATERTHANOREQUAL 0` in
+    // the current emitter — execution order may differ; we accept any
+    // permutation to stay robust to that).
     assert!(
-        gte >= 1,
-        "issue must carry auctionDiscountBps >= 0 (OP_GREATERTHANOREQUAL64, \
-         found {gte} total — at least one must be the discount-bound check)"
+        contains_window_3(
+            &output,
+            "issue",
+            "<auctionDiscountBps>",
+            "OP_GREATERTHANOREQUAL",
+            "0"
+        ),
+        "issue must carry the `auctionDiscountBps >= 0` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_GREATERTHANOREQUAL, 0 \
+         within 3 consecutive ASM tokens of `issue`)"
     );
+    assert!(
+        contains_window_3(
+            &output,
+            "issue",
+            "<auctionDiscountBps>",
+            "OP_LESSTHAN",
+            "10000"
+        ),
+        "issue must carry the `auctionDiscountBps < 10000` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_LESSTHAN, 10000 within \
+         3 consecutive ASM tokens of `issue`)"
+    );
+}
+
+/// True iff the function `name`'s server-variant ASM contains three given
+/// tokens in any order within a 3-token sliding window. Used for targeted
+/// regression checks where the compiler may emit a comparison's operands
+/// and opcode in a non-postfix display order — what matters is adjacency,
+/// not exact sequence.
+fn contains_window_3(
+    output: &arkade_compiler::models::ContractJson,
+    name: &str,
+    a: &str,
+    b: &str,
+    c: &str,
+) -> bool {
+    let tokens = asm_tokens(output, name);
+    if tokens.len() < 3 {
+        return false;
+    }
+    let target: std::collections::BTreeSet<&str> = [a, b, c].into_iter().collect();
+    tokens.windows(3).any(|w| {
+        let s: std::collections::BTreeSet<&str> = w.iter().map(|t| t.as_str()).collect();
+        s == target
+    })
 }
 
 #[test]
@@ -691,10 +738,32 @@ fn test_roll_pair_enforces_all_deployment_invariants() {
         gt, 6,
         "rollIn must replicate issue's invariants (expected 6 OP_GREATERTHAN, found {gt})"
     );
-    let gte = opcode_count(&output, "rollIn", "OP_GREATERTHANOREQUAL64");
+    // Targeted check for `auctionDiscountBps >= 0` AND `< 10000` — see
+    // the parallel test in `test_issue_enforces_deployment_invariants` for
+    // the rationale (arkanaai O1 / CodeRabbit review).
     assert!(
-        gte >= 1,
-        "rollIn must carry auctionDiscountBps >= 0 (found {gte} OP_GREATERTHANOREQUAL64)"
+        contains_window_3(
+            &output,
+            "rollIn",
+            "<auctionDiscountBps>",
+            "OP_GREATERTHANOREQUAL",
+            "0"
+        ),
+        "rollIn must carry the `auctionDiscountBps >= 0` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_GREATERTHANOREQUAL, 0 \
+         within 3 consecutive ASM tokens of `rollIn`)"
+    );
+    assert!(
+        contains_window_3(
+            &output,
+            "rollIn",
+            "<auctionDiscountBps>",
+            "OP_LESSTHAN",
+            "10000"
+        ),
+        "rollIn must carry the `auctionDiscountBps < 10000` deployment guard \
+         (expected window of <auctionDiscountBps>, OP_LESSTHAN, 10000 within \
+         3 consecutive ASM tokens of `rollIn`)"
     );
 }
 
