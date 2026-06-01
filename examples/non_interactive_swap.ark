@@ -14,8 +14,8 @@
 options {
   // Server key is injected from getInfo(), not passed in constructor
   server = server;
-  // Exit delay: 144 blocks (~24 hours) for unilateral recovery
-  exit = 144;
+  // Unilateral-exit timelock in blocks; constructor param so the playground can set it
+  exit = exit;
 }
 
 contract NonInteractiveSwap(
@@ -30,7 +30,9 @@ contract NonInteractiveSwap(
   // Amount of want asset required for the swap
   int wantAmount,
   // Expiration timestamp (block height) after which maker can cancel
-  int expirationTime
+  int expirationTime,
+  // Unilateral-exit timelock in blocks (~144 = 24h); parameterizable
+  int exit
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
   // Cooperative: takerSig + serverSig + OP_INSPECT* (server validates outputs)
