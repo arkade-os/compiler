@@ -485,7 +485,7 @@ contract RepaymentPool(
   //   over-cover  (collateralValue >= mintedAmount):
   //     auctionUsdt    = mintedAmount   * (10000 - auctionDiscountBps) / 10000
   //     collateralSold = mintedAmount   * 1e8 / oraclePrice          → auctioneer
-  //     excess         = collateral - collateralSold                 → borrower (if ≥ 330)
+  //     excess         = collateral - collateralSold                 → borrower (if > 330)
   //   shortfall   (collateralValue < mintedAmount):
   //     auctionUsdt    = collateralValue * (10000 - auctionDiscountBps) / 10000
   //     all collateral                                                → auctioneer

@@ -79,20 +79,51 @@ Each `BondMint` function is gated to match:
 | `liquidate` | `tx.time < maturity` | any auctioneer |
 | `auction` | `tx.time >= maturity AND tx.time < maturity + auctionWindow` | any auctioneer |
 
-**Pre-maturity co-spend safety.** Three pool functions share the pre-maturity
-phase: `issue`, `acceptRepayment`, `liquidate`. They're safely co-spendable
-with the relevant vault function because each one's covenant invariants
-conflict with the others' in any combined tx:
+**Pre-maturity co-spend safety.** Five pool functions share the pre-maturity
+phase: `issue`, `acceptRepayment`, `rollOut`, `rollIn`, `liquidate`. They're
+safely co-spendable with the relevant vault function because of THREE
+defence layers operating together:
+
+  1. **Strict-burn equality** on every settlement function: the debit-group
+     delta must equal *exactly* the function's accounted `mintedAmount`, so
+     multi-vault batching fails closed before any output-pin phase can be
+     reached. `creditGroup.delta == 0` is enforced symmetrically on every
+     settlement function, so credit cannot be silently co-burned to dilute
+     remaining holders.
+  2. **Per-function output-pin conflicts** on `output[1]`:
+     `pool.acceptRepayment` pins it to the borrower, `pool.liquidate` pins
+     it to the auctioneer — incompatible scriptPubKeys for the same output
+     index, so the wrong vault function cannot pair with the wrong pool
+     function.
+  3. **Pool-side borrower signature** on every state-mutating user-driven
+     pool function: `issue`, `acceptRepayment` (via vault.repay's sig),
+     `rollOut`, `rollIn`, `redeem`. The two intentionally-permissionless
+     pool functions (`liquidate`, `acceptAuction`) gate on the oracle
+     witness + a hard health/time check instead.
+
+Pair-by-pair:
 
 - `vault.repay` pairs with `pool.acceptRepayment` (intended): borrower-signed,
   burns debit, returns collateral → borrower. Cannot pair with `pool.issue`
-  (debit-delta arithmetic forces mintedAmount=0 in vault, impossible). Cannot
-  pair with `pool.liquidate` (output[1] script must be both borrower and
-  auctioneer — conflict).
+  (debit-delta arithmetic forces `mintedAmount=0` in vault, impossible).
+  Cannot pair with `pool.liquidate` (output[1] script must be both borrower
+  and auctioneer — conflict). Cannot pair with `pool.rollOut` (`rollOut`
+  pins `output[outIdxPool]` and burns `oldMintedAmount` debit, but
+  vault.repay also pins output[1] = borrower; the borrower would be
+  rolling AND withdrawing their collateral at par price — self-inflicted
+  only since both legs require the same borrower's sig, not exploitable).
 - `vault.liquidate` pairs with `pool.liquidate` (intended): permissionless,
-  burns debit, collateral → auctioneer, requires `collateralValue < healthFloor`.
-  Cannot pair with `pool.issue` (debit-delta conflict) or
-  `pool.acceptRepayment` (output[1] script conflict).
+  burns debit, collateral → auctioneer, requires `collateralValue <
+  healthFloor`. Cannot pair with `pool.issue` (debit-delta conflict) or
+  `pool.acceptRepayment` (output[1] script conflict). **Cannot pair with
+  `pool.rollOut`** — this is what the rollOut borrower signature blocks.
+  Without it, the pairing would let an attacker pay par USDT and take any
+  healthy vault's full collateral, bypassing the oracle + healthFloor gate.
+  See §Loan roll "Security note on rollOut's borrower signature".
+- `vault.roll` pairs with `pool.rollOut` + `pool.rollIn` (intended): both
+  borrower-signed; vault.roll burns the old debit, rollOut discharges the
+  old obligation at par, rollIn mints fresh credit + debit on the next
+  pool. The full three-leg pattern is atomic.
 
 **In-window co-spend safety.** `vault.auction` pairs only with
 `pool.acceptAuction` — the other four pool functions all fail their time
@@ -149,7 +180,7 @@ identical to `acceptAuction`:
 ```
 collateralValue   = collateral * oraclePrice / 1e8
 collateralSold    = mintedAmount * 1e8 / oraclePrice        → auctioneer
-excess            = collateral - collateralSold             → borrower (if ≥ 330 sats)
+excess            = collateral - collateralSold             → borrower (if > 330 sats)
 poolReceives      = mintedAmount * (10000 - auctionDiscountBps) / 10000  → pool
 auctioneer profit = mintedAmount - poolReceives = mintedAmount * discountBps / 10000
 vault burns        = mintedAmount debit
@@ -298,11 +329,17 @@ lookups (`vaultIdx`, `poolIdx`) the contract already uses.
 **Safety.** rollOut and rollIn each enforce their own pool's invariants
 independently:
 
-- rollOut: old pool's USDT must grow by ≥ `oldMintedAmount` (the obligation
-  is actually discharged) and the old vault's debit must be burned
-  **exactly** (no batched seizure of extra vaults — see §"Strict-burn invariant").
+- rollOut: borrower-signed (blocks the vault.liquidate force-liquidation
+  pairing); old pool's USDT must grow by **exactly** `oldMintedAmount` (the
+  obligation is discharged at par, strict equality symmetric with the
+  strict-burn invariant); the old vault's debit must also be burned
+  **exactly** (no batched seizure of extra vaults — see §"Strict-burn invariant"); credit must not move (`creditGroup.delta == 0`).
 - rollIn: oracle-priced over-collateralisation, dual-mint gated by the new
   pool's control assets, borrower signature for consent on the new debt.
+  The credit destination scriptPubKey is NOT pinned by the contract — the
+  borrower's Schnorr sighash covers all outputs, so any destination
+  (including a `non_interactive_swap` covenant) is implicitly committed at
+  signing time.
 - BondMint.roll: borrower signature for consent on collateral release.
 
 If the borrower wanted a two-tx variant (open new vault separately, then
@@ -429,7 +466,7 @@ execute. Inline `// FOLLOW-UP:` notes are at the affected sites.
 | **E1** | Partial repays. | Today a borrower must repay the full `mintedAmount` or default. If their cashflow only covers half, they default and lose all collateral to auction. | `BondMint.repayPartial(amount, sig)`: split the vault into a new vault with `mintedAmount - amount` carrying forward the proportional collateral, and return the rest to the borrower. |
 | **E2** | Per-holder redemption receipt. | A credit holder who wants to lock in their entitlement BEFORE the redeem phase opens has no on-chain way to do so today. Useful when the auction window is long or the holder is offline. | Add a `RedemptionReceipt` covenant and a `RepaymentPool.lock(amount, holderPk)` (auction-window-gated) that mints a single-owner receipt UTXO representing the holder's deferred claim. |
 | **E3** | Explicit `finalize` snapshot. | The current design's redemption rate is fixed in practice (no late USDT additions can occur in the redeem phase). An explicit `finalize` would make the snapshot immutable in the pool state, hardening against future changes that re-open the auction phase. | One-shot `finalize` callable by anyone post-window; sets immutable `maturedTotalCredit`, `maturedTotalUsdt`; `redeem` then uses those. |
-| **E4** | Configurable dust threshold. | Borrower-excess output is hard-coded to `>= 330` sats. If Bitcoin's dust policy changes or the deployer wants stricter/looser, the contract must be edited. | Add `dustThreshold` constructor param; use `if (excess >= dustThreshold)` instead. |
+| **E4** | Configurable dust threshold. | Borrower-excess output is hard-coded to `> 330` sats (strict, per CLAUDE.md dust-branch convention). If Bitcoin's dust policy changes or the deployer wants stricter/looser, the contract must be edited. | Add `dustThreshold` constructor param; use `if (excess > dustThreshold)` instead. |
 | **E5** | ~~Atomic single-tx loan roll~~ — **WIRED** (commit history). | Implemented via three new functions (`BondMint.roll`, `RepaymentPool.rollOut`, `RepaymentPool.rollIn`) using witness output indices to compose with a `non_interactive_swap` fill in one tx. See §Loan roll. | — |
 
 ### Time-axis clarity
