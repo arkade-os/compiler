@@ -46,8 +46,8 @@
       ],
       "asm": [
         "OP_PUSHCURRENTINPUTINDEX",
-        "OP_EQUAL",
         "1",
+        "OP_EQUAL",
         "0",
         "OP_INSPECTINPUTARKADESCRIPTHASH",
         "<endpointSendScriptHash>",
@@ -96,7 +96,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-06-05T16:00:05.221130444+00:00",
+  "updatedAt": "2026-06-05T16:09:37.769822294+00:00",
   "warnings": [
     "warning[type]: fn consume: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
   ]
