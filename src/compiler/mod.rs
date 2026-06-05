@@ -1555,18 +1555,23 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
             asm.push(format!("<{}>", var));
         }
         (Expression::Property(prop), "==", Expression::Literal(value)) => {
-            // Bitcoin script order: push left, push right, then OP_EQUAL.
-            // (The legacy fast paths in this match emit <lhs> OP <rhs> which is
-            // wrong for execution; they're dormant for non-Property cases,
-            // but `this.activeInputIndex == 0` hits this branch and needs the
-            // correct order so the marker scripts actually execute.)
-            match prop.as_str() {
+            // Map "this" properties to their dedicated opcodes (mirrors
+            // generate_expression_asm); otherwise keep the placeholder.
+            let emit_left = |asm: &mut Vec<String>| match prop.as_str() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
                 "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
                 _ => asm.push(format!("<{}>", prop)),
+            };
+            if value == "true" {
+                // `require(expr)` is parsed as `expr == true`; this dummy
+                // comparison just pushes the introspection result.
+                emit_left(asm);
+            } else {
+                // Correct Bitcoin Script order is left, right, OP_EQUAL.
+                emit_left(asm);
+                asm.push(value.clone());
+                asm.push(OP_EQUAL.to_string());
             }
-            asm.push(value.clone());
-            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Property(prop), ">=", Expression::Literal(value)) => {
             asm.push(format!("<{}>", prop));

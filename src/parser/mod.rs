@@ -913,22 +913,12 @@ fn parse_byte_expr_term(pair: Pair<Rule>) -> Result<Expression, String> {
     let inner = pair.into_inner().next().ok_or("Empty byte_expr_term")?;
     match inner.as_rule() {
         Rule::sha256_func => {
-            // Parse the inner argument and wrap with Expression::Sha256 so the
-            // compiler emits inline OP_SHA256.
+            // sha256_func's child is always an additive_expr (see grammar), so
+            // route it through parse_additive_expr to recover the structured
+            // inner expression (substr/packet/cat/…) and wrap with
+            // Expression::Sha256 so the compiler emits inline OP_SHA256.
             let arg_pair = inner.into_inner().next().ok_or("Missing sha256 argument")?;
-            let data = match arg_pair.as_rule() {
-                Rule::substr_func => parse_substr(arg_pair)?,
-                Rule::cat_func => parse_cat(arg_pair)?,
-                Rule::bin2num_func => parse_bin2num(arg_pair)?,
-                Rule::size_func => parse_size(arg_pair)?,
-                Rule::packet_inspect => parse_packet_inspect(arg_pair)?,
-                Rule::input_packet_inspect => parse_input_packet_inspect(arg_pair)?,
-                Rule::input_introspection => parse_input_introspection_to_expression(arg_pair)?,
-                Rule::output_introspection => parse_output_introspection_to_expression(arg_pair)?,
-                Rule::identifier => Expression::Variable(arg_pair.as_str().to_string()),
-                Rule::number_literal => Expression::Literal(arg_pair.as_str().to_string()),
-                _ => Expression::Property(arg_pair.as_str().to_string()),
-            };
+            let data = parse_additive_expr(arg_pair)?;
             Ok(Expression::Sha256 {
                 data: Box::new(data),
             })

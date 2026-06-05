@@ -13,9 +13,9 @@
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_BIN2NUM, OP_CAT, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
+    OP_BIN2NUM, OP_CAT, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
     OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTPACKET, OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN,
-    OP_SIZE, OP_SUBSTR, OP_TXID,
+    OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SIZE, OP_SUBSTR, OP_TXID,
 };
 
 fn compile_first_function_asm(src: &str) -> Vec<String> {
@@ -221,6 +221,73 @@ contract WitnessDemo(bytes32 expectedHash, int exit) {{
     assert!(
         asm.iter().any(|s| s == OP_INSPECTINPUTARKADEWITNESSHASH),
         "expected OP_INSPECTINPUTARKADEWITNESSHASH; got {:?}",
+        asm
+    );
+}
+
+#[test]
+fn test_sha256_of_substr_emits_inline_opcodes_not_placeholder() {
+    // Regression: sha256(substr(...)) inside a byte_expr_comparison must route
+    // its argument through the additive-expression parser so the inner substr
+    // emits inline OP_SUBSTR + OP_SHA256 rather than a "<sha256(...)>" placeholder.
+    let src = format!(
+        r#"{}
+contract Sha256Substr(bytes32 expected, int exit) {{
+  function probe(bytes data) {{
+    require(sha256(substr(data, 0, 32)) == expected, "hash mismatch");
+  }}
+}}"#,
+        PROLOGUE
+    );
+
+    let asm = compile_first_function_asm(&src);
+    assert!(
+        asm.iter().any(|s| s == OP_SUBSTR),
+        "expected inline OP_SUBSTR; got {:?}",
+        asm
+    );
+    assert!(
+        asm.iter().any(|s| s == OP_SHA256),
+        "expected inline OP_SHA256; got {:?}",
+        asm
+    );
+    assert!(
+        !asm.iter()
+            .any(|s| s.contains("sha256(") || s.contains("substr(")),
+        "no source-text placeholder should leak into asm; got {:?}",
+        asm
+    );
+}
+
+#[test]
+fn test_active_input_index_eq_literal_has_correct_operand_order() {
+    // Regression: `this.activeInputIndex == N` must emit left, right, OP_EQUAL
+    // (OP_PUSHCURRENTINPUTINDEX, then the literal, then OP_EQUAL).
+    let src = format!(
+        r#"{}
+contract IndexCheck(int exit) {{
+  function probe() {{
+    require(this.activeInputIndex == 0, "wrong input index");
+  }}
+}}"#,
+        PROLOGUE
+    );
+
+    let asm = compile_first_function_asm(&src);
+    let idx = asm
+        .iter()
+        .position(|s| s == OP_PUSHCURRENTINPUTINDEX)
+        .expect("expected OP_PUSHCURRENTINPUTINDEX");
+    assert_eq!(
+        asm[idx + 1],
+        "0",
+        "literal must be pushed before OP_EQUAL: {:?}",
+        asm
+    );
+    assert_eq!(
+        asm[idx + 2],
+        OP_EQUAL,
+        "OP_EQUAL must follow operands: {:?}",
         asm
     );
 }
