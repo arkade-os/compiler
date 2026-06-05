@@ -163,7 +163,7 @@ function generateTypeScript(ir) {
             for (const f of variant.userFields) {
                 out += `  /** ${f.arkType} (${f.encoding}) */\n  ${toCamelCase(f.name)}: ${tsTypeForField(f)};\n`;
             }
-            if (label === 'Cooperative') out += `  // serverSig injected by Ark server\n`;
+            if (label === 'Cooperative') out += `  // serverSig injected by Arkade server\n`;
             else if (variant.isNofnFallback) out += `  // N-of-N multisig exit fallback\n`;
             else out += `  // exit timelock enforced by script\n`;
             out += `}\n\n`;
@@ -255,7 +255,7 @@ function generateGo(ir) {
             for (const f of variant.userFields) {
                 out += `\t${toPascalCase(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
             }
-            if (label === 'Cooperative') out += `\t// ServerSig injected by Ark server\n`;
+            if (label === 'Cooperative') out += `\t// ServerSig injected by Arkade server\n`;
             else if (variant.isNofnFallback) out += `\t// N-of-N multisig exit fallback\n`;
             else out += `\t// Exit timelock enforced by script\n`;
             out += `}\n\n`;
@@ -263,7 +263,7 @@ function generateGo(ir) {
     }
 
     // Contract struct
-    out += `// ${ir.name} wraps an Ark contract instance.\n`;
+    out += `// ${ir.name} wraps an Arkade contract instance.\n`;
     out += `type ${ir.name} struct {\n\t*ark.Contract\n}\n\n`;
 
     // Constructor

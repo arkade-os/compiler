@@ -79,7 +79,7 @@ export function version() {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_9c31b086c2b26051: function(arg0, arg1) {
+        __wbg___wbindgen_throw_1506f2235d1bdba0: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_error_a6fa202b58aa1cd3: function(arg0, arg1) {
@@ -93,11 +93,11 @@ function __wbg_get_imports() {
                 wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
             }
         },
-        __wbg_getTime_09f1dd40a44edb30: function(arg0) {
+        __wbg_getTime_00b3f7db575e4ef5: function(arg0) {
             const ret = arg0.getTime();
             return ret;
         },
-        __wbg_new_0_2722fcdb71a888a6: function() {
+        __wbg_new_0_445c13a750296eb6: function() {
             const ret = new Date();
             return ret;
         },
