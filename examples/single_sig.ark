@@ -4,7 +4,7 @@ options {
   server = server;
   
   // Renewal timelock: 7 days (1008 blocks)
-  // The contract must be renewed with the Ark server within this period
+  // The contract must be renewed with the Arkade server within this period
   renew = 1008;
   
   // Exit timelock: 24 hours (144 blocks)

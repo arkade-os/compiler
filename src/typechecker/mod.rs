@@ -133,9 +133,9 @@ impl TypeError {
 
 // ─── Scope ────────────────────────────────────────────────────────────────────
 
-type Scope = HashMap<String, ArkType>;
+pub type Scope = HashMap<String, ArkType>;
 
-fn build_scope(params: &[crate::models::Parameter]) -> Scope {
+pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
     params
         .iter()
         .flat_map(|p| {
@@ -479,6 +479,10 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         | Expression::Sha256Update { .. }
         | Expression::Sha256Finalize { .. } => ArkType::Bytes32,
 
+        // Byte-string ops
+        Expression::Concat { .. } => ArkType::Bytes,
+        Expression::Sha256 { .. } => ArkType::Bytes32,
+
         // Conversion and arithmetic
         Expression::Neg64 { .. } => ArkType::Uint64Le,
         Expression::Le64ToScriptNum { .. } => ArkType::Int,
@@ -521,8 +525,17 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             let lt = infer_type(left, scope);
             let rt = infer_type(right, scope);
             match op.as_str() {
-                "+" | "-" | "*" | "/" => {
-                    // If either side is 64-bit, the result is 64-bit.
+                "+" => {
+                    // bytes-like on either side → concatenation (result Bytes).
+                    if is_bytes_like(&lt) || is_bytes_like(&rt) {
+                        ArkType::Bytes
+                    } else if lt == ArkType::Uint64Le || rt == ArkType::Uint64Le {
+                        ArkType::Uint64Le
+                    } else {
+                        ArkType::Int
+                    }
+                }
+                "-" | "*" | "/" => {
                     if lt == ArkType::Uint64Le || rt == ArkType::Uint64Le {
                         ArkType::Uint64Le
                     } else {
@@ -534,4 +547,16 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             }
         }
     }
+}
+
+/// Returns true when the type is a raw byte string (eligible as a `+`
+/// operand for concatenation via OP_CAT).
+pub fn is_bytes_like(t: &ArkType) -> bool {
+    matches!(t, ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32)
+}
+
+/// Returns true when the type is an integer/scriptnum that needs
+/// `OP_SCRIPTNUMTOLE64` before being concatenated with a bytes value.
+pub fn needs_scriptnum_to_le64(t: &ArkType) -> bool {
+    matches!(t, ArkType::Int | ArkType::Bool | ArkType::Uint32Le)
 }

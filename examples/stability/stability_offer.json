@@ -6,23 +6,15 @@
       "type": "pubkey"
     },
     {
-      "name": "ticker_txid",
+      "name": "oraclePk",
+      "type": "pubkey"
+    },
+    {
+      "name": "ticker",
       "type": "bytes32"
     },
     {
-      "name": "ticker_gidx",
-      "type": "int"
-    },
-    {
-      "name": "clock_txid",
-      "type": "bytes32"
-    },
-    {
-      "name": "clock_gidx",
-      "type": "int"
-    },
-    {
-      "name": "fundingSatPerBlock",
+      "name": "fundingRatePerSec",
       "type": "int"
     },
     {
@@ -31,6 +23,14 @@
     },
     {
       "name": "collateralRatioPct",
+      "type": "int"
+    },
+    {
+      "name": "seekerExitFee",
+      "type": "int"
+    },
+    {
+      "name": "takeFee",
       "type": "int"
     },
     {
@@ -49,6 +49,18 @@
         {
           "name": "seekerPk",
           "type": "pubkey"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
         }
       ],
       "witnessSchema": [
@@ -61,6 +73,21 @@
           "name": "seekerPk",
           "type": "pubkey",
           "encoding": "compressed-33"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
         },
         {
           "name": "serverSig",
@@ -101,16 +128,40 @@
           "type": "comparison"
         },
         {
-          "type": "assetCheck"
+          "type": "signatureFromStack"
         },
         {
-          "type": "assetCheck"
+          "type": "comparison"
         },
         {
-          "type": "assetCheck"
+          "type": "comparison"
         },
         {
-          "type": "assetCheck"
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
         },
         {
           "type": "serverSignature"
@@ -126,38 +177,47 @@
         "<collateralRatioPct>",
         "OP_GREATERTHANOREQUAL",
         "100",
-        "1",
-        "<ticker_txid>",
-        "<ticker_gidx>",
-        "OP_INSPECTINASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "<entryPrice>",
+        "<oraclePrice>",
         "0",
         "OP_GREATERTHAN",
-        "1",
-        "<clock_txid>",
-        "<clock_gidx>",
-        "OP_INSPECTINASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "<tx.time >",
-        "<beaconHeight>",
+        "<seekerExitFee>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<seekerExitFee>",
+        "10000",
+        "OP_LESSTHANOREQUAL",
+        "<takeFee>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<takeFee>",
+        "10000",
+        "OP_LESSTHANOREQUAL",
+        "<tx.offchainTime >",
+        "<oracleTime>",
         "OP_SCRIPTNUMTOLE64",
         "OP_SUB64",
         "OP_VERIFY",
-        "<beaconAge>",
-        "144",
+        "<oracleAge>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<oracleAge>",
+        "600",
         "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "OP_SHA256",
+        "<oracleMsg>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
         "<userBTC>",
         "OP_SCRIPTNUMTOLE64",
-        "<entryPrice>",
+        "<oraclePrice>",
         "OP_SCRIPTNUMTOLE64",
         "OP_MUL64",
         "OP_VERIFY",
@@ -179,14 +239,14 @@
         "100",
         "OP_DIV64",
         "OP_VERIFY",
-        "0",
-        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<ticker>,<clock>,<targetUSD>,<totalCollateral>,<fundingSatPerBlock>,<tx.time>,<exit>)>",
-        "OP_EQUAL",
-        "0",
-        "OP_INSPECTOUTPUTVALUE",
-        "<totalCollateral>",
-        "OP_GREATERTHANOREQUAL64",
+        "<userBTC>",
+        "OP_SCRIPTNUMTOLE64",
+        "<takeFee>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "10000",
+        "OP_DIV64",
         "OP_VERIFY",
         "<maxExposureBTC>",
         "OP_SCRIPTNUMTOLE64",
@@ -196,16 +256,6 @@
         "OP_VERIFY",
         "<remainingCapacity>",
         "OP_SCRIPTNUMTOLE64",
-        "0",
-        "OP_GREATERTHAN64",
-        "OP_VERIFY",
-        "OP_IF",
-        "1",
-        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:StabilityOffer(<providerPk>,<ticker>,<clock>,<fundingSatPerBlock>,<remainingCapacity>,<collateralRatioPct>,<exit>)>",
-        "OP_EQUAL",
-        "<remainingCapacity>",
-        "OP_SCRIPTNUMTOLE64",
         "<collateralRatioPct>",
         "OP_SCRIPTNUMTOLE64",
         "OP_MUL64",
@@ -213,60 +263,78 @@
         "100",
         "OP_DIV64",
         "OP_VERIFY",
+        "<takeFeeSats>",
+        "OP_SCRIPTNUMTOLE64",
+        "330",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<targetUSD>,<totalCollateral>,<fundingRatePerSec>,<tx.offchainTime>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<providerPk>)>",
+        "OP_EQUAL",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<takeFeeSats>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<remainingCapacity>",
+        "OP_SCRIPTNUMTOLE64",
+        "0",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "2",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityOffer(<providerPk>,<oraclePk>,<ticker>,<fundingRatePerSec>,<remainingCapacity>,<collateralRatioPct>,<seekerExitFee>,<takeFee>,<exit>)>",
+        "OP_EQUAL",
+        "2",
+        "OP_INSPECTOUTPUTVALUE",
+        "<remainingCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_ENDIF",
+        "OP_ELSE",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityVault(<seekerPk>,<providerPk>,<oraclePk>,<ticker>,<targetUSD>,<totalCollateral>,<fundingRatePerSec>,<tx.offchainTime>,<collateralRatioPct>,<seekerExitFee>,<exit>)>",
+        "OP_EQUAL",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<takeFeeSats>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<dustVaultValue>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<remainingCapacity>",
+        "OP_SCRIPTNUMTOLE64",
+        "0",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityOffer(<providerPk>,<oraclePk>,<ticker>,<fundingRatePerSec>,<remainingCapacity>,<collateralRatioPct>,<seekerExitFee>,<takeFee>,<exit>)>",
+        "OP_EQUAL",
         "1",
         "OP_INSPECTOUTPUTVALUE",
         "<remainingCollateral>",
         "OP_GREATERTHANOREQUAL64",
         "OP_VERIFY",
-        "2",
-        "<ticker_txid>",
-        "<ticker_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "<entryPrice>",
-        "OP_GREATERTHANOREQUAL64",
-        "OP_VERIFY",
-        "2",
-        "<clock_txid>",
-        "<clock_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "<beaconHeight>",
-        "OP_GREATERTHANOREQUAL64",
-        "OP_VERIFY",
-        "OP_ELSE",
-        "1",
-        "<ticker_txid>",
-        "<ticker_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "<entryPrice>",
-        "OP_GREATERTHANOREQUAL64",
-        "OP_VERIFY",
-        "1",
-        "<clock_txid>",
-        "<clock_gidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
-        "OP_VERIFY",
-        "<beaconHeight>",
-        "OP_GREATERTHANOREQUAL64",
-        "OP_VERIFY",
+        "OP_ENDIF",
         "OP_ENDIF",
         "<SERVER_KEY>",
         "<serverSig>",
@@ -285,7 +353,23 @@
           "type": "pubkey"
         },
         {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
           "name": "providerPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePkSig",
           "type": "signature"
         },
         {
@@ -300,6 +384,11 @@
           "encoding": "schnorr-64"
         },
         {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
           "name": "seekerPkSig",
           "type": "signature",
           "encoding": "schnorr-64"
@@ -309,7 +398,7 @@
       "require": [
         {
           "type": "nOfNMultisig",
-          "message": "2-of-2 signatures required (introspection fallback)"
+          "message": "3-of-3 signatures required (introspection fallback)"
         },
         {
           "type": "older",
@@ -319,6 +408,9 @@
       "asm": [
         "<providerPk>",
         "<providerPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<oraclePk>",
+        "<oraclePkSig>",
         "OP_CHECKSIGVERIFY",
         "<seekerPk>",
         "<seekerPkSig>",
@@ -401,17 +493,34 @@
       ]
     }
   ],
-  "source": "\nimport \"stability_vault.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityOffer(\n  pubkey  providerPk,\n  bytes32 ticker,\n  bytes32 clock,\n  int     fundingSatPerBlock,\n  int     maxExposureBTC,\n  int     collateralRatioPct,\n  int     exit\n) {\n\n  function take(int userBTC, pubkey seekerPk) {\n    require(userBTC > 0, \"zero deposit\");\n    require(userBTC <= maxExposureBTC, \"exceeds offer capacity\");\n    require(collateralRatioPct >= 100, \"collateral ratio below minimum\");\n\n    int entryPrice = tx.inputs[1].assets.lookup(ticker);\n    require(entryPrice > 0, \"invalid beacon price\");\n\n    int beaconHeight = tx.inputs[1].assets.lookup(clock);\n    int beaconAge = tx.time - beaconHeight;\n    require(beaconAge <= 144, \"stale oracle\");\n\n    int targetUSD = userBTC * entryPrice / 100000000;\n    require(targetUSD > 0, \"position too small\");\n\n    int totalCollateral = userBTC * (100 + collateralRatioPct) / 100;\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityVault(\n        seekerPk, providerPk, ticker, clock,\n        targetUSD, totalCollateral, fundingSatPerBlock, tx.time, exit\n      ),\n      \"invalid vault output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"insufficient vault collateral\");\n\n    int remainingCapacity = maxExposureBTC - userBTC;\n    if (remainingCapacity > 0) {\n      require(\n        tx.outputs[1].scriptPubKey == new StabilityOffer(\n          providerPk, ticker, clock,\n          fundingSatPerBlock, remainingCapacity, collateralRatioPct, exit\n        ),\n        \"invalid remaining offer\"\n      );\n      int remainingCollateral = remainingCapacity * collateralRatioPct / 100;\n      require(tx.outputs[1].value >= remainingCollateral, \"insufficient offer collateral\");\n\n      require(\n        tx.outputs[2].assets.lookup(ticker) >= entryPrice,\n        \"beacon must survive\"\n      );\n      require(\n        tx.outputs[2].assets.lookup(clock) >= beaconHeight,\n        \"beacon clock must survive\"\n      );\n    } else {\n      require(\n        tx.outputs[1].assets.lookup(ticker) >= entryPrice,\n        \"beacon must survive\"\n      );\n      require(\n        tx.outputs[1].assets.lookup(clock) >= beaconHeight,\n        \"beacon clock must survive\"\n      );\n    }\n  }\n\n  function withdraw(signature providerSig) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n  }\n}",
+  "source": "\nimport \"stability_vault.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityOffer(\n  pubkey  providerPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     fundingRatePerSec,\n  int     maxExposureBTC,\n  int     collateralRatioPct,\n  int     seekerExitFee,\n  int     takeFee,\n  int     exit\n) {\n\n  function take(\n    int       userBTC,\n    pubkey    seekerPk,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(userBTC > 0, \"zero deposit\");\n    require(userBTC <= maxExposureBTC, \"exceeds offer capacity\");\n    require(collateralRatioPct >= 100, \"collateral ratio below minimum\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n    require(seekerExitFee >= 0, \"negative exit fee\");\n    require(seekerExitFee <= 10000, \"exit fee > 100%\");\n    require(takeFee >= 0, \"negative take fee\");\n    require(takeFee <= 10000, \"take fee > 100%\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int targetUSD = userBTC * oraclePrice / 100000000;\n    require(targetUSD > 0, \"position too small\");\n\n    int totalCollateral       = userBTC * (100 + collateralRatioPct) / 100;\n    int takeFeeSats           = userBTC * takeFee / 10000;\n    int remainingCapacity     = maxExposureBTC - userBTC;\n    int remainingCollateral   = remainingCapacity * collateralRatioPct / 100;\n\n    if (takeFeeSats > 330) {\n      require(\n        tx.outputs[0].scriptPubKey == new StabilityVault(\n          seekerPk, providerPk, oraclePk, ticker,\n          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,\n          collateralRatioPct, seekerExitFee, exit\n        ),\n        \"invalid vault output\"\n      );\n      require(tx.outputs[0].value >= totalCollateral, \"insufficient vault collateral\");\n      require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), \"output 1 not provider\");\n      require(tx.outputs[1].value >= takeFeeSats, \"provider underpaid take fee\");\n      if (remainingCapacity > 0) {\n        require(\n          tx.outputs[2].scriptPubKey == new StabilityOffer(\n            providerPk, oraclePk, ticker,\n            fundingRatePerSec, remainingCapacity, collateralRatioPct,\n            seekerExitFee, takeFee, exit\n          ),\n          \"invalid remaining offer\"\n        );\n        require(tx.outputs[2].value >= remainingCollateral, \"insufficient offer collateral\");\n      }\n    } else {\n      require(\n        tx.outputs[0].scriptPubKey == new StabilityVault(\n          seekerPk, providerPk, oraclePk, ticker,\n          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,\n          collateralRatioPct, seekerExitFee, exit\n        ),\n        \"invalid vault output\"\n      );\n      int dustVaultValue = totalCollateral + takeFeeSats;\n      require(tx.outputs[0].value >= dustVaultValue, \"insufficient vault collateral\");\n      if (remainingCapacity > 0) {\n        require(\n          tx.outputs[1].scriptPubKey == new StabilityOffer(\n            providerPk, oraclePk, ticker,\n            fundingRatePerSec, remainingCapacity, collateralRatioPct,\n            seekerExitFee, takeFee, exit\n          ),\n          \"invalid remaining offer\"\n        );\n        require(tx.outputs[1].value >= remainingCollateral, \"insufficient offer collateral\");\n      }\n    }\n  }\n\n  function withdraw(signature providerSig) {\n    require(checkSig(providerSig, providerPk), \"invalid provider sig\");\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-08T16:26:00.255901270+00:00",
+  "updatedAt": "2026-05-21T21:40:19.079771535+00:00",
   "warnings": [
-    "warning[type]: fn take: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn take: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn take: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn take: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <targetUSD> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'targetUSD'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <remainingCapacity> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'remainingCapacity'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <takeFeeSats> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'takeFeeSats'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <totalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'totalCollateral'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <takeFeeSats> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'takeFeeSats'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <remainingCapacity> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'remainingCapacity'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <remainingCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'remainingCollateral'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <totalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'totalCollateral'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <takeFeeSats> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'takeFeeSats'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <dustVaultValue> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'dustVaultValue'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <remainingCapacity> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'remainingCapacity'",
+    "warning[output-invariant]: fn 'take' (serverVariant=true): placeholder <remainingCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'remainingCollateral'",
+    "warning[output-invariant]: fn 'take' (serverVariant=false): placeholder <seekerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'seekerPk'"
   ]
 }

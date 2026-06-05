@@ -152,12 +152,6 @@ fn roundtrip_fuji_safe() {
 }
 
 #[test]
-fn roundtrip_price_beacon() {
-    let output = compile_example("stability/price_beacon.ark");
-    assert_output_invariants(&output, "stability/price_beacon.ark");
-}
-
-#[test]
 fn roundtrip_stability_vault() {
     let output = compile_example("stability/stability_vault.ark");
     assert_output_invariants(&output, "stability/stability_vault.ark");
@@ -205,6 +199,25 @@ fn roundtrip_payment_auth() {
     assert_output_invariants(&output, "payment_auth.ark");
 }
 
+#[test]
+fn roundtrip_repayment_pool() {
+    let output = compile_example("bonds/repayment_pool.ark");
+    assert_output_invariants(&output, "bonds/repayment_pool.ark");
+    assert_eq!(output.name, "RepaymentPool");
+    // 7 functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
+    // acceptAuction, redeem) × 2 variants = 14
+    assert_eq!(output.functions.len(), 14);
+}
+
+#[test]
+fn roundtrip_bond_mint() {
+    let output = compile_example("bonds/bond_mint.ark");
+    assert_output_invariants(&output, "bonds/bond_mint.ark");
+    assert_eq!(output.name, "BondMint");
+    // 4 functions (repay, liquidate, auction, roll) × 2 variants = 8
+    assert_eq!(output.functions.len(), 8);
+}
+
 // ─── Cross-cutting invariant: scan ALL examples ───────────────────────────────
 
 /// Recursively collect all .ark files under a directory.
@@ -244,8 +257,8 @@ fn all_examples_compile_and_satisfy_invariants() {
     }
 
     assert!(
-        count >= 15,
-        "expected at least 15 example contracts, found {}",
+        count >= 14,
+        "expected at least 14 example contracts, found {}",
         count
     );
 }

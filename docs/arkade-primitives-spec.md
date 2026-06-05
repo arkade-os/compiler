@@ -369,7 +369,7 @@ OP_VERIFY                               ; [srcId, burnTx, recip, sig0, sig1, sig
 ; The runtime computes the full child Taproot scriptPubKey for SingleSig(<recipientPk>)
 ; by inheriting the enclosing contract's options: the server key (serverPk) and the
 ; exit timelock (288 blocks). The inlined script is NOT a generic SingleSig output —
-; it is the specific Ark VTXO taproot that includes those inherited parameters.
+; it is the specific Arkade VTXO taproot that includes those inherited parameters.
 ; We compare output 1's scriptPubKey against that resolved script.
 OP_1
 OP_INSPECTOUTPUTSCRIPTPUBKEY            ; [.., ctrlIn, outScript(bytes)]

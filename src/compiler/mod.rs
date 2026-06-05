@@ -112,6 +112,10 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
             context,
             last_chunk,
         } => expression_uses_introspection(context) || expression_uses_introspection(last_chunk),
+        Expression::Sha256 { data } => expression_uses_introspection(data),
+        Expression::Concat { left, right, .. } => {
+            expression_uses_introspection(left) || expression_uses_introspection(right)
+        }
         Expression::Neg64 { value } => expression_uses_introspection(value),
         Expression::Le64ToScriptNum { value } => expression_uses_introspection(value),
         Expression::Le32ToLe64 { value } => expression_uses_introspection(value),
@@ -167,16 +171,232 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
     }
 }
 
-/// Collect all pubkey parameters from constructor and function for N-of-N fallback.
-/// The Arkade operator key is always external and never appears as a constructor parameter,
-/// so no exclusion is needed here.
+/// Walk an expression tree, recording the names of pubkey identifiers that
+/// appear as the `pubkey` operand of `checkSig` (transaction-signing
+/// context) vs `checkSigFromStack` / `checkSigFromStackVerify` (data-signing
+/// context — verifies a signature over an arbitrary byte string).
+fn collect_pubkey_usage_in_expr(
+    expr: &Expression,
+    tx_sigs: &mut std::collections::HashSet<String>,
+    data_sigs: &mut std::collections::HashSet<String>,
+) {
+    match expr {
+        Expression::CheckSigExpr { pubkey, .. } => {
+            tx_sigs.insert(pubkey.clone());
+        }
+        Expression::CheckSigFromStackExpr { pubkey, .. }
+        | Expression::CheckSigFromStackVerify { pubkey, .. } => {
+            data_sigs.insert(pubkey.clone());
+        }
+        Expression::AssetLookup { index, .. } | Expression::AssetCount { index, .. } => {
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::AssetAt {
+            io_index,
+            asset_index,
+            ..
+        } => {
+            collect_pubkey_usage_in_expr(io_index, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(asset_index, tx_sigs, data_sigs);
+        }
+        Expression::InputIntrospection { index, .. }
+        | Expression::OutputIntrospection { index, .. } => {
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::BinaryOp { left, right, .. } => {
+            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
+        }
+        Expression::GroupSum { index, .. } | Expression::GroupNumIO { index, .. } => {
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => {
+            collect_pubkey_usage_in_expr(group_index, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(io_index, tx_sigs, data_sigs);
+        }
+        Expression::ArrayIndex { array, index } => {
+            collect_pubkey_usage_in_expr(array, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+        }
+        Expression::Concat { left, right, .. } => {
+            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
+        }
+        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => {
+            collect_pubkey_usage_in_expr(data, tx_sigs, data_sigs);
+        }
+        Expression::Sha256Update { context, chunk } => {
+            collect_pubkey_usage_in_expr(context, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(chunk, tx_sigs, data_sigs);
+        }
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => {
+            collect_pubkey_usage_in_expr(context, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(last_chunk, tx_sigs, data_sigs);
+        }
+        Expression::Neg64 { value }
+        | Expression::Le64ToScriptNum { value }
+        | Expression::Le32ToLe64 { value } => {
+            collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
+        }
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => {
+            collect_pubkey_usage_in_expr(scalar, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(point_p, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(point_q, tx_sigs, data_sigs);
+        }
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => {
+            collect_pubkey_usage_in_expr(point_p, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(tweak, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(point_q, tx_sigs, data_sigs);
+        }
+        Expression::ContractInstance { args, .. } => {
+            for arg in args {
+                collect_pubkey_usage_in_expr(arg, tx_sigs, data_sigs);
+            }
+        }
+        Expression::Substr { data, offset, size } => {
+            collect_pubkey_usage_in_expr(data, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(offset, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(size, tx_sigs, data_sigs);
+        }
+        Expression::Cat { left, right } => {
+            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
+        }
+        Expression::Num2Bin { value, size } => {
+            collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(size, tx_sigs, data_sigs);
+        }
+        Expression::Bin2Num { data } | Expression::SizeOf { data } => {
+            collect_pubkey_usage_in_expr(data, tx_sigs, data_sigs);
+        }
+        Expression::PacketInspect { packet_type } => {
+            collect_pubkey_usage_in_expr(packet_type, tx_sigs, data_sigs);
+        }
+        Expression::InputPacketInspect { index, packet_type } => {
+            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(packet_type, tx_sigs, data_sigs);
+        }
+        // Leaves with no nested expressions / no pubkey usage
+        Expression::Variable(_)
+        | Expression::Literal(_)
+        | Expression::Property(_)
+        | Expression::CurrentInput(_)
+        | Expression::TxIntrospection { .. }
+        | Expression::GroupFind { .. }
+        | Expression::GroupProperty { .. }
+        | Expression::AssetGroupsLength
+        | Expression::ArrayLength(_) => {}
+    }
+}
+
+/// Walk a requirement, recording pubkey usage. CheckMultisig keys are
+/// transaction-signing (they go into OP_CHECKSIGADD / OP_CHECKMULTISIG).
+fn collect_pubkey_usage_in_req(
+    req: &Requirement,
+    tx_sigs: &mut std::collections::HashSet<String>,
+    data_sigs: &mut std::collections::HashSet<String>,
+) {
+    match req {
+        Requirement::CheckSig { pubkey, .. } => {
+            tx_sigs.insert(pubkey.clone());
+        }
+        Requirement::CheckSigFromStack { pubkey, .. } => {
+            data_sigs.insert(pubkey.clone());
+        }
+        Requirement::CheckMultisig { pubkeys, .. } => {
+            for pk in pubkeys {
+                tx_sigs.insert(pk.clone());
+            }
+        }
+        Requirement::Comparison { left, right, .. } => {
+            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
+            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
+        }
+        Requirement::After { .. } | Requirement::HashEqual { .. } => {}
+    }
+}
+
+/// Walk a statement list, recursing into bodies and conditions.
+fn collect_pubkey_usage_in_stmts(
+    stmts: &[Statement],
+    tx_sigs: &mut std::collections::HashSet<String>,
+    data_sigs: &mut std::collections::HashSet<String>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::Require(req) => collect_pubkey_usage_in_req(req, tx_sigs, data_sigs),
+            Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
+                collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                collect_pubkey_usage_in_expr(condition, tx_sigs, data_sigs);
+                collect_pubkey_usage_in_stmts(then_body, tx_sigs, data_sigs);
+                if let Some(eb) = else_body {
+                    collect_pubkey_usage_in_stmts(eb, tx_sigs, data_sigs);
+                }
+            }
+            Statement::ForIn { iterable, body, .. } => {
+                collect_pubkey_usage_in_expr(iterable, tx_sigs, data_sigs);
+                collect_pubkey_usage_in_stmts(body, tx_sigs, data_sigs);
+            }
+        }
+    }
+}
+
+/// Compute the set of pubkey identifiers that appear **only** in
+/// `checkSigFromStack` contexts across every function in the contract,
+/// never in `checkSig`. These keys verify oracle-signed data, not Bitcoin
+/// transactions — an off-chain price oracle (Stork, Pyth, …) publishes
+/// signatures over byte strings, it does not co-sign individual L1 spends.
+/// Including such a key in the N-of-N exit leaf would make the exit path
+/// unreachable in practice. Filtering them out here lets the exit leaf
+/// stay broadcastable by the remaining transaction signers.
+fn collect_data_only_pubkeys(
+    contract: &crate::models::Contract,
+) -> std::collections::HashSet<String> {
+    let mut tx_sigs = std::collections::HashSet::new();
+    let mut data_sigs = std::collections::HashSet::new();
+    for function in &contract.functions {
+        collect_pubkey_usage_in_stmts(&function.statements, &mut tx_sigs, &mut data_sigs);
+    }
+    data_sigs.difference(&tx_sigs).cloned().collect()
+}
+
+/// Collect pubkey parameters from constructor and function for the N-of-N
+/// exit fallback. Excludes pubkeys that only ever appear as the key in a
+/// `checkSigFromStack` call — those verify oracle-signed data and have no
+/// runtime tx-signing role.
+///
+/// The Arkade operator key is always external and never appears as a
+/// constructor parameter, so no further exclusion is needed.
 fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) -> Vec<String> {
+    let excluded = collect_data_only_pubkeys(contract);
     contract
         .parameters
         .iter()
         .chain(function.parameters.iter())
         .filter(|p| p.param_type == "pubkey")
         .map(|p| p.name.clone())
+        .filter(|name| !excluded.contains(name))
         .collect()
 }
 
@@ -217,7 +437,7 @@ fn strip_comments(source: &str) -> String {
 ///
 /// A Result containing a ContractJson or an error message
 pub fn compile(source_code: &str) -> Result<ContractJson, String> {
-    let contract = match parser::parse(source_code) {
+    let mut contract = match parser::parse(source_code) {
         Ok(contract) => contract,
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
@@ -234,6 +454,9 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
             .collect();
         return Err(errors.join("; "));
     }
+
+    // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
+    rewrite_concat_ops(&mut contract);
 
     // ── Type checking ──────────────────────────────────────────────────────
     // Run the type checker. Errors are non-fatal and returned as warnings on
@@ -1058,6 +1281,30 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             generate_expression_asm(last_chunk, asm);
             asm.push(OP_SHA256FINALIZE.to_string());
         }
+        // One-shot SHA256: sha256(data) → OP_SHA256
+        Expression::Sha256 { data } => {
+            generate_expression_asm(data, asm);
+            asm.push(OP_SHA256.to_string());
+        }
+        // Byte-string concatenation: bytes-like + value → OP_CAT
+        // Coercion flags decide whether to convert a scriptnum side to LE64
+        // before the cat (so off-chain hashing uses fixed 8-byte ints).
+        Expression::Concat {
+            left,
+            right,
+            coerce_left,
+            coerce_right,
+        } => {
+            generate_expression_asm(left, asm);
+            if *coerce_left {
+                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+            }
+            generate_expression_asm(right, asm);
+            if *coerce_right {
+                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+            }
+            asm.push(OP_CAT.to_string());
+        }
         // Conversion & Arithmetic
         Expression::Neg64 { value } => {
             generate_expression_asm(value, asm);
@@ -1627,6 +1874,28 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(context, asm);
             emit_expression_asm(last_chunk, asm);
             asm.push(OP_SHA256FINALIZE.to_string());
+        }
+        // One-shot SHA256: sha256(data) → OP_SHA256
+        Expression::Sha256 { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_SHA256.to_string());
+        }
+        // Byte-string concatenation: bytes-like + value → OP_CAT
+        Expression::Concat {
+            left,
+            right,
+            coerce_left,
+            coerce_right,
+        } => {
+            emit_expression_asm(left, asm);
+            if *coerce_left {
+                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+            }
+            emit_expression_asm(right, asm);
+            if *coerce_right {
+                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+            }
+            asm.push(OP_CAT.to_string());
         }
         // Conversion & Arithmetic
         Expression::Neg64 { value } => {
@@ -2405,5 +2674,272 @@ fn substitute_expression(
         },
         // All other expressions are returned as-is
         _ => expr.clone(),
+    }
+}
+
+// ─── Concat rewrite pass ────────────────────────────────────────────────────
+//
+// Walk every function's AST and convert `BinaryOp { op: "+" }` into
+// `Concat { ... }` when at least one operand resolves to a bytes-like type
+// (Bytes, Bytes20, Bytes32). Pure int+int additions stay as `BinaryOp` and
+// continue to emit OP_ADD64.
+//
+// We need types to make the decision, so the walk threads a `Scope` and
+// uses `typechecker::infer_type` on rewritten subtrees. The rewrite is
+// bottom-up: children are rewritten first so the parent sees the post-
+// rewrite type (e.g. `bytes32 + int` rewrites to `Concat` of type Bytes,
+// which then makes the outer `+ int` also a Concat).
+
+use crate::typechecker::{is_bytes_like, needs_scriptnum_to_le64, Scope};
+
+fn rewrite_concat_ops(contract: &mut crate::models::Contract) {
+    let constructor_scope = crate::typechecker::build_scope(&contract.parameters);
+    for function in &mut contract.functions {
+        let mut scope = constructor_scope.clone();
+        scope.extend(crate::typechecker::build_scope(&function.parameters));
+        rewrite_statements_concat(&mut function.statements, &mut scope);
+    }
+}
+
+fn rewrite_statements_concat(stmts: &mut [Statement], scope: &mut Scope) {
+    for stmt in stmts {
+        rewrite_statement_concat(stmt, scope);
+    }
+}
+
+fn rewrite_statement_concat(stmt: &mut Statement, scope: &mut Scope) {
+    match stmt {
+        Statement::Require(req) => rewrite_requirement_concat(req, scope),
+        Statement::LetBinding { name, value } => {
+            let (new_expr, t) = rewrite_expression_concat(
+                std::mem::replace(value, Expression::Literal(String::new())),
+                scope,
+            );
+            *value = new_expr;
+            scope.insert(name.clone(), t);
+        }
+        Statement::VarAssign { name, value } => {
+            let (new_expr, t) = rewrite_expression_concat(
+                std::mem::replace(value, Expression::Literal(String::new())),
+                scope,
+            );
+            *value = new_expr;
+            scope.insert(name.clone(), t);
+        }
+        Statement::IfElse {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            let (new_cond, _) = rewrite_expression_concat(
+                std::mem::replace(condition, Expression::Literal(String::new())),
+                scope,
+            );
+            *condition = new_cond;
+            let mut then_scope = scope.clone();
+            rewrite_statements_concat(then_body, &mut then_scope);
+            if let Some(eb) = else_body {
+                let mut else_scope = scope.clone();
+                rewrite_statements_concat(eb, &mut else_scope);
+            }
+        }
+        Statement::ForIn {
+            index_var,
+            value_var,
+            iterable,
+            body,
+        } => {
+            let (new_iter, _) = rewrite_expression_concat(
+                std::mem::replace(iterable, Expression::Literal(String::new())),
+                scope,
+            );
+            *iterable = new_iter;
+            let mut loop_scope = scope.clone();
+            loop_scope.insert(index_var.clone(), ArkType::Int);
+            loop_scope.insert(value_var.clone(), ArkType::Unknown);
+            rewrite_statements_concat(body, &mut loop_scope);
+        }
+    }
+}
+
+fn rewrite_requirement_concat(req: &mut Requirement, scope: &Scope) {
+    if let Requirement::Comparison { left, right, .. } = req {
+        let (nl, _) = rewrite_expression_concat(
+            std::mem::replace(left, Expression::Literal(String::new())),
+            scope,
+        );
+        *left = nl;
+        let (nr, _) = rewrite_expression_concat(
+            std::mem::replace(right, Expression::Literal(String::new())),
+            scope,
+        );
+        *right = nr;
+    }
+}
+
+fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Expression, ArkType) {
+    match expr {
+        Expression::BinaryOp { left, op, right } => {
+            let (new_l, lt) = rewrite_expression_concat(*left, scope);
+            let (new_r, rt) = rewrite_expression_concat(*right, scope);
+            if op == "+" && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
+                let coerce_left = needs_scriptnum_to_le64(&lt);
+                let coerce_right = needs_scriptnum_to_le64(&rt);
+                (
+                    Expression::Concat {
+                        left: Box::new(new_l),
+                        right: Box::new(new_r),
+                        coerce_left,
+                        coerce_right,
+                    },
+                    ArkType::Bytes,
+                )
+            } else {
+                let result_type = match op.as_str() {
+                    "+" | "-" | "*" | "/" => {
+                        if lt == ArkType::Uint64Le || rt == ArkType::Uint64Le {
+                            ArkType::Uint64Le
+                        } else {
+                            ArkType::Int
+                        }
+                    }
+                    "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
+                    _ => ArkType::Unknown,
+                };
+                (
+                    Expression::BinaryOp {
+                        left: Box::new(new_l),
+                        op,
+                        right: Box::new(new_r),
+                    },
+                    result_type,
+                )
+            }
+        }
+        Expression::Sha256 { data } => {
+            let (new_data, _) = rewrite_expression_concat(*data, scope);
+            (
+                Expression::Sha256 {
+                    data: Box::new(new_data),
+                },
+                ArkType::Bytes32,
+            )
+        }
+        Expression::Sha256Initialize { data } => {
+            let (new_data, _) = rewrite_expression_concat(*data, scope);
+            (
+                Expression::Sha256Initialize {
+                    data: Box::new(new_data),
+                },
+                ArkType::Bytes32,
+            )
+        }
+        Expression::Sha256Update { context, chunk } => {
+            let (new_ctx, _) = rewrite_expression_concat(*context, scope);
+            let (new_chunk, _) = rewrite_expression_concat(*chunk, scope);
+            (
+                Expression::Sha256Update {
+                    context: Box::new(new_ctx),
+                    chunk: Box::new(new_chunk),
+                },
+                ArkType::Bytes32,
+            )
+        }
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => {
+            let (new_ctx, _) = rewrite_expression_concat(*context, scope);
+            let (new_chunk, _) = rewrite_expression_concat(*last_chunk, scope);
+            (
+                Expression::Sha256Finalize {
+                    context: Box::new(new_ctx),
+                    last_chunk: Box::new(new_chunk),
+                },
+                ArkType::Bytes32,
+            )
+        }
+        Expression::Concat {
+            left,
+            right,
+            coerce_left,
+            coerce_right,
+        } => {
+            let (new_l, _) = rewrite_expression_concat(*left, scope);
+            let (new_r, _) = rewrite_expression_concat(*right, scope);
+            (
+                Expression::Concat {
+                    left: Box::new(new_l),
+                    right: Box::new(new_r),
+                    coerce_left,
+                    coerce_right,
+                },
+                ArkType::Bytes,
+            )
+        }
+        Expression::Neg64 { value } => {
+            let (nv, _) = rewrite_expression_concat(*value, scope);
+            (
+                Expression::Neg64 {
+                    value: Box::new(nv),
+                },
+                ArkType::Uint64Le,
+            )
+        }
+        Expression::Le64ToScriptNum { value } => {
+            let (nv, _) = rewrite_expression_concat(*value, scope);
+            (
+                Expression::Le64ToScriptNum {
+                    value: Box::new(nv),
+                },
+                ArkType::Int,
+            )
+        }
+        Expression::Le32ToLe64 { value } => {
+            let (nv, _) = rewrite_expression_concat(*value, scope);
+            (
+                Expression::Le32ToLe64 {
+                    value: Box::new(nv),
+                },
+                ArkType::Uint64Le,
+            )
+        }
+        Expression::ArrayIndex { array, index } => {
+            let (na, at) = rewrite_expression_concat(*array, scope);
+            let (ni, _) = rewrite_expression_concat(*index, scope);
+            let elem_type = if let ArkType::Array(inner) = at {
+                *inner
+            } else {
+                ArkType::Unknown
+            };
+            (
+                Expression::ArrayIndex {
+                    array: Box::new(na),
+                    index: Box::new(ni),
+                },
+                elem_type,
+            )
+        }
+        Expression::ContractInstance {
+            contract_name,
+            args,
+        } => {
+            let new_args = args
+                .into_iter()
+                .map(|a| rewrite_expression_concat(a, scope).0)
+                .collect();
+            (
+                Expression::ContractInstance {
+                    contract_name,
+                    args: new_args,
+                },
+                ArkType::Bytes,
+            )
+        }
+        // Leaves and other compound expressions: no `+` to rewrite below the surface.
+        other => {
+            let t = crate::typechecker::infer_type(&other, scope);
+            (other, t)
+        }
     }
 }

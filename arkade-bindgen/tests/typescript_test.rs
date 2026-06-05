@@ -42,7 +42,7 @@ fn test_htlc_typescript_generates() {
     assert!(code.contains("export interface HTLCClaimCooperativeWitness {"));
     assert!(code.contains("receiverSig: Signature;"));
     assert!(code.contains("preimage: Bytes;"));
-    assert!(code.contains("// serverSig injected by Ark server"));
+    assert!(code.contains("// serverSig injected by Arkade server"));
 
     assert!(code.contains("export interface HTLCClaimExitWitness {"));
     assert!(code.contains("// exit timelock enforced by script"));

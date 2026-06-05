@@ -1,0 +1,654 @@
+// RepaymentPool Contract
+//
+// Per-maturity singleton implementing a fixed-maturity bond market: borrowers
+// self-issue credit + debit tokens (1:1) against collateral; the credit half
+// is sold by the borrower for USDT on the order book (via non_interactive_swap)
+// — that is the borrower's loan and the lender's entry point. NO interest rate;
+// the yield is whatever discount the market sets at sale time.
+//
+// Two settlement paths close a vault outside of voluntary repayment:
+//
+//   MARGIN CALL (pre-maturity, permissionless)
+//     `liquidate` fires the moment `collateralValue < liqThresholdBps ×
+//     mintedAmount / 10000`. The vault's collateral is sold at the oracle
+//     price, USDT enters the pool, the obligation is extinguished. This keeps
+//     every vault in the pool thresholded healthy at every block, which is
+//     what preserves credit-token fungibility on the order book: a lender
+//     buying credit doesn't need to know WHICH vault backs it because every
+//     vault in the pool is covenant-guaranteed to be above the health floor.
+//
+//   AUCTION (post-maturity default, permissionless)
+//     `acceptAuction` closes vaults whose borrowers did not repay by maturity.
+//     Same oracle-priced sale, same auctioneer-discount incentive. Only fires
+//     in the dedicated auction window so it can't race with redemptions.
+//
+// PHASED TIMELINE
+//   [-, maturity)                              REPAY    issue, acceptRepayment,
+//                                                       rollOut, rollIn,
+//                                                       liquidate (margin call)
+//   [maturity, maturity + auctionWindow)        AUCTION  acceptAuction only
+//   [maturity + auctionWindow, +)               REDEEM   redeem only
+//
+// (Pre-maturity functions are mutually safe by THREE layers:
+//   1. STRICT debit-burn equality on every settlement function — `sumInputs
+//      == sumOutputs + N` (never `>=`) — so multi-vault batching fails
+//      closed before any output-pin phase can be reached. The credit
+//      asset is also constrained on every settlement (delta == 0), so an
+//      adversary cannot co-burn their own credit to dilute remaining
+//      holders.
+//   2. Per-function output-pin conflicts on output[1]: acceptRepayment
+//      pins borrower, liquidate pins auctioneer — incompatible script
+//      pubkeys for the same output index, so the wrong vault function
+//      cannot pair with the wrong pool function.
+//   3. Pool-side borrower signature on every state-mutating user-driven
+//      function: issue, rollOut, rollIn, redeem (and acceptRepayment via
+//      the vault-side BondMint.repay sig). The two settlement functions
+//      that are intentionally permissionless (liquidate, acceptAuction)
+//      gate on the oracle witness + a hard health/time check. rollOut
+//      could NOT be permissionless because vault.liquidate is — pairing
+//      them would let an attacker force-liquidate healthy vaults at par.
+//  acceptAuction and redeem are also mutually time-exclusive with each
+//  other and with the pre-maturity functions, so vault.auction binds
+//  settlement to acceptAuction by time.)
+//
+// LOAN ROLL — single-tx atomic
+//   A borrower migrates their position to the next maturity in one tx using
+//   three new functions: BondMint.roll (consent + old debit burn), this
+//   pool's rollOut (validate old vault, take USDT discharge), and the NEW
+//   pool's rollIn (oracle-priced new issuance + collateral migration). All
+//   three use WITNESS output indices (outIdxPool, outIdxVault, outIdxCredit),
+//   so they compose with a non_interactive_swap fill in the same tx without
+//   the cross-covenant output[0] conflict that would otherwise block atomic
+//   composition. See docs/bonds.md §Loan roll.
+//
+// PERMISSIONLESS AUCTION + LIQUIDATION
+//   Any auctioneer constructs a tx with the oracle witness, providing USDT
+//   and taking the collateral. Incentive: the `auctionDiscountBps` haircut on
+//   pool income is the auctioneer's profit (e.g. 50 bps = 0.5% spread). The
+//   same discount applies to both margin-call liquidations and post-maturity
+//   auctions, so the same keepers/bots service both.
+//
+// REDEEM
+//   Credit holders convert credit → USDT pro-rata after the auction window
+//   closes. Both usdt and credit are fixed at this point, so the rate
+//   `usdtBalance / totalCreditOutstanding` is fair for all redeem orders, no
+//   late-redeemer advantage.
+//
+// UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
+//   - BondMint per-vault: collateral recoverable cooperatively or unilaterally
+//     via N-of-N + CSV; the surviving signer is the borrower
+//     (single-owner-effective on the unilateral path).
+//   - RepaymentPool aggregate: the REDEEM phase drains the pool into
+//     per-holder SingleSig UTXOs — each of those has a clean single-owner
+//     exit, so the lasting on-chain state after every holder redeems is
+//     fully self-sovereign and the pool's aggregate exit surface goes to
+//     zero. See docs/bonds.md §"Unilateral exits".
+//
+// STATE carried forward on every spend:
+//   usdtBalance, totalCreditOutstanding, totalDebitOutstanding
+//
+// MONETIZATION
+//   auctionDiscountBps (wired): auctioneer's spread on pool income, paid on
+//   both margin-call liquidations and post-maturity auctions. Origination
+//   fee, redemption fee, and order-book fee are enumerated follow-ups
+//   (M1–M3 in docs/bonds.md).
+
+import "bond_mint.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract RepaymentPool(
+  bytes32 usdtAssetId,
+  bytes32 creditAssetId,         // fungible per-maturity credit (lender entitlement)
+  bytes32 creditCtrlId,          // control asset gating credit mint
+  bytes32 debitAssetId,          // fungible per-maturity debit (borrower obligation)
+  bytes32 debitCtrlId,           // control asset gating debit mint
+  bytes32 ticker,                // oracle feed id (e.g. sha256("BTC/USDT"))
+  pubkey  oraclePk,              // price oracle (Fuji-style signed feed)
+  int     oracleMaxAgeSeconds,   // max oracle staleness, in SECONDS (tx.offchainTime); contrast with maturity/auctionWindow which are BLOCK HEIGHTS (tx.time)
+  int     initRatioBps,          // required collateral ratio at issuance (e.g. 15000 = 150%)
+  int     liqThresholdBps,       // margin-call trigger: liquidate when collateralValue < this × mintedAmount / 10000 (e.g. 11000 = 110%)
+  int     maturity,              // block height: settlement boundary
+  int     auctionWindow,         // blocks: auction phase length post-maturity
+  int     auctionDiscountBps,    // bps: auctioneer's spread on pool income (0..10000)
+  int     usdtBalance,
+  int     totalCreditOutstanding,
+  int     totalDebitOutstanding,
+  int     exit
+) {
+
+  // ISSUE — pre-maturity, borrower mints `amount` credit + `amount` debit (1:1)
+  // and posts collateral. Credit → borrower's wallet (to sell). Debit → a new
+  // BondMint vault that locks the collateral.
+  //   output[0]: pool re-created (totalCredit + amount, totalDebit + amount)
+  //   output[1]: `amount` credit → borrower
+  //   output[2]: BondMint vault holding collateral + `amount` debit
+  function issue(int amount, int collateral, pubkey borrowerPk, signature borrowerSig, int oraclePrice, int oracleTime, signature oracleSig) {
+    require(amount > 0, "zero issuance");
+    require(collateral > 0, "zero collateral");
+    // Deployment-safety invariants: collected here at issuance time so a
+    // misconfigured pool can never originate a vault.
+    //  - initRatioBps > liqThresholdBps: a vault minted at the minimum
+    //    collateral must NOT be immediately liquidatable in the same block.
+    //  - liqThresholdBps > 0: a non-positive health threshold would invert
+    //    the liquidate gate (every vault liquidatable, or none).
+    //  - auctionWindow > 0: a zero-length auction window collapses the
+    //    `tx.time >= maturity && tx.time < maturity` gate to an empty set,
+    //    so no defaulted vault can ever be settled via acceptAuction —
+    //    mintedAmount stays in totalDebitOutstanding forever and credit
+    //    holders absorb the full default. Same class of deployment invariant
+    //    as the ratio checks above.
+    //  - auctionDiscountBps ∈ [0, 10000): an out-of-range discount bricks
+    //    every liquidate + acceptAuction (settlement-side runtime check
+    //    fails closed). Validate at deployment so pool issuance fails
+    //    rather than silently producing an unsettleable book.
+    require(initRatioBps > liqThresholdBps, "liq threshold must be below init ratio");
+    require(liqThresholdBps > 0, "liq threshold must be positive");
+    require(auctionWindow > 0, "auction window must be positive");
+    require(auctionDiscountBps >= 0, "negative discount");
+    require(auctionDiscountBps < 10000, "discount >= 100%");
+    require(tx.time < maturity, "pool matured");
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    // FOLLOW-UP: `collateral * oraclePrice` overflows int64 above ~92 BTC at
+    // a $1M BTC price; OP_MUL64 fails closed. Chunk issuance or rescale the
+    // price denominator (e.g. 1e4 vs 1e8) for very large vaults.
+    int collateralValue = collateral * oraclePrice / 100000000;
+    // Ceiling division on the required collateral floor: floor division
+    // lets dust-sized issuances bypass collateralisation entirely
+    // (`amount=1, initRatioBps=14999` floors to `required=1`, so 1 sat of
+    // collateral mints 1 credit + 1 debit). An attacker could flood the
+    // auction window with thousands of dust defaults that are unprofitable
+    // for auctioneers to settle (gas > profit), leaving them as permanent
+    // deadweight in totalDebitOutstanding. Ceiling rounds UP, so
+    // `1 * 14999 / 10000` → 2, breaking the dust-mint shape.
+    int required = (amount * initRatioBps + 9999) / 10000;
+    require(collateralValue >= required, "undercollateralized at issuance");
+
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == amount, "credit delta mismatch");
+    require(creditGroup.control == creditCtrlId, "wrong credit control");
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.delta == amount, "debit delta mismatch");
+    require(debitGroup.control == debitCtrlId, "wrong debit control");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    int creditNext = totalCreditOutstanding + amount;
+    int debitNext  = totalDebitOutstanding + amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new RepaymentPool(
+        usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        usdtBalance, creditNext, debitNext, exit
+      ),
+      "invalid pool recreation"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtBalance, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+    require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+
+    require(tx.outputs[1].assets.lookup(creditAssetId) >= amount, "credit not delivered");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "credit dest not borrower");
+
+    require(
+      tx.outputs[2].scriptPubKey == new BondMint(
+        borrowerPk, debitAssetId, debitCtrlId, amount, collateral, maturity, auctionWindow, exit
+      ),
+      "invalid vault"
+    );
+    require(tx.outputs[2].value >= collateral, "collateral not locked");
+    require(tx.outputs[2].assets.lookup(debitAssetId) >= amount, "debit not custodied in vault");
+  }
+
+  // ACCEPT REPAYMENT — pre-maturity, co-spent with BondMint.repay.
+  //   input[vaultIdx]: the BondMint being repaid (validated by reconstruction)
+  //   output[0]: pool re-created (usdt + mintedAmount, totalDebit - mintedAmount)
+  //   output[1]: collateral sats → borrower
+  function acceptRepayment(pubkey borrowerPk, int vaultIdx, int mintedAmount, int collateral) {
+    require(mintedAmount > 0, "zero amount");
+    require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
+    require(tx.time < maturity, "matured; use acceptAuction");
+
+    require(
+      tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+        borrowerPk, debitAssetId, debitCtrlId, mintedAmount, collateral, maturity, auctionWindow, exit
+      ),
+      "vault input mismatch"
+    );
+
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move on repayment");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    int usdtNext  = usdtBalance + mintedAmount;
+    int debitNext = totalDebitOutstanding - mintedAmount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new RepaymentPool(
+        usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        usdtNext, totalCreditOutstanding, debitNext, exit
+      ),
+      "invalid pool recreation"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "repayment not received");
+    require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+    require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+
+    require(tx.outputs[1].value >= collateral, "collateral not returned");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "collateral dest not borrower");
+  }
+
+  // ROLL OUT — borrower co-spends their old BondMint to extinguish the
+  // old-maturity obligation. A paired rollIn on a NEXT-maturity pool opens a
+  // new vault using the same collateral atomically (no fronted capital). USDT
+  // discharging the old obligation arrives in the same tx from an order-book
+  // maker (atomically buying the new credit via non_interactive_swap) or, in
+  // a simpler variant, from the borrower's own wallet.
+  //
+  // Variable output indices: every output that rollOut pins is at a witness-
+  // supplied index, so the borrower (or wallet) can place this pool's
+  // recreation wherever the rollIn / swap / new-vault outputs allow. Inputs
+  // are still index-witnessed (vaultIdx) the same way.
+  //
+  // SAFETY — pool-side borrower signature is REQUIRED. The vault-side path
+  // pairs vault.roll (borrower-signed) with rollOut; the vault-side path
+  // also exposes vault.liquidate (PERMISSIONLESS, pre-maturity) — without a
+  // pool-side sig, an attacker could pair vault.liquidate with rollOut and
+  // pay par-USDT to take a healthy vault's full collateral, bypassing
+  // pool.liquidate's health gate. The pool-side sig blocks that pairing.
+  //
+  //   input[vaultIdx]:    the OLD BondMint being closed
+  //   output[outIdxPool]: this pool re-created (usdt += expectedDischarge,
+  //                       totalDebit -= oldMintedAmount, totalCredit unchanged)
+  //   (collateral and credit outputs are NOT pinned here — they belong to the
+  //   paired rollIn / swap; vault.roll authorizes the spend on the borrower
+  //   side, rollIn validates the new vault's collateralisation)
+  function rollOut(pubkey borrowerPk, signature borrowerSig, int vaultIdx, int oldMintedAmount, int collateral,
+                   int outIdxPool, int expectedDischarge) {
+    require(oldMintedAmount > 0, "zero amount");
+    require(oldMintedAmount <= totalDebitOutstanding, "exceeds outstanding");
+    require(expectedDischarge == oldMintedAmount, "discharge must equal par");
+    require(tx.time < maturity, "old pool matured");
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
+
+    require(
+      tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+        borrowerPk, debitAssetId, debitCtrlId, oldMintedAmount, collateral, maturity, auctionWindow, exit
+      ),
+      "vault input mismatch"
+    );
+
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + oldMintedAmount, "debit not burned exactly oldMintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move during roll");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    int usdtNext = usdtBalance + expectedDischarge;
+    int debitNext = totalDebitOutstanding - oldMintedAmount;
+
+    require(
+      tx.outputs[outIdxPool].scriptPubKey == new RepaymentPool(
+        usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        usdtNext, totalCreditOutstanding, debitNext, exit
+      ),
+      "invalid pool recreation"
+    );
+    require(tx.outputs[outIdxPool].assets.lookup(usdtAssetId) >= usdtNext, "discharge not received");
+    require(tx.outputs[outIdxPool].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+    require(tx.outputs[outIdxPool].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+  }
+
+  // ROLL IN — borrower opens a new vault on THIS pool (the next maturity).
+  // Same safety invariants as issue (oracle-priced over-collateralisation +
+  // dual-mint + control retention + borrower consent), but all output pins
+  // use witness indices so it composes with rollOut on the previous pool
+  // and a non_interactive_swap fill in the same atomic tx.
+  //
+  //   output[outIdxPool]:   this pool re-created (totalCredit + newMintedAmount,
+  //                         totalDebit + newMintedAmount)
+  //   output[outIdxCredit]: newMintedAmount credit → arbitrary destination.
+  //                         The scriptPubKey is NOT pinned by this contract:
+  //                         it could be a non_interactive_swap covenant that
+  //                         delivers to the maker, directly the maker's
+  //                         SingleSig, or any other valid destination. The
+  //                         borrower's Schnorr signature (SIGHASH_ALL by
+  //                         default) commits to the entire tx including this
+  //                         output's scriptPubKey, so the destination IS
+  //                         covered at signing time — the script just doesn't
+  //                         dictate its form, which is what makes atomic
+  //                         composition with non_interactive_swap possible.
+  //   output[outIdxVault]:  new BondMint vault holding newCollateral + debit
+  function rollIn(int newMintedAmount, int newCollateral, pubkey borrowerPk, signature borrowerSig,
+                  int oraclePrice, int oracleTime, signature oracleSig,
+                  int outIdxPool, int outIdxVault, int outIdxCredit) {
+    require(newMintedAmount > 0, "zero issuance");
+    require(newCollateral > 0, "zero collateral");
+    // Same deployment-safety invariants as issue() — rollIn is an alternate
+    // issuance entry that must reject misconfigured pools identically.
+    require(initRatioBps > liqThresholdBps, "liq threshold must be below init ratio");
+    require(liqThresholdBps > 0, "liq threshold must be positive");
+    require(auctionWindow > 0, "auction window must be positive");
+    require(auctionDiscountBps >= 0, "negative discount");
+    require(auctionDiscountBps < 10000, "discount >= 100%");
+    require(tx.time < maturity, "new pool matured");
+    require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int collateralValue = newCollateral * oraclePrice / 100000000;
+    // Ceiling division — see explanation in issue(). Same dust-issuance
+    // defence on the alternate issuance entry.
+    int required = (newMintedAmount * initRatioBps + 9999) / 10000;
+    require(collateralValue >= required, "undercollateralized at issuance");
+
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == newMintedAmount, "credit delta mismatch");
+    require(creditGroup.control == creditCtrlId, "wrong credit control");
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.delta == newMintedAmount, "debit delta mismatch");
+    require(debitGroup.control == debitCtrlId, "wrong debit control");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    int creditNext = totalCreditOutstanding + newMintedAmount;
+    int debitNext = totalDebitOutstanding + newMintedAmount;
+
+    require(
+      tx.outputs[outIdxPool].scriptPubKey == new RepaymentPool(
+        usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        usdtBalance, creditNext, debitNext, exit
+      ),
+      "invalid pool recreation"
+    );
+    require(tx.outputs[outIdxPool].assets.lookup(usdtAssetId) >= usdtBalance, "pool usdt short");
+    require(tx.outputs[outIdxPool].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+    require(tx.outputs[outIdxPool].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+
+    require(tx.outputs[outIdxCredit].assets.lookup(creditAssetId) >= newMintedAmount, "credit not delivered");
+    // No scriptPubKey pin: the borrower's Schnorr sighash covers all outputs,
+    // so the credit destination IS implicitly committed by borrowerSig. This
+    // is what lets rollIn compose with a non_interactive_swap covenant fill.
+
+    require(
+      tx.outputs[outIdxVault].scriptPubKey == new BondMint(
+        borrowerPk, debitAssetId, debitCtrlId, newMintedAmount, newCollateral, maturity, auctionWindow, exit
+      ),
+      "invalid new vault"
+    );
+    require(tx.outputs[outIdxVault].value >= newCollateral, "collateral not locked");
+    require(tx.outputs[outIdxVault].assets.lookup(debitAssetId) >= newMintedAmount, "debit not custodied in vault");
+  }
+
+  // LIQUIDATE — pre-maturity MARGIN CALL. Permissionless. Anyone can trigger
+  // when `collateralValue < liqThresholdBps × mintedAmount / 10000`. Same
+  // oracle-priced two-branch payout as acceptAuction (over-cover: pool gets
+  // mintedAmount × payRate / 10000 USDT, auctioneer takes obligation-equivalent
+  // collateral, excess → borrower; shortfall: pool gets collateralValue ×
+  // payRate / 10000 USDT, auctioneer takes all collateral, gap socialises via
+  // redemption rate).
+  //
+  //   input[vaultIdx]: the BondMint being liquidated
+  //   output[0]: pool re-created (usdt + liquidationUsdt, totalDebit - mintedAmount)
+  //   output[1]: collateral sats → auctioneer
+  //   output[2]: excess sats → borrower (over-cover branch only, when > dust)
+  function liquidate(pubkey borrowerPk, int vaultIdx, int mintedAmount, int collateral,
+                     int oraclePrice, int oracleTime, signature oracleSig, pubkey auctioneerPk) {
+    require(auctionDiscountBps >= 0, "negative discount");
+    require(auctionDiscountBps < 10000, "discount >= 100%");
+    require(mintedAmount > 0, "zero amount");
+    require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
+    require(tx.time < maturity, "matured; use acceptAuction");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    require(
+      tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+        borrowerPk, debitAssetId, debitCtrlId, mintedAmount, collateral, maturity, auctionWindow, exit
+      ),
+      "vault input mismatch"
+    );
+
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move on liquidation");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    int collateralValue = collateral * oraclePrice / 100000000;
+    // Health-factor gate: liquidation is allowed ONLY when the vault has
+    // fallen below the threshold. This is the invariant that keeps every
+    // vault in the pool covenant-thresholded healthy and credit tokens
+    // genuinely fungible.
+    int healthFloor = mintedAmount * liqThresholdBps / 10000;
+    require(collateralValue < healthFloor, "vault still healthy");
+
+    int debitNext = totalDebitOutstanding - mintedAmount;
+    int payRate = 10000 - auctionDiscountBps;
+
+    if (collateralValue >= mintedAmount) {
+      int collateralSold  = mintedAmount * 100000000 / oraclePrice;
+      int excess          = collateral - collateralSold;
+      int liquidationUsdt = mintedAmount * payRate / 10000;
+      int usdtNext        = usdtBalance + liquidationUsdt;
+      require(
+        tx.outputs[0].scriptPubKey == new RepaymentPool(
+          usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          usdtNext, totalCreditOutstanding, debitNext, exit
+        ),
+        "invalid pool recreation"
+      );
+      require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "liquidation proceeds short");
+      require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+      require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+      require(tx.outputs[1].value >= collateralSold, "auctioneer underpaid");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+      if (excess > 330) {
+        require(tx.outputs[2].value >= excess, "borrower underpaid");
+        require(tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk), "output 2 not borrower");
+      }
+    } else {
+      int liquidationUsdt = collateralValue * payRate / 10000;
+      int usdtNext        = usdtBalance + liquidationUsdt;
+      require(
+        tx.outputs[0].scriptPubKey == new RepaymentPool(
+          usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          usdtNext, totalCreditOutstanding, debitNext, exit
+        ),
+        "invalid pool recreation"
+      );
+      require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "liquidation proceeds short");
+      require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+      require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+      require(tx.outputs[1].value >= collateral, "auctioneer underpaid");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+    }
+  }
+
+  // ACCEPT AUCTION — at/after maturity, in the auction window. Permissionless.
+  // Any auctioneer provides the USDT and takes the collateral; the discount
+  // is their profit.
+  //
+  //   over-cover  (collateralValue >= mintedAmount):
+  //     auctionUsdt    = mintedAmount   * (10000 - auctionDiscountBps) / 10000
+  //     collateralSold = mintedAmount   * 1e8 / oraclePrice          → auctioneer
+  //     excess         = collateral - collateralSold                 → borrower (if > 330)
+  //   shortfall   (collateralValue < mintedAmount):
+  //     auctionUsdt    = collateralValue * (10000 - auctionDiscountBps) / 10000
+  //     all collateral                                                → auctioneer
+  //
+  //   input[vaultIdx]: the BondMint being auctioned
+  //   output[0]: pool re-created (usdt + auctionUsdt, totalDebit - mintedAmount)
+  //   output[1]: collateral sats → auctioneer
+  //   output[2]: excess sats → borrower (over-cover branch only, when > dust)
+  function acceptAuction(pubkey borrowerPk, int vaultIdx, int mintedAmount, int collateral,
+                         int oraclePrice, int oracleTime, signature oracleSig, pubkey auctioneerPk) {
+    require(auctionDiscountBps >= 0, "negative discount");
+    require(auctionDiscountBps < 10000, "discount >= 100%");
+    require(mintedAmount > 0, "zero amount");
+    require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
+    require(tx.time >= maturity, "not yet matured");
+    int windowEnd = maturity + auctionWindow;
+    require(tx.time < windowEnd, "auction window closed");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    require(
+      tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+        borrowerPk, debitAssetId, debitCtrlId, mintedAmount, collateral, maturity, auctionWindow, exit
+      ),
+      "vault input mismatch"
+    );
+
+    let debitGroup = tx.assetGroups.find(debitAssetId);
+    require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.delta == 0, "credit must not move on auction");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    // FOLLOW-UP: same overflow ceiling as `issue` on `collateral * oraclePrice`;
+    // and `mintedAmount * 100000000` overflows above ~92 BTC of par. Both fail
+    // closed; chunked auctions or a rescaled price unit lift the cap.
+    int collateralValue = collateral * oraclePrice / 100000000;
+    int debitNext = totalDebitOutstanding - mintedAmount;
+    int payRate = 10000 - auctionDiscountBps;
+
+    if (collateralValue >= mintedAmount) {
+      int collateralSold = mintedAmount * 100000000 / oraclePrice;
+      int excess         = collateral - collateralSold;
+      int auctionUsdt    = mintedAmount * payRate / 10000;
+      int usdtNext       = usdtBalance + auctionUsdt;
+      require(
+        tx.outputs[0].scriptPubKey == new RepaymentPool(
+          usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          usdtNext, totalCreditOutstanding, debitNext, exit
+        ),
+        "invalid pool recreation"
+      );
+      require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "auction proceeds short");
+      require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+      require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+      require(tx.outputs[1].value >= collateralSold, "auctioneer underpaid");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+      if (excess > 330) {
+        require(tx.outputs[2].value >= excess, "borrower underpaid");
+        require(tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk), "output 2 not borrower");
+      }
+    } else {
+      int auctionUsdt = collateralValue * payRate / 10000;
+      int usdtNext    = usdtBalance + auctionUsdt;
+      require(
+        tx.outputs[0].scriptPubKey == new RepaymentPool(
+          usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+          oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+          usdtNext, totalCreditOutstanding, debitNext, exit
+        ),
+        "invalid pool recreation"
+      );
+      require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "auction proceeds short");
+      require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+      require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+      require(tx.outputs[1].value >= collateral, "auctioneer underpaid");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+    }
+  }
+
+  // REDEEM — after the auction window closes, credit holders burn credit for
+  // pro-rata USDT. payout = amount * usdtBalance / totalCreditOutstanding.
+  // The rate is preserved under redemption alone, so fair pro-rata for every
+  // claim ordering.
+  //
+  //   output[0]: pool re-created (usdt - payout, totalCredit - amount)
+  //   output[1]: payout USDT → holder (SingleSig — clean single-owner exit)
+  function redeem(int amount, pubkey holderPk, signature holderSig) {
+    require(amount > 0, "zero redeem");
+    int redeemStart = maturity + auctionWindow;
+    require(tx.time >= redeemStart, "auction window not closed");
+    require(checkSig(holderSig, holderPk), "invalid holder sig");
+    require(amount <= totalCreditOutstanding, "exceeds outstanding");
+    require(totalCreditOutstanding > 0, "no credit outstanding");
+    require(usdtBalance > 0, "pool empty");
+
+    // FOLLOW-UP: `amount * usdtBalance` overflows int64 at large pool sizes.
+    // Fails closed; chunk redemptions or rearrange math to divide-before-
+    // multiply with controlled precision loss.
+    int payout = amount * usdtBalance / totalCreditOutstanding;
+    require(payout > 0, "payout rounds to zero");
+
+    let creditGroup = tx.assetGroups.find(creditAssetId);
+    require(creditGroup.sumInputs == creditGroup.sumOutputs + amount, "credit not burned exactly amount");
+    let ccGroup = tx.assetGroups.find(creditCtrlId);
+    require(ccGroup.delta == 0, "credit control changed");
+    let dcGroup = tx.assetGroups.find(debitCtrlId);
+    require(dcGroup.delta == 0, "debit control changed");
+
+    int usdtNext   = usdtBalance - payout;
+    int creditNext = totalCreditOutstanding - amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new RepaymentPool(
+        usdtAssetId, creditAssetId, creditCtrlId, debitAssetId, debitCtrlId, ticker,
+        oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
+        usdtNext, creditNext, totalDebitOutstanding, exit
+      ),
+      "invalid pool recreation"
+    );
+    require(tx.outputs[0].assets.lookup(usdtAssetId) >= usdtNext, "pool usdt short");
+    require(tx.outputs[0].assets.lookup(creditCtrlId) >= 1, "credit control not retained");
+    require(tx.outputs[0].assets.lookup(debitCtrlId) >= 1, "debit control not retained");
+
+    require(tx.outputs[1].assets.lookup(usdtAssetId) >= payout, "holder underpaid");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(holderPk), "redeem dest not holder");
+  }
+}

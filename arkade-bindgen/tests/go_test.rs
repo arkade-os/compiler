@@ -40,7 +40,7 @@ fn test_htlc_go_generates() {
     assert!(code.contains("type HTLCClaimCooperativeWitness struct {"));
     assert!(code.contains("ReceiverSig [64]byte"));
     assert!(code.contains("Preimage []byte"));
-    assert!(code.contains("// ServerSig injected by Ark server"));
+    assert!(code.contains("// ServerSig injected by Arkade server"));
 
     assert!(code.contains("type HTLCClaimExitWitness struct {"));
     assert!(code.contains("// Exit timelock enforced by script"));

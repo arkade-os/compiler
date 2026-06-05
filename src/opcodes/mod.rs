@@ -48,6 +48,9 @@ pub const OP_SHA256UPDATE: &str = "OP_SHA256UPDATE";
 pub const OP_SHA256INITIALIZE: &str = "OP_SHA256INITIALIZE";
 pub const OP_SHA256FINALIZE: &str = "OP_SHA256FINALIZE";
 
+// Byte-string manipulation
+pub const OP_CAT: &str = "OP_CAT";
+
 // Stack manipulation
 pub const OP_DROP: &str = "OP_DROP";
 pub const OP_DUP: &str = "OP_DUP";
@@ -121,7 +124,6 @@ pub const OP_2ROT: &str = "OP_2ROT";
 pub const OP_2SWAP: &str = "OP_2SWAP";
 
 // Byte-string manipulation (introspector extensions)
-pub const OP_CAT: &str = "OP_CAT";
 pub const OP_SUBSTR: &str = "OP_SUBSTR";
 pub const OP_LEFT: &str = "OP_LEFT";
 pub const OP_RIGHT: &str = "OP_RIGHT";

@@ -207,7 +207,7 @@ fn emit_witness_interface(
 
     // Comments for server-injected or timelock fields
     if variant_label == "Cooperative" {
-        out.push_str("  // serverSig injected by Ark server\n");
+        out.push_str("  // serverSig injected by Arkade server\n");
     } else if variant.is_nofn_fallback {
         out.push_str("  // N-of-N multisig exit fallback\n");
     } else {

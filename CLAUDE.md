@@ -172,6 +172,7 @@ Canonical skills directory: `.codex/skills/`.
 Compatibility symlinks: `.claude/skills -> ../.codex/skills`, `.agents/skills -> ../.codex/skills`.
 
 Available project skills:
+- `writing-arkade-contracts.md`: Patterns and gotchas for authoring `.ark` contracts (constructors, tapleaves, output layout, oracle pattern, fixed-point arithmetic, grammar workarounds).
 - `language-feature-development.md`: Add or change Arkade syntax/AST/compiler semantics safely.
 - `testing-and-regressions.md`: Author and maintain integration/CLI regression tests.
 - `wasm-playground-workflow.md`: Build/debug/deploy playground and WASM bridge.
@@ -191,11 +192,15 @@ Load only the skill required for the active task domain.
     - [2026-05-08] `exit` and `renew` are `int` constructor parameters so the playground can parameterize them. `options { server = server; exit = exit; }` is the canonical form.
     - [2026-05-08] `tx.time` is block height throughout (Bitcoin nLockTime). Beacon `clock` asset quantity = block height of last update. Staleness check = 144 blocks (≈ 24 hours), not 86400 seconds.
     - [2026-05-08] Always "Arkade" — never "ARK" or "ASP" in comments, docs, or contract code.
+    - [2026-05-19] StabilityVault + StabilityOffer use oracle-signed price witness (Fuji-style), not on-chain beacon UTXO. Oracle constructs msg = sha256(ticker || price || timestamp), signs it. Contract verifies via checkSigFromStack(sig, oraclePk, sha256(ticker + price + time)). The `+` operator auto-coerces int operands to 8-byte LE for correct on-chain hash reconstruction. Replay protection: ticker (feed id), price (value), timestamp (uniqueness + 144-block freshness check).
+    - [2026-05-19] Type-dispatched `+` operator: routes to OP_CAT when operands are bytes-like (bytes32, bytes, or int with bytes-like context); emits OP_ADD64 for int + int. Implemented via bottom-up AST rewrite pass that uses typechecker::infer_type() to determine operand types before compilation.
+    - [2026-05-19] price_beacon.ark was superseded by oracle-signed design; examples/price_beacon.ark file deleted. Do NOT restore it; stability contracts are the canonical oracle pattern going forward. playground/contracts.js must be regenerated via `./playground/generate_contracts.sh` whenever examples/*.ark changes.
   </project_decisions>
 
   <lessons_learned>
     - README examples may drift; verify behavior against `src/main.rs`, parser, and tests.
     - Grammar alternative order in PEG materially changes parse results.
     - Reliable feature work requires synchronized changes across `models`, `parser`, `compiler`, and `tests`.
+    - playground/contracts.js is auto-generated from examples/**/*.ark via `./playground/generate_contracts.sh` — never edit it manually. Always regenerate after adding/deleting/modifying example contracts. This keeps playground synchronized with compiler version.
   </lessons_learned>
 </memory>
