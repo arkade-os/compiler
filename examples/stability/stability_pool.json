@@ -1,0 +1,619 @@
+{
+  "contractName": "StabilityPool",
+  "constructorInputs": [
+    {
+      "name": "priceTicker_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "priceTicker_gidx",
+      "type": "int"
+    },
+    {
+      "name": "priceClock_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "priceClock_gidx",
+      "type": "int"
+    },
+    {
+      "name": "yieldTicker_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "yieldTicker_gidx",
+      "type": "int"
+    },
+    {
+      "name": "yieldClock_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "yieldClock_gidx",
+      "type": "int"
+    },
+    {
+      "name": "aggregateSeekerUSD",
+      "type": "int"
+    },
+    {
+      "name": "poolYieldIndex",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "providerDeposit",
+      "functionInputs": [
+        {
+          "name": "depositSats",
+          "type": "int"
+        },
+        {
+          "name": "providerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "depositSats",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "providerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<depositSats>",
+        "OP_GREATERTHANOREQUAL",
+        "330",
+        "1",
+        "<priceTicker_txid>",
+        "<priceTicker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "1",
+        "<priceClock_txid>",
+        "<priceClock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<priceHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<priceAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "2",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "2",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<yieldHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<yieldAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<currentIndex>",
+        "OP_GREATERTHANOREQUAL",
+        "<poolYieldIndex>",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityPool(<priceTicker>,<priceClock>,<yieldTicker>,<yieldClock>,<aggregateSeekerUSD>,<currentIndex>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTINPUTVALUE",
+        "<depositSats>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<poolValueAfter>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<priceTicker_txid>",
+        "<priceTicker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<priceClock_txid>",
+        "<priceClock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<priceHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentIndex>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<yieldHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "3",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:ProviderShare(<providerPk>,<depositSats>,<currentIndex>,<exit>)>",
+        "OP_EQUAL",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "providerDeposit",
+      "functionInputs": [
+        {
+          "name": "depositSats",
+          "type": "int"
+        },
+        {
+          "name": "providerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "1-of-1 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "providerWithdraw",
+      "functionInputs": [
+        {
+          "name": "withdrawSats",
+          "type": "int"
+        },
+        {
+          "name": "providerPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "withdrawSats",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "providerPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<withdrawSats>",
+        "OP_GREATERTHANOREQUAL",
+        "330",
+        "1",
+        "<priceTicker_txid>",
+        "<priceTicker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "1",
+        "<priceClock_txid>",
+        "<priceClock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<priceHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<priceAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "2",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "2",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<tx.time >",
+        "<yieldHeight>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<yieldAge>",
+        "144",
+        "OP_LESSTHANOREQUAL",
+        "<currentIndex>",
+        "OP_GREATERTHANOREQUAL",
+        "<poolYieldIndex>",
+        "<aggregateSeekerUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "100000000",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<currentIndex>",
+        "OP_SCRIPTNUMTOLE64",
+        "<poolYieldIndex>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<aggregateSeekerUSD>",
+        "OP_SCRIPTNUMTOLE64",
+        "<deltaIndex>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "100000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<seekerCapitalNominal>",
+        "OP_SCRIPTNUMTOLE64",
+        "<fundingAccrued>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTINPUTVALUE",
+        "<withdrawSats>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<totalAfter>",
+        "<seekerCapital>",
+        "OP_GREATERTHAN",
+        "<seekerCapital>",
+        "OP_SCRIPTNUMTOLE64",
+        "3",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<leverageBound>",
+        "<totalAfter>",
+        "OP_LESSTHANOREQUAL",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:StabilityPool(<priceTicker>,<priceClock>,<yieldTicker>,<yieldClock>,<aggregateSeekerUSD>,<currentIndex>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalAfter>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<priceTicker_txid>",
+        "<priceTicker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentPrice>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "<priceClock_txid>",
+        "<priceClock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<priceHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentIndex>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "2",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<yieldHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "3",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<providerPk>)>",
+        "OP_EQUAL",
+        "3",
+        "OP_INSPECTOUTPUTVALUE",
+        "<withdrawSats>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "providerWithdraw",
+      "functionInputs": [
+        {
+          "name": "withdrawSats",
+          "type": "int"
+        },
+        {
+          "name": "providerPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "providerPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "providerPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "1-of-1 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<providerPk>",
+        "<providerPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\nimport \"provider_share.ark\";\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract StabilityPool(\n  bytes32 priceTicker,\n  bytes32 priceClock,\n  bytes32 yieldTicker,\n  bytes32 yieldClock,\n  int     aggregateSeekerUSD,\n  int     poolYieldIndex,\n  int     exit\n) {\n\n  function providerDeposit(int depositSats, pubkey providerPk) {\n    require(depositSats >= 330, \"deposit below dust\");\n\n    int currentPrice = tx.inputs[1].assets.lookup(priceTicker);\n    require(currentPrice > 0, \"invalid price beacon\");\n    int priceHeight = tx.inputs[1].assets.lookup(priceClock);\n    int priceAge = tx.time - priceHeight;\n    require(priceAge <= 144, \"stale price oracle\");\n\n    int currentIndex = tx.inputs[2].assets.lookup(yieldTicker);\n    int yieldHeight  = tx.inputs[2].assets.lookup(yieldClock);\n    int yieldAge     = tx.time - yieldHeight;\n    require(yieldAge <= 144, \"stale funding oracle\");\n    require(currentIndex >= poolYieldIndex, \"yield index regressed\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityPool(\n        priceTicker, priceClock, yieldTicker, yieldClock,\n        aggregateSeekerUSD, currentIndex, exit\n      ),\n      \"invalid pool output\"\n    );\n    int poolValueAfter = tx.inputs[0].value + depositSats;\n    require(\n      tx.outputs[0].value >= poolValueAfter,\n      \"pool deposit not credited\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(priceTicker) >= currentPrice,\n      \"price beacon must survive\"\n    );\n    require(\n      tx.outputs[1].assets.lookup(priceClock) >= priceHeight,\n      \"price clock must survive\"\n    );\n\n    require(\n      tx.outputs[2].assets.lookup(yieldTicker) >= currentIndex,\n      \"funding beacon must survive\"\n    );\n    require(\n      tx.outputs[2].assets.lookup(yieldClock) >= yieldHeight,\n      \"funding clock must survive\"\n    );\n\n    require(\n      tx.outputs[3].scriptPubKey == new ProviderShare(\n        providerPk, depositSats, currentIndex, exit\n      ),\n      \"invalid provider share output\"\n    );\n  }\n\n  function providerWithdraw(int withdrawSats, pubkey providerPk) {\n    require(withdrawSats >= 330, \"withdraw below dust\");\n\n    int currentPrice = tx.inputs[1].assets.lookup(priceTicker);\n    require(currentPrice > 0, \"invalid price beacon\");\n    int priceHeight = tx.inputs[1].assets.lookup(priceClock);\n    int priceAge = tx.time - priceHeight;\n    require(priceAge <= 144, \"stale price oracle\");\n\n    int currentIndex = tx.inputs[2].assets.lookup(yieldTicker);\n    int yieldHeight  = tx.inputs[2].assets.lookup(yieldClock);\n    int yieldAge     = tx.time - yieldHeight;\n    require(yieldAge <= 144, \"stale funding oracle\");\n    require(currentIndex >= poolYieldIndex, \"yield index regressed\");\n\n    int seekerCapitalNominal = aggregateSeekerUSD * 100000000 / currentPrice;\n    int deltaIndex           = currentIndex - poolYieldIndex;\n    int fundingAccrued       = aggregateSeekerUSD * deltaIndex / 100000000;\n    int seekerCapital        = seekerCapitalNominal + fundingAccrued;\n\n    int totalAfter = tx.inputs[0].value - withdrawSats;\n    require(totalAfter > seekerCapital, \"withdraw would undercollateralise\");\n\n    int leverageBound = seekerCapital * 3;\n    require(leverageBound <= totalAfter, \"leverage gate: provider withdraw blocked\");\n\n\n    require(\n      tx.outputs[0].scriptPubKey == new StabilityPool(\n        priceTicker, priceClock, yieldTicker, yieldClock,\n        aggregateSeekerUSD, currentIndex, exit\n      ),\n      \"invalid pool output\"\n    );\n    require(tx.outputs[0].value >= totalAfter, \"pool value mismatch\");\n\n    require(\n      tx.outputs[1].assets.lookup(priceTicker) >= currentPrice,\n      \"price beacon must survive\"\n    );\n    require(\n      tx.outputs[1].assets.lookup(priceClock) >= priceHeight,\n      \"price clock must survive\"\n    );\n\n    require(\n      tx.outputs[2].assets.lookup(yieldTicker) >= currentIndex,\n      \"funding beacon must survive\"\n    );\n    require(\n      tx.outputs[2].assets.lookup(yieldClock) >= yieldHeight,\n      \"funding clock must survive\"\n    );\n\n    require(\n      tx.outputs[3].scriptPubKey == new SingleSig(providerPk),\n      \"output 3 not provider\"\n    );\n    require(tx.outputs[3].value >= withdrawSats, \"provider underpaid\");\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-05-15T17:21:56.331826983+00:00",
+  "warnings": [
+    "warning[type]: fn providerDeposit: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerDeposit: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerDeposit: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerDeposit: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerWithdraw: comparison '>' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerWithdraw: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerWithdraw: comparison '<=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerWithdraw: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn providerWithdraw: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
+}

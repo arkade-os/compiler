@@ -1,0 +1,49 @@
+// ProviderShare Contract (Phase 2 skeleton)
+//
+// Per-Provider UTXO representing a claim on StabilityPool.providerCapital.
+// Holds the provider's pubkey, the sats they deposited at entry, and the
+// FundingBeacon yield index at entry (so equity dilution from accrued
+// Seeker funding can be computed at exit time).
+//
+// v0 enforcement scope:
+//   - redeem() checks the provider signature
+//   - redeem() requires the spending tx to spend a StabilityPool input
+//     (deferred: introspect input[0].scriptPubKey shape match — needs
+//     the pool's current state to instantiate, which the share doesn't
+//     directly observe; v0 trusts the pool to enforce the leverage gate)
+//
+// TODO (Phase 2 completion, post-PRD review):
+//   - Equity dilution: actual payout = depositedSats × (currentProviderCapital
+//     / providerCapitalAtEntry). Requires the share to read both indices and
+//     the pool's aggregateSeekerUSD/poolYieldIndex. One option: share carries
+//     a "shares-issued snapshot" rather than raw sats, mirroring ERC-4626.
+//   - Split / merge for partial withdraws.
+//
+// In the current skeleton, redeem() is a permission token only. The pool's
+// providerWithdraw function decides how many sats may leave, gated by the
+// system-wide leverage check. Fairness across providers is not yet enforced.
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract ProviderShare(
+  pubkey providerPk,
+  int    depositedSats,   // sats committed at entry
+  int    entryIndex,      // FundingBeacon yield index at entry
+  int    exit
+) {
+
+  // -------------------------------------------------------------------------
+  // REDEEM
+  // Provider authorizes burning this share as part of a pool withdraw tx.
+  // The pool covenant (input[0]) enforces the actual sat-withdraw and the
+  // leverage gate. This function only authorizes the burn.
+  // -------------------------------------------------------------------------
+  function redeem(signature providerSig) {
+    require(checkSig(providerSig, providerPk), "invalid provider sig");
+    // TODO Phase 2 completion: enforce that input[0] is a StabilityPool and
+    // verify the share's fair equity claim against current pool state.
+  }
+}
