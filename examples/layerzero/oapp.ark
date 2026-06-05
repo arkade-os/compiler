@@ -107,11 +107,17 @@ contract OApp(
       "credit remoteSender mismatch"
     );
 
-    // Recipient output's scriptPubKey x-only key matches the CreditMessage's
-    // 32-byte recipient field (offset 145 + 2 = 147 inside the LzReceive packet,
-    // skipping the 0x5120 P2TR tag prefix at offset 145..147).
+    // Recipient output's scriptPubKey matches the CreditMessage's full 34-byte
+    // P2TR scriptPubKey field (0x5120 tag prefix + 32-byte x-only key, starting
+    // at LzReceive offset 145).
+    //
+    // OP_INSPECTOUTPUTSCRIPTPUBKEY returns the full scriptPubKey bytes as a
+    // single stack item (see docs/arkade-primitives-spec.md Phase 7 — the
+    // canonical Arkade convention is one-item `outScript(bytes)`, not the
+    // (program, version) two-item form some Liquid-style references describe).
+    // So both sides of this equality are 34 bytes.
     require(
-      tx.outputs[1].scriptPubKey == substr(tx.inputs[0].packet(17), 147, 32),
+      tx.outputs[1].scriptPubKey == substr(tx.inputs[0].packet(17), 145, 34),
       "recipient pkScript mismatch"
     );
 

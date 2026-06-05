@@ -92,17 +92,68 @@ expressed in Arkade:
 | DVN attested-hash binding | `sha256(substr(recv, 1, 140)) == attestedHash` | `OP_INSPECTPACKET`, `OP_SUBSTR`, `OP_SHA256` |
 | LzSend GUID = sha256(invocation) | `sha256(substr(tx.inputs[1].packet(20), 0, 175)) == substr(tx.packet(19), 77, 32)` | `OP_INSPECTINPUTPACKET`, `OP_SHA256`, `OP_INSPECTPACKET`, `OP_SUBSTR` |
 
-The only deliberately-deferred check is **nonce monotonicity** (inbound nonce
-in next state = previous inbound nonce + 1, and the same for outbound on
-`send`). Expressing that needs access to the *previous* Endpoint state
-packet via `tx.inputs[currentInputIndex].packet(EndpointState)`, which the
-introspector exposes but the compiler's parameterised input-packet form
-needs a literal-or-witness index. The route-prefix hash check pins
-endpointID/oappID/route/DVN-keys; combined with DVN-attested hash binding
-to the LzReceive header, an attacker who tampers with the nonce field in
-the next-state packet would need a valid DVN attestation over the
-manipulated header — which they don't have. Adding the strict +1 check is
-a small follow-up once `tx.inputs[currentInputIndex]` is wired.
+## Witness convention
+
+A few of the contract bodies reference identifiers that are neither
+constructor parameters nor `let` bindings — `attestedHash`, `dvn0Sig`,
+`dvn1Sig` in `Endpoint.receive()`. These are **prover-supplied witness
+inputs** declared in the function signature; the Arkade compiler picks
+them up from the parameter list and emits the matching `witnessSchema`
+entries. The on-chain script then pins each witness to a canonical
+packet-derived value before it is used:
+
+- `attestedHash` is pinned twice — once against
+  `sha256(substr(LzReceive, 1, 140))` (the on-chain reconstruction of
+  the DVN-signed header) and once against `substr(DvnAttestation, 1, 32)`
+  (the in-packet attested hash). Both DVN signatures verify over it.
+- `dvn0Sig` / `dvn1Sig` are checked with `checkSigFromStackVerify` against
+  the contract-baked DVN pubkeys (which are themselves pinned against the
+  in-packet DVN pubkey slots in the Endpoint state).
+
+This is the same pattern the existing examples use for hash preimages
+(see `htlc.ark`'s `claim(preimage)` and `fuji_safe.ark`'s
+`liquidate(currentPrice)`). The witness supplies an unverified value;
+the contract body proves it equals the canonical on-chain value before
+relying on it.
+
+## Constructor decomposition
+
+Some `bytes32` constructor parameters (`endpointCtrlAssetId`,
+`endpointIDAssetId`, `oappIDAssetId`, `usdt0AssetId`) appear in the
+generated JSON as `_txid` + `_gidx` pairs, while others
+(`oappCtrlAssetId`, `endpointID`, `oappID`, `remoteOApp`) appear as
+single `bytes32` values. This is by design: the compiler decomposes
+only the asset IDs that are passed to `tx.{inputs,outputs}[i].assets.lookup(...)`
+or to `tx.assetGroups.find(...)` inside the function bodies — those
+need to be split into the `(txid32, gidx_u16)` pair the underlying
+`OP_INSPECT*ASSETLOOKUP` / `OP_FINDASSETGROUPBYASSETID` opcodes consume.
+`bytes32` params that only get passed through to a child constructor
+(`new ReceiveMarker(oappCtrlAssetId, …)`) stay as a single 32-byte value.
+The split shows up in the JSON but is invisible at the Arkade source level.
+
+## Nonce monotonicity
+
+The only deliberately-deferred check is **strict nonce monotonicity**
+(inbound nonce in next state = previous inbound nonce + 1, and the same
+for outbound on `send`). Expressing that needs access to the *previous*
+Endpoint state packet via `tx.inputs[currentInputIndex].packet(EndpointState)`,
+which the introspector exposes but the compiler's parameterised
+input-packet form needs a literal-or-witness index.
+
+**Off-chain safety net.** Replay of a DVN attestation is not actually
+possible at the LayerZero protocol layer: each DVN signs over the
+full LzReceive header, which includes the inbound nonce as one of its
+fields. An on-chain replay would require a fresh DVN attestation over
+the *new* (replayed) header at the next nonce slot — which honest DVNs
+will not produce, since the source-chain event is single-use and the
+DVN's signing rule binds (srcEID, sender, dstEID, receiver, nonce) to a
+specific emitted event. The route-prefix hash check baked into Endpoint
+pins endpointID/oappID/route/DVN-keys, so an attacker who tampers with
+the nonce field in the next-state packet would need a valid DVN
+attestation over the manipulated header — which they don't have.
+
+Adding the strict +1 check is a small follow-up once
+`tx.inputs[currentInputIndex]` is wired into the compiler grammar.
 
 ## Local checks
 

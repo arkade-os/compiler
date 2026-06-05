@@ -96,7 +96,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-16T13:12:05.043779373+00:00",
+  "updatedAt": "2026-06-05T16:00:05.221130444+00:00",
   "warnings": [
     "warning[type]: fn consume: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
   ]

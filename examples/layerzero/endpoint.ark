@@ -98,6 +98,13 @@ contract Endpoint(
   // Validate a DVN-attested LzReceive packet and emit a receive-invocation
   // marker for OApp.receive() to consume.
   //
+  // Witness inputs (prover-supplied; the introspector layer binds them to
+  // the canonical packet-derived values via the on-chain checks below):
+  //   - attestedHash : sha256(LzReceive[1..141]) — receive header digest.
+  //     Pinned twice on chain: against sha256(substr(packet17, 1, 140)) and
+  //     against substr(packet18, 1, 32). Both DVN sigs verify over it.
+  //   - dvn0Sig / dvn1Sig : Schnorr signatures from the two configured DVNs.
+  //
   // On-chain enforcement (mirrors BuildEndpointReceiveScript end-to-end):
   //   - Packets EndpointState/LzReceive/DvnAttestation are v1 with fixed size.
   //   - Route fields (endpointID, oappID, remoteEID, remoteOApp) match config.
@@ -109,7 +116,12 @@ contract Endpoint(
   //   - One EndpointID asset is minted on output[1] (receive marker).
   //   - Output[1] uses the canonical ReceiveMarker pkScript.
   // -------------------------------------------------------------------------
-  function receive(bytes32 receiveMarkerScriptHash) {
+  function receive(
+    bytes32 receiveMarkerScriptHash,
+    bytes32 attestedHash,
+    signature dvn0Sig,
+    signature dvn1Sig
+  ) {
     // Pull the three current-tx packets. tx.packet() asserts presence.
     require(size(tx.packet(16)) == 183, "endpoint state packet size");
     require(size(tx.packet(17)) == 219, "lz receive packet size");
