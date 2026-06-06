@@ -1,0 +1,347 @@
+// VariableDividendPreferred Contract
+//
+// A Bitcoin-native perpetual preferred share paying a VARIABLE cash dividend,
+// callable by the issuer at par + accrued. A $100-par claim whose dividend
+// rate is re-pegged to keep the share trading near par. Dividends are
+// denominated in USD cents and paid in BTC (sats) at an oracle-attested
+// BTC/USD price.
+//
+// DIVIDEND MODEL (continuous, cumulative, penalty-backed)
+//   Accrual is continuous and pro-rata on PAR (faceValue x units), at the
+//   current annual rate `dividendRateBps`:
+//     elapsed     = tx.offchainTime - lastAccrual
+//     notional    = faceValue * units                 (cents)
+//     rateElapsed = effRate * elapsed / 31536000       (bps over the period)
+//     delta       = notional * rateElapsed / 10000     (cents)
+//     accruedCents += delta
+//   `accruedCents` is CUMULATIVE: it is only ever reset to 0 by an actual
+//   payment (claim or redeem). Dividends are simple (cash-pay) on par, so par
+//   never compounds; compounding re-enters only via the arrears penalty rate.
+//
+// THE RE-PEG (oracle-driven, deterministic)
+//   The defining feature is a rate that moves to keep the share near par.
+//   A script can't see a secondary market, so the secondary price arrives over
+//   a signed oracle feed (`prefTicker`). The re-peg is then deterministic:
+//     gap     = faceValue - prefPriceCents   (>0 when trading below par)
+//     newRate = clamp(dividendRateBps + adjGain * gap / faceValue,
+//                     rateMinBps, rateMaxBps)
+//   Below par the rate is forced up; above par, down. The issuer's only
+//   freedom is WHEN to re-peg; the magnitude is pinned by the formula.
+//
+// ARREARS TEETH (cumulative preferred protection)
+//   The reserve is the sats held in the position UTXO. Because we owe in cents
+//   but hold sats, "is the reserve actually covering accrued?" needs the
+//   BTC/USD oracle. The covenant can only assert lower bounds on output value,
+//   so coverage is made SELF-REVEALING: the spender declares the next
+//   `arrearsSince`, and
+//     - declaring healthy (nextArrearsSince == 0) FORCES full coverage
+//       (output value >= sats needed to cover accrued), while
+//     - declaring arrears requires an honest clock (starts now; never moved
+//       forward once running).
+//   An under-funded issuer therefore cannot produce a "healthy" next state.
+//   Once arrears exceed `gracePeriod`:
+//     - the effective accrual rate jumps to `penaltyRateBps`, and
+//     - the holder may `forceRedeem`, sweeping the whole reserve.
+//   `pokeArrears` is PERMISSIONLESS so the issuer can't dodge the penalty by
+//   simply never calling anything; the holder (or anyone) starts the clock.
+//
+// ORACLE MODEL (Fuji-style signed feed; one oraclePk, two tickers)
+//   msg = sha256(ticker || price || time); price,time are 8-byte LE.
+//     prefTicker -> secondary price of THIS preferred (cents/unit); re-peg
+//     btcTicker  -> BTC/USD (cents);                                pay + coverage
+//   Freshness: tx.offchainTime - oracleTime in [0, 600] seconds.
+//   `tx.offchainTime` is the TEE-introspector wallclock (unix seconds).
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract VariableDividendPreferred(
+  pubkey  issuerPk,        // sets the rate (within rules) and can call/redeem
+  pubkey  holderPk,        // current owner; mutable on transfer
+  pubkey  oraclePk,        // only signatures from this key accepted
+  bytes32 prefTicker,      // secondary-price feed id (drives the re-peg)
+  bytes32 btcTicker,       // BTC/USD feed id (cents)
+  int     faceValue,       // par per unit in cents (10000 = $100); immutable
+  int     units,           // shares in this lot; immutable here (no split)
+  int     dividendRateBps, // current annual rate, bps; the re-peg knob; mutable
+  int     rateMinBps,      // rate floor; immutable
+  int     rateMaxBps,      // rate cap; immutable
+  int     adjGain,         // re-peg sensitivity, bps per 100% deviation; immutable
+  int     penaltyRateBps,  // arrears accrual rate (> rateMaxBps); immutable
+  int     gracePeriod,     // seconds of uncovered arrears before penalty + seize
+  int     accruedCents,    // cumulative unpaid dividend in cents; mutable
+  int     lastAccrual,     // unix seconds; basis for accrual; mutable
+  int     arrearsSince,    // 0 = healthy; else unix-sec the reserve went short
+  int     exit             // exit timelock in blocks
+) {
+
+  // ---------------------------------------------------------------------------
+  // ACCRUE & RE-PEG — issuer rolls accrued dividend at the effective (penalty-
+  // aware) rate, then the contract forces the new rate from the oracle
+  // secondary price. arrearsSince is carried unchanged (cleared only by a real
+  // payment; started only by pokeArrears/claim coverage logic).
+  // ---------------------------------------------------------------------------
+  function accrueAndRepeg(
+    signature issuerSig,
+    int       prefPriceCents,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(issuerSig, issuerPk), "invalid issuer sig");
+    require(prefPriceCents > 0, "invalid pref price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+    let oracleMsg = sha256(prefTicker + prefPriceCents + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    // Effective rate: penalty once arrears exceed grace.
+    int effRate = dividendRateBps;
+    if (arrearsSince != 0) {
+      int arrearsAge = tx.offchainTime - arrearsSince;
+      if (arrearsAge > gracePeriod) {
+        effRate = penaltyRateBps;
+      }
+    }
+
+    int elapsed     = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int notional    = faceValue * units;
+    int rateElapsed = effRate * elapsed / 31536000;
+    int delta       = notional * rateElapsed / 10000;
+    require(delta > 0, "no accrual; wait longer");
+    int newAccrued  = accruedCents + delta;
+
+    // Deterministic re-peg: below par -> raise, above par -> lower; clamped.
+    int gap        = faceValue - prefPriceCents;
+    int step       = adjGain * gap / faceValue;
+    int rawNewRate = dividendRateBps + step;
+    int newRate    = rawNewRate;
+    if (rawNewRate < rateMinBps) {
+      newRate = rateMinBps;
+    }
+    if (rawNewRate > rateMaxBps) {
+      newRate = rateMaxBps;
+    }
+
+    require(
+      tx.outputs[0].scriptPubKey == new VariableDividendPreferred(
+        issuerPk, holderPk, oraclePk, prefTicker, btcTicker,
+        faceValue, units, newRate, rateMinBps, rateMaxBps, adjGain,
+        penaltyRateBps, gracePeriod, newAccrued, tx.offchainTime, arrearsSince, exit
+      ),
+      "invalid repeg output"
+    );
+    require(tx.outputs[0].value >= 330, "reserve dusted");
+  }
+
+  // ---------------------------------------------------------------------------
+  // POKE ARREARS — permissionless. Rolls accrual at the effective rate and
+  // updates the arrears clock via self-revealing coverage. Anyone can call it,
+  // so the issuer cannot dodge the penalty by staying idle.
+  // ---------------------------------------------------------------------------
+  function pokeArrears(
+    int       btcPriceCents,
+    int       oracleTime,
+    signature oracleSig,
+    int       nextArrearsSince
+  ) {
+    require(btcPriceCents > 0, "invalid btc price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+    let oracleMsg = sha256(btcTicker + btcPriceCents + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int nowTime = tx.offchainTime;
+
+    int effRate = dividendRateBps;
+    if (arrearsSince != 0) {
+      int arrearsAge = nowTime - arrearsSince;
+      if (arrearsAge > gracePeriod) {
+        effRate = penaltyRateBps;
+      }
+    }
+
+    int elapsed     = nowTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int notional    = faceValue * units;
+    int rateElapsed = effRate * elapsed / 31536000;
+    int delta       = notional * rateElapsed / 10000;
+    require(delta > 0, "no accrual; wait longer");
+    int newAccrued  = accruedCents + delta;
+
+    // Self-revealing coverage: declaring healthy forces full reserve coverage;
+    // declaring arrears requires an honest, non-resettable clock.
+    int requiredSats = newAccrued * 100000000 / btcPriceCents;
+    if (nextArrearsSince == 0) {
+      require(tx.outputs[0].value >= requiredSats, "reserve below accrued; cannot clear arrears");
+    } else {
+      if (arrearsSince == 0) {
+        require(nextArrearsSince == nowTime, "arrears clock must start now");
+      } else {
+        require(nextArrearsSince == arrearsSince, "arrears clock cannot move");
+      }
+    }
+
+    require(
+      tx.outputs[0].scriptPubKey == new VariableDividendPreferred(
+        issuerPk, holderPk, oraclePk, prefTicker, btcTicker,
+        faceValue, units, dividendRateBps, rateMinBps, rateMaxBps, adjGain,
+        penaltyRateBps, gracePeriod, newAccrued, nowTime, nextArrearsSince, exit
+      ),
+      "invalid poke output"
+    );
+    require(tx.outputs[0].value >= 330, "reserve dusted");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CLAIM — holder is paid the FULL accrued dividend in sats at BTC/USD. There
+  // is no partial-claim path: a successful claim always zeroes accruedCents and
+  // clears arrears (a real payment is healthy by definition).
+  // ---------------------------------------------------------------------------
+  function claim(
+    signature holderSig,
+    int       btcPriceCents,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(holderSig, holderPk), "invalid holder sig");
+    require(btcPriceCents > 0, "invalid btc price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+    let oracleMsg = sha256(btcTicker + btcPriceCents + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int effRate = dividendRateBps;
+    if (arrearsSince != 0) {
+      int arrearsAge = tx.offchainTime - arrearsSince;
+      if (arrearsAge > gracePeriod) {
+        effRate = penaltyRateBps;
+      }
+    }
+
+    int elapsed     = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int notional    = faceValue * units;
+    int rateElapsed = effRate * elapsed / 31536000;
+    int delta       = notional * rateElapsed / 10000;
+    int dueCents    = accruedCents + delta;
+    require(dueCents > 0, "nothing due");
+
+    int payoutSats  = dueCents * 100000000 / btcPriceCents;
+    require(payoutSats >= 330, "dividend below dust");
+
+    // output[0]: position self-replaces, accrued -> 0, arrears -> 0.
+    require(
+      tx.outputs[0].scriptPubKey == new VariableDividendPreferred(
+        issuerPk, holderPk, oraclePk, prefTicker, btcTicker,
+        faceValue, units, dividendRateBps, rateMinBps, rateMaxBps, adjGain,
+        penaltyRateBps, gracePeriod, 0, tx.offchainTime, 0, exit
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= 330, "reserve dusted");
+    // output[1]: dividend to holder.
+    require(tx.outputs[1].scriptPubKey == new SingleSig(holderPk), "output 1 not holder");
+    require(tx.outputs[1].value >= payoutSats, "holder underpaid");
+  }
+
+  // ---------------------------------------------------------------------------
+  // TOP UP — issuer funds the dividend/redemption reserve (sats in the UTXO).
+  // All state is preserved; the issuer simply recreates the position with more
+  // value attached.
+  // ---------------------------------------------------------------------------
+  function topUp(signature issuerSig) {
+    require(checkSig(issuerSig, issuerPk), "invalid issuer sig");
+    require(
+      tx.outputs[0].scriptPubKey == new VariableDividendPreferred(
+        issuerPk, holderPk, oraclePk, prefTicker, btcTicker,
+        faceValue, units, dividendRateBps, rateMinBps, rateMaxBps, adjGain,
+        penaltyRateBps, gracePeriod, accruedCents, lastAccrual, arrearsSince, exit
+      ),
+      "invalid topup output"
+    );
+    require(tx.outputs[0].value >= 330, "reserve dusted");
+  }
+
+  // ---------------------------------------------------------------------------
+  // TRANSFER — holder sells/moves the lot. Accrued dividend and arrears state
+  // travel with the position to the new holder.
+  // ---------------------------------------------------------------------------
+  function transfer(signature holderSig, pubkey newHolderPk) {
+    require(checkSig(holderSig, holderPk), "invalid holder sig");
+    require(
+      tx.outputs[0].scriptPubKey == new VariableDividendPreferred(
+        issuerPk, newHolderPk, oraclePk, prefTicker, btcTicker,
+        faceValue, units, dividendRateBps, rateMinBps, rateMaxBps, adjGain,
+        penaltyRateBps, gracePeriod, accruedCents, lastAccrual, arrearsSince, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= 330, "reserve dusted");
+  }
+
+  // ---------------------------------------------------------------------------
+  // REDEEM (issuer call) — issuer redeems the lot at par + accrued, paid in
+  // sats at BTC/USD. The lot is burned (no self-output). Accrual is rolled at
+  // the effective rate so an issuer in arrears can't call cheaply.
+  // ---------------------------------------------------------------------------
+  function redeem(
+    signature issuerSig,
+    int       btcPriceCents,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(issuerSig, issuerPk), "invalid issuer sig");
+    require(btcPriceCents > 0, "invalid btc price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+    let oracleMsg = sha256(btcTicker + btcPriceCents + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int effRate     = dividendRateBps;
+    if (arrearsSince != 0) {
+      int arrearsAge = tx.offchainTime - arrearsSince;
+      if (arrearsAge > gracePeriod) {
+        effRate = penaltyRateBps;
+      }
+    }
+
+    int elapsed     = tx.offchainTime - lastAccrual;
+    require(elapsed >= 0, "clock regression");
+    int notional    = faceValue * units;
+    int rateElapsed = effRate * elapsed / 31536000;
+    int delta       = notional * rateElapsed / 10000;
+    int totalCents  = notional + accruedCents + delta;
+    int payoutSats  = totalCents * 100000000 / btcPriceCents;
+
+    require(tx.outputs[0].scriptPubKey == new SingleSig(holderPk), "output 0 not holder");
+    require(tx.outputs[0].value >= payoutSats, "holder underpaid on call");
+  }
+
+  // ---------------------------------------------------------------------------
+  // FORCE REDEEM — the teeth. Once arrears exceed grace, the holder unilaterally
+  // sweeps the entire reserve and burns the lot. Gated on holderSig, so the
+  // issuer can never trigger it; the holder rationally sweeps everything.
+  // ---------------------------------------------------------------------------
+  function forceRedeem(signature holderSig) {
+    require(checkSig(holderSig, holderPk), "invalid holder sig");
+    require(arrearsSince != 0, "not in arrears");
+    int arrearsAge = tx.offchainTime - arrearsSince;
+    require(arrearsAge > gracePeriod, "grace not elapsed");
+
+    require(tx.outputs[0].scriptPubKey == new SingleSig(holderPk), "output 0 not holder");
+    require(tx.outputs[0].value >= 330, "empty seizure");
+  }
+}
