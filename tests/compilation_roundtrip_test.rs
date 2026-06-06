@@ -208,6 +208,16 @@ fn roundtrip_bond_mint() {
     assert_eq!(output.functions.len(), 8);
 }
 
+#[test]
+fn roundtrip_variable_dividend_preferred() {
+    let output = compile_example("variable_dividend_preferred.ark");
+    assert_output_invariants(&output, "variable_dividend_preferred.ark");
+    assert_eq!(output.name, "VariableDividendPreferred");
+    // 7 functions (accrueAndRepeg, pokeArrears, claim, topUp, transfer,
+    // redeem, forceRedeem) × 2 variants = 14
+    assert_eq!(output.functions.len(), 14);
+}
+
 // ─── Cross-cutting invariant: scan ALL examples ───────────────────────────────
 
 /// Recursively collect all .ark files under a directory.
