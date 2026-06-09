@@ -1,160 +1,221 @@
-# Market-Maker Residual-Delta Hedge on StabilityVault
+# Market-Maker Inventory Hedging on a BTC-Settled Vault
 
-**Status:** design note for internal review (pre-Andrew). Not a spec.
+**Status:** design note. Not a spec.
 
-This note describes how a BTC/USD RFQ desk can hedge its inventory delta
-*natively on Arkade*, reusing the existing `StabilityVault` primitive, instead
-of mirroring fills on a centralized exchange. It is meant to pressure-test one
-assumption in particular — long-side liquidity sourcing — before we commit to a
-build.
+This note describes how a market-making / RFQ desk can hedge its net inventory
+delta *natively and BTC-settled*, instead of mirroring fills on a centralized
+exchange. The instrument is a generalization of `StabilityVault`: a
+BTC-collateralized, oracle-marked vault with perpetual dynamic funding. The desk
+holds one leg of the vault to convert residual BTC inventory into a
+fiat-denominated claim — delta-flat, self-custodied, no CEX.
+
+Scope is **hedging only**. Turning this into a public, tradeable swap market is a
+separate layer (§8) and explicitly out of scope here.
 
 ---
 
 ## 1. The problem
 
-A desk that makes a two-sided BTC/USD market accumulates inventory delta. When a
-client sells the desk BTC (desk pays USD), the desk is now **long BTC** and wants
-to be flat in USD terms. The reflexive hedge is to short a BTC perpetual on a
-CEX. That is:
+A desk that makes a two-sided BTC/fiat market accumulates inventory delta. When a
+client sells the desk BTC (desk pays fiat), the desk is **long BTC** and wants to
+be flat in fiat terms. The reflexive hedge is to short a BTC perpetual on a CEX,
+which is:
 
-- **Capital intensive** — margin cannot be netted across venues; a desk must
-  pre-fund every exchange it hedges on, inflating required capital (~2.5× in
-  commonly cited prime-brokerage examples). The short also ties up margin and
-  can be liquidated on a sharp rally.
-- **Freeze-prone** — funds on a CEX are an unsecured custodial claim. FTX,
-  Celsius, Voyager, and Mt. Gox all froze withdrawals; even solvent exchanges
-  (Binance, KuCoin) halt withdrawals ad hoc during congestion or outages.
+- **Capital intensive** — margin cannot be netted across venues, so the desk must
+  pre-fund collateral at every venue it hedges on; the short also ties up margin
+  and can be liquidated on a sharp rally.
+- **Freeze-prone** — funds on a CEX are an unsecured custodial claim. Exchanges
+  have frozen withdrawals in insolvency, and even solvent venues halt withdrawals
+  during congestion or outages. Capital can be stranded or lost for years.
 
-We want a hedge that keeps BTC in self-custody and never routes capital to an
+The goal is a hedge that keeps BTC in self-custody and never routes capital to an
 exchange.
 
-## 2. The insight: the desk is a Seeker
+## 2. The instrument: the desk holds the claim leg
 
-`StabilityVault` already splits a BTC UTXO into a senior USD claim and a
+A `StabilityVault`-style vault splits a BTC UTXO into a senior fiat claim and a
 leveraged long:
 
-| StabilityVault role | What it holds | Delta |
+| Vault role | Holds | Delta |
 |---|---|---|
-| **Seeker** | deposits `S` BTC, holds a USD-denominated claim `targetUSD` | **flat in USD** |
-| **Provider** | locks additional collateral, takes the residual BTC upside | long BTC |
-| funding | `fundingRatePerSec > 0` ⇒ **Provider pays Seeker** | — |
+| **Claim leg** | a fiat-denominated claim (`targetFiat`) backed by the pooled BTC | **flat in fiat** |
+| **Long leg** | the residual BTC upside; posts the over-collateral | long BTC |
+| funding | `fundingRate > 0` ⇒ **long leg pays claim leg** | — |
 
-So a desk that is **net-long BTC takes the Seeker leg**: it deposits its
-residual inventory, converts it to a USD claim of equal value, and — because
-funding is conventionally positive — *gets paid* to be delta-flat. A desk that is
-**net-short takes the Provider leg.** The vault is symmetric enough to absorb
-residual delta in either direction.
+A desk that is **net-long BTC takes the claim leg**: it deposits its residual
+inventory and converts it to a fiat claim of equal value, delta-flat, while the
+BTC stays in self-custody as collateral. A desk that is **net-short takes the long
+leg.** The vault is symmetric enough to absorb residual delta either direction.
 
-This is structurally the Ethena USDe delta-neutral trade (long spot + short
-synthetic), executed peer-to-peer and non-custodially, with two real edges:
+Structurally this is the cash-and-carry hedge (long spot + offsetting synthetic),
+executed peer-to-peer and BTC-settled, with two properties that beat a CEX perp:
 
-1. **Funding floored at zero for the desk.** `settleAndUpdateFunding` enforces
-   `newFundingRatePerSec >= 0`, so the Provider can never charge the Seeker. The
-   desk's worst case is zero funding income (then it `seekerExit`s). Ethena, by
-   contrast, *eats* negative funding out of a finite reserve fund.
-2. **No perp-spot basis.** Settlement is at the oracle/index price directly
-   (`seekerExit`: `seekerRaw = newTargetUSD * 1e8 / P`), not against a separately
+1. **No perp-spot basis.** Settlement is at the oracle/index price directly
+   (`seekerExit`: `claimRaw = newTargetFiat * 1e8 / P`), not against a separately
    floating perp mark.
+2. **No exchange custody.** The hedge is a self-custodied UTXO; there is no
+   withdrawal to freeze.
 
 ### Downside protection is bounded by the collateral ratio
 
-At a 1.5:1 ratio the Seeker deposits `S`, the Provider adds `1.5·S`, total
-collateral `2.5·S`. The Seeker's claim in sats at price `P` is
-`targetUSD·1e8/P = S·P0/P`, which stays `<= 2.5·S` as long as
-`P >= 0.4·P0`. **The desk is made whole down to a ~60% BTC drawdown**; beyond
-that the Provider's buffer is exhausted and the desk eats the tail. This is the
-single most important number to size against the freshness of the funding/margin
-top-up cycle (`addCapital`, `removeCapital`'s ratio check).
+At a 1.5:1 ratio the claim leg deposits `S`, the long leg adds `1.5·S`, total
+collateral `2.5·S`. The claim in sats at price `P` is `targetFiat·1e8/P`, which
+stays `<= 2.5·S` while `P >= 0.4·P0`. **The desk is made whole down to a ~60%
+drawdown**; beyond that the buffer is exhausted and the desk carries the tail.
+This bound, against the freshness of the funding/margin top-up cycle
+(`addCapital` / `removeCapital`), is the number to size first.
 
-## 3. The efficient flow: internalize → hedge residual → resize
+## 3. Multi-currency reduces to one BTC-delta book
 
-The mistake would be to open a vault per fill. The FX dealing literature is
-unambiguous: top desks **internalize 80–90%+** of flow and externally hedge only
-the residual. The efficient construction mirrors that:
+A desk that quotes several BTC/fiat pairs (USD, BRL, CHF, EUR, …) instantiates the
+**same vault construction once per oracle ticker**. The currencies differ only in
+which `BTC/<fiat>` feed the vault reads.
+
+The key simplification: every fiat claim leg is, in BTC terms, **short BTC** — they
+differ in *currency* but point the *same direction in BTC delta*. So the whole
+desk collapses to:
+
+> **N currencies, one number to balance: aggregate net BTC delta**, over one shared
+> BTC collateral pool.
+
+The currency dimension is handled by reading different oracles; the only thing
+that must be *balanced* is BTC-longness vs BTC-shortness across the whole book.
+Cross-currency exposure triangulates through BTC (`<fiatA>/<fiatB>` =
+`(BTC/<fiatB>) / (BTC/<fiatA>)`), so no separate FX leg is needed.
+
+## 4. Perpetual dynamic funding
+
+Funding is **perpetual** (no maturity — dated hedges fragment liquidity across
+tenors and add rate risk) and **dynamic**, driven by long/short imbalance:
+
+```
+fundingRate = clamp( premiumIndex + carryComponent , -cap, +cap )
+premiumIndex ∝ open-interest skew between claim and long legs
+long leg crowded  -> funding up   -> longs pay the claim side   (cools long demand)
+claim crowded     -> funding down -> claim side pays longs       (recruits longs)
+```
+
+Dynamic funding is what clears a one-sided book without a permanent dedicated
+counterparty: when the desk's residual is heavily one direction, funding moves to
+recruit the other side. (This is the perpetual-funding mechanism that
+everlasting-style instruments use to replace expiry.) `StabilityVault`'s current
+funding is a fixed negotiated rate; making it imbalance-driven is the main
+behavioral change for a hedging book.
+
+The funding **floor** is the key economic knob: floor at zero is desk-friendly but
+drains long-side liquidity when the basis inverts; allowing negative funding keeps
+both sides present. Choose per deployment.
+
+## 5. The counterparty: a willing BTC holder
+
+The one persistent constraint is that **someone must take the BTC-long leg.** For a
+self-hosted hedge the natural provider is the firm's own **BTC treasury**: the
+market-making book hedges *into* the treasury, the treasury holds the BTC-long leg
+(exposure a BTC-long treasury wants anyway) and earns the funding. No external
+provider, no CEX; funding is internal P&L allocation between books.
+
+State this honestly: if the treasury is the only provider, the **firm remains net
+long BTC** — the delta is *transferred* from the market-making book to the book
+that wants it, not eliminated firm-wide. That is exactly correct for a desk whose
+mandate is to stay flat while the firm's directional view lives in treasury. It is
+**risk-transfer to a willing holder, not risk-elimination** — do not represent it
+as a firm-level hedge.
+
+When treasury appetite is exhausted, the fallbacks are: raise funding to recruit
+external longs, or warehouse the residual unhedged (acceptable for a sophisticated
+desk on a short horizon).
+
+## 6. The efficient flow: internalize → hedge residual → resize
+
+Do not open a vault per fill. Hedge only the residual swing:
 
 ```
 1. INTERNALIZE
-   Net client buys against sells on the desk's own book.
-   Skew quotes (Avellaneda-Stoikov reservation-price skew) to attract
+   Net client buys against sells across the whole book.
+   Skew quotes (inventory-aware reservation price) to attract
    inventory-reducing flow. Most flow never needs an external hedge.
 
 2. SIZE THE RESIDUAL
-   Track net inventory delta D (signed, in sats).
-   Open / adjust a hedge only when |D| breaches a position limit
-   (Barzykin-Gueant externalization threshold).
+   Track net BTC delta D (signed, aggregated across all currency pairs).
+   Adjust the hedge only when |D| breaches a position limit.
 
 3. HEDGE
-   D > 0 (net long)  -> hold Seeker claim of notional |D|
-   D < 0 (net short) -> hold Provider leg of notional |D|
+   D > 0 (net long)  -> hold the claim leg of notional |D|
+   D < 0 (net short) -> hold the long leg of notional |D|
 
 4. RESIZE, don't churn
    As D drifts, reshape the existing position:
-     split    -> peel off part of the USD claim when D shrinks
-     merge     -> combine positions when D grows
-     transfer  -> reassign a leg
+     split    -> peel off part of the claim when D shrinks
+     merge    -> combine positions when D grows
+     transfer -> reassign a leg
    The hedge tracks moving inventory without unwind/reopen.
 ```
 
 Internalisation is what makes the native hedge viable: it shrinks the residual
-that needs a counterparty by ~5–10×, which is exactly the part that is hard to
-source on Arkade (§5).
+that needs a counterparty by a large factor, which is exactly the part that is
+hard to source (§5, §9).
 
-## 4. What exists today vs. what's missing
+## 7. What exists today vs. what's missing
 
 **Reusable as-is from `stability_vault.ark`:**
-
-- Seeker USD claim + Provider collateral in one UTXO; funding accrual.
-- `seekerExit` / `providerExit` oracle-priced settlement with clamping.
-- `split` / `merge` / `transfer` for resizing (step 4 above).
+- Claim leg + long leg in one UTXO; funding accrual; oracle-priced settlement with
+  clamping (`seekerExit` / `providerExit`).
+- `split` / `merge` / `transfer` for resizing.
 - `addCapital` / `removeCapital` with a collateral-ratio guard.
-- Fuji-style oracle (`sha256(ticker + price + time)`), `tx.offchainTime`
-  freshness, two-tapleaf cooperative/exit.
+- Fuji-style oracle (`sha256(ticker + price + time)`), `tx.offchainTime` freshness,
+  two-tapleaf cooperative/exit, 330-sat dust floor.
+- Per-currency instances are just the same contract with a different `ticker`.
 
-**Missing for an efficient desk workflow:**
+**Net-new:**
+- **Dynamic, imbalance-driven funding** (§4) — current funding is a static
+  negotiated rate.
+- Aggregate **BTC-delta accounting** across currency instances — lives in the
+  desk's off-chain risk engine; no contract change.
+- Treasury-as-provider tooling for the long leg (templates, internal funding
+  accounting).
 
-- **Pooled Provider side.** The current vault is a 1:1 Seeker↔Provider match. A
-  desk needs to open a hedge on demand, which requires a *pool* of Providers
-  (GMX-GLP / Synthetix-debt-pool shape) rather than finding one counterparty per
-  hedge. This is the same pooling primitive as the covered-call vault discussion
-  and is the main net-new contract work.
-- **Residual-delta accounting** lives off-chain in the desk's risk engine; the
-  vault only needs to represent the hedge once sized. No contract change.
-- **Net-short via Provider leg** is mechanically supported but the UX/templates
-  for a desk taking the Provider side need to be defined.
+## 8. Scope boundary
 
-## 5. The assumption to pressure-test (and the honest tradeoffs)
+This note covers the **hedging core** only. A useful decomposition:
 
-**Long-side liquidity sourcing is the binding constraint.** A CEX perp book is
-deep; a P2P/pooled vault is not. In a **sustained negative-funding regime, no
-rational Provider will pay to be long** when a CEX would pay them instead — so
-native hedge liquidity thins exactly when the market is one-sided. The
-funding-floored-at-zero protection for the desk is the flip side of this same
-coin. **This is the thing to model before building.**
+> A public synthetic swap market = **(this hedging vault) + (a bootstrapping
+> layer).**
 
-Other tradeoffs, stated plainly:
+The bootstrapping layer — a fungible, freely-tradeable claim token, a maker
+quoting tight near mid, and the two-sided flywheel that pulls in third-party
+liquidity — is what a *public market* needs. A private hedge needs none of it: it
+needs a counterparty (§5) and a fair funding rate (§4). Making the claim a fungible
+token and adding a maker is the upgrade path *if and when* a tradeable market
+becomes a goal; it is out of scope for hedging.
 
-- **Tail collateralization.** Protection only holds down to the ratio bound
-  (~60% drawdown at 1.5:1). A Provider default on a violent down-move is the tail
-  where the desk most needed the hedge. Pooling adds a pool-wipeout failure mode
-  (cf. Hyperliquid HLP drawdown).
-- **Oracle + operator liveness.** Settlement uses the Fuji oracle and
-  `tx.offchainTime`, enforceable only on the cooperative tapleaf. If the Operator
-  is down, the desk cannot settle the hedge at oracle price on demand via the
-  unilateral exit path (no introspection there).
-- **Risk-type shift, not removal.** We trade CEX custody/freeze/basis risk for
-  Provider-default, oracle, funding-availability, and operator-liveness risk.
-  "Delta-neutral" means price-neutral, not risk-free.
+## 9. Tradeoffs and risks
 
-## 6. Decision points before involving Andrew
+1. **Counterparty in risk-off.** A one-sided book needs the other leg. Treasury
+   appetite is finite; when exhausted, funding spikes or the desk warehouses. A
+   desk can warehouse temporarily; this is the binding constraint to model.
+2. **Tail collateralization.** Protection holds only to the ratio bound (~60%
+   drawdown at 1.5:1). Beyond it the claim leg carries the loss. For a hedging
+   desk this is a consciously-accepted basis risk, not a consumer guarantee.
+3. **Oracle per currency.** Each `BTC/<fiat>` feed adds oracle surface; thinner
+   pairs are more manipulable, and high-rate currencies embed carry that funding
+   must reflect.
+4. **Oracle / operator liveness.** Settlement is enforceable only on the
+   cooperative tapleaf; the unilateral exit path cannot price-introspect. Define
+   the fallback for unwinding a hedge when the cooperative path is unavailable.
+5. **Risk-type shift, not removal.** This trades CEX custody / freeze / basis risk
+   for counterparty, oracle, funding-availability, and operator-liveness risk.
+   Delta-flat means price-neutral, not risk-free.
 
-1. **Pooled vs. matched Provider side** — is a Provider pool in scope, or do we
-   start with 1:1 matched hedges and accept thin coverage?
-2. **Negative-funding regime** — keep funding floored at zero (desk-friendly,
-   but Providers vanish when the basis inverts) or allow opt-in negative funding
-   to retain Provider liquidity?
-3. **Operator-down settlement** — is a coarse block-height emergency exit
-   acceptable for a hedge, or do we need a pre-signed unilateral settlement path?
+## 10. Open decisions
 
-The cleanest first build is **(1) matched, (2) floored, (3) cooperative-only**,
-with the pooled Provider side as a fast follow once the liquidity model is
-validated.
+1. **Funding floor** — allow negative funding (true two-sided clearing) or floor
+   at zero (desk-friendly, but longs thin on inverted basis)?
+2. **Counterparty model** — treasury-only to start, or a small provider set for
+   redundancy?
+3. **Operator-down unwind** — coarse block-height emergency exit, or a pre-signed
+   unilateral settlement path?
+
+The thinnest first build: a single-provider (treasury) hedge on one `BTC/<fiat>`
+pair, perpetual dynamic funding, cooperative-only settlement, with the multi-
+currency aggregation and additional providers as fast-follows once the
+counterparty model is validated.
