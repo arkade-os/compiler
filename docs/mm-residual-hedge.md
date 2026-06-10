@@ -424,6 +424,12 @@ Off-chain, the desk nets client flow internally and only adjusts the hedge when
 aggregate BTC delta breaches a limit (§6): `addCapital` / `removeCapital` /
 `transfer` reshape the live position instead of unwind-and-reopen.
 
+> **Deferred (fast-follow).** §6/§7 also list `split` (peel off part of the claim
+> when delta shrinks) and `merge` (combine positions when delta grows). They are
+> reusable from `stability_vault.ark` but **not** in this thinnest first build
+> (§10) — `InventoryHedge` ships `transfer` for reassignment and leaves
+> `split`/`merge` to a follow-up once the single-provider model is validated.
+
 ## Playground
 
 The contract ships in the WASM playground under the **Hedging** project folder

@@ -57,7 +57,7 @@ contract InventoryHedge(
   bytes32 ticker,            // BTC/<fiat> feed identifier (e.g. sha256("BTC/USD"))
   int     targetFiat,        // claim leg's fiat value (minor units); mutates on funding
   int     totalCollateral,   // sats locked; mutates on add/removeCapital
-  int     fundingRatePerSec, // signed fixed-point at scale 1e12; mutates on update
+  int     fundingRatePerSec, // signed fixed-point at scale 1e12; runtime updates enforce >= 0 (see updateFunding); a negative *initial* rate is not prevented at construction and should not be used for a hedging vault
   int     lastUpdate,        // unix seconds; basis for funding accrual
   int     collateralRatioPct,// min collateral ratio for removeCapital (50 = 1.5:1)
   int     exit               // exit timelock in blocks
@@ -164,6 +164,13 @@ contract InventoryHedge(
     int rateElapsedScaled  = fundingRatePerSec * elapsed / 1000000;
     int delta              = targetFiat * rateElapsedScaled / 1000000;
     int newTargetFiat      = targetFiat + delta;
+    // Defense-in-depth: a non-positive claim would make minCollateral <= 0 and
+    // the ratio check trivially pass, letting the long leg drain the vault. The
+    // runtime invariant is fundingRatePerSec >= 0 (enforced by updateFunding),
+    // but a negative *initial* rate is not prevented at construction, so guard
+    // here too — matching updateFunding. A wiped claim must settle via withdraw,
+    // not be reclaimed-around via removeCapital.
+    require(newTargetFiat > 0, "claim wiped by funding");
     int currentClaimBase   = newTargetFiat * 100000000 / oraclePrice;
     int minCollateral      = currentClaimBase * (100 + collateralRatioPct) / 100;
     int newTotalCollateral = totalCollateral - amount;
@@ -211,6 +218,11 @@ contract InventoryHedge(
     int newTargetFiat     = targetFiat + delta;
     int claimRaw          = newTargetFiat * 100000000 / oraclePrice;
 
+    // No require(newTargetFiat > 0) here, on purpose: if funding has driven the
+    // claim non-positive, claimRaw <= 0 and the clamp routes the ENTIRE
+    // collateral to the long leg — the correct terminal outcome for a wiped
+    // claim. A hard guard would abort this legitimate settlement, including the
+    // long leg's own withdraw. The clamp, not a require, is the invariant here.
     if (claimRaw <= 0) {
       require(tx.outputs[0].value >= totalCollateral, "long leg underpaid");
       require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), "output 0 not long leg");
@@ -256,6 +268,11 @@ contract InventoryHedge(
     int newTargetFiat     = targetFiat + delta;
     int claimRaw          = newTargetFiat * 100000000 / oraclePrice;
 
+    // No require(newTargetFiat > 0) here, on purpose: if funding has driven the
+    // claim non-positive, claimRaw <= 0 and the clamp routes the ENTIRE
+    // collateral to the long leg — the correct terminal outcome for a wiped
+    // claim. A hard guard would abort this legitimate settlement, including the
+    // long leg's own withdraw. The clamp, not a require, is the invariant here.
     if (claimRaw <= 0) {
       require(tx.outputs[0].value >= totalCollateral, "long leg underpaid");
       require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), "output 0 not long leg");
