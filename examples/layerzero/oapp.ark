@@ -136,12 +136,12 @@ contract OApp(
     );
 
     // OApp state continues at output 0 with control + ID assets intact.
+    // Recursive covenant: the output reuses the spent input's pkScript,
+    // matching the Go reference (BuildOAppReceiveScript's
+    // OP_INSPECTOUTPUTSCRIPTPUBKEY == OP_PUSHCURRENTINPUTINDEX
+    // OP_INSPECTINPUTSCRIPTPUBKEY check).
     require(
-      tx.outputs[0].scriptPubKey == new OApp(
-        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
-        endpointCtrlAssetId, endpointIDAssetId,
-        endpointID, oappID, remoteEID, remoteOApp, exit
-      ),
+      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
       "oapp state must continue"
     );
     require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, "oapp control missing");
@@ -202,13 +202,10 @@ contract OApp(
     let oappIDGroup = tx.assetGroups.find(oappIDAssetId);
     require(oappIDGroup.sumOutputs == 1, "extra send marker minted");
 
-    // OApp state continues at output 0.
+    // OApp state continues at output 0: recursive covenant via the spent
+    // input's own pkScript (see receive() for rationale).
     require(
-      tx.outputs[0].scriptPubKey == new OApp(
-        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
-        endpointCtrlAssetId, endpointIDAssetId,
-        endpointID, oappID, remoteEID, remoteOApp, exit
-      ),
+      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
       "oapp state must continue"
     );
     require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, "oapp control missing");

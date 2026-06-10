@@ -78,8 +78,9 @@ expressed in Arkade:
 
 | Invariant class | Arkade construct | Underlying opcodes |
 |---|---|---|
-| DVN 2-of-2 signature over the canonical receive hash | `checkSigFromStackVerify(dvn*Sig, dvn*Pk, attestedHash)` | `OP_CHECKSIGFROMSTACKVERIFY` |
-| Endpoint/OApp state continuation | `tx.outputs[0].scriptPubKey == new …` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + VTXO placeholder |
+| DVN 2-of-2 signature over the canonical receive hash | `require(checkSigFromStack(dvn*Sig, dvn*Pk, attestedHash))` | `OP_CHECKSIGFROMSTACK` |
+| Endpoint/OApp state continuation | `tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + `OP_PUSHCURRENTINPUTINDEX` + `OP_INSPECTINPUTSCRIPTPUBKEY` |
+| Marker output pinning | `tx.outputs[1].scriptPubKey == new ReceiveMarker(…)` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + VTXO placeholder |
 | Marker mint (1 unit) | `tx.outputs[i].assets.lookup(marker) == 1` + `group.sumOutputs == 1` | `OP_INSPECTOUTASSETLOOKUP`, `OP_INSPECTASSETGROUPSUM` |
 | Marker burn | `group.sumOutputs == 0` | same |
 | USDT0 delta == credited amount | `usdt0Group.delta == bin2num(substr(packet, off, 8))` | `OP_INSPECTASSETGROUPSUM`, `OP_SUBSTR`, `OP_BIN2NUM` |
@@ -106,7 +107,7 @@ packet-derived value before it is used:
   `sha256(substr(LzReceive, 1, 140))` (the on-chain reconstruction of
   the DVN-signed header) and once against `substr(DvnAttestation, 1, 32)`
   (the in-packet attested hash). Both DVN signatures verify over it.
-- `dvn0Sig` / `dvn1Sig` are checked with `checkSigFromStackVerify` against
+- `dvn0Sig` / `dvn1Sig` are checked with `require(checkSigFromStack(...))` against
   the contract-baked DVN pubkeys (which are themselves pinned against the
   in-packet DVN pubkey slots in the Endpoint state).
 

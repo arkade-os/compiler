@@ -11,9 +11,17 @@
 //   tx.packet(PacketType)          — current-tx extension packet
 //   substr / cat / bin2num         — fixed-width field extraction
 //   sha256(substr(...))            — DVN attestation hash binding
-//   checkSigFromStackVerify        — DVN Schnorr verification
-//   tx.outputs[*].scriptPubKey ==  — canonical pkScript pinning
+//   checkSigFromStack              — DVN Schnorr verification
+//   tx.outputs[0].scriptPubKey ==  — recursive covenant (state continuation)
+//     tx.input.current.scriptPubKey
+//   tx.outputs[1].scriptPubKey ==  — canonical pkScript pinning
 //     new ReceiveMarker(...)        for marker outputs
+//
+// Packet type ids (16 = EndpointState 0x10, 17 = LzReceive 0x11,
+// 18 = DvnAttestation 0x12, 19 = LzSend 0x13, 20 = OAppSendInvocation 0x14)
+// appear as integer literals below; once the language gains compile-time
+// constants (`const int ENDPOINT_STATE_PACKET_ID = 16;` …) these should be
+// hoisted to named declarations.
 //
 // Packet layout constants (from internal/scripts/builders.go offsets):
 //
@@ -163,8 +171,8 @@ contract Endpoint(
     require(substr(tx.packet(18), 1, 32) == attestedHash, "dvn attested hash mismatch");
 
     // DVN 2-of-2 signatures over the attestedHash.
-    require(checkSigFromStackVerify(dvn0Sig, dvn0Pk, attestedHash), "dvn0 sig invalid");
-    require(checkSigFromStackVerify(dvn1Sig, dvn1Pk, attestedHash), "dvn1 sig invalid");
+    require(checkSigFromStack(dvn0Sig, dvn0Pk, attestedHash), "dvn0 sig invalid");
+    require(checkSigFromStack(dvn1Sig, dvn1Pk, attestedHash), "dvn1 sig invalid");
 
     // The embedded CreditMessage hashes to LzReceive.messageHash, locking the
     // marker to the body OApp.receive() will read.
@@ -173,15 +181,13 @@ contract Endpoint(
       "credit message hash mismatch"
     );
 
-    // Endpoint state continuation: output[0] uses the same pkScript and
-    // carries the Endpoint control asset.
+    // Endpoint state continuation: output[0] reuses the spent input's
+    // pkScript verbatim (recursive covenant) and carries the Endpoint
+    // control asset. This matches the Go reference exactly:
+    // OP_INSPECTOUTPUTSCRIPTPUBKEY == OP_PUSHCURRENTINPUTINDEX
+    // OP_INSPECTINPUTSCRIPTPUBKEY (BuildEndpointReceiveScript).
     require(
-      tx.outputs[0].scriptPubKey == new Endpoint(
-        endpointCtrlAssetId, endpointIDAssetId,
-        oappCtrlAssetId,     oappIDAssetId,
-        endpointID, oappID, remoteEID, remoteOApp,
-        dvn0Pk, dvn1Pk, exit
-      ),
+      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
       "endpoint state must continue"
     );
     require(
@@ -279,14 +285,10 @@ contract Endpoint(
     require(oappIDGroup.sumInputs == 1, "send marker missing");
     require(oappIDGroup.sumOutputs == 0, "send marker not burned");
 
-    // Endpoint state continues.
+    // Endpoint state continues: recursive covenant via the spent input's
+    // own pkScript (see receive() for rationale).
     require(
-      tx.outputs[0].scriptPubKey == new Endpoint(
-        endpointCtrlAssetId, endpointIDAssetId,
-        oappCtrlAssetId,     oappIDAssetId,
-        endpointID, oappID, remoteEID, remoteOApp,
-        dvn0Pk, dvn1Pk, exit
-      ),
+      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
       "endpoint state must continue"
     );
     require(

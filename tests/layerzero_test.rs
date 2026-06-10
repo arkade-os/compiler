@@ -1,10 +1,23 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIG, OP_CHECKSIGFROMSTACKVERIFY, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPSUM,
+    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPSUM,
     OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTPACKET,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTPACKET,
-    OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SUBSTR,
+    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_INSPECTPACKET, OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SUBSTR,
 };
+
+/// Assert the recursive-covenant continuation pattern: the function's asm must
+/// contain `OP_INSPECTOUTPUTSCRIPTPUBKEY OP_PUSHCURRENTINPUTINDEX
+/// OP_INSPECTINPUTSCRIPTPUBKEY`, i.e. output[k].scriptPubKey is pinned to the
+/// spent input's own pkScript (mirrors the Go reference's state-continuation
+/// check in BuildEndpointReceiveScript / BuildOAppReceiveScript).
+fn has_self_continuation(asm: &[String]) -> bool {
+    asm.windows(3).any(|w| {
+        w[0] == OP_INSPECTOUTPUTSCRIPTPUBKEY
+            && w[1] == OP_PUSHCURRENTINPUTINDEX
+            && w[2] == OP_INSPECTINPUTSCRIPTPUBKEY
+    })
+}
 
 // ---------------------------------------------------------------------------
 // LayerZero / USDT0 contract suite — translates the asset-flow and signature
@@ -78,19 +91,21 @@ fn test_endpoint_receive_verifies_both_dvn_signatures() {
         .find(|f| f.name == "receive" && f.server_variant)
         .unwrap();
 
-    // Both DVNs are now verified via OP_CHECKSIGFROMSTACKVERIFY in the
-    // packet-native rewrite. The signed message is the on-chain-derived
-    // attestedHash; each DVN sig is the corresponding witness argument.
+    // Both DVNs are verified via require(checkSigFromStack(...)) — the
+    // introspector has no OP_CHECKSIGFROMSTACKVERIFY variant, so the contract
+    // uses the plain opcode wrapped in require(). The signed message is the
+    // prover-supplied attestedHash, pinned on chain to both the LzReceive
+    // header hash and the DvnAttestation packet field.
     let sig_count = receive
         .asm
         .iter()
-        .filter(|s| s.contains(OP_CHECKSIGFROMSTACKVERIFY))
+        .filter(|s| *s == OP_CHECKSIGFROMSTACK)
         .count();
 
     assert!(
         sig_count >= 2,
         "endpoint.receive() must verify both DVN signatures via {}; found {} occurrences",
-        OP_CHECKSIGFROMSTACKVERIFY,
+        OP_CHECKSIGFROMSTACK,
         sig_count
     );
 }
@@ -138,10 +153,10 @@ fn test_endpoint_receive_emits_receive_marker_output() {
         receive.asm
     );
 
-    let has_endpoint_continuation = receive.asm.iter().any(|s| s.contains("VTXO:Endpoint("));
     assert!(
-        has_endpoint_continuation,
-        "endpoint.receive() must continue Endpoint state via output[0]: {:?}",
+        has_self_continuation(&receive.asm),
+        "endpoint.receive() must continue Endpoint state via the recursive \
+         covenant (output pkScript == current input pkScript): {:?}",
         receive.asm
     );
 
@@ -242,10 +257,10 @@ fn test_oapp_receive_consumes_endpoint_marker_and_mints_usdt0() {
         "oapp.receive() must pin recipient output scriptPubKey"
     );
 
-    let has_oapp_continuation = receive.asm.iter().any(|s| s.contains("VTXO:OApp("));
     assert!(
-        has_oapp_continuation,
-        "oapp.receive() must continue OApp state via output[0]"
+        has_self_continuation(&receive.asm),
+        "oapp.receive() must continue OApp state via the recursive covenant \
+         (output pkScript == current input pkScript)"
     );
 }
 
