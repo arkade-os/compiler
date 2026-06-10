@@ -371,10 +371,10 @@ minCollateral      = claimSats * (100 + collateralRatioPct) / 100
 require( totalCollateral - amount >= minCollateral )   // "would breach collateral ratio"
 ```
 
-## 5. `claimExit` — desk settles to BTC (terminal)
+## 5. `redeem` — desk settles to BTC (terminal)
 
-The desk unwinds the hedge at the oracle mark. BTC-native settlement at the index
-price (§2: no perp-spot basis). The vault terminates.
+The desk redeems its fiat claim for BTC at the oracle mark. BTC-native settlement
+at the index price (§2: no perp-spot basis). The vault terminates.
 
 ```
 Signers : claimSig (+ SERVER_KEY | + CLTV exit)
@@ -400,7 +400,7 @@ only when it exceeds 330 sats; below that it routes to fees rather than a dust
 output. "Fully collateralized" means this clamp always pays out of the pool — no
 liquidation, no margin call on the claim side (the §2 / §9.2 tail bound).
 
-## 6. `longExit` — treasury-driven settlement (terminal)
+## 6. `withdraw` — treasury-driven settlement (terminal)
 
 Identical clamp math; the long leg initiates instead of the desk. Same output
 table as §5 with `longSig` in place of `claimSig`. Lets the treasury close a
@@ -416,8 +416,8 @@ position the desk has gone quiet on, settling both legs fairly at the mark.
             │  │
             │  └──▶ transfer (reassign claim leg)
             │
-            ├──▶ claimExit  ──▶ BTC to claim (+ remainder to long)   [terminal]
-            └──▶ longExit   ──▶ BTC to claim (+ remainder to long)   [terminal]
+            ├──▶ redeem    ──▶ BTC to claim (+ remainder to long)   [terminal]
+            └──▶ withdraw  ──▶ BTC to claim (+ remainder to long)   [terminal]
 ```
 
 Off-chain, the desk nets client flow internally and only adjusts the hedge when

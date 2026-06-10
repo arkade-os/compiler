@@ -28,7 +28,7 @@
 //   risk engine and supplied to updateFunding; on-chain logic is the >= 0 guard
 //   plus the accrual roll-forward.
 //
-// Settlement math (single shape across claimExit, longExit, removeCapital):
+// Settlement math (single shape across redeem, withdraw, removeCapital):
 //   newTargetFiat = targetFiat × (1 + fundingRatePerSec × elapsed / 1e12)
 //   claimRaw      = newTargetFiat × 1e8 / oraclePrice
 //   claimPayout   = clamp(claimRaw, 0, totalCollateral)
@@ -183,12 +183,12 @@ contract InventoryHedge(
   }
 
   // -------------------------------------------------------------------------
-  // CLAIM EXIT — desk settles the hedge to BTC at the oracle price.
+  // REDEEM — desk redeems its fiat claim for BTC at the oracle price.
   // BTC-native at the index price (doc §2: no perp-spot basis). No exit fee.
   //   claimRaw    = newTargetFiat × 1e8 / oraclePrice
   //   claimPayout = clamp(claimRaw, 0, totalCollateral); remainder to long leg.
   // -------------------------------------------------------------------------
-  function claimExit(
+  function redeem(
     signature claimSig,
     int       oraclePrice,
     int       oracleTime,
@@ -231,9 +231,9 @@ contract InventoryHedge(
   }
 
   // -------------------------------------------------------------------------
-  // LONG EXIT — provider-driven settlement; identical clamp math.
+  // WITHDRAW — treasury-driven settlement; identical clamp math.
   // -------------------------------------------------------------------------
-  function longExit(
+  function withdraw(
     signature longSig,
     int       oraclePrice,
     int       oracleTime,

@@ -3,7 +3,7 @@
 //
 // These tests pin the compilation roundtrip (both tapleaf variants per
 // function, non-empty witness schemas) and the behavioral invariants:
-// oracle-gated settlement, the claimExit clamp branches, and the auto-injected
+// oracle-gated settlement, the redeem clamp branches, and the auto-injected
 // <SERVER_KEY> on the cooperative path.
 
 use arkade_compiler::compile;
@@ -16,12 +16,12 @@ const FUNCTIONS: &[&str] = &[
     "updateFunding",
     "addCapital",
     "removeCapital",
-    "claimExit",
-    "longExit",
+    "redeem",
+    "withdraw",
 ];
 
 // Functions that settle against the oracle-attested price.
-const ORACLE_FUNCTIONS: &[&str] = &["removeCapital", "claimExit", "longExit"];
+const ORACLE_FUNCTIONS: &[&str] = &["removeCapital", "redeem", "withdraw"];
 
 #[test]
 fn test_compiles_with_12_tapleaves() {
@@ -146,7 +146,7 @@ fn test_transfer_is_pure_keyswap() {
 }
 
 #[test]
-fn test_claim_exit_has_clamp_branches() {
+fn test_redeem_has_clamp_branches() {
     // claimRaw is clamped into [0, totalCollateral]: claimRaw<=0 (all to long),
     // claimRaw>=collateral (all to claim), else split. That is three OP_IF
     // branches plus the long-leg dust guard.
@@ -154,12 +154,12 @@ fn test_claim_exit_has_clamp_branches() {
     let f = out
         .functions
         .iter()
-        .find(|f| f.name == "claimExit" && f.server_variant)
+        .find(|f| f.name == "redeem" && f.server_variant)
         .unwrap();
     let if_count = f.asm.iter().filter(|s| s.as_str() == "OP_IF").count();
     assert!(
         if_count >= 3,
-        "claimExit must encode the clamp branches, found {if_count} OP_IF"
+        "redeem must encode the clamp branches, found {if_count} OP_IF"
     );
 }
 
