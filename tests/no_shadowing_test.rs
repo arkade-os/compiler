@@ -28,11 +28,8 @@ contract Demo(int limit) {
   }
 }
 "#;
-    assert!(
-        compile(src).is_ok(),
-        "expected clean compile: {:?}",
-        compile(src).err()
-    );
+    let result = compile(src);
+    assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
 }
 
 #[test]
@@ -70,11 +67,8 @@ contract Demo(pubkey[] ks) {
   }
 }
 "#;
-    assert!(
-        compile(src).is_ok(),
-        "expected clean compile: {:?}",
-        compile(src).err()
-    );
+    let result = compile(src);
+    assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
 }
 
 #[test]
@@ -260,11 +254,8 @@ contract Demo(pubkey[] ks) {
   }
 }
 "#;
-    assert!(
-        compile(src).is_ok(),
-        "expected clean compile: {:?}",
-        compile(src).err()
-    );
+    let result = compile(src);
+    assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
 }
 
 use std::fs;
