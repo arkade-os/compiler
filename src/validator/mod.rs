@@ -216,8 +216,11 @@ fn statement_has_require(stmt: &Statement) -> bool {
 /// constructor parameters explicitly before seeding (a collapsed set would
 /// silently swallow the duplicate).
 fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    let ctor_names: HashSet<&str> =
-        contract.parameters.iter().map(|p| p.name.as_str()).collect();
+    let ctor_names: HashSet<&str> = contract
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
 
     for func in &contract.functions {
         // Seed frame: constructor params + this function's params.
@@ -379,15 +382,15 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
             }
         }
 
-        // Reserved generated names (conservative superset; never variant-specific here).
+        // `serverSig` is appended unconditionally to the cooperative witness
+        // schema (no dedup), so a parameter of that name genuinely collides.
         if contract.has_server_key {
             record_name("serverSig".to_string(), &func.name, &mut seen, issues);
         }
-        for p in &contract.parameters {
-            if p.param_type == "pubkey" {
-                record_name(format!("{}Sig", p.name), &func.name, &mut seen, issues);
-            }
-        }
+        // N-of-N exit signatures (`{pubkey}Sig`) are intentionally NOT reserved:
+        // the emitter deduplicates them against existing signature parameters by
+        // name (src/compiler/mod.rs ~690), so a param like `senderSig` for a
+        // `sender` pubkey is reused rather than duplicated — no collision.
     }
 }
 

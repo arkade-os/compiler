@@ -9,7 +9,9 @@ contract Demo(int amount) {
   }
 }
 "#;
-    let err = compile(src).expect_err("expected a shadowing error").to_string();
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
     assert!(
         err.contains("shadows constructor parameter"),
         "unexpected error: {err}"
@@ -85,7 +87,9 @@ contract Demo(int limit) {
   }
 }
 "#;
-    let err = compile(src).expect_err("expected a shadowing error").to_string();
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
     assert!(
         err.contains("shadows an in-scope binding"),
         "unexpected error: {err}"
@@ -106,7 +110,9 @@ contract Demo(int limit) {
   }
 }
 "#;
-    let err = compile(src).expect_err("expected a shadowing error").to_string();
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
     assert!(
         err.contains("shadows an in-scope binding"),
         "unexpected error: {err}"
@@ -126,7 +132,9 @@ contract Demo(pubkey[] ks) {
   }
 }
 "#;
-    let err = compile(src).expect_err("expected a shadowing error").to_string();
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
     assert!(
         err.contains("shadows an in-scope binding"),
         "unexpected error: {err}"
@@ -144,7 +152,9 @@ contract Demo(int i) {
   }
 }
 "#;
-    let err = compile(src).expect_err("expected a shadowing error").to_string();
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
     assert!(
         err.contains("shadows an in-scope binding"),
         "unexpected error: {err}"
@@ -255,4 +265,32 @@ contract Demo(pubkey[] ks) {
         "expected clean compile: {:?}",
         compile(src).err()
     );
+}
+
+use std::fs;
+use std::path::Path;
+
+/// Every bundled example must still compile cleanly. A new failure here means
+/// either a real latent shadowing/collision bug in the example (fix the example
+/// per the spec) or a false positive in the rule (fix the rule).
+#[test]
+fn all_examples_still_compile() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    let mut checked = 0;
+    for entry in fs::read_dir(&dir).expect("read examples dir") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|s| s.to_str()) != Some("ark") {
+            continue;
+        }
+        let src = fs::read_to_string(&path).expect("read example");
+        let result = compile(&src);
+        assert!(
+            result.is_ok(),
+            "example {} failed to compile: {:?}",
+            path.display(),
+            result.err()
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no .ark examples found in {}", dir.display());
 }

@@ -20,7 +20,9 @@ contract SingleSig(
   pubkey server
 ) {
   // Cooperative spend path (user + server)
-  function cooperative(signature userSig, signature serverSig) {
+  // The server cosignature (serverSig) is injected automatically by the
+  // compiler, so it must not be declared as an explicit parameter.
+  function cooperative(signature userSig) {
     require(checkMultisig([user, server]));
   }
   
@@ -57,16 +59,13 @@ contract SingleSig(
         .find(|f| f.name == "cooperative" && f.server_variant)
         .unwrap();
 
-    // Check function inputs
-    assert_eq!(cooperative_function.function_inputs.len(), 2);
+    // Check function inputs. Only userSig is an explicit parameter; the server
+    // cosignature (<serverSig>) is injected by the compiler and appears in the
+    // ASM/witness rather than as a declared function input.
+    assert_eq!(cooperative_function.function_inputs.len(), 1);
     assert_eq!(cooperative_function.function_inputs[0].name, "userSig");
     assert_eq!(
         cooperative_function.function_inputs[0].param_type,
-        "signature"
-    );
-    assert_eq!(cooperative_function.function_inputs[1].name, "serverSig");
-    assert_eq!(
-        cooperative_function.function_inputs[1].param_type,
         "signature"
     );
 
