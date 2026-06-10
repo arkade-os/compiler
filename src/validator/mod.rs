@@ -180,6 +180,7 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     }
 
     check_shadowing(contract, &mut issues);
+    check_expanded_namespace(contract, &mut issues);
 
     issues
 }
@@ -347,6 +348,61 @@ fn walk_scope(
             // Reassignment is handled separately; requires introduce no bindings.
             Statement::VarAssign { .. } | Statement::Require(_) => {}
         }
+    }
+}
+
+/// Check 2: the names a function's parameters and the constructor's parameters
+/// contribute to the *emitted* placeholder namespace — after array flattening,
+/// asset decomposition, and reserved generated names — must be unique. Distinct
+/// source names can still collide here (e.g. `int[] xs` vs `int xs_0`).
+fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let lookup_ids = crate::compiler::collect_lookup_asset_ids(contract);
+    // Constructor params expanded exactly as the emitter decomposes them.
+    let ctor_expanded =
+        crate::compiler::decompose_constructor_params(&contract.parameters, &lookup_ids);
+
+    for func in contract.functions.iter().filter(|f| !f.is_internal) {
+        let mut seen: HashSet<String> = HashSet::new();
+
+        for p in &ctor_expanded {
+            record_name(p.name.clone(), &func.name, &mut seen, issues);
+        }
+
+        // Function parameters: array flattening only (mirrors generate_witness_schema).
+        for p in &func.parameters {
+            if p.param_type.ends_with("[]") {
+                for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
+                    record_name(format!("{}_{}", p.name, i), &func.name, &mut seen, issues);
+                }
+            } else {
+                record_name(p.name.clone(), &func.name, &mut seen, issues);
+            }
+        }
+
+        // Reserved generated names (conservative superset; never variant-specific here).
+        if contract.has_server_key {
+            record_name("serverSig".to_string(), &func.name, &mut seen, issues);
+        }
+        for p in &contract.parameters {
+            if p.param_type == "pubkey" {
+                record_name(format!("{}Sig", p.name), &func.name, &mut seen, issues);
+            }
+        }
+    }
+}
+
+/// Insert an emitted name; on the first duplicate, record a collision error.
+fn record_name(
+    name: String,
+    fname: &str,
+    seen: &mut HashSet<String>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if !seen.insert(name.clone()) {
+        issues.push(ValidationIssue::error(format!(
+            "parameters in function '{}' collide in the emitted namespace as '{}'",
+            fname, name
+        )));
     }
 }
 

@@ -480,7 +480,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 }
 
 /// Collect all asset ID parameter names used in AssetLookup expressions
-fn collect_lookup_asset_ids(contract: &crate::models::Contract) -> Vec<String> {
+pub(crate) fn collect_lookup_asset_ids(contract: &crate::models::Contract) -> Vec<String> {
     let mut ids = Vec::new();
     for function in &contract.functions {
         for stmt in &function.statements {
@@ -551,7 +551,7 @@ fn collect_asset_ids_from_expression(expr: &Expression, ids: &mut Vec<String>) {
 
 /// Decompose constructor params: bytes32 params used in asset lookups become _txid + _gidx pairs
 /// Array types (e.g., pubkey[]) are flattened to name_0, name_1, name_2, etc.
-fn decompose_constructor_params(
+pub(crate) fn decompose_constructor_params(
     params: &[crate::models::Parameter],
     lookup_asset_ids: &[String],
 ) -> Vec<crate::models::Parameter> {

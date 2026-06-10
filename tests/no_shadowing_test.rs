@@ -169,6 +169,66 @@ contract Demo(pubkey[] ks) {
 }
 
 #[test]
+fn rejects_array_element_colliding_with_scalar_param() {
+    // Constructor `int[] xs` -> xs_0, xs_1, xs_2 ; function `int xs_0` -> xs_0.
+    let src = r#"
+contract Demo(int[] xs) {
+  function f(int xs_0) {
+    require(xs_0 >= 1);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a namespace collision error")
+        .to_string();
+    assert!(
+        err.contains("collide in the emitted namespace"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_asset_decomposition_collision() {
+    // `foo` is used in a lookup -> decomposes to foo_txid, foo_gidx; param foo_txid collides.
+    let src = r#"
+contract Demo(bytes32 foo) {
+  function f(bytes32 foo_txid) {
+    require(tx.inputs[0].assets.lookup(foo) > 0);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a namespace collision error")
+        .to_string();
+    assert!(
+        err.contains("collide in the emitted namespace"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_param_colliding_with_server_signature() {
+    let src = r#"
+options {
+  server = server;
+  exit = 144;
+}
+contract Demo(int limit) {
+  function f(signature serverSig) {
+    require(limit >= 1);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a namespace collision error")
+        .to_string();
+    assert!(
+        err.contains("collide in the emitted namespace"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn accepts_sibling_scope_reuse() {
     // let x in both branches; the same loop vars in two separate loops.
     let src = r#"
