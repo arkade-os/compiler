@@ -53,6 +53,16 @@
 //   freshness: tx.offchainTime - oracleTime <= 600 seconds. `tx.offchainTime`
 //   is the TEE-introspector wallclock (unix seconds), distinct from `tx.time`
 //   (Bitcoin nLockTime, block height).
+//
+// ADVERSE SELECTION / TRUST SCOPE (doc §9.b): unlike StabilityVault, redeem and
+// withdraw settle FEE-FREE at the oracle mark. Whoever initiates settlement
+// holds a free option on the oracle delay (BTC moves between the signed
+// timestamp and the spend), so fee-free oracle settlement is only sound between
+// mutually-trusting parties — the intended desk <-> own-treasury deployment,
+// where lag-arbitraging yourself is pointless. For ANY external counterparty an
+// exit fee (StabilityVault's seekerExitFee, ~0.2-0.3% sized to max oracle delay
+// + feed reliability) must be reinstated: it is the adverse-selection premium,
+// not an optional cost.
 
 import "single_sig.ark";
 

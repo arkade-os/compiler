@@ -206,6 +206,50 @@ becomes a goal; it is out of scope for hedging.
    for counterparty, oracle, funding-availability, and operator-liveness risk.
    Delta-flat means price-neutral, not risk-free.
 
+### 9.b Adverse selection: the oracle-AMM problem
+
+The sharpest objection to this design (credit: internal review): **a passive
+provider settling at a lagging oracle mark is structurally adversely selected.**
+BTC moves between the oracle's timestamp and the settlement transaction, so
+whoever initiates settlement holds a free option on that delay. The provider must
+charge for it — an enter/exit fee priced off the maximum accepted oracle delay
+plus feed reliability, easily **0.2–0.3%** (StabilityVault's `seekerExitFee` is
+exactly this premium). The failure mode is well documented on Ethereum, where
+oracle-priced AMMs have effectively died out: when oracle error exceeds the fee,
+bots pick the pool off (toxic flow / LVR); when it is below the fee, flow routes
+to tighter venues and the pool earns nothing. The surviving venues do price
+discovery by competitive quoting, not by oracle — Uniswap v3's concentrated
+liquidity is effectively an order book, Hyperliquid is literally one.
+
+Why lending-style stability tolerates this and a hedging book may not:
+**settlement frequency.** A stability seeker enters once, holds, exits once —
+the fee is amortized over a long hold. A market-making desk's residual is the
+thing that moves constantly; if the hedge re-strikes at anything near quote
+frequency, it pays the adverse-selection premium repeatedly *and* re-exposes to
+lag-arbitrage on every resize.
+
+Consequences for this design:
+
+- **The §6 internalize-first flow is load-bearing, not an optimization.** The
+  construction is only viable if internalization makes the *net* residual drift
+  slow enough that vault settlement is rare — i.e. the hedge must behave like the
+  lending case, not the trading case. This is asserted, not proven; the viability
+  inequality (net-residual re-hedge frequency × fee vs. CEX-perp all-in cost) is
+  the first thing to measure before building more.
+- **`InventoryHedge` deliberately drops the exit fee** (`redeem`/`withdraw`
+  settle fee-free). That is defensible only between mutually-trusting books
+  (desk ↔ own treasury, where lag-arbitrage against yourself is pointless). For
+  ANY external counterparty the fee must come back — it is the adverse-selection
+  premium, not a cost to optimize away.
+- **§2's "no perp-spot basis" claim needs qualification:** settling at a stale
+  oracle is not basis-free; the staleness *is* a basis, paid as adverse selection
+  instead of as a spread.
+- **The §8 bootstrapping layer is closer to required than optional** for
+  anything beyond the private desk↔treasury hedge: a public version of this
+  instrument needs order-book/RFQ-style price discovery (maker quoting near mid),
+  with the vault as the settlement container — not an oracled pool quoting to
+  the open market.
+
 ## 10. Open decisions
 
 1. **Funding floor** — allow negative funding (true two-sided clearing) or floor
