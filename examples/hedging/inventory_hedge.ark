@@ -36,6 +36,17 @@
 // At a 1.5:1 ratio the desk is made whole to a ~60% drawdown (doc §2); beyond
 // that the buffer is exhausted and the claim leg carries the tail.
 //
+// INT64 CEILING (fail-closed, inherited verbatim from stability_vault.ark):
+// `newTargetFiat × 1e8` overflows signed int64 once newTargetFiat exceeds
+// ~9.2e10 minor units (≈ $922M at cents). OP_MUL64 is emitted with OP_VERIFY,
+// so an overflow ABORTS the settlement script — it never produces a wrong
+// payout. The same holds for `currentClaimBase × (100+ratio)` in removeCapital.
+// Consequence is a liveness ceiling on position size, not a theft vector; sizing
+// well under that bound (and using a sane oracle feed) is an operational
+// constraint. A split-division rewrite would raise the ceiling but the language
+// has no modulo operator, so it is deferred rather than introducing unproven
+// settlement math that diverges from the audited reference.
+//
 // Oracle model (Fuji-style signed feed):
 //   msg = sha256(ticker || price || timestamp), price/timestamp as 8-byte LE.
 //   At settlement the caller supplies (oraclePrice, oracleTime, oracleSig);
@@ -100,6 +111,15 @@ contract InventoryHedge(
     // Anti-grief: if the current rate is non-zero the accrual must be non-zero,
     // else advancing lastUpdate would silently suppress funding owed the desk.
     // A no-accrual update is only legitimate when the current rate is already 0.
+    //
+    // KNOWN LIMITATION (by design): with a NEGATIVE current rate, delta < 0, so
+    // `require(delta > 0)` always fails and repricing via updateFunding is
+    // bricked — the rate can never be moved back to >= 0. This is only reachable
+    // when a vault is constructed with a negative initial fundingRatePerSec,
+    // which is unsupported (see the constructor comment). Funds are NOT locked:
+    // redeem/withdraw still settle (their clamp handles a wiped claim). A
+    // factory that validates the initial rate would seal this off; out of scope
+    // for the thinnest first build.
     if (fundingRatePerSec != 0) {
       require(delta > 0, "no accrual; wait longer");
     }
