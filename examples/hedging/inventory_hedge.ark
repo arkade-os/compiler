@@ -1,0 +1,277 @@
+// InventoryHedge Contract
+//
+// A perpetual, BTC-settled, fully-collateralized market-maker inventory hedge.
+// See docs/mm-residual-hedge.md. It generalizes StabilityVault: a BTC UTXO is
+// split between two parties so a market-making desk can convert residual BTC
+// inventory into a fiat-denominated claim — delta-flat, self-custodied, no CEX.
+//
+// Legs (doc §2):
+//   - CLAIM leg (claimPk): the desk. Holds a fiat claim `targetFiat`,
+//     delta-flat in fiat terms.
+//   - LONG leg (longPk): the provider / BTC treasury. Holds the residual BTC
+//     upside and posts the over-collateral.
+//   Funding flows LONG -> CLAIM: the cost of self-custodied leverage.
+//
+// Perpetual: no maturity. Oracle-marked. Fully collateralized — settlement is
+// always a clamp into [0, totalCollateral], so there is no liquidation.
+//
+// Multi-currency (doc §3): `ticker` is the BTC/<fiat> feed id
+// (e.g. sha256("BTC/USD")). One instance per pair; the same contract serves
+// USD/BRL/CHF/EUR purely by parameterization. Every fiat claim leg is short BTC,
+// so the whole desk collapses to one aggregate BTC-delta book balanced off-chain.
+//
+// Funding model (fiat-compound, interleaved /1e6 to stay in int64):
+//   elapsed       = tx.offchainTime - lastUpdate
+//   newTargetFiat = targetFiat × (1 + fundingRatePerSec × elapsed / 1e12)
+//   fundingRatePerSec is a signed fixed-point fraction at scale 1e12. The
+//   dynamic, imbalance-driven rate (doc §4) is computed OFF-chain by the desk's
+//   risk engine and supplied to updateFunding; on-chain logic is the >= 0 guard
+//   plus the accrual roll-forward.
+//
+// Settlement math (single shape across claimExit, longExit, removeCapital):
+//   newTargetFiat = targetFiat × (1 + fundingRatePerSec × elapsed / 1e12)
+//   claimRaw      = newTargetFiat × 1e8 / oraclePrice
+//   claimPayout   = clamp(claimRaw, 0, totalCollateral)
+//   longPayout    = totalCollateral − claimPayout
+// At a 1.5:1 ratio the desk is made whole to a ~60% drawdown (doc §2); beyond
+// that the buffer is exhausted and the claim leg carries the tail.
+//
+// Oracle model (Fuji-style signed feed):
+//   msg = sha256(ticker || price || timestamp), price/timestamp as 8-byte LE.
+//   At settlement the caller supplies (oraclePrice, oracleTime, oracleSig);
+//   freshness: tx.offchainTime - oracleTime <= 600 seconds. `tx.offchainTime`
+//   is the TEE-introspector wallclock (unix seconds), distinct from `tx.time`
+//   (Bitcoin nLockTime, block height).
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract InventoryHedge(
+  pubkey  claimPk,            // holder of the fiat claim leg (the hedging desk)
+  pubkey  longPk,            // collateral provider / BTC long leg (treasury)
+  pubkey  oraclePk,          // price feed key; only its signatures are accepted
+  bytes32 ticker,            // BTC/<fiat> feed identifier (e.g. sha256("BTC/USD"))
+  int     targetFiat,        // claim leg's fiat value (minor units); mutates on funding
+  int     totalCollateral,   // sats locked; mutates on add/removeCapital
+  int     fundingRatePerSec, // signed fixed-point at scale 1e12; mutates on update
+  int     lastUpdate,        // unix seconds; basis for funding accrual
+  int     collateralRatioPct,// min collateral ratio for removeCapital (50 = 1.5:1)
+  int     exit               // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // TRANSFER — desk reassigns the claim leg. Pure key swap, no oracle.
+  // -------------------------------------------------------------------------
+  function transfer(signature claimSig, pubkey newClaimPk) {
+    require(checkSig(claimSig, claimPk), "invalid claim sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new InventoryHedge(
+        newClaimPk, longPk, oraclePk, ticker,
+        targetFiat, totalCollateral, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // UPDATE FUNDING — provider rolls accrued funding into targetFiat and sets a
+  // new rate. The rate must be >= 0: a negative rate would let the provider
+  // drain the desk. The dynamic, imbalance-driven value is computed off-chain
+  // (doc §4) and supplied here; on-chain we only guard the sign and the accrual.
+  // -------------------------------------------------------------------------
+  function updateFunding(signature longSig, int newFundingRatePerSec) {
+    require(checkSig(longSig, longPk), "invalid long-leg sig");
+    require(newFundingRatePerSec >= 0, "negative funding rate disallowed");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = targetFiat * rateElapsedScaled / 1000000;
+    int newTargetFiat     = targetFiat + delta;
+    require(newTargetFiat > 0, "claim wiped by funding");
+
+    // Anti-grief: if the current rate is non-zero the accrual must be non-zero,
+    // else advancing lastUpdate would silently suppress funding owed the desk.
+    // A no-accrual update is only legitimate when the current rate is already 0.
+    if (fundingRatePerSec != 0) {
+      require(delta > 0, "no accrual; wait longer");
+    }
+
+    require(
+      tx.outputs[0].scriptPubKey == new InventoryHedge(
+        claimPk, longPk, oraclePk, ticker,
+        newTargetFiat, totalCollateral, newFundingRatePerSec, tx.offchainTime,
+        collateralRatioPct, exit
+      ),
+      "invalid update output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // ADD CAPITAL — provider tops up collateral (doc §2 margin top-up cycle).
+  // More collateral is always strictly better for the desk; no ratio check.
+  // -------------------------------------------------------------------------
+  function addCapital(signature longSig, int amount) {
+    require(checkSig(longSig, longPk), "invalid long-leg sig");
+    require(amount > 0, "zero amount");
+
+    int newTotalCollateral = totalCollateral + amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new InventoryHedge(
+        claimPk, longPk, oraclePk, ticker,
+        targetFiat, newTotalCollateral, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, exit
+      ),
+      "invalid output"
+    );
+    require(tx.outputs[0].value >= newTotalCollateral, "collateral not deposited");
+  }
+
+  // -------------------------------------------------------------------------
+  // REMOVE CAPITAL — provider reclaims excess collateral, but the remaining
+  // position must still cover the claim at collateralRatioPct (doc §2 bound).
+  // Accrued funding is included in the check without rolling it into the vault.
+  // -------------------------------------------------------------------------
+  function removeCapital(
+    signature longSig,
+    int       amount,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(longSig, longPk), "invalid long-leg sig");
+    require(amount > 0, "zero amount");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int elapsed            = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled  = fundingRatePerSec * elapsed / 1000000;
+    int delta              = targetFiat * rateElapsedScaled / 1000000;
+    int newTargetFiat      = targetFiat + delta;
+    int currentClaimBase   = newTargetFiat * 100000000 / oraclePrice;
+    int minCollateral      = currentClaimBase * (100 + collateralRatioPct) / 100;
+    int newTotalCollateral = totalCollateral - amount;
+    require(newTotalCollateral >= minCollateral, "would breach collateral ratio");
+
+    require(
+      tx.outputs[0].scriptPubKey == new InventoryHedge(
+        claimPk, longPk, oraclePk, ticker,
+        targetFiat, newTotalCollateral, fundingRatePerSec, lastUpdate,
+        collateralRatioPct, exit
+      ),
+      "invalid vault output"
+    );
+    require(tx.outputs[0].value >= newTotalCollateral, "vault underfunded");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), "output 1 not long leg");
+    require(tx.outputs[1].value >= amount, "long leg underpaid");
+  }
+
+  // -------------------------------------------------------------------------
+  // CLAIM EXIT — desk settles the hedge to BTC at the oracle price.
+  // BTC-native at the index price (doc §2: no perp-spot basis). No exit fee.
+  //   claimRaw    = newTargetFiat × 1e8 / oraclePrice
+  //   claimPayout = clamp(claimRaw, 0, totalCollateral); remainder to long leg.
+  // -------------------------------------------------------------------------
+  function claimExit(
+    signature claimSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(claimSig, claimPk), "invalid claim sig");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = targetFiat * rateElapsedScaled / 1000000;
+    int newTargetFiat     = targetFiat + delta;
+    int claimRaw          = newTargetFiat * 100000000 / oraclePrice;
+
+    if (claimRaw <= 0) {
+      require(tx.outputs[0].value >= totalCollateral, "long leg underpaid");
+      require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), "output 0 not long leg");
+    } else {
+      if (claimRaw >= totalCollateral) {
+        require(tx.outputs[0].value >= totalCollateral, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+      } else {
+        require(tx.outputs[0].value >= claimRaw, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+        int longPayout = totalCollateral - claimRaw;
+        if (longPayout > 330) {
+          require(tx.outputs[1].value >= longPayout, "long leg underpaid");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), "output 1 not long leg");
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // LONG EXIT — provider-driven settlement; identical clamp math.
+  // -------------------------------------------------------------------------
+  function longExit(
+    signature longSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(longSig, longPk), "invalid long-leg sig");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = targetFiat * rateElapsedScaled / 1000000;
+    int newTargetFiat     = targetFiat + delta;
+    int claimRaw          = newTargetFiat * 100000000 / oraclePrice;
+
+    if (claimRaw <= 0) {
+      require(tx.outputs[0].value >= totalCollateral, "long leg underpaid");
+      require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), "output 0 not long leg");
+    } else {
+      if (claimRaw >= totalCollateral) {
+        require(tx.outputs[0].value >= totalCollateral, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+      } else {
+        require(tx.outputs[0].value >= claimRaw, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+        int longPayout = totalCollateral - claimRaw;
+        if (longPayout > 330) {
+          require(tx.outputs[1].value >= longPayout, "long leg underpaid");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), "output 1 not long leg");
+        }
+      }
+    }
+  }
+}
