@@ -181,6 +181,12 @@ contract InventoryHedge(
     require(checkSig(longSig, longPk), "invalid long-leg sig");
     require(amount > 0, "zero amount");
     require(oraclePrice > 0, "invalid oracle price");
+    // Defense-in-depth (same class as the newTargetFiat guard below): the
+    // constructor cannot validate collateralRatioPct, and a negative ratio
+    // (<= -100) makes minCollateral non-positive, letting the long leg drain a
+    // live claim. StabilityOffer seals this at take() time; with no factory the
+    // in-function guard is the equivalent.
+    require(collateralRatioPct >= 0, "invalid collateral ratio");
 
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
