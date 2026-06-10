@@ -347,10 +347,11 @@ pub enum Expression {
         coerce_left: bool,
         coerce_right: bool,
     },
-    /// One-shot SHA256: sha256(data) → 32-byte digest. Used for small
-    /// fixed messages where streaming would be overkill.
-    Sha256 { data: Box<Expression> },
     // ─── Streaming SHA256 ──────────────────────────────────────────────
+    /// Plain SHA256: sha256(data) → emits `<data> OP_SHA256`.
+    /// One-shot hashing of byte-string expressions like substr; used for
+    /// small fixed messages where streaming would be overkill.
+    Sha256 { data: Box<Expression> },
     /// Streaming SHA256 initialize: sha256Initialize(data)
     Sha256Initialize { data: Box<Expression> },
     /// Streaming SHA256 update: sha256Update(ctx, chunk)
@@ -400,5 +401,37 @@ pub enum Expression {
         contract_name: String,
         /// Constructor arguments (typically Variable or Literal)
         args: Vec<Expression>,
+    },
+    // ─── Byte-string Manipulation (introspector extensions) ────────────
+    /// Substring extraction: substr(data, offset, size) → OP_SUBSTR
+    Substr {
+        data: Box<Expression>,
+        offset: Box<Expression>,
+        size: Box<Expression>,
+    },
+    /// Byte concatenation: cat(a, b) → OP_CAT
+    Cat {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    /// Bytes-to-number (little-endian, leading-zero-stripped BigNum): bin2num(bytes) → OP_BIN2NUM
+    Bin2Num { data: Box<Expression> },
+    /// Number-to-bytes (little-endian, zero-padded): num2bin(num, size) → OP_NUM2BIN
+    Num2Bin {
+        value: Box<Expression>,
+        size: Box<Expression>,
+    },
+    /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
+    SizeOf { data: Box<Expression> },
+    // ─── Packet Introspection ──────────────────────────────────────────
+    /// Current-tx packet content: tx.packet(packetType)
+    /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
+    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`.
+    PacketInspect { packet_type: Box<Expression> },
+    /// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
+    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`.
+    InputPacketInspect {
+        index: Box<Expression>,
+        packet_type: Box<Expression>,
     },
 }

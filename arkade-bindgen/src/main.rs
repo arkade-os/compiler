@@ -46,7 +46,7 @@ fn main() {
         return;
     }
 
-    let input = cli.input.expect("input path is required");
+    let input = cli.input.clone().expect("input path is required");
 
     if cli.lang.is_empty() {
         eprintln!("Error: --lang is required (e.g., --lang typescript,go)");
