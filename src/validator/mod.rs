@@ -179,6 +179,8 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
+    check_shadowing(contract, &mut issues);
+
     issues
 }
 
@@ -205,6 +207,146 @@ fn statement_has_require(stmt: &Statement) -> bool {
                     .map_or(false, |b| statements_have_require(b))
         }
         Statement::ForIn { body, .. } => statements_have_require(body),
+    }
+}
+
+/// Check 1: reject any binding that shadows a name still live in an enclosing
+/// scope, plus `for (x, x)`. Function parameters are compared against
+/// constructor parameters explicitly before seeding (a collapsed set would
+/// silently swallow the duplicate).
+fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let ctor_names: HashSet<&str> =
+        contract.parameters.iter().map(|p| p.name.as_str()).collect();
+
+    for func in &contract.functions {
+        // Seed frame: constructor params + this function's params.
+        let mut seed: HashSet<String> = ctor_names.iter().map(|s| s.to_string()).collect();
+        for param in &func.parameters {
+            if ctor_names.contains(param.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "parameter '{}' in function '{}' shadows constructor parameter '{}'",
+                    param.name, func.name, param.name
+                )));
+            }
+            seed.insert(param.name.clone());
+        }
+
+        let mut stack: Vec<HashSet<String>> = vec![seed];
+        walk_scope(&func.statements, &func.name, &mut stack, issues);
+
+        check_ctor_assignment(&func.statements, &func.name, &ctor_names, issues);
+    }
+}
+
+/// Reject `name = expr;` where `name` is a constructor parameter; constructor
+/// parameters are immutable. Recurses into branch and loop bodies.
+fn check_ctor_assignment(
+    stmts: &[Statement],
+    fname: &str,
+    ctor_names: &HashSet<&str>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::VarAssign { name, .. } => {
+                if ctor_names.contains(name.as_str()) {
+                    issues.push(ValidationIssue::error(format!(
+                        "cannot assign to constructor parameter '{}' in function '{}'; \
+                         constructor parameters are immutable",
+                        name, fname
+                    )));
+                }
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_ctor_assignment(then_body, fname, ctor_names, issues);
+                if let Some(eb) = else_body {
+                    check_ctor_assignment(eb, fname, ctor_names, issues);
+                }
+            }
+            Statement::ForIn { body, .. } => {
+                check_ctor_assignment(body, fname, ctor_names, issues);
+            }
+            Statement::LetBinding { .. } | Statement::Require(_) => {}
+        }
+    }
+}
+
+/// Returns true if `name` is bound in any frame currently on the stack.
+fn in_scope(stack: &[HashSet<String>], name: &str) -> bool {
+    stack.iter().any(|frame| frame.contains(name))
+}
+
+/// Walk statements maintaining a lexical scope stack. Each block (`for` body,
+/// `if`/`else` branch) is a pushed frame, so sibling blocks do not conflict.
+fn walk_scope(
+    stmts: &[Statement],
+    fname: &str,
+    stack: &mut Vec<HashSet<String>>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::LetBinding { name, .. } => {
+                if in_scope(stack, name) {
+                    issues.push(ValidationIssue::error(format!(
+                        "binding '{}' in function '{}' shadows an in-scope binding",
+                        name, fname
+                    )));
+                } else {
+                    stack
+                        .last_mut()
+                        .expect("non-empty scope stack")
+                        .insert(name.clone());
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                body,
+                ..
+            } => {
+                if index_var == value_var {
+                    issues.push(ValidationIssue::error(format!(
+                        "loop variables in function '{}' must differ; both are named '{}'",
+                        fname, index_var
+                    )));
+                }
+                for v in [index_var, value_var] {
+                    if in_scope(stack, v) {
+                        issues.push(ValidationIssue::error(format!(
+                            "loop variable '{}' in function '{}' shadows an in-scope binding",
+                            v, fname
+                        )));
+                    }
+                }
+                let mut frame = HashSet::new();
+                frame.insert(index_var.clone());
+                frame.insert(value_var.clone());
+                stack.push(frame);
+                walk_scope(body, fname, stack, issues);
+                stack.pop();
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                stack.push(HashSet::new());
+                walk_scope(then_body, fname, stack, issues);
+                stack.pop();
+                if let Some(eb) = else_body {
+                    stack.push(HashSet::new());
+                    walk_scope(eb, fname, stack, issues);
+                    stack.pop();
+                }
+            }
+            // Reassignment is handled separately; requires introduce no bindings.
+            Statement::VarAssign { .. } | Statement::Require(_) => {}
+        }
     }
 }
 
