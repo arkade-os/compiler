@@ -32,7 +32,7 @@ const projects = {
     },
     hedging: {
         name: 'Hedging',
-        description: 'Perpetual, BTC-settled, fully-collateralized market-maker inventory hedge: a desk converts residual BTC inventory into a delta-flat fiat claim (claim leg) while a treasury holds the BTC long leg and earns funding. Oracle-marked, no liquidation, one instance per BTC/<fiat> pair. See docs/hedging/inventory_hedge_tx_flows.md and docs/mm-residual-hedge.md',
+        description: 'Perpetual, BTC-settled, fully-collateralized market-maker inventory hedge: a desk converts residual BTC inventory into a delta-flat fiat claim (claim leg) while a treasury holds the BTC long leg and earns funding. Oracle-marked, no liquidation, one instance per BTC/<fiat> pair. See docs/mm-residual-hedge.md (design note + transaction flows)',
         files: {
             'inventory_hedge.ark': contracts.inventory_hedge,
         }
