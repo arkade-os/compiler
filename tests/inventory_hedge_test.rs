@@ -7,7 +7,7 @@
 // <SERVER_KEY> on the cooperative path.
 
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64};
+use arkade_compiler::opcodes::{OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64, OP_SHA256};
 
 const HEDGE_CODE: &str = include_str!("../examples/hedging/inventory_hedge.ark");
 
@@ -80,8 +80,12 @@ fn test_cooperative_path_injects_server_key() {
 
 #[test]
 fn test_oracle_paths_verify_price_and_divide() {
-    // Each settling path reconstructs the oracle message, verifies it via
-    // checkSigFromStack, and converts fiat->sats with a 64-bit division.
+    // Each settling path must RECONSTRUCT the oracle message on-chain
+    // (sha256(ticker || price || time)) and verify the sig against it — not
+    // accept a caller-supplied digest. Pin the concatenation (>=2 OP_CAT for
+    // ticker+price+time), the hash (OP_SHA256), the sig check, and the
+    // fiat->sats division. Mirrors stability_vault_test's oracle assertions so
+    // a compiler regression that drops cat/hash can't slip the replay guard.
     let out = compile(HEDGE_CODE).unwrap();
     for name in ORACLE_FUNCTIONS {
         let f = out
@@ -90,6 +94,15 @@ fn test_oracle_paths_verify_price_and_divide() {
             .find(|f| &f.name == name && f.server_variant)
             .unwrap();
         let asm = f.asm.join(" ");
+        let cat_count = f.asm.iter().filter(|s| s.as_str() == OP_CAT).count();
+        assert!(
+            cat_count >= 2,
+            "{name}: expected >=2 OP_CAT (ticker+price, +time), found {cat_count}"
+        );
+        assert!(
+            asm.contains(OP_SHA256),
+            "{name}: missing OP_SHA256 oracle hash"
+        );
         assert!(
             asm.contains(OP_CHECKSIGFROMSTACK),
             "{name}: missing oracle sig verify"
@@ -103,6 +116,32 @@ fn test_oracle_paths_verify_price_and_divide() {
             "{name}: missing user checksig"
         );
     }
+}
+
+#[test]
+fn test_add_capital_does_no_oracle_call() {
+    // addCapital is a pure top-up: more collateral is always better for the
+    // claim leg, so it must NOT depend on an oracle price. Guards against a
+    // future refactor accidentally adding a price-introspecting check.
+    let out = compile(HEDGE_CODE).unwrap();
+    let f = out
+        .functions
+        .iter()
+        .find(|f| f.name == "addCapital" && f.server_variant)
+        .unwrap();
+    let asm = f.asm.join(" ");
+    assert!(
+        !asm.contains(OP_CHECKSIGFROMSTACK),
+        "addCapital must not call the oracle"
+    );
+    assert!(
+        !asm.contains(OP_SHA256),
+        "addCapital must not reconstruct an oracle message"
+    );
+    assert!(
+        f.asm.iter().any(|s| s == OP_CHECKSIG),
+        "addCapital must verify the long-leg key"
+    );
 }
 
 #[test]
@@ -147,9 +186,10 @@ fn test_transfer_is_pure_keyswap() {
 
 #[test]
 fn test_redeem_has_clamp_branches() {
-    // claimRaw is clamped into [0, totalCollateral]: claimRaw<=0 (all to long),
-    // claimRaw>=collateral (all to claim), else split. That is three OP_IF
-    // branches plus the long-leg dust guard.
+    // claimRaw is clamped into [0, totalCollateral] via exactly three nested
+    // OP_IF branches: (1) claimRaw<=0 → all to long, (2) claimRaw>=collateral →
+    // all to claim, (3) else split, where the long-leg dust guard
+    // (longPayout > 330) is itself the third OP_IF (not a fourth branch).
     let out = compile(HEDGE_CODE).unwrap();
     let f = out
         .functions

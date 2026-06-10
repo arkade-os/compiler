@@ -88,7 +88,7 @@ Cross-currency exposure triangulates through BTC (`<fiatA>/<fiatB>` =
 Funding is **perpetual** (no maturity — dated hedges fragment liquidity across
 tenors and add rate risk) and **dynamic**, driven by long/short imbalance:
 
-```
+```text
 fundingRate = clamp( premiumIndex + carryComponent , -cap, +cap )
 premiumIndex ∝ open-interest skew between claim and long legs
 long leg crowded  -> funding up   -> longs pay the claim side   (cools long demand)
@@ -129,7 +129,7 @@ desk on a short horizon).
 
 Do not open a vault per fill. Hedge only the residual swing:
 
-```
+```text
 1. INTERNALIZE
    Net client buys against sells across the whole book.
    Skew quotes (inventory-aware reservation price) to attract
@@ -284,7 +284,7 @@ meaningful on the cooperative leaf; the exit leaf is the liveness backstop
 
 Funding accrual, interleaved `/1e6` twice to stay inside int64:
 
-```
+```text
 elapsed       = tx.offchainTime - lastUpdate
 rateElapsed   = fundingRatePerSec * elapsed / 1e6
 delta         = targetFiat * rateElapsed / 1e6
@@ -296,7 +296,7 @@ newTargetFiat = targetFiat + delta          // = targetFiat × (1 + rate·elapse
 The desk hands its claim to a new key (the §6 "transfer" resize). Pure key swap;
 no oracle, no funding roll.
 
-```
+```text
 Signers : claimSig (+ SERVER_KEY | + CLTV exit)
 Witness : claimSig, newClaimPk
 
@@ -310,7 +310,7 @@ out[0]  : InventoryHedge( claimPk:=newClaimPk, …all other state unchanged… )
 The long leg rolls accrued funding into the claim and adopts the next
 off-chain-computed rate (§4).
 
-```
+```text
 Signers : longSig (+ SERVER_KEY | + CLTV exit)
 Witness : longSig, newFundingRatePerSec
 
@@ -334,7 +334,7 @@ is legal only when the current rate is already 0 (resume-from-pause).
 More collateral is strictly better for the desk, so no ratio/oracle check
 (the top-up side of the §2 margin cycle).
 
-```
+```text
 Signers : longSig (+ SERVER_KEY | + CLTV exit)
 Witness : longSig, amount
 
@@ -352,7 +352,7 @@ Accrual is computed **only for the guard** — `targetFiat` and `lastUpdate` are
 deliberately **not** mutated, so a withdrawal never truncates funding (only
 `updateFunding` moves the clock).
 
-```
+```text
 Signers : longSig (+ SERVER_KEY | + CLTV exit)
 Witness : longSig, amount, oraclePrice, oracleTime, oracleSig
 
@@ -364,7 +364,7 @@ out[1]  : SingleSig(longPk)                value >= amount     // reclaimed sats
 
 Guard (oracle-priced):
 
-```
+```text
 accruedFiat        = targetFiat + delta
 claimSats          = accruedFiat * 1e8 / oraclePrice
 minCollateral      = claimSats * (100 + collateralRatioPct) / 100
@@ -376,7 +376,7 @@ require( totalCollateral - amount >= minCollateral )   // "would breach collater
 The desk redeems its fiat claim for BTC at the oracle mark. BTC-native settlement
 at the index price (§2: no perp-spot basis). The vault terminates.
 
-```
+```text
 Signers : claimSig (+ SERVER_KEY | + CLTV exit)
 Witness : claimSig, oraclePrice, oracleTime, oracleSig
 
@@ -385,7 +385,7 @@ in [0]  : InventoryHedge UTXO
 
 Payout is the claim clamped into `[0, totalCollateral]`:
 
-```
+```text
 claimRaw = newTargetFiat * 1e8 / oraclePrice
 ```
 
@@ -408,7 +408,7 @@ position the desk has gone quiet on, settling both legs fairly at the mark.
 
 ## Lifecycle at a glance
 
-```
+```text
             ┌────────────── updateFunding (roll funding, reprice) ───────────────┐
             │                                                                     │
             ▼                                                                     │
@@ -436,7 +436,7 @@ The contract ships in the WASM playground under the **Hedging** project folder
 (`playground/main.js`), sourced from `playground/contracts.js` (regenerate with
 `./playground/generate_contracts.sh` after editing the `.ark`). Build and serve:
 
-```
+```text
 ./playground/build.sh          # wasm-pack build + contracts regen
 ./playground/serve.sh 8080     # static server
 ```
