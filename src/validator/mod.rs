@@ -179,6 +179,9 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
+    check_shadowing(contract, &mut issues);
+    check_expanded_namespace(contract, &mut issues);
+
     issues
 }
 
@@ -205,6 +208,204 @@ fn statement_has_require(stmt: &Statement) -> bool {
                     .map_or(false, |b| statements_have_require(b))
         }
         Statement::ForIn { body, .. } => statements_have_require(body),
+    }
+}
+
+/// Check 1: reject any binding that shadows a name still live in an enclosing
+/// scope, plus `for (x, x)`. Function parameters are compared against
+/// constructor parameters explicitly before seeding (a collapsed set would
+/// silently swallow the duplicate).
+fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let ctor_names: HashSet<&str> = contract
+        .parameters
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+
+    for func in &contract.functions {
+        // Seed frame: constructor params + this function's params.
+        let mut seed: HashSet<String> = ctor_names.iter().map(|s| s.to_string()).collect();
+        for param in &func.parameters {
+            if ctor_names.contains(param.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "parameter '{}' in function '{}' shadows constructor parameter '{}'",
+                    param.name, func.name, param.name
+                )));
+            }
+            seed.insert(param.name.clone());
+        }
+
+        let mut stack: Vec<HashSet<String>> = vec![seed];
+        walk_scope(&func.statements, &func.name, &mut stack, issues);
+
+        check_ctor_assignment(&func.statements, &func.name, &ctor_names, issues);
+    }
+}
+
+/// Reject `name = expr;` where `name` is a constructor parameter; constructor
+/// parameters are immutable. Recurses into branch and loop bodies.
+fn check_ctor_assignment(
+    stmts: &[Statement],
+    fname: &str,
+    ctor_names: &HashSet<&str>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::VarAssign { name, .. } => {
+                if ctor_names.contains(name.as_str()) {
+                    issues.push(ValidationIssue::error(format!(
+                        "cannot assign to constructor parameter '{}' in function '{}'; \
+                         constructor parameters are immutable",
+                        name, fname
+                    )));
+                }
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_ctor_assignment(then_body, fname, ctor_names, issues);
+                if let Some(eb) = else_body {
+                    check_ctor_assignment(eb, fname, ctor_names, issues);
+                }
+            }
+            Statement::ForIn { body, .. } => {
+                check_ctor_assignment(body, fname, ctor_names, issues);
+            }
+            Statement::LetBinding { .. } | Statement::Require(_) => {}
+        }
+    }
+}
+
+/// Returns true if `name` is bound in any frame currently on the stack.
+fn in_scope(stack: &[HashSet<String>], name: &str) -> bool {
+    stack.iter().any(|frame| frame.contains(name))
+}
+
+/// Walk statements maintaining a lexical scope stack. Each block (`for` body,
+/// `if`/`else` branch) is a pushed frame, so sibling blocks do not conflict.
+fn walk_scope(
+    stmts: &[Statement],
+    fname: &str,
+    stack: &mut Vec<HashSet<String>>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::LetBinding { name, .. } => {
+                if in_scope(stack, name) {
+                    issues.push(ValidationIssue::error(format!(
+                        "binding '{}' in function '{}' shadows an in-scope binding",
+                        name, fname
+                    )));
+                } else {
+                    stack
+                        .last_mut()
+                        .expect("non-empty scope stack")
+                        .insert(name.clone());
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                body,
+                ..
+            } => {
+                if index_var == value_var {
+                    issues.push(ValidationIssue::error(format!(
+                        "loop variables in function '{}' must differ; both are named '{}'",
+                        fname, index_var
+                    )));
+                }
+                for v in [index_var, value_var] {
+                    if in_scope(stack, v) {
+                        issues.push(ValidationIssue::error(format!(
+                            "loop variable '{}' in function '{}' shadows an in-scope binding",
+                            v, fname
+                        )));
+                    }
+                }
+                let mut frame = HashSet::new();
+                frame.insert(index_var.clone());
+                frame.insert(value_var.clone());
+                stack.push(frame);
+                walk_scope(body, fname, stack, issues);
+                stack.pop();
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                stack.push(HashSet::new());
+                walk_scope(then_body, fname, stack, issues);
+                stack.pop();
+                if let Some(eb) = else_body {
+                    stack.push(HashSet::new());
+                    walk_scope(eb, fname, stack, issues);
+                    stack.pop();
+                }
+            }
+            // Reassignment is handled separately; requires introduce no bindings.
+            Statement::VarAssign { .. } | Statement::Require(_) => {}
+        }
+    }
+}
+
+/// Check 2: the names a function's parameters and the constructor's parameters
+/// contribute to the *emitted* placeholder namespace — after array flattening,
+/// asset decomposition, and reserved generated names — must be unique. Distinct
+/// source names can still collide here (e.g. `int[] xs` vs `int xs_0`).
+fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let lookup_ids = crate::compiler::collect_lookup_asset_ids(contract);
+    // Constructor params expanded exactly as the emitter decomposes them.
+    let ctor_expanded =
+        crate::compiler::decompose_constructor_params(&contract.parameters, &lookup_ids);
+
+    for func in contract.functions.iter().filter(|f| !f.is_internal) {
+        let mut seen: HashSet<String> = HashSet::new();
+
+        for p in &ctor_expanded {
+            record_name(p.name.clone(), &func.name, &mut seen, issues);
+        }
+
+        // Function parameters: array flattening only (mirrors generate_witness_schema).
+        for p in &func.parameters {
+            if p.param_type.ends_with("[]") {
+                for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
+                    record_name(format!("{}_{}", p.name, i), &func.name, &mut seen, issues);
+                }
+            } else {
+                record_name(p.name.clone(), &func.name, &mut seen, issues);
+            }
+        }
+
+        // `serverSig` is appended unconditionally to the cooperative witness
+        // schema (no dedup), so a parameter of that name genuinely collides.
+        if contract.has_server_key {
+            record_name("serverSig".to_string(), &func.name, &mut seen, issues);
+        }
+        // N-of-N exit signatures (`{pubkey}Sig`) are intentionally NOT reserved:
+        // the emitter deduplicates them against existing signature parameters by
+        // name (src/compiler/mod.rs ~690), so a param like `senderSig` for a
+        // `sender` pubkey is reused rather than duplicated — no collision.
+    }
+}
+
+/// Insert an emitted name; on the first duplicate, record a collision error.
+fn record_name(
+    name: String,
+    fname: &str,
+    seen: &mut HashSet<String>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if !seen.insert(name.clone()) {
+        issues.push(ValidationIssue::error(format!(
+            "parameters in function '{}' collide in the emitted namespace as '{}'",
+            fname, name
+        )));
     }
 }
 
