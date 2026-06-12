@@ -87,7 +87,7 @@ PULSE closes this gap.
 | **Pool VTXO `U_k`** | The pool's virtual UTXO at epoch `k`, holding the aggregate funds |
 | **State table `S_k`** | The full balance table at epoch `k`: every member's `(memberPk, balance)` |
 | **Pulse** | One off-chain cooperative state transition `S_k → S_{k+1}`, consuming `U_k`, producing `U_{k+1}` |
-| **msg.senders `M_k`** | The parties whose balances change in pulse `k` (online by definition; typically 1–2) |
+| **Transacting parties `M_k`** | The parties whose balances change in pulse `k` — whoever is depositing, withdrawing, or trading (online by definition; typically 1–2) |
 | **Transition tx `T_k`** | The plain, fully-signed, broadcastable transaction implementing pulse `k` |
 | **Epoch key `P_k`** | MuSig2 aggregate of *ephemeral, sign-once* keys of `{Operator} ∪ M_k`. Passive members are **never** in the aggregate |
 | **Exit lattice `L_k`** | Fully pre-signed splitting tree spending `U_k`'s exit leaf into one slot per member, per `S_k` |
@@ -103,10 +103,10 @@ PULSE closes this gap.
 | Role | Signs | Online when | Notes |
 |---|---|---|---|
 | **Passive member** | **Nothing after deposit** | Own deposit/withdraw only | Must *retain* exit artifacts (or delegate to a watchtower); interactivity is borne by transactors |
-| **msg.senders** | Lattice + transition + `h_k`, in **one ceremony** (two MuSig2 rounds, one network round-trip) | Their own transaction | Typically 1–2 parties |
+| **Transacting parties** | Lattice + transition + `h_k`, in **one ceremony** (two MuSig2 rounds, one network round-trip) | Their own transaction | Typically 1–2 parties |
 | **Operator** | Every pulse + attestation + commitment | Always-on | Absence ⇒ freeze ⇒ everyone exits via lattices |
 | **Watchtower** | Nothing (lattice is fully pre-signed) | Monitoring only | Can broadcast *anyone's* exit; non-custodial; delegable |
-| **Heartbeat participants** | Operator + that pulse's msg.senders only | — | Passive members are **not** needed at heartbeats |
+| **Heartbeat participants** | Operator + that pulse's transacting parties only | — | Passive members are **not** needed at heartbeats |
 | **Genesis** | Operator only, if the pool starts empty and members join via deposit pulses | — | **No all-hands N-of-N ceremony ever exists** |
 
 ## 6. The exit leaf
@@ -134,7 +134,7 @@ emits — instead of the N-of-N CHECKSIG chain:
 ### 7.0 Genesis (D0)
 
 1. The Operator posts the per-pool **bond** (§9), sized to at least
-   `requiredCoverage(initialTVL)`.
+   `requiredCoverage(initialTVL)` (TVL = the pool's total value locked).
 2. The pool contract is deployed: an open-membership recursive covenant whose
    cooperative path the Operator emulates, with `recurrent` exit mode.
 3. Preferred genesis: **start empty**. The first members join via ordinary deposit
@@ -148,18 +148,20 @@ emits — instead of the N-of-N CHECKSIG chain:
 A pulse either completes fully or is abandoned, leaving the pool on `U_k`, whose
 lattice is already valid.
 
-1. **Propose.** A transition `T_{k+1}` is proposed, changing only the msg.senders'
-   balances. The Operator emulates the contract's introspection covenant against it.
-   `S_{k+1} = S_k` with only `M_{k+1}` slots changed.
+1. **Propose.** A transition `T_{k+1}` is proposed, changing only the transacting
+   parties' balances. The Operator emulates the contract's introspection covenant
+   against it. `S_{k+1} = S_k` with only `M_{k+1}` slots changed.
 2. **Attest.** The Operator signs the continuity attestation `A_{k+1}` over the Merkle
-   root of the *entire* `S_{k+1}` — every member, not just msg.senders. One Schnorr
+   root of the *entire* `S_{k+1}` — every member, not just the transacting parties.
+   One Schnorr
    signature; O(1) on-chain footprint; O(log N) inclusion proofs per member.
 3. **Lattice first.** The parties build and MuSig2-sign `L_{k+1}` under
    `P_{k+1} = MuSig2(Operator, M_{k+1})`:
    - Root spends `U_{k+1}`'s exit leaf; the tree splits into per-member slots
      (`SingleSig(memberPk)` + the member's own exit CSV).
-   - **Dedicated per-claimant anchor outputs** (P2A) on every node; TRUC (v3)
-     transaction topology; lattice txs are non-RBF — fee bumping is anchor/CPFP only.
+   - **Dedicated per-claimant anchor outputs** (pay-to-anchor, P2A) on every node;
+     TRUC ("v3") transaction topology; lattice txs opt out of replace-by-fee — fee
+     bumping is anchors + child-pays-for-parent (CPFP) only.
    - Balances below the 330-sat taproot dust floor are aggregated into a single
      **cooperative-only dust slot**.
    - If any signer aborts here, the **pulse is abandoned**; no keys are deleted; the
@@ -177,8 +179,8 @@ lattice is already valid.
    - (c) the Operator bond still covers the pool's passive TVL (§9);
    - (d) **its own lattice branch is in its hands** — *"no lattice in my hands, no
      pulse."* Publication to the relay mesh alone is never trusted.
-5. **Transition signing.** Only now do Operator + msg.senders sign `T_{k+1}`
-   (SIGHASH_ALL, nSequence final).
+5. **Transition signing.** Only now do the Operator + transacting parties sign
+   `T_{k+1}` (SIGHASH_ALL, nSequence final).
 6. **Commit.** `h_{k+1}` is **co-signed by the Operator + a threshold of `M_{k+1}`**
    (so the Operator cannot unilaterally author forks) and committed in the Operator's
    next on-chain batch transaction. Full artifacts `(S_{k+1}, T_{k+1}, L_{k+1},
@@ -203,8 +205,8 @@ lattice is already valid.
 A forced design finding: re-anchoring `U_k` under a new on-chain output changes its
 outpoint, and every pre-signed signature (the transitions *and* the lattice) commits to
 the old outpoint under SIGHASH_ALL. Re-signing would require the deleted ephemeral
-keys. Therefore, **without `SIGHASH_ANYPREVOUT`, the heartbeat must itself be a
-cooperative on-chain pulse**:
+keys. Therefore, **absent any consensus change that lets signatures float across
+outpoints (§12.2), the heartbeat must itself be a cooperative on-chain pulse**:
 
 - A full pulse ceremony whose `T` lands on-chain, with a **complete lattice rebuild
   over all of `S_k`** under a fresh epoch key.
@@ -263,7 +265,7 @@ infrastructure:
 
 - **A `checkSigFromStack` punishment leaf would be circular — rejected.**
   `checkSigFromStack` is an *emulated* Arkade opcode, not Bitcoin L1 consensus (it is
-  consensus on Liquid, and proposed for Bitcoin as BIP-348). An Arkade-native bond
+  consensus on Liquid, not on Bitcoin). An Arkade-native bond
   slashed via an emulated opcode dies with the emulator: the malicious Operator simply
   shuts the instance down.
 - **Adopted design: judicial federation bond.** The bond is held by k-of-n entities
@@ -277,14 +279,18 @@ infrastructure:
   Federation trust applies to the **deterrent layer only — never to exit**.
 - **Rejected alternative, documented honestly:** forced-nonce-reuse key-leak punishment
   (make any second `P_k` signature leak the aggregate secret) does **not** work with
-  plain CHECKSIG: a cheater simply signs with a fresh nonce, and Script cannot pin the
-  nonce without CSFS.
+  plain CHECKSIG: a cheater simply signs with a fresh nonce, and Script cannot pin
+  the nonce.
 - **Sizing and client enforcement.** The bond is per-pool and TVL-tracking. Wallets
   refuse to participate in pulses of an under-bonded pool (`bond <
   requiredCoverage(passiveTVL)`) — client-side policy informed by a bond-reference
   field in the ABI (§11).
-- **Upgrade path.** BIP-348 CSFS on Bitcoin makes slashing L1-native and the
-  federation evaporates. See §12 for what CTV/APO additionally close.
+- **Permanence.** Under the working assumption that no covenant soft fork ever
+  activates on Bitcoin, the federation is a permanent fixture of the deterrent layer —
+  and is engineered to be acceptable as one: evidence-only powers, k-of-n diversity,
+  never in the exit path. The only contemplated consensus change that would retire it
+  is the Great Script Restoration (§12.2), whose restored opcodes make the
+  equivocation proof verifiable in Script directly.
 
 ## 10. Attack analysis appendix
 
@@ -294,7 +300,7 @@ safety claim), **HIGH** (loses funds or bricks exit under a realistic adversary)
 
 | # | Attack | Severity | Resolution in this spec |
 |---|---|---|---|
-| A1 | **Operator-only heartbeat re-anchor voids all pre-signed exits** — new outpoint ⇒ txid change ⇒ every SIGHASH_ALL signature dead; re-signing needs deleted keys | CRITICAL | Heartbeat is a full cooperative on-chain pulse with complete lattice rebuild (§7.2). No cheap re-anchor construct exists or may be exposed |
+| A1 | **Operator-only heartbeat re-anchor voids all pre-signed exits** — new outpoint ⇒ txid change ⇒ every SIGHASH_ALL signature dead; re-signing needs deleted keys | CRITICAL | Heartbeat is a full cooperative on-chain pulse with complete lattice rebuild (§7.2). No cheap re-anchor construct exists or may be exposed (floating claims under GSR would relax this — §12.2) |
 | A2 | **Silent-majority gap** — lattice signers are only Operator + `M_k`; nothing structurally forces correct passive slots; for 1-party pulses this degrades to "trust the Operator" | CRITICAL | Continuity attestation `A_k` over the *full* table each epoch + carry-forward verification by every msg.sender (§7.1 step 4b) + cross-epoch fraud proof slashable on the bond (§9) |
 | A3 | **"Publish the lattice" is unenforceable** — Operator signs last, can withhold mesh publication or the on-chain commitment selectively | HIGH | "No lattice *in my hands*, no pulse" (local possession gate, §7.1 step 4d); chained `h_k` dependency turns withholding into a visible stall that trips auto-exit (§7.1 step 6, §7.3) |
 | A4 | **MuSig2 N-of-N brittleness** — one signer aborts mid-ceremony ⇒ epoch key can never sign again ⇒ if the lattice were incomplete, the exit leaf is permanently unspendable | HIGH | Lattice signed *before* the transition (§7.1 order); abort ⇒ pulse abandoned on still-protected `U_k`; passive members excluded from the aggregate (minimal signer set) |
@@ -304,7 +310,7 @@ safety claim), **HIGH** (loses funds or bricks exit under a realistic adversary)
 | A8 | **"Deletion attestations" are unfalsifiable** — you cannot prove a key was deleted | HIGH | Deletion demoted to hygiene; the trust anchor is equivocation detection, which requires **mandatory artifact retention** (§8); a resurrected key that signs anything new creates the fraud proof |
 | A9 | **Renew-sweep races in-flight exits** — sweep maturity near `renew` can consume `U_k` under a maturing lattice | HIGH | Compiler-enforced ordering invariant `sweepDelay ≥ Δ + margin` creating a lattice-exclusive window (§7.4) |
 | A10 | **Bond circularity & sizing** — emulated slashing dies with the emulator; fixed bonds get out-run by TVL | HIGH | Judicial federation bond, evidence-based, emulator-independent (§9); TVL-tracking sizing with client-side refusal; heartbeat cadence caps at-risk-per-epoch ≤ bond |
-| A11 | **O(N) lattice re-sign cascade** — SIGHASH_ALL invalidates all descendants on any root change; "incremental subtree reuse" does not survive the txid cascade | MED→HIGH | Costed honestly (§7.1 step 3): O(N) compute for 2–3 parties, O(1) interactivity; two-tier hot-band sharding as the scaling valve; APO named as the real fix (§12) |
+| A11 | **O(N) lattice re-sign cascade** — SIGHASH_ALL invalidates all descendants on any root change; "incremental subtree reuse" does not survive the txid cascade | MED→HIGH | Costed honestly (§7.1 step 3): O(N) compute for 2–3 parties, O(1) interactivity; two-tier hot-band sharding as the scaling valve; GSR floating-claim constructions named as the real fix (§12.2) |
 | A12 | **Depositor verification is not enough** — verifying your slot at deposit does not protect later epochs you never sign | MED | Deposit completes only with branch + attestation + bond-coverage check in hand; continued protection explicitly requires a watchtower (§5, §8) |
 | A13 | **Off-chain `h_k` equivocation** — Operator shows different chains to different parties while committing one hash on-chain | MED | `h_k` must be co-signed by Operator + threshold of `M_k` (§7.1 step 6): a fork necessarily carries someone's contradictory signature |
 
@@ -349,29 +355,79 @@ only.
 Everything else — ceremony ordering, artifact retention, watchtower triggers, TRUC
 packaging, bond-coverage refusal — is SDK/ceremony policy, not compiler surface.
 
-## 12. Open problems and the covenant upgrade path
+## 12. The no-fork endgame, and the GSR annex
 
-Stated honestly: PULSE is the strongest construction available *without* new Bitcoin
-consensus features, and these are its residual gaps.
+Working assumption: **no covenant soft fork ever activates on Bitcoin.** PULSE is
+designed to be the terminal construction under that assumption, not a stopgap. The
+only consensus change this document contemplates at all is the **Great Script
+Restoration (GSR)** — re-enabling the Script opcodes disabled in 2010 — treated here
+as an annex, not a dependency.
 
-1. **Passive carry-forward is attestation-bonded, not consensus-enforced.** A passive,
-   watchtower-less member who retains nothing degrades to bonded-Operator trust.
-   **CTV (BIP-119)** would let the covenant *consensus-enforce* slot carry-forward
-   across epochs, closing A2 cryptographically.
-2. **Heartbeats need a quorum.** Because re-anchoring invalidates SIGHASH_ALL
-   signatures, every heartbeat is a ceremony. **APO (BIP-118 /
-   `SIGHASH_ANYPREVOUT`)** would let pre-signed lattices float across re-anchors,
-   enabling operator-free heartbeats and true incremental (O(log N)) lattice updates
-   (closing A1 and A11).
-3. **The defender is slower than the thief.** The theft path has no CSV; the lattice
-   waits Δ. Only the bond deters collusion; if `theft value > bond`, collusion of the
-   Operator + all of `M_k` is profitable. Heartbeat cadence must cap at-risk-per-epoch
-   accordingly. APO-style zero-delay defensive paths would close this structurally.
-4. **Bond slashing is federated until CSFS.** **BIP-348 (`OP_CHECKSIGFROMSTACK`)** on
-   Bitcoin L1 makes the equivocation proof consensus-verifiable inside the bond's
-   punishment leaf, removing the judicial federation entirely.
-5. **Key deletion is unprovable** — inherent; no covenant fixes it. The design
-   therefore never relies on it (§8, A8).
+### 12.1 Baseline: permanent operating characteristics
+
+These are not "open problems awaiting a fork"; they are the operating envelope, each
+with its compensating discipline:
+
+1. **Passive carry-forward stays attestation-bonded.** A passive, watchtower-less
+   member who retains nothing degrades to bonded-Operator trust. Discipline: the
+   watchtower market (non-custodial; anyone can run one) plus mandatory artifact
+   retention (§8). Hardening available today, no fork required: **k-of-n
+   multi-Operator co-signing of the continuity attestation `A_k`** — lying about a
+   passive balance then requires collusion across independent Operators, not just
+   one.
+2. **Heartbeats stay quorum-gated ceremonies.** Re-anchoring invalidates SIGHASH_ALL
+   signatures, so every heartbeat is a full pulse. Discipline: heartbeat cadence is a
+   protocol parameter enforced client-side; pools that cannot sustain their cadence
+   should not grow.
+3. **The defender stays slower than the thief.** The theft path has no CSV; the
+   lattice waits Δ. Only the bond deters collusion: if `theft value > bond`, collusion
+   of the Operator + all transacting parties of an epoch is profitable. Discipline:
+   heartbeat cadence and client-side bond checks cap at-risk-per-epoch ≤ bond —
+   wallets refuse pulses that would breach it (§9).
+4. **Bond slashing stays federated.** Evidence-only powers, k-of-n diversity, never in
+   the exit path (§9). This is the deterrent layer's permanent shape.
+5. **Key deletion stays unprovable** — inherent; no consensus change fixes it. The
+   design therefore never relies on it (§8, A8).
+
+### 12.2 The GSR annex (the only fork contemplated)
+
+The Great Script Restoration proposes re-enabling the opcodes disabled in 2010 —
+concatenation, substrings, bit operations, multiplication/division — under a *varops
+budget* that bounds worst-case validation cost the way the existing sigops budget
+bounds signature checks. It is not a "covenant soft fork" by name. But restored
+concatenation **is a covenant in effect**, through two well-understood constructions:
+
+- **Sighash reconstruction.** Script assembles the spending transaction's signature
+  hash from stack elements (concatenation + SHA256) and verifies it with a fixed-key
+  `OP_CHECKSIG` — constraining the spending transaction field by field. Transaction-id
+  reflection extends this to introspecting the current outpoint.
+- **Hash-based one-time signatures.** Their verification is pure hashing and
+  concatenation, so Script can verify signatures over *arbitrary data* with no new
+  signature-check opcode.
+
+Under GSR, each baseline characteristic upgrades:
+
+1. **Carry-forward becomes consensus-enforced** (closes A2 cryptographically). The
+   exit leaf becomes a real covenant: "this output may only be spent to the
+   distribution Merkle-committed by `h_k`," with each member's slot proven by a log-N
+   Merkle path verified in Script. The pre-signed lattice becomes an optimization for
+   cheap exits — no longer the safety net.
+2. **Heartbeats no longer need the quorum** (closes A1 and A11). Exit claims built on
+   sighash reconstruction can choose *not* to commit to the prevout transaction id, so
+   they float across re-anchors without re-signing. The Operator can re-anchor
+   unilaterally; incremental O(log N) state updates follow.
+3. **The theft path disappears structurally** (closes the A5 asymmetry). A covenant
+   exit leaf has no epoch key to collude with: there is nothing the Operator and the
+   transacting parties can co-sign that pays anywhere other than the committed
+   distribution.
+4. **Slashing becomes L1-native and the federation evaporates** (closes the §9
+   residue). Epoch authorizations double as hash-based one-time signatures; producing
+   two conflicting one-time signatures under one epoch authorization is verifiable in
+   the bond's punishment leaf with nothing but hashing. The equivocation proof stops
+   needing judges.
+
+All four verifications are hash-dominated (Merkle paths, one-time-signature chains)
+and sized for a budgeted Script model.
 
 ### Trust statement
 
@@ -381,8 +437,9 @@ consensus features, and these are its residual gaps.
 > emulator-independent**: pure pre-signed L1 transactions — Operator or emulator
 > shutdown means freeze, never theft. The **theft deterrent** is economic: a
 > federation-held bond slashed on objective equivocation evidence, with federation
-> trust confined to the deterrent layer until BIP-348 makes slashing L1-native.
-> Active members in recent epochs get 1-honest-of-(msg.senders ∪ Operator) plus the
-> bond. Passive, watchtower-less members degrade to bonded-Operator trust.
-> Covenant-grade trustlessness requires CTV/APO — §12 names exactly which residual
-> gap each one closes.
+> trust confined to the deterrent layer — permanently, under the no-fork assumption.
+> Active members in recent epochs get 1-honest-of-(transacting parties ∪ Operator)
+> plus the bond. Passive, watchtower-less members degrade to bonded-Operator trust.
+> Covenant-grade trustlessness is reachable only through the GSR annex (§12.2);
+> absent any fork, this bonded-Operator-plus-equivocation-detection model is the end
+> state, and the design is engineered to be livable as exactly that.
