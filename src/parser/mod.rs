@@ -492,6 +492,15 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
+        // Byte-string manipulation
+        Rule::substr_func => parse_substr(pair),
+        Rule::cat_func => parse_cat(pair),
+        Rule::bin2num_func => parse_bin2num(pair),
+        Rule::num2bin_func => parse_num2bin(pair),
+        Rule::size_func => parse_size(pair),
+        // Packet introspection
+        Rule::packet_inspect => parse_packet_inspect(pair),
+        Rule::input_packet_inspect => parse_input_packet_inspect(pair),
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
@@ -519,6 +528,7 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::identifier_comparison => parse_identifier_comparison(pair),
         Rule::property_comparison => parse_property_comparison(pair),
         Rule::hash_comparison => parse_hash_comparison(pair),
+        Rule::byte_expr_comparison => parse_byte_expr_comparison(pair),
         Rule::binary_operation => parse_binary_operation(pair),
         Rule::asset_lookup_comparison => parse_asset_lookup_comparison(pair),
         Rule::asset_count_comparison => parse_asset_count_comparison(pair),
@@ -602,6 +612,63 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             })
         }
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
+        // Byte-string manipulation — wrap as truthy assertions in require contexts.
+        Rule::substr_func => {
+            let expr = parse_substr(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::cat_func => {
+            let expr = parse_cat(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::bin2num_func => {
+            let expr = parse_bin2num(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::num2bin_func => {
+            let expr = parse_num2bin(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::size_func => {
+            let expr = parse_size(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::packet_inspect => {
+            let expr = parse_packet_inspect(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::input_packet_inspect => {
+            let expr = parse_input_packet_inspect(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
         Rule::constructor => {
             let expr = parse_constructor_to_expression(pair)?;
             Ok(Requirement::Comparison {
@@ -799,14 +866,128 @@ fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
     let sha256_func = inner.next().ok_or("Missing hash function")?;
     let mut sha256_inner = sha256_func.into_inner();
-    let preimage = sha256_inner
+    let preimage_pair = sha256_inner.next().ok_or("Missing preimage")?;
+    let rhs_pair = inner.next().ok_or("Missing the hash")?;
+
+    // The grammar wraps the sha256 argument in `additive_expr`, so identifiers
+    // and literals surface as `Variable` / `Literal`, while byte-producing
+    // primitives (substr/cat/…) and arithmetic surface as their own variants.
+    let preimage_expr = parse_additive_expr(preimage_pair)?;
+    let rhs_is_identifier = matches!(rhs_pair.as_rule(), Rule::identifier);
+
+    // Fast path: a bare identifier/literal preimage AND identifier RHS keep the
+    // legacy HashEqual emission (`<preimage> OP_SHA256 <hash> OP_EQUAL`).
+    if rhs_is_identifier {
+        if let Expression::Variable(name) | Expression::Literal(name) = &preimage_expr {
+            return Ok(Requirement::HashEqual {
+                preimage: name.clone(),
+                hash: rhs_pair.as_str().to_string(),
+            });
+        }
+    }
+
+    // Complex preimage and/or complex RHS: emit via Comparison so byte-producing
+    // primitives expand inline.
+    let rhs_expr = match rhs_pair.as_rule() {
+        Rule::substr_func => parse_substr(rhs_pair)?,
+        Rule::cat_func => parse_cat(rhs_pair)?,
+        Rule::num2bin_func => parse_num2bin(rhs_pair)?,
+        Rule::identifier => Expression::Variable(rhs_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(rhs_pair.as_str().to_string()),
+        _ => Expression::Property(rhs_pair.as_str().to_string()),
+    };
+
+    Ok(Requirement::Comparison {
+        left: Expression::Sha256 {
+            data: Box::new(preimage_expr),
+        },
+        op: "==".to_string(),
+        right: rhs_expr,
+    })
+}
+
+/// Parse a `byte_expr_term` rule into an Expression
+/// (sha256/substr/cat/bin2num/num2bin/size).
+fn parse_byte_expr_term(pair: Pair<Rule>) -> Result<Expression, String> {
+    // byte_expr_term is a single-alternative wrapper — descend into the inner rule.
+    let inner = pair.into_inner().next().ok_or("Empty byte_expr_term")?;
+    match inner.as_rule() {
+        Rule::sha256_func => {
+            // sha256_func's child is always an additive_expr (see grammar), so
+            // route it through parse_additive_expr to recover the structured
+            // inner expression (substr/packet/cat/…) and wrap with
+            // Expression::Sha256 so the compiler emits inline OP_SHA256.
+            let arg_pair = inner.into_inner().next().ok_or("Missing sha256 argument")?;
+            let data = parse_additive_expr(arg_pair)?;
+            Ok(Expression::Sha256 {
+                data: Box::new(data),
+            })
+        }
+        Rule::substr_func => parse_substr(inner),
+        Rule::cat_func => parse_cat(inner),
+        Rule::bin2num_func => parse_bin2num(inner),
+        Rule::num2bin_func => parse_num2bin(inner),
+        Rule::size_func => parse_size(inner),
+        r => Err(format!("Unsupported byte_expr_term rule: {:?}", r)),
+    }
+}
+
+/// Parse a `byte_expr_atom` rule (one operand of byte_expr_arith).
+fn parse_byte_expr_atom(pair: Pair<Rule>) -> Result<Expression, String> {
+    let inner = pair.into_inner().next().ok_or("Empty byte_expr_atom")?;
+    match inner.as_rule() {
+        Rule::bin2num_func => parse_bin2num(inner),
+        Rule::size_func => parse_size(inner),
+        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
+        Rule::number_literal => Ok(Expression::Literal(inner.as_str().to_string())),
+        r => Err(format!("Unsupported byte_expr_atom rule: {:?}", r)),
+    }
+}
+
+/// Parse a `byte_expr_arith` rule into a BinaryOp.
+fn parse_byte_expr_arith(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let left = parse_byte_expr_atom(inner.next().ok_or("Missing left of byte_expr_arith")?)?;
+    let op = inner
         .next()
-        .ok_or("Missing preimage")?
+        .ok_or("Missing op in byte_expr_arith")?
         .as_str()
         .to_string();
-    let hash = inner.next().ok_or("Missing the hash")?.as_str().to_string();
+    let right = parse_byte_expr_atom(inner.next().ok_or("Missing right of byte_expr_arith")?)?;
+    Ok(Expression::BinaryOp {
+        left: Box::new(left),
+        op,
+        right: Box::new(right),
+    })
+}
 
-    Ok(Requirement::HashEqual { preimage, hash })
+/// Parse a `byte_expr_rhs` rule into an Expression.
+fn parse_byte_expr_rhs(pair: Pair<Rule>) -> Result<Expression, String> {
+    let inner = pair.into_inner().next().ok_or("Empty byte_expr_rhs")?;
+    match inner.as_rule() {
+        Rule::byte_expr_arith => parse_byte_expr_arith(inner),
+        Rule::byte_expr_term => parse_byte_expr_term(inner),
+        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
+        Rule::number_literal => Ok(Expression::Literal(inner.as_str().to_string())),
+        r => Err(format!("Unsupported byte_expr_rhs rule: {:?}", r)),
+    }
+}
+
+/// Parse `byte_expr_comparison` → Requirement::Comparison.
+fn parse_byte_expr_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+    let left = parse_byte_expr_term(inner.next().ok_or("Missing left of byte_expr_comparison")?)?;
+    let op = inner
+        .next()
+        .ok_or("Missing op in byte_expr_comparison")?
+        .as_str()
+        .to_string();
+    let right = parse_byte_expr_rhs(
+        inner
+            .next()
+            .ok_or("Missing right of byte_expr_comparison")?,
+    )?;
+    Ok(Requirement::Comparison { left, op, right })
 }
 
 /// Parse binary operation: expr op expr → Comparison requirement
@@ -854,6 +1035,7 @@ fn parse_asset_lookup_comparison(pair: Pair<Rule>) -> Result<Requirement, String
     let right = match right_pair.as_rule() {
         Rule::asset_lookup_arith_expr => parse_arith_expr_to_expression(right_pair)?,
         Rule::asset_lookup => parse_asset_lookup_to_expression(right_pair)?,
+        Rule::bin2num_func => parse_bin2num(right_pair)?,
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -1233,6 +1415,7 @@ fn parse_input_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement,
 
     let right_pair = inner.next().ok_or("Missing right expression")?;
     let right = match right_pair.as_rule() {
+        Rule::substr_func => parse_substr(right_pair)?,
         Rule::input_introspection => parse_input_introspection_to_expression(right_pair)?,
         Rule::output_introspection => parse_output_introspection_to_expression(right_pair)?,
         Rule::tx_property_access | Rule::this_property_access => {
@@ -1267,6 +1450,7 @@ fn parse_output_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement
 
     let right_pair = inner.next().ok_or("Missing right expression")?;
     let right = match right_pair.as_rule() {
+        Rule::substr_func => parse_substr(right_pair)?,
         Rule::input_introspection => parse_input_introspection_to_expression(right_pair)?,
         Rule::output_introspection => parse_output_introspection_to_expression(right_pair)?,
         Rule::tx_property_access | Rule::this_property_access => {
@@ -1461,6 +1645,7 @@ fn parse_group_property_comparison(pair: Pair<Rule>) -> Result<Requirement, Stri
                 .next()
                 .ok_or("Missing right operand in arithmetic")?;
             let right_expr = match right_operand.as_rule() {
+                Rule::bin2num_func => parse_bin2num(right_operand)?,
                 Rule::identifier => Expression::Variable(right_operand.as_str().to_string()),
                 Rule::number_literal => Expression::Literal(right_operand.as_str().to_string()),
                 _ => Expression::Property(right_operand.as_str().to_string()),
@@ -1499,6 +1684,7 @@ fn parse_group_property_comparison(pair: Pair<Rule>) -> Result<Requirement, Stri
                 property: prop_name,
             }
         }
+        Rule::bin2num_func => parse_bin2num(right_pair)?,
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -1734,6 +1920,126 @@ fn parse_check_sig_from_stack_verify_expr(pair: Pair<Rule>) -> Result<Expression
         signature,
         pubkey,
         message,
+    })
+}
+
+// ─── Byte-string Manipulation Parsing ──────────────────────────────────
+
+/// Helper: convert an inner pair to an Expression for the byte-string
+/// and packet primitives. Identifiers → Variable, numbers → Literal,
+/// everything else → Property.
+fn parse_atom_pair(pair: Pair<Rule>) -> Expression {
+    match pair.as_rule() {
+        Rule::identifier => Expression::Variable(pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(pair.as_str().to_string()),
+        _ => Expression::Property(pair.as_str().to_string()),
+    }
+}
+
+/// Parse a `byte_value` rule into an Expression. Used wherever the grammar
+/// accepts an arbitrary byte-producing operand (substr/cat/bin2num/size args).
+fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
+    // byte_value wraps exactly one inner rule.
+    let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
+    match inner.as_rule() {
+        Rule::substr_func => parse_substr(inner),
+        Rule::cat_func => parse_cat(inner),
+        Rule::num2bin_func => parse_num2bin(inner),
+        Rule::packet_inspect => parse_packet_inspect(inner),
+        Rule::input_packet_inspect => parse_input_packet_inspect(inner),
+        Rule::input_introspection => parse_input_introspection_to_expression(inner),
+        Rule::output_introspection => parse_output_introspection_to_expression(inner),
+        Rule::asset_at => parse_asset_at_to_expression(inner),
+        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
+        r => Err(format!("Unsupported byte_value rule: {:?}", r)),
+    }
+}
+
+/// Parse substr(data, offset, size) → Expression::Substr
+fn parse_substr(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_byte_value(inner.next().ok_or("Missing data in substr")?)?;
+    let offset = parse_atom_pair(inner.next().ok_or("Missing offset in substr")?);
+    let size = parse_atom_pair(inner.next().ok_or("Missing size in substr")?);
+    Ok(Expression::Substr {
+        data: Box::new(data),
+        offset: Box::new(offset),
+        size: Box::new(size),
+    })
+}
+
+/// Parse cat(a, b) → Expression::Cat
+fn parse_cat(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let left = parse_byte_value(inner.next().ok_or("Missing first argument in cat")?)?;
+    let right = parse_byte_value(inner.next().ok_or("Missing second argument in cat")?)?;
+    Ok(Expression::Cat {
+        left: Box::new(left),
+        right: Box::new(right),
+    })
+}
+
+/// Parse bin2num(data) → Expression::Bin2Num
+fn parse_bin2num(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_byte_value(inner.next().ok_or("Missing data in bin2num")?)?;
+    Ok(Expression::Bin2Num {
+        data: Box::new(data),
+    })
+}
+
+/// Parse num2bin(value, size) → Expression::Num2Bin
+fn parse_num2bin(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let value = parse_atom_pair(inner.next().ok_or("Missing value in num2bin")?);
+    let size = parse_atom_pair(inner.next().ok_or("Missing size in num2bin")?);
+    Ok(Expression::Num2Bin {
+        value: Box::new(value),
+        size: Box::new(size),
+    })
+}
+
+/// Parse size(data) → Expression::SizeOf
+fn parse_size(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_byte_value(inner.next().ok_or("Missing data in size")?)?;
+    Ok(Expression::SizeOf {
+        data: Box::new(data),
+    })
+}
+
+/// Parse tx.packet(packetType) → Expression::PacketInspect
+fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let packet_type = parse_atom_pair(inner.next().ok_or("Missing packet type in tx.packet()")?);
+    Ok(Expression::PacketInspect {
+        packet_type: Box::new(packet_type),
+    })
+}
+
+/// Parse tx.inputs[i].packet(packetType) → Expression::InputPacketInspect
+fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // First child: array_access — extract the index expression
+    let array_access = inner
+        .next()
+        .ok_or("Missing input index in tx.inputs[i].packet()")?;
+    let index_pair = array_access
+        .into_inner()
+        .next()
+        .ok_or("Empty array access in tx.inputs[i].packet()")?;
+    let index = parse_atom_pair(index_pair);
+
+    let packet_type = parse_atom_pair(
+        inner
+            .next()
+            .ok_or("Missing packet type in tx.inputs[i].packet()")?,
+    );
+
+    Ok(Expression::InputPacketInspect {
+        index: Box::new(index),
+        packet_type: Box::new(packet_type),
     })
 }
 

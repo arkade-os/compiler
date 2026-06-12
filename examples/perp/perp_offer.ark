@@ -1,0 +1,270 @@
+// PerpOffer Contract
+//
+// A maker order VTXO for a HyperLiquid-style perpetual futures DEX.
+// A trader pre-commits their margin into a standing offer specifying
+// direction, notional size, acceptable entry price range, and leverage.
+// Any counterparty (or the exchange's matching engine) can fill it
+// non-interactively by supplying a fresh oracle-attested price within
+// the maker's stated range.
+//
+// This is the order-book layer. It mirrors StabilityOffer in structure:
+// the offer is a UTXO that gets consumed atomically when matched, producing
+// a PerpPosition output that holds both sides' collateral.
+//
+// Flow:
+//   1. Maker deploys PerpOffer with their margin (makerMarginSats BTC).
+//   2. Taker calls fill(takerMarginSats, takerPk, oraclePrice, oracleTime, oracleSig).
+//   3. Contract verifies:
+//      a. Oracle freshness and signature.
+//      b. Oracle price is within maker's [minPrice, maxPrice] range (limit order semantics).
+//      c. Output 0 is a valid PerpPosition with both sides' collateral.
+//      d. Exchange margin is contributed via output collateral >= required amount.
+//   4. Maker calls cancel() to reclaim margin if offer expires or is not filled.
+//
+// Maker is always the initiating side. The taker takes the opposite direction:
+//   - makerIsLong == 1: maker opens long, taker opens short on the same position.
+//   - makerIsLong == 0: maker opens short, taker opens long.
+//
+// Both sides' margins are pooled into a single PerpPosition VTXO:
+//   totalCollateral = makerMarginSats + takerMarginSats
+//
+// The entry price is the oracle-attested price at fill time.
+//
+// Offer expiry uses tx.time (Bitcoin block height), consistent with how
+// other time-based conditions work in this contract language.
+//
+// Oracle model:
+//   oracleMsg = sha256(ticker || oraclePrice || oracleTime)
+//   Freshness: tx.offchainTime - oracleTime <= 600 seconds.
+
+import "single_sig.ark";
+import "perp_position.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract PerpOffer(
+  pubkey  makerPk,               // offer creator
+  pubkey  exchangePk,            // exchange/clearinghouse
+  pubkey  oraclePk,              // price oracle
+  bytes32 ticker,                // market, e.g. sha256("BTC-PERP")
+  int     makerIsLong,           // 1 = maker wants long, 0 = maker wants short
+  int     positionUSD,           // desired notional in USD cents
+  int     minPrice,              // maker's min acceptable fill price (USD cents/BTC)
+  int     maxPrice,              // maker's max acceptable fill price (USD cents/BTC)
+  int     leverage,              // desired leverage (e.g. 10 = 10x)
+  int     maintenanceMarginBps,  // maintenance margin in bps (e.g. 50 = 0.5%)
+  int     fundingRatePerSec,     // initial funding rate at scale 1e12
+  int     liquidationFeeBps,     // liquidator reward in bps (e.g. 25 = 0.25%)
+  int     expiryHeight,          // block height after which offer can only be cancelled
+  int     exit                   // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // FILL — Taker fills the offer non-interactively.
+  //
+  // The taker supplies their margin (takerMarginSats) via an input and a
+  // fresh oracle-signed price. The oracle price must fall within the maker's
+  // [minPrice, maxPrice] range to enforce limit-order semantics.
+  //
+  // Both sides' margins are pooled into a single PerpPosition VTXO.
+  // The maker takes their stated direction; the taker is on the opposite side.
+  // The PerpPosition output encodes the maker's perspective (makerIsLong).
+  //
+  // initialMarginSats in the PerpPosition reflects the maker's margin only;
+  // the exchange/taker side is represented by the collateral surplus
+  // (totalCollateral - initialMarginSats).
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpOffer VTXO            (makerMarginSats)
+  //   input[1]:  taker's margin input            (>= takerMarginSats)
+  //   output[0]: PerpPosition VTXO               (makerMarginSats + takerMarginSats)
+  //   output[1]: taker's change (unconstrained)  (optional)
+  // -------------------------------------------------------------------------
+  function fill(
+    int       takerMarginSats,
+    pubkey    takerPk,
+    signature takerSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    // Taker must sign to authorize their margin
+    require(checkSig(takerSig, takerPk), "invalid taker sig");
+
+    // Offer must not be expired
+    require(tx.time < expiryHeight, "offer expired");
+
+    // Oracle checks
+    require(oraclePrice > 0, "invalid oracle price");
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle sig");
+
+    // Limit order price range: oracle price must be within maker's acceptable range
+    require(oraclePrice >= minPrice, "price below maker min");
+    require(oraclePrice <= maxPrice, "price above maker max");
+
+    // Validate taker margin is sensible
+    require(takerMarginSats > 0, "zero taker margin");
+
+    // Compute maker's initial margin from the offer VTXO value.
+    // The offer VTXO carries exactly makerMarginSats.
+    // Total collateral = maker margin + taker margin.
+    int makerMarginSats  = tx.inputs[0].value;
+    int totalCollateral  = makerMarginSats + takerMarginSats;
+
+    // Verify the PerpPosition output is correctly constructed
+    require(
+      tx.outputs[0].scriptPubKey == new PerpPosition(
+        makerPk, exchangePk, oraclePk, ticker,
+        makerIsLong, positionUSD, oraclePrice,
+        makerMarginSats, totalCollateral,
+        leverage, maintenanceMarginBps,
+        fundingRatePerSec, tx.offchainTime,
+        liquidationFeeBps, exit
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "position undercollateralized");
+  }
+
+  // -------------------------------------------------------------------------
+  // PARTIAL FILL — Taker fills only part of the offer.
+  //
+  // The unfilled portion remains as a new PerpOffer with reduced positionUSD.
+  // This enables an order-book where large orders are consumed incrementally.
+  //
+  // fillUSD must be > 0 and < positionUSD. The maker's margin is split
+  // proportionally: filledMarginSats = makerMarginSats × fillUSD / positionUSD.
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpOffer VTXO
+  //   input[1]:  taker's margin input            (>= takerMarginSats for fillUSD portion)
+  //   output[0]: PerpPosition VTXO               (filled portion)
+  //   output[1]: remaining PerpOffer VTXO        (unfilled portion)
+  //   output[2]: taker's change (unconstrained)  (optional)
+  // -------------------------------------------------------------------------
+  function partialFill(
+    int       fillUSD,
+    int       takerMarginSats,
+    pubkey    takerPk,
+    signature takerSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(takerSig, takerPk), "invalid taker sig");
+    require(tx.time < expiryHeight, "offer expired");
+    require(fillUSD > 0, "zero fill");
+    require(fillUSD < positionUSD, "use fill() for full fill");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle sig");
+
+    require(oraclePrice >= minPrice, "price below maker min");
+    require(oraclePrice <= maxPrice, "price above maker max");
+    require(takerMarginSats > 0, "zero taker margin");
+
+    int makerMarginSats         = tx.inputs[0].value;
+    int filledMarginSats        = makerMarginSats * fillUSD / positionUSD;
+    int remainingMarginSats     = makerMarginSats - filledMarginSats;
+    int remainingPositionUSD    = positionUSD - fillUSD;
+    int totalCollateral         = filledMarginSats + takerMarginSats;
+
+    require(filledMarginSats > 330, "filled portion too small");
+    require(remainingMarginSats > 330, "remaining portion too small");
+
+    // Output 0: PerpPosition for the filled portion
+    require(
+      tx.outputs[0].scriptPubKey == new PerpPosition(
+        makerPk, exchangePk, oraclePk, ticker,
+        makerIsLong, fillUSD, oraclePrice,
+        filledMarginSats, totalCollateral,
+        leverage, maintenanceMarginBps,
+        fundingRatePerSec, tx.offchainTime,
+        liquidationFeeBps, exit
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "position undercollateralized");
+
+    // Output 1: remaining PerpOffer with proportionally reduced size
+    require(
+      tx.outputs[1].scriptPubKey == new PerpOffer(
+        makerPk, exchangePk, oraclePk, ticker,
+        makerIsLong, remainingPositionUSD,
+        minPrice, maxPrice,
+        leverage, maintenanceMarginBps,
+        fundingRatePerSec, liquidationFeeBps,
+        expiryHeight, exit
+      ),
+      "invalid remaining offer"
+    );
+    require(tx.outputs[1].value >= remainingMarginSats, "remaining offer underfunded");
+  }
+
+  // -------------------------------------------------------------------------
+  // CANCEL — Maker reclaims their margin if the offer expires or is withdrawn.
+  //
+  // After expiryHeight the offer can only be cancelled; fill() will also
+  // reject calls past expiry.
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpOffer VTXO
+  //   output[0]: maker receives their margin back (SingleSig)
+  // -------------------------------------------------------------------------
+  function cancel(signature makerSig) {
+    require(checkSig(makerSig, makerPk), "invalid maker sig");
+    // No time constraint: maker can cancel any time (before or after expiry).
+    // The exchange co-signature (server) or exit CSV provides the unilateral path.
+  }
+
+  // -------------------------------------------------------------------------
+  // UPDATE — Maker modifies price range or funding rate before any fill.
+  //
+  // Useful for makers tracking market price: they can tighten or widen the
+  // acceptable price range without cancelling and redeploying.
+  // positionUSD and direction are immutable (creates a new VTXO to change those).
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpOffer VTXO
+  //   output[0]: updated PerpOffer with new price range
+  // -------------------------------------------------------------------------
+  function update(
+    signature makerSig,
+    int       newMinPrice,
+    int       newMaxPrice,
+    int       newFundingRatePerSec,
+    int       newExpiryHeight
+  ) {
+    require(checkSig(makerSig, makerPk), "invalid maker sig");
+    require(newMinPrice > 0, "invalid min price");
+    require(newMaxPrice >= newMinPrice, "max < min");
+
+    int makerMarginSats = tx.inputs[0].value;
+
+    require(
+      tx.outputs[0].scriptPubKey == new PerpOffer(
+        makerPk, exchangePk, oraclePk, ticker,
+        makerIsLong, positionUSD,
+        newMinPrice, newMaxPrice,
+        leverage, maintenanceMarginBps,
+        newFundingRatePerSec, liquidationFeeBps,
+        newExpiryHeight, exit
+      ),
+      "invalid updated offer"
+    );
+    require(tx.outputs[0].value >= makerMarginSats, "margin not preserved");
+  }
+}

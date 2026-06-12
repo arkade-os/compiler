@@ -423,6 +423,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::TxIntrospection { property } => match property.as_str() {
             "version" | "locktime" => ArkType::Uint32Le,
             "numInputs" | "numOutputs" | "weight" => ArkType::Int,
+            "id" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
@@ -433,6 +434,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             "sequence" => ArkType::Uint32Le,
             "outpoint" => ArkType::Bytes32,
             "issuance" => ArkType::Bytes,
+            "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
@@ -471,8 +473,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             _ => ArkType::Unknown,
         },
 
-        // Streaming SHA256 — all produce a 32-byte digest or midstate
-        Expression::Sha256Initialize { .. }
+        // SHA256 — all produce a 32-byte digest or midstate
+        Expression::Sha256 { .. }
+        | Expression::Sha256Initialize { .. }
         | Expression::Sha256Update { .. }
         | Expression::Sha256Finalize { .. } => ArkType::Bytes32,
 
@@ -505,6 +508,17 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,
+
+        // Byte-string manipulation (introspector extensions)
+        Expression::Substr { .. } => ArkType::Bytes,
+        Expression::Cat { .. } => ArkType::Bytes,
+        Expression::Bin2Num { .. } => ArkType::Uint64Le,
+        Expression::Num2Bin { .. } => ArkType::Bytes,
+        Expression::SizeOf { .. } => ArkType::Int,
+
+        // Packet introspection — returns raw packet bytes.
+        Expression::PacketInspect { .. } => ArkType::Bytes,
+        Expression::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.
         Expression::BinaryOp { left, op, right } => {

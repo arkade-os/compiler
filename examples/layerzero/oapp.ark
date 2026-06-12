@@ -1,0 +1,216 @@
+// OApp Contract — USDT0 mint / burn application
+//
+// Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go
+//       BuildOAppReceiveScript + BuildOAppSendScript.
+//
+// The OApp owns the application-level token effects. It mints USDT0 from
+// Endpoint-authenticated receive invocations and burns USDT0 to create
+// authenticated send invocations back to the Endpoint.
+//
+// Packet layout reminders (see endpoint.ark for the full schema):
+//
+//   LzReceivePacket (size 219, type 0x11, presented via input 0):
+//     1..33     receiver (= oappID)
+//     33..37    srcEID (= remoteEID)
+//     37..69    sender (= remoteOApp)
+//     109..141  messageHash
+//     141..145  messageLen (u32 BE) = 74
+//     145..219  CreditMessage (74 bytes):
+//       0..2    P2TR script-pubkey tag (0x5120)
+//       2..34   recipient x-only key
+//       34..42  amount (u64 BE)
+//       42..74  remoteSender
+//
+//   OAppSendInvocationPacket (size 175, type 0x14, produced in current tx):
+//     1..33     oappID
+//     33..65    endpointID
+//     65..67    invocation_vout (u16 BE)
+//     67..71    dstEID
+//     71..103   receiver (= remoteOApp)
+//     103..111  amountSD (u64 BE)
+//     111..143  remoteRecipient
+//     143..175  messageHash
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract OApp(
+  bytes32 oappCtrlAssetId,
+  bytes32 oappIDAssetId,
+  bytes32 usdt0AssetId,
+  bytes32 endpointCtrlAssetId,
+  bytes32 endpointIDAssetId,
+  bytes32 endpointID,
+  bytes32 oappID,
+  int     remoteEID,
+  bytes32 remoteOApp,
+  int     exit
+) {
+
+  // -------------------------------------------------------------------------
+  // OAPP RECEIVE
+  // Consume a receive-invocation marker (input 0) and mint the credited USDT0
+  // amount to the recipient committed by the inbound CreditMessage.
+  //
+  // The marker carries the LzReceivePacket as an extension packet of the
+  // *previous* Arkade tx (the Endpoint receive); we access it through
+  // tx.inputs[0].packet(LzReceive).
+  // -------------------------------------------------------------------------
+  function receive() {
+    // The previous-tx LzReceive packet on the marker input must be v1 with
+    // the credit-message shape (size 219).
+    require(size(tx.inputs[0].packet(17)) == 219, "lz receive packet size");
+    require(substr(tx.inputs[0].packet(17), 0, 1) == 1, "lz receive version");
+
+    // CreditMessage length field must equal 74 (creditMessageSize).
+    require(
+      bin2num(substr(tx.inputs[0].packet(17), 141, 4)) == 74,
+      "credit message length"
+    );
+
+    // The receive-invocation marker (1 EndpointID asset) is consumed on
+    // input 0 and fully burned.
+    require(
+      tx.inputs[0].assets.lookup(endpointIDAssetId) == 1,
+      "marker asset not on input 0"
+    );
+    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);
+    require(endpointIDGroup.sumOutputs == 0, "marker not burned");
+
+    // LzReceive route fields are pinned by the contract configuration.
+    require(
+      substr(tx.inputs[0].packet(17), 1, 32) == oappID,
+      "lz receiver != oappID"
+    );
+    require(
+      bin2num(substr(tx.inputs[0].packet(17), 33, 4)) == remoteEID,
+      "lz srcEID != remoteEID"
+    );
+    require(
+      substr(tx.inputs[0].packet(17), 37, 32) == remoteOApp,
+      "lz sender != remoteOApp"
+    );
+
+    // The embedded CreditMessage hashes to LzReceive.messageHash. This pins
+    // the body bytes that the Endpoint receive already DVN-attested.
+    require(
+      sha256(substr(tx.inputs[0].packet(17), 145, 74))
+        == substr(tx.inputs[0].packet(17), 109, 32),
+      "credit message hash mismatch"
+    );
+
+    // CreditMessage.remoteSender == LzReceive.sender.
+    require(
+      substr(tx.inputs[0].packet(17), 187, 32) == substr(tx.inputs[0].packet(17), 37, 32),
+      "credit remoteSender mismatch"
+    );
+
+    // Recipient output's scriptPubKey matches the CreditMessage's full 34-byte
+    // P2TR scriptPubKey field (0x5120 tag prefix + 32-byte x-only key, starting
+    // at LzReceive offset 145).
+    //
+    // OP_INSPECTOUTPUTSCRIPTPUBKEY returns the full scriptPubKey bytes as a
+    // single stack item (see docs/arkade-primitives-spec.md Phase 7 — the
+    // canonical Arkade convention is one-item `outScript(bytes)`, not the
+    // (program, version) two-item form some Liquid-style references describe).
+    // So both sides of this equality are 34 bytes.
+    require(
+      tx.outputs[1].scriptPubKey == substr(tx.inputs[0].packet(17), 145, 34),
+      "recipient pkScript mismatch"
+    );
+
+    // Recipient output receives exactly CreditMessage.amount USDT0.
+    require(
+      tx.outputs[1].assets.lookup(usdt0AssetId)
+        == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),
+      "recipient amount mismatch"
+    );
+
+    // USDT0 delta equals the credited amount.
+    let usdt0Group = tx.assetGroups.find(usdt0AssetId);
+    require(
+      usdt0Group.delta == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),
+      "usdt0 delta != credit amount"
+    );
+
+    // OApp state continues at output 0 with control + ID assets intact.
+    require(
+      tx.outputs[0].scriptPubKey == new OApp(
+        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
+        endpointCtrlAssetId, endpointIDAssetId,
+        endpointID, oappID, remoteEID, remoteOApp, exit
+      ),
+      "oapp state must continue"
+    );
+    require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, "oapp control missing");
+    require(tx.outputs[0].assets.lookup(oappIDAssetId) == 1, "oapp id missing");
+  }
+
+  // -------------------------------------------------------------------------
+  // OAPP SEND
+  // Burn the outbound USDT0 amount and emit an OAppSendInvocation packet
+  // alongside a send-invocation marker for Endpoint.send() to consume.
+  //
+  // Authorisation: this function takes no signatures. Mirroring the Go
+  // reference (BuildOAppSendScript), authority comes from
+  //   (a) the OApp control singleton, which only sits on the real OApp state;
+  //   (b) the USDT0 input UTXOs, each requiring their own owner sig under
+  //       their per-UTXO scripts;
+  //   (c) the Arkade server cosign on the cooperative path (added
+  //       automatically by serverVariant=true) or the exit CSV on the
+  //       fallback path. No contract-level owner signature exists or is
+  //       needed.
+  // -------------------------------------------------------------------------
+  function send(bytes32 sendMarkerScriptHash) {
+    // Current-tx OAppSendInvocation packet: v1, fixed size.
+    require(size(tx.packet(20)) == 175, "send invocation packet size");
+    require(substr(tx.packet(20), 0, 1) == 1, "send invocation version");
+
+    // Packet identifies this exact OApp / Endpoint pair.
+    require(substr(tx.packet(20), 1, 32) == oappID, "invocation oappID");
+    require(substr(tx.packet(20), 33, 32) == endpointID, "invocation endpointID");
+
+    // Destination route matches the configured remote.
+    require(bin2num(substr(tx.packet(20), 67, 4)) == remoteEID, "invocation dstEID");
+    require(substr(tx.packet(20), 71, 32) == remoteOApp, "invocation receiver");
+
+    // invocation_vout points at the marker output (output 1).
+    require(bin2num(substr(tx.packet(20), 65, 2)) == 1, "invocation_vout != 1");
+
+    // USDT0 input sum minus output sum equals the invocation amount
+    // (i.e. delta == -amount). Expressed as monotonic equality on sumInputs
+    // - sumOutputs using the existing group_property arithmetic.
+    let usdt0Group = tx.assetGroups.find(usdt0AssetId);
+    require(
+      usdt0Group.sumInputs == usdt0Group.sumOutputs + bin2num(substr(tx.packet(20), 103, 8)),
+      "burn amount mismatch"
+    );
+
+    // Send-invocation marker emitted at output 1.
+    require(
+      tx.outputs[1].assets.lookup(oappIDAssetId) == 1,
+      "send marker asset missing"
+    );
+    require(
+      tx.outputs[1].scriptPubKey == new SendMarker(
+        sendMarkerScriptHash, endpointCtrlAssetId, exit
+      ),
+      "send marker pkScript not canonical"
+    );
+    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);
+    require(oappIDGroup.sumOutputs == 1, "extra send marker minted");
+
+    // OApp state continues at output 0.
+    require(
+      tx.outputs[0].scriptPubKey == new OApp(
+        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,
+        endpointCtrlAssetId, endpointIDAssetId,
+        endpointID, oappID, remoteEID, remoteOApp, exit
+      ),
+      "oapp state must continue"
+    );
+    require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, "oapp control missing");
+  }
+}

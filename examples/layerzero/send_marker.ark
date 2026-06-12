@@ -1,0 +1,49 @@
+// SendMarker — send-invocation marker output
+//
+// Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go
+//       BuildSendInvocationScript.
+//
+// Locks a one-unit OAppID asset alongside the OAppSendInvocation extension
+// data emitted by OApp.send(). Consumable only when the consuming
+// transaction also spends the canonical Endpoint state UTXO running
+// Endpoint.send(). Symmetric to ReceiveMarker.
+//
+// Mirrors the three Go-script checks:
+//   1. Marker spent from input position config.SendInvocationInputIndex.
+//   2. The Endpoint state input was spent through the Endpoint.send()
+//      Arkade closure (OP_INSPECTINPUTARKADESCRIPTHASH).
+//   3. Defense-in-depth: Endpoint control singleton on the Endpoint state input.
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract SendMarker(
+  bytes32 endpointSendScriptHash,
+  bytes32 endpointCtrlAssetId,
+  int     exit
+) {
+  // Single execution path: consumed inside Endpoint.send().
+  //
+  // Endpoint.send() reads its Endpoint state input from input 0 and the
+  // OApp-emitted send marker from input 1. The marker must be at input 1
+  // (PUSHCURRENTINPUTINDEX), and input 0 must have been spent through the
+  // Endpoint.send() Arkade closure with the Endpoint control singleton.
+  function consume() {
+    // (1) the marker is at the expected input position.
+    require(this.activeInputIndex == 1, "marker input position");
+
+    // (2) the Endpoint state input was spent through the Endpoint.send() closure.
+    require(
+      tx.inputs[0].arkadeScriptHash == endpointSendScriptHash,
+      "endpoint state not via send closure"
+    );
+
+    // (3) defense-in-depth: Endpoint control singleton on the consuming input.
+    require(
+      tx.inputs[0].assets.lookup(endpointCtrlAssetId) == 1,
+      "endpoint state input missing control asset"
+    );
+  }
+}

@@ -1,0 +1,596 @@
+{
+  "contractName": "OApp",
+  "constructorInputs": [
+    {
+      "name": "oappCtrlAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "oappCtrlAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "oappIDAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "oappIDAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "usdt0AssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "usdt0AssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "endpointCtrlAssetId",
+      "type": "bytes32"
+    },
+    {
+      "name": "endpointIDAssetId_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "endpointIDAssetId_gidx",
+      "type": "int"
+    },
+    {
+      "name": "endpointID",
+      "type": "bytes32"
+    },
+    {
+      "name": "oappID",
+      "type": "bytes32"
+    },
+    {
+      "name": "remoteEID",
+      "type": "int"
+    },
+    {
+      "name": "remoteOApp",
+      "type": "bytes32"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "receive",
+      "functionInputs": [],
+      "witnessSchema": [
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "219",
+        "OP_EQUAL",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "141",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "74",
+        "OP_EQUAL",
+        "0",
+        "<endpointIDAssetId_txid>",
+        "<endpointIDAssetId_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<endpointIDAssetId_txid>",
+        "<endpointIDAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<endpointIDGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "0",
+        "OP_EQUAL",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<oappID>",
+        "OP_EQUAL",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "<remoteEID>",
+        "OP_EQUAL",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "37",
+        "32",
+        "OP_SUBSTR",
+        "<remoteOApp>",
+        "OP_EQUAL",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "145",
+        "74",
+        "OP_SUBSTR",
+        "OP_SHA256",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "109",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "187",
+        "32",
+        "OP_SUBSTR",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "37",
+        "32",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "145",
+        "34",
+        "OP_SUBSTR",
+        "OP_EQUAL",
+        "1",
+        "<usdt0AssetId_txid>",
+        "<usdt0AssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "179",
+        "8",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<usdt0AssetId_txid>",
+        "<usdt0AssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<usdt0Group>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "<usdt0Group>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "17",
+        "0",
+        "OP_INSPECTINPUTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "179",
+        "8",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:OApp(<oappCtrlAssetId>,<oappIDAssetId>,<usdt0AssetId>,<endpointCtrlAssetId>,<endpointIDAssetId>,<endpointID>,<oappID>,<remoteEID>,<remoteOApp>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<oappCtrlAssetId_txid>",
+        "<oappCtrlAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "<oappIDAssetId_txid>",
+        "<oappIDAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "receive",
+      "functionInputs": [],
+      "witnessSchema": [],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "0-of-0 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "send",
+      "functionInputs": [
+        {
+          "name": "sendMarkerScriptHash",
+          "type": "bytes32"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "sendMarkerScriptHash",
+          "type": "bytes32",
+          "encoding": "raw-32"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "groupCheck"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "OP_SIZE",
+        "OP_NIP",
+        "175",
+        "OP_EQUAL",
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "0",
+        "1",
+        "OP_SUBSTR",
+        "1",
+        "OP_EQUAL",
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "1",
+        "32",
+        "OP_SUBSTR",
+        "<oappID>",
+        "OP_EQUAL",
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "33",
+        "32",
+        "OP_SUBSTR",
+        "<endpointID>",
+        "OP_EQUAL",
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "67",
+        "4",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "<remoteEID>",
+        "OP_EQUAL",
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "71",
+        "32",
+        "OP_SUBSTR",
+        "<remoteOApp>",
+        "OP_EQUAL",
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "65",
+        "2",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "1",
+        "OP_EQUAL",
+        "<usdt0AssetId_txid>",
+        "<usdt0AssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<usdt0Group>",
+        "OP_0",
+        "OP_INSPECTASSETGROUPSUM",
+        "<usdt0Group>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "20",
+        "OP_INSPECTPACKET",
+        "OP_1",
+        "OP_EQUALVERIFY",
+        "103",
+        "8",
+        "OP_SUBSTR",
+        "OP_BIN2NUM",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "OP_EQUAL",
+        "1",
+        "<oappIDAssetId_txid>",
+        "<oappIDAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SendMarker(<sendMarkerScriptHash>,<endpointCtrlAssetId>,<exit>)>",
+        "OP_EQUAL",
+        "<oappIDAssetId_txid>",
+        "<oappIDAssetId_gidx>",
+        "OP_FINDASSETGROUPBYASSETID",
+        "<oappIDGroup>",
+        "OP_1",
+        "OP_INSPECTASSETGROUPSUM",
+        "1",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:OApp(<oappCtrlAssetId>,<oappIDAssetId>,<usdt0AssetId>,<endpointCtrlAssetId>,<endpointIDAssetId>,<endpointID>,<oappID>,<remoteEID>,<remoteOApp>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<oappCtrlAssetId_txid>",
+        "<oappCtrlAssetId_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "1",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "send",
+      "functionInputs": [
+        {
+          "name": "sendMarkerScriptHash",
+          "type": "bytes32"
+        }
+      ],
+      "witnessSchema": [],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "0-of-0 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract OApp(\n  bytes32 oappCtrlAssetId,\n  bytes32 oappIDAssetId,\n  bytes32 usdt0AssetId,\n  bytes32 endpointCtrlAssetId,\n  bytes32 endpointIDAssetId,\n  bytes32 endpointID,\n  bytes32 oappID,\n  int     remoteEID,\n  bytes32 remoteOApp,\n  int     exit\n) {\n\n  function receive() {\n    require(size(tx.inputs[0].packet(17)) == 219, \"lz receive packet size\");\n    require(substr(tx.inputs[0].packet(17), 0, 1) == 1, \"lz receive version\");\n\n    require(\n      bin2num(substr(tx.inputs[0].packet(17), 141, 4)) == 74,\n      \"credit message length\"\n    );\n\n    require(\n      tx.inputs[0].assets.lookup(endpointIDAssetId) == 1,\n      \"marker asset not on input 0\"\n    );\n    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);\n    require(endpointIDGroup.sumOutputs == 0, \"marker not burned\");\n\n    require(\n      substr(tx.inputs[0].packet(17), 1, 32) == oappID,\n      \"lz receiver != oappID\"\n    );\n    require(\n      bin2num(substr(tx.inputs[0].packet(17), 33, 4)) == remoteEID,\n      \"lz srcEID != remoteEID\"\n    );\n    require(\n      substr(tx.inputs[0].packet(17), 37, 32) == remoteOApp,\n      \"lz sender != remoteOApp\"\n    );\n\n    require(\n      sha256(substr(tx.inputs[0].packet(17), 145, 74))\n        == substr(tx.inputs[0].packet(17), 109, 32),\n      \"credit message hash mismatch\"\n    );\n\n    require(\n      substr(tx.inputs[0].packet(17), 187, 32) == substr(tx.inputs[0].packet(17), 37, 32),\n      \"credit remoteSender mismatch\"\n    );\n\n    require(\n      tx.outputs[1].scriptPubKey == substr(tx.inputs[0].packet(17), 145, 34),\n      \"recipient pkScript mismatch\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(usdt0AssetId)\n        == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),\n      \"recipient amount mismatch\"\n    );\n\n    let usdt0Group = tx.assetGroups.find(usdt0AssetId);\n    require(\n      usdt0Group.delta == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),\n      \"usdt0 delta != credit amount\"\n    );\n\n    require(\n      tx.outputs[0].scriptPubKey == new OApp(\n        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,\n        endpointCtrlAssetId, endpointIDAssetId,\n        endpointID, oappID, remoteEID, remoteOApp, exit\n      ),\n      \"oapp state must continue\"\n    );\n    require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, \"oapp control missing\");\n    require(tx.outputs[0].assets.lookup(oappIDAssetId) == 1, \"oapp id missing\");\n  }\n\n  function send(bytes32 sendMarkerScriptHash) {\n    require(size(tx.packet(20)) == 175, \"send invocation packet size\");\n    require(substr(tx.packet(20), 0, 1) == 1, \"send invocation version\");\n\n    require(substr(tx.packet(20), 1, 32) == oappID, \"invocation oappID\");\n    require(substr(tx.packet(20), 33, 32) == endpointID, \"invocation endpointID\");\n\n    require(bin2num(substr(tx.packet(20), 67, 4)) == remoteEID, \"invocation dstEID\");\n    require(substr(tx.packet(20), 71, 32) == remoteOApp, \"invocation receiver\");\n\n    require(bin2num(substr(tx.packet(20), 65, 2)) == 1, \"invocation_vout != 1\");\n\n    let usdt0Group = tx.assetGroups.find(usdt0AssetId);\n    require(\n      usdt0Group.sumInputs == usdt0Group.sumOutputs + bin2num(substr(tx.packet(20), 103, 8)),\n      \"burn amount mismatch\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(oappIDAssetId) == 1,\n      \"send marker asset missing\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new SendMarker(\n        sendMarkerScriptHash, endpointCtrlAssetId, exit\n      ),\n      \"send marker pkScript not canonical\"\n    );\n    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);\n    require(oappIDGroup.sumOutputs == 1, \"extra send marker minted\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new OApp(\n        oappCtrlAssetId, oappIDAssetId, usdt0AssetId,\n        endpointCtrlAssetId, endpointIDAssetId,\n        endpointID, oappID, remoteEID, remoteOApp, exit\n      ),\n      \"oapp state must continue\"\n    );\n    require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, \"oapp control missing\");\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-06-05T16:00:05.037160165+00:00",
+  "warnings": [
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn receive: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn send: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <endpointIDGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'endpointIDGroup'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'receive' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <usdt0Group> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'usdt0Group'",
+    "warning[output-invariant]: fn 'send' (serverVariant=true): placeholder <oappIDGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oappIDGroup'"
+  ]
+}
