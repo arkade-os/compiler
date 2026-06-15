@@ -181,9 +181,11 @@ lattice is already valid.
      pulse."* Publication to the relay mesh alone is never trusted.
 5. **Transition signing.** Only now do the Operator + transacting parties sign
    `T_{k+1}` (SIGHASH_ALL, nSequence final).
-6. **Commit.** `h_{k+1}` is **co-signed by the Operator + a threshold of `M_{k+1}`**
-   (so the Operator cannot unilaterally author forks) and committed in the Operator's
-   next on-chain batch transaction. Full artifacts `(S_{k+1}, T_{k+1}, L_{k+1},
+6. **Commit.** `h_{k+1}` is **co-signed by the Operator + a threshold `t` of `M_{k+1}`**
+   so the Operator cannot unilaterally author forks (`t ≥ 1`; a fork then requires `t`
+   contradicting signatures, so higher `t` is more fork-resistant at the cost of more
+   required online co-signers — `t = 1` minimal, `t = |M_{k+1}|` maximal). It is
+   committed in the Operator's next on-chain batch transaction. Full artifacts `(S_{k+1}, T_{k+1}, L_{k+1},
    A_{k+1})` go to the relay mesh, content-addressed by `h_{k+1}`. **The next pulse is
    invalid until `h_k` is on-chain** — a chained dependency that turns commitment
    withholding into a *visible liveness fault* that trips auto-exit (§7.4).
@@ -391,8 +393,14 @@ infrastructure:
   the nonce.
 - **Sizing and client enforcement.** The bond is per-pool and TVL-tracking. Wallets
   refuse to participate in pulses of an under-bonded pool (`bond <
-  requiredCoverage(passiveTVL)`) — client-side policy informed by a bond-reference
-  field in the ABI (§11).
+  requiredCoverage(...)`) — client-side policy informed by a bond-reference field in the
+  ABI (§11). **`requiredCoverage` is an at-risk-*per-epoch* floor, not total TVL:** the
+  most that can be stolen before the next heartbeat is the passive value a single
+  collusion can short, so full deterrence needs `bond ≥` (passive value at risk between
+  heartbeats). Heartbeat cadence is the lever that keeps this affordable — frequent
+  heartbeats shrink the at-risk window, so the bond covers per-epoch exposure rather than
+  the whole pool. Below full coverage, the residual is exactly the +EV-above-bond risk of
+  §12.1 item 3: a capital-efficiency-vs-coverage policy choice, not a free parameter.
 - **Permanence.** Under the working assumption that no covenant soft fork ever
   activates on Bitcoin, the federation is a permanent fixture of the deterrent layer —
   and is engineered to be acceptable as one: evidence-only powers, k-of-n diversity,
@@ -500,7 +508,7 @@ with its compensating discipline:
 5. **Key deletion stays unprovable** — inherent; no consensus change fixes it. The
    design therefore never relies on it (§8, A8).
 6. **Sub-dust balances have no unilateral exit.** Balances below the 330-sat floor are
-   aggregated into a cooperative-only dust slot (§7.1.3), which by construction needs
+   aggregated into a cooperative-only dust slot (§7.1 step 3), which by construction needs
    Operator cooperation to spend. Discipline: clients warn a member when their balance
    crosses below the unilateral-exit floor so they can consolidate while the Operator is
    live; the dust aggregate is attested in `A_k` so over-debiting it is at least
@@ -564,7 +572,7 @@ conflating them is the central error to avoid:
 | Property | Model | Honest assumption |
 |---|---|---|
 | **Exit mechanism** (can I get *out*?) | **1-of-N** — Ark-grade | The lattice is fully pre-signed and non-custodial; *any one* honest data-holder in `{you, your watchtowers, mesh archivers}` can broadcast it. You yourself suffice (1-of-1 in the Ark sense). Against a non-racing Operator, exit always completes. |
-| **Exit amount** (is the *number* in my slot right?) | **Bonded — not a clean 1-of-N** | The set whose honesty protects a passive member's balance in a pulse is `{Operator ∪ M_k}` — the Operator plus whoever is transacting. One honest member of that set refuses the bad pulse at the gate (§7.1 step 4b). But that set **excludes the victim** and can be **as small as two**. Below "1 honest in that set," safety degrades to *bonded compensation* (§9), an economic layer, not a cryptographic one. |
+| **Exit amount** (is the *number* in my slot right?) | **Bonded — not a clean 1-of-N** | The set whose honesty protects a passive member's balance in a pulse is `{Operator ∪ M_k}` — the Operator plus whoever is transacting. One honest member of that set refuses the bad pulse at the gate (§7.1 step 4b). But that set **excludes the victim** and can be **as small as two** (Operator + one transacting party — and if both collude, the honest count in it is zero). Below "1 honest in that set," safety degrades to *bonded compensation* (§9), an economic layer, not a cryptographic one. |
 
 **Why the amount model is weaker than the systems PULSE resembles.** In a statechain or
 a coinpool, every signer is checking *their own* balance and updates are N-of-N, so any
@@ -619,7 +627,11 @@ Three vectors — two bounded, one intentional:
 3. **Anyone with *objective* fraud evidence can halt epoch creation via the dispute
    artifact** (§8a) — this is intentional (the social freeze). Critical caveat: conforming
    clients must halt only on **machine-checkable** evidence; halting on unverified
-   disputes turns "cry wolf" into a free pool-wide DoS.
+   disputes turns "cry wolf" into a free pool-wide DoS. The admissible evidence is the
+   two types defined in §9 (two conflicting `P_k` signatures, or an `A_j` contradicted by
+   a later lattice) packaged as the §8a bundle; their exact wire serialization is an open
+   item for the SDK/ABI (§11) — two implementations that disagree on the format would
+   split the social layer, so the format must be fixed there, not left to convention.
 
 ### 13.5 Is the Operator always the exit-creator? (and the federation fix)
 
@@ -638,7 +650,13 @@ liveness bottleneck (§13.4 #1), (ii) raises the theft-collusion threshold from
 widens and diversifies the trusted set but does **not** convert §13.1's amount model into
 a clean 1-of-N over the membership, and does not escape the trilemma (§13.2). It is the
 best available no-fork hardening, recommended as the baseline operator construction — not
-a way out of the corner.
+a way out of the corner. Threshold guidance: pick `k` and `n` so that compromising `k`
+independently-run operators is strictly harder than compromising one (`k ≥ 2`), while
+`n − k + 1` honest-and-live operators still suffice to advance and attest — `k` high
+enough for safety, `n − k` slack high enough for liveness. A `1-of-n` federation is
+*weaker* than a single Operator (any one node enables collusion); `n-of-n` is maximally
+safe but liveness-fragile. The bond and attestation parameters (§9, §12.1 item 1) are
+sized against the same `k`.
 
 ### 13.6 Feasibility: the lattice is an Ark tree
 
@@ -650,9 +668,12 @@ covenant-free — so the construction is buildable on Bitcoin today with no soft
   Covenant-less Ark ("clArk") establishes that all-of-all pre-signing emulates a covenant
   with **no introspection opcode and no fork**. PULSE's epoch-key-then-delete is the same
   statechain/Ark technique (with the unprovable-deletion caveat, A8).
-- **The fee plumbing:** dedicated per-leaf anchors via **P2A** (standard since Bitcoin
-  Core 28.0), **TRUC/v3** relay, and ephemeral anchors — all merged. §7.1.3's "dedicated
-  anchors + TRUC" is real, not aspirational.
+- **The fee plumbing:** dedicated per-leaf anchors via **P2A** (standard relay since
+  Bitcoin Core 28.0), **TRUC/v3** relay, and ephemeral anchors — all merged. §7.1 step
+  3's "dedicated anchors + TRUC" is real, not aspirational. Implementer caveat: a
+  P2A-bearing lattice transaction only propagates across peers on Core ≥28.0 (or
+  equivalent relay policy), and a lattice that does not propagate is a failed exit — so
+  wallets should broadcast through P2A-aware relay rather than assume universal support.
 - **The binding constraint:** the SIGHASH_ALL txid cascade (A11) forces re-signing the
   **whole O(N) tree every pulse**, versus Ark's once-per-*round*. This is realistic for
   low-to-moderate pulse frequency; a high-throughput pool needs the two-tier hot-band
