@@ -354,7 +354,8 @@ exists to prevent anyone from forgetting.
 
 > **Bottom line.** For an active, online party the gate is a true veto. For a passive
 > member shorted by an *actively-colluding* Operator, recourse terminates at **bonded
-> compensation, not coin recovery** — because you cannot broadcast a correct lattice that
+> compensation, not coin recovery** (this is the *amount* security model of §13.1) —
+> because you cannot broadcast a correct lattice that
 > was never signed. That is the structural price of pooling funds in one shared UTXO
 > without a covenant; the protocol's job is to shrink the set of cases that reach it
 > (rules §7.1a, the full-table attestation, mesh archival, TVL-tracking bond) and to make
@@ -549,17 +550,132 @@ Under GSR, each baseline characteristic upgrades:
 All four verifications are hash-dominated (Merkle paths, one-time-signature chains)
 and sized for a budgeted Script model.
 
-### Trust statement
+## 13. Security model and dialectical review
 
-> PULSE converts open-membership pool custody from **trusted-Operator** to
-> **bonded-Operator + equivocation detection**, contingent on member liveness
-> (watchtowers) and retained exit artifacts. The **exit guarantee is
-> emulator-independent**: pure pre-signed L1 transactions — Operator or emulator
-> shutdown means freeze, never theft. The **theft deterrent** is economic: a
-> federation-held bond slashed on objective equivocation evidence, with federation
-> trust confined to the deterrent layer — permanently, under the no-fork assumption.
-> Active members in recent epochs get 1-honest-of-(transacting parties ∪ Operator)
-> plus the bond. Passive, watchtower-less members degrade to bonded-Operator trust.
-> Covenant-grade trustlessness is reachable only through the GSR annex (§12.2);
-> absent any fork, this bonded-Operator-plus-equivocation-detection model is the end
+This section answers the three questions the design is most often pressed on — *is this
+1-of-N? can anyone halt epoch creation? is the Operator always the exit-creator?* — and
+states the one thing the rest of the document must not overclaim.
+
+### 13.1 Two security models, not one
+
+PULSE has **two distinct security properties with two distinct trust models**, and
+conflating them is the central error to avoid:
+
+| Property | Model | Honest assumption |
+|---|---|---|
+| **Exit mechanism** (can I get *out*?) | **1-of-N** — Ark-grade | The lattice is fully pre-signed and non-custodial; *any one* honest data-holder in `{you, your watchtowers, mesh archivers}` can broadcast it. You yourself suffice (1-of-1 in the Ark sense). Against a non-racing Operator, exit always completes. |
+| **Exit amount** (is the *number* in my slot right?) | **Bonded — not a clean 1-of-N** | The set whose honesty protects a passive member's balance in a pulse is `{Operator ∪ M_k}` — the Operator plus whoever is transacting. One honest member of that set refuses the bad pulse at the gate (§7.1 step 4b). But that set **excludes the victim** and can be **as small as two**. Below "1 honest in that set," safety degrades to *bonded compensation* (§9), an economic layer, not a cryptographic one. |
+
+**Why the amount model is weaker than the systems PULSE resembles.** In a statechain or
+a coinpool, every signer is checking *their own* balance and updates are N-of-N, so any
+one refusal blocks — a true 1-of-N where the honest party is *defending their own funds*.
+In Ark, the VTXO owner is 1-of-1 over *their own* coins. In PULSE, **the victim is not a
+required signer of the transition that can rob them**: the honest party who could save a
+passive member is a *disinterested third party* (some other transacting party running
+the §7.1 step 4b carry-forward check), not the victim. That carry-forward check is
+therefore **policy-enforced, not incentive-compatible** — a transacting party has no
+economic stake in a stranger's passive slot, so the check holds only because conforming
+software performs it, and it is not a Nash equilibrium. This is the honest game-theoretic
+floor, and it is why "1-of-N" must always be qualified as *"1-of-N for the mechanism,
+bonded for the amount."*
+
+### 13.2 The trilemma
+
+The amount model is not weak by oversight; it is the corner the design chose. You cannot
+have all three of:
+
+- **(a) non-interactive passive members** — they sign nothing while idle (the entire
+  open-membership selling point);
+- **(b) no covenant** — the working assumption (§12);
+- **(c) trustless safety of a passive member's *amount*** — cryptographic, not bonded.
+
+PULSE takes **(a) + (b)** and pays by relaxing **(c)** to bonded compensation. A real
+covenant (the GSR annex, §12.2) buys **(a) + (c)** by dropping (b). Forcing the victim to
+co-sign every pulse that touches the pool buys **(b) + (c)** by dropping (a) — but that is
+just a coinpool, and it destroys the passive/open-membership property. The trilemma *is*
+the design, stated honestly; it is not a defect to be patched.
+
+### 13.3 Dialectical summary
+
+| Thesis | Antithesis | Synthesis |
+|---|---|---|
+| Pre-signed lattices give passive members a standing unilateral exit with no covenant | The lattice is signed only by `{Operator + transacting parties}`, never the victim — a unilateral exit to an amount *someone else wrote* | **Self-custody of the exit mechanism, delegated (bonded) custody of the exit amount** |
+| Recurrent pulses keep the exit fresh | Recurrence puts the Operator in every pulse — perpetual operator dependency | Liveness of *progress* is operator-gated; liveness of *exit* is operator-free (you hold the last lattice) |
+| Bond + equivocation proof deters theft | Economic security ≠ cryptographic; above the bond theft is +EV; and the preventing check has no incentive behind it | A cryptographically-enforced *mechanism* around an economically-enforced *amount* — a hybrid, not trustless |
+
+### 13.4 Can anyone halt epoch creation?
+
+Three vectors — two bounded, one intentional:
+
+1. **The Operator can halt *all* epoch creation unilaterally** (it is a mandatory signer
+   of every pulse). This is a real censorship/liveness power, but it is **bounded to
+   "freeze + force mass exit," not theft**: a frozen pool just means everyone leaves on
+   the last lattice. It is the same shape as Ark's operator-liveness assumption, with a
+   wider blast radius (one Operator freezes the whole pool's progress at once).
+2. **Any single transacting party can halt *their own* pulse** by aborting the MuSig2
+   round (N-of-N: one missing nonce or partial stalls it — A4). This blocks only pulses
+   that party is in; it cannot censor others transacting with the Operator. Bounded
+   griefing.
+3. **Anyone with *objective* fraud evidence can halt epoch creation via the dispute
+   artifact** (§8a) — this is intentional (the social freeze). Critical caveat: conforming
+   clients must halt only on **machine-checkable** evidence; halting on unverified
+   disputes turns "cry wolf" into a free pool-wide DoS.
+
+### 13.5 Is the Operator always the exit-creator? (and the federation fix)
+
+**Yes.** `P_k` always includes the Operator, so **no valid exit lattice can be produced
+without it** — the Operator is a mandatory co-signer *of the safety net itself*. This does
+not brick exit of *existing* funds (you still hold the last lattice), but it means there
+is **no operator-free way to mint a new exit distribution**, the Operator is the **sole
+liveness bottleneck** for progress, and its collusion with a small `M_k` is the only theft
+path.
+
+The highest-leverage no-fork improvement is to make **"the Operator" a k-of-n
+federation** rather than a single party. This simultaneously (i) removes the single
+liveness bottleneck (§13.4 #1), (ii) raises the theft-collusion threshold from
+"Operator + M_k" to "k operators + M_k," and (iii) strengthens the continuity attestation
+(§12.1 item 1). **Honest ceiling:** federation does *not* make the victim a signer, so it
+widens and diversifies the trusted set but does **not** convert §13.1's amount model into
+a clean 1-of-N over the membership, and does not escape the trilemma (§13.2). It is the
+best available no-fork hardening, recommended as the baseline operator construction — not
+a way out of the corner.
+
+### 13.6 Feasibility: the lattice is an Ark tree
+
+The "exit lattice" is **structurally an Ark VTXO tree**, which is deployed and
+covenant-free — so the construction is buildable on Bitcoin today with no soft fork:
+
+- **The tree:** a Taproot root spending the shared UTXO, internal branches splitting
+  value, `SingleSig + CSV` leaves — signed N-of-N via MuSig2 with the Operator included.
+  Covenant-less Ark ("clArk") establishes that all-of-all pre-signing emulates a covenant
+  with **no introspection opcode and no fork**. PULSE's epoch-key-then-delete is the same
+  statechain/Ark technique (with the unprovable-deletion caveat, A8).
+- **The fee plumbing:** dedicated per-leaf anchors via **P2A** (standard since Bitcoin
+  Core 28.0), **TRUC/v3** relay, and ephemeral anchors — all merged. §7.1.3's "dedicated
+  anchors + TRUC" is real, not aspirational.
+- **The binding constraint:** the SIGHASH_ALL txid cascade (A11) forces re-signing the
+  **whole O(N) tree every pulse**, versus Ark's once-per-*round*. This is realistic for
+  low-to-moderate pulse frequency; a high-throughput pool needs the two-tier hot-band
+  sharding (§7.1 step 3). MuSig2 for the epoch key is a two-round ceremony over the small
+  online `M_k` — passive members are correctly excluded from it.
+
+**Verdict:** no Bitcoin-Script or transaction-structure reason the lattice cannot be
+built as described. Feasibility is bounded by *signing throughput*, not consensus rules.
+("Lattice" is the splitting-tree nomenclature here — a radix/Merkle tree — unrelated to
+lattice *cryptography*.)
+
+## Trust statement
+
+> PULSE has **two security models, not one.** The **exit mechanism is 1-of-N** and
+> emulator-independent — pure pre-signed L1 transactions, any one honest data-holder can
+> broadcast, Operator or emulator shutdown means *freeze, never theft*. The **exit amount
+> is bonded, not trustless**: a passive member's balance is protected cryptographically
+> only by the honesty of `{Operator ∪ the transacting parties}` of a pulse — a set that
+> excludes the victim and can be as small as two — and below that by a federation-held
+> bond slashed on objective equivocation evidence. This split is the **trilemma** (§13.2):
+> with non-interactive passive members and no covenant, amount-safety *must* be bonded
+> rather than trustless. The recommended no-fork hardening is a **k-of-n federated
+> Operator** (§13.5), which widens the trusted set without escaping the trilemma.
+> Covenant-grade trustlessness of the amount is reachable only through the GSR annex
+> (§12.2); absent any fork, this **trustless-mechanism / bonded-amount** model is the end
 > state, and the design is engineered to be livable as exactly that.
