@@ -542,12 +542,37 @@ escapes the trilemma:
   enclaves of mixed make), and accept the added hardware-vendor trust. The output
   constraint to `{victim, operator}` is enforced by the enclave, not by Script (Script
   cannot constrain a multisig's outputs without a covenant).
-- **Bonded referees (skin in the game).** Referees post their own (fidelity) bonds, so a
-  referee that co-signs an unbacked payout or refuses a valid claim — both objectively
-  detectable — is itself slashable. This makes referee collusion −EV, the same logic as
-  the operator bond. Keep the referee set **independent of the Operator / threshold-MPC
-  set (§13.5)**; reusing one staked set for both roles correlates operator-collusion with
-  referee-collusion.
+- **Referee fidelity bonds — Sybil resistance first, punishment second.** Each referee
+  identity is gated by a *publicly verifiable* Bitcoin fidelity bond — time-locked (a CLTV
+  UTXO whose weight grows with the amount locked and the lock duration) or burned. The bond
+  does two distinct jobs that must not be conflated:
+  - **Sybil resistance (the clean, Bitcoin-native win).** A fidelity bond makes forged
+    independence *expensive*: standing up `k` referees costs `k` locked bonds, and each
+    bond ties a persistent, costly identity to a referee so reputation accrues to it. This
+    is exactly the economic backing the `k`-of-`n` independence assumption was missing (the
+    node-collusion worry of §13.5) — and it needs **no slashing machinery**: the bond only
+    has to *exist and be provable*. It also keeps the construction Bitcoin-native rather
+    than importing an external staking network. **Sizing chains cleanly:** corrupting the
+    quorum must cost more than the operator bond it guards, which is itself
+    `requiredCoverage` (≥ at-risk-per-epoch), so `Σ(referee bonds to reach k) ≥
+    operatorBond ≥ stealable value`. Like the pool's own bond, fidelity bonds are
+    time-bounded and must be **renewed**; the client check that refuses an under-bonded
+    pool (§9) should verify the *referee* bonds are live and sized, not only the
+    Operator's.
+  - **Punishment (honestly bounded).** Making a referee bond *slashable on misbehavior*
+    hits the same wall as the operator bond — Bitcoin Script cannot verify "this payout was
+    unbacked" or "this referee censored a valid claim." Three partial backstops, strongest
+    first: (i) **equivocation self-slashing** — structure each referee's payout
+    authorization so that co-signing two conflicting payouts for the same case leaks that
+    referee's key and anyone sweeps its bond (the one-time/nonce-committed-signature
+    construction; pure-ish Script for the double-sign case, GSR-gated in general, §12.2);
+    (ii) **attestation-gated recovery** — a referee reclaims its time-locked bond only
+    against a TEE attestation that it followed the protocol, so misbehavior forfeits
+    recovery (the off-chain TEE trust of the bullet above); (iii) **reputation** — for known
+    bonded entities a public, costly, persistent identity makes getting-caught
+    business-ending, the suspenders to the on-chain belt. Keep the referee set
+    **independent of the Operator / threshold-MPC set (§13.5)** so the two collusions do not
+    correlate.
 - **The Operator may sit in the `k`-of-`n` for the *return* path only, never the
   *slashing* path.** Split the bond into two spending conditions: **pay-victim** requires
   `k`-of-`n` referees with the **Operator excluded** (otherwise it could block its own
