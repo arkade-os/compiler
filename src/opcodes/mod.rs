@@ -16,7 +16,6 @@ pub const OP_13: &str = "OP_13";
 pub const OP_14: &str = "OP_14";
 pub const OP_15: &str = "OP_15";
 pub const OP_16: &str = "OP_16";
-pub const OP_1NEGATE: &str = "OP_1NEGATE";
 
 // Absolute and relative timelock verification
 pub const OP_CHECKLOCKTIMEVERIFY: &str = "OP_CHECKLOCKTIMEVERIFY";
@@ -53,7 +52,6 @@ pub const OP_CAT: &str = "OP_CAT";
 
 // Stack manipulation
 pub const OP_DROP: &str = "OP_DROP";
-pub const OP_DUP: &str = "OP_DUP";
 pub const OP_NIP: &str = "OP_NIP";
 pub const OP_SWAP: &str = "OP_SWAP";
 

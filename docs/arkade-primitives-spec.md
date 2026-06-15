@@ -337,13 +337,8 @@ OP_VERIFY                               ; [.., ctrlIn, mintAmt(u)]
 
 ; mintAmt >= amount (both u64le)
 OP_3 OP_PICK                            ; copy amt(u)
-                                        ; depth from top: ctrlIn=1, msg=2, amt=3... 
-                                        ; Recount:
-                                        ; [srcId(8), burnTx(7), recip(6), sig0(5), sig1(4),
-                                        ;  sig2(3), amt(2), msg(1), ctrlIn(0), mintAmt(top)]
-                                        ; Wait, mintAmt IS top. amt at depth 3 from mintAmt.
-                                        ; But OP_PICK index counts from top-1.
-                                        ; top=mintAmt(0), ctrlIn(1), msg(2), amt(3).
+                                        ; depth from top: mintAmt=0, ctrlIn=1,
+                                        ; msg=2, amt=3
                                         ; OP_3 OP_PICK copies amt. Correct.
 OP_SWAP                                 ; [.., amt(u), mintAmt(u)]
 OP_GREATERTHANOREQUAL64                 ; [.., flag(c)]
@@ -501,14 +496,14 @@ After Phase 9, stack is:
 | Phase 4: streaming hash | 16 | 32 | 0 |
 | Phase 5: DVN quorum (3 iters) | 24 | 96 (3 x 32-byte pubkeys) | 0 |
 | Phase 5: quorum check | 3 | 1 (threshold) | 0 |
-| Phase 6: ctrl present | 9 | 34 | 0 |
-| Phase 7: mint output | 14 | 36 | 0 |
+| Phase 6: ctrl present | 5 | 34 | 0 |
+| Phase 7: mint output | 10 | 36 | 0 |
 | Phase 8: recursive covenant | 5 | 0 | 0 |
-| Phase 9: ctrl not leaked | 12 | 34 | 0 |
+| Phase 9: ctrl not leaked | 8 | 34 | 0 |
 | Phase 10: cleanup | 5 | 0 | 0 |
-| **Total** | **~102** | **~305** | **1** |
+| **Total** | **~90** | **~305** | **1** |
 
-**Script size:** ~102 opcodes + ~305 bytes push data + ~20 push-length prefixes = **~427 bytes**.
+**Script size:** ~90 opcodes + ~305 bytes push data + ~20 push-length prefixes = **~415 bytes**.
 
 **Sigops budget:** 50 + witness_size. Witness = 1 serverSig (64B) + 3 dvnSigs (192B) + 1 amount (~4B) + 1 sourceArkId (32B) + 1 burnTxId (32B) + 1 recipientPk (32B) + CompactSize prefixes (~8B) = ~364B. Budget = 50 + 364 = **414**. Cost = 50 (one CHECKSIGVERIFY). Passes with 364 remaining.
 
