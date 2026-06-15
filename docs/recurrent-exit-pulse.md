@@ -15,7 +15,9 @@ emulated introspection).
 
 ---
 
-## 1. ELI5
+## 1. Plain-language explainers
+
+### 1.1 The 30-second version
 
 The pool is a **group piggy bank held at a bank** (the Arkade Operator).
 
@@ -36,6 +38,64 @@ The pool is a **group piggy bank held at a bank** (the Arkade Operator).
 - Periodically (the **heartbeat**), the whole arrangement is refreshed on the actual
   blockchain, like renewing a lease. That is the "recurrent" rhythm: many off-chain
   **pulses** between on-chain heartbeats.
+
+### 1.2 The plain-language walkthrough (no math, no cryptography)
+
+Picture a **shared money jar** that a group uses together — to trade, lend, or pool
+funds. Normally, putting money in a shared jar means trusting whoever holds it. PULSE is
+a set of rules that lets you put money in the jar **and still take your own share out at
+any time, by yourself, even if the jar-keeper vanishes or turns dishonest.** Here is how,
+without any math.
+
+- **The jar-keeper is a clerk, not a bank.** Someone (the Operator) runs the jar, but
+  never holds your money in a way they could walk off with. Their job is to keep the
+  books and coordinate — like the clerk in a shared safe-deposit room. They can refuse to
+  *do new business*, but they cannot *take what is already yours*.
+
+- **Every change comes with fresh "exit tickets."** Each time anyone makes a move — a
+  deposit, a withdrawal, a trade — the few people involved in *that* move re-issue a
+  complete set of **exit tickets**: one per member, each saying "this person is owed
+  exactly this much." The tickets are already signed and final. Anyone can walk a ticket
+  to the public ledger and cash it out — no permission, no clerk needed. If the clerk
+  disappears tomorrow, everyone just cashes their latest ticket and goes home.
+
+- **Old tickets can't be reused.** The moment a new set of tickets is signed, the tools
+  used to sign that batch are destroyed. So nobody — not even the clerk — can quietly
+  write a *second, different* set for the same moment. There is exactly one valid set,
+  and you hold your copy.
+
+- **A public headcount protects the people not in the room.** You don't have to show up
+  every time others transact. So how do you know *your* ticket still says the right number
+  when you weren't watching? Each time, the clerk publishes a **signed headcount** — a
+  public, stamped list of what *every* member is owed, not just the people doing the deal.
+  Anyone in the world can check that the new tickets match that list and that the totals
+  add up. If they don't, honest software everywhere refuses the change and the group falls
+  back to the last good set of tickets. A mistake can't quietly slip through; it gets
+  caught and rewound.
+
+- **If the clerk lies, they lose a cash deposit.** Before running the jar, the Operator
+  puts up a **security deposit** held by an independent referee group. If the Operator is
+  ever caught doing the one forbidden thing — signing two contradictory documents about
+  the same money — that is black-and-white proof of cheating, and the deposit is paid to
+  the victim. Cheating isn't just hard; it's expensive and self-incriminating.
+
+- **A watchdog can stand guard for you.** Because the tickets work without you lifting a
+  finger, you can run (or hire) a **watchdog** that watches the ledger and cashes your
+  ticket automatically the moment anything looks wrong — the clerk going silent, a
+  deadline approaching, or two conflicting documents showing up.
+
+- **The one honest catch.** When you are *not* in the room, the amount on *your* ticket is
+  filled in by the people who are — checked by the public headcount and backed by the
+  deposit, but not personally signed by you. So your ability to *leave* is rock-solid and
+  needs nobody's permission; the *number* on your ticket is normally right (everyone can
+  check the math) and, if someone manages to cheat it, the deposit pays you back. It is
+  *"you can always get out, and you're financially covered if the amount is wrong"* — not
+  *"the amount is impossible to get wrong."* That distinction is the whole trade-off.
+
+- **Why "recurrent."** Tickets don't last forever. Every so often the whole arrangement is
+  renewed on the public ledger, like resigning a lease, which keeps everyone's tickets
+  fresh and cheap to cash. The practical upshot: don't go *completely* dark forever —
+  check in now and then (or let your watchdog do it), and your money stays yours.
 
 ---
 
