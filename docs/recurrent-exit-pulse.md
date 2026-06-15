@@ -59,10 +59,12 @@ without any math.
   to the public ledger and cash it out — no permission, no clerk needed. If the clerk
   disappears tomorrow, everyone just cashes their latest ticket and goes home.
 
-- **Old tickets can't be reused.** The moment a new set of tickets is signed, the tools
-  used to sign that batch are destroyed. So nobody — not even the clerk — can quietly
-  write a *second, different* set for the same moment. There is exactly one valid set,
-  and you hold your copy.
+- **Old tickets can't be quietly rewritten.** The moment a new set of tickets is signed,
+  the tools used to sign that batch are destroyed — so a *second, different* set for the
+  same moment can't normally be made behind your back. In the one case it still could (the
+  clerk teaming up with *everyone* who was in the room), doing it leaves a
+  self-incriminating paper trail that triggers the cash deposit below. Either way, one set
+  counts, and you hold your copy.
 
 - **A public headcount protects the people not in the room.** You don't have to show up
   every time others transact. So how do you know *your* ticket still says the right number
@@ -447,6 +449,22 @@ infrastructure:
   - a continuity attestation `A_j` contradicted by a later published lattice paying a
     member less, with no member-signed debit in between.
   Federation trust applies to the **deterrent layer only — never to exit**.
+- **How the slashing actually executes — and why it is *not* pure Bitcoin Script.** The
+  bond is an on-chain UTXO the **Operator funds** and locks into a `k`-of-`n` multisig
+  with the referees. **Bitcoin Script enforces only that multisig — not the fraud logic.**
+  No current opcode can evaluate the evidence on-chain: Script cannot test whether two
+  Schnorr signatures share a key and conflict, nor verify a signature against a message
+  placed on the stack (that needs `OP_CHECKSIGFROMSTACK`, which Bitcoin lacks), and the
+  Lightning-style nonce-reuse key-leak cannot be forced without pinning the nonce (a
+  covenant). So the referees check the *objective, public* evidence off-chain and co-sign
+  the payout to the victim (or the return to the Operator at expiry). The trust added is
+  precisely **≥1 honest referee in the `k`-of-`n` set** who honors objective evidence and
+  does not collude to steal or deny — reputationally exposed (anyone can recompute the same
+  evidence) but not Script-enforced. Pure-Script slashing — *"reveal two conflicting
+  signatures, take the bond"* — becomes possible only with the new opcodes of §12.2
+  (`OP_CHECKSIGFROMSTACK`, or `OP_CAT`-verifiable hash-based one-time signatures whose
+  reuse leaks a preimage that sweeps the bond); until then, the multisig-plus-referees
+  construction is the honest mechanism.
 - **Rejected alternative, documented honestly:** forced-nonce-reuse key-leak punishment
   (make any second `P_k` signature leak the aggregate secret) does **not** work with
   plain CHECKSIG: a cheater simply signs with a fresh nonce, and Script cannot pin
@@ -633,13 +651,13 @@ conflating them is the central error to avoid:
 
 | Property | Model | Honest assumption |
 |---|---|---|
-| **Exit mechanism** (can I get *out*?) | **1-of-N** — Ark-grade | The lattice is fully pre-signed and non-custodial; *any one* honest data-holder in `{you, your watchtowers, mesh archivers}` can broadcast it. You yourself suffice (1-of-1 in the Ark sense). Against a non-racing Operator, exit always completes. |
+| **Exit mechanism** (can I get *out*?) | **1-of-N** — the strongest tier | The lattice is fully pre-signed and non-custodial; *any one* honest data-holder in `{you, your watchtowers, mesh archivers}` can broadcast it. You yourself suffice (1-of-1). Against a non-racing Operator, exit always completes. |
 | **Exit amount** (is the *number* in my slot right?) | **Bonded — not a clean 1-of-N** | The set whose honesty protects a passive member's balance in a pulse is `{Operator ∪ M_k}` — the Operator plus whoever is transacting. One honest member of that set refuses the bad pulse at the gate (§7.1 step 4b). But that set **excludes the victim** and can be **as small as two** (Operator + one transacting party — and if both collude, the honest count in it is zero). Below "1 honest in that set," safety degrades to *bonded compensation* (§9), an economic layer, not a cryptographic one. |
 
 **Why the amount model is weaker than the systems PULSE resembles.** In a statechain or
 a coinpool, every signer is checking *their own* balance and updates are N-of-N, so any
 one refusal blocks — a true 1-of-N where the honest party is *defending their own funds*.
-In Ark, the VTXO owner is 1-of-1 over *their own* coins. In PULSE, **the victim is not a
+In Arkade, a VTXO owner is 1-of-1 over *their own* coins. In PULSE, **the victim is not a
 required signer of the transition that can rob them**: the honest party who could save a
 passive member is a *disinterested third party* (some other transacting party running
 the §7.1 step 4b carry-forward check), not the victim. That carry-forward check is
@@ -680,7 +698,7 @@ Three vectors — two bounded, one intentional:
 1. **The Operator can halt *all* epoch creation unilaterally** (it is a mandatory signer
    of every pulse). This is a real censorship/liveness power, but it is **bounded to
    "freeze + force mass exit," not theft**: a frozen pool just means everyone leaves on
-   the last lattice. It is the same shape as Ark's operator-liveness assumption, with a
+   the last lattice. It is the same shape as Arkade's normal operator-liveness assumption, with a
    wider blast radius (one Operator freezes the whole pool's progress at once).
 2. **Any single transacting party can halt *their own* pulse** by aborting the MuSig2
    round (N-of-N: one missing nonce or partial stalls it — A4). This blocks only pulses
@@ -720,16 +738,17 @@ attest. A `1-of-n` federation is *weaker* than a single Operator (any one node e
 collusion); `n-of-n` is maximally safe but liveness-fragile. The bond and attestation
 parameters (§9, §12.1 item 1) are sized against the same `k`.
 
-### 13.6 Feasibility: the lattice is an Ark tree
+### 13.6 Feasibility: the lattice is an Arkade VTXO tree
 
-The "exit lattice" is **structurally an Ark VTXO tree**, which is deployed and
+The "exit lattice" is **structurally an Arkade VTXO tree**, which is deployed and
 covenant-free — so the construction is buildable on Bitcoin today with no soft fork:
 
 - **The tree:** a Taproot root spending the shared UTXO, internal branches splitting
   value, `SingleSig + CSV` leaves — signed N-of-N via MuSig2 with the Operator included.
-  Covenant-less Ark ("clArk") establishes that all-of-all pre-signing emulates a covenant
+  Arkade is itself covenant-free — its VTXO trees are pre-signed and operator-cosigned
+  with no covenant opcode — establishing that all-of-all pre-signing emulates a covenant
   with **no introspection opcode and no fork**. PULSE's epoch-key-then-delete is the same
-  statechain/Ark technique (with the unprovable-deletion caveat, A8).
+  sign-once-then-delete key technique (with the unprovable-deletion caveat, A8).
 - **The fee plumbing:** dedicated per-leaf anchors via **P2A** (standard relay since
   Bitcoin Core 28.0), **TRUC/v3** relay, and ephemeral anchors — all merged. §7.1 step
   3's "dedicated anchors + TRUC" is real, not aspirational. Implementer caveat: a
@@ -737,7 +756,7 @@ covenant-free — so the construction is buildable on Bitcoin today with no soft
   equivalent relay policy), and a lattice that does not propagate is a failed exit — so
   wallets should broadcast through P2A-aware relay rather than assume universal support.
 - **The binding constraint:** the SIGHASH_ALL txid cascade (A11) forces re-signing the
-  **whole O(N) tree every pulse**, versus Ark's once-per-*round*. This is realistic for
+  **whole O(N) tree every pulse**, versus Arkade's once-per-*batch*. This is realistic for
   low-to-moderate pulse frequency; a high-throughput pool needs the two-tier hot-band
   sharding (§7.1 step 3). MuSig2 for the epoch key is a two-round ceremony over the small
   online `M_k` — passive members are correctly excluded from it.
