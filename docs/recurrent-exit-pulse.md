@@ -172,7 +172,7 @@ lattice is already valid.
      one network round) but **O(1) interactivity**. The scaling valve is two-tier
      sharding: frequent pulses update a small "hot band" sub-pool; the periodic
      heartbeat folds it back into the full lattice.
-4. **Verification gate.** Each msg.sender verifies, *before releasing anything*:
+4. **Verification gate.** Each transacting party verifies, *before releasing anything*:
    - (a) its own slot value in `L_{k+1}`;
    - (b) **every passive slot equals the `S_k` carry-forward**, Merkle-checked against
      `A_{k+1}`;
@@ -199,6 +199,30 @@ lattice is already valid.
 | `L_{k+1}` (lattice) | `P_{k+1} = MuSig2(Operator, M_{k+1})`, **before** `T` is signed |
 | `A_{k+1}` (full-table attestation) | Operator alone (its honesty is bonded) |
 | `h_{k+1}` (commitment) | Operator + threshold of `M_{k+1}` |
+
+### 7.1a Public finality predicate (conservation + consistency)
+
+The verification gate (step 4) is a *veto*, but only the transacting parties run it.
+There is a second check that **anyone** can run — passive members, watchtowers, new
+depositors, third parties — from data the on-chain commitment `h_k` already binds, with
+no signing role required. It is the safety net for everyone the gate does not cover, and
+it is what catches an *honest-but-buggy* pulse (one with no lie to slash on).
+
+A pulse `k` is **final only if** both hold, recomputed from the published `S_k`,
+`root(L_k)`, and the on-chain `value(U_k)`:
+
+1. **Conservation** — `Σ(leaf values of L_k) + dust slot + Σ(path fees) == value(U_k)`.
+2. **Consistency** — `root(L_k)` reproduces exactly the per-member slot set implied by
+   `S_k`, and the `S_k` root matches the one attested in `A_k`.
+
+If either fails — or the pre-image data needed to check them is withheld (which is
+itself the §7.1 step 6 / A3 stall) — **conforming wallets and watchtowers MUST treat
+pulse `k` as non-final and auto-exit on epoch `k−1`**, the last epoch that passed both
+checks (genesis `h_0` is checked at deposit). This converts a malformed or
+over-allocating lattice from a *silent loss* into a *liveness halt*, and it does so
+without any covenant: the data is public and the arithmetic is objective. The only
+residual is a counterparty who already treated pulse `k` as final off-chain before
+checking — so external settlement must gate finality on this same predicate.
 
 ### 7.2 Heartbeat (D2) — there is no cheap operator-only re-anchor
 
@@ -251,7 +275,90 @@ watchtowers auto-exit if the pool has not heartbeat by `renew − Δ − margin`
 Because the equivocation proof requires the victim to *hold* the lattice, **local
 retention of `(lattice branch, root(L_k), A_k, h_k inclusion proof)` per epoch is a
 security-critical protocol invariant**, not a convenience. A member (or their
-watchtower) that discards these has no fraud proof.
+watchtower) that discards these has no fraud proof — though because the lattice is
+non-custodial, *any* surviving copy (the relay mesh, an archival watchtower) lets
+anyone reconstruct and broadcast on the victim's behalf, so the data only needs to
+exist *somewhere*, not necessarily with the victim.
+
+**The contest window Δ is also a dispute window.** No published evidence can freeze
+`U_k` on-chain — there is no covenant to freeze it. But a standardized, machine-checkable
+evidence bundle (`A_j` plus the contradicting `L_k` or forked `h_k`) does two things
+during Δ: it makes the federation *earmark* the bond (blocking its expiry-return while a
+live contradiction stands), and it flips every conforming client's accept-policy to
+*refuse new pulses* on that pool. Since the next pulse is invalid until `h_k` is on-chain
+and honest co-signers will not co-sign a disputed tip, a credible dispute **halts state
+progression** — the closest no-covenant analogue to a freeze. It stops the attacker
+finding fresh victims; it does not, by itself, claw back the specific contested coins.
+
+## 8a. Recourse: when the count doesn't check out
+
+This is the user-facing companion to §8. The governing fact, stated sharply because
+every line depends on it:
+
+> A user can only ever broadcast a lattice that was **actually signed**. No honest
+> "correct" lattice exists unless it was ceremonially produced. So *recovering your
+> position* is possible only by falling back to a previously-signed, still-spendable
+> lattice. If none exists, the ceiling is **economic compensation from the bond**, and
+> the floor is **unbacked loss**.
+
+### Failure modes and where each lands
+
+| Failure | What it is | Tag (determining condition) |
+|---|---|---|
+| **Wrong amount** | your slot pays less than your balance | Active signer: **POSITION-RECOVERABLE** (veto at the gate). Passive: **COMPENSATION-ONLY** via `A_k` contradiction, unless you win the race below |
+| **Missing slot** | you are in `A_k` but absent from `L_k` (= wrong amount, slot 0) | Same as wrong amount; the fraud proof is the cleanest (Merkle inclusion in `A_k` vs absence in `root(L_k)`); doubles as a conservation alarm |
+| **Conservation failure — malicious** | `Σ(slots) > value(U_k)`, a theft structured as a race among victims | **LIVENESS-HALT** (§7.1a predicate; the inflated `A_k` also contradicts on-chain `value(U_k)`) → compensation residue |
+| **Conservation failure — buggy-honest** | ceremony bug; `A_k` matches the buggy lattice, so *no lie, no conflicting signature* | Without §7.1a: **UNBACKED-LOSS** (no slashable evidence). With §7.1a: **LIVENESS-HALT** at `k−1`. This is why §7.1a is a first-class rule |
+| **Missing / invalid branch** | signatures don't verify, or you never received a branch | Invalid sig, active: **POSITION-RECOVERABLE** (veto). Passive: **COMPENSATION-ONLY** if `A_k`+inclusion retained or mesh-recoverable; **UNBACKED** only if the data is *globally* lost |
+| **Stale-but-correct** | your `L_k` is correct but `U_k` was already consumed by a newer (bad) transition | **COMPENSATION-ONLY** in the realistic case; POSITION-RECOVERABLE only inside the race below, which you usually lose |
+| **Commitment fork** | Operator double-allocates `U_k` across two off-chain histories | **COMPENSATION-ONLY** (co-signed conflicting `h_k`) + **LIVENESS-HALT** for any observer of both |
+| **Sub-dust** | balance below the 330-sat floor, aggregated into the cooperative-only dust slot | **UNBACKED-LOSS**, bounded ≤ dust floor — a *permanent* no-unilateral-exit gap (see §12.1) |
+
+### The recourse ladder (strongest → weakest)
+
+1. **Prevention — the gate is a veto.** If you are transacting in the pulse, you refuse
+   to sign; because the lattice is signed before the transition, `U_k` is never consumed
+   and the pool stays on the still-valid `L_k`. Full recourse — but only for the parties
+   **online and signing that pulse**. Everyone else is downstream, and the rest of this
+   ladder exists solely to serve them.
+2. **Public conservation/consistency halt (§7.1a).** Anyone can recompute conservation
+   and consistency from committed public data; on failure, pulse `k` is non-final and
+   conforming software exits on `k−1`. Converts buggy-honest and over-allocating lattices
+   from silent loss into a liveness halt, with no fork.
+3. **Detect-before-consumed exit via the last-good epoch.** Hold a correct `L_{k−1}`,
+   detect the bad pulse, broadcast `L_{k−1}` before the bad transition confirms. **Honest
+   verdict: this loses the race to an active thief and works only against a dark or
+   stalled Operator** (see below). It is a freeze remedy, not a theft defense.
+4. **Equivocation fraud proof → bond compensation.** Two conflicting `P_k` signatures, or
+   `A_j` contradicted by a later lattice with no member-signed debit. The federation pays
+   victims — **money, not position**, capped at the bond.
+5. **Residual unbacked loss.** What actually falls here: buggy-honest conservation *absent
+   rule §7.1a*; a branch whose data is *globally* lost; sub-dust balances (structurally no
+   exit); and the over-the-bond portion of any theft (`loss > bond`).
+
+### Why the detect-before-consumed race favors the thief, not the victim
+
+Your exit spends `<P_k> OP_CHECKSIG <Δ> OP_CSV`: the relative timelock means the lattice
+root cannot be mined until **Δ blocks after `U_k` confirmed**. The attacker's consuming
+transition carries **no CSV** (`nSequence` final, by design — §6, §8 row 3): it is
+spendable immediately and confirms in the next block. So a colluding Operator consumes
+`U_k` roughly Δ blocks before your exit is even valid, and your correct `L_k` becomes
+un-broadcastable (its input is spent). Chain-extension dominance is a race the honest
+side wins **only when the honest side holds the newer transition**; when the *thief*
+holds the newer (bad) state, the same Δ that gives honest holders a contest window is a
+head start handed to the attacker. The race therefore rescues only the **dark/stalled-
+Operator** case (nobody broadcasts the consuming transition; your `L_k` matures
+unopposed — this is the "freeze, not theft" case §9 is genuinely good at). Against active
+theft it fails, and recourse falls to rung 4 — exactly the asymmetry the A5 finding
+exists to prevent anyone from forgetting.
+
+> **Bottom line.** For an active, online party the gate is a true veto. For a passive
+> member shorted by an *actively-colluding* Operator, recourse terminates at **bonded
+> compensation, not coin recovery** — because you cannot broadcast a correct lattice that
+> was never signed. That is the structural price of pooling funds in one shared UTXO
+> without a covenant; the protocol's job is to shrink the set of cases that reach it
+> (rules §7.1a, the full-table attestation, mesh archival, TVL-tracking bond) and to make
+> the compensation actually cover the loss.
 
 ## 9. Bond and enforcement layers
 
@@ -294,14 +401,15 @@ infrastructure:
 
 ## 10. Attack analysis appendix
 
-Thirteen adversarial findings shaped this spec. Severity: **CRITICAL** (breaks the
-safety claim), **HIGH** (loses funds or bricks exit under a realistic adversary),
-**MED** (griefing/liveness/cost).
+Fifteen adversarial findings shaped this spec — A1–A13 from the protocol red-team,
+A14–A15 from the recourse analysis (§8a). Severity: **CRITICAL** (breaks the safety
+claim), **HIGH** (loses funds or bricks exit under a realistic adversary), **MED**
+(griefing/liveness/cost).
 
 | # | Attack | Severity | Resolution in this spec |
 |---|---|---|---|
 | A1 | **Operator-only heartbeat re-anchor voids all pre-signed exits** — new outpoint ⇒ txid change ⇒ every SIGHASH_ALL signature dead; re-signing needs deleted keys | CRITICAL | Heartbeat is a full cooperative on-chain pulse with complete lattice rebuild (§7.2). No cheap re-anchor construct exists or may be exposed (floating claims under GSR would relax this — §12.2) |
-| A2 | **Silent-majority gap** — lattice signers are only Operator + `M_k`; nothing structurally forces correct passive slots; for 1-party pulses this degrades to "trust the Operator" | CRITICAL | Continuity attestation `A_k` over the *full* table each epoch + carry-forward verification by every msg.sender (§7.1 step 4b) + cross-epoch fraud proof slashable on the bond (§9) |
+| A2 | **Silent-majority gap** — lattice signers are only Operator + `M_k`; nothing structurally forces correct passive slots; for 1-party pulses this degrades to "trust the Operator" | CRITICAL | Continuity attestation `A_k` over the *full* table each epoch + carry-forward verification by every transacting party (§7.1 step 4b) + cross-epoch fraud proof slashable on the bond (§9) |
 | A3 | **"Publish the lattice" is unenforceable** — Operator signs last, can withhold mesh publication or the on-chain commitment selectively | HIGH | "No lattice *in my hands*, no pulse" (local possession gate, §7.1 step 4d); chained `h_k` dependency turns withholding into a visible stall that trips auto-exit (§7.1 step 6, §7.3) |
 | A4 | **MuSig2 N-of-N brittleness** — one signer aborts mid-ceremony ⇒ epoch key can never sign again ⇒ if the lattice were incomplete, the exit leaf is permanently unspendable | HIGH | Lattice signed *before* the transition (§7.1 order); abort ⇒ pulse abandoned on still-protected `U_k`; passive members excluded from the aggregate (minimal signer set) |
 | A5 | **Theft beats the race** — a colluding theft tx has no CSV; the lattice waits Δ; the defender is structurally slower | HIGH | Stated honestly: chain-extension dominance only kills *stale* lattices; anti-theft is the equivocation proof + bond (§8, §9), not a race |
@@ -313,6 +421,8 @@ safety claim), **HIGH** (loses funds or bricks exit under a realistic adversary)
 | A11 | **O(N) lattice re-sign cascade** — SIGHASH_ALL invalidates all descendants on any root change; "incremental subtree reuse" does not survive the txid cascade | MED→HIGH | Costed honestly (§7.1 step 3): O(N) compute for 2–3 parties, O(1) interactivity; two-tier hot-band sharding as the scaling valve; GSR floating-claim constructions named as the real fix (§12.2) |
 | A12 | **Depositor verification is not enough** — verifying your slot at deposit does not protect later epochs you never sign | MED | Deposit completes only with branch + attestation + bond-coverage check in hand; continued protection explicitly requires a watchtower (§5, §8) |
 | A13 | **Off-chain `h_k` equivocation** — Operator shows different chains to different parties while committing one hash on-chain | MED | `h_k` must be co-signed by Operator + threshold of `M_k` (§7.1 step 6): a fork necessarily carries someone's contradictory signature |
+| A14 | **Buggy-honest conservation failure** — a ceremony bug makes `Σ(slots) ≠ value(U_k)` while `A_k` matches the buggy lattice, so there is no lie and no slashable evidence → silent unbacked loss | HIGH | Public finality predicate (§7.1a): conservation + consistency are recomputable from committed data; failure makes pulse `k` non-final and forces auto-exit on `k−1`, converting silent loss into a liveness halt with no fork |
+| A15 | **Sub-dust no-exit** — balances below the 330-sat floor sit in a cooperative-only dust slot with no unilateral exit | MED | Named as a permanent, bounded recourse gap (§8a, §12.1 item 6); mitigated by client below-floor warnings and attesting the dust aggregate so over-debit is compensation-provable |
 
 ## 11. Compiler surface (future work — gated zones)
 
@@ -388,6 +498,16 @@ with its compensating discipline:
    the exit path (§9). This is the deterrent layer's permanent shape.
 5. **Key deletion stays unprovable** — inherent; no consensus change fixes it. The
    design therefore never relies on it (§8, A8).
+6. **Sub-dust balances have no unilateral exit.** Balances below the 330-sat floor are
+   aggregated into a cooperative-only dust slot (§7.1.3), which by construction needs
+   Operator cooperation to spend. Discipline: clients warn a member when their balance
+   crosses below the unilateral-exit floor so they can consolidate while the Operator is
+   live; the dust aggregate is attested in `A_k` so over-debiting it is at least
+   compensation-provable. The structural floor itself is permanent absent a fork.
+
+Worst-case for a passive member shorted by an actively-colluding Operator, recourse is
+the bond (compensation), not coin recovery (§8a) — the bond is therefore a *cap on
+compensable loss*, which is what items 3 and 6 are disciplined around.
 
 ### 12.2 The GSR annex (the only fork contemplated)
 
