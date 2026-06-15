@@ -13,6 +13,43 @@ Cross-references: [`options.md`](./options.md) (two-tapleaf model, exit/renew op
 [`arkade-primitives-spec.md`](./arkade-primitives-spec.md) (recursive covenants,
 emulated introspection).
 
+## Table of contents
+
+- [1. Plain-language explainers](#1-plain-language-explainers)
+  - [1.1 The 30-second version](#11-the-30-second-version)
+  - [1.2 The plain-language walkthrough (no math, no cryptography)](#12-the-plain-language-walkthrough-no-math-no-cryptography)
+- [2. Motivation: the gap in today's exit compilation](#2-motivation-the-gap-in-todays-exit-compilation)
+- [3. Design principles](#3-design-principles)
+- [4. Vocabulary](#4-vocabulary)
+- [5. Interactivity requirements](#5-interactivity-requirements)
+- [6. The exit leaf](#6-the-exit-leaf)
+- [7. Protocol lifecycle](#7-protocol-lifecycle)
+  - [7.0 Genesis (D0)](#70-genesis-d0)
+  - [7.1 Pulse ceremony (D1) — atomic; order is load-bearing](#71-pulse-ceremony-d1--atomic-order-is-load-bearing)
+  - [7.1a Public finality predicate (conservation + consistency)](#71a-public-finality-predicate-conservation--consistency)
+  - [7.2 Heartbeat (D2) — there is no cheap operator-only re-anchor](#72-heartbeat-d2--there-is-no-cheap-operator-only-re-anchor)
+  - [7.3 Unilateral exit walk (D3)](#73-unilateral-exit-walk-d3)
+  - [7.4 Expiry (D4) and the timelock ordering invariant](#74-expiry-d4-and-the-timelock-ordering-invariant)
+- [8. Invalidation model](#8-invalidation-model)
+- [8a. Recourse: when the count doesn't check out](#8a-recourse-when-the-count-doesnt-check-out)
+  - [Failure modes and where each lands](#failure-modes-and-where-each-lands)
+  - [The recourse ladder (strongest → weakest)](#the-recourse-ladder-strongest--weakest)
+  - [Why the detect-before-consumed race favors the thief, not the victim](#why-the-detect-before-consumed-race-favors-the-thief-not-the-victim)
+- [9. Bond and enforcement layers](#9-bond-and-enforcement-layers)
+- [10. Attack analysis appendix](#10-attack-analysis-appendix)
+- [11. Compiler surface (future work — gated zones)](#11-compiler-surface-future-work--gated-zones)
+- [12. The no-fork endgame, and the GSR annex](#12-the-no-fork-endgame-and-the-gsr-annex)
+  - [12.1 Baseline: permanent operating characteristics](#121-baseline-permanent-operating-characteristics)
+  - [12.2 The GSR annex (the only fork contemplated)](#122-the-gsr-annex-the-only-fork-contemplated)
+- [13. Security model and dialectical review](#13-security-model-and-dialectical-review)
+  - [13.1 Two security models, not one](#131-two-security-models-not-one)
+  - [13.2 The trilemma](#132-the-trilemma)
+  - [13.3 Dialectical summary](#133-dialectical-summary)
+  - [13.4 Can anyone halt epoch creation?](#134-can-anyone-halt-epoch-creation)
+  - [13.5 Is the Operator always the exit-creator? (and the federation fix)](#135-is-the-operator-always-the-exit-creator-and-the-federation-fix)
+  - [13.6 Feasibility: the lattice is an Arkade VTXO tree](#136-feasibility-the-lattice-is-an-arkade-vtxo-tree)
+- [Trust statement](#trust-statement)
+
 ---
 
 ## 1. Plain-language explainers
@@ -762,6 +799,22 @@ path); and it does **not** make the victim a signer, so amount-safety merely mov
 committee trust, not cryptographic self-custody, and so it does not escape the trilemma
 (§13.2). It also imports that network's own liveness, security, and economic assumptions —
 a real external dependency weighed against PULSE's "buildable on Arkade" baseline.
+
+**The threshold benefit is only as real as the network's Sybil resistance.** "Collusion
+now requires breaking the MPC threshold" holds *only if the nodes are genuinely
+independent* — and node independence **cannot be proven cryptographically**; it is the
+same unprovable real-world property as key deletion (A8) and federation non-collusion
+(§9). It rests entirely on economics and social structure: per-node staking with slashing
+sized **above the stealable value** (the MPC analogue of `requiredCoverage`, §12.1 item 3),
+identifiable abort (which punishes a *defector* but not a *colluding majority*), and
+genuine stake distribution. If those fail — the "nodes" are one entity behind a façade, or
+a staked majority colludes — the threshold collapses back to the single-Operator-collusion
+case of §8 (row 3), **but no worse**: exit stays MPC-independent and the bonded-amount
+model already assumes that collusion is possible, so a fake threshold degrades PULSE to its
+existing floor, never beneath it. Wallets should therefore gate the "MPC-secured" label on
+a measured stake-distribution bound (e.g. a Nakamoto-coefficient floor), the same way they
+refuse an under-bonded pool (§9) — the benefit is quantitative and economic, never a
+cryptographic guarantee of independence.
 
 ### 13.6 Feasibility: the lattice is an Arkade VTXO tree
 
