@@ -191,12 +191,6 @@ contract Demo(int[] xs) {
     );
 }
 
-// NOTE: the former `rejects_asset_decomposition_collision` test was removed.
-// Asset IDs are no longer implicitly decomposed into `_txid`/`_gidx` generated
-// names; they are authored as ordinary explicit scalar params, so that
-// collision class no longer exists. Array-flattening collisions are still
-// covered by the tests above.
-
 #[test]
 fn rejects_param_colliding_with_server_signature() {
     let src = r#"

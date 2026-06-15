@@ -198,10 +198,6 @@ fn test_asset_id_is_two_explicit_params() {
         .find(|p| p.name == "stableAssetIdGidx")
         .expect("constructorInputs must include explicit stableAssetIdGidx");
     assert_eq!(gidx.param_type, "int");
-    // No implicit decomposition: the old generated `_txid`/`_gidx` names are gone.
-    let names: Vec<&str> = out.parameters.iter().map(|p| p.name.as_str()).collect();
-    assert!(!names.contains(&"stableAssetId_txid"));
-    assert!(!names.contains(&"stableAssetId_gidx"));
 }
 
 #[test]

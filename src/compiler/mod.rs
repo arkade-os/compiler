@@ -439,8 +439,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     // The Arkade operator key is always injected externally (via getInfo()).
     // It is never a constructor parameter — options.server is a boolean flag only.
 
-    // Build constructor inputs. Asset IDs are now ordinary scalar params
-    // (explicit `bytes32 fooTxid` + `int fooGidx`); only array params expand.
+    // Build constructor inputs (array params expand to indexed scalars).
     let parameters = decompose_constructor_params(&contract.parameters);
 
     let mut json = ContractJson {
@@ -486,8 +485,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 
 /// Expand constructor params for emission. Array types (e.g., `pubkey[]`) are
 /// flattened to `name_0`, `name_1`, `name_2`, …; every other param passes
-/// through unchanged. Asset IDs are no longer special-cased: an Asset ID is
-/// authored as two ordinary scalar params (`bytes32 fooTxid` + `int fooGidx`).
+/// through unchanged.
 pub(crate) fn decompose_constructor_params(
     params: &[crate::models::Parameter],
 ) -> Vec<crate::models::Parameter> {

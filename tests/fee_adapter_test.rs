@@ -85,7 +85,7 @@ fn test_fee_adapter_contract() {
     );
 
     // Lookups assert presence by consuming the opcode success flag with a
-    // single OP_VERIFY (replaces the old -1 sentinel guard).
+    // single OP_VERIFY.
     assert!(
         execute_asm.contains(&format!("{OP_INSPECTINASSETLOOKUP} {OP_VERIFY}")),
         "input lookup must be followed by OP_VERIFY flag-consume: {}",

@@ -335,8 +335,7 @@ asset_group_access = {
 
 // Group property names — atomic to prevent partial matches
 // numInputs/numOutputs must come before sumInputs/sumOutputs to prevent partial matches
-// `control` was removed: a canonical control Asset ID is two items + a flag, so
-// use `controlIs(txid, gidx)` / `hasControl` instead.
+// Control membership is tested with `controlIs(txid, gidx)` / `hasControl`.
 group_property = @{
     "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
 }

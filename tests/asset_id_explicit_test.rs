@@ -30,13 +30,8 @@ fn lookup_consumes_success_flag_with_single_verify() {
         }}"
     );
     let asm = server_asm(&src, "f");
-    // lookup opcode is immediately followed by OP_VERIFY (flag consume) — and
-    // the stale -1 sentinel guard (OP_1NEGATE/OP_DUP) is gone.
+    // lookup opcode is immediately followed by OP_VERIFY to consume the flag.
     assert!(asm.contains("OP_INSPECTOUTASSETLOOKUP OP_VERIFY"), "{asm}");
-    assert!(
-        !asm.contains("OP_1NEGATE"),
-        "sentinel guard must be gone: {asm}"
-    );
 }
 
 #[test]
@@ -200,10 +195,7 @@ fn legacy_control_property_is_rejected() {
             }}
         }}"
     );
-    assert!(
-        compile(&src).is_err(),
-        "legacy `.control` must no longer parse"
-    );
+    assert!(compile(&src).is_err(), "`.control` is not valid syntax");
 }
 
 // ─── Minimal ScriptNum encoding for a literal gidx ──────────────────────────

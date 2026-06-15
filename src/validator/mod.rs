@@ -546,8 +546,7 @@ fn walk_scope(
 /// and reserved generated names — must be unique. Distinct source names can
 /// still collide here (e.g. `int[] xs` vs `int xs_0`).
 fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    // Constructor params expanded exactly as the emitter expands them
-    // (array flattening only; asset IDs are now ordinary scalar params).
+    // Constructor params expanded exactly as the emitter expands them (array flattening).
     let ctor_expanded = crate::compiler::decompose_constructor_params(&contract.parameters);
 
     for func in contract.functions.iter().filter(|f| !f.is_internal) {
