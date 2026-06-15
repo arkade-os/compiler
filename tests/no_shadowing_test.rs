@@ -1,0 +1,287 @@
+use arkade_compiler::compile;
+
+#[test]
+fn rejects_function_param_shadowing_constructor_param() {
+    let src = r#"
+contract Demo(int amount) {
+  function f(int amount) {
+    require(amount >= 1);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
+    assert!(
+        err.contains("shadows constructor parameter"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn accepts_distinct_names() {
+    let src = r#"
+contract Demo(int limit) {
+  function f(signature sig, pubkey pk) {
+    require(checkSig(sig, pk));
+    require(limit >= 1);
+  }
+}
+"#;
+    let result = compile(src);
+    assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
+}
+
+#[test]
+fn rejects_assignment_to_constructor_param() {
+    let src = r#"
+contract Demo(int amount) {
+  function f(signature sig, pubkey pk) {
+    amount = 5;
+    require(checkSig(sig, pk));
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected an immutability error")
+        .to_string();
+    assert!(
+        err.contains("cannot assign to constructor parameter"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn allows_reassignment_of_local() {
+    // `int valid = 0;` then `valid = valid + 1;` — the documented pattern.
+    let src = r#"
+contract Demo(pubkey[] ks) {
+  function f(signature[] sigs, bytes32 msg) {
+    int valid = 0;
+    for (i, s) in sigs {
+      if (checkSigFromStack(s, ks[i], msg)) {
+        valid = valid + 1;
+      }
+    }
+    require(valid >= 1);
+  }
+}
+"#;
+    let result = compile(src);
+    assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
+}
+
+#[test]
+fn rejects_local_shadowing_function_param() {
+    let src = r#"
+contract Demo(int limit) {
+  function f(int amount) {
+    int amount = 5;
+    require(amount >= 1);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
+    assert!(
+        err.contains("shadows an in-scope binding"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_nested_local_shadowing_enclosing_local() {
+    let src = r#"
+contract Demo(int limit) {
+  function f(signature sig, pubkey pk) {
+    int x = 1;
+    if (limit >= 1) {
+      int x = 2;
+      require(x >= 1);
+    }
+    require(checkSig(sig, pk));
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
+    assert!(
+        err.contains("shadows an in-scope binding"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_inner_loop_var_shadowing_outer_loop_var() {
+    let src = r#"
+contract Demo(pubkey[] ks) {
+  function f(signature[] sigs, bytes32 msg) {
+    for (i, s) in sigs {
+      for (i, t) in sigs {
+        require(checkSigFromStack(s, ks[i], msg));
+      }
+    }
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
+    assert!(
+        err.contains("shadows an in-scope binding"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_loop_var_shadowing_constructor_param() {
+    let src = r#"
+contract Demo(int i) {
+  function f(signature[] sigs, pubkey[] ks, bytes32 msg) {
+    for (i, s) in sigs {
+      require(checkSigFromStack(s, ks[i], msg));
+    }
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a shadowing error")
+        .to_string();
+    assert!(
+        err.contains("shadows an in-scope binding"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_identical_loop_variables() {
+    let src = r#"
+contract Demo(pubkey[] ks) {
+  function f(signature[] sigs, bytes32 msg) {
+    for (x, x) in sigs {
+      require(checkSigFromStack(x, ks[0], msg));
+    }
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a duplicate loop-variable error")
+        .to_string();
+    assert!(err.contains("must differ"), "unexpected error: {err}");
+}
+
+#[test]
+fn rejects_array_element_colliding_with_scalar_param() {
+    // Constructor `int[] xs` -> xs_0, xs_1, xs_2 ; function `int xs_0` -> xs_0.
+    let src = r#"
+contract Demo(int[] xs) {
+  function f(int xs_0) {
+    require(xs_0 >= 1);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a namespace collision error")
+        .to_string();
+    assert!(
+        err.contains("collide in the emitted namespace"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_asset_decomposition_collision() {
+    // `foo` is used in a lookup -> decomposes to foo_txid, foo_gidx; param foo_txid collides.
+    let src = r#"
+contract Demo(bytes32 foo) {
+  function f(bytes32 foo_txid) {
+    require(tx.inputs[0].assets.lookup(foo) > 0);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a namespace collision error")
+        .to_string();
+    assert!(
+        err.contains("collide in the emitted namespace"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn rejects_param_colliding_with_server_signature() {
+    let src = r#"
+options {
+  server = server;
+  exit = 144;
+}
+contract Demo(int limit) {
+  function f(signature serverSig) {
+    require(limit >= 1);
+  }
+}
+"#;
+    let err = compile(src)
+        .expect_err("expected a namespace collision error")
+        .to_string();
+    assert!(
+        err.contains("collide in the emitted namespace"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn accepts_sibling_scope_reuse() {
+    // let x in both branches; the same loop vars in two separate loops.
+    let src = r#"
+contract Demo(pubkey[] ks) {
+  function f(signature[] sigs, bytes32 msg, int flag) {
+    if (flag >= 1) {
+      int x = 1;
+      require(x >= 1);
+    } else {
+      int x = 2;
+      require(x >= 1);
+    }
+    for (i, s) in sigs {
+      require(checkSigFromStack(s, ks[i], msg));
+    }
+    for (i, s) in sigs {
+      require(checkSigFromStack(s, ks[i], msg));
+    }
+  }
+}
+"#;
+    let result = compile(src);
+    assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
+}
+
+use std::fs;
+use std::path::Path;
+
+/// Every bundled example must still compile cleanly. A new failure here means
+/// either a real latent shadowing/collision bug in the example (fix the example
+/// per the spec) or a false positive in the rule (fix the rule).
+#[test]
+fn all_examples_still_compile() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    let mut checked = 0;
+    for entry in fs::read_dir(&dir).expect("read examples dir") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|s| s.to_str()) != Some("ark") {
+            continue;
+        }
+        let src = fs::read_to_string(&path).expect("read example");
+        let result = compile(&src);
+        assert!(
+            result.is_ok(),
+            "example {} failed to compile: {:?}",
+            path.display(),
+            result.err()
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no .ark examples found in {}", dir.display());
+}
