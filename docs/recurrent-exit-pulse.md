@@ -463,8 +463,10 @@ only.
 - **ABI**: a new requirement type `recurrentExit` on the exit variant, carrying the
   lattice template: slot script (`SingleSig(<memberPk>)` + exit CSV — the existing
   pattern), tree arity, dedicated-anchor policy, dust policy (330-sat floor,
-  cooperative-only dust slot), continuity-attestation format, and a bond reference for
-  client-side coverage checks.
+  cooperative-only dust slot), continuity-attestation format, the dispute-evidence
+  bundle format (§13.4 — fixing it here is what keeps conforming clients from splitting
+  on what counts as a valid halt trigger), and a bond reference for client-side coverage
+  checks.
 
 - **Timelock invariant**: the compiler rejects configurations where the operator sweep
   could mature inside the exit window (`sweepDelay < exit + margin`), per §7.4.
@@ -651,12 +653,12 @@ widens and diversifies the trusted set but does **not** convert §13.1's amount 
 a clean 1-of-N over the membership, and does not escape the trilemma (§13.2). It is the
 best available no-fork hardening, recommended as the baseline operator construction — not
 a way out of the corner. Threshold guidance: pick `k` and `n` so that compromising `k`
-independently-run operators is strictly harder than compromising one (`k ≥ 2`), while
-`n − k + 1` honest-and-live operators still suffice to advance and attest — `k` high
-enough for safety, `n − k` slack high enough for liveness. A `1-of-n` federation is
-*weaker* than a single Operator (any one node enables collusion); `n-of-n` is maximally
-safe but liveness-fragile. The bond and attestation parameters (§9, §12.1 item 1) are
-sized against the same `k`.
+independently-run operators is strictly harder than compromising one (`k ≥ 2`), and set
+`n ≥ 2k − 1` so that even after `k − 1` compromises (safety margin intact) the remaining
+`n − k + 1` honest operators still meet the `k`-of-`n` threshold needed to advance and
+attest. A `1-of-n` federation is *weaker* than a single Operator (any one node enables
+collusion); `n-of-n` is maximally safe but liveness-fragile. The bond and attestation
+parameters (§9, §12.1 item 1) are sized against the same `k`.
 
 ### 13.6 Feasibility: the lattice is an Ark tree
 
