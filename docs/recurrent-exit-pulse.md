@@ -36,6 +36,7 @@ emulated introspection).
   - [The recourse ladder (strongest → weakest)](#the-recourse-ladder-strongest--weakest)
   - [Why the detect-before-consumed race favors the thief, not the victim](#why-the-detect-before-consumed-race-favors-the-thief-not-the-victim)
 - [9. Bond and enforcement layers](#9-bond-and-enforcement-layers)
+  - [9.1 Hardening the referees (TEE-constrained, bonded, conflict-free)](#91-hardening-the-referees-tee-constrained-bonded-conflict-free)
 - [10. Attack analysis appendix](#10-attack-analysis-appendix)
 - [11. Compiler surface (future work — gated zones)](#11-compiler-surface-future-work--gated-zones)
 - [12. The no-fork endgame, and the GSR annex](#12-the-no-fork-endgame-and-the-gsr-annex)
@@ -522,6 +523,44 @@ infrastructure:
   never in the exit path. The only contemplated consensus change that would retire it
   is the Great Script Restoration (§12.2), whose restored opcodes make the
   equivocation proof verifiable in Script directly.
+
+### 9.1 Hardening the referees (TEE-constrained, bonded, conflict-free)
+
+The federation's job is *halt-or-pay-per-evidence*, never *spend freely* — but a
+`k`-of-`n` multisig is free to send anywhere, so absent a covenant the "only halt, not
+steal" property must be supplied off-chain. Three hardenings, stackable, none of which
+escapes the trilemma:
+
+- **Attested execution (TEE) constrains the referee key.** If each referee's signing key
+  lives in a TEE running *attested* adjudication code, the key will only co-sign a payout
+  that matches the objective public evidence and is addressed to `{victim, operator}` —
+  so a referee **cannot use its key to steal the bond, only to follow the rules or
+  refuse**. This reduces the trust from "the referee is honest" to "the enclave is unbroken
+  *and* the attested code is correct." Caveats stated plainly: TEEs are *defense-in-depth,
+  not a sovereign root of trust* — enclaves have a long history of microarchitectural
+  breaks — so use `k`-of-`n` **across diverse TEE vendors** (an attacker must break `k`
+  enclaves of mixed make), and accept the added hardware-vendor trust. The output
+  constraint to `{victim, operator}` is enforced by the enclave, not by Script (Script
+  cannot constrain a multisig's outputs without a covenant).
+- **Bonded referees (skin in the game).** Referees post their own (fidelity) bonds, so a
+  referee that co-signs an unbacked payout or refuses a valid claim — both objectively
+  detectable — is itself slashable. This makes referee collusion −EV, the same logic as
+  the operator bond. Keep the referee set **independent of the Operator / threshold-MPC
+  set (§13.5)**; reusing one staked set for both roles correlates operator-collusion with
+  referee-collusion.
+- **The Operator may sit in the `k`-of-`n` for the *return* path only, never the
+  *slashing* path.** Split the bond into two spending conditions: **pay-victim** requires
+  `k`-of-`n` referees with the **Operator excluded** (otherwise it could block its own
+  punishment), while **return-to-Operator** at expiry may require the Operator plus a
+  timelock (wanting one's own bond back is aligned). Putting the Operator in the slashing
+  quorum is a conflict of interest and is forbidden.
+
+**Blast radius.** Even if the *entire* referee/TEE layer is compromised, the worst case is
+**the bond is stolen or a valid claim is denied — the deterrent evaporates** — but the
+**pool funds are untouched**, because the exit lattices are pre-signed and independent of
+the bond apparatus: members still sweep their last-good amount. Referee compromise degrades
+the *amount-deterrent*, never the *exit*. As everywhere else, this hardens the trusted
+layer; only a covenant (§12.2) converts amount-safety into cryptographic self-custody.
 
 ## 10. Attack analysis appendix
 
