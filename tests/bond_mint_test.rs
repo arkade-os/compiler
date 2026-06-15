@@ -18,11 +18,12 @@ fn test_bond_mint_compiles() {
     assert_eq!(output.functions.len(), 8, "expected 8 functions");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
+    // Asset IDs are authored as explicit (Txid, Gidx) param pairs — no implicit decomposition.
     for id in ["debitAssetId", "debitCtrlId"] {
         assert!(
-            names.contains(&format!("{id}_txid").as_str())
-                && names.contains(&format!("{id}_gidx").as_str()),
-            "{id} not decomposed, got: {names:?}"
+            names.contains(&format!("{id}Txid").as_str())
+                && names.contains(&format!("{id}Gidx").as_str()),
+            "{id} not present as explicit Txid/Gidx params, got: {names:?}"
         );
     }
     assert!(

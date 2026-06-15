@@ -138,7 +138,8 @@ function computeChildGeneration(sireGenerationBE8: bytes8, dameGenerationBE8: by
 // Contract 1: Commits to a breeding pair and a secret salt.
 // This creates a temporary UTXO locked with the BreedRevealContract script.
 contract BreedCommit(
-    assetId speciesControlId,
+    bytes32 speciesControlIdTxid,
+    int speciesControlIdGidx,
     script feeScript, // A generic script for the fee output
     int fee, // The required fee to prevent spam
     pubkey oracle // The public key of the oracle to be used for the reveal
@@ -147,8 +148,8 @@ contract BreedCommit(
 ) {
     function commit(            
         // Sire & Dame details
-        sireId: assetId, sireGenome: bytes32, sireGenerationBE8: bytes8, script sireOwner,
-        dameId: assetId, dameGenome: bytes32, dameGenerationBE8: bytes8, script dameOwner,
+        sireIdTxid: bytes32, sireIdGidx: int, sireGenome: bytes32, sireGenerationBE8: bytes8, script sireOwner,
+        dameIdTxid: bytes32, dameIdGidx: int, dameGenome: bytes32, dameGenerationBE8: bytes8, script dameOwner,
         // A secret salt from the user, hashed
         saltHash: bytes32,
         // The output index for the reveal UTXO
@@ -163,20 +164,20 @@ contract BreedCommit(
         // 1. Verify a fee is paid to the designated fee script
         require(tx.outputs[feeOutputIndex].scriptPubKey == feeScript, "Fee output script mismatch");
         require(tx.outputs[feeOutputIndex].value >= fee, "Fee not paid");
-        require(tx.outputs[revealOutputIndex].assets.lookup(speciesControlId) == 1, "Species Control not locked in reveal output");
-        require(tx.outputs[revealOutputIndex].assets.lookup(sireId) == 1, "Sire not locked in reveal output");
-        require(tx.outputs[revealOutputIndex].assets.lookup(dameId) == 1, "Dame not locked in reveal output");
+        require(tx.outputs[revealOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not locked in reveal output");
+        require(tx.outputs[revealOutputIndex].assets.lookup(sireIdTxid, sireIdGidx) == 1, "Sire not locked in reveal output");
+        require(tx.outputs[revealOutputIndex].assets.lookup(dameIdTxid, dameIdGidx) == 1, "Dame not locked in reveal output");
         // 2. Verify parent assets are present and valid
-        let sireGroup = tx.assetGroups.find(sireId);
-        let dameGroup = tx.assetGroups.find(dameId);
+        let sireGroup = tx.assetGroups.find(sireIdTxid, sireIdGidx);
+        let dameGroup = tx.assetGroups.find(dameIdTxid, dameIdGidx);
         require(sireGroup != null && dameGroup != null, "Sire and Dame assets must be spent");
-        require(sireGroup.control == speciesControlId, "Sire not Species-Controlled");
-        require(dameGroup.control == speciesControlId, "Dame not Species-Controlled");
+        require(sireGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Sire not Species-Controlled");
+        require(dameGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Dame not Species-Controlled");
         require(sireGroup.metadataHash == computeKittyMetadataRoot(sireGenome, sireGenerationBE8), "Sire metadata hash mismatch");
         require(dameGroup.metadataHash == computeKittyMetadataRoot(dameGenome, dameGenerationBE8), "Dame metadata hash mismatch");
 
         // 2. Verify Species Control asset is present and retained
-        let speciesGroup = tx.assetGroups.find(speciesControlId);
+        let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
         require(speciesGroup != null && speciesGroup.delta == 0, "Species Control must be present and retained");
 
         // 3. Construct the reveal script and enforce its creation
@@ -186,9 +187,10 @@ contract BreedCommit(
         // with this exact script, which it reconstructs here for verification.
 
         Script revealScript = new BreedReveal(
-            speciesControlId,
+            speciesControlIdTxid, speciesControlIdGidx,
             oracle,
-            sireId, dameId,
+            sireIdTxid, sireIdGidx,
+            dameIdTxid, dameIdGidx,
             sireGenome, sireGenerationBE8,
             dameGenome, dameGenerationBE8,
             saltHash,
@@ -207,9 +209,10 @@ contract BreedCommit(
 // Contract 2: Spends the commit UTXO, verifies oracle randomness, and creates the new Kitty.
 contract BreedReveal(
     // Note: All parameters are now baked into the contract's script at creation time.
-    assetId speciesControlId,
+    bytes32 speciesControlIdTxid, int speciesControlIdGidx,
     pubkey oracle,
-    assetId sireId, assetId dameId,
+    bytes32 sireIdTxid, int sireIdGidx,
+    bytes32 dameIdTxid, int dameIdGidx,
     bytes32 sireGenome, bytes8 sireGenerationBE8,
     bytes32 dameGenome, bytes8 dameGenerationBE8,
     bytes32 saltHash,
@@ -223,8 +226,9 @@ contract BreedReveal(
         // Oracle provides randomness and a signature
         oracleRand: bytes32,
         oracleSig: signature,
-        // The assetId of the new Kitty being created
-        newKittyId: assetId,
+        // The explicit Asset ID operands of the new Kitty being created
+        newKittyIdTxid: bytes32,
+        newKittyIdGidx: int,
         kittyOutputIndex: int,
         sireOutputIndex: int,
         dameOutputIndex: int,
@@ -239,17 +243,17 @@ contract BreedReveal(
         require(checkDataSig(oracleSig, sha256(commitOutpoint + oracleRand), oracle), "Invalid oracle signature");
 
         // 3. Verify Species Control is present and retained (delta == 0)
-        let speciesGroup = tx.assetGroups.find(speciesControlId);
+        let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
         require(speciesGroup != null && speciesGroup.delta == 0, "Species Control must be present and retained");
-        require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlId) == 1, "Species Control not in output");
+        require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not in output");
 
         // 4. Find the new Kitty's asset group
-        let newKittyGroup = tx.assetGroups.find(newKittyId);
+        let newKittyGroup = tx.assetGroups.find(newKittyIdTxid, newKittyIdGidx);
         require(newKittyGroup != null, "New Kitty asset group not found");
         require(newKittyGroup.isFresh && newKittyGroup.delta == 1, "Child must be a fresh NFT");
-        require(newKittyGroup.control == speciesControlId, "Child not Species-Controlled");
+        require(newKittyGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Child not Species-Controlled");
         let newKittyOutput = tx.outputs[kittyOutputIndex];
-        require(newKittyOutput.assets.lookup(newKittyId) == 1, "New Kitty not locked in output");
+        require(newKittyOutput.assets.lookup(newKittyIdTxid, newKittyIdGidx) == 1, "New Kitty not locked in output");
         require(newKittyOutput.scriptPubKey == newKittyOwner, "New Kitty must be sent to a P2PKH address");
 
         // 5. Generate the unpredictable genome and expected metadata hash
@@ -268,15 +272,15 @@ contract BreedReveal(
         require(tx.locktime >= expirationTime, "Timeout not yet reached");
 
         // 2. Verify parents are returned to their owners
-        require(tx.outputs[sireOutputIndex].assets.lookup(sireId) == 1, "Sire not refunded");
+        require(tx.outputs[sireOutputIndex].assets.lookup(sireIdTxid, sireIdGidx) == 1, "Sire not refunded");
         require(tx.outputs[sireOutputIndex].scriptPubKey == sireOwner, "Sire not refunded to owner");
-        require(tx.outputs[dameOutputIndex].assets.lookup(dameId) == 1, "Dame not refunded");
+        require(tx.outputs[dameOutputIndex].assets.lookup(dameIdTxid, dameIdGidx) == 1, "Dame not refunded");
         require(tx.outputs[dameOutputIndex].scriptPubKey == dameOwner, "Dame not refunded to owner");
 
         // 3. Verify Species Control is retained (delta == 0)
-        let speciesGroup = tx.assetGroups.find(speciesControlId);
+        let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
         require(speciesGroup != null && speciesGroup.delta == 0, "Species Control must be retained");
-        require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlId) == 1, "Species Control not in output");
+        require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not in output");
     }
 
 }

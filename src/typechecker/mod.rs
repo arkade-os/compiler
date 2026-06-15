@@ -446,23 +446,38 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Asset introspection
         Expression::AssetLookup { .. } => ArkType::Uint64Le,
+        Expression::AssetHas { .. } => ArkType::Bool,
         Expression::AssetCount { .. } => ArkType::Int,
         Expression::AssetAt { property, .. } => match property.as_str() {
             "amount" => ArkType::Uint64Le,
+            // TODO(asset-id-struct): `.assetId` is really a two-item canonical
+            // Asset ID (asset_txid, asset_gidx), NOT a single bytes32. Typed as
+            // Bytes32 only as a stopgap until the composite `AssetId` struct
+            // return type lands (separate PR). See
+            // docs/superpowers/specs/2026-06-11-asset-lookup-explicit-txid-gidx-design.md
+            // ("Value side / asset_at" + "Out of scope").
             "assetId" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // Asset group introspection
         Expression::GroupFind { .. } => ArkType::Int,
+        Expression::GroupHas { .. } => ArkType::Bool,
+        Expression::GroupControlIs { .. } => ArkType::Bool,
         Expression::GroupSum { .. } => ArkType::Uint64Le,
         Expression::GroupNumIO { .. } => ArkType::Int,
         Expression::AssetGroupsLength => ArkType::Int,
         Expression::GroupProperty { property, .. } => match property.as_str() {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Uint64Le,
             "numInputs" | "numOutputs" => ArkType::Int,
-            "control" | "metadataHash" | "assetId" => ArkType::Bytes32,
-            "isFresh" => ArkType::Bool,
+            // TODO(asset-id-struct): `assetId` is really a two-item canonical
+            // Asset ID (asset_txid, asset_gidx), not a single bytes32; typed
+            // Bytes32 only as a stopgap until the composite `AssetId` struct
+            // lands, so `==` over it is unsound until then (see spec
+            // 2026-06-11-asset-lookup-explicit-txid-gidx-design.md). `metadataHash`
+            // is genuinely a 32-byte hash and is correct.
+            "metadataHash" | "assetId" => ArkType::Bytes32,
+            "isFresh" | "hasControl" => ArkType::Bool,
             _ => ArkType::Unknown,
         },
         Expression::GroupIOAccess { property, .. } => match property.as_deref() {

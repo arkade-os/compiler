@@ -55,6 +55,7 @@ pub const OP_CAT: &str = "OP_CAT";
 pub const OP_DROP: &str = "OP_DROP";
 pub const OP_DUP: &str = "OP_DUP";
 pub const OP_NIP: &str = "OP_NIP";
+pub const OP_SWAP: &str = "OP_SWAP";
 
 // Type conversions
 pub const OP_LE64TOSCRIPTNUM: &str = "OP_LE64TOSCRIPTNUM";
@@ -66,6 +67,7 @@ pub const OP_ECMULSCALARVERIFY: &str = "OP_ECMULSCALARVERIFY";
 pub const OP_TWEAKVERIFY: &str = "OP_TWEAKVERIFY";
 
 // Conditionals
+pub const OP_BOOLAND: &str = "OP_BOOLAND";
 pub const OP_NOT: &str = "OP_NOT";
 pub const OP_FALSE: &str = "OP_FALSE";
 pub const OP_IF: &str = "OP_IF";

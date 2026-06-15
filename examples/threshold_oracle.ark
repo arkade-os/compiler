@@ -16,8 +16,10 @@ options {
 }
 
 contract ThresholdOracle(
-  bytes32 tokenAssetId,
-  bytes32 ctrlAssetId,
+  bytes32 tokenAssetIdTxid,
+  int tokenAssetIdGidx,
+  bytes32 ctrlAssetIdTxid,
+  int ctrlAssetIdGidx,
   pubkey[] oracles,
   int threshold
 ) {
@@ -37,9 +39,9 @@ contract ThresholdOracle(
     }
     require(valid >= threshold, "quorum failed");
 
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
-    require(tx.outputs[1].assets.lookup(tokenAssetId) >= amount, "short");
+    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
+    require(tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "short");
     require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
-    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetId, ctrlAssetId, oracles, threshold), "broken");
+    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetIdTxid, tokenAssetIdGidx, ctrlAssetIdTxid, ctrlAssetIdGidx, oracles, threshold), "broken");
   }
 }

@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_1NEGATE, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_GREATERTHAN64,
-    OP_GREATERTHANOREQUAL64, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_NOT, OP_VERIFY,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL64,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
 
 #[test]
@@ -16,27 +16,25 @@ fn test_token_vault_contract() {
     // Verify contract name
     assert_eq!(output.name, "TokenVault");
 
-    // Verify parameters - bytes32 params used in lookups should be decomposed
-    // ownerPk (pubkey, no decomposition)
-    // tokenAssetId (bytes32 → _txid + _gidx)
-    // ctrlAssetId (bytes32 → _txid + _gidx)
+    // Verify parameters, including explicit Asset ID (Txid, Gidx) pairs.
+    // ownerPk remains a scalar pubkey parameter.
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"ownerPk"), "missing ownerPk");
     assert!(
-        param_names.contains(&"tokenAssetId_txid"),
-        "missing tokenAssetId_txid decomposition"
+        param_names.contains(&"tokenAssetIdTxid"),
+        "missing explicit tokenAssetIdTxid"
     );
     assert!(
-        param_names.contains(&"tokenAssetId_gidx"),
-        "missing tokenAssetId_gidx decomposition"
+        param_names.contains(&"tokenAssetIdGidx"),
+        "missing explicit tokenAssetIdGidx"
     );
     assert!(
-        param_names.contains(&"ctrlAssetId_txid"),
-        "missing ctrlAssetId_txid decomposition"
+        param_names.contains(&"ctrlAssetIdTxid"),
+        "missing explicit ctrlAssetIdTxid"
     );
     assert!(
-        param_names.contains(&"ctrlAssetId_gidx"),
-        "missing ctrlAssetId_gidx decomposition"
+        param_names.contains(&"ctrlAssetIdGidx"),
+        "missing explicit ctrlAssetIdGidx"
     );
 
     // Verify functions: 2 functions x 2 variants = 4
@@ -66,11 +64,16 @@ fn test_token_vault_contract() {
         deposit_asm
     );
 
-    // Check sentinel guard pattern (DUP, 1NEGATE, EQUAL, NOT, VERIFY)
-    let sentinel_guard = format!("{OP_DUP} {OP_1NEGATE} {OP_EQUAL} {OP_NOT} {OP_VERIFY}");
+    // Lookups assert presence by consuming the opcode success flag with a
+    // single OP_VERIFY.
     assert!(
-        deposit_asm.contains(&sentinel_guard),
-        "missing sentinel guard pattern in deposit asm: {}",
+        deposit_asm.contains(&format!("{OP_INSPECTINASSETLOOKUP} {OP_VERIFY}")),
+        "input lookup must be followed by OP_VERIFY flag-consume: {}",
+        deposit_asm
+    );
+    assert!(
+        deposit_asm.contains(&format!("{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY}")),
+        "output lookup must be followed by OP_VERIFY flag-consume: {}",
         deposit_asm
     );
 
@@ -170,6 +173,6 @@ fn test_token_vault_cli() {
     assert!(json_output.contains("\"contractName\": \"TokenVault\""));
     assert!(json_output.contains(OP_INSPECTINASSETLOOKUP));
     assert!(json_output.contains(OP_INSPECTOUTASSETLOOKUP));
-    assert!(json_output.contains("tokenAssetId_txid"));
-    assert!(json_output.contains("ctrlAssetId_txid"));
+    assert!(json_output.contains("tokenAssetIdTxid"));
+    assert!(json_output.contains("ctrlAssetIdTxid"));
 }

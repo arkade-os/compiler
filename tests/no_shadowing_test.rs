@@ -191,24 +191,11 @@ contract Demo(int[] xs) {
     );
 }
 
-#[test]
-fn rejects_asset_decomposition_collision() {
-    // `foo` is used in a lookup -> decomposes to foo_txid, foo_gidx; param foo_txid collides.
-    let src = r#"
-contract Demo(bytes32 foo) {
-  function f(bytes32 foo_txid) {
-    require(tx.inputs[0].assets.lookup(foo) > 0);
-  }
-}
-"#;
-    let err = compile(src)
-        .expect_err("expected a namespace collision error")
-        .to_string();
-    assert!(
-        err.contains("collide in the emitted namespace"),
-        "unexpected error: {err}"
-    );
-}
+// NOTE: the former `rejects_asset_decomposition_collision` test was removed.
+// Asset IDs are no longer implicitly decomposed into `_txid`/`_gidx` generated
+// names; they are authored as ordinary explicit scalar params, so that
+// collision class no longer exists. Array-flattening collisions are still
+// covered by the tests above.
 
 #[test]
 fn rejects_param_colliding_with_server_signature() {

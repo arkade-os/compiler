@@ -17,7 +17,7 @@ options {
 contract CoveredCall(
   pubkey  sellerPk,
   pubkey  buyerPk,
-  bytes32 stableAssetId,
+  bytes32 stableAssetIdTxid, int stableAssetIdGidx,
   int     btcSats,
   int     strikeAmount,
   int     expiryHeight,
@@ -29,7 +29,7 @@ contract CoveredCall(
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
 
     require(
-      tx.outputs[0].assets.lookup(stableAssetId) >= strikeAmount,
+      tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= strikeAmount,
       "seller underpaid"
     );
     require(
@@ -184,21 +184,24 @@ fn test_reclaim_is_seller_only_with_cltv() {
 }
 
 #[test]
-fn test_asset_id_decomposes_to_txid_and_gidx() {
+fn test_asset_id_is_two_explicit_params() {
     let out = compile(CALL_CODE).unwrap();
+    let txid = out
+        .parameters
+        .iter()
+        .find(|p| p.name == "stableAssetIdTxid")
+        .expect("constructorInputs must include explicit stableAssetIdTxid");
+    assert_eq!(txid.param_type, "bytes32");
+    let gidx = out
+        .parameters
+        .iter()
+        .find(|p| p.name == "stableAssetIdGidx")
+        .expect("constructorInputs must include explicit stableAssetIdGidx");
+    assert_eq!(gidx.param_type, "int");
+    // No implicit decomposition: the old generated `_txid`/`_gidx` names are gone.
     let names: Vec<&str> = out.parameters.iter().map(|p| p.name.as_str()).collect();
-    assert!(
-        names.contains(&"stableAssetId_txid"),
-        "constructorInputs must include stableAssetId_txid"
-    );
-    assert!(
-        names.contains(&"stableAssetId_gidx"),
-        "constructorInputs must include stableAssetId_gidx"
-    );
-    assert!(
-        !names.contains(&"stableAssetId"),
-        "raw bytes32 stableAssetId should not appear in ABI"
-    );
+    assert!(!names.contains(&"stableAssetId_txid"));
+    assert!(!names.contains(&"stableAssetId_gidx"));
 }
 
 #[test]

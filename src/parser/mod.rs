@@ -493,8 +493,10 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
+        Rule::asset_has => parse_asset_has_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
+        Rule::group_control_is => parse_group_control_is_to_expression(pair),
         Rule::input_introspection => parse_input_introspection_to_expression(pair),
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
@@ -522,6 +524,8 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::binary_operation => parse_binary_operation(pair),
         Rule::asset_lookup_comparison => parse_asset_lookup_comparison(pair),
         Rule::asset_count_comparison => parse_asset_count_comparison(pair),
+        Rule::asset_has_comparison => parse_asset_has_comparison(pair),
+        Rule::group_control_is_comparison => parse_group_control_is_comparison(pair),
         Rule::asset_at_comparison => parse_asset_at_comparison(pair),
         Rule::input_introspection_comparison => parse_input_introspection_comparison(pair),
         Rule::output_introspection_comparison => parse_output_introspection_comparison(pair),
@@ -530,9 +534,11 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::output_introspection => parse_standalone_output_introspection(pair),
         Rule::tx_introspection => parse_standalone_tx_introspection(pair),
         Rule::asset_lookup => parse_standalone_asset_lookup(pair),
+        Rule::asset_has => parse_standalone_asset_has(pair),
         Rule::asset_count => parse_standalone_asset_count(pair),
         Rule::asset_at => parse_standalone_asset_at(pair),
         Rule::asset_group_access => parse_asset_group_access(pair),
+        Rule::group_control_is => parse_standalone_group_control_is(pair),
         Rule::group_property_comparison => parse_group_property_comparison(pair),
         // Streaming SHA256
         Rule::sha256_initialize => {
@@ -773,6 +779,9 @@ fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
         .to_string();
     let right_expr = inner.next().ok_or("Missing right side expression")?;
 
+    reject_malformed_asset_call(left_expr.as_str())?;
+    reject_malformed_asset_call(right_expr.as_str())?;
+
     let left = match left_expr.as_rule() {
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(left_expr)
@@ -878,8 +887,62 @@ fn parse_standalone_asset_lookup(pair: Pair<Rule>) -> Result<Requirement, String
     })
 }
 
-/// Parse an asset_lookup pair into an Expression::AssetLookup
-fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+/// Parse an asset-id txid operand (a bytes32 identifier).
+fn parse_asset_id_txid(pair: Pair<Rule>) -> Expression {
+    Expression::Variable(pair.as_str().to_string())
+}
+
+/// Parse an asset-id gidx operand (an int identifier or a numeric literal).
+fn parse_asset_id_gidx(pair: Pair<Rule>) -> Expression {
+    match pair.as_rule() {
+        Rule::number_literal => Expression::Literal(pair.as_str().to_string()),
+        _ => Expression::Variable(pair.as_str().to_string()),
+    }
+}
+
+/// Parse the two Asset ID operands from an asset-group access pair.
+fn parse_asset_group_id_operands(pair: Pair<Rule>) -> Result<(Expression, Expression), String> {
+    let operand_parent = match pair.as_rule() {
+        Rule::tx_property_access => {
+            let mut inner = pair.into_inner();
+            let body = inner
+                .next()
+                .ok_or("asset id requires (txid, gidx) operands")?;
+            if body.as_rule() != Rule::tx_property_body || inner.next().is_some() {
+                return Err("asset id requires (txid, gidx) operands".to_string());
+            }
+            body
+        }
+        Rule::tx_property_body | Rule::asset_group_access => pair,
+        rule => return Err(format!("unexpected asset group operand parent: {rule:?}")),
+    };
+
+    let mut operands = operand_parent.into_inner();
+    let txid_pair = operands
+        .next()
+        .ok_or("asset id requires (txid, gidx) operands")?;
+    let gidx_pair = operands
+        .next()
+        .ok_or("asset id requires (txid, gidx) operands")?;
+
+    if txid_pair.as_rule() != Rule::identifier
+        || !matches!(gidx_pair.as_rule(), Rule::identifier | Rule::number_literal)
+        || operands.next().is_some()
+    {
+        return Err("asset id requires (txid, gidx) operands".to_string());
+    }
+
+    Ok((
+        parse_asset_id_txid(txid_pair),
+        parse_asset_id_gidx(gidx_pair),
+    ))
+}
+
+/// Shared parse for `tx.{inputs,outputs}[i].assets.{lookup,has}(txid, gidx)`:
+/// returns the source, the input/output index, and the two Asset ID operands.
+fn parse_asset_lookup_operands(
+    pair: Pair<Rule>,
+) -> Result<(AssetLookupSource, Expression, Expression, Expression), String> {
     let mut inner = pair.into_inner();
 
     // Parse source: "inputs" or "outputs"
@@ -907,13 +970,32 @@ fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, Stri
         _ => Expression::Literal(index_pair.as_str().to_string()),
     };
 
-    // Parse asset ID
-    let asset_id = inner.next().ok_or("Missing asset ID")?.as_str().to_string();
+    // Parse the canonical Asset ID operands: txid (bytes32) then gidx (int).
+    let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing asset txid")?);
+    let asset_gidx = parse_asset_id_gidx(inner.next().ok_or("Missing asset gidx")?);
 
+    Ok((source, index, asset_txid, asset_gidx))
+}
+
+/// Parse an asset_lookup pair into an Expression::AssetLookup
+fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
     Ok(Expression::AssetLookup {
         source,
         index: Box::new(index),
-        asset_id,
+        asset_txid: Box::new(asset_txid),
+        asset_gidx: Box::new(asset_gidx),
+    })
+}
+
+/// Parse an asset_has pair into an Expression::AssetHas
+fn parse_asset_has_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
+    Ok(Expression::AssetHas {
+        source,
+        index: Box::new(index),
+        asset_txid: Box::new(asset_txid),
+        asset_gidx: Box::new(asset_gidx),
     })
 }
 
@@ -1045,6 +1127,99 @@ fn parse_asset_count_comparison(pair: Pair<Rule>) -> Result<Requirement, String>
         _ => {
             return Err(format!(
                 "Unexpected right side in asset count comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+/// Parse a standalone asset_has (require-bare): leaves the presence flag.
+fn parse_standalone_asset_has(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_asset_has_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse asset_has_comparison: asset_has op (identifier | number_literal)
+fn parse_asset_has_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left asset has")?;
+    let left = parse_asset_has_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in asset has comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+/// Parse a group_control_is pair: `group.controlIs(txid, gidx)` → GroupControlIs.
+fn parse_group_control_is_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let group = inner
+        .next()
+        .ok_or("Missing group in controlIs")?
+        .as_str()
+        .to_string();
+    let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing controlIs txid")?);
+    let asset_gidx = parse_asset_id_gidx(inner.next().ok_or("Missing controlIs gidx")?);
+    Ok(Expression::GroupControlIs {
+        group,
+        asset_txid: Box::new(asset_txid),
+        asset_gidx: Box::new(asset_gidx),
+    })
+}
+
+/// Parse a standalone group_control_is (require-bare): leaves the boolean.
+fn parse_standalone_group_control_is(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_group_control_is_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse group_control_is_comparison: group.controlIs(...) op (identifier | number_literal)
+fn parse_group_control_is_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left controlIs")?;
+    let left = parse_group_control_is_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in controlIs comparison: {:?}",
                 right_pair.as_rule()
             ))
         }
@@ -1335,18 +1510,27 @@ fn parse_arith_expr_to_expression(pair: Pair<Rule>) -> Result<Expression, String
 /// tx.assetGroups[k].property
 fn parse_asset_group_access(pair: Pair<Rule>) -> Result<Requirement, String> {
     let text = pair.as_str();
-    let mut inner = pair.into_inner();
 
     // Determine which variant of asset group access
     if text.contains(".find(") {
-        // tx.assetGroups.find(assetId)
-        let asset_id = inner
-            .next()
-            .ok_or("Missing asset ID in group find")?
-            .as_str()
-            .to_string();
+        // tx.assetGroups.find(txid, gidx)
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
         Ok(Requirement::Comparison {
-            left: Expression::GroupFind { asset_id },
+            left: Expression::GroupFind {
+                asset_txid: Box::new(asset_txid),
+                asset_gidx: Box::new(asset_gidx),
+            },
+            op: "==".to_string(),
+            right: Expression::Literal("true".to_string()),
+        })
+    } else if text.contains(".has(") {
+        // tx.assetGroups.has(txid, gidx)
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
+        Ok(Requirement::Comparison {
+            left: Expression::GroupHas {
+                asset_txid: Box::new(asset_txid),
+                asset_gidx: Box::new(asset_gidx),
+            },
             op: "==".to_string(),
             right: Expression::Literal("true".to_string()),
         })
@@ -1359,6 +1543,7 @@ fn parse_asset_group_access(pair: Pair<Rule>) -> Result<Requirement, String> {
         })
     } else {
         // tx.assetGroups[k].property
+        let mut inner = pair.into_inner();
         let array_access = inner.next().ok_or("Missing group index")?;
         let index_pair = array_access
             .into_inner()
@@ -1798,15 +1983,46 @@ fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
 
 /// Parse tx_property_access into the appropriate Expression type
 /// Handles special patterns like tx.assetGroups[idx].sumInputs/sumOutputs
+/// Reject malformed asset-API calls that fell through to the generic property
+/// path. A well-formed `.assets.lookup`/`.assets.has` matches the dedicated
+/// `asset_lookup`/`asset_has` rules (which require exactly two operands) before
+/// any property fallback, so seeing one of these method names in a property
+/// string means a legacy single-argument or otherwise malformed call.
+fn reject_malformed_asset_call(text: &str) -> Result<(), String> {
+    if text.contains(".assets.lookup(") {
+        return Err(format!(
+            "asset lookup requires two operands `lookup(txid, gidx)`: {text}"
+        ));
+    }
+    if text.contains(".assets.has(") {
+        return Err(format!(
+            "asset presence check requires two operands `has(txid, gidx)`: {text}"
+        ));
+    }
+    Ok(())
+}
+
 fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     let text = pair.as_str();
 
-    // Handle tx.assetGroups.find(assetId)
-    if text.starts_with("tx.assetGroups.find(") && text.ends_with(")") {
-        let start = "tx.assetGroups.find(".len();
-        let end = text.len() - 1;
-        let asset_id = text[start..end].to_string();
-        return Ok(Expression::GroupFind { asset_id });
+    reject_malformed_asset_call(text)?;
+
+    // Handle tx.assetGroups.find(txid, gidx)
+    if text.starts_with("tx.assetGroups.find(") && text.ends_with(')') {
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
+        return Ok(Expression::GroupFind {
+            asset_txid: Box::new(asset_txid),
+            asset_gidx: Box::new(asset_gidx),
+        });
+    }
+
+    // Handle tx.assetGroups.has(txid, gidx)
+    if text.starts_with("tx.assetGroups.has(") && text.ends_with(')') {
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
+        return Ok(Expression::GroupHas {
+            asset_txid: Box::new(asset_txid),
+            asset_gidx: Box::new(asset_gidx),
+        });
     }
 
     // Handle tx.assetGroups.length

@@ -260,11 +260,23 @@ pub enum Expression {
     Property(String),
     /// Current input access (tx.input.current)
     CurrentInput(Option<String>),
-    /// Asset lookup: tx.inputs[i].assets.lookup(assetId) or tx.outputs[o].assets.lookup(assetId)
+    /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
+    /// tx.outputs[o].assets.lookup(txid, gidx). Asserts the asset is present
+    /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
     AssetLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_id: String,
+        asset_txid: Box<Expression>, // bytes32 reference
+        asset_gidx: Box<Expression>, // int reference or literal (0..65535)
+    },
+    /// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) or
+    /// tx.outputs[o].assets.has(txid, gidx). Boolean — true when the asset is
+    /// present, false when absent (keeps the opcode success flag, drops amount).
+    AssetHas {
+        source: AssetLookupSource,
+        index: Box<Expression>,
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
     },
     /// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
     AssetCount {
@@ -296,10 +308,29 @@ pub enum Expression {
         op: String,
         right: Box<Expression>,
     },
-    /// Asset group find: tx.assetGroups.find(assetId) → csn index
-    GroupFind { asset_id: String },
+    /// Asset group find: tx.assetGroups.find(txid, gidx) → resolved packet
+    /// position k. Asserts existence (consumes the success flag with OP_VERIFY).
+    GroupFind {
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
+    /// Asset group presence predicate: tx.assetGroups.has(txid, gidx). Boolean —
+    /// true when a group with that Asset ID exists, false otherwise.
+    GroupHas {
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
     /// Asset group property: group.sumInputs, group.delta, etc.
     GroupProperty { group: String, property: String },
+    /// Boolean equality over the complete canonical control Asset ID:
+    /// group.controlIs(txid, gidx). False when control is absent or either
+    /// component differs. `group.hasControl` (presence only) is modeled as a
+    /// plain `GroupProperty { property: "hasControl" }`.
+    GroupControlIs {
+        group: String,
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
     /// Asset group sum with explicit index: tx.assetGroups[k].sumInputs/sumOutputs

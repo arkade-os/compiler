@@ -20,7 +20,7 @@ options {
 contract EpochLimiter(
   bytes32 epochStartAssetId,
   bytes32 epochTotalAssetId,
-  bytes32 ctrlAssetId,
+  bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
   int epochLimit,
   int epochBlocks,
   pubkey adminPk,
@@ -32,7 +32,7 @@ contract EpochLimiter(
     let epochStart = tx.assetGroups[epochStartIdx].sumInputs;
     let epochTotal = tx.assetGroups[epochTotalIdx].sumInputs;
 
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
+    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
 
     if (tx.time >= epochStart + epochBlocks) {
       let newStart = tx.time;
@@ -46,7 +46,7 @@ contract EpochLimiter(
       require(newTotal <= epochLimit, "exceeds limit");
     }
 
-    require(tx.outputs[0].assets.lookup(ctrlAssetId) >= tx.inputs[0].assets.lookup(ctrlAssetId), "ctrl leaked");
+    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) >= tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx), "ctrl leaked");
     require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
   }
 }

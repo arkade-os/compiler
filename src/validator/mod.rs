@@ -19,7 +19,8 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
-use crate::models::{Contract, ContractJson, Parameter, Statement};
+use crate::models::{Contract, ContractJson, Expression, Parameter, Requirement, Statement};
+use crate::typechecker::{build_scope, infer_type, ArkType, Scope};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -181,8 +182,194 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
 
     check_shadowing(contract, &mut issues);
     check_expanded_namespace(contract, &mut issues);
+    check_asset_id_operands(contract, &mut issues);
 
     issues
+}
+
+// ─── Asset ID operand validation (fatal) ───────────────────────────────────────
+
+/// Reject malformed canonical Asset ID operands at compile time instead of
+/// relying on the emulator's runtime `popAssetID` check. For every
+/// `lookup`/`find`/`has`/`controlIs` operand:
+/// - `asset_txid` must resolve to `Bytes32` (rejects `Unknown`/swapped types),
+/// - `asset_gidx` must resolve to `Int` (rejects `Unknown`); a numeric literal
+///   must additionally be in `0..=65535`.
+///
+/// Scope-aware: seeds constructor + function params, infers `let`/assignment
+/// values, binds a `for` loop's index variable as `Int`. The loop value
+/// variable stays `Unknown` (no iterable-element typing yet) and is therefore
+/// not accepted as an Asset ID component.
+fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let ctor_scope = build_scope(&contract.parameters);
+    for func in &contract.functions {
+        let mut scope = ctor_scope.clone();
+        scope.extend(build_scope(&func.parameters));
+        walk_asset_id_stmts(&func.statements, &mut scope, &func.name, issues);
+    }
+}
+
+fn walk_asset_id_stmts(
+    stmts: &[Statement],
+    scope: &mut Scope,
+    fname: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::Require(req) => {
+                if let Requirement::Comparison { left, right, .. } = req {
+                    check_asset_id_expr(left, scope, fname, issues);
+                    check_asset_id_expr(right, scope, fname, issues);
+                }
+            }
+            Statement::LetBinding { name, value } => {
+                check_asset_id_expr(value, scope, fname, issues);
+                let t = infer_type(value, scope);
+                scope.insert(name.clone(), t);
+            }
+            Statement::VarAssign { name, value } => {
+                check_asset_id_expr(value, scope, fname, issues);
+                let t = infer_type(value, scope);
+                scope.insert(name.clone(), t);
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                check_asset_id_expr(condition, scope, fname, issues);
+                walk_asset_id_stmts(then_body, &mut scope.clone(), fname, issues);
+                if let Some(eb) = else_body {
+                    walk_asset_id_stmts(eb, &mut scope.clone(), fname, issues);
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                body,
+                ..
+            } => {
+                let mut loop_scope = scope.clone();
+                loop_scope.insert(index_var.clone(), ArkType::Int);
+                loop_scope.insert(value_var.clone(), ArkType::Unknown);
+                walk_asset_id_stmts(body, &mut loop_scope, fname, issues);
+            }
+        }
+    }
+}
+
+/// Walk an expression, validating the operands of every Asset ID construct and
+/// recursing through compound expressions that can nest one.
+fn check_asset_id_expr(
+    expr: &Expression,
+    scope: &Scope,
+    fname: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    match expr {
+        Expression::AssetLookup {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        }
+        | Expression::AssetHas {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        } => {
+            check_asset_id_expr(index, scope, fname, issues);
+            validate_asset_id(asset_txid, asset_gidx, scope, fname, issues);
+        }
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupControlIs {
+            asset_txid,
+            asset_gidx,
+            ..
+        } => {
+            validate_asset_id(asset_txid, asset_gidx, scope, fname, issues);
+        }
+        Expression::BinaryOp { left, right, .. } | Expression::Concat { left, right, .. } => {
+            check_asset_id_expr(left, scope, fname, issues);
+            check_asset_id_expr(right, scope, fname, issues);
+        }
+        Expression::AssetAt {
+            io_index,
+            asset_index,
+            ..
+        } => {
+            check_asset_id_expr(io_index, scope, fname, issues);
+            check_asset_id_expr(asset_index, scope, fname, issues);
+        }
+        Expression::InputIntrospection { index, .. }
+        | Expression::OutputIntrospection { index, .. }
+        | Expression::AssetCount { index, .. } => {
+            check_asset_id_expr(index, scope, fname, issues);
+        }
+        _ => {}
+    }
+}
+
+/// Validate one `(asset_txid, asset_gidx)` pair.
+fn validate_asset_id(
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    scope: &Scope,
+    fname: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let txid_type = infer_type(asset_txid, scope);
+    if txid_type != ArkType::Bytes32 {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': asset id txid operand {} must be bytes32, got {}",
+            fname,
+            describe_operand(asset_txid),
+            txid_type.as_str()
+        )));
+    }
+
+    // gidx: a numeric literal is range-checked directly; anything else must
+    // resolve to Int through the scope.
+    if let Expression::Literal(lit) = asset_gidx {
+        match lit.parse::<i64>() {
+            Ok(v) if (0..=65535).contains(&v) => {}
+            Ok(v) => issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx literal {} is out of range 0..65535",
+                fname, v
+            ))),
+            Err(_) => issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx literal '{}' is not a valid integer",
+                fname, lit
+            ))),
+        }
+    } else {
+        let gidx_type = infer_type(asset_gidx, scope);
+        if gidx_type != ArkType::Int {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx operand {} must be int (0..65535), got {}",
+                fname,
+                describe_operand(asset_gidx),
+                gidx_type.as_str()
+            )));
+        }
+    }
+}
+
+fn describe_operand(expr: &Expression) -> String {
+    match expr {
+        Expression::Variable(v) => format!("'{}'", v),
+        Expression::Literal(l) => format!("'{}'", l),
+        _ => "<expr>".to_string(),
+    }
 }
 
 // ─── AST helpers ─────────────────────────────────────────────────────────────
@@ -355,14 +542,13 @@ fn walk_scope(
 }
 
 /// Check 2: the names a function's parameters and the constructor's parameters
-/// contribute to the *emitted* placeholder namespace — after array flattening,
-/// asset decomposition, and reserved generated names — must be unique. Distinct
-/// source names can still collide here (e.g. `int[] xs` vs `int xs_0`).
+/// contribute to the *emitted* placeholder namespace — after array flattening
+/// and reserved generated names — must be unique. Distinct source names can
+/// still collide here (e.g. `int[] xs` vs `int xs_0`).
 fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    let lookup_ids = crate::compiler::collect_lookup_asset_ids(contract);
-    // Constructor params expanded exactly as the emitter decomposes them.
-    let ctor_expanded =
-        crate::compiler::decompose_constructor_params(&contract.parameters, &lookup_ids);
+    // Constructor params expanded exactly as the emitter expands them
+    // (array flattening only; asset IDs are now ordinary scalar params).
+    let ctor_expanded = crate::compiler::decompose_constructor_params(&contract.parameters);
 
     for func in contract.functions.iter().filter(|f| !f.is_internal) {
         let mut seen: HashSet<String> = HashSet::new();
