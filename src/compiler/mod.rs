@@ -1475,8 +1475,8 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
         }
         (Expression::Property(prop), ">=", Expression::Property(prop2)) => {
             asm.push(format!("<{}>", prop));
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", prop2));
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
             if value == "true" {
