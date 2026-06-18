@@ -453,9 +453,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             // TODO(asset-id-struct): `.assetId` is really a two-item canonical
             // Asset ID (asset_txid, asset_gidx), NOT a single bytes32. Typed as
             // Bytes32 only as a stopgap until the composite `AssetId` struct
-            // return type lands (separate PR). See
-            // docs/superpowers/specs/2026-06-11-asset-lookup-explicit-txid-gidx-design.md
-            // ("Value side / asset_at" + "Out of scope").
+            // return type lands (separate PR).
             "assetId" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
@@ -473,8 +471,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             // TODO(asset-id-struct): `assetId` is really a two-item canonical
             // Asset ID (asset_txid, asset_gidx), not a single bytes32; typed
             // Bytes32 only as a stopgap until the composite `AssetId` struct
-            // lands, so `==` over it is unsound until then (see spec
-            // 2026-06-11-asset-lookup-explicit-txid-gidx-design.md). `metadataHash`
+            // lands, so `==` over it is unsound until then. `metadataHash`
             // is genuinely a 32-byte hash and is correct.
             "metadataHash" | "assetId" => ArkType::Bytes32,
             "isFresh" | "hasControl" => ArkType::Bool,

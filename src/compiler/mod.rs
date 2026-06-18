@@ -2028,8 +2028,7 @@ fn emit_asset_at_asm(
             // TODO(asset-id-struct): this intentionally leaves TWO stack items, so
             // `.assetId` needs a composite `AssetId` struct return type before it
             // can be destructured (.txid/.gidx) or compared safely. Deferred to a
-            // separate PR — see
-            // docs/superpowers/specs/2026-06-11-asset-lookup-explicit-txid-gidx-design.md
+            // separate PR.
             asm.push(OP_DROP.to_string());
         }
         "amount" => {
@@ -2211,8 +2210,7 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
             // TODO(asset-id-struct): like asset_at `.assetId`, this needs a composite
             // `AssetId` struct return type before it can be destructured (.txid/.gidx)
             // or compared with `==` (a single OP_EQUAL only sees the top item, the
-            // gidx). Deferred to a separate PR — see
-            // docs/superpowers/specs/2026-06-11-asset-lookup-explicit-txid-gidx-design.md
+            // gidx). Deferred to a separate PR.
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
         }
