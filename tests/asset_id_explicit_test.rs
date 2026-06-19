@@ -278,6 +278,45 @@ fn rejects_out_of_range_literal_gidx() {
 }
 
 #[test]
+fn rejects_bad_gidx_in_right_hand_comparison_operand() {
+    // The Asset ID walker must validate *both* sides of a comparison, not just
+    // the left. The left operand is a valid lookup; the malformed one (gidx
+    // 70000) is the right-hand operand.
+    let src = format!(
+        "{PREAMBLE}contract C(bytes32 fooTxid, pubkey pk) {{
+            function f(signature sig) {{
+                require(tx.inputs[0].assets.lookup(fooTxid, 5)
+                    >= tx.outputs[0].assets.lookup(fooTxid, 70000));
+                require(checkSig(sig, pk));
+            }}
+        }}"
+    );
+    let err = compile(&src)
+        .expect_err("out-of-range gidx in RHS operand must be rejected")
+        .to_string();
+    assert!(err.contains("out of range"), "unexpected error: {err}");
+}
+
+#[test]
+fn rejects_bad_gidx_in_if_condition_predicate() {
+    // A `has()` predicate nested in an `if` condition must still be validated.
+    let src = format!(
+        "{PREAMBLE}contract C(bytes32 fooTxid, pubkey pk) {{
+            function f(signature sig) {{
+                if (tx.outputs[0].assets.has(fooTxid, 70000)) {{
+                    require(checkSig(sig, pk));
+                }}
+                require(checkSig(sig, pk));
+            }}
+        }}"
+    );
+    let err = compile(&src)
+        .expect_err("out-of-range gidx in if-condition must be rejected")
+        .to_string();
+    assert!(err.contains("out of range"), "unexpected error: {err}");
+}
+
+#[test]
 fn accepts_loop_index_as_gidx() {
     // The loop index variable is statically Int, so it is a valid gidx operand.
     let src = format!(

@@ -260,30 +260,33 @@ fn walk_asset_id_stmts(
 }
 
 /// Walk an expression, validating the operands of every Asset ID construct and
-/// recursing through compound expressions that can nest one.
+/// recursing through every sub-expression that can nest one.
+///
+/// Traversal and validation are deliberately split: this function validates the
+/// Asset ID operands of the constructs that carry them, then recurses into *all*
+/// direct sub-expressions via [`child_exprs`]. Because `child_exprs` is an
+/// exhaustive match with no wildcard, any future `Expression` variant forces a
+/// decision there and can never silently bypass this validation by falling
+/// through a catch-all.
 fn check_asset_id_expr(
     expr: &Expression,
     scope: &Scope,
     fname: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    // Variant-specific Asset ID operand validation.
     match expr {
         Expression::AssetLookup {
-            index,
             asset_txid,
             asset_gidx,
             ..
         }
         | Expression::AssetHas {
-            index,
             asset_txid,
             asset_gidx,
             ..
-        } => {
-            check_asset_id_expr(index, scope, fname, issues);
-            validate_asset_id(asset_txid, asset_gidx, scope, fname, issues);
         }
-        Expression::GroupFind {
+        | Expression::GroupFind {
             asset_txid,
             asset_gidx,
         }
@@ -298,24 +301,101 @@ fn check_asset_id_expr(
         } => {
             validate_asset_id(asset_txid, asset_gidx, scope, fname, issues);
         }
-        Expression::BinaryOp { left, right, .. } | Expression::Concat { left, right, .. } => {
-            check_asset_id_expr(left, scope, fname, issues);
-            check_asset_id_expr(right, scope, fname, issues);
+        _ => {}
+    }
+
+    // Generic recursion through every sub-expression.
+    for child in child_exprs(expr) {
+        check_asset_id_expr(child, scope, fname, issues);
+    }
+}
+
+/// Return the direct sub-expressions of `expr`.
+///
+/// This is the single source of truth for expression-tree traversal in the
+/// validator. The match is intentionally exhaustive (no `_` arm): adding a new
+/// [`Expression`] variant will fail to compile here until its nested
+/// expressions — if any — are declared, guaranteeing that walkers built on top
+/// of this (e.g. [`check_asset_id_expr`]) cover every new construct.
+fn child_exprs(expr: &Expression) -> Vec<&Expression> {
+    match expr {
+        // Leaf nodes: no nested expressions.
+        Expression::Variable(_)
+        | Expression::Literal(_)
+        | Expression::Property(_)
+        | Expression::CurrentInput(_)
+        | Expression::TxIntrospection { .. }
+        | Expression::GroupProperty { .. }
+        | Expression::AssetGroupsLength
+        | Expression::ArrayLength(_)
+        | Expression::CheckSigExpr { .. }
+        | Expression::CheckSigFromStackExpr { .. }
+        | Expression::CheckSigFromStackVerify { .. } => vec![],
+
+        Expression::AssetLookup {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
         }
+        | Expression::AssetHas {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        } => vec![index, asset_txid, asset_gidx],
+        Expression::AssetCount { index, .. }
+        | Expression::InputIntrospection { index, .. }
+        | Expression::OutputIntrospection { index, .. }
+        | Expression::GroupSum { index, .. }
+        | Expression::GroupNumIO { index, .. } => vec![index],
         Expression::AssetAt {
             io_index,
             asset_index,
             ..
-        } => {
-            check_asset_id_expr(io_index, scope, fname, issues);
-            check_asset_id_expr(asset_index, scope, fname, issues);
+        } => vec![io_index, asset_index],
+        Expression::BinaryOp { left, right, .. } | Expression::Concat { left, right, .. } => {
+            vec![left, right]
         }
-        Expression::InputIntrospection { index, .. }
-        | Expression::OutputIntrospection { index, .. }
-        | Expression::AssetCount { index, .. } => {
-            check_asset_id_expr(index, scope, fname, issues);
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
         }
-        _ => {}
+        | Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => vec![asset_txid, asset_gidx],
+        Expression::GroupControlIs {
+            asset_txid,
+            asset_gidx,
+            ..
+        } => vec![asset_txid, asset_gidx],
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => vec![group_index, io_index],
+        Expression::ArrayIndex { array, index } => vec![array, index],
+        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
+        Expression::Sha256Update { context, chunk } => vec![context, chunk],
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => vec![context, last_chunk],
+        Expression::Neg64 { value }
+        | Expression::Le64ToScriptNum { value }
+        | Expression::Le32ToLe64 { value } => vec![value],
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => vec![scalar, point_p, point_q],
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => vec![point_p, tweak, point_q],
+        Expression::ContractInstance { args, .. } => args.iter().collect(),
     }
 }
 
