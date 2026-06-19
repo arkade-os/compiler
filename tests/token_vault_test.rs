@@ -175,4 +175,6 @@ fn test_token_vault_cli() {
     assert!(json_output.contains(OP_INSPECTOUTASSETLOOKUP));
     assert!(json_output.contains("tokenAssetIdTxid"));
     assert!(json_output.contains("ctrlAssetIdTxid"));
+    assert!(json_output.contains("tokenAssetIdGidx"));
+    assert!(json_output.contains("ctrlAssetIdGidx"));
 }
