@@ -263,7 +263,7 @@ asset_count_comparison = {
 // Asset has comparison: asset_has op expression
 // Handles: tx.outputs[0].assets.has(txid, gidx) == 0 (assert absent)
 asset_has_comparison = {
-    asset_has ~ binary_operator ~ (identifier | number_literal)
+    asset_has ~ comparison_operator ~ (identifier | number_literal)
 }
 
 // Asset at comparison: asset_at op expression
@@ -349,7 +349,7 @@ group_control_is = {
 
 // controlIs comparison: group.controlIs(txid, gidx) == 0 (assert absent/unequal)
 group_control_is_comparison = {
-    group_control_is ~ binary_operator ~ (identifier | number_literal)
+    group_control_is ~ comparison_operator ~ (identifier | number_literal)
 }
 
 // Group property comparison: variable.property op expression
