@@ -170,7 +170,6 @@ contract BreedCommit(
         // 2. Verify parent assets are present and valid
         let sireGroup = tx.assetGroups.find(sireIdTxid, sireIdGidx);
         let dameGroup = tx.assetGroups.find(dameIdTxid, dameIdGidx);
-        require(sireGroup != null && dameGroup != null, "Sire and Dame assets must be spent");
         require(sireGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Sire not Species-Controlled");
         require(dameGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Dame not Species-Controlled");
         require(sireGroup.metadataHash == computeKittyMetadataRoot(sireGenome, sireGenerationBE8), "Sire metadata hash mismatch");
@@ -178,7 +177,7 @@ contract BreedCommit(
 
         // 2. Verify Species Control asset is present and retained
         let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
-        require(speciesGroup != null && speciesGroup.delta == 0, "Species Control must be present and retained");
+        require(speciesGroup.delta == 0, "Species Control must be present and retained");
 
         // 3. Construct the reveal script and enforce its creation
         // The off-chain client is responsible for constructing the exact reveal script by
@@ -244,12 +243,11 @@ contract BreedReveal(
 
         // 3. Verify Species Control is present and retained (delta == 0)
         let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
-        require(speciesGroup != null && speciesGroup.delta == 0, "Species Control must be present and retained");
+        require(speciesGroup.delta == 0, "Species Control must be present and retained");
         require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not in output");
 
         // 4. Find the new Kitty's asset group
         let newKittyGroup = tx.assetGroups.find(newKittyIdTxid, newKittyIdGidx);
-        require(newKittyGroup != null, "New Kitty asset group not found");
         require(newKittyGroup.isFresh && newKittyGroup.delta == 1, "Child must be a fresh NFT");
         require(newKittyGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Child not Species-Controlled");
         let newKittyOutput = tx.outputs[kittyOutputIndex];
@@ -279,7 +277,7 @@ contract BreedReveal(
 
         // 3. Verify Species Control is retained (delta == 0)
         let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
-        require(speciesGroup != null && speciesGroup.delta == 0, "Species Control must be retained");
+        require(speciesGroup.delta == 0, "Species Control must be retained");
         require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not in output");
     }
 

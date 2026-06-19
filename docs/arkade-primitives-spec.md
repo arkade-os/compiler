@@ -105,7 +105,7 @@ contract USDT0Bridge(
 |---|---|---|---|---|
 | `csn` | 1-4 bytes | CScriptNum | Witness inputs, OP_0..16, OP_PICK | OP_PICK, OP_IF, OP_EQUAL, OP_VERIFY |
 | `u32le` | 4 bytes | Unsigned LE | OP_INSPECTLOCKTIME | OP_LE32TOLE64 |
-| `u64le` | 8 bytes | Signed LE | INSPECTASSETGROUPSUM, ADD64, asset lookup result | ADD64, GREATERTHAN64, EQUAL |
+| `u64le` | 8 bytes | Unsigned LE | INSPECTASSETGROUPSUM, ADD64, asset lookup result | ADD64, GREATERTHAN64, EQUAL |
 | `bytes32` | 32 bytes | Raw | SHA256FINALIZE, witness pushes | SHA256UPDATE, EQUAL, CHECKSIGFROMSTACK |
 | `pubkey` | 32 bytes | x-only (BIP340) | Witness, constructor literal | CHECKSIG, CHECKSIGFROMSTACK, SingleSig |
 | `signature` | 64 bytes | BIP340 Schnorr | Witness | CHECKSIG, CHECKSIGFROMSTACK |

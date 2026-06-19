@@ -12,7 +12,7 @@ These opcodes provide access to the Arkade Asset V1 packet embedded in the trans
 
 All Asset IDs are the canonical pair **`(asset_txid, asset_gidx)`** — two stack items. `asset_txid` (32 bytes) is the **issuance** transaction ID where the asset was minted. `asset_gidx` is the group index **at which the asset was issued**, a minimally encoded ScriptNum in `0..65535` (not a group's current packet position — the two coincide only for a fresh issuance).
 
-The lookup/find/control opcodes return a trailing **success flag**: `… 1` on success, `0 0` (or `empty 0 0` for control) on absence. The Arkade Script sugar consumes that flag for you — `lookup`/`find`/`controlIs` assert presence; `has`/`hasControl` expose it as a boolean.
+The lookup/find/control opcodes return a trailing **success flag**: `… 1` on success, `0 0` (or `empty 0 0` for control) on absence. The Arkade Script sugar consumes that flag for you — `lookup`/`find` assert presence; `has`/`hasControl`/`controlIs` expose it as a boolean.
 
 ### Packet & Groups
 
