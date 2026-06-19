@@ -15,34 +15,36 @@ options {
 }
 
 contract ControlledMint(
-  bytes32 tokenAssetId,
-  bytes32 ctrlAssetId,
+  bytes32 tokenAssetIdTxid,
+  int tokenAssetIdGidx,
+  bytes32 ctrlAssetIdTxid,
+  int ctrlAssetIdGidx,
   pubkey issuerPk
 ) {
   // Mint: delta > 0, control asset present and retained
   function mint(int amount, pubkey recipientPk, signature issuerSig) {
-    let tokenGroup = tx.assetGroups.find(tokenAssetId);
+    let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
     require(tokenGroup.delta == amount, "delta mismatch");
-    require(tokenGroup.control == ctrlAssetId, "wrong control");
+    require(tokenGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
 
-    let ctrlGroup = tx.assetGroups.find(ctrlAssetId);
+    let ctrlGroup = tx.assetGroups.find(ctrlAssetIdTxid, ctrlAssetIdGidx);
     require(ctrlGroup.delta == 0, "ctrl supply changed");
 
-    require(tx.outputs[0].assets.lookup(tokenAssetId) >= amount, "mint short");
+    require(tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "mint short");
     require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 
   // Burn: delta < 0, no control asset needed
   function burn(int amount, signature ownerSig, pubkey ownerPk) {
-    let tokenGroup = tx.assetGroups.find(tokenAssetId);
+    let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
     require(tokenGroup.sumInputs >= tokenGroup.sumOutputs + amount, "burn short");
     require(checkSig(ownerSig, ownerPk), "bad sig");
   }
 
   // Lock supply forever: burn the control asset
   function lockSupply(signature issuerSig) {
-    let ctrlGroup = tx.assetGroups.find(ctrlAssetId);
+    let ctrlGroup = tx.assetGroups.find(ctrlAssetIdTxid, ctrlAssetIdGidx);
     require(ctrlGroup.sumOutputs == 0, "ctrl not burned");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }

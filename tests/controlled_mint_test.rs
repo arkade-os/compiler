@@ -20,26 +20,24 @@ fn test_controlled_mint_contract() {
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"issuerPk"), "missing issuerPk");
 
-    // tokenAssetId (bytes32 used in lookups) should be decomposed into _txid + _gidx
+    // Asset IDs are authored as explicit (Txid, Gidx) param pairs.
     assert!(
-        param_names.contains(&"tokenAssetId_txid"),
-        "missing tokenAssetId_txid decomposition, got: {:?}",
+        param_names.contains(&"tokenAssetIdTxid"),
+        "missing explicit tokenAssetIdTxid, got: {:?}",
         param_names
     );
     assert!(
-        param_names.contains(&"tokenAssetId_gidx"),
-        "missing tokenAssetId_gidx decomposition"
+        param_names.contains(&"tokenAssetIdGidx"),
+        "missing explicit tokenAssetIdGidx"
     );
-
-    // ctrlAssetId should also be decomposed (used in find and lookup)
     assert!(
-        param_names.contains(&"ctrlAssetId_txid"),
-        "missing ctrlAssetId_txid decomposition, got: {:?}",
+        param_names.contains(&"ctrlAssetIdTxid"),
+        "missing explicit ctrlAssetIdTxid, got: {:?}",
         param_names
     );
     assert!(
-        param_names.contains(&"ctrlAssetId_gidx"),
-        "missing ctrlAssetId_gidx decomposition"
+        param_names.contains(&"ctrlAssetIdGidx"),
+        "missing explicit ctrlAssetIdGidx"
     );
 
     // Verify functions: 3 functions x 2 variants = 6

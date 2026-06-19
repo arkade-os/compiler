@@ -2,11 +2,11 @@
   "contractName": "NFTMint",
   "constructorInputs": [
     {
-      "name": "collectionCtrlId_txid",
+      "name": "collectionCtrlIdTxid",
       "type": "bytes32"
     },
     {
-      "name": "collectionCtrlId_gidx",
+      "name": "collectionCtrlIdGidx",
       "type": "int"
     },
     {
@@ -19,8 +19,12 @@
       "name": "mint",
       "functionInputs": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int"
         },
         {
           "name": "recipientPk",
@@ -33,9 +37,14 @@
       ],
       "witnessSchema": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32",
           "encoding": "raw-32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int",
+          "encoding": "scriptnum"
         },
         {
           "name": "recipientPk",
@@ -81,9 +90,10 @@
         }
       ],
       "asm": [
-        "<nftAssetId_txid>",
-        "<nftAssetId_gidx>",
+        "<nftAssetIdTxid>",
+        "<nftAssetIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<nftGroup>",
         "OP_INSPECTASSETGROUPASSETID",
         "OP_DROP",
@@ -103,11 +113,17 @@
         "OP_EQUAL",
         "<nftGroup>",
         "OP_INSPECTASSETGROUPCTRL",
-        "<collectionCtrlId>",
+        "OP_DROP",
+        "<collectionCtrlIdGidx>",
         "OP_EQUAL",
-        "<collectionCtrlId_txid>",
-        "<collectionCtrlId_gidx>",
+        "OP_SWAP",
+        "<collectionCtrlIdTxid>",
+        "OP_EQUAL",
+        "OP_BOOLAND",
+        "<collectionCtrlIdTxid>",
+        "<collectionCtrlIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<ctrlGroup>",
         "OP_1",
         "OP_INSPECTASSETGROUPSUM",
@@ -119,13 +135,9 @@
         "0",
         "OP_EQUAL",
         "0",
-        "<nftAssetId_txid>",
-        "<nftAssetId_gidx>",
+        "<nftAssetIdTxid>",
+        "<nftAssetIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "1",
         "OP_EQUAL",
@@ -146,8 +158,12 @@
       "name": "mint",
       "functionInputs": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int"
         },
         {
           "name": "recipientPk",
@@ -205,8 +221,12 @@
       "name": "transfer",
       "functionInputs": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int"
         },
         {
           "name": "newOwnerPk",
@@ -223,9 +243,14 @@
       ],
       "witnessSchema": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32",
           "encoding": "raw-32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int",
+          "encoding": "scriptnum"
         },
         {
           "name": "newOwnerPk",
@@ -273,9 +298,10 @@
         }
       ],
       "asm": [
-        "<nftAssetId_txid>",
-        "<nftAssetId_gidx>",
+        "<nftAssetIdTxid>",
+        "<nftAssetIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<nftGroup>",
         "OP_INSPECTASSETGROUPASSETID",
         "OP_DROP",
@@ -295,16 +321,17 @@
         "OP_EQUAL",
         "<nftGroup>",
         "OP_INSPECTASSETGROUPCTRL",
-        "<collectionCtrlId>",
+        "OP_DROP",
+        "<collectionCtrlIdGidx>",
         "OP_EQUAL",
+        "OP_SWAP",
+        "<collectionCtrlIdTxid>",
+        "OP_EQUAL",
+        "OP_BOOLAND",
         "0",
-        "<nftAssetId_txid>",
-        "<nftAssetId_gidx>",
+        "<nftAssetIdTxid>",
+        "<nftAssetIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "1",
         "OP_EQUAL",
@@ -325,8 +352,12 @@
       "name": "transfer",
       "functionInputs": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int"
         },
         {
           "name": "newOwnerPk",
@@ -400,8 +431,12 @@
       "name": "burn",
       "functionInputs": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int"
         },
         {
           "name": "ownerSig",
@@ -414,9 +449,14 @@
       ],
       "witnessSchema": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32",
           "encoding": "raw-32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int",
+          "encoding": "scriptnum"
         },
         {
           "name": "ownerSig",
@@ -450,9 +490,10 @@
         }
       ],
       "asm": [
-        "<nftAssetId_txid>",
-        "<nftAssetId_gidx>",
+        "<nftAssetIdTxid>",
+        "<nftAssetIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<nftGroup>",
         "OP_INSPECTASSETGROUPASSETID",
         "OP_DROP",
@@ -482,8 +523,12 @@
       "name": "burn",
       "functionInputs": [
         {
-          "name": "nftAssetId",
+          "name": "nftAssetIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "nftAssetIdGidx",
+          "type": "int"
         },
         {
           "name": "ownerSig",
@@ -538,17 +583,34 @@
       ]
     }
   ],
-  "source": "\noptions {\n    server = server;\n    exit = 288;\n}\n\ncontract NFTMint(\n    bytes32 collectionCtrlId,\n    pubkey issuerPk\n) {\n    function mint(bytes32 nftAssetId, pubkey recipientPk, signature issuerSig) {\n        let nftGroup = tx.assetGroups.find(nftAssetId);\n\n        require(nftGroup.isFresh == 1, \"must be fresh\");\n\n        require(nftGroup.delta == 1, \"must mint exactly 1\");\n\n        require(nftGroup.control == collectionCtrlId, \"wrong collection\");\n\n        let ctrlGroup = tx.assetGroups.find(collectionCtrlId);\n        require(ctrlGroup.delta == 0, \"control must be retained\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), \"wrong recipient\");\n\n        require(checkSig(issuerSig, issuerPk), \"bad issuer sig\");\n    }\n\n    function transfer(bytes32 nftAssetId, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetId);\n\n        require(nftGroup.isFresh == 0, \"cannot be fresh\");\n\n        require(nftGroup.delta == 0, \"must be transfer\");\n\n        require(nftGroup.control == collectionCtrlId, \"wrong collection\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), \"wrong dest\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n\n    function burn(bytes32 nftAssetId, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetId);\n\n        require(nftGroup.isFresh == 0, \"cannot burn fresh asset\");\n\n        require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, \"must burn exactly 1\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n}",
+  "source": "\noptions {\n  server = server;\n  exit = 288;\n}\n\ncontract NFTMint(\n    bytes32 collectionCtrlIdTxid,\n    int collectionCtrlIdGidx,\n    pubkey issuerPk\n) {\n    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey recipientPk, signature issuerSig) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 1, \"must be fresh\");\n\n        require(nftGroup.delta == 1, \"must mint exactly 1\");\n\n        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), \"wrong collection\");\n\n        let ctrlGroup = tx.assetGroups.find(collectionCtrlIdTxid, collectionCtrlIdGidx);\n        require(ctrlGroup.delta == 0, \"control must be retained\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), \"wrong recipient\");\n\n        require(checkSig(issuerSig, issuerPk), \"bad issuer sig\");\n    }\n\n    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 0, \"cannot be fresh\");\n\n        require(nftGroup.delta == 0, \"must be transfer\");\n\n        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), \"wrong collection\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), \"wrong dest\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n\n    function burn(bytes32 nftAssetIdTxid, int nftAssetIdGidx, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 0, \"cannot burn fresh asset\");\n\n        require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, \"must burn exactly 1\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-08T15:43:11.148171244+00:00",
+  "updatedAt": "2026-06-15T12:19:44.398758+00:00",
   "warnings": [
     "warning[type]: fn mint: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn mint: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn mint: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <ctrlGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ctrlGroup'",
+    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <ctrlGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ctrlGroup'",
+    "warning[output-invariant]: fn 'mint' (serverVariant=false): placeholder <recipientPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'recipientPk'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=false): placeholder <newOwnerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newOwnerPk'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=false): placeholder <ownerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ownerPk'",
+    "warning[output-invariant]: fn 'burn' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'burn' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'burn' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
+    "warning[output-invariant]: fn 'burn' (serverVariant=false): placeholder <ownerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ownerPk'"
   ]
 }

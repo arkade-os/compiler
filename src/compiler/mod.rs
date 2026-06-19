@@ -4,23 +4,23 @@ use crate::models::{
     WitnessElement, DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY,
+    OP_0, OP_1, OP_ADD64, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY,
     OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY,
-    OP_CHECKSIGVERIFY, OP_DIV64, OP_DROP, OP_DUP, OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF,
-    OP_EQUAL, OP_FALSE, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64,
-    OP_GREATERTHANOREQUAL, OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT,
-    OP_INPUTSEQUENCE, OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID,
-    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
-    OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
-    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN,
-    OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT,
-    OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SUB64, OP_TWEAKVERIFY, OP_TXHASH, OP_TXWEIGHT,
-    OP_VERIFY,
+    OP_CHECKSIGVERIFY, OP_DIV64, OP_DROP, OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL,
+    OP_FALSE, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
+    OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE,
+    OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTISSUANCE,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS,
+    OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP,
+    OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION,
+    OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL,
+    OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT, OP_NUMEQUAL,
+    OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SUB64, OP_SWAP, OP_TWEAKVERIFY, OP_TXHASH,
+    OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::parser;
 use crate::typechecker::{self, ArkType};
@@ -84,10 +84,13 @@ fn expression_uses_introspection(expr: &Expression) -> bool {
         Expression::InputIntrospection { .. } => true,
         Expression::OutputIntrospection { .. } => true,
         Expression::AssetLookup { .. } => true,
+        Expression::AssetHas { .. } => true,
         Expression::AssetCount { .. } => true,
         Expression::AssetAt { .. } => true,
         Expression::GroupFind { .. } => true,
+        Expression::GroupHas { .. } => true,
         Expression::GroupProperty { .. } => true,
+        Expression::GroupControlIs { .. } => true,
         Expression::AssetGroupsLength => true,
         Expression::GroupSum { .. } => true,
         Expression::GroupNumIO { .. } => true,
@@ -166,7 +169,9 @@ fn collect_pubkey_usage_in_expr(
         | Expression::CheckSigFromStackVerify { pubkey, .. } => {
             data_sigs.insert(pubkey.clone());
         }
-        Expression::AssetLookup { index, .. } | Expression::AssetCount { index, .. } => {
+        Expression::AssetLookup { index, .. }
+        | Expression::AssetHas { index, .. }
+        | Expression::AssetCount { index, .. } => {
             collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
         }
         Expression::AssetAt {
@@ -253,7 +258,9 @@ fn collect_pubkey_usage_in_expr(
         | Expression::CurrentInput(_)
         | Expression::TxIntrospection { .. }
         | Expression::GroupFind { .. }
+        | Expression::GroupHas { .. }
         | Expression::GroupProperty { .. }
+        | Expression::GroupControlIs { .. }
         | Expression::AssetGroupsLength
         | Expression::ArrayLength(_) => {}
     }
@@ -432,11 +439,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     // The Arkade operator key is always injected externally (via getInfo()).
     // It is never a constructor parameter — options.server is a boolean flag only.
 
-    // Collect asset IDs used in lookups for constructor param decomposition
-    let lookup_asset_ids = collect_lookup_asset_ids(&contract);
-
-    // Build constructor inputs with asset ID decomposition
-    let parameters = decompose_constructor_params(&contract.parameters, &lookup_asset_ids);
+    // Build constructor inputs (array params expand to indexed scalars).
+    let parameters = decompose_constructor_params(&contract.parameters);
 
     let mut json = ContractJson {
         name: contract.name.clone(),
@@ -479,95 +483,15 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     Ok(json)
 }
 
-/// Collect all asset ID parameter names used in AssetLookup expressions
-pub(crate) fn collect_lookup_asset_ids(contract: &crate::models::Contract) -> Vec<String> {
-    let mut ids = Vec::new();
-    for function in &contract.functions {
-        for stmt in &function.statements {
-            collect_asset_ids_from_statement(stmt, &mut ids);
-        }
-    }
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
-fn collect_asset_ids_from_statement(stmt: &Statement, ids: &mut Vec<String>) {
-    match stmt {
-        Statement::Require(req) => {
-            collect_asset_ids_from_requirement(req, ids);
-        }
-        Statement::IfElse {
-            condition,
-            then_body,
-            else_body,
-        } => {
-            collect_asset_ids_from_expression(condition, ids);
-            for s in then_body {
-                collect_asset_ids_from_statement(s, ids);
-            }
-            if let Some(else_stmts) = else_body {
-                for s in else_stmts {
-                    collect_asset_ids_from_statement(s, ids);
-                }
-            }
-        }
-        Statement::ForIn { body, .. } => {
-            for s in body {
-                collect_asset_ids_from_statement(s, ids);
-            }
-        }
-        Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
-            collect_asset_ids_from_expression(value, ids);
-        }
-    }
-}
-
-fn collect_asset_ids_from_requirement(req: &Requirement, ids: &mut Vec<String>) {
-    match req {
-        Requirement::Comparison { left, op: _, right } => {
-            collect_asset_ids_from_expression(left, ids);
-            collect_asset_ids_from_expression(right, ids);
-        }
-        _ => {}
-    }
-}
-
-fn collect_asset_ids_from_expression(expr: &Expression, ids: &mut Vec<String>) {
-    match expr {
-        Expression::AssetLookup { asset_id, .. } => {
-            ids.push(asset_id.clone());
-        }
-        Expression::BinaryOp { left, right, .. } => {
-            collect_asset_ids_from_expression(left, ids);
-            collect_asset_ids_from_expression(right, ids);
-        }
-        Expression::GroupFind { asset_id } => {
-            ids.push(asset_id.clone());
-        }
-        _ => {}
-    }
-}
-
-/// Decompose constructor params: bytes32 params used in asset lookups become _txid + _gidx pairs
-/// Array types (e.g., pubkey[]) are flattened to name_0, name_1, name_2, etc.
+/// Expand constructor params for emission. Array types (e.g., `pubkey[]`) are
+/// flattened to `name_0`, `name_1`, `name_2`, …; every other param passes
+/// through unchanged.
 pub(crate) fn decompose_constructor_params(
     params: &[crate::models::Parameter],
-    lookup_asset_ids: &[String],
 ) -> Vec<crate::models::Parameter> {
     let mut result = Vec::new();
     for param in params {
-        if lookup_asset_ids.contains(&param.name) && param.param_type == "bytes32" {
-            // Decompose into txid (bytes32) + gidx (int)
-            result.push(crate::models::Parameter {
-                name: format!("{}_txid", param.name),
-                param_type: "bytes32".to_string(),
-            });
-            result.push(crate::models::Parameter {
-                name: format!("{}_gidx", param.name),
-                param_type: "int".to_string(),
-            });
-        } else if param.param_type.ends_with("[]") {
+        if param.param_type.ends_with("[]") {
             // Array type: flatten to name_0, name_1, name_2, etc.
             let base_type = param.param_type.trim_end_matches("[]");
             for i in 0..DEFAULT_ARRAY_LENGTH {
@@ -825,15 +749,19 @@ fn generate_requirements(function: &Function) -> Vec<RequireStatement> {
 }
 
 fn contains_asset_lookup(expr: &Expression) -> bool {
-    matches!(expr, Expression::AssetLookup { .. })
-        || matches!(expr, Expression::BinaryOp { left, .. } if contains_asset_lookup(left))
+    matches!(
+        expr,
+        Expression::AssetLookup { .. } | Expression::AssetHas { .. }
+    ) || matches!(expr, Expression::BinaryOp { left, .. } if contains_asset_lookup(left))
 }
 
 fn contains_group_expression(expr: &Expression) -> bool {
     matches!(
         expr,
         Expression::GroupFind { .. }
+            | Expression::GroupHas { .. }
             | Expression::GroupProperty { .. }
+            | Expression::GroupControlIs { .. }
             | Expression::GroupSum { .. }
             | Expression::AssetGroupsLength
     )
@@ -1300,9 +1228,18 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetLookup {
             source,
             index,
-            asset_id,
+            asset_txid,
+            asset_gidx,
         } => {
-            emit_asset_lookup_asm(source, index, asset_id, asm);
+            emit_asset_lookup_asm(source, index, asset_txid, asset_gidx, asm);
+        }
+        Expression::AssetHas {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
         }
         Expression::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
@@ -1324,10 +1261,24 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::OutputIntrospection { index, property } => {
             emit_output_introspection_asm(index, property, asm);
         }
-        Expression::GroupFind { asset_id } => {
-            asm.push(format!("<{}_txid>", asset_id));
-            asm.push(format!("<{}_gidx>", asset_id));
-            asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_find_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_has_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupControlIs {
+            group,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
         }
         Expression::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
@@ -1575,7 +1526,23 @@ fn emit_comparison_asm(left: &Expression, op: &str, right: &Expression, asm: &mu
     if op == "==" {
         if let Expression::Literal(val) = right {
             if val == "true" {
-                // This is a dummy comparison wrapping an introspection expression
+                // Bare `tx.assetGroups.find(...)`: the find already asserts
+                // existence via its internal OP_VERIFY and leaves the resolved
+                // packet position k. k is NOT a boolean (k == 0 is a valid
+                // successful find), so drop it and leave an explicit OP_1 as the
+                // requirement's true result.
+                if let Expression::GroupFind {
+                    asset_txid,
+                    asset_gidx,
+                } = left
+                {
+                    emit_group_find_asm(asset_txid, asset_gidx, asm);
+                    asm.push(OP_DROP.to_string());
+                    asm.push(OP_1.to_string());
+                    return;
+                }
+                // Other dummy-wrapped expressions (has/controlIs/checkSig/…)
+                // already leave a boolean — emit directly.
                 emit_expression_asm(left, asm);
                 return;
             }
@@ -1638,9 +1605,18 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetLookup {
             source,
             index,
-            asset_id,
+            asset_txid,
+            asset_gidx,
         } => {
-            emit_asset_lookup_asm(source, index, asset_id, asm);
+            emit_asset_lookup_asm(source, index, asset_txid, asset_gidx, asm);
+        }
+        Expression::AssetHas {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
         }
         Expression::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
@@ -1665,11 +1641,24 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::BinaryOp { left, op, right } => {
             emit_binary_op_asm(left, op, right, asm);
         }
-        Expression::GroupFind { asset_id } => {
-            // tx.assetGroups.find(assetId) → OP_FINDASSETGROUPBYASSETID
-            asm.push(format!("<{}_txid>", asset_id));
-            asm.push(format!("<{}_gidx>", asset_id));
-            asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_find_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_has_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupControlIs {
+            group,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
         }
         Expression::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
@@ -1899,39 +1888,91 @@ fn emit_contract_instance_asm(contract_name: &str, args: &[Expression], asm: &mu
     asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
 }
 
-/// Emit assembly for an asset lookup: tx.inputs[i].assets.lookup(assetId)
+/// Push the lookup operands and the source-appropriate lookup opcode.
 ///
-/// Emits the lookup opcode followed by sentinel guard pattern.
-/// The sentinel guard verifies the result is not -1 (asset not found).
+/// Push order follows the opcode (`popAssetID` pops gidx top, then txid; then
+/// the io index `o`/`i`): index, then txid, then gidx. Stack after the opcode is
+/// `[amount, success_flag]` (flag on top).
+fn emit_asset_lookup_operands(
+    source: &AssetLookupSource,
+    index: &Expression,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    asm: &mut Vec<String>,
+) {
+    emit_expression_asm(index, asm);
+    emit_expression_asm(asset_txid, asm); // -> <fooTxid>
+    emit_expression_asm(asset_gidx, asm); // -> <fooGidx> or pushed literal
+    match source {
+        AssetLookupSource::Input => asm.push(OP_INSPECTINASSETLOOKUP.to_string()),
+        AssetLookupSource::Output => asm.push(OP_INSPECTOUTASSETLOOKUP.to_string()),
+    }
+}
+
+/// Emit `tx.{inputs,outputs}[i].assets.lookup(txid, gidx)`: assert the asset is
+/// present (consume the success flag with OP_VERIFY) and leave the typed amount.
 fn emit_asset_lookup_asm(
     source: &AssetLookupSource,
     index: &Expression,
-    asset_id: &str,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
     asm: &mut Vec<String>,
 ) {
-    // Push the index
-    emit_expression_asm(index, asm);
+    emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
+    asm.push(OP_VERIFY.to_string()); // consume success flag, leave amount
+}
 
-    // Push decomposed asset ID (txid + gidx)
-    asm.push(format!("<{}_txid>", asset_id));
-    asm.push(format!("<{}_gidx>", asset_id));
+/// Emit `tx.{inputs,outputs}[i].assets.has(txid, gidx)`: boolean presence —
+/// keep the success flag, drop the amount below it with OP_NIP.
+fn emit_asset_has_asm(
+    source: &AssetLookupSource,
+    index: &Expression,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    asm: &mut Vec<String>,
+) {
+    emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
+    asm.push(OP_NIP.to_string()); // drop amount, leave success flag (Bool)
+}
 
-    // Emit the appropriate lookup opcode
-    match source {
-        AssetLookupSource::Input => {
-            asm.push(OP_INSPECTINASSETLOOKUP.to_string());
-        }
-        AssetLookupSource::Output => {
-            asm.push(OP_INSPECTOUTASSETLOOKUP.to_string());
-        }
-    }
+/// Emit `tx.assetGroups.find(txid, gidx)`: assert existence (consume the success
+/// flag with OP_VERIFY) and leave the resolved packet position k.
+fn emit_group_find_asm(asset_txid: &Expression, asset_gidx: &Expression, asm: &mut Vec<String>) {
+    emit_expression_asm(asset_txid, asm);
+    emit_expression_asm(asset_gidx, asm);
+    asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+    asm.push(OP_VERIFY.to_string()); // consume success flag, leave k; fail if absent
+}
 
-    // Sentinel guard: verify result is not -1 (asset not found)
-    asm.push(OP_DUP.to_string());
-    asm.push(OP_1NEGATE.to_string());
-    asm.push(OP_EQUAL.to_string());
-    asm.push(OP_NOT.to_string());
-    asm.push(OP_VERIFY.to_string());
+/// Emit `tx.assetGroups.has(txid, gidx)`: boolean presence — keep the success
+/// flag, drop the resolved position k below it with OP_NIP.
+fn emit_group_has_asm(asset_txid: &Expression, asset_gidx: &Expression, asm: &mut Vec<String>) {
+    emit_expression_asm(asset_txid, asm);
+    emit_expression_asm(asset_gidx, asm);
+    asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+    asm.push(OP_NIP.to_string()); // drop k, leave success flag (Bool)
+}
+
+/// Emit `group.controlIs(txid, gidx)`: boolean equality over the complete
+/// canonical control Asset ID. Stack after OP_INSPECTASSETGROUPCTRL is
+/// `[ctrl_txid, ctrl_gidx, flag]`; drop the flag, compare gidx then txid (no
+/// OP_EQUALVERIFY), and AND the two booleans. The absent tuple
+/// `[empty_bytes, 0, 0]` cannot equal a valid bytes32 txid, so absence is false.
+fn emit_group_control_is_asm(
+    group: &str,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    asm: &mut Vec<String>,
+) {
+    asm.push(format!("<{}>", group));
+    asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
+    asm.push(OP_DROP.to_string()); // drop success flag -> [ctrl_txid, ctrl_gidx]
+    emit_expression_asm(asset_gidx, asm);
+    asm.push(OP_EQUAL.to_string()); // ctrl_gidx == gidx -> [ctrl_txid, bool]
+    asm.push(OP_SWAP.to_string()); // -> [bool, ctrl_txid]
+    emit_expression_asm(asset_txid, asm);
+    asm.push(OP_EQUAL.to_string()); // ctrl_txid == txid -> [bool, bool]
+    asm.push(OP_BOOLAND.to_string()); // combine -> Bool
 }
 
 /// Emit assembly for asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -1983,7 +2024,11 @@ fn emit_asset_at_asm(
     // Extract based on property
     match property {
         "assetId" => {
-            // Drop the amount, keep txid32 and gidx_u16
+            // Drop the amount, keep the canonical Asset ID (asset_txid, asset_gidx).
+            // TODO(asset-id-struct): this intentionally leaves TWO stack items, so
+            // `.assetId` needs a composite `AssetId` struct return type before it
+            // can be destructured (.txid/.gidx) or compared safely. Deferred to a
+            // separate PR.
             asm.push(OP_DROP.to_string());
         }
         "amount" => {
@@ -2148,16 +2193,24 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
             asm.push(OP_SUB64.to_string());
             asm.push(OP_VERIFY.to_string());
         }
-        "control" => {
+        "hasControl" => {
+            // group.hasControl: presence only.
+            // [ctrl_txid, ctrl_gidx, flag] -> OP_NIP OP_NIP -> flag (Bool)
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
+            asm.push(OP_NIP.to_string());
+            asm.push(OP_NIP.to_string());
         }
         "metadataHash" => {
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string());
         }
         "assetId" => {
-            // Returns (txid32, gidx_u16) tuple on stack
+            // Returns the canonical Asset ID (asset_txid, asset_gidx) — TWO stack items.
+            // TODO(asset-id-struct): like asset_at `.assetId`, this needs a composite
+            // `AssetId` struct return type before it can be destructured (.txid/.gidx)
+            // or compared with `==` (a single OP_EQUAL only sees the top item, the
+            // gidx). Deferred to a separate PR.
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
         }
@@ -2520,6 +2573,82 @@ fn substitute_expression(
                 .iter()
                 .map(|a| substitute_expression(a, index_var, value_var, k, array_name))
                 .collect(),
+        },
+        // Asset lookups/has: substitute the io index and both Asset ID operands
+        // (e.g. `tx.outputs[i].assets.lookup(assetTxid, i)` unrolls i -> 0,1,2…).
+        Expression::AssetLookup {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => Expression::AssetLookup {
+            source: source.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::AssetHas {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => Expression::AssetHas {
+            source: source.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        } => Expression::GroupFind {
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => Expression::GroupHas {
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupControlIs {
+            group,
+            asset_txid,
+            asset_gidx,
+        } => Expression::GroupControlIs {
+            // Replace the group name with the loop index when iterating groups.
+            group: if group == value_var {
+                k.to_string()
+            } else {
+                group.clone()
+            },
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
         },
         // All other expressions are returned as-is
         _ => expr.clone(),

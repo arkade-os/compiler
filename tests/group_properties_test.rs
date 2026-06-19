@@ -14,10 +14,10 @@ fn test_group_asset_id_basic() {
             exit = 144;
         }
 
-        contract AssetIdTest(pubkey serverKey, bytes32 tokenAssetId, bytes32 expectedAssetId) {
+        contract AssetIdTest(pubkey serverKey, bytes32 tokenAssetIdTxid, int tokenAssetIdGidx, bytes32 expectedAssetId) {
             function checkAssetId(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let tokenGroup = tx.assetGroups.find(tokenAssetId);
+                let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
                 require(tokenGroup.assetId == expectedAssetId, "asset id mismatch");
             }
         }
@@ -55,10 +55,10 @@ fn test_group_is_fresh_basic() {
             exit = 144;
         }
 
-        contract FreshAssetTest(pubkey serverKey, bytes32 newAssetId) {
+        contract FreshAssetTest(pubkey serverKey, bytes32 newAssetIdTxid, int newAssetIdGidx) {
             function verifyFresh(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(newAssetId);
+                let group = tx.assetGroups.find(newAssetIdTxid, newAssetIdGidx);
                 require(group.isFresh == 1, "must be fresh");
             }
         }
@@ -105,13 +105,13 @@ fn test_is_fresh_with_delta_combo() {
             exit = 144;
         }
 
-        contract NFTMintTest(pubkey serverKey, bytes32 nftAssetId, bytes32 ctrlAssetId) {
+        contract NFTMintTest(pubkey serverKey, bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx) {
             function mintNFT(signature issuerSig, pubkey issuer) {
                 require(checkSig(issuerSig, issuer));
-                let nftGroup = tx.assetGroups.find(nftAssetId);
+                let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
                 require(nftGroup.isFresh == 1, "must be new asset");
                 require(nftGroup.delta == 1, "must mint exactly 1");
-                require(nftGroup.control == ctrlAssetId, "wrong control");
+                require(nftGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
             }
         }
     "#;
@@ -161,10 +161,10 @@ fn test_is_fresh_zero_for_existing_asset() {
             exit = 144;
         }
 
-        contract ExistingAssetTest(pubkey serverKey, bytes32 assetId) {
+        contract ExistingAssetTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
             function transferExisting(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(assetId);
+                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
                 require(group.isFresh == 0, "must be existing asset");
                 require(group.delta == 0, "must be transfer only");
             }
@@ -205,10 +205,10 @@ fn test_group_metadata_hash() {
             exit = 144;
         }
 
-        contract MetadataTest(pubkey serverKey, bytes32 assetId, bytes32 expectedHash) {
+        contract MetadataTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx, bytes32 expectedHash) {
             function verifyMetadata(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(assetId);
+                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
                 require(group.metadataHash == expectedHash, "metadata mismatch");
             }
         }
@@ -244,18 +244,18 @@ fn test_all_group_properties() {
 
         contract AllPropertiesTest(
             pubkey serverKey,
-            bytes32 assetId,
-            bytes32 ctrlAssetId,
+            bytes32 assetIdTxid, int assetIdGidx,
+            bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
             bytes32 expectedMetadata
         ) {
             function fullCheck(signature sig, pubkey pk, int expectedDelta) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetId);
+                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
 
                 // Test all group properties
                 require(group.isFresh == 1, "not fresh");
                 require(group.delta == expectedDelta, "wrong delta");
-                require(group.control == ctrlAssetId, "wrong control");
+                require(group.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
                 require(group.metadataHash == expectedMetadata, "wrong metadata");
                 require(group.sumOutputs >= group.sumInputs, "outputs < inputs");
             }
@@ -321,10 +321,10 @@ fn test_group_num_inputs() {
             exit = 144;
         }
 
-        contract NumInputsTest(pubkey serverKey, bytes32 assetId) {
+        contract NumInputsTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
             function checkInputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetId);
+                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
                 require(group.numInputs >= 1, "need at least one input");
             }
         }
@@ -364,10 +364,10 @@ fn test_group_num_outputs() {
             exit = 144;
         }
 
-        contract NumOutputsTest(pubkey serverKey, bytes32 assetId) {
+        contract NumOutputsTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
             function checkOutputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetId);
+                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
                 require(group.numOutputs >= 2, "need at least two outputs");
             }
         }
@@ -407,10 +407,10 @@ fn test_group_num_io_together() {
             exit = 144;
         }
 
-        contract NumIOTest(pubkey serverKey, bytes32 assetId) {
+        contract NumIOTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
             function checkCounts(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetId);
+                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
                 require(group.numInputs >= 1, "need inputs");
                 require(group.numOutputs >= 1, "need outputs");
                 require(group.numOutputs >= group.numInputs, "outputs must be >= inputs");

@@ -16,13 +16,13 @@ options {
 }
 
 contract PriceBeacon(
-  bytes32 ctrlAssetId,
+  bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
   pubkey oraclePk,
   pubkey oracleServerPk,
   int numGroups
 ) {
   function passthrough() {
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetId, oraclePk, oracleServerPk, numGroups), "broken");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, oracleServerPk, numGroups), "broken");
 
     for (k, group) in tx.assetGroups {
       require(group.sumOutputs >= group.sumInputs, "drained");
@@ -30,8 +30,8 @@ contract PriceBeacon(
   }
 
   function update(signature oracleSig) {
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetId, oraclePk, oracleServerPk, numGroups), "broken");
+    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, oracleServerPk, numGroups), "broken");
     require(checkSig(oracleSig, oraclePk), "bad sig");
   }
 }
@@ -49,8 +49,8 @@ options {
 }
 
 contract PriceBeacon(
-  bytes32 ticker,
-  bytes32 clock,
+  bytes32 tickerTxid, int tickerGidx,
+  bytes32 clockTxid, int clockGidx,
   pubkey  oraclePk,
   int     exit
 ) {
@@ -58,38 +58,38 @@ contract PriceBeacon(
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
     require(newPrice > 0, "price must be positive");
 
-    int currentHeight = tx.inputs[0].assets.lookup(clock);
+    int currentHeight = tx.inputs[0].assets.lookup(clockTxid, clockGidx);
     require(newBlockHeight >= currentHeight, "block height must not regress");
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
       "beacon script must survive"
     );
     require(
-      tx.outputs[0].assets.lookup(ticker) == newPrice,
+      tx.outputs[0].assets.lookup(tickerTxid, tickerGidx) == newPrice,
       "price not updated correctly"
     );
     require(
-      tx.outputs[0].assets.lookup(clock) == newBlockHeight,
+      tx.outputs[0].assets.lookup(clockTxid, clockGidx) == newBlockHeight,
       "block height not updated correctly"
     );
   }
 
   function passthrough() {
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
       "beacon script must survive"
     );
 
-    int currentPrice = tx.inputs[0].assets.lookup(ticker);
+    int currentPrice = tx.inputs[0].assets.lookup(tickerTxid, tickerGidx);
     require(
-      tx.outputs[0].assets.lookup(ticker) >= currentPrice,
+      tx.outputs[0].assets.lookup(tickerTxid, tickerGidx) >= currentPrice,
       "price asset must survive"
     );
 
-    int currentHeight = tx.inputs[0].assets.lookup(clock);
+    int currentHeight = tx.inputs[0].assets.lookup(clockTxid, clockGidx);
     require(
-      tx.outputs[0].assets.lookup(clock) >= currentHeight,
+      tx.outputs[0].assets.lookup(clockTxid, clockGidx) >= currentHeight,
       "clock asset must survive"
     );
   }
@@ -97,19 +97,19 @@ contract PriceBeacon(
   function migrate(signature oracleSig, pubkey newOraclePk) {
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
 
-    int currentPrice  = tx.inputs[0].assets.lookup(ticker);
-    int currentHeight = tx.inputs[0].assets.lookup(clock);
+    int currentPrice  = tx.inputs[0].assets.lookup(tickerTxid, tickerGidx);
+    int currentHeight = tx.inputs[0].assets.lookup(clockTxid, clockGidx);
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, newOraclePk, exit),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, newOraclePk, exit),
       "invalid new beacon"
     );
     require(
-      tx.outputs[0].assets.lookup(ticker) == currentPrice,
+      tx.outputs[0].assets.lookup(tickerTxid, tickerGidx) == currentPrice,
       "price must be preserved"
     );
     require(
-      tx.outputs[0].assets.lookup(clock) == currentHeight,
+      tx.outputs[0].assets.lookup(clockTxid, clockGidx) == currentHeight,
       "block height must be preserved"
     );
   }

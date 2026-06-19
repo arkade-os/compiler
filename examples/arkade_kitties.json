@@ -2,11 +2,11 @@
   "contractName": "ArkadeKitties",
   "constructorInputs": [
     {
-      "name": "speciesControlId_txid",
+      "name": "speciesControlIdTxid",
       "type": "bytes32"
     },
     {
-      "name": "speciesControlId_gidx",
+      "name": "speciesControlIdGidx",
       "type": "int"
     },
     {
@@ -19,16 +19,28 @@
       "name": "breed",
       "functionInputs": [
         {
-          "name": "sireId",
+          "name": "sireIdTxid",
           "type": "bytes32"
         },
         {
-          "name": "dameId",
+          "name": "sireIdGidx",
+          "type": "int"
+        },
+        {
+          "name": "dameIdTxid",
           "type": "bytes32"
         },
         {
-          "name": "childId",
+          "name": "dameIdGidx",
+          "type": "int"
+        },
+        {
+          "name": "childIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "childIdGidx",
+          "type": "int"
         },
         {
           "name": "sireGenomeHash",
@@ -65,19 +77,34 @@
       ],
       "witnessSchema": [
         {
-          "name": "sireId",
+          "name": "sireIdTxid",
           "type": "bytes32",
           "encoding": "raw-32"
         },
         {
-          "name": "dameId",
+          "name": "sireIdGidx",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "dameIdTxid",
           "type": "bytes32",
           "encoding": "raw-32"
         },
         {
-          "name": "childId",
+          "name": "dameIdGidx",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "childIdTxid",
           "type": "bytes32",
           "encoding": "raw-32"
+        },
+        {
+          "name": "childIdGidx",
+          "type": "int",
+          "encoding": "scriptnum"
         },
         {
           "name": "sireGenomeHash",
@@ -180,13 +207,19 @@
         }
       ],
       "asm": [
-        "<sireId_txid>",
-        "<sireId_gidx>",
+        "<sireIdTxid>",
+        "<sireIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<sireGroup>",
         "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
+        "OP_DROP",
+        "<speciesControlIdGidx>",
         "OP_EQUAL",
+        "OP_SWAP",
+        "<speciesControlIdTxid>",
+        "OP_EQUAL",
+        "OP_BOOLAND",
         "<sireGroup>",
         "OP_INSPECTASSETGROUPMETADATAHASH",
         "<sireGenomeHash>",
@@ -201,13 +234,19 @@
         "OP_VERIFY",
         "0",
         "OP_EQUAL",
-        "<dameId_txid>",
-        "<dameId_gidx>",
+        "<dameIdTxid>",
+        "<dameIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<dameGroup>",
         "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
+        "OP_DROP",
+        "<speciesControlIdGidx>",
         "OP_EQUAL",
+        "OP_SWAP",
+        "<speciesControlIdTxid>",
+        "OP_EQUAL",
+        "OP_BOOLAND",
         "<dameGroup>",
         "OP_INSPECTASSETGROUPMETADATAHASH",
         "<dameGenomeHash>",
@@ -222,9 +261,10 @@
         "OP_VERIFY",
         "0",
         "OP_EQUAL",
-        "<childId_txid>",
-        "<childId_gidx>",
+        "<childIdTxid>",
+        "<childIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<childGroup>",
         "OP_INSPECTASSETGROUPASSETID",
         "OP_DROP",
@@ -244,15 +284,21 @@
         "OP_EQUAL",
         "<childGroup>",
         "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
+        "OP_DROP",
+        "<speciesControlIdGidx>",
         "OP_EQUAL",
+        "OP_SWAP",
+        "<speciesControlIdTxid>",
+        "OP_EQUAL",
+        "OP_BOOLAND",
         "<childGroup>",
         "OP_INSPECTASSETGROUPMETADATAHASH",
         "<expectedChildMetadataHash>",
         "OP_EQUAL",
-        "<speciesControlId_txid>",
-        "<speciesControlId_gidx>",
+        "<speciesControlIdTxid>",
+        "<speciesControlIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<ctrlGroup>",
         "OP_1",
         "OP_INSPECTASSETGROUPSUM",
@@ -267,49 +313,33 @@
         "<oracleSig>",
         "OP_CHECKSIG",
         "<childOutputIdx>",
-        "<childId_txid>",
-        "<childId_gidx>",
+        "<childIdTxid>",
+        "<childIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "1",
         "OP_EQUAL",
         "OP_VERIFY",
         "<sireOutputIdx>",
-        "<sireId_txid>",
-        "<sireId_gidx>",
+        "<sireIdTxid>",
+        "<sireIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "1",
         "OP_EQUAL",
         "OP_VERIFY",
         "<dameOutputIdx>",
-        "<dameId_txid>",
-        "<dameId_gidx>",
+        "<dameIdTxid>",
+        "<dameIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "1",
         "OP_EQUAL",
         "OP_VERIFY",
         "<ctrlOutputIdx>",
-        "<speciesControlId_txid>",
-        "<speciesControlId_gidx>",
+        "<speciesControlIdTxid>",
+        "<speciesControlIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "1",
         "OP_EQUAL",
@@ -323,16 +353,28 @@
       "name": "breed",
       "functionInputs": [
         {
-          "name": "sireId",
+          "name": "sireIdTxid",
           "type": "bytes32"
         },
         {
-          "name": "dameId",
+          "name": "sireIdGidx",
+          "type": "int"
+        },
+        {
+          "name": "dameIdTxid",
           "type": "bytes32"
         },
         {
-          "name": "childId",
+          "name": "dameIdGidx",
+          "type": "int"
+        },
+        {
+          "name": "childIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "childIdGidx",
+          "type": "int"
         },
         {
           "name": "sireGenomeHash",
@@ -402,8 +444,12 @@
       "name": "transfer",
       "functionInputs": [
         {
-          "name": "kittyId",
+          "name": "kittyIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "kittyIdGidx",
+          "type": "int"
         },
         {
           "name": "newOwnerPk",
@@ -420,9 +466,14 @@
       ],
       "witnessSchema": [
         {
-          "name": "kittyId",
+          "name": "kittyIdTxid",
           "type": "bytes32",
           "encoding": "raw-32"
+        },
+        {
+          "name": "kittyIdGidx",
+          "type": "int",
+          "encoding": "scriptnum"
         },
         {
           "name": "newOwnerPk",
@@ -470,9 +521,10 @@
         }
       ],
       "asm": [
-        "<kittyId_txid>",
-        "<kittyId_gidx>",
+        "<kittyIdTxid>",
+        "<kittyIdGidx>",
         "OP_FINDASSETGROUPBYASSETID",
+        "OP_VERIFY",
         "<kittyGroup>",
         "OP_INSPECTASSETGROUPASSETID",
         "OP_DROP",
@@ -482,8 +534,13 @@
         "OP_EQUAL",
         "<kittyGroup>",
         "OP_INSPECTASSETGROUPCTRL",
-        "<speciesControlId>",
+        "OP_DROP",
+        "<speciesControlIdGidx>",
         "OP_EQUAL",
+        "OP_SWAP",
+        "<speciesControlIdTxid>",
+        "OP_EQUAL",
+        "OP_BOOLAND",
         "<kittyGroup>",
         "OP_1",
         "OP_INSPECTASSETGROUPSUM",
@@ -495,13 +552,9 @@
         "0",
         "OP_EQUAL",
         "0",
-        "<kittyId_txid>",
-        "<kittyId_gidx>",
+        "<kittyIdTxid>",
+        "<kittyIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "1",
         "OP_EQUAL",
@@ -522,8 +575,12 @@
       "name": "transfer",
       "functionInputs": [
         {
-          "name": "kittyId",
+          "name": "kittyIdTxid",
           "type": "bytes32"
+        },
+        {
+          "name": "kittyIdGidx",
+          "type": "int"
         },
         {
           "name": "newOwnerPk",
@@ -594,12 +651,12 @@
       ]
     }
   ],
-  "source": "\noptions {\n    server = server;\n    exit = 576;\n}\n\ncontract ArkadeKitties(\n    bytes32 speciesControlId,\n    pubkey oraclePk\n) {\n    function breed(\n        bytes32 sireId,\n        bytes32 dameId,\n        bytes32 childId,\n        bytes32 sireGenomeHash,\n        bytes32 dameGenomeHash,\n        bytes32 expectedChildMetadataHash,\n        signature oracleSig,\n        int childOutputIdx,\n        int sireOutputIdx,\n        int dameOutputIdx,\n        int ctrlOutputIdx\n    ) {\n        let sireGroup = tx.assetGroups.find(sireId);\n        require(sireGroup.control == speciesControlId, \"sire not species-controlled\");\n        require(sireGroup.metadataHash == sireGenomeHash, \"sire genome mismatch\");\n        require(sireGroup.delta == 0, \"sire must be retained\");\n\n        let dameGroup = tx.assetGroups.find(dameId);\n        require(dameGroup.control == speciesControlId, \"dame not species-controlled\");\n        require(dameGroup.metadataHash == dameGenomeHash, \"dame genome mismatch\");\n        require(dameGroup.delta == 0, \"dame must be retained\");\n\n        let childGroup = tx.assetGroups.find(childId);\n        require(childGroup.isFresh == 1, \"child must be fresh\");\n        require(childGroup.delta == 1, \"must mint exactly 1 child\");\n        require(childGroup.control == speciesControlId, \"child not species-controlled\");\n        require(childGroup.metadataHash == expectedChildMetadataHash, \"child genome mismatch\");\n\n        let ctrlGroup = tx.assetGroups.find(speciesControlId);\n        require(ctrlGroup.delta == 0, \"species control must be retained\");\n\n        require(checkSig(oracleSig, oraclePk), \"invalid oracle sig\");\n\n        require(tx.outputs[childOutputIdx].assets.lookup(childId) == 1, \"child not in output\");\n        require(tx.outputs[sireOutputIdx].assets.lookup(sireId) == 1, \"sire not returned\");\n        require(tx.outputs[dameOutputIdx].assets.lookup(dameId) == 1, \"dame not returned\");\n        require(tx.outputs[ctrlOutputIdx].assets.lookup(speciesControlId) == 1, \"ctrl not retained\");\n    }\n\n    function transfer(bytes32 kittyId, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let kittyGroup = tx.assetGroups.find(kittyId);\n\n        require(kittyGroup.isFresh == 0, \"must be existing kitty\");\n\n        require(kittyGroup.control == speciesControlId, \"not species-controlled\");\n\n        require(kittyGroup.delta == 0, \"must be transfer only\");\n\n        require(tx.outputs[0].assets.lookup(kittyId) == 1, \"kitty not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), \"wrong destination\");\n        require(checkSig(ownerSig, ownerPk), \"invalid owner sig\");\n    }\n}",
+  "source": "\noptions {\n    server = server;\n    exit = 576;\n}\n\ncontract ArkadeKitties(\n    bytes32 speciesControlIdTxid,\n    int speciesControlIdGidx,\n    pubkey oraclePk\n) {\n    function breed(\n        bytes32 sireIdTxid,\n        int sireIdGidx,\n        bytes32 dameIdTxid,\n        int dameIdGidx,\n        bytes32 childIdTxid,\n        int childIdGidx,\n        bytes32 sireGenomeHash,\n        bytes32 dameGenomeHash,\n        bytes32 expectedChildMetadataHash,\n        signature oracleSig,\n        int childOutputIdx,\n        int sireOutputIdx,\n        int dameOutputIdx,\n        int ctrlOutputIdx\n    ) {\n        let sireGroup = tx.assetGroups.find(sireIdTxid, sireIdGidx);\n        require(sireGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), \"sire not species-controlled\");\n        require(sireGroup.metadataHash == sireGenomeHash, \"sire genome mismatch\");\n        require(sireGroup.delta == 0, \"sire must be retained\");\n\n        let dameGroup = tx.assetGroups.find(dameIdTxid, dameIdGidx);\n        require(dameGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), \"dame not species-controlled\");\n        require(dameGroup.metadataHash == dameGenomeHash, \"dame genome mismatch\");\n        require(dameGroup.delta == 0, \"dame must be retained\");\n\n        let childGroup = tx.assetGroups.find(childIdTxid, childIdGidx);\n        require(childGroup.isFresh == 1, \"child must be fresh\");\n        require(childGroup.delta == 1, \"must mint exactly 1 child\");\n        require(childGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), \"child not species-controlled\");\n        require(childGroup.metadataHash == expectedChildMetadataHash, \"child genome mismatch\");\n\n        let ctrlGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);\n        require(ctrlGroup.delta == 0, \"species control must be retained\");\n\n        require(checkSig(oracleSig, oraclePk), \"invalid oracle sig\");\n\n        require(tx.outputs[childOutputIdx].assets.lookup(childIdTxid, childIdGidx) == 1, \"child not in output\");\n        require(tx.outputs[sireOutputIdx].assets.lookup(sireIdTxid, sireIdGidx) == 1, \"sire not returned\");\n        require(tx.outputs[dameOutputIdx].assets.lookup(dameIdTxid, dameIdGidx) == 1, \"dame not returned\");\n        require(tx.outputs[ctrlOutputIdx].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, \"ctrl not retained\");\n    }\n\n    function transfer(bytes32 kittyIdTxid, int kittyIdGidx, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let kittyGroup = tx.assetGroups.find(kittyIdTxid, kittyIdGidx);\n\n        require(kittyGroup.isFresh == 0, \"must be existing kitty\");\n\n        require(kittyGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), \"not species-controlled\");\n\n        require(kittyGroup.delta == 0, \"must be transfer only\");\n\n        require(tx.outputs[0].assets.lookup(kittyIdTxid, kittyIdGidx) == 1, \"kitty not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), \"wrong destination\");\n        require(checkSig(ownerSig, ownerPk), \"invalid owner sig\");\n    }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-08T15:43:10.958175096+00:00",
+  "updatedAt": "2026-06-15T12:19:43.981980+00:00",
   "warnings": [
     "warning[type]: fn breed: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn breed: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
@@ -610,6 +667,27 @@
     "warning[type]: fn breed: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn breed: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <sireGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'sireGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <sireGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'sireGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <sireGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'sireGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <sireGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'sireGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <dameGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'dameGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <dameGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'dameGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <dameGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'dameGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <dameGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'dameGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <childGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'childGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <childGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'childGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <childGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'childGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <childGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'childGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <childGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'childGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <ctrlGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ctrlGroup'",
+    "warning[output-invariant]: fn 'breed' (serverVariant=true): placeholder <ctrlGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ctrlGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <kittyGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'kittyGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <kittyGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'kittyGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <kittyGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'kittyGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <kittyGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'kittyGroup'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=false): placeholder <newOwnerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newOwnerPk'",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=false): placeholder <ownerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ownerPk'"
   ]
 }

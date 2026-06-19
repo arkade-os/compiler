@@ -6,11 +6,11 @@
       "type": "pubkey"
     },
     {
-      "name": "offerAssetId_txid",
+      "name": "offerAssetIdTxid",
       "type": "bytes32"
     },
     {
-      "name": "offerAssetId_gidx",
+      "name": "offerAssetIdGidx",
       "type": "int"
     },
     {
@@ -18,11 +18,11 @@
       "type": "int"
     },
     {
-      "name": "wantAssetId_txid",
+      "name": "wantAssetIdTxid",
       "type": "bytes32"
     },
     {
-      "name": "wantAssetId_gidx",
+      "name": "wantAssetIdGidx",
       "type": "int"
     },
     {
@@ -90,13 +90,9 @@
         "<takerSig>",
         "OP_CHECKSIG",
         "0",
-        "<wantAssetId_txid>",
-        "<wantAssetId_gidx>",
+        "<wantAssetIdTxid>",
+        "<wantAssetIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "<wantAmount>",
         "OP_GREATERTHANOREQUAL64",
@@ -106,13 +102,9 @@
         "<VTXO:SingleSig(<makerPk>)>",
         "OP_EQUAL",
         "1",
-        "<offerAssetId_txid>",
-        "<offerAssetId_gidx>",
+        "<offerAssetIdTxid>",
+        "<offerAssetIdGidx>",
         "OP_INSPECTOUTASSETLOOKUP",
-        "OP_DUP",
-        "OP_1NEGATE",
-        "OP_EQUAL",
-        "OP_NOT",
         "OP_VERIFY",
         "<offerAmount>",
         "OP_GREATERTHANOREQUAL64",
@@ -268,14 +260,15 @@
       ]
     }
   ],
-  "source": "\noptions {\n  server = server;\n  exit = 144;\n}\n\ncontract NonInteractiveSwap(\n  pubkey makerPk,\n  bytes32 offerAssetId,\n  int offerAmount,\n  bytes32 wantAssetId,\n  int wantAmount,\n  int expirationTime\n) {\n  function swap(pubkey takerPk, signature takerSig) {\n    require(checkSig(takerSig, takerPk), \"invalid taker signature\");\n\n    require(\n      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,\n      \"insufficient want asset for maker\"\n    );\n    require(\n      tx.outputs[0].scriptPubKey == new SingleSig(makerPk),\n      \"output 0 not spendable by maker\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,\n      \"insufficient offer asset for taker\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new SingleSig(takerPk),\n      \"output 1 not spendable by taker\"\n    );\n  }\n\n  function cancel(signature makerSig) {\n    require(tx.time >= expirationTime, \"swap not expired\");\n    require(checkSig(makerSig, makerPk), \"invalid maker signature\");\n  }\n}",
+  "source": "\noptions {\n  server = server;\n  exit = 144;\n}\n\ncontract NonInteractiveSwap(\n  pubkey makerPk,\n  bytes32 offerAssetIdTxid,\n  int offerAssetIdGidx,\n  int offerAmount,\n  bytes32 wantAssetIdTxid,\n  int wantAssetIdGidx,\n  int wantAmount,\n  int expirationTime\n) {\n  function swap(pubkey takerPk, signature takerSig) {\n    require(checkSig(takerSig, takerPk), \"invalid taker signature\");\n\n    require(\n      tx.outputs[0].assets.lookup(wantAssetIdTxid, wantAssetIdGidx) >= wantAmount,\n      \"insufficient want asset for maker\"\n    );\n    require(\n      tx.outputs[0].scriptPubKey == new SingleSig(makerPk),\n      \"output 0 not spendable by maker\"\n    );\n\n    require(\n      tx.outputs[1].assets.lookup(offerAssetIdTxid, offerAssetIdGidx) >= offerAmount,\n      \"insufficient offer asset for taker\"\n    );\n    require(\n      tx.outputs[1].scriptPubKey == new SingleSig(takerPk),\n      \"output 1 not spendable by taker\"\n    );\n  }\n\n  function cancel(signature makerSig) {\n    require(tx.time >= expirationTime, \"swap not expired\");\n    require(checkSig(makerSig, makerPk), \"invalid maker signature\");\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-08T15:43:11.207072223+00:00",
+  "updatedAt": "2026-06-15T12:19:43.984220+00:00",
   "warnings": [
     "warning[type]: fn swap: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn swap: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn swap: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'swap' (serverVariant=false): placeholder <takerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'takerPk'"
   ]
 }

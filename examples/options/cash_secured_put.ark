@@ -44,7 +44,8 @@ options {
 contract CashSecuredPut(
   pubkey  sellerPk,         // option writer; locks the stable
   pubkey  buyerPk,          // option holder
-  bytes32 stableAssetId,    // USDT / USDC asset id
+  bytes32 stableAssetIdTxid, // USDT / USDC asset id (issuance txid)
+  int     stableAssetIdGidx, // USDT / USDC asset id (issuance group index)
   int     stableAmount,     // seller's deposit (strike value)
   int     btcSats,          // BTC the buyer must deliver to exercise
   int     expiryHeight,     // exercise window opens at this block height
@@ -70,7 +71,7 @@ contract CashSecuredPut(
 
     // Output 1: buyer receives the stablecoin.
     require(
-      tx.outputs[1].assets.lookup(stableAssetId) >= stableAmount,
+      tx.outputs[1].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
       "buyer underpaid"
     );
     require(
@@ -99,13 +100,13 @@ contract CashSecuredPut(
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
     require(
       tx.outputs[0].scriptPubKey == new CashSecuredPut(
-        newSellerPk, buyerPk, stableAssetId,
+        newSellerPk, buyerPk, stableAssetIdTxid, stableAssetIdGidx,
         stableAmount, btcSats, expiryHeight, graceBlocks, exit
       ),
       "invalid transfer output"
     );
     require(
-      tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,
+      tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
       "collateral not preserved"
     );
   }
@@ -120,13 +121,13 @@ contract CashSecuredPut(
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
     require(
       tx.outputs[0].scriptPubKey == new CashSecuredPut(
-        sellerPk, newBuyerPk, stableAssetId,
+        sellerPk, newBuyerPk, stableAssetIdTxid, stableAssetIdGidx,
         stableAmount, btcSats, expiryHeight, graceBlocks, exit
       ),
       "invalid transfer output"
     );
     require(
-      tx.outputs[0].assets.lookup(stableAssetId) >= stableAmount,
+      tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
       "collateral not preserved"
     );
   }

@@ -140,10 +140,12 @@ primary_expr = {
     tweak_verify |
     asset_at |
     asset_count |
+    asset_has |
     asset_lookup |
     input_introspection |
     output_introspection |
     tx_introspection |
+    group_control_is |
     tx_property_access |
     this_property_access |
     constructor |
@@ -176,10 +178,12 @@ complex_expression = _{
     hash_comparison |
     asset_lookup_comparison |
     asset_count_comparison |
+    asset_has_comparison |
     asset_at_comparison |
     input_introspection_comparison |
     output_introspection_comparison |
     tx_introspection_comparison |
+    group_control_is_comparison |
     group_property_comparison |
     property_comparison |
     identifier_comparison |
@@ -194,10 +198,12 @@ complex_expression = _{
     tweak_verify |
     asset_at |
     asset_count |
+    asset_has |
     asset_lookup |
     input_introspection |
     output_introspection |
     tx_introspection |
+    group_control_is |
     asset_group_access |
     constructor |
     tx_property_access |
@@ -210,9 +216,17 @@ complex_expression = _{
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
-// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(assetId)
+// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
+// txid is a bytes32 identifier; gidx is an int identifier or a 0..65535 literal.
 asset_lookup = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ "." ~ "lookup" ~ "(" ~ identifier ~ ")"
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
+        ~ "." ~ "lookup" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) → Bool
+asset_has = {
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
+        ~ "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
 // Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -244,6 +258,12 @@ asset_lookup_comparison = {
 // Handles: tx.outputs[0].assets.length >= 1
 asset_count_comparison = {
     asset_count ~ binary_operator ~ (identifier | number_literal)
+}
+
+// Asset has comparison: asset_has op expression
+// Handles: tx.outputs[0].assets.has(txid, gidx) == 0 (assert absent)
+asset_has_comparison = {
+    asset_has ~ comparison_operator ~ (identifier | number_literal)
 }
 
 // Asset at comparison: asset_at op expression
@@ -306,7 +326,8 @@ output_introspection_comparison = {
 // tx.assetGroups[k].sumInputs, etc.
 asset_group_access = {
     "tx" ~ "." ~ "assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ ")" |
+        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
         "." ~ "length" |
         array_access ~ "." ~ group_property
     )
@@ -314,8 +335,21 @@ asset_group_access = {
 
 // Group property names — atomic to prevent partial matches
 // numInputs/numOutputs must come before sumInputs/sumOutputs to prevent partial matches
+// Control membership is tested with `controlIs(txid, gidx)` / `hasControl`.
 group_property = @{
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
+}
+
+// Group control predicates (struct-free, replace the old `.control ==`):
+//   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
+//   group.hasControl            → Bool (handled as a plain group_property)
+group_control_is = {
+    identifier ~ "." ~ "controlIs" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// controlIs comparison: group.controlIs(txid, gidx) == 0 (assert absent/unequal)
+group_control_is_comparison = {
+    group_control_is ~ comparison_operator ~ (identifier | number_literal)
 }
 
 // Group property comparison: variable.property op expression
@@ -391,9 +425,10 @@ tx_property_access = {
 tx_property_body = {
     // Input.current syntax - first-class support for current input introspection
     ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
-    // Asset groups access: find, length, or indexed property access
+    // Asset groups access: find, has, length, or indexed property access
     ("assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ ")" |
+        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
         "." ~ "length" |
         array_access ~ ("." ~ asset_group_property)?
     )?) |
@@ -408,7 +443,7 @@ tx_property_suffix = {
 
 // Asset group properties
 asset_group_property = {
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
 }
 
 // This property access

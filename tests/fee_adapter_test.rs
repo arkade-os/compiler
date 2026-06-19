@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_1NEGATE, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_GREATERTHAN64,
-    OP_GREATERTHANOREQUAL, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_NOT, OP_VERIFY,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
 
 #[test]
@@ -23,15 +23,15 @@ fn test_fee_adapter_contract() {
     assert!(param_names.contains(&"recipientPk"));
     assert!(param_names.contains(&"minFee"));
 
-    // paymentAssetId (bytes32 used in lookup) should be decomposed
+    // paymentAssetId is authored as explicit (Txid, Gidx) params.
     assert!(
-        param_names.contains(&"paymentAssetId_txid"),
-        "missing paymentAssetId_txid decomposition, got: {:?}",
+        param_names.contains(&"paymentAssetIdTxid"),
+        "missing explicit paymentAssetIdTxid, got: {:?}",
         param_names
     );
     assert!(
-        param_names.contains(&"paymentAssetId_gidx"),
-        "missing paymentAssetId_gidx decomposition"
+        param_names.contains(&"paymentAssetIdGidx"),
+        "missing explicit paymentAssetIdGidx"
     );
 
     // Verify functions: 2 functions x 2 variants = 4
@@ -84,11 +84,16 @@ fn test_fee_adapter_contract() {
         execute_asm
     );
 
-    // Should have sentinel guard pattern
-    let sentinel_guard = format!("{OP_DUP} {OP_1NEGATE} {OP_EQUAL} {OP_NOT} {OP_VERIFY}");
+    // Lookups assert presence by consuming the opcode success flag with a
+    // single OP_VERIFY.
     assert!(
-        execute_asm.contains(&sentinel_guard),
-        "missing sentinel guard in execute: {}",
+        execute_asm.contains(&format!("{OP_INSPECTINASSETLOOKUP} {OP_VERIFY}")),
+        "input lookup must be followed by OP_VERIFY flag-consume: {}",
+        execute_asm
+    );
+    assert!(
+        execute_asm.contains(&format!("{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY}")),
+        "output lookup must be followed by OP_VERIFY flag-consume: {}",
         execute_asm
     );
 

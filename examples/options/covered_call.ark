@@ -52,7 +52,8 @@ options {
 contract CoveredCall(
   pubkey  sellerPk,         // option writer; locks the BTC
   pubkey  buyerPk,          // option holder
-  bytes32 stableAssetId,    // USDT / USDC asset id
+  bytes32 stableAssetIdTxid, // USDT / USDC asset id (issuance txid)
+  int     stableAssetIdGidx, // USDT / USDC asset id (issuance group index)
   int     btcSats,          // seller's deposit
   int     strikeAmount,     // total stablecoin the buyer must pay to exercise
   int     expiryHeight,     // exercise window opens at this block height
@@ -73,7 +74,7 @@ contract CoveredCall(
 
     // Output 0: seller receives the strike payment in stablecoin.
     require(
-      tx.outputs[0].assets.lookup(stableAssetId) >= strikeAmount,
+      tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= strikeAmount,
       "seller underpaid"
     );
     require(
@@ -113,7 +114,7 @@ contract CoveredCall(
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
     require(
       tx.outputs[0].scriptPubKey == new CoveredCall(
-        newSellerPk, buyerPk, stableAssetId,
+        newSellerPk, buyerPk, stableAssetIdTxid, stableAssetIdGidx,
         btcSats, strikeAmount, expiryHeight, graceBlocks, exit
       ),
       "invalid transfer output"
@@ -131,7 +132,7 @@ contract CoveredCall(
     require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
     require(
       tx.outputs[0].scriptPubKey == new CoveredCall(
-        sellerPk, newBuyerPk, stableAssetId,
+        sellerPk, newBuyerPk, stableAssetIdTxid, stableAssetIdGidx,
         btcSats, strikeAmount, expiryHeight, graceBlocks, exit
       ),
       "invalid transfer output"

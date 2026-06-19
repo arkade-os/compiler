@@ -30,9 +30,9 @@ fn test_repayment_pool_compiles() {
         "debitCtrlId",
     ] {
         assert!(
-            names.contains(&format!("{id}_txid").as_str())
-                && names.contains(&format!("{id}_gidx").as_str()),
-            "{id} not decomposed, got: {names:?}"
+            names.contains(&format!("{id}Txid").as_str())
+                && names.contains(&format!("{id}Gidx").as_str()),
+            "{id} not present as explicit Txid/Gidx params, got: {names:?}"
         );
     }
     // Phased timeline + margin-call threshold + auction-incentive surface.
@@ -126,13 +126,13 @@ fn test_all_burn_checks_are_strict_equality() {
 #[test]
 fn test_pool_retains_debit_ctrl_in_every_function() {
     // SECURITY: BondMint authenticates "genuine pool co-spent" only by
-    // `tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1` — no scriptPubKey
+    // `tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1` — no scriptPubKey
     // reconstruction. The safety of every BondMint settlement therefore
     // depends on the asset-registry invariant that NO RepaymentPool function
     // ever lets debitCtrlId leak from its output[0] (or outIdxPool for
     // variable-output functions).
     //
-    // If a future function omits the `tx.outputs[*].assets.lookup(debitCtrlId)
+    // If a future function omits the `tx.outputs[*].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx)
     // >= 1` retention check, the control asset can migrate into a malicious
     // covenant that the BondMint will then accept as "the pool" on its next
     // settlement, redirecting collateral to the attacker.

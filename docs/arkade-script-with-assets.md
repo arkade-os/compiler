@@ -10,16 +10,18 @@ For base opcodes (transaction introspection, arithmetic, cryptographic, etc.), s
 
 These opcodes provide access to the Arkade Asset V1 packet embedded in the transaction.
 
-All Asset IDs are represented as **two stack items**: `(txid32, gidx_u16)`. `txid32` is the transaction ID of the genesis transaction where the asset was minted, and `gidx_u16` is the index of the asset group within that genesis transaction.
+All Asset IDs are the canonical pair **`(asset_txid, asset_gidx)`** — two stack items. `asset_txid` (32 bytes) is the **issuance** transaction ID where the asset was minted. `asset_gidx` is the group index **at which the asset was issued**, a minimally encoded ScriptNum in `0..65535` (not a group's current packet position — the two coincide only for a fresh issuance).
+
+The lookup/find/control opcodes return a trailing **success flag**: `… 1` on success, `0 0` (or `empty 0 0` for control) on absence. The Arkade Script sugar consumes that flag for you — `lookup`/`find` assert presence; `has`/`hasControl`/`controlIs` expose it as a boolean.
 
 ### Packet & Groups
 
 | Opcode | Stack Effect | Description |
 |--------|--------------|-------------|
 | `OP_INSPECTNUMASSETGROUPS` | → `count_u16` | Number of groups in the Arkade Asset packet |
-| `OP_INSPECTASSETGROUPASSETID` `gidx_u16` | → `txid32 gidx_u16` | Resolved AssetId of group `gidx_u16`. Issuance group uses `this_txid` as its genesis transaction. |
-| `OP_INSPECTASSETGROUPCTRL` `gidx_u16` | → `-1` \| `txid32 gidx_u16` | Control AssetId if present, else -1 |
-| `OP_FINDASSETGROUPBYASSETID` `txid32 gidx_u16` | → `-1` \| `gidx_u16` | Find group index, or -1 if absent |
+| `OP_INSPECTASSETGROUPASSETID` `k` | → `asset_txid asset_gidx` | Canonical Asset ID of the group at packet position `k`. A fresh issuance resolves to `(this_txid, k)`. |
+| `OP_INSPECTASSETGROUPCTRL` `k` | → `asset_txid asset_gidx 1` \| `empty 0 0` | Control Asset ID + success flag (`1` present, `0` absent) |
+| `OP_FINDASSETGROUPBYASSETID` `asset_txid asset_gidx` | → `k 1` \| `0 0` | Resolved packet position `k` + success flag |
 
 ### Per-Group Metadata
 
@@ -49,7 +51,7 @@ All Asset IDs are represented as **two stack items**: `(txid32, gidx_u16)`. `txi
 |--------|--------------|-------------|
 | `OP_INSPECTOUTASSETCOUNT` `o_u32` | → `count_u32` | Number of asset entries assigned to output `o_u32` |
 | `OP_INSPECTOUTASSETAT` `o_u32 t_u32` | → `txid32 gidx_u16 amount_u64` | `t_u32`-th asset at output `o_u32` |
-| `OP_INSPECTOUTASSETLOOKUP` `o_u32 txid32 gidx_u16` | → `amount_u64` \| `-1` | Amount of asset `(txid32, gidx_u16)` at output `o_u32`, or -1 if not found |
+| `OP_INSPECTOUTASSETLOOKUP` `o_u32 asset_txid asset_gidx` | → `amount_u64 1` \| `0 0` | Amount of asset `(asset_txid, asset_gidx)` at output `o_u32` + success flag |
 
 ### Cross-Input (Packet-Declared)
 
@@ -57,7 +59,7 @@ All Asset IDs are represented as **two stack items**: `(txid32, gidx_u16)`. `txi
 |--------|--------------|-------------|
 | `OP_INSPECTINASSETCOUNT` `i_u32` | → `count_u32` | Number of assets declared for input `i_u32` |
 | `OP_INSPECTINASSETAT` `i_u32 t_u32` | → `txid32 gidx_u16 amount_u64` | `t_u32`-th asset declared for input `i_u32` |
-| `OP_INSPECTINASSETLOOKUP` `i_u32 txid32 gidx_u16` | → `amount_u64` \| `-1` | Declared amount for asset `(txid32, gidx_u16)` at input `i_u32`, or -1 if not found |
+| `OP_INSPECTINASSETLOOKUP` `i_u32 asset_txid asset_gidx` | → `amount_u64 1` \| `0 0` | Declared amount for asset `(asset_txid, asset_gidx)` at input `i_u32` + success flag |
 
 ---
 
@@ -70,19 +72,28 @@ The following API provides syntactic sugar for Arkade Script contracts. Each pro
 ```javascript
 tx.assetGroups.length      // → OP_INSPECTNUMASSETGROUPS
 
-tx.assetGroups.find(assetId)
-                           // → OP_FINDASSETGROUPBYASSETID assetId.txid assetId.gidx
-                           //   Returns: group index, or -1 if not found
+tx.assetGroups.find(assetTxid, assetGidx)
+                           // → assetTxid assetGidx OP_FINDASSETGROUPBYASSETID OP_VERIFY
+                           //   Asserts existence, leaves the resolved packet position k
+
+tx.assetGroups.has(assetTxid, assetGidx)
+                           // → assetTxid assetGidx OP_FINDASSETGROUPBYASSETID OP_NIP
+                           //   Bool: true if a group with that Asset ID exists
 
 tx.assetGroups[k].assetId  // → OP_INSPECTASSETGROUPASSETID k
-                           //   Returns: { txid: bytes32, gidx: int }
+                           //   Returns the canonical Asset ID (asset_txid, asset_gidx)
 
 tx.assetGroups[k].isFresh  // → OP_INSPECTASSETGROUPASSETID k
                            //   OP_DROP OP_TXID OP_EQUAL
-                           //   True if assetId.txid == this_txid (new asset)
+                           //   True if asset_txid == this_txid (new asset)
 
-tx.assetGroups[k].control  // → OP_INSPECTASSETGROUPCTRL k
-                           //   Returns: AssetId (txid32, gidx_u16), or -1 if no control
+group.controlIs(ctrlTxid, ctrlGidx)
+                           // → <group> OP_INSPECTASSETGROUPCTRL OP_DROP
+                           //   <ctrlGidx> OP_EQUAL OP_SWAP <ctrlTxid> OP_EQUAL OP_BOOLAND
+                           //   Bool: full canonical control Asset ID equality
+
+group.hasControl           // → <group> OP_INSPECTASSETGROUPCTRL OP_NIP OP_NIP
+                           //   Bool: true if a control asset is present
 
 // Metadata hash (immutable, set at genesis)
 tx.assetGroups[k].metadataHash
@@ -156,9 +167,13 @@ tx.inputs[i].assets[t].assetId
 tx.inputs[i].assets[t].amount
                            // → OP_INSPECTINASSETAT i t
 
-tx.inputs[i].assets.lookup(assetId)
-                           // → OP_INSPECTINASSETLOOKUP i assetId.txid assetId.gidx
-                           //   Returns: amount (> 0) or -1 if not found
+tx.inputs[i].assets.lookup(assetTxid, assetGidx)
+                           // → i assetTxid assetGidx OP_INSPECTINASSETLOOKUP OP_VERIFY
+                           //   Asserts presence, leaves amount
+
+tx.inputs[i].assets.has(assetTxid, assetGidx)
+                           // → i assetTxid assetGidx OP_INSPECTINASSETLOOKUP OP_NIP
+                           //   Bool: true if the asset is present
 ```
 
 ### Cross-Output Asset Lookups
@@ -171,9 +186,13 @@ tx.outputs[o].assets[t].assetId
 tx.outputs[o].assets[t].amount
                            // → OP_INSPECTOUTASSETAT o t
 
-tx.outputs[o].assets.lookup(assetId)
-                           // → OP_INSPECTOUTASSETLOOKUP o assetId.txid assetId.gidx
-                           //   Returns: amount (> 0) or -1 if not found
+tx.outputs[o].assets.lookup(assetTxid, assetGidx)
+                           // → o assetTxid assetGidx OP_INSPECTOUTASSETLOOKUP OP_VERIFY
+                           //   Asserts presence, leaves amount
+
+tx.outputs[o].assets.has(assetTxid, assetGidx)
+                           // → o assetTxid assetGidx OP_INSPECTOUTASSETLOOKUP OP_NIP
+                           //   Bool: true if the asset is present
 ```
 
 ---
@@ -234,13 +253,15 @@ struct AssetOutputIntent {
 ### Checking Asset Presence
 
 ```javascript
-// Check if an asset is present in transaction
-let groupIndex = tx.assetGroups.find(assetId);
-require(groupIndex != null, "Asset not found");
+// Assert an asset group exists (find aborts on absence, leaving k)
+let groupIndex = tx.assetGroups.find(assetTxid, assetGidx);
 
-// Check if asset is at a specific output
-let amount = tx.outputs[o].assets.lookup(assetId);
-require(amount > 0, "Asset not at output");
+// Boolean presence without aborting
+require(tx.assetGroups.has(assetTxid, assetGidx), "Asset not found");
+
+// Assert an asset is at a specific output (lookup aborts on absence)
+let amount = tx.outputs[o].assets.lookup(assetTxid, assetGidx);
+require(amount > 0, "Asset amount must be positive");
 ```
 
 ### Checking if Asset is Fresh (New Issuance)
@@ -273,7 +294,6 @@ require(group.delta < 0, "Must be burn");
 ### Verifying Control Asset
 
 ```javascript
-let group = tx.assetGroups.find(assetId);
-require(group != null, "Asset not found");
-require(group.control == expectedControlId, "Wrong control asset");
+let group = tx.assetGroups.find(assetTxid, assetGidx);
+require(group.controlIs(expectedCtrlTxid, expectedCtrlGidx), "Wrong control asset");
 ```

@@ -192,25 +192,6 @@ contract Demo(int[] xs) {
 }
 
 #[test]
-fn rejects_asset_decomposition_collision() {
-    // `foo` is used in a lookup -> decomposes to foo_txid, foo_gidx; param foo_txid collides.
-    let src = r#"
-contract Demo(bytes32 foo) {
-  function f(bytes32 foo_txid) {
-    require(tx.inputs[0].assets.lookup(foo) > 0);
-  }
-}
-"#;
-    let err = compile(src)
-        .expect_err("expected a namespace collision error")
-        .to_string();
-    assert!(
-        err.contains("collide in the emitted namespace"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
 fn rejects_param_colliding_with_server_signature() {
     let src = r#"
 options {
@@ -261,19 +242,29 @@ contract Demo(pubkey[] ks) {
 use std::fs;
 use std::path::Path;
 
+/// Recursively collect every `.ark` file under `dir`, including subdirectories
+/// like `examples/bonds/` and `examples/options/`.
+fn collect_ark_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).expect("read examples dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            collect_ark_files(&path, out);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("ark") {
+            out.push(path);
+        }
+    }
+}
+
 /// Every bundled example must still compile cleanly. A new failure here means
 /// either a real latent shadowing/collision bug in the example (fix the example
 /// per the spec) or a false positive in the rule (fix the rule).
 #[test]
 fn all_examples_still_compile() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    let mut checked = 0;
-    for entry in fs::read_dir(&dir).expect("read examples dir") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|s| s.to_str()) != Some("ark") {
-            continue;
-        }
-        let src = fs::read_to_string(&path).expect("read example");
+    let mut files = Vec::new();
+    collect_ark_files(&dir, &mut files);
+    for path in &files {
+        let src = fs::read_to_string(path).expect("read example");
         let result = compile(&src);
         assert!(
             result.is_ok(),
@@ -281,7 +272,10 @@ fn all_examples_still_compile() {
             path.display(),
             result.err()
         );
-        checked += 1;
     }
-    assert!(checked > 0, "no .ark examples found in {}", dir.display());
+    assert!(
+        !files.is_empty(),
+        "no .ark examples found in {}",
+        dir.display()
+    );
 }
