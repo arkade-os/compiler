@@ -22,7 +22,7 @@ contract PriceBeacon(
   int numGroups
 ) {
   function passthrough() {
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetId, oraclePk, oracleServerPk, numGroups), "broken");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, oracleServerPk, numGroups), "broken");
 
     for (k, group) in tx.assetGroups {
       require(group.sumOutputs >= group.sumInputs, "drained");
@@ -31,7 +31,7 @@ contract PriceBeacon(
 
   function update(signature oracleSig) {
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetId, oraclePk, oracleServerPk, numGroups), "broken");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, oracleServerPk, numGroups), "broken");
     require(checkSig(oracleSig, oraclePk), "bad sig");
   }
 }
@@ -62,7 +62,7 @@ contract PriceBeacon(
     require(newBlockHeight >= currentHeight, "block height must not regress");
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
       "beacon script must survive"
     );
     require(
@@ -77,7 +77,7 @@ contract PriceBeacon(
 
   function passthrough() {
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, oraclePk, exit),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
       "beacon script must survive"
     );
 
@@ -101,7 +101,7 @@ contract PriceBeacon(
     int currentHeight = tx.inputs[0].assets.lookup(clockTxid, clockGidx);
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(ticker, clock, newOraclePk, exit),
+      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, newOraclePk, exit),
       "invalid new beacon"
     );
     require(
