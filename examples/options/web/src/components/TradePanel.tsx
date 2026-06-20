@@ -64,7 +64,7 @@ export function TradePanel() {
           </Badge>
         </div>
 
-        <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <div className="form-grid">
           <Field label="Notional (BTC)">
             <NumberInput value={notionalBtc} onChange={setNotional} step={0.1} min={0.01} />
           </Field>

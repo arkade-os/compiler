@@ -57,6 +57,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
 a {
@@ -460,7 +461,7 @@ h4 {
 .main-grid {
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(360px, 440px) minmax(360px, 1fr);
+  grid-template-columns: minmax(320px, 440px) minmax(320px, 1fr);
   align-items: start;
   margin-top: 16px;
 }
@@ -470,15 +471,87 @@ h4 {
   grid-template-columns: repeat(3, 1fr);
   margin-top: 16px;
 }
+/* reusable responsive content grids (used inline in components) */
+.form-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+}
+.stat-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+}
+.split-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+/* allow grid children to shrink below content min-width so inner overflow:auto
+   (e.g. <pre> ASM panes) scrolls internally instead of widening the page */
+.form-grid > *,
+.stat-grid > *,
+.split-grid > * {
+  min-width: 0;
+}
+
+@media (max-width: 1000px) {
+  .tri-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 @media (max-width: 900px) {
   .main-grid,
   .tri-grid {
     grid-template-columns: 1fr;
   }
 }
+@media (max-width: 640px) {
+  .ark-shell {
+    padding: 14px 13px 64px;
+  }
+  .ark-card {
+    padding: 14px;
+  }
+  .ark-card.tight {
+    padding: 12px;
+  }
+  .split-grid {
+    grid-template-columns: 1fr;
+  }
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ark-stat .v {
+    font-size: 17px;
+  }
+  .ark-wordmark {
+    font-size: 14px;
+    letter-spacing: 0.1em;
+  }
+  .ark-seg {
+    flex-wrap: wrap;
+  }
+  .ark-toast {
+    max-width: calc(100vw - 26px);
+    text-align: center;
+  }
+}
+@media (max-width: 460px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* long, unbreakable hex (addresses, keys) must not force horizontal scroll */
+.mono-wrap {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
 input[type="range"] {
   accent-color: var(--ark-lime);
+  max-width: 100%;
 }
 
 .kbd {

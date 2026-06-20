@@ -70,10 +70,10 @@ function Inspector({ p }: { p: Position }) {
   const exitAsm = renderAsm(p.inst, exit, {});
   return (
     <div className="col" style={{ gap: 10, marginTop: 10 }}>
-      <div className="mono faint" style={{ fontSize: 11 }}>
+      <div className="mono faint mono-wrap" style={{ fontSize: 11 }}>
         vault: {p.inst.address}
       </div>
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div className="split-grid">
         <div className="col" style={{ gap: 4 }}>
           <Badge tone="lime">cooperative tapleaf · virtual</Badge>
           <pre className="mono" style={preStyle}>{coopAsm.join("\n")}</pre>
@@ -95,6 +95,7 @@ const preStyle: React.CSSProperties = {
   fontSize: 10.5,
   lineHeight: 1.45,
   maxHeight: 200,
+  minWidth: 0,
   overflow: "auto",
   color: "var(--ark-muted)",
   margin: 0,
@@ -137,7 +138,7 @@ function PositionCard({ p }: { p: Position }) {
         </Badge>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+      <div className="stat-grid" style={{ marginBottom: 12 }}>
         <MiniStat k="Collateral" v={fmtBtc(p.btcSats)} />
         <MiniStat k="Strike pay" v={fmtStable(p.strikeUnits)} />
         <MiniStat k="Premium" v={fmtUsd(p.terms.premiumUsd)} />
@@ -196,7 +197,7 @@ function PositionCard({ p }: { p: Position }) {
         </div>
       )}
 
-      <div className="faint mono" style={{ fontSize: 10.5, marginTop: 8 }}>
+      <div className="faint mono mono-wrap" style={{ fontSize: 10.5, marginTop: 8 }}>
         seller {shortHex(p.sellerPk)} · buyer {shortHex(p.buyerPk)} · intrinsic{" "}
         {fmtUsd(intrinsic)} · strike {fmtUsd(stableUnitsToUsd(p.strikeUnits))}
       </div>
