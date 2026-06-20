@@ -49,6 +49,20 @@ pnpm build      # typecheck + production bundle to dist/
 pnpm smoke      # headless lifecycle test (write/exercise/reclaim/transfer)
 ```
 
+### Deploy
+
+On every push to `master` that touches `examples/options/web/**`, the
+[`Deploy Covered-Call App`](../../../.github/workflows/deploy-options-app.yml)
+workflow builds the app and publishes it to the `gh-pages` branch under
+`/options`, served at:
+
+**https://arkade-os.github.io/compiler/options/**
+
+It lives alongside the playground (served at the site root) and PR previews
+(`/pr-previews/…`) as an independent subtree of `gh-pages`. The Vite `base` is
+`./` (relative assets), so the bundle works under that subpath unchanged. You can
+also trigger it manually from the Actions tab (`workflow_dispatch`).
+
 ### Try the happy path
 1. Open the app — your embedded wallet is funded on both chains.
 2. Keep **Virtual (Ark)** selected, set a strike below spot, and **Write covered
