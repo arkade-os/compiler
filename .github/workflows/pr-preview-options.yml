@@ -1,0 +1,123 @@
+name: PR Preview (Covered-Call App)
+
+# Vercel-style per-PR preview deploys for the covered-call app. Every PR that
+# touches examples/options/web gets its own live build at
+# /options-previews/pr-<N>/ on the gh-pages branch, commented onto the PR and
+# torn down when the PR closes. Each preview is an independent gh-pages subtree
+# (clean is scoped to its own folder); the production /options deploy and the
+# root playground deploy leave it alone (the latter clean-excludes it).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - master
+    paths:
+      - "examples/options/web/**"
+      - ".github/workflows/pr-preview-options.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-preview-options-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/options/web
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: examples/options/web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Deploy preview
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: examples/options/web/dist
+          target-folder: options-previews/pr-${{ github.event.number }}
+          clean: true
+
+      - name: Post or update PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request.number;
+            const previewUrl = `https://arkade-os.github.io/compiler/options-previews/pr-${pr}/`;
+            const marker = '<!-- arkade-options-preview -->';
+            const body = `${marker}
+            ### Covered-Call App Preview
+
+            A live preview of this PR's covered-call dApp is available at:
+            **[${previewUrl}](${previewUrl})**
+
+            > Built from commit \`${{ github.sha }}\` · [Workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr,
+                body,
+              });
+            }
+
+  cleanup-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Remove preview directory
+        run: |
+          PREVIEW_DIR="options-previews/pr-${{ github.event.number }}"
+          if [ -d "$PREVIEW_DIR" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git rm -rf "$PREVIEW_DIR"
+            git commit -m "chore: remove covered-call app preview for #${{ github.event.number }}"
+            git push
+          else
+            echo "No preview directory found at $PREVIEW_DIR, nothing to clean up."
+          fi
