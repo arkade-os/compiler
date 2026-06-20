@@ -1,0 +1,35 @@
+{
+  "name": "arkade-covered-call",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Arkade Bitcoin covered-call options dApp (Rysk-style) with embedded wallet and dual-chain (onchain + virtual) emulator.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/run-smoke.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.6.0",
+    "@noble/hashes": "^1.5.0",
+    "@scure/base": "^1.1.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "esbuild": "0.21.5",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
