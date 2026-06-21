@@ -14,7 +14,7 @@ from quote to settlement without a node, a server, or real funds.
 
 ## The flow
 
-1. **Deposit BTC** and pick an expiry (7 / 14 / 30 days).
+1. **Deposit BTC.** The call is a fixed 30-day tenor.
 2. **Request quotes.** Five market makers price the same option off their own
    implied vol — an RFQ — and you’re shown **5 strikes**, each with the best
    premium and APY.
@@ -68,9 +68,9 @@ under any subpath.
 
 ## Architecture
 
-```
+```text
 src/
-  abi/                 compiler-sourced ABIs (covered_call.json, cash_secured_put.json)
+  abi/                 compiler-sourced ABI (covered_call.json)
   lib/
     crypto.ts          @noble schnorr + @scure/base — keys, sighash, hashing
     wallet.ts          embedded wallet + simulated maker / Operator

@@ -1,13 +1,9 @@
 // Contract instantiation: bind a compiler ABI + concrete constructor arguments
-// into a deployable instance with a deterministic vault identity (a stand-in for
-// the Taproot output key / VTXO script address) and per-function tapleaf
-// rendering. This is the boundary the real Arkade SDK's contract artifact would
-// occupy; the emulator and tx-builder consume this shape, not the raw ABI.
-import {
-  ContractAbi,
-  AbiFunctionVariant,
-  pickVariant,
-} from "../abi";
+// into a deployable instance with a deterministic Arkade vault identity (a
+// stand-in for the Taproot output key / VTXO script address). This is the
+// boundary the real Arkade SDK's contract artifact would occupy; the emulator
+// and the options domain consume this shape, not the raw ABI.
+import { ContractAbi } from "../abi";
 import { concatBytes, sha256, toHex, u64le, utf8, fromHex } from "./crypto";
 
 export type ParamValue = string | number | bigint;
@@ -83,53 +79,4 @@ export function instantiate(
     scriptId,
     address: scriptIdToAddress(scriptId),
   };
-}
-
-/**
- * Render a function's tapleaf ASM with constructor params and witness values
- * substituted into `<placeholder>` tokens. `reclaimHeight` is computed per the
- * documented SDK substitution (expiryHeight + graceBlocks). The returned ASM is
- * the exact script a verifier would execute; the emulator does a structural
- * check of it rather than a full Bitcoin Script interpreter pass.
- */
-export function renderAsm(
-  inst: ContractInstance,
-  fn: AbiFunctionVariant,
-  witness: Record<string, ParamValue>,
-): string[] {
-  const bindings: Record<string, string> = {};
-  for (const [k, v] of Object.entries(inst.params)) bindings[k] = String(v);
-  for (const [k, v] of Object.entries(witness)) bindings[k] = String(v);
-
-  // Documented compiler quirk: reclaimHeight is emitted as a bare placeholder.
-  if (inst.params.expiryHeight !== undefined && inst.params.graceBlocks !== undefined) {
-    bindings.reclaimHeight = String(
-      BigInt(inst.params.expiryHeight as number) +
-        BigInt(inst.params.graceBlocks as number),
-    );
-  }
-  bindings.SERVER_KEY = "SERVER_KEY";
-
-  return fn.asm.map((tok) => {
-    if (tok.startsWith("<") && tok.endsWith(">")) {
-      const inner = tok.slice(1, -1);
-      if (bindings[inner] !== undefined) return bindings[inner];
-      return tok; // structural placeholder (e.g. nested VTXO:..., tx.time)
-    }
-    return tok;
-  });
-}
-
-export function getVariant(
-  inst: ContractInstance,
-  fnName: string,
-  serverVariant: boolean,
-): AbiFunctionVariant {
-  const v = pickVariant(inst.abi, fnName, serverVariant);
-  if (!v) {
-    throw new Error(
-      `no ${serverVariant ? "cooperative" : "exit"} variant for ${fnName}`,
-    );
-  }
-  return v;
 }

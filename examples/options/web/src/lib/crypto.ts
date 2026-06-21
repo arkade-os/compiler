@@ -68,6 +68,9 @@ export function schnorrVerify(sig: Bytes, message: Bytes, pubXOnly: Bytes): bool
 /** Encode a non-negative integer as 8-byte little-endian (uint64 LE). */
 export function u64le(n: bigint | number): Bytes {
   let v = BigInt(n);
+  if (v < 0n || v > 0xffffffffffffffffn) {
+    throw new RangeError(`u64le: value out of uint64 range: ${v}`);
+  }
   const out = new Uint8Array(8);
   for (let i = 0; i < 8; i++) {
     out[i] = Number(v & 0xffn);

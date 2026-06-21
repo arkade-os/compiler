@@ -36,13 +36,25 @@ function makeWallet(label: string, priv: Bytes): Wallet {
 const USER_KEY = "arkade.cc.user.secret";
 
 /** Load the embedded user wallet, generating + persisting one on first run. */
-export function loadUserWallet(): Wallet {
-  let secret = localStorage.getItem(USER_KEY);
-  if (!secret) {
-    secret = toHex(randomPrivateKey());
-    localStorage.setItem(USER_KEY, secret);
+/** A valid persisted secret is 64 lowercase hex chars (32 bytes). */
+function parseSecret(secret: string | null): Uint8Array | null {
+  if (!secret) return null;
+  try {
+    const priv = fromHex(secret.trim().replace(/^0x/, ""));
+    return priv.length === 32 ? priv : null;
+  } catch {
+    return null;
   }
-  return makeWallet("You", fromHex(secret));
+}
+
+/** Load the embedded wallet, regenerating if storage is missing or corrupted. */
+export function loadUserWallet(): Wallet {
+  let priv = parseSecret(localStorage.getItem(USER_KEY));
+  if (!priv) {
+    priv = randomPrivateKey();
+    localStorage.setItem(USER_KEY, toHex(priv));
+  }
+  return makeWallet("You", priv);
 }
 
 export function resetUserWallet(): Wallet {

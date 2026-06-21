@@ -4,6 +4,7 @@ import React from "react";
 
 type Div = React.HTMLAttributes<HTMLDivElement>;
 
+/** Bordered surface with an optional uppercase title. */
 export function Card({
   title,
   children,
@@ -19,6 +20,7 @@ export function Card({
   );
 }
 
+/** Themed button with primary / ghost / danger variants. */
 export function Button({
   variant = "default",
   size,
@@ -33,6 +35,8 @@ export function Button({
 }
 
 export type BadgeTone = "default" | "lime" | "cyan" | "green" | "red" | "amber" | "violet";
+
+/** Small status pill. */
 export function Badge({
   tone = "default",
   dot,
@@ -50,118 +54,7 @@ export function Badge({
   );
 }
 
-export function Stat({ k, v, sub }: { k: string; v: React.ReactNode; sub?: React.ReactNode }) {
-  return (
-    <div className="ark-stat">
-      <span className="k">{k}</span>
-      <span className="v">{v}</span>
-      {sub && <span className="faint" style={{ fontSize: 12 }}>{sub}</span>}
-    </div>
-  );
-}
-
-export function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="ark-field">
-      <span className="ark-label">{label}</span>
-      {children}
-      {hint && <span className="faint" style={{ fontSize: 11 }}>{hint}</span>}
-    </label>
-  );
-}
-
-export function NumberInput({
-  value,
-  onChange,
-  step = 1,
-  min,
-  ...rest
-}: {
-  value: number;
-  onChange: (n: number) => void;
-  step?: number;
-  min?: number;
-} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
-  return (
-    <input
-      className="ark-input"
-      type="number"
-      value={Number.isFinite(value) ? value : ""}
-      step={step}
-      min={min}
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-      {...rest}
-    />
-  );
-}
-
-export function Segmented<T extends string>({
-  value,
-  onChange,
-  options,
-  tone = "lime",
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: { value: T; label: React.ReactNode }[];
-  tone?: "lime" | "cyan";
-}) {
-  return (
-    <div className="ark-seg">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          className={value === o.value ? `active ${tone}` : ""}
-          onClick={() => onChange(o.value)}
-          type="button"
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-export function Modal({
-  title,
-  onClose,
-  children,
-  footer,
-}: {
-  title: React.ReactNode;
-  onClose: () => void;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  return (
-    <div className="ark-modal-backdrop" onClick={onClose}>
-      <div className="ark-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="row between center" style={{ marginBottom: 14 }}>
-          <h3>{title}</h3>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            ✕
-          </Button>
-        </div>
-        {children}
-        {footer && (
-          <>
-            <div className="divider" style={{ margin: "16px 0" }} />
-            <div className="row between center">{footer}</div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
+/** Arkade wordmark + logo. */
 export function Logo() {
   return (
     <div className="ark-brand">

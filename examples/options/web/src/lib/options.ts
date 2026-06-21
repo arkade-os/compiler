@@ -1,7 +1,7 @@
 // BTC-only covered call — the simplified, Rysk-style product.
 //
 // You deposit BTC and sell a call against it. A market maker pays you a premium
-// in BTC now. At expiry it settles in BTC, two ways:
+// in BTC now. At expiry (a fixed 30 days) it settles in BTC, two ways:
 //   • spot ≤ strike  → "kept":   you get your full deposit back (+ the premium).
 //   • spot > strike   → "called": your BTC is sold at the strike, so you receive
 //                        deposit × strike/spot BTC (the capped amount) + premium.
@@ -20,6 +20,8 @@ import { satsToBtc, usdToStableUnits } from "./pricing";
 import { sha256, concatBytes, utf8, fromHex, schnorrVerify } from "./crypto";
 
 export const BLOCKS_PER_DAY = 144;
+/** The only expiry offered — a fixed 30-day tenor. */
+export const EXPIRY_DAYS = 30;
 const GRACE_BLOCKS = 144;
 const EXIT_BLOCKS = 144;
 const STABLE_TXID = "a1b2c3d4e5f6071829303132333435363738393a3b3c3d3e3f40414243444546";
@@ -27,8 +29,8 @@ const STABLE_GIDX = 0;
 
 /** Covered-call strikes sit above spot. Five rungs, rounded to clean numbers. */
 export const STRIKE_OFFSETS = [0.03, 0.06, 0.1, 0.15, 0.2];
-export const EXPIRY_PRESETS = [7, 14, 30];
 
+/** The five strike prices offered for a given spot. */
 export function strikeLadder(spot: number): number[] {
   const round = spot >= 50_000 ? 1000 : 500;
   return STRIKE_OFFSETS.map((p) => Math.round((spot * (1 + p)) / round) * round);
@@ -44,7 +46,6 @@ export interface Position {
   apyPct: number;
   openedHeight: number;
   expiryHeight: number;
-  expiryDays: number;
   expiryDate: number; // ms epoch
   spotAtOpen: number;
   vaultUtxoId: string | null;
@@ -78,8 +79,22 @@ function coSign(parts: string[], signers: Wallet[]): void {
   }
 }
 
+/** Greedily select spendable BTC-only UTXOs covering `need` sats. */
+function selectBtc(emu: Emulator, pubkey: string, need: number): { inputs: Utxo[]; total: number } {
+  const utxos = emu.utxosOf(pubkey, "virtual").filter((u) => u.sats > 0 && !u.asset);
+  const inputs: Utxo[] = [];
+  let total = 0;
+  for (const u of utxos) {
+    if (total >= need) break;
+    inputs.push(u);
+    total += u.sats;
+  }
+  return { inputs, total };
+}
+
 let pid = 0;
 
+/** Build the CoveredCall contract instance (deterministic Arkade vault). */
 export function buildInstance(
   ctx: Ctx,
   depositSats: number,
@@ -102,7 +117,6 @@ export function buildInstance(
 export interface WriteArgs {
   depositSats: number;
   strikeUsd: number;
-  expiryDays: number;
   premiumSats: number;
   makerName: string;
   apyPct: number;
@@ -113,28 +127,30 @@ export interface WriteArgs {
 export function writeCall(ctx: Ctx, a: WriteArgs): { position: Position; tx: SettledTx } {
   const { emu, user, maker } = ctx;
 
-  const utxos = emu.utxosOf(user.pubkey, "virtual").filter((u) => u.sats > 0 && !u.asset);
-  const total = utxos.reduce((n, u) => n + u.sats, 0);
-  if (total < a.depositSats) {
+  // Validate inputs up front so we never settle a malformed position.
+  if (!Number.isFinite(a.depositSats) || a.depositSats <= 0) {
+    throw new Error("Enter a positive BTC amount");
+  }
+  if (!Number.isFinite(a.strikeUsd) || a.strikeUsd <= 0) throw new Error("Invalid strike");
+  if (!Number.isFinite(a.premiumSats) || a.premiumSats < 0) throw new Error("Invalid premium");
+
+  const depositSats = Math.floor(a.depositSats);
+  const premiumSats = Math.floor(a.premiumSats);
+
+  const { inputs, total } = selectBtc(emu, user.pubkey, depositSats);
+  if (total < depositSats) {
     throw new Error(
-      `Not enough BTC: need ${satsToBtc(a.depositSats).toFixed(4)}, have ${satsToBtc(total).toFixed(4)}`,
+      `Not enough BTC: need ${satsToBtc(depositSats).toFixed(4)}, have ${satsToBtc(total).toFixed(4)}`,
     );
   }
-  const inputs: Utxo[] = [];
-  let acc = 0;
-  for (const u of utxos) {
-    inputs.push(u);
-    acc += u.sats;
-    if (acc >= a.depositSats) break;
-  }
 
-  const expiryHeight = emu.height + a.expiryDays * BLOCKS_PER_DAY;
-  const inst = buildInstance(ctx, a.depositSats, a.strikeUsd, expiryHeight);
+  const expiryHeight = emu.height + EXPIRY_DAYS * BLOCKS_PER_DAY;
+  const inst = buildInstance(ctx, depositSats, a.strikeUsd, expiryHeight);
 
-  coSign(["lock", inst.scriptId, String(a.depositSats)], [user]);
+  coSign(["lock", inst.scriptId, String(depositSats)], [user]);
 
-  const outputs = [{ owner: vaultOwner(inst), sats: a.depositSats, asset: undefined }];
-  const change = acc - a.depositSats;
+  const outputs = [{ owner: vaultOwner(inst), sats: depositSats, asset: undefined }];
+  const change = total - depositSats;
   if (change > 0) outputs.push({ owner: userOwner(user), sats: change, asset: undefined });
 
   const tx = emu.settle({
@@ -142,36 +158,41 @@ export function writeCall(ctx: Ctx, a: WriteArgs): { position: Position; tx: Set
     inputs: inputs.map((i) => i.id),
     outputs,
     kind: "open",
-    note: `Locked ${satsToBtc(a.depositSats).toFixed(4)} BTC · sold $${a.strikeUsd.toLocaleString()} call to ${a.makerName}`,
+    note: `Locked ${satsToBtc(depositSats).toFixed(4)} BTC · sold $${a.strikeUsd.toLocaleString()} call to ${a.makerName}`,
   });
 
-  // Premium paid maker → writer, in BTC, off-contract.
-  emu.credit(
-    "virtual",
-    userOwner(user),
-    a.premiumSats,
-    undefined,
-    `${a.makerName} paid ${satsToBtc(a.premiumSats).toFixed(6)} BTC premium`,
-  );
+  // Premium paid maker → writer, in BTC, from the maker's own balance.
+  const prem = selectBtc(emu, maker.pubkey, premiumSats);
+  if (prem.total < premiumSats) throw new Error("Maker has insufficient BTC to pay premium");
+  emu.settle({
+    chain: "virtual",
+    inputs: prem.inputs.map((i) => i.id),
+    outputs: [
+      { owner: userOwner(user), sats: premiumSats, asset: undefined },
+      ...(prem.total > premiumSats
+        ? [{ owner: userOwner(maker), sats: prem.total - premiumSats, asset: undefined }]
+        : []),
+    ],
+    kind: "premium",
+    note: `${a.makerName} paid ${satsToBtc(premiumSats).toFixed(6)} BTC premium`,
+  });
 
   const position: Position = {
     id: `pos_${++pid}`,
     instance: inst,
-    depositSats: a.depositSats,
+    depositSats,
     strikeUsd: a.strikeUsd,
-    premiumSats: a.premiumSats,
+    premiumSats,
     makerName: a.makerName,
     apyPct: a.apyPct,
     openedHeight: emu.height,
     expiryHeight,
-    expiryDays: a.expiryDays,
-    expiryDate: Date.now() + a.expiryDays * 864e5,
+    expiryDate: Date.now() + EXPIRY_DAYS * 864e5,
     spotAtOpen: a.spot,
     vaultUtxoId: tx.outputs[0] ?? emu.contractUtxos(inst.scriptId)[0]?.id ?? null,
     status: "active",
     history: [{ height: emu.height, text: "Opened — BTC locked, premium received" }],
   };
-  void maker;
   return { position, tx };
 }
 

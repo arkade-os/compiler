@@ -1,7 +1,7 @@
 import { useStore, type LadderRow } from "../state/store";
-import { Badge, Button, Card, Segmented } from "../ui";
+import { Badge, Button, Card } from "../ui";
 import { OutcomePanel } from "./OutcomePanel";
-import { EXPIRY_PRESETS } from "../lib/options";
+import { EXPIRY_DAYS } from "../lib/options";
 import { btcToSats, satsToBtc } from "../lib/pricing";
 import { fmtUsd } from "../lib/format";
 
@@ -43,8 +43,6 @@ export function TradeFlow() {
   const {
     deposit,
     setDeposit,
-    expiryDays,
-    setExpiry,
     spot,
     quoting,
     ladder,
@@ -59,30 +57,24 @@ export function TradeFlow() {
   return (
     <Card title="Earn yield on your BTC">
       <div className="col" style={{ gap: 16 }}>
-        {/* Step 1 — amount + expiry */}
+        {/* Step 1 — amount */}
         <div className="col" style={{ gap: 10 }}>
-          <div className="row between center wrap" style={{ gap: 10 }}>
+          <div className="row between center">
             <span className="ark-label">Deposit</span>
-            <Segmented
-              value={String(expiryDays)}
-              onChange={(v) => setExpiry(Number(v))}
-              tone="cyan"
-              options={EXPIRY_PRESETS.map((d) => ({ value: String(d), label: `${d}d` }))}
-            />
+            <Badge tone="cyan">{EXPIRY_DAYS}-day call</Badge>
           </div>
-          <div className="row center" style={{ gap: 8 }}>
-            <div className="row center grow" style={{ gap: 8, background: "var(--ark-bg)", border: "1px solid var(--ark-border)", borderRadius: 9, padding: "8px 12px" }}>
-              <input
-                className="grow"
-                style={{ background: "transparent", border: "none", outline: "none", color: "var(--ark-text)", fontFamily: "var(--ark-mono)", fontSize: 18, width: "100%" }}
-                type="number"
-                step={0.01}
-                min={0}
-                value={Number.isFinite(deposit) ? deposit : ""}
-                onChange={(e) => setDeposit(parseFloat(e.target.value))}
-              />
-              <span className="mono muted">BTC</span>
-            </div>
+          <div className="row center grow" style={{ gap: 8, background: "var(--ark-bg)", border: "1px solid var(--ark-border)", borderRadius: 9, padding: "8px 12px" }}>
+            <input
+              aria-label="BTC deposit amount"
+              className="grow"
+              style={{ background: "transparent", border: "none", outline: "none", color: "var(--ark-text)", fontFamily: "var(--ark-mono)", fontSize: 18, width: "100%" }}
+              type="number"
+              step={0.01}
+              min={0}
+              value={Number.isFinite(deposit) ? deposit : ""}
+              onChange={(e) => setDeposit(parseFloat(e.target.value))}
+            />
+            <span className="mono muted">BTC</span>
           </div>
           <div className="row wrap" style={{ gap: 6 }}>
             {DEPOSIT_CHIPS.map((c) => (
@@ -129,7 +121,7 @@ export function TradeFlow() {
                 {/* RFQ maker breakdown */}
                 <div className="col" style={{ gap: 6 }}>
                   <span className="ark-label">Market-maker quotes</span>
-                  {selectedRow.quotes.map((q, i) => {
+                  {selectedRow.quotes.map((q) => {
                     const isBest = q.maker === selectedRow.best.maker;
                     return (
                       <div
@@ -146,7 +138,6 @@ export function TradeFlow() {
                         <div className="row center" style={{ gap: 8 }}>
                           <Badge tone={q.tone}>{q.maker}</Badge>
                           {isBest && <Badge tone="green">BEST</Badge>}
-                          {i === 0 && !isBest && null}
                           <span className="faint" style={{ fontSize: 10.5 }}>IV {Math.round(q.iv * 100)}%</span>
                         </div>
                         <div className="row center" style={{ gap: 12 }}>
@@ -168,7 +159,7 @@ export function TradeFlow() {
                   strikeUsd={selectedRow.strikeUsd}
                   premiumSats={selectedRow.best.premiumSats}
                   spot={spot}
-                  expiryDate={Date.now() + expiryDays * 864e5}
+                  expiryDate={Date.now() + EXPIRY_DAYS * 864e5}
                 />
 
                 <Button variant="primary" onClick={() => accept(selectedRow)}>
@@ -176,7 +167,7 @@ export function TradeFlow() {
                   {satsToBtc(selectedRow.best.premiumSats).toFixed(6)} BTC ({selectedRow.best.apyPct.toFixed(1)}% APY)
                 </Button>
                 <span className="faint" style={{ fontSize: 11 }}>
-                  Locks {deposit} BTC in an Arkade vault and pays the premium now. Settles in BTC at expiry.
+                  Locks {deposit} BTC in an Arkade vault and pays the premium now. Settles in BTC in {EXPIRY_DAYS} days.
                 </span>
               </div>
             )}

@@ -40,7 +40,7 @@ function PositionCard({ p }: { p: Position }) {
         <Badge tone="green">+{p.apyPct.toFixed(1)}% APY</Badge>
       </div>
 
-      <div className="stat-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginBottom: 12 }}>
+      <div className="stat-3" style={{ marginBottom: 12 }}>
         <MiniStat k="Deposit" v={`${satsToBtc(p.depositSats).toFixed(4)} BTC`} />
         <MiniStat k="Premium earned" v={<span className="up">+{satsToBtc(p.premiumSats).toFixed(6)}</span>} />
         <MiniStat k="Strike" v={fmtUsd(p.strikeUsd)} />

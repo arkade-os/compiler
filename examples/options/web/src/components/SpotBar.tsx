@@ -23,6 +23,7 @@ export function SpotBar() {
         <input
           className="grow"
           type="range"
+          aria-label="Simulated BTC spot price (USD)"
           min={20000}
           max={250000}
           step={500}

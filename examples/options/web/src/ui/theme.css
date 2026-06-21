@@ -240,8 +240,8 @@ h4 {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 8px currentColor;
+  background: currentcolor;
+  box-shadow: 0 0 8px currentcolor;
 }
 
 /* ---------- inputs ---------- */
@@ -494,8 +494,14 @@ h4 {
 }
 /* allow grid children to shrink below content min-width so inner overflow:auto
    (e.g. <pre> ASM panes) scrolls internally instead of widening the page */
+.stat-3 {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, 1fr);
+}
 .form-grid > *,
 .stat-grid > *,
+.stat-3 > *,
 .split-grid > * {
   min-width: 0;
 }
@@ -551,7 +557,6 @@ h4 {
 /* long, unbreakable hex (addresses, keys) must not force horizontal scroll */
 .mono-wrap {
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 input[type="range"] {
