@@ -1,40 +1,41 @@
-# Arkade · Covered Call
+# Arkade · BTC Covered Calls
 
-A Bitcoin-native **covered-call options dApp** in the spirit of Rysk Finance,
-built on the Arkade `CoveredCall` contract. It runs entirely in the browser with
-an **embedded wallet** and an **emulator that settles on two chains** — Bitcoin
-L1 (onchain) and Arkade VTXOs (virtual) — so you can drive a covered call through
-its whole lifecycle without a node, a server, or real funds.
+A dead-simple, Rysk-style way to **earn yield on your Bitcoin** by selling covered
+calls — BTC in, BTC out, no stablecoins and no oracle. It runs entirely in the
+browser with an **embedded wallet** and a **local Arkade emulator**, so you can go
+from quote to settlement without a node, a server, or real funds.
 
-> Standalone web app living under `examples/options/web`. No real money. For
-> education and protocol demonstration.
+> Standalone web app under `examples/options/web`. No real money. For education
+> and protocol demonstration.
 
-![stack](https://img.shields.io/badge/vite-react-ts-informational) ·
-`pnpm` · `@noble` · `@scure`
+`pnpm` · `vite` · `react` · `@noble` · `@scure`
 
 ---
 
-## What it does
+## The flow
 
-- **Write or buy** a single-locked, physically-settled European covered call.
-  The writer locks BTC; the holder brings the strike payment in stablecoin
-  (`aUSD`) only if they exercise in the money. Premium flows MM→seller upfront,
-  off-contract.
-- **Quotes premiums** with a built-in Black-Scholes model (RFQ-style) and charts
-  the **payoff** for the chosen side.
-- **Embedded self-custodial wallet** — a BIP340 Schnorr key generated and
-  persisted in the browser (`localStorage`); the private key never leaves the
-  tab.
-- **Dual-chain emulator** sharing one Bitcoin block clock (the basis for every
-  `tx.time` / CLTV / CSV timelock):
-  - **Virtual (Ark)** — the Arkade Operator co-signs and the spend settles
-    instantly. Maps to the contract's **cooperative** tapleaf.
-  - **Onchain (L1)** — spends enter a mempool and confirm after a few blocks.
-    Maps to the contract's **exit** tapleaf (N-of-N + CSV `exit` delay).
-- **Full lifecycle**: `write → exercise | reclaim | transfer`, with a live
-  block clock, ITM/OTM moneyness driven by a spot slider, and a per-position
-  **script inspector** that renders the two compiled tapleaves with your
-  parameters substituted in.
+1. **Deposit BTC** and pick an expiry (7 / 14 / 30 days).
+2. **Request quotes.** Five market makers price the same option off their own
+   implied vol — an RFQ — and you’re shown **5 strikes**, each with the best
+   premium and APY.
+3. **Pick a strike.** You see every maker’s quote (best one tagged) and a
+   plain-language outcome:
+   - **If BTC < strike at expiry** → you keep all your BTC **+ the premium**.
+   - **If BTC ≥ strike** → your BTC is sold at the strike (capped upside) **+ the
+     premium**, paid out in BTC.
+4. **Sell the call.** Your BTC locks in an Arkade vault; the premium hits your
+   wallet immediately.
+5. **Settle at expiry.** Drag the spot to simulate the market, mine to the expiry
+   block, and settle — the position resolves in BTC based on where spot landed.
+
+## One settlement model
+
+Arkade settles an on-chain **UTXO** and a **virtual UTXO** the same way, so there
+is no chain to bridge or choose and no path to pick — the app never exposes one.
+Settlement is a cooperative Arkade close co-signed by you, the maker, and the
+Operator. Value is conserved end-to-end: on a called-away outcome the vault’s BTC
+is split between your capped proceeds (`deposit × strike / spot`) and the maker’s
+share — the smoke test asserts this.
 
 ## Run it
 
@@ -46,7 +47,7 @@ pnpm dev        # http://localhost:5180
 
 ```bash
 pnpm build      # typecheck + production bundle to dist/
-pnpm smoke      # headless lifecycle test (write/exercise/reclaim/transfer)
+pnpm smoke      # headless test: RFQ → open → settle (kept) → settle (called)
 ```
 
 ### Deploy
@@ -54,25 +55,16 @@ pnpm smoke      # headless lifecycle test (write/exercise/reclaim/transfer)
 On every push to `master` that touches `examples/options/web/**`, the
 [`Deploy Covered-Call App`](../../../.github/workflows/deploy-options-app.yml)
 workflow builds the app and publishes it to the `gh-pages` branch under
-`/options`, served at:
+`/options`:
 
 **https://arkade-os.github.io/compiler/options/**
 
-It lives alongside the playground (served at the site root) and PR previews
-(`/pr-previews/…`) as an independent subtree of `gh-pages`. The Vite `base` is
-`./` (relative assets), so the bundle works under that subpath unchanged. You can
-also trigger it manually from the Actions tab (`workflow_dispatch`).
-
-### Try the happy path
-1. Open the app — your embedded wallet is funded on both chains.
-2. Keep **Virtual (Ark)** selected, set a strike below spot, and **Write covered
-   call**. You receive the premium; your BTC is locked in the vault.
-3. **Mine** blocks (⛏) until you cross the expiry height.
-4. Hit **Exercise** — the buyer (Arkade MM) pays the strike `aUSD` to you and
-   takes the BTC, settled instantly on the virtual chain.
-5. Or don't exercise: mine past the reclaim height and **Reclaim** the BTC.
-6. Switch to **Onchain (L1)** to watch the same flows go through a mempool and
-   confirm via the unilateral **exit** path after the CSV delay.
+Each PR that touches the app also gets a Vercel-style preview at
+`/options-previews/pr-<N>/` via
+[`pr-preview-options.yml`](../../../.github/workflows/pr-preview-options.yml).
+Both live alongside the playground (site root) and its PR previews as independent
+`gh-pages` subtrees. Vite `base` is `./` (relative assets), so the bundle works
+under any subpath.
 
 ## Architecture
 
@@ -81,45 +73,31 @@ src/
   abi/                 compiler-sourced ABIs (covered_call.json, cash_secured_put.json)
   lib/
     crypto.ts          @noble schnorr + @scure/base — keys, sighash, hashing
-    wallet.ts          embedded wallet + simulated MM / Operator
-    contract.ts        ABI + args → deterministic vault identity; tapleaf rendering
-    arkadeScript.ts    high-level Arkade-Script tx builder (the SDK seam)
-    emulator.ts        dual-chain UTXO ledger, block clock, confirmations
-    coveredCall.ts     lifecycle: write / exercise / reclaim / transfer
-    pricing.ts         Black-Scholes premium + payoff math
+    wallet.ts          embedded wallet + simulated maker / Operator
+    contract.ts        ABI + args → deterministic Arkade vault identity
+    emulator.ts        UTXO/vUTXO ledger + block clock
+    pricing.ts         Black-Scholes premium math
+    rfq.ts             market-maker quote simulation (the RFQ)
+    options.ts         BTC-only covered call: strikes, write, settle
   state/store.ts       zustand store wiring it together
   ui/ + components/    Arkade-branded design system + screens
 ```
 
 ### Contract source
 
-The contract logic is **not** reimplemented here — it is consumed from the
-Arkade compiler output. `src/abi/covered_call.json` is the compiler's ABI for
-[`examples/options/covered_call.ark`](../covered_call.ark), including the two
-tapleaf variants per function (`serverVariant true/false`). `contract.ts` binds
-constructor arguments to a deterministic vault commitment and renders each
-tapleaf's ASM with parameters and witness values substituted — the same
-substitution an SDK performs when building a witness (including the documented
-`reclaimHeight = expiryHeight + graceBlocks` binding).
-
-### The SDK boundary
-
-The brief asked for the Arkade TypeScript SDK's high-level Arkade-Script tx
-builder. That builder currently lives on an **unpublished branch**
-(`arkade-os/ts-sdk@arkade-script`) and isn't installable from npm, and the
-emulator requirement implies an in-browser settlement layer regardless. So
-`lib/arkadeScript.ts` is a faithful, **narrow re-implementation of that builder's
-shape** — `spendVault → addInput → addOutput → sign → withOperator → build` —
-and is the *only* seam the app depends on. Swapping in the real
-`@arkade-os/sdk` builder is a single-module change: nothing in the UI, store, or
-lifecycle reaches past this interface into emulator internals.
+The contract logic is **not** reimplemented — it’s consumed from the compiler.
+`src/abi/covered_call.json` is the compiler’s ABI for
+[`examples/options/covered_call.ark`](../covered_call.ark); `contract.ts` binds
+constructor arguments into a deterministic Arkade vault address, so every
+position points at a real compiled vault. `options.ts` is the seam where the
+Arkade SDK’s tx builder would assemble the actual settlement spend.
 
 ### Notes & limitations
 
-- Signatures are real BIP340 Schnorr over a canonical (not consensus-exact)
-  sighash; the emulator verifies every required signature actually covers the
-  spend. Script execution is checked structurally, not by a full Bitcoin Script
-  interpreter.
-- Mining fees are out of band (as in the contract design docs).
-- This is an emulator: balances, blocks, and the spot feed are all local. The
-  spot slider is the buyer's ITM/OTM signal — the contract itself has no oracle.
+- Self-custodial **BIP340 Schnorr** wallet generated and persisted in the browser
+  (`localStorage`); the private key never leaves the tab. Every lock and
+  settlement is co-signed with real schnorr signatures, verified by the emulator.
+- This is an emulator: balances, blocks, and the spot feed are local. The spot
+  slider is the settlement signal — the contract has no oracle.
+- Premiums use a compact Black-Scholes; makers differ by implied vol and edge to
+  produce a realistic RFQ spread.

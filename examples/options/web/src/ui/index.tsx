@@ -32,7 +32,7 @@ export function Button({
   return <button className={`ark-btn ${v} ${size ?? ""} ${className}`} {...rest} />;
 }
 
-export type BadgeTone = "default" | "lime" | "cyan" | "green" | "red" | "amber";
+export type BadgeTone = "default" | "lime" | "cyan" | "green" | "red" | "amber" | "violet";
 export function Badge({
   tone = "default",
   dot,

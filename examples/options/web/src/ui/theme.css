@@ -231,6 +231,11 @@ h4 {
   border-color: rgba(255, 194, 75, 0.3);
   background: rgba(255, 194, 75, 0.08);
 }
+.ark-badge.violet {
+  color: var(--ark-violet);
+  border-color: rgba(155, 123, 255, 0.3);
+  background: rgba(155, 123, 255, 0.08);
+}
 .dot {
   width: 7px;
   height: 7px;
@@ -552,6 +557,52 @@ h4 {
 input[type="range"] {
   accent-color: var(--ark-lime);
   max-width: 100%;
+}
+
+/* strike ladder (5 options) */
+.strike-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(5, 1fr);
+}
+@media (max-width: 560px) {
+  .strike-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.strike-card {
+  appearance: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 11px 6px;
+  border: 1px solid var(--ark-border);
+  border-radius: 11px;
+  transition: border-color 0.12s, background 0.12s, transform 0.08s;
+  min-width: 0;
+}
+.strike-card:hover {
+  border-color: var(--ark-faint);
+}
+.strike-card:active {
+  transform: translateY(1px);
+}
+
+/* RFQ spinner */
+.rfq-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--ark-border);
+  border-top-color: var(--ark-lime);
+  animation: rfq-spin 0.7s linear infinite;
+}
+@keyframes rfq-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .kbd {

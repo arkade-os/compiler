@@ -12,13 +12,14 @@ export const SATS_PER_BTC = 100_000_000;
 function normCdf(x: number): number {
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
   const d = 0.3989422804014327 * Math.exp(-0.5 * x * x);
+  // p ≈ upper-tail (1 − Φ(|x|)); fold to Φ(x).
   let p =
     d *
     t *
     (0.31938153 +
       t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
   if (x > 0) p = 1 - p;
-  return 1 - p;
+  return p;
 }
 
 export interface BsParams {

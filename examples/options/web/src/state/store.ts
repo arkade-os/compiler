@@ -1,9 +1,8 @@
-// Global app state (zustand).
+// Global app state (zustand) for the simplified BTC covered-call flow.
 //
-// Owns the singleton emulator, the embedded wallet + simulated counterparties,
-// the market (spot/vol), and the open positions. UI components read the
-// `snapshot` and call actions; every action mutates the emulator then republishes
-// a fresh snapshot so React re-renders.
+// One ledger (Arkade settles UTXO and vUTXO the same way — no chain choice),
+// one product (sell a call on your BTC), an RFQ step, and settlement. Components
+// read `snapshot` + `ladder`/`positions` and call actions.
 import { create } from "zustand";
 import { Emulator, EmulatorSnapshot, Owner } from "../lib/emulator";
 import {
@@ -13,29 +12,21 @@ import {
   type Wallet,
 } from "../lib/wallet";
 import {
-  writeCoveredCall,
-  exercise,
-  reclaim,
-  transferLeg,
-  STABLE,
+  writeCall,
+  settleCall,
+  strikeLadder,
+  STRIKE_OFFSETS,
   type Position,
-  type PositionTerms,
-  type Side,
   type Ctx,
-} from "../lib/coveredCall";
-import { TapleafPath } from "../lib/arkadeScript";
-import { btcToSats, usdToStableUnits } from "../lib/pricing";
+} from "../lib/options";
+import { runRfq, bestQuote, type Quote } from "../lib/rfq";
+import { btcToSats, satsToBtc } from "../lib/pricing";
 
-export interface OpenForm {
-  side: Side; // user's side
-  notionalBtc: number;
+export interface LadderRow {
   strikeUsd: number;
-  premiumUsd: number;
-  volPct: number;
-  expiryInBlocks: number;
-  graceBlocks: number;
-  exitBlocks: number;
-  chain: "onchain" | "virtual";
+  offsetPct: number;
+  quotes: Quote[];
+  best: Quote;
 }
 
 interface AppState {
@@ -45,23 +36,29 @@ interface AppState {
   emu: Emulator;
   snapshot: EmulatorSnapshot;
   positions: Position[];
+
   spot: number;
-  vol: number;
-  selectedChain: "onchain" | "virtual";
+  deposit: number; // BTC
+  expiryDays: number;
+
+  quoting: boolean;
+  ladder: LadderRow[] | null;
+  selectedStrike: number | null;
+
   toast: { kind: "ok" | "err"; text: string } | null;
 
-  refresh: () => void;
   ctx: () => Ctx;
   setSpot: (n: number) => void;
-  setVol: (n: number) => void;
-  selectChain: (c: "onchain" | "virtual") => void;
+  setDeposit: (n: number) => void;
+  setExpiry: (d: number) => void;
+  requestQuotes: () => void;
+  selectStrike: (s: number) => void;
+  clearQuotes: () => void;
+  accept: (row: LadderRow) => void;
+  settle: (id: string) => void;
   mine: (n: number) => void;
   faucet: () => void;
-  resetWallet: () => void;
-  openPosition: (f: OpenForm) => void;
-  exercisePosition: (id: string, path: TapleafPath) => void;
-  reclaimPosition: (id: string, path: TapleafPath) => void;
-  transferPosition: (id: string, leg: Side) => void;
+  reset: () => void;
   clearToast: () => void;
 }
 
@@ -69,33 +66,16 @@ function keyOwner(w: Wallet): Owner {
   return { kind: "key", pubkey: w.pubkey, label: w.label };
 }
 
-function seed(emu: Emulator, user: Wallet, maker: Wallet) {
-  for (const chain of ["onchain", "virtual"] as const) {
-    emu.credit(chain, keyOwner(user), btcToSats(1), undefined);
-    emu.credit(chain, keyOwner(user), 0, {
-      id: STABLE.id,
-      amount: usdToStableUnits(250_000),
-    });
-    emu.credit(chain, keyOwner(maker), btcToSats(20), undefined);
-    emu.credit(chain, keyOwner(maker), 0, {
-      id: STABLE.id,
-      amount: usdToStableUnits(5_000_000),
-    });
-  }
-  emu.events.length = 0; // keep the seed quiet
+function seed(emu: Emulator, user: Wallet) {
+  emu.credit("virtual", keyOwner(user), btcToSats(1), undefined);
+  emu.events.length = 0;
 }
 
 export const useStore = create<AppState>((set, get) => {
   const user = loadUserWallet();
   const { maker, operator } = makeCounterparties();
   const emu = new Emulator();
-  seed(emu, user, maker);
-
-  const resolve = (pubkey: string): Wallet => {
-    const { user: u, maker: m, operator: o } = get();
-    for (const w of [u, m, o]) if (w.pubkey === pubkey) return w;
-    throw new Error(`no wallet for ${pubkey.slice(0, 8)}…`);
-  };
+  seed(emu, user);
 
   return {
     user,
@@ -105,16 +85,81 @@ export const useStore = create<AppState>((set, get) => {
     snapshot: emu.snapshot(),
     positions: [],
     spot: 100_000,
-    vol: 0.6,
-    selectedChain: "virtual",
+    deposit: 0.1,
+    expiryDays: 14,
+    quoting: false,
+    ladder: null,
+    selectedStrike: null,
     toast: null,
 
-    refresh: () => set({ snapshot: get().emu.snapshot() }),
-    ctx: () => ({ emu: get().emu, operator: get().operator, resolve }),
-    setSpot: (n) => set({ spot: Math.max(1, n) }),
-    setVol: (n) => set({ vol: Math.max(0.01, n) }),
-    selectChain: (c) => set({ selectedChain: c }),
+    ctx: () => ({ emu: get().emu, user: get().user, maker: get().maker, operator: get().operator }),
+    setSpot: (n) => set({ spot: Math.max(1, Math.round(n)) }),
+    setDeposit: (n) => set({ deposit: Math.max(0, n), ladder: null, selectedStrike: null }),
+    setExpiry: (d) => set({ expiryDays: d, ladder: null, selectedStrike: null }),
+    clearQuotes: () => set({ ladder: null, selectedStrike: null }),
     clearToast: () => set({ toast: null }),
+
+    requestQuotes: () => {
+      const { deposit, spot } = get();
+      if (!(deposit > 0)) {
+        set({ toast: { kind: "err", text: "Enter a BTC amount first" } });
+        return;
+      }
+      set({ quoting: true, ladder: null, selectedStrike: null });
+      // brief delay to evoke makers streaming quotes back to the desk
+      setTimeout(() => {
+        const { expiryDays } = get();
+        const rows: LadderRow[] = strikeLadder(spot).map((strikeUsd, i) => {
+          const quotes = runRfq({ spot, strikeUsd, depositBtc: deposit, days: expiryDays });
+          return { strikeUsd, offsetPct: STRIKE_OFFSETS[i], quotes, best: bestQuote(quotes) };
+        });
+        // default-select the richest-yield rung
+        const top = rows.reduce((a, b) => (b.best.apyPct > a.best.apyPct ? b : a));
+        set({ ladder: rows, quoting: false, selectedStrike: top.strikeUsd });
+      }, 850);
+    },
+
+    selectStrike: (s) => set({ selectedStrike: s }),
+
+    accept: (row) => {
+      try {
+        const { deposit, expiryDays, spot } = get();
+        const q = row.best;
+        const { position } = writeCall(get().ctx(), {
+          depositSats: btcToSats(deposit),
+          strikeUsd: row.strikeUsd,
+          expiryDays,
+          premiumSats: q.premiumSats,
+          makerName: q.maker,
+          apyPct: q.apyPct,
+          spot,
+        });
+        set({
+          positions: [position, ...get().positions],
+          snapshot: get().emu.snapshot(),
+          ladder: null,
+          selectedStrike: null,
+          toast: { kind: "ok", text: `Sold $${row.strikeUsd.toLocaleString()} call · earned ${satsToBtc(q.premiumSats).toFixed(6)} BTC` },
+        });
+      } catch (e) {
+        set({ toast: { kind: "err", text: (e as Error).message } });
+      }
+    },
+
+    settle: (id) => {
+      try {
+        const pos = get().positions.find((p) => p.id === id);
+        if (!pos) return;
+        settleCall(get().ctx(), pos, get().spot);
+        set({
+          positions: [...get().positions],
+          snapshot: get().emu.snapshot(),
+          toast: { kind: "ok", text: "Position settled" },
+        });
+      } catch (e) {
+        set({ toast: { kind: "err", text: (e as Error).message } });
+      }
+    },
 
     mine: (n) => {
       get().emu.mine(n);
@@ -122,114 +167,24 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     faucet: () => {
-      const { emu, user, selectedChain } = get();
-      emu.credit(selectedChain, keyOwner(user), btcToSats(0.5), undefined, "Faucet: +0.5 BTC");
-      emu.credit(
-        selectedChain,
-        keyOwner(user),
-        0,
-        { id: STABLE.id, amount: usdToStableUnits(100_000) },
-        "Faucet: +100,000 aUSD",
-      );
-      set({ snapshot: emu.snapshot(), toast: { kind: "ok", text: "Faucet delivered" } });
+      const { emu, user } = get();
+      emu.credit("virtual", keyOwner(user), btcToSats(0.5), undefined, "Faucet: +0.5 BTC");
+      set({ snapshot: emu.snapshot(), toast: { kind: "ok", text: "Faucet: +0.5 BTC" } });
     },
 
-    resetWallet: () => {
+    reset: () => {
       const w = resetUserWallet();
       const emu2 = new Emulator();
-      seed(emu2, w, get().maker);
+      seed(emu2, w);
       set({
         user: w,
         emu: emu2,
         snapshot: emu2.snapshot(),
         positions: [],
-        toast: { kind: "ok", text: "New wallet generated" },
+        ladder: null,
+        selectedStrike: null,
+        toast: { kind: "ok", text: "New wallet" },
       });
-    },
-
-    openPosition: (f) => {
-      try {
-        const { user, maker } = get();
-        const userParty = { pubkey: user.pubkey, label: "You" };
-        const makerParty = { pubkey: maker.pubkey, label: "Arkade MM" };
-        const seller = f.side === "seller" ? userParty : makerParty;
-        const buyer = f.side === "seller" ? makerParty : userParty;
-        const terms: PositionTerms = {
-          notionalBtc: f.notionalBtc,
-          strikeUsd: f.strikeUsd,
-          premiumUsd: f.premiumUsd,
-          volPct: f.volPct,
-          expiryHeight: get().emu.height + f.expiryInBlocks,
-          graceBlocks: f.graceBlocks,
-          exit: f.exitBlocks,
-        };
-        const { position } = writeCoveredCall(get().ctx(), {
-          seller,
-          buyer,
-          userSide: f.side,
-          terms,
-          chain: f.chain,
-        });
-        set({
-          positions: [position, ...get().positions],
-          snapshot: get().emu.snapshot(),
-          toast: { kind: "ok", text: `Covered call opened on ${f.chain}` },
-        });
-      } catch (e) {
-        set({ toast: { kind: "err", text: (e as Error).message } });
-      }
-    },
-
-    exercisePosition: (id, path) => {
-      try {
-        const pos = get().positions.find((p) => p.id === id);
-        if (!pos) return;
-        exercise(get().ctx(), pos, path);
-        set({
-          positions: [...get().positions],
-          snapshot: get().emu.snapshot(),
-          toast: { kind: "ok", text: "Exercised" },
-        });
-      } catch (e) {
-        set({ toast: { kind: "err", text: (e as Error).message } });
-      }
-    },
-
-    reclaimPosition: (id, path) => {
-      try {
-        const pos = get().positions.find((p) => p.id === id);
-        if (!pos) return;
-        reclaim(get().ctx(), pos, path);
-        set({
-          positions: [...get().positions],
-          snapshot: get().emu.snapshot(),
-          toast: { kind: "ok", text: "Reclaimed" },
-        });
-      } catch (e) {
-        set({ toast: { kind: "err", text: (e as Error).message } });
-      }
-    },
-
-    transferPosition: (id, leg) => {
-      try {
-        const pos = get().positions.find((p) => p.id === id);
-        if (!pos) return;
-        // Transfer to a fresh deterministic "new party" — reuse the MM as the
-        // demo counterparty to swap into.
-        const { maker, user } = get();
-        const target =
-          leg === "seller" && pos.sellerPk === user.pubkey
-            ? { pubkey: maker.pubkey, label: "Arkade MM" }
-            : { pubkey: user.pubkey, label: "You" };
-        transferLeg(get().ctx(), pos, leg, target);
-        set({
-          positions: [...get().positions],
-          snapshot: get().emu.snapshot(),
-          toast: { kind: "ok", text: `${leg} leg transferred` },
-        });
-      } catch (e) {
-        set({ toast: { kind: "err", text: (e as Error).message } });
-      }
     },
   };
 });
