@@ -14,6 +14,14 @@
             <span class="version" id="compiler-version"></span>
         </div>
         <div class="header-right">
+            <div class="network-selector">
+                <select id="network-select">
+                    <option value="bitcoin">Bitcoin</option>
+                    <option value="mutinynet">Mutinynet</option>
+                    <option value="signet">Signet</option>
+                </select>
+                <span class="network-status" id="network-status" title="Fetching..."></span>
+            </div>
             <button id="compile-btn" class="btn-primary">
                 <i class="fas fa-play"></i> Compile
             </button>
