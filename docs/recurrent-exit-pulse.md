@@ -5,8 +5,9 @@
 A protocol for giving open-membership pool contracts on Arkade a *standing* unilateral
 exit, enforced by recurrent state updates between the transacting parties. This document
 is a design specification: it defines the protocol lifecycle, the trust model, the
-attack analysis that shaped it, and the compiler surface that would standardize it. It
-proposes no code changes; the compiler-facing sections are future work.
+attack analysis — fifteen adversarial findings (A1–A15), detailed in §10 — that shaped
+it, and the compiler surface that would standardize it. It proposes no code changes; the
+compiler-facing sections are future work.
 
 Cross-references: [`options.md`](./options.md) (two-tapleaf model, exit/renew options),
 [`bonds.md`](./bonds.md) (pool covenants and today's exit asymmetry),
@@ -197,6 +198,8 @@ PULSE closes this gap.
 | **Heartbeat** | A pulse whose transition tx lands on-chain, re-anchoring the pool tip with a freshly built full lattice |
 | **Δ (`exit`)** | The exit leaf's relative timelock — the contest window |
 | **`renew`** | The pool's absolute expiry, after which the Operator's sweep path eventually matures |
+| **Bond** | The Operator's on-chain security deposit, held by a `k`-of-`n` federation of referees independent of the Operator; pays victims on objective equivocation evidence or returns to the Operator at expiry (§9) |
+| **`requiredCoverage`** | The minimum bond size — an at-risk-*per-epoch* floor (the passive value a single collusion could short before the next heartbeat), not total TVL (§9) |
 
 ## 5. Interactivity requirements
 
