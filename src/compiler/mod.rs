@@ -27,6 +27,8 @@ use crate::typechecker::{self, ArkType};
 use crate::validator::{self, Severity};
 use chrono::Utc;
 
+pub mod tapscript;
+
 // ─── Introspection Detection ────────────────────────────────────────────────────
 //
 // These helpers detect if a function uses introspection opcodes (OP_INSPECT*).
