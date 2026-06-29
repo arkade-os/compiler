@@ -876,46 +876,36 @@ attest. A `1-of-n` federation is *weaker* than a single Operator (any one node e
 collusion); `n-of-n` is maximally safe but liveness-fragile. The bond and attestation
 parameters (§9, §12.1 item 1) are sized against the same `k`.
 
-**Realizing the federation as a threshold-MPC operator.** The strongest instantiation of
-this federation is not a hand-rolled multisig but a **threshold-MPC signing network** that
-acts as the Operator's side of every signature. A non-collusive scheme (the kind where the
-network can sign *only* together with the user, and the network side is itself an MPC
-across hundreds–thousands of nodes with identifiable abort — e.g. 2PC-MPC) is a clean
-drop-in: because such schemes now produce **Schnorr/Taproot-compatible** signatures, the
-network simply produces the Operator's share of `P_k`, `A_k`, and `h_k`, while the
-transacting parties `M_k` remain the always-required co-signers — no change to the Bitcoin
-side of the design. This upgrades three named weaknesses at once: operator-collusion theft
-now requires breaking the MPC threshold rather than bribing one party; the network can
-**enforce the verification-gate policy *before* it co-signs** — refusing its share for any
-pulse that violates passive carry-forward or conservation — which turns A2's
-policy-but-not-incentive-compatible client check into something an honest threshold
-actually enforces; and key-resurrection (A8) now needs threshold collusion. Identifiable
-abort also lets the network's own staking punish misbehavior, partly subsuming the §9
-referee federation for the operator-collusion case. **The same honest ceiling still
-binds, and two limits are specific to this realization:** the MPC sits on the
-**cooperative path only** — the exit must stay pre-signed and MPC-independent, so that the
-lattice broadcasts even if the MPC network is gone (never put MPC liveness in the custody
-path); and it does **not** make the victim a signer, so amount-safety merely moves from
-"trust one Operator" to "trust the MPC threshold" — quantitatively far stronger, but still
-committee trust, not cryptographic self-custody, and so it does not escape the trilemma
-(§13.2). It also imports that network's own liveness, security, and economic assumptions —
-a real external dependency weighed against PULSE's "buildable on Arkade" baseline.
+**Realizing the federated Operator.** Its canonical realization is the **FROST-in-TEE
+primary model of §9**: a threshold-attested signer that refuses to produce its share for an
+invalid pulse, so a passive-member-shorting lattice cannot be signed at all — which also
+turns A2's policy-but-not-incentive-compatible client check into something an honest
+threshold enforces, and raises key-resurrection (A8) to threshold collusion. A
+non-collusive **2PC-MPC** network (user + a hundreds-to-thousands-node MPC with
+identifiable abort, producing Schnorr/Taproot-compatible signatures) is an alternative
+instantiation of the same role, and its identifiable-abort slashing can subsume the
+*optional* referee federation (§9). Both sit on the **cooperative path only** — the exit
+stays pre-signed and signer-independent — and neither makes the victim a signer, so neither
+escapes the trilemma (§13.2): amount trust moves from "one Operator" to "the threshold,"
+quantitatively far stronger but still committee/enclave trust, not cryptographic
+self-custody.
 
-**The threshold benefit is only as real as the network's Sybil resistance.** "Collusion
-now requires breaking the MPC threshold" holds *only if the nodes are genuinely
-independent* — and node independence **cannot be proven cryptographically**; it is the
-same unprovable real-world property as key deletion (A8) and federation non-collusion
-(§9). It rests entirely on economics and social structure: per-node staking with slashing
-sized **above the stealable value** (the MPC analogue of `requiredCoverage`, §12.1 item 3),
-identifiable abort (which punishes a *defector* but not a *colluding majority*), and
-genuine stake distribution. If those fail — the "nodes" are one entity behind a façade, or
-a staked majority colludes — the threshold collapses back to the single-Operator-collusion
-case of §8 (row 3), **but no worse**: exit stays MPC-independent and the bonded-amount
-model already assumes that collusion is possible, so a fake threshold degrades PULSE to its
-existing floor, never beneath it. Wallets should therefore gate the "MPC-secured" label on
-a measured stake-distribution bound (e.g. a Nakamoto-coefficient floor), the same way they
-refuse an under-bonded pool (§9) — the benefit is quantitative and economic, never a
-cryptographic guarantee of independence.
+**The threshold benefit is only as real as the operator set's Sybil resistance.**
+"Collusion now requires breaking the threshold" holds *only if the nodes (or enclaves) are
+genuinely independent* — and that independence **cannot be proven cryptographically**; it
+is the same unprovable real-world property as key deletion (A8) and federation
+non-collusion (§9). It rests on economics and social structure: diverse membership, staking
+or fidelity bonds sized **above the stealable value** (the analogue of `requiredCoverage`,
+§12.1 item 3), identifiable abort (which punishes a *defector* but not a *colluding
+majority*), and genuine distribution — so that breaking the threshold means compromising
+`t` *independent* operators (or their enclaves), not one entity's. If those fail — the
+"nodes" are one entity behind a façade, or a staked majority colludes — the threshold
+collapses back to the single-Operator-collusion case of §8 (row 3), **but no worse**: exit
+stays signer-independent and the model already assumes that collusion is possible, so a fake
+threshold degrades PULSE to its existing floor, never beneath it. Wallets should therefore
+gate the "threshold-secured" label on a measured distribution bound (e.g. a
+Nakamoto-coefficient floor), the same way they refuse an under-bonded pool (§9) — the
+benefit is quantitative, never a cryptographic guarantee of independence.
 
 ### 13.6 Feasibility: the lattice is an Arkade VTXO tree
 
