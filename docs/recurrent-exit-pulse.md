@@ -37,6 +37,8 @@ emulated introspection).
   - [The recourse ladder (strongest → weakest)](#the-recourse-ladder-strongest--weakest)
   - [Why the detect-before-consumed race favors the thief, not the victim](#why-the-detect-before-consumed-race-favors-the-thief-not-the-victim)
 - [9. Bond and enforcement layers](#9-bond-and-enforcement-layers)
+  - [Primary model: a FROST-in-TEE operator (no capital bond)](#primary-model-a-frost-in-tee-operator-no-capital-bond)
+  - [Optional economic backstop: the bonded federation](#optional-economic-backstop-the-bonded-federation)
   - [9.1 Hardening the referees (TEE-constrained, bonded, conflict-free)](#91-hardening-the-referees-tee-constrained-bonded-conflict-free)
 - [10. Attack analysis appendix](#10-attack-analysis-appendix)
 - [11. Compiler surface (future work — gated zones)](#11-compiler-surface-future-work--gated-zones)
@@ -472,8 +474,40 @@ exists to prevent anyone from forgetting.
 pre-signed Bitcoin transactions. An emulator shutdown — including the Operator killing
 its own attested execution environment — is a **freeze, not a theft**: watchtowers trip
 on the missed heartbeat commitment and every member exits on L1 with zero Operator
-involvement. The bond exists only as a *deterrent against active collusion-theft*
-(§8, row 3), and its enforcement must therefore be independent of the Operator's
+involvement. What remains to defend is the *amount* a passive member is owed when an active set
+colludes (§8, row 3). There are two ways to defend it; the simpler one is now primary.
+
+### Primary model: a FROST-in-TEE operator (no capital bond)
+
+Take the Operator to be a **permissionless FROST federation running in TEEs** — anyone can
+peer in via threshold resharing, and each node's signing share lives in an attested
+enclave. The enclave runs the pulse-validity policy (carry-forward, conservation, correct
+passive balances) and **refuses to contribute its FROST share to an invalid pulse**. So a
+lattice that shorts a passive member **cannot be signed at all** — strictly stronger than
+"it can be signed but you are compensated," and it needs **no TVL-sized capital and no
+separate referee quorum**. The protocol then reduces to what it should be: a **framework
+that generates the recurrent exit lattices in the background**, as part of the
+federation's normal per-pulse signing — members and watchtowers receive their branch
+automatically, with no bond ceremony.
+
+The honest cost: the amount guarantee now rests on "**≥ `t` enclaves hold**" — hardware-
+attestation trust rather than economic trust. It is **defense-in-depth, not a sovereign
+root** (enclaves get broken), so membership must be *diverse*, so that breaking the FROST
+threshold means compromising `t` **independent** operators' hardware, not one entity's.
+And with no bond, a successful threshold-break is an **uncompensated** loss rather than a
+compensated one — though the exit stays TEE-independent (your last-good lattice is plain
+pre-signed Bitcoin), so the freeze/dark case still gets everyone out. Fidelity bonds
+survive here only as **cheap Sybil-resistance of the permissionless membership** (so
+"anyone can peer" can't become one entity quietly holding `t` shares) — not as capital
+sized to TVL. This **swaps the bond's economic trust for the enclave threshold's hardware
+trust**; like everything else it does not escape the trilemma (§13.2), it relocates the
+third corner.
+
+### Optional economic backstop: the bonded federation
+
+For deployments that prefer an economic guarantee over hardware trust — or that want a
+*compensation* backstop against a TEE-threshold break — the original bonded model follows.
+It is now **optional**, not load-bearing; its enforcement is independent of the Operator's
 infrastructure:
 
 - **A `checkSigFromStack` punishment leaf would be circular — rejected.**
@@ -916,13 +950,15 @@ lattice *cryptography*.)
 > PULSE has **two security models, not one.** The **exit mechanism is 1-of-N** and
 > emulator-independent — pure pre-signed L1 transactions, any one honest data-holder can
 > broadcast, Operator or emulator shutdown means *freeze, never theft*. The **exit amount
-> is bonded, not trustless**: a passive member's balance is protected cryptographically
-> only by the honesty of `{Operator ∪ the transacting parties}` of a pulse — a set that
-> excludes the victim and can be as small as two — and below that by a federation-held
-> bond slashed on objective equivocation evidence. This split is the **trilemma** (§13.2):
-> with non-interactive passive members and no covenant, amount-safety *must* be bonded
-> rather than trustless. The recommended no-fork hardening is a **k-of-n federated
-> Operator** (§13.5), which widens the trusted set without escaping the trilemma.
-> Covenant-grade trustlessness of the amount is reachable only through the GSR annex
-> (§12.2); absent any fork, this **trustless-mechanism / bonded-amount** model is the end
-> state, and the design is engineered to be livable as exactly that.
+> is enforced, not trustless**: a passive member's balance is protected only by the
+> honesty of `{Operator ∪ the transacting parties}` of a pulse — a set that excludes the
+> victim and can be as small as two. The **primary model** closes that set with a
+> **FROST-in-TEE Operator** (§9) whose attested enclaves refuse to sign an invalid pulse,
+> so the bad lattice cannot be produced — hardware-attestation trust, no capital; an
+> **optional bond** adds an economic *compensation* backstop for those who prefer it to
+> hardware trust. Either way the amount rests on enclave-threshold or committee trust, not
+> cryptographic self-custody — the **trilemma** (§13.2): with non-interactive passive
+> members and no covenant, amount-safety *must* be enforced by a trusted layer rather than
+> by consensus. Covenant-grade trustlessness of the amount is reachable only through the
+> GSR annex (§12.2); absent any fork, this **trustless-mechanism / enforced-amount** model
+> is the end state, and the design is engineered to be livable as exactly that.
