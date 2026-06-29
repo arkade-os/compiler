@@ -46,6 +46,9 @@ pub const OP_SHA256: &str = "OP_SHA256";
 pub const OP_SHA256UPDATE: &str = "OP_SHA256UPDATE";
 pub const OP_SHA256INITIALIZE: &str = "OP_SHA256INITIALIZE";
 pub const OP_SHA256FINALIZE: &str = "OP_SHA256FINALIZE";
+pub const OP_HASH160: &str = "OP_HASH160";
+pub const OP_HASH256: &str = "OP_HASH256";
+pub const OP_RIPEMD160: &str = "OP_RIPEMD160";
 
 // Byte-string manipulation
 pub const OP_CAT: &str = "OP_CAT";
