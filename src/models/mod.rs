@@ -150,6 +150,8 @@ pub struct Contract {
     pub has_server_key: bool,
     /// Contract functions
     pub functions: Vec<Function>,
+    /// Tapscript (L1 leaf) declarations, parsed from `function … tapscript { }`.
+    pub tapscripts: Vec<NamedTapscript>,
     /// Imported contract file paths (declared via `import "path.ark";`)
     pub imports: Vec<String>,
 }
@@ -220,6 +222,81 @@ pub enum Requirement {
         op: String,
         right: Expression,
     },
+}
+
+/// Hash function used in a tapscript condition prefix (`hashFn(x) == h`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum HashFn {
+    Sha256,
+    Hash160,
+    Hash256,
+    Ripemd160,
+}
+
+impl HashFn {
+    /// The Bitcoin opcode string this hash function emits.
+    pub fn opcode(&self) -> &'static str {
+        match self {
+            HashFn::Sha256 => "OP_SHA256",
+            HashFn::Hash160 => "OP_HASH160",
+            HashFn::Hash256 => "OP_HASH256",
+            HashFn::Ripemd160 => "OP_RIPEMD160",
+        }
+    }
+
+    /// Parse a hash function name; returns None for unknown names.
+    pub fn parse(name: &str) -> Option<HashFn> {
+        match name {
+            "sha256" => Some(HashFn::Sha256),
+            "hash160" => Some(HashFn::Hash160),
+            "hash256" => Some(HashFn::Hash256),
+            "ripemd160" => Some(HashFn::Ripemd160),
+            _ => None,
+        }
+    }
+}
+
+/// A key operand in a tapscript `checkSig`/`checkMultisig`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeyExpr {
+    /// A bare pubkey identifier: a reserved role (`server`, `emulator`) or any
+    /// pubkey in scope (constructor pubkey, etc.).
+    Ident(String),
+    /// `tweak(emulator, func)`: the emulator key tweaked by `func`'s covenant hash.
+    Tweak { func: String },
+}
+
+/// One ordered component of a tapscript leaf body. Source order must follow the
+/// closure template: condition? · timelock? · multisig (validated in Context::Tapscript).
+#[derive(Debug, Clone)]
+pub enum TapItem {
+    /// `hashFn(preimage) == hash` → condition prefix.
+    Hash {
+        hash_fn: HashFn,
+        preimage: String,
+        hash: String,
+    },
+    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal or param name.
+    Older { value: String },
+    /// `after(n)` or `tx.time >= n` → CLTV (absolute timelock, forfeit class).
+    After { value: String },
+    /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
+    Sig {
+        keys: Vec<KeyExpr>,
+        sigs: Vec<String>,
+        threshold: Option<u16>,
+    },
+}
+
+/// A `tapscript`-modified function declaration: an L1 tapleaf source member.
+#[derive(Debug, Clone)]
+pub struct NamedTapscript {
+    /// Declared name (decides function-binding by exact match).
+    pub name: String,
+    /// Declared witness inputs (signatures, preimages, …), in source order.
+    pub inputs: Vec<Parameter>,
+    /// Ordered closure components.
+    pub items: Vec<TapItem>,
 }
 
 /// Source of an asset lookup (input or output)

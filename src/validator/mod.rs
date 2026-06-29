@@ -952,6 +952,7 @@ mod tests {
                 statements: vec![],
                 is_internal: false,
             }],
+            tapscripts: Vec::new(),
             imports: vec![],
         }
     }

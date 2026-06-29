@@ -31,6 +31,7 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
         exit_timelock: None,
         has_server_key: false,
         functions: Vec::new(),
+        tapscripts: Vec::new(),
         imports: Vec::new(),
     };
 
