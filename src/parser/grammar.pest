@@ -40,13 +40,17 @@ parameter = { data_type ~ identifier }
 base_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
 data_type = { base_type ~ ("[]")? }
 
-// Function definition with strict structure
+// Function definition. A `tapscript` modifier selects an L1 tapleaf body
+// (require-only); otherwise it is an ordinary covenant function body.
 function = {
     "function" ~ identifier ~
     "(" ~ param_list ~ ")" ~
-    function_modifier? ~
-    "{" ~ statement* ~ "}"
+    ( "tapscript" ~ tapscript_block
+    | function_modifier? ~ "{" ~ statement* ~ "}" )
 }
+
+// Tapscript body: only require() statements (single-interpreter leaf).
+tapscript_block = { "{" ~ require_stmt* ~ "}" }
 
 // Function modifier (internal, etc.)
 function_modifier = { "internal" }
@@ -391,10 +395,14 @@ property_comparison = {
     (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)
 }
 
-// Hash comparison (sha256(preimage) == hash)
-hash_comparison = {
-    sha256_func ~ "==" ~ identifier
-}
+// Generalized hash condition function name.
+hash_fn_name = { "sha256" | "hash256" | "hash160" | "ripemd160" }
+
+// Generalized hash function: hashFn(expr)
+hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
+
+// Hash comparison: hashFn(preimage) == hash
+hash_comparison = { hash_func ~ "==" ~ identifier }
 
 // Binary operations between literals or identifiers
 binary_operation = {
@@ -498,9 +506,19 @@ function_call = {
 
 // ─── Cryptographic Primitives ──────────────────────────────────────────────────
 
-// CheckSig expression
+// Key expression: a bare pubkey identifier (server, emulator, owner, …) or an
+// explicit emulator tweak. Used only inside checkSig/checkMultisig.
+key_expr = { tweak_key | identifier }
+
+// Explicit emulator tweak: tweak(emulator, funcName)
+tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" }
+
+// Array of key expressions (widens `array`, which is identifier-only).
+key_array = { "[" ~ key_expr ~ ("," ~ key_expr)* ~ "]" }
+
+// CheckSig expression — key position accepts a key expression (incl. tweak()).
 check_sig = {
-    "checkSig" ~ "(" ~ identifier ~ "," ~ identifier ~ ")"
+    "checkSig" ~ "(" ~ identifier ~ "," ~ key_expr ~ ")"
 }
 
 // CheckSigFromStack expression
@@ -519,8 +537,12 @@ check_legacy_multisig = {
     "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")"
 }
 
+// checkMultisig([keys], [sigs]?, threshold?) — keys may be tweak()s; the
+// optional second array carries the aligned signature inputs; optional final
+// number is the threshold. Existing single-array and [keys],[sigs] forms still
+// match (key_array accepts identifier-only arrays).
 check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ array ~ ("," ~ number_literal)? ~ ")"
+    "checkMultisig" ~ "(" ~ key_array ~ ("," ~ array)? ~ ("," ~ number_literal)? ~ ")"
 }
 
 // Array of identifiers

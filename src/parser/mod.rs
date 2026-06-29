@@ -687,7 +687,7 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     })
 }
 
-/// Parse checkMultisig([pubkeys], threshold) → CheckMultisig requirement
+/// Parse checkMultisig([pubkeys], [sigs]?, threshold?) → CheckMultisig requirement
 fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair
         .into_inner()
@@ -696,28 +696,31 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         .into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
 
-    // We support threshold multisig only, so signatures are not required
-    // The next item is a threshold number
-    let next = inner.next();
-
     let pubkeys: Vec<String> = pubkeys_array
         .into_inner()
         .map(|p| p.as_str().to_string())
         .collect();
-    match next {
+
+    // Next may be an optional sigs array (Rule::array) or a threshold number.
+    // Skip the sigs array if present; use number_literal as threshold.
+    let mut threshold_pair = inner.next();
+    if let Some(ref tp) = threshold_pair {
+        if tp.as_rule() == Rule::array {
+            threshold_pair = inner.next();
+        }
+    }
+
+    match threshold_pair {
         Some(next_pair) => {
             // m-of-n threshold multisig
             let threshold = match u16::from_str(next_pair.as_str()) {
                 Ok(threshold) => threshold,
-                Err(e) => {
-                    return Err(format!("{}", e));
-                }
+                Err(e) => return Err(format!("{}", e)),
             };
-
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
         None => {
-            // An n-of-n multisig should be created by optionally omitting the threshold from checkMultisig arguments
+            // n-of-n multisig when threshold is omitted
             let threshold = pubkeys.len() as u16;
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
@@ -806,9 +809,11 @@ fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
 /// Parse sha256(preimage) == hash → HashEqual requirement
 fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let sha256_func = inner.next().ok_or("Missing hash function")?;
-    let mut sha256_inner = sha256_func.into_inner();
-    let preimage = sha256_inner
+    let hash_func = inner.next().ok_or("Missing hash function")?;
+    let mut hash_func_inner = hash_func.into_inner();
+    // skip hash_fn_name ("sha256", "hash256", …)
+    let _fn_name = hash_func_inner.next().ok_or("Missing hash function name")?;
+    let preimage = hash_func_inner
         .next()
         .ok_or("Missing preimage")?
         .as_str()
