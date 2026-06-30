@@ -1,8 +1,10 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD64, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY,
-    OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
+    OP_ADD64, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
 };
+
+mod common;
+use common::{arkade_asm, arkade_asm_tokens, leaf_asm};
 
 /// Test contract from PLAN.md Commit 4: If/Else + Variable Reassignment
 ///
@@ -11,20 +13,14 @@ use arkade_compiler::opcodes::{
 /// - `if/else` control flow statements
 /// - Variable reassignment
 /// - Virtual stack model for branch normalization
+///
+/// options block and unused pubkey params (adminPk, adminServerPk) removed;
+/// the function body never referenced them.
 const EPOCH_LIMITER_CODE: &str = r#"
-options {
-  server = adminServerPk;
-  exit = 288;
-}
-
 contract EpochLimiter(
-  bytes32 epochStartAssetId,
-  bytes32 epochTotalAssetId,
   bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
   int epochLimit,
-  int epochBlocks,
-  pubkey adminPk,
-  pubkey adminServerPk
+  int epochBlocks
 ) {
   function check(int transferAmount, int epochStartIdx, int epochTotalIdx) {
     require(transferAmount > 0, "zero");
@@ -63,48 +59,32 @@ fn test_epoch_limiter_structure() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
     assert_eq!(output.name, "EpochLimiter");
-    // 1 function x 2 variants (server + exit)
-    assert_eq!(output.functions.len(), 2);
-
-    // Verify we have both server and exit variants
-    let server_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant);
-    let exit_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && !f.server_variant);
-
-    assert!(server_func.is_some(), "Missing server variant");
-    assert!(exit_func.is_some(), "Missing exit variant");
+    // NEW: 1 function group (not 2 variants)
+    assert_eq!(output.functions.len(), 1);
+    assert_eq!(output.functions[0].name, "check");
 }
 
 #[test]
 fn test_epoch_limiter_has_if_else() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let server_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .unwrap();
+    let asm_str = arkade_asm(&output, "check");
 
-    // Check for if/else opcodes in the assembly
+    // Check for if/else opcodes in the covenant assembly
     assert!(
-        server_func.asm.iter().any(|s| s == OP_IF),
-        "Missing OP_IF in assembly: {:?}",
-        server_func.asm
+        asm_str.contains(OP_IF),
+        "Missing OP_IF in assembly: {}",
+        asm_str
     );
     assert!(
-        server_func.asm.iter().any(|s| s == OP_ELSE),
-        "Missing OP_ELSE in assembly: {:?}",
-        server_func.asm
+        asm_str.contains(OP_ELSE),
+        "Missing OP_ELSE in assembly: {}",
+        asm_str
     );
     assert!(
-        server_func.asm.iter().any(|s| s == OP_ENDIF),
-        "Missing OP_ENDIF in assembly: {:?}",
-        server_func.asm
+        asm_str.contains(OP_ENDIF),
+        "Missing OP_ENDIF in assembly: {}",
+        asm_str
     );
 }
 
@@ -112,16 +92,12 @@ fn test_epoch_limiter_has_if_else() {
 fn test_epoch_limiter_branch_structure() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
-    let server_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .unwrap();
+    let tokens = arkade_asm_tokens(&output, "check");
 
     // Find positions of control flow opcodes
-    let if_idx = server_func.asm.iter().position(|s| s == OP_IF);
-    let else_idx = server_func.asm.iter().position(|s| s == OP_ELSE);
-    let endif_idx = server_func.asm.iter().position(|s| s == OP_ENDIF);
+    let if_idx = tokens.iter().position(|s| s == OP_IF);
+    let else_idx = tokens.iter().position(|s| s == OP_ELSE);
+    let endif_idx = tokens.iter().position(|s| s == OP_ENDIF);
 
     // Verify correct ordering: IF < ELSE < ENDIF
     assert!(if_idx.is_some() && else_idx.is_some() && endif_idx.is_some());
@@ -132,19 +108,11 @@ fn test_epoch_limiter_branch_structure() {
 #[test]
 fn test_epoch_limiter_asset_group_introspection() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
-
-    let server_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .unwrap();
+    let asm_str = arkade_asm(&output, "check");
 
     // Should have OP_INSPECTASSETGROUPSUM for reading group sums
     assert!(
-        server_func
-            .asm
-            .iter()
-            .any(|s| s.contains(OP_INSPECTASSETGROUPSUM)),
+        asm_str.contains(OP_INSPECTASSETGROUPSUM),
         "Missing {OP_INSPECTASSETGROUPSUM} in assembly"
     );
 }
@@ -152,56 +120,32 @@ fn test_epoch_limiter_asset_group_introspection() {
 #[test]
 fn test_epoch_limiter_64bit_arithmetic() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
-
-    let server_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .unwrap();
+    let asm_str = arkade_asm(&output, "check");
 
     // Should use 64-bit arithmetic for asset amounts
-    // At minimum: OP_ADD64 for epochStart + epochBlocks and epochTotal + transferAmount
-    let has_add64 = server_func.asm.iter().any(|s| s == OP_ADD64);
-
+    let has_add64 = asm_str.contains(OP_ADD64);
     assert!(has_add64, "Missing 64-bit arithmetic opcodes");
 }
 
 #[test]
-fn test_epoch_limiter_server_variant_has_checksig() {
+fn test_epoch_limiter_default_leaf_has_checksig() {
+    // The synthesized default leaf must carry the SERVER_KEY + EMULATOR_KEY guard.
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
+    let l = leaf_asm(&output, "check", "check");
 
-    let server_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .unwrap();
-
-    // Server variant should have server signature check
     assert!(
-        server_func
-            .asm
-            .iter()
-            .any(|s| s == OP_CHECKSIG || s == OP_CHECKSIGVERIFY),
-        "Server variant missing signature check"
+        l.contains(OP_CHECKSIG),
+        "Default leaf missing OP_CHECKSIG: {}",
+        l
+    );
+    assert!(
+        l.contains("<SERVER_KEY>"),
+        "Default leaf missing <SERVER_KEY>: {}",
+        l
     );
 }
 
-#[test]
-fn test_epoch_limiter_exit_variant_has_timelock() {
-    let output = compile(EPOCH_LIMITER_CODE).unwrap();
-
-    let exit_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && !f.server_variant)
-        .unwrap();
-
-    // Exit variant should have CSV timelock (288 blocks)
-    assert!(
-        exit_func
-            .asm
-            .iter()
-            .any(|s| s == OP_CHECKLOCKTIMEVERIFY || s == OP_CHECKSEQUENCEVERIFY),
-        "Exit variant missing timelock check"
-    );
-}
+// NOTE: test_epoch_limiter_exit_variant_has_timelock DROPPED.
+// In the new tapscript ABI there is no per-function exit variant; the CSV exit
+// path is an explicit standalone tapscript (e.g. `function unilateral … tapscript`).
+// EpochLimiter has no such leaf, so there is nothing to assert here.

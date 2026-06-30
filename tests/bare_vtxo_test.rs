@@ -1,31 +1,27 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_NUMEQUAL,
+    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGVERIFY, OP_DROP,
+    OP_NUMEQUAL,
 };
+
+mod common;
+use common::{arkade_asm, arkade_asm_tokens, arkade_inputs, leaf_asm};
 
 #[test]
 fn test_bare_vtxo_contract() {
-    // Bare VTXO contract source code
-    let vtxo_code = r#"// Contract configuration options
-options {
-  // Arkade operator key (always external, never a contract party)
-  server = operator;
-  
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
+    // Bare VTXO contract source code (no options block; server is a real
+    // constructor pubkey used in the multisig check; timelock is an int param)
+    let vtxo_code = r#"
 contract SingleSig(
   pubkey user,
-  pubkey server
+  pubkey server,
+  int timelock
 ) {
   // Cooperative spend path (user + server)
-  // The server cosignature (serverSig) is injected automatically by the
-  // compiler, so it must not be declared as an explicit parameter.
   function cooperative(signature userSig) {
     require(checkMultisig([user, server]));
   }
-  
+
   // Timeout path (user after timelock)
   function timeout(signature userSig) {
     require(checkSig(userSig, user));
@@ -43,60 +39,102 @@ contract SingleSig(
     assert_eq!(output.name, "SingleSig");
 
     // Verify parameters
-    assert_eq!(output.parameters.len(), 2);
+    assert_eq!(output.parameters.len(), 3);
     assert_eq!(output.parameters[0].name, "user");
     assert_eq!(output.parameters[0].param_type, "pubkey");
     assert_eq!(output.parameters[1].name, "server");
     assert_eq!(output.parameters[1].param_type, "pubkey");
+    assert_eq!(output.parameters[2].name, "timelock");
+    assert_eq!(output.parameters[2].param_type, "int");
 
-    // Verify functions - we have 4 functions (2 functions x 2 variants)
-    assert_eq!(output.functions.len(), 4);
+    // NEW: 2 function groups (one per function), not 4 variants
+    assert_eq!(output.functions.len(), 2);
 
-    // Verify cooperative function with server variant
-    let cooperative_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "cooperative" && f.server_variant)
-        .unwrap();
+    // ── cooperative group ─────────────────────────────────────────────────────
+    // Covenant inputs: only userSig is declared (server cosig is in the leaf)
+    let coop_inputs = arkade_inputs(&output, "cooperative");
+    assert_eq!(coop_inputs.len(), 1);
+    assert_eq!(coop_inputs[0], "userSig");
 
-    // Check function inputs. Only userSig is an explicit parameter; the server
-    // cosignature (<serverSig>) is injected by the compiler and appears in the
-    // ASM/witness rather than as a declared function input.
-    assert_eq!(cooperative_function.function_inputs.len(), 1);
-    assert_eq!(cooperative_function.function_inputs[0].name, "userSig");
-    assert_eq!(
-        cooperative_function.function_inputs[0].param_type,
-        "signature"
+    // Covenant ASM: multisig pubkey check (no server append here)
+    let coop_asm = arkade_asm(&output, "cooperative");
+    assert!(
+        coop_asm.contains(OP_CHECKSIG),
+        "cooperative: missing OP_CHECKSIG"
+    );
+    assert!(
+        coop_asm.contains(OP_CHECKSIGADD),
+        "cooperative: missing OP_CHECKSIGADD"
+    );
+    assert!(coop_asm.contains(OP_2), "cooperative: missing OP_2");
+    assert!(
+        coop_asm.contains(OP_NUMEQUAL),
+        "cooperative: missing OP_NUMEQUAL"
+    );
+    assert!(
+        coop_asm.contains("<user>"),
+        "cooperative: missing <user> pubkey"
+    );
+    assert!(
+        coop_asm.contains("<server>"),
+        "cooperative: missing <server> pubkey"
     );
 
-    // Check assembly instructions
-    assert_eq!(cooperative_function.asm.len(), 9);
-    assert_eq!(cooperative_function.asm[0], "<user>");
-    assert_eq!(cooperative_function.asm[1], OP_CHECKSIG);
-    assert_eq!(cooperative_function.asm[2], "<server>");
-    assert_eq!(cooperative_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(cooperative_function.asm[4], OP_2);
-    assert_eq!(cooperative_function.asm[5], OP_NUMEQUAL);
-    assert_eq!(cooperative_function.asm[6], "<SERVER_KEY>");
-    assert_eq!(cooperative_function.asm[7], "<serverSig>");
-    assert_eq!(cooperative_function.asm[8], OP_CHECKSIG);
+    // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY guard
+    let coop_leaf = leaf_asm(&output, "cooperative", "cooperative");
+    assert!(
+        coop_leaf.contains("<SERVER_KEY>"),
+        "cooperative leaf: missing <SERVER_KEY>"
+    );
+    assert!(
+        coop_leaf.contains(OP_CHECKSIGVERIFY),
+        "cooperative leaf: missing OP_CHECKSIGVERIFY"
+    );
+    assert!(
+        coop_leaf.contains(OP_CHECKSIG),
+        "cooperative leaf: missing OP_CHECKSIG"
+    );
 
-    // Verify timeout function with server variant
-    let timeout_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "timeout" && f.server_variant)
-        .unwrap();
+    // ── timeout group ─────────────────────────────────────────────────────────
+    let timeout_tokens = arkade_asm_tokens(&output, "timeout");
+    let timeout_asm = timeout_tokens.join(" ");
 
-    // Check assembly instructions
-    assert_eq!(timeout_function.asm.len(), 9);
-    assert_eq!(timeout_function.asm[0], "<user>");
-    assert_eq!(timeout_function.asm[1], "<userSig>");
-    assert_eq!(timeout_function.asm[2], OP_CHECKSIG);
-    assert_eq!(timeout_function.asm[3], "<timelock>"); // Variable reference
-    assert_eq!(timeout_function.asm[4], OP_CHECKLOCKTIMEVERIFY);
-    assert_eq!(timeout_function.asm[5], OP_DROP);
-    assert_eq!(timeout_function.asm[6], "<SERVER_KEY>");
-    assert_eq!(timeout_function.asm[7], "<serverSig>");
-    assert_eq!(timeout_function.asm[8], OP_CHECKSIG);
+    // Verify user checksig present
+    assert!(
+        timeout_asm.contains("<user>"),
+        "timeout: missing <user> pubkey"
+    );
+    assert!(
+        timeout_asm.contains("<userSig>"),
+        "timeout: missing <userSig>"
+    );
+    assert!(
+        timeout_asm.contains(OP_CHECKSIG),
+        "timeout: missing OP_CHECKSIG"
+    );
+
+    // Verify timelock check
+    assert!(
+        timeout_asm.contains("<timelock>"),
+        "timeout: missing <timelock> operand"
+    );
+    assert!(
+        timeout_asm.contains(OP_CHECKLOCKTIMEVERIFY),
+        "timeout: missing OP_CHECKLOCKTIMEVERIFY"
+    );
+    assert!(
+        timeout_asm.contains(OP_DROP),
+        "timeout: missing OP_DROP after CLTV"
+    );
+
+    // Default leaf: synthesized server guard (no introspection)
+    let timeout_leaf = leaf_asm(&output, "timeout", "timeout");
+    assert!(
+        timeout_leaf.contains("<SERVER_KEY>"),
+        "timeout leaf: missing <SERVER_KEY>"
+    );
+    assert!(
+        timeout_leaf.contains(OP_CHECKSIG),
+        "timeout leaf: missing final OP_CHECKSIG"
+    );
 }

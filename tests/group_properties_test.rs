@@ -5,16 +5,14 @@ use arkade_compiler::opcodes::{
     OP_INSPECTASSETGROUPSUM, OP_SUB64, OP_TXHASH,
 };
 
+mod common;
+use common::arkade_asm;
+
 /// Test that group.assetId emits OP_INSPECTASSETGROUPASSETID
 #[test]
 fn test_group_asset_id_basic() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract AssetIdTest(pubkey serverKey, bytes32 tokenAssetIdTxid, int tokenAssetIdGidx, bytes32 expectedAssetId) {
+        contract AssetIdTest(bytes32 tokenAssetIdTxid, int tokenAssetIdGidx, bytes32 expectedAssetId) {
             function checkAssetId(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
@@ -29,13 +27,7 @@ fn test_group_asset_id_basic() {
     let output = result.unwrap();
     assert_eq!(output.name, "AssetIdTest");
 
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkAssetId" && f.server_variant)
-        .expect("checkAssetId server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "checkAssetId");
 
     // assetId emits: OP_INSPECTASSETGROUPASSETID
     assert!(
@@ -50,12 +42,7 @@ fn test_group_asset_id_basic() {
 #[test]
 fn test_group_is_fresh_basic() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract FreshAssetTest(pubkey serverKey, bytes32 newAssetIdTxid, int newAssetIdGidx) {
+        contract FreshAssetTest(bytes32 newAssetIdTxid, int newAssetIdGidx) {
             function verifyFresh(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let group = tx.assetGroups.find(newAssetIdTxid, newAssetIdGidx);
@@ -70,13 +57,7 @@ fn test_group_is_fresh_basic() {
     let output = result.unwrap();
     assert_eq!(output.name, "FreshAssetTest");
 
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "verifyFresh" && f.server_variant)
-        .expect("verifyFresh server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "verifyFresh");
 
     // isFresh emits: OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXHASH OP_EQUAL
     assert!(
@@ -100,12 +81,7 @@ fn test_group_is_fresh_basic() {
 #[test]
 fn test_is_fresh_with_delta_combo() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract NFTMintTest(pubkey serverKey, bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx) {
+        contract NFTMintTest(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx) {
             function mintNFT(signature issuerSig, pubkey issuer) {
                 require(checkSig(issuerSig, issuer));
                 let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
@@ -120,13 +96,7 @@ fn test_is_fresh_with_delta_combo() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "mintNFT" && f.server_variant)
-        .expect("mintNFT server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "mintNFT");
 
     // Verify all three group property opcodes are present
     assert!(
@@ -156,12 +126,7 @@ fn test_is_fresh_with_delta_combo() {
 #[test]
 fn test_is_fresh_zero_for_existing_asset() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract ExistingAssetTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
+        contract ExistingAssetTest(bytes32 assetIdTxid, int assetIdGidx) {
             function transferExisting(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
@@ -175,13 +140,7 @@ fn test_is_fresh_zero_for_existing_asset() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "transferExisting" && f.server_variant)
-        .expect("transferExisting server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "transferExisting");
 
     // isFresh emits the same opcode sequence regardless of comparison value
     assert!(
@@ -200,12 +159,7 @@ fn test_is_fresh_zero_for_existing_asset() {
 #[test]
 fn test_group_metadata_hash() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract MetadataTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx, bytes32 expectedHash) {
+        contract MetadataTest(bytes32 assetIdTxid, int assetIdGidx, bytes32 expectedHash) {
             function verifyMetadata(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
@@ -218,13 +172,7 @@ fn test_group_metadata_hash() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "verifyMetadata" && f.server_variant)
-        .expect("verifyMetadata server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "verifyMetadata");
 
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPMETADATAHASH),
@@ -237,13 +185,7 @@ fn test_group_metadata_hash() {
 #[test]
 fn test_all_group_properties() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
         contract AllPropertiesTest(
-            pubkey serverKey,
             bytes32 assetIdTxid, int assetIdGidx,
             bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
             bytes32 expectedMetadata
@@ -266,13 +208,7 @@ fn test_all_group_properties() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "fullCheck" && f.server_variant)
-        .expect("fullCheck server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "fullCheck");
 
     // All group property opcodes should be present
     assert!(
@@ -316,12 +252,7 @@ fn test_all_group_properties() {
 #[test]
 fn test_group_num_inputs() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract NumInputsTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
+        contract NumInputsTest(bytes32 assetIdTxid, int assetIdGidx) {
             function checkInputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
@@ -334,13 +265,7 @@ fn test_group_num_inputs() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkInputCount" && f.server_variant)
-        .expect("checkInputCount server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "checkInputCount");
 
     // numInputs emits: <group> OP_0 OP_INSPECTASSETGROUPNUM
     assert!(
@@ -359,12 +284,7 @@ fn test_group_num_inputs() {
 #[test]
 fn test_group_num_outputs() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract NumOutputsTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
+        contract NumOutputsTest(bytes32 assetIdTxid, int assetIdGidx) {
             function checkOutputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
@@ -377,13 +297,7 @@ fn test_group_num_outputs() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkOutputCount" && f.server_variant)
-        .expect("checkOutputCount server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "checkOutputCount");
 
     // numOutputs emits: <group> OP_1 OP_INSPECTASSETGROUPNUM
     assert!(
@@ -402,12 +316,7 @@ fn test_group_num_outputs() {
 #[test]
 fn test_group_num_io_together() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract NumIOTest(pubkey serverKey, bytes32 assetIdTxid, int assetIdGidx) {
+        contract NumIOTest(bytes32 assetIdTxid, int assetIdGidx) {
             function checkCounts(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
@@ -422,13 +331,7 @@ fn test_group_num_io_together() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkCounts" && f.server_variant)
-        .expect("checkCounts server variant not found");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = arkade_asm(&output, "checkCounts");
 
     // Should have multiple OP_INSPECTASSETGROUPNUM calls
     let count = asm_str.matches(OP_INSPECTASSETGROUPNUM).count();
