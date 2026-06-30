@@ -1,7 +1,14 @@
 //! Tapscript (L1 leaf) compilation: closure assembly, validation, and ASM
 //! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
 
-use crate::models::{Contract, HashFn, KeyExpr, NamedTapscript, TapItem};
+use crate::models::{
+    Contract, HashFn, KeyExpr, NamedTapscript, Parameter, TapItem, WitnessElement,
+};
+use crate::opcodes::{
+    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
+    OP_EQUAL, OP_VERIFY,
+};
+use crate::typechecker::ArkType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Context {
@@ -363,6 +370,101 @@ pub fn validate_arkd_rules(
     // no policy source wired yet, defer to arkd. (Placeholder for future config.)
 
     Ok(warnings)
+}
+
+/// Lower a key operand to its ASM placeholder. `leaf_func` is the function name
+/// used for a name-matched leaf's bare `emulator`.
+pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
+    match k {
+        KeyExpr::Ident(id) if id == "server" => "<SERVER_KEY>".to_string(),
+        KeyExpr::Ident(id) if id == "emulator" => format!("<EMULATOR_KEY:{leaf_func}>"),
+        KeyExpr::Ident(id) => format!("<{id}>"),
+        KeyExpr::Tweak { func } => format!("<EMULATOR_KEY:{func}>"),
+    }
+}
+
+/// Emit a timelock operand: literal as-is, else a `<param>` placeholder.
+fn timelock_operand(value: &str) -> String {
+    if value.parse::<u64>().is_ok() {
+        value.to_string()
+    } else {
+        format!("<{value}>")
+    }
+}
+
+/// Emit the multisig suffix (N-of-N CHECKSIG chain).
+fn emit_multisig(keys: &[KeyExpr], leaf_func: &str, asm: &mut Vec<String>) {
+    for (i, k) in keys.iter().enumerate() {
+        asm.push(key_placeholder(k, leaf_func));
+        if i == keys.len() - 1 {
+            asm.push(OP_CHECKSIG.to_string());
+        } else {
+            asm.push(OP_CHECKSIGVERIFY.to_string());
+        }
+    }
+}
+
+/// Assemble the full leaf ASM in arkd's closure byte order: condition? · timelock? · multisig.
+pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<String> {
+    let mut asm = Vec::new();
+    // The function name used for a bare `emulator` placeholder.
+    let leaf_func = match binding {
+        Binding::Tweaked(f) => f.as_str(),
+        _ => ts_name,
+    };
+
+    // Condition prefix.
+    if let Some((hash_fn, hash)) = &c.condition {
+        asm.push(hash_fn.opcode().to_string());
+        asm.push(format!("<{hash}>"));
+        asm.push(OP_EQUAL.to_string());
+        asm.push(OP_VERIFY.to_string());
+    }
+
+    // Timelock prefix.
+    if let Some(tl) = &c.timelock {
+        asm.push(timelock_operand(tl));
+        match c.class {
+            ClosureClass::CsvMultisig | ClosureClass::ConditionCsvMultisig => {
+                asm.push(OP_CHECKSEQUENCEVERIFY.to_string());
+            }
+            _ => asm.push(OP_CHECKLOCKTIMEVERIFY.to_string()),
+        }
+        asm.push(OP_DROP.to_string());
+    }
+
+    emit_multisig(&c.keys, leaf_func, &mut asm);
+    asm
+}
+
+/// Derive the leaf witness array from the tapscript inputs, with the same array
+/// expansion behavior as covenant function inputs (DEFAULT_ARRAY_LENGTH).
+pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
+    let mut out = Vec::new();
+    for p in &ts.inputs {
+        push_witness_param(p, &mut out);
+    }
+    out
+}
+
+fn push_witness_param(p: &Parameter, out: &mut Vec<WitnessElement>) {
+    if let Some(base) = p.param_type.strip_suffix("[]") {
+        let t = ArkType::parse(base);
+        for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
+            out.push(WitnessElement {
+                name: format!("{}_{}", p.name, i),
+                elem_type: base.to_string(),
+                encoding: t.encoding().to_string(),
+            });
+        }
+    } else {
+        let t = ArkType::parse(&p.param_type);
+        out.push(WitnessElement {
+            name: p.name.clone(),
+            elem_type: p.param_type.clone(),
+            encoding: t.encoding().to_string(),
+        });
+    }
 }
 
 #[cfg(test)]
@@ -782,5 +884,121 @@ mod tests {
         let cl = closure_of(&leaf);
         let b = resolve_binding(&c, &leaf).unwrap();
         assert!(validate_arkd_rules(&c, &leaf, &cl, &b, Some(144)).is_ok());
+    }
+
+    use crate::opcodes::{
+        OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
+        OP_EQUAL, OP_HASH160, OP_VERIFY,
+    };
+
+    #[test]
+    fn emits_condition_multisig_like_golden_htlc_claim() {
+        // ConditionMultisigClosure { HASH160 <preimageHash> EQUAL, [server, emulator(claim)] }
+        let leaf = NamedTapscript {
+            name: "claim".into(),
+            inputs: vec![
+                Parameter {
+                    name: "preimage".into(),
+                    param_type: "bytes".into(),
+                },
+                Parameter {
+                    name: "serverSig".into(),
+                    param_type: "signature".into(),
+                },
+                Parameter {
+                    name: "emulatorSig".into(),
+                    param_type: "signature".into(),
+                },
+            ],
+            items: vec![
+                TapItem::Hash {
+                    hash_fn: HashFn::Hash160,
+                    preimage: "preimage".into(),
+                    hash: "preimageHash".into(),
+                },
+                sig(vec![ident("server"), ident("emulator")]),
+            ],
+        };
+        let c = assemble_closure(&leaf).unwrap();
+        let asm = emit_leaf_asm(&c, "claim", &Binding::NameMatched);
+        assert_eq!(
+            asm,
+            vec![
+                OP_HASH160.to_string(),
+                "<preimageHash>".to_string(),
+                OP_EQUAL.to_string(),
+                OP_VERIFY.to_string(),
+                "<SERVER_KEY>".to_string(),
+                OP_CHECKSIGVERIFY.to_string(),
+                "<EMULATOR_KEY:claim>".to_string(),
+                OP_CHECKSIG.to_string(),
+            ]
+        );
+        // Signatures are witness, not script.
+        assert!(!asm.iter().any(|t| t.contains("Sig")));
+        let w = leaf_witness(&leaf);
+        let names: Vec<_> = w.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, vec!["preimage", "serverSig", "emulatorSig"]);
+    }
+
+    #[test]
+    fn emits_cltv_multisig_like_golden_htlc_refund() {
+        let leaf = NamedTapscript {
+            name: "refund".into(),
+            inputs: vec![],
+            items: vec![
+                TapItem::After {
+                    value: "refundTime".into(),
+                },
+                sig(vec![ident("server"), ident("emulator")]),
+            ],
+        };
+        let c = assemble_closure(&leaf).unwrap();
+        let asm = emit_leaf_asm(&c, "refund", &Binding::NameMatched);
+        assert_eq!(
+            asm,
+            vec![
+                "<refundTime>".to_string(),
+                OP_CHECKLOCKTIMEVERIFY.to_string(),
+                OP_DROP.to_string(),
+                "<SERVER_KEY>".to_string(),
+                OP_CHECKSIGVERIFY.to_string(),
+                "<EMULATOR_KEY:refund>".to_string(),
+                OP_CHECKSIG.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn emits_csv_single_sig_exit() {
+        let leaf = NamedTapscript {
+            name: "unilateral".into(),
+            inputs: vec![Parameter {
+                name: "senderSig".into(),
+                param_type: "signature".into(),
+            }],
+            items: vec![
+                TapItem::Older {
+                    value: "exit".into(),
+                },
+                TapItem::Sig {
+                    keys: vec![ident("sender")],
+                    sigs: vec!["senderSig".into()],
+                    threshold: Some(1),
+                },
+            ],
+        };
+        let c = assemble_closure(&leaf).unwrap();
+        let asm = emit_leaf_asm(&c, "unilateral", &Binding::Standalone);
+        assert_eq!(
+            asm,
+            vec![
+                "<exit>".to_string(),
+                OP_CHECKSEQUENCEVERIFY.to_string(),
+                OP_DROP.to_string(),
+                "<sender>".to_string(),
+                OP_CHECKSIG.to_string(),
+            ]
+        );
     }
 }
