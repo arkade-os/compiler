@@ -16,28 +16,40 @@ Contract authors writing `.ark` files. Not the compiler/grammar maintainer audie
 
 <core_patterns>
 
-## 1. The two-tapleaf mental model
+## 1. The covenant + tapleaf mental model
 
-Every non-internal function compiles into **two variants**: `serverVariant=true` (cooperative; Arkade Operator co-signs) and `serverVariant=false` (exit; CLTV-gated unilateral fallback). Both enforce the same settlement math.
+Each contract member is one of two kinds:
+- a covenant `function name(...) { ... }` — the emulator-run introspection logic (the "settlement math");
+- a tapscript `function name(...) tapscript { require(...)* }` — an L1 taproot leaf (BIP-342 only) that gates the on-chain spend.
+
+A covenant `function` with **no** matching `tapscript` automatically gets a synthesized **default collaborative leaf**: `checkMultisig([server, tweak(emulator, fn)], [serverSig, emulatorSig], 2)`. So cooperative signing is free — you only write a `tapscript` block when you need extra signers, a hashlock, or a custom timelock. Unilateral exit is **explicit**: add a standalone CSV tapscript.
 
 Canonical opening:
 ```ark
-options {
-  server = server;
-  exit = exit;
-}
-
 contract Foo(
+  pubkey owner,
   ...,
   int exit  // unilateral-exit timelock in blocks; constructor param so playground can set it
-) { ... }
+) {
+  // covenant: settlement math (introspection allowed here)
+  function settle() {
+    require(tx.outputs[0].value >= 330);
+  }
+
+  // explicit unilateral exit (CSV leaf). Omit if no exit path is needed.
+  function unilateral(signature ownerSig) tapscript {
+    require(older(exit));
+    require(checkSig(ownerSig, owner));
+  }
+}
 ```
 
 Rules:
-- **NEVER** put `pubkey serverPk` (or `operatorPk`, etc.) in the constructor. The Arkade Operator key is auto-injected as `<SERVER_KEY>` via `options.server`. The `server = server` binding is documentation/convention only.
-- **`server = server` is the only valid form** — never `server = oraclePk` or `server = providerPk`.
-- `exit` (and `renew` if applicable) MUST be `int` constructor parameters so the playground can parameterize timelocks. Never hardcode `exit = 144` as a literal in `options`.
-- "Internal" functions (those that don't unlock the UTXO directly) emit only one variant. Most user-facing functions are non-internal.
+- **`options { ... }` no longer exists** — do not write it (the grammar rejects it).
+- **NEVER** put `pubkey serverPk` / `operatorPk` (or `server`/`emulator`) in the constructor. `server` → `<SERVER_KEY>` and `emulator` → `<EMULATOR_KEY:fn>` are reserved tapscript key roles, injected automatically; they appear only as key operands inside a `tapscript` block's `checkSig`/`checkMultisig`.
+- Co-signer signatures (`serverSig`, `emulatorSig`, …) are source-declared `signature` inputs on author-written tapscripts; the synthesized default leaf generates them for you.
+- `exit` (and `renew` if applicable) are `int` constructor parameters referenced by `older(...)` / `tx.time >= ...`. A contract with no exit tapscript is valid — it simply has no unilateral-exit path.
+- A tapscript must assemble to one of arkd's 5 closures (source order `condition? · timelock? · multisig`; multisig is always N-of-N; forfeit closures must include `server`). See `docs/tapscript-leaves-spec.md`.
 
 ## 2. State-bearing UTXOs via constructor recursion
 
@@ -213,8 +225,9 @@ When writing a new contract:
 
 <antipatterns>
 
-- Putting `pubkey serverPk` (or any operator key alias) in the constructor.
-- Hardcoding `exit = 144` as a literal in `options`.
+- Putting `pubkey serverPk`/`operatorPk` (or `server`/`emulator`) in the constructor.
+- Writing an `options { ... }` block (removed from the language).
+- Putting `server`/`emulator` co-signers in a covenant `function` body instead of a `tapscript` leaf.
 - Computing output indices via expression (they're constants).
 - Comparing `value` against an arithmetic expression directly (bind first).
 - Skipping `require(elapsed >= 0)` on any `tx.offchainTime - X` subtraction.
