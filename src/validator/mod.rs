@@ -10,11 +10,11 @@
 //!
 //! 2. **Output validation** (`validate_output`) — runs after compilation.
 //!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
-//!    bugs before the output reaches callers.  Includes:
-//!    - BSST-style ASM structure analysis (OP_IF/OP_ELSE/OP_ENDIF balance,
-//!      placeholder syntax, no empty instructions).
-//!    - CashScript-style placeholder consistency check (every `<name>` in ASM must
-//!      resolve against the witnessSchema or constructorInputs).
+//!    bugs before the output reaches callers: every spend group has at least one
+//!    leaf, each leaf has non-empty `asm` and `witness`, each present `arkade`
+//!    covenant has non-empty `asm`, and no leaf `asm` carries a signature
+//!    placeholder (signatures are witness-only). Tapscript-source-level operand
+//!    scope checks live in `compiler::tapscript::validate_arkd_rules`.
 //!
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.

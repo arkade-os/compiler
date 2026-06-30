@@ -320,6 +320,78 @@ pub fn validate_arkd_rules(
         }
     }
 
+    // Any declared name (constructor param or tapscript input), any type.
+    let name_declared = |name: &str| -> bool {
+        contract.parameters.iter().any(|p| p.name == name)
+            || ts.inputs.iter().any(|p| p.name == name)
+    };
+    // A declared `signature` input.
+    let sig_input = |name: &str| -> bool {
+        ts.inputs
+            .iter()
+            .any(|p| p.name == name && p.param_type == "signature")
+    };
+
+    // Signature-operand validation (§4.3, §8): every signature operand in a
+    // checkSig/checkMultisig must be a declared `signature` input, and the
+    // signature array must align 1:1 with the key set (the leaf's witness is
+    // unspendable otherwise — a missing or misaligned sig yields a witness ABI
+    // that cannot satisfy the closure).
+    for item in &ts.items {
+        if let TapItem::Sig { keys, sigs, .. } = item {
+            if sigs.len() != keys.len() {
+                return Err(format!(
+                    "tapscript `{}`: checkSig/checkMultisig has {} key(s) but {} signature(s); \
+                     signatures must align 1:1 with keys",
+                    ts.name,
+                    keys.len(),
+                    sigs.len()
+                ));
+            }
+            for s in sigs {
+                if !sig_input(s) {
+                    return Err(format!(
+                        "tapscript `{}`: signature operand `{s}` is not a declared `signature` input",
+                        ts.name
+                    ));
+                }
+            }
+        }
+    }
+
+    // Operand scope (restores the placeholder-consistency check the removed
+    // two-variant validator provided): the condition preimage/hash and the
+    // timelock value are emitted as `<name>` placeholders, so each must resolve
+    // to a declared input or constructor parameter (timelocks may also be a
+    // numeric literal). A typo would otherwise compile to a dangling placeholder.
+    for item in &ts.items {
+        match item {
+            TapItem::Hash { preimage, hash, .. } => {
+                if !name_declared(preimage) {
+                    return Err(format!(
+                        "tapscript `{}`: hash preimage `{preimage}` is not a declared input or constructor parameter",
+                        ts.name
+                    ));
+                }
+                if !name_declared(hash) {
+                    return Err(format!(
+                        "tapscript `{}`: hash value `{hash}` is not a declared input or constructor parameter",
+                        ts.name
+                    ));
+                }
+            }
+            TapItem::Older { value } | TapItem::After { value } => {
+                if value.parse::<u64>().is_err() && !name_declared(value) {
+                    return Err(format!(
+                        "tapscript `{}`: timelock `{value}` is not a literal, declared input, or constructor parameter",
+                        ts.name
+                    ));
+                }
+            }
+            TapItem::Sig { .. } => {}
+        }
+    }
+
     // F2: forfeit closures must contain `server`.
     if c.class.is_forfeit() {
         let has_server = c
@@ -789,6 +861,16 @@ mod tests {
         }
     }
 
+    /// `signature` inputs `s0..sn` matching the names `sig()` generates.
+    fn sig_params(n: usize) -> Vec<Parameter> {
+        (0..n)
+            .map(|i| Parameter {
+                name: format!("s{i}"),
+                param_type: "signature".into(),
+            })
+            .collect()
+    }
+
     #[test]
     fn name_matched_requires_bare_emulator() {
         // claim covenant exists; leaf named claim with bare emulator → NameMatched
@@ -906,7 +988,7 @@ mod tests {
     fn forfeit_without_server_is_rejected() {
         let leaf = NamedTapscript {
             name: "liquidate".into(),
-            inputs: vec![],
+            inputs: sig_params(2),
             items: vec![sig(vec![ident("owner"), ident("backup")])],
         };
         let c = contract_with(&[], vec![leaf.clone()]);
@@ -921,9 +1003,14 @@ mod tests {
         // after()+server is a CLTV forfeit; an *exit* must use older(). This
         // leaf is actually a valid CLTV forfeit, so instead test the inverse:
         // a CSV (older) leaf is an exit and needs no server — accepted.
+        let mut inputs = sig_params(1);
+        inputs.push(Parameter {
+            name: "exitDelay".into(),
+            param_type: "int".into(),
+        });
         let leaf = NamedTapscript {
             name: "unilateral".into(),
-            inputs: vec![],
+            inputs,
             items: vec![
                 TapItem::Older {
                     value: "exitDelay".into(),
@@ -955,7 +1042,7 @@ mod tests {
     fn literal_exit_delay_below_min_is_rejected() {
         let leaf = NamedTapscript {
             name: "exit".into(),
-            inputs: vec![],
+            inputs: sig_params(1),
             items: vec![
                 TapItem::Older { value: "10".into() }, // literal
                 sig(vec![ident("owner")]),
@@ -970,9 +1057,14 @@ mod tests {
 
     #[test]
     fn param_exit_delay_defers_magnitude_check() {
+        let mut inputs = sig_params(1);
+        inputs.push(Parameter {
+            name: "exitDelay".into(),
+            param_type: "int".into(),
+        });
         let leaf = NamedTapscript {
             name: "exit".into(),
-            inputs: vec![],
+            inputs,
             items: vec![
                 TapItem::Older {
                     value: "exitDelay".into(),
@@ -984,6 +1076,105 @@ mod tests {
         let cl = closure_of(&leaf);
         let b = resolve_binding(&c, &leaf).unwrap();
         assert!(validate_arkd_rules(&c, &leaf, &cl, &b, Some(144)).is_ok());
+    }
+
+    #[test]
+    fn misaligned_sig_and_key_count_is_rejected() {
+        // 2 keys but 1 declared signature → witness cannot satisfy the closure.
+        let leaf = NamedTapscript {
+            name: "x".into(),
+            inputs: vec![Parameter {
+                name: "serverSig".into(),
+                param_type: "signature".into(),
+            }],
+            items: vec![TapItem::Sig {
+                keys: vec![ident("server"), ident("emulator")],
+                sigs: vec!["serverSig".into()],
+                threshold: Some(2),
+            }],
+        };
+        let c = contract_with(&["x"], vec![leaf.clone()]);
+        let cl = closure_of(&leaf);
+        let b = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        assert!(err.contains("align 1:1"), "got: {err}");
+    }
+
+    #[test]
+    fn undeclared_signature_operand_is_rejected() {
+        // sig operand `ghostSig` is not declared as a `signature` input.
+        let leaf = NamedTapscript {
+            name: "x".into(),
+            inputs: vec![],
+            items: vec![TapItem::Sig {
+                keys: vec![ident("server")],
+                sigs: vec!["ghostSig".into()],
+                threshold: Some(1),
+            }],
+        };
+        let c = contract_with(&[], vec![leaf.clone()]);
+        let cl = closure_of(&leaf);
+        let b = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        assert!(
+            err.contains("not a declared `signature` input"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn undeclared_timelock_operand_is_rejected() {
+        // older(typo) where `typo` is neither a literal nor a declared name.
+        let leaf = NamedTapscript {
+            name: "exit".into(),
+            inputs: sig_params(1),
+            items: vec![
+                TapItem::Older {
+                    value: "typoDelay".into(),
+                },
+                sig(vec![ident("owner")]),
+            ],
+        };
+        let c = contract_with(&[], vec![leaf.clone()]);
+        let cl = closure_of(&leaf);
+        let b = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        assert!(err.contains("timelock `typoDelay`"), "got: {err}");
+    }
+
+    #[test]
+    fn undeclared_hash_value_is_rejected() {
+        // hash160(preimage) == typoHash where typoHash is not declared.
+        let leaf = NamedTapscript {
+            name: "claim".into(),
+            inputs: vec![
+                Parameter {
+                    name: "preimage".into(),
+                    param_type: "bytes".into(),
+                },
+                Parameter {
+                    name: "serverSig".into(),
+                    param_type: "signature".into(),
+                },
+            ],
+            items: vec![
+                TapItem::Hash {
+                    hash_fn: HashFn::Hash160,
+                    preimage: "preimage".into(),
+                    hash: "typoHash".into(),
+                },
+                TapItem::Sig {
+                    keys: vec![ident("server")],
+                    sigs: vec!["serverSig".into()],
+                    threshold: Some(1),
+                },
+            ],
+        };
+        let c = contract_with(&[], vec![leaf.clone()]);
+        let cl = closure_of(&leaf);
+        let b = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        assert!(err.contains("hash value `typoHash`"), "got: {err}");
     }
 
     use crate::opcodes::{
