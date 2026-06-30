@@ -10,70 +10,98 @@
 //! unused by one binary (but used by another) would otherwise warn.
 #![allow(dead_code)]
 
-use arkade_compiler::models::{AbiFunction, ContractJson};
+use arkade_compiler::models::{AbiFunctionGroup, AbiLeaf, ContractJson};
 
-/// Locate a (name, server_variant) function or panic with a descriptive
-/// message. Centralised so every helper produces the same diagnostic when a
-/// test references a missing/renamed function.
-fn find_fn<'a>(output: &'a ContractJson, name: &str, server: bool) -> &'a AbiFunction {
-    output
-        .functions
+/// Locate a spend group by name or panic with a descriptive message.
+pub fn group<'a>(out: &'a ContractJson, name: &str) -> &'a AbiFunctionGroup {
+    out.functions
         .iter()
-        .find(|f| f.name == name && f.server_variant == server)
+        .find(|g| g.name == name)
         .unwrap_or_else(|| {
-            let known: Vec<String> = output
-                .functions
-                .iter()
-                .map(|f| format!("{}(server={})", f.name, f.server_variant))
-                .collect();
-            panic!("function {name} (server_variant={server}) not found; known variants: {known:?}")
+            let known: Vec<_> = out.functions.iter().map(|g| g.name.clone()).collect();
+            panic!("group {name} not found; known: {known:?}")
         })
 }
 
-/// The server-variant ASM of a function, joined into one searchable string.
-pub fn asm_of(output: &ContractJson, name: &str) -> String {
-    asm_variant(output, name, true)
+fn leaf<'a>(out: &'a ContractJson, group_name: &str, leaf_name: &str) -> &'a AbiLeaf {
+    group(out, group_name)
+        .leaves
+        .iter()
+        .find(|l| l.name == leaf_name)
+        .unwrap_or_else(|| panic!("leaf {leaf_name} not found in group {group_name}"))
 }
 
-/// The ASM of a specific (function, variant) pair, joined into one string.
-/// `server = true` selects the cooperative variant; `false` the exit variant.
-pub fn asm_variant(output: &ContractJson, name: &str, server: bool) -> String {
-    find_fn(output, name, server).asm.join(" ")
+/// The arkade covenant ASM of a group, joined into one searchable string.
+/// Panics if the group has no arkade covenant.
+pub fn arkade_asm(out: &ContractJson, group_name: &str) -> String {
+    group(out, group_name)
+        .arkade
+        .as_ref()
+        .unwrap_or_else(|| panic!("group {group_name} has no arkade covenant"))
+        .asm
+        .join(" ")
 }
 
-/// The ASM of a function's server variant as a token vector — for structural
-/// checks (e.g. "the operand immediately before OP_CHECKLOCKTIMEVERIFY must be
+/// The arkade covenant ASM as a token vector — for structural checks
+/// (e.g. "the operand immediately before OP_CHECKLOCKTIMEVERIFY must be
 /// <redeemStart>") that can't be done via substring search.
-pub fn asm_tokens(output: &ContractJson, name: &str) -> Vec<String> {
-    find_fn(output, name, true).asm.clone()
+/// Panics if the group has no arkade covenant.
+pub fn arkade_asm_tokens(out: &ContractJson, group_name: &str) -> Vec<String> {
+    group(out, group_name)
+        .arkade
+        .as_ref()
+        .unwrap_or_else(|| panic!("group {group_name} has no arkade covenant"))
+        .asm
+        .clone()
 }
 
-/// The witness-schema parameter names of a function's server variant.
-pub fn witness_names(output: &ContractJson, name: &str) -> Vec<String> {
-    find_fn(output, name, true)
-        .witness_schema
+/// The arkade covenant input parameter names (function parameters that go into
+/// the covenant, NOT the leaf's cosig witnesses). Returns empty if no arkade.
+pub fn arkade_inputs(out: &ContractJson, group_name: &str) -> Vec<String> {
+    group(out, group_name)
+        .arkade
+        .as_ref()
+        .map(|a| a.inputs.iter().map(|i| i.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// The ASM of a named leaf within a named group, joined into one string.
+pub fn leaf_asm(out: &ContractJson, group_name: &str, leaf_name: &str) -> String {
+    leaf(out, group_name, leaf_name).asm.join(" ")
+}
+
+/// The ASM of a named leaf as a token vector.
+pub fn leaf_asm_tokens(out: &ContractJson, group_name: &str, leaf_name: &str) -> Vec<String> {
+    leaf(out, group_name, leaf_name).asm.clone()
+}
+
+/// Witness element names of a leaf (the on-chain witness stack items).
+pub fn witness_names(out: &ContractJson, group_name: &str, leaf_name: &str) -> Vec<String> {
+    leaf(out, group_name, leaf_name)
+        .witness
         .iter()
         .map(|w| w.name.clone())
         .collect()
 }
 
-/// Count exact-token occurrences of an opcode in a function's server-variant
-/// ASM. Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL"
-/// or "OP_GREATERTHANOREQUAL64".
-pub fn opcode_count(output: &ContractJson, name: &str, op: &str) -> usize {
-    find_fn(output, name, true)
-        .asm
-        .iter()
-        .filter(|tok| tok.as_str() == op)
-        .count()
+/// Count exact-token occurrences of an opcode in a group's arkade covenant ASM.
+/// Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL"
+/// or "OP_GREATERTHANOREQUAL64". Returns 0 if the group has no arkade.
+pub fn opcode_count_in_arkade(out: &ContractJson, group_name: &str, op: &str) -> usize {
+    group(out, group_name)
+        .arkade
+        .as_ref()
+        .map(|a| a.asm.iter().filter(|tok| tok.as_str() == op).count())
+        .unwrap_or(0)
 }
 
-/// Signature-witness names of a function's server variant, excluding
-/// `serverSig` (the Arkade cooperative-path signature auto-injected on every
-/// server variant — not a user/trust signature).
-pub fn user_signatures(output: &ContractJson, name: &str) -> Vec<String> {
-    witness_names(output, name)
+/// Signature-input names from the arkade covenant inputs, identified by name
+/// ending with "sig" (case-insensitive). These are the user-supplied signatures
+/// — excludes serverSig/emulatorSig which live in the leaf witness, not in
+/// arkade.inputs.
+pub fn user_signatures(out: &ContractJson, group_name: &str) -> Vec<String> {
+    arkade_inputs(out, group_name)
         .into_iter()
-        .filter(|w| w.to_lowercase().ends_with("sig") && w != "serverSig")
+        .filter(|w| w.to_lowercase().ends_with("sig"))
         .collect()
 }

@@ -5,7 +5,7 @@ use arkade_compiler::opcodes::{
 };
 
 mod common;
-use common::{asm_of, asm_variant, user_signatures, witness_names};
+use common::{arkade_asm, arkade_inputs, user_signatures};
 
 const CODE: &str = include_str!("../examples/bonds/bond_mint.ark");
 
@@ -13,9 +13,8 @@ const CODE: &str = include_str!("../examples/bonds/bond_mint.ark");
 fn test_bond_mint_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "BondMint");
-    // 3 functions (repay, liquidate, auction) x 2 variants = 6
-    // 4 functions (repay, liquidate, auction, roll) × 2 variants = 8
-    assert_eq!(output.functions.len(), 8, "expected 8 functions");
+    // 4 covenant functions (repay, liquidate, auction, roll) + 1 tapscript (unilateral) = 5 groups
+    assert_eq!(output.functions.len(), 5, "expected 5 function groups");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     // Asset IDs are authored as explicit (Txid, Gidx) param pairs.
@@ -35,7 +34,7 @@ fn test_bond_mint_compiles() {
 #[test]
 fn test_repay_is_atomic_with_pool() {
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "repay");
+    let asm = arkade_asm(&output, "repay");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
         "repay verifies pool co-spent"
@@ -63,7 +62,7 @@ fn test_liquidate_is_permissionless_prematurity() {
     // auctioneer-pinned collateral output. The oracle + threshold + payout
     // math lives on the pool side.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "liquidate");
+    let asm = arkade_asm(&output, "liquidate");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
         "liquidate verifies pool co-spent"
@@ -81,7 +80,7 @@ fn test_liquidate_is_permissionless_prematurity() {
         "liquidate enforces tx.time < maturity"
     );
 
-    let ws = witness_names(&output, "liquidate");
+    let ws = arkade_inputs(&output, "liquidate");
     let user_sigs = user_signatures(&output, "liquidate");
     assert!(
         user_sigs.is_empty(),
@@ -89,7 +88,7 @@ fn test_liquidate_is_permissionless_prematurity() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a witness parameter (got: {ws:?})"
+        "auctioneerPk must be a covenant input parameter (got: {ws:?})"
     );
 }
 
@@ -102,7 +101,7 @@ fn test_auction_is_permissionless_and_phased() {
     //   - auctioneer-pinned collateral output
     // Auctioneer identity is a pure witness pubkey; no user signature.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "auction");
+    let asm = arkade_asm(&output, "auction");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
         "auction verifies pool co-spent"
@@ -117,9 +116,7 @@ fn test_auction_is_permissionless_and_phased() {
         "auction enforces tx.time < maturity + auctionWindow"
     );
 
-    let ws = witness_names(&output, "auction");
-    // user_signatures excludes serverSig (the Arkade cooperative-path
-    // signature auto-injected on every server variant — not a user sig).
+    let ws = arkade_inputs(&output, "auction");
     let user_sigs = user_signatures(&output, "auction");
     assert!(
         user_sigs.is_empty(),
@@ -127,7 +124,7 @@ fn test_auction_is_permissionless_and_phased() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a witness parameter (got: {ws:?})"
+        "auctioneerPk must be a covenant input parameter (got: {ws:?})"
     );
 }
 
@@ -141,7 +138,7 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
     // the paired rollOut/rollIn/swap covenants at their witness-supplied
     // indices.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "roll");
+    let asm = arkade_asm(&output, "roll");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
         "roll verifies the genuine old pool is co-spent via debitCtrlId"
@@ -167,7 +164,7 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
         "roll must NOT pin any output's value — same reason"
     );
 
-    let ws = witness_names(&output, "roll");
+    let ws = arkade_inputs(&output, "roll");
     let user_sigs = user_signatures(&output, "roll");
     assert_eq!(
         user_sigs.len(),
@@ -182,20 +179,41 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
 }
 
 #[test]
-fn test_exit_variant_is_unilateral_fallback() {
+fn test_unilateral_exit_is_csv_timelocked() {
+    // The unilateral tapscript is the single exit leaf — used when the Arkade
+    // operator is offline. It must be CSV-timelocked (no covenant introspection)
+    // and require only the borrower's signature.
+    //
+    // In the new ABI, per-function exit variants (server_variant=false) are
+    // gone. The exit path is the shared `unilateral` tapscript leaf instead.
+    use arkade_compiler::opcodes::OP_DROP;
     let output = compile(CODE).expect("compilation failed");
-    for name in ["repay", "liquidate", "auction", "roll"] {
-        let asm = asm_variant(&output, name, false);
-        assert!(
-            asm.contains(OP_CHECKSEQUENCEVERIFY),
-            "{name} exit must be CSV-timelocked"
-        );
-        assert!(asm.contains(OP_CHECKSIG), "{name} exit must check sigs");
-        assert!(
-            !asm.contains(OP_INSPECTOUTPUTVALUE) && !asm.contains(OP_INSPECTASSETGROUPSUM),
-            "{name} exit must not carry covenant introspection"
-        );
-    }
+    let asm = common::leaf_asm(&output, "unilateral", "unilateral");
+    assert!(
+        asm.contains(OP_CHECKSEQUENCEVERIFY),
+        "unilateral exit must be CSV-timelocked"
+    );
+    assert!(asm.contains(OP_CHECKSIG), "unilateral exit must check sig");
+    assert!(
+        asm.contains(OP_DROP),
+        "unilateral exit must drop the CSV value"
+    );
+    // No covenant introspection on the exit leaf.
+    assert!(
+        !asm.contains(OP_INSPECTOUTPUTVALUE),
+        "exit leaf must carry no output-value introspection"
+    );
+    assert!(
+        !asm.contains(OP_INSPECTASSETGROUPSUM),
+        "exit leaf must carry no asset-group-sum introspection"
+    );
+    // The leaf witness is borrowerSig only — no serverSig/emulatorSig on a tapscript.
+    let ws = common::witness_names(&output, "unilateral", "unilateral");
+    assert_eq!(
+        ws,
+        vec!["borrowerSig"],
+        "unilateral witness must be [borrowerSig], got: {ws:?}"
+    );
 }
 
 #[test]

@@ -1,13 +1,15 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CAT, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64,
-    OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL64, OP_SHA256,
+    OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64, OP_FINDASSETGROUPBYASSETID,
+    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
+    OP_LESSTHANOREQUAL, OP_MUL64, OP_SHA256,
 };
 
 mod common;
-use common::{asm_of, asm_tokens, asm_variant, opcode_count, user_signatures, witness_names};
+use common::{
+    arkade_asm, arkade_asm_tokens, arkade_inputs, opcode_count_in_arkade, user_signatures,
+};
 
 const CODE: &str = include_str!("../examples/bonds/repayment_pool.ark");
 
@@ -15,11 +17,10 @@ const CODE: &str = include_str!("../examples/bonds/repayment_pool.ark");
 fn test_repayment_pool_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "RepaymentPool");
-    // 5 functions (issue, acceptRepayment, liquidate, acceptAuction, redeem)
-    // × 2 variants = 10
-    // 7 functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
-    // acceptAuction, redeem) × 2 variants = 14
-    assert_eq!(output.functions.len(), 14, "expected 14 functions");
+    // 7 covenant functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
+    // acceptAuction, redeem) → 7 groups (one per function; no per-function exit
+    // variants in the new ABI).
+    assert_eq!(output.functions.len(), 7, "expected 7 function groups");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     for id in [
@@ -154,7 +155,7 @@ fn test_pool_retains_debit_ctrl_in_every_function() {
         "redeem",
     ];
     for fn_name in pool_recreating_fns {
-        let lookups = opcode_count(&output, fn_name, OP_INSPECTOUTASSETLOOKUP);
+        let lookups = opcode_count_in_arkade(&output, fn_name, OP_INSPECTOUTASSETLOOKUP);
         assert!(
             lookups >= 3,
             "function `{fn_name}` emits only {lookups} OP_INSPECTOUTASSETLOOKUP — at minimum it must check usdtAssetId balance + creditCtrlId retention + debitCtrlId retention on the recreated pool output, or BondMint pool-authentication breaks."
@@ -204,7 +205,7 @@ fn test_no_interest_rate_anywhere() {
 #[test]
 fn test_issue_is_oracle_priced_and_dual_mints() {
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "issue");
+    let asm = arkade_asm(&output, "issue");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
         "issue verifies oracle sig"
@@ -259,7 +260,7 @@ fn test_issue_enforces_deployment_invariants() {
     // a `>= 5` lower bound would let one be silently deleted.
     // (OP_GREATERTHANOREQUAL / *_64 are distinct opcodes, not counted here.)
     let output = compile(CODE).expect("compilation failed");
-    let gt = opcode_count(&output, "issue", "OP_GREATERTHAN");
+    let gt = opcode_count_in_arkade(&output, "issue", "OP_GREATERTHAN");
     assert_eq!(
         gt, 6,
         "issue must carry initRatioBps > liqThresholdBps + liqThresholdBps > 0 \
@@ -305,11 +306,10 @@ fn test_issue_enforces_deployment_invariants() {
     );
 }
 
-/// True iff the function `name`'s server-variant ASM contains three given
-/// tokens in any order within a 3-token sliding window. Used for targeted
-/// regression checks where the compiler may emit a comparison's operands
-/// and opcode in a non-postfix display order — what matters is adjacency,
-/// not exact sequence.
+/// True iff the group's arkade covenant ASM contains three given tokens in any
+/// order within a 3-token sliding window. Used for targeted regression checks
+/// where the compiler may emit a comparison's operands and opcode in a
+/// non-postfix display order — what matters is adjacency, not exact sequence.
 fn contains_window_3(
     output: &arkade_compiler::models::ContractJson,
     name: &str,
@@ -317,7 +317,7 @@ fn contains_window_3(
     b: &str,
     c: &str,
 ) -> bool {
-    let tokens = asm_tokens(output, name);
+    let tokens = arkade_asm_tokens(output, name);
     if tokens.len() < 3 {
         return false;
     }
@@ -345,7 +345,7 @@ fn test_issue_uses_ceiling_division_on_required_collateral() {
     // a different bias like + 5000) trips this test.
     let output = compile(CODE).expect("compilation failed");
     for fn_name in ["issue", "rollIn"] {
-        let tokens = asm_tokens(&output, fn_name);
+        let tokens = arkade_asm_tokens(&output, fn_name);
         assert!(
             tokens.iter().any(|t| t == "9999"),
             "{fn_name} must use ceiling division on the required-collateral \
@@ -358,7 +358,7 @@ fn test_issue_uses_ceiling_division_on_required_collateral() {
 #[test]
 fn test_accept_repayment_validates_vault_and_burns_debit() {
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "acceptRepayment");
+    let asm = arkade_asm(&output, "acceptRepayment");
     assert!(
         asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
         "acceptRepayment validates the BondMint input"
@@ -386,7 +386,7 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
     // Oracle witness only. Auctioneer identity = witness pubkey.
     // Phased gate: tx.time >= maturity AND tx.time < maturity + auctionWindow.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "acceptAuction");
+    let asm = arkade_asm(&output, "acceptAuction");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
         "acceptAuction verifies oracle sig"
@@ -416,10 +416,10 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
         "acceptAuction enforces auction-window upper bound"
     );
 
-    // Excluding serverSig (the Arkade cooperative-path sig auto-injected on
-    // every server-variant function), exactly ONE signature witness remains:
-    // the oracle. No auctioneer signature — auction is permissionless.
-    let ws = witness_names(&output, "acceptAuction");
+    // Excluding serverSig/emulatorSig (in the leaf witness, not arkade.inputs),
+    // exactly ONE signature in arkade.inputs: the oracle. No auctioneer
+    // signature — auction is permissionless.
+    let ws = arkade_inputs(&output, "acceptAuction");
     let user_sigs = user_signatures(&output, "acceptAuction");
     assert_eq!(
         user_sigs.len(),
@@ -433,7 +433,7 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a witness parameter, got: {ws:?}"
+        "auctioneerPk must be a covenant input parameter, got: {ws:?}"
     );
 }
 
@@ -444,7 +444,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     // Same two-branch payout as acceptAuction, same auctioneer-discount
     // incentive — but pre-maturity and triggered by the health threshold.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "liquidate");
+    let asm = arkade_asm(&output, "liquidate");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
         "liquidate verifies oracle sig"
@@ -477,14 +477,14 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     // the health gate, the single most important liquidate invariant — fails
     // the test. A `>= 2` lower bound would let the health gate be silently
     // deleted (dropping 3 -> 2 while still passing).
-    let lt = opcode_count(&output, "liquidate", "OP_LESSTHAN");
+    let lt = opcode_count_in_arkade(&output, "liquidate", "OP_LESSTHAN");
     assert_eq!(
         lt, 3,
         "liquidate must gate on discount-bound AND tx.time<maturity AND \
          collateralValue<healthFloor (expected exactly 3 OP_LESSTHAN, found {lt})"
     );
 
-    let ws = witness_names(&output, "liquidate");
+    let ws = arkade_inputs(&output, "liquidate");
     let user_sigs = user_signatures(&output, "liquidate");
     assert_eq!(
         user_sigs.len(),
@@ -498,7 +498,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a witness parameter, got: {ws:?}"
+        "auctioneerPk must be a covenant input parameter, got: {ws:?}"
     );
 }
 
@@ -512,12 +512,12 @@ fn test_liquidate_and_accept_auction_are_phase_disjoint() {
     // >= comparison — so the two paths can never both be valid at one height.
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(
-        opcode_count(&output, "liquidate", "OP_LESSTHAN"),
+        opcode_count_in_arkade(&output, "liquidate", "OP_LESSTHAN"),
         3,
         "liquidate must carry its discount-bound, pre-maturity, and health-floor comparisons"
     );
     assert!(
-        asm_of(&output, "acceptAuction").contains(OP_LESSTHAN),
+        arkade_asm(&output, "acceptAuction").contains(OP_LESSTHAN),
         "acceptAuction must carry its window upper-bound comparison"
     );
 }
@@ -527,7 +527,7 @@ fn test_redeem_is_pro_rata_post_window() {
     // redeem only opens AFTER the auction window closes, so the rate
     // (usdtBalance / totalCreditOutstanding) is locked and fair for all orderings.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "redeem");
+    let asm = arkade_asm(&output, "redeem");
     assert!(
         asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
         "redeem computes pro-rata payout"
@@ -553,7 +553,7 @@ fn test_redeem_is_pro_rata_post_window() {
     // OP_CHECKLOCKTIMEVERIFY (the dedicated Bitcoin time-lock opcode),
     // because that's exactly the "block height ≥ N" semantic.
     assert_eq!(
-        opcode_count(&output, "redeem", "OP_CHECKLOCKTIMEVERIFY"),
+        opcode_count_in_arkade(&output, "redeem", "OP_CHECKLOCKTIMEVERIFY"),
         1,
         "redeem must gate on tx.time >= maturity + auctionWindow (CLTV, post-window phase)"
     );
@@ -564,7 +564,7 @@ fn test_redeem_is_pro_rata_post_window() {
     // opcode-count check above but bypass the gate semantically. Both
     // `<maturity>` and `<auctionWindow>` placeholders must appear in the
     // redeem ASM for the gate's operand to be the intended sum.
-    let tokens = asm_tokens(&output, "redeem");
+    let tokens = arkade_asm_tokens(&output, "redeem");
     assert!(
         tokens.iter().any(|t| t == "<maturity>"),
         "redeem CLTV operand must derive from maturity (placeholder missing)"
@@ -605,7 +605,7 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
     // pool.liquidate's oracle + healthFloor gate entirely. The pool-side sig
     // is the gate that blocks that pairing.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "rollOut");
+    let asm = arkade_asm(&output, "rollOut");
     assert!(
         asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
         "rollOut validates the OLD BondMint at input[vaultIdx]"
@@ -633,18 +633,18 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
 
     // The discharge gate is `expectedDischarge == oldMintedAmount` — strict
     // equality, symmetric with the strict-burn invariant. Both are witnesses.
-    let ws = witness_names(&output, "rollOut");
+    let ws = arkade_inputs(&output, "rollOut");
     assert!(
         ws.iter().any(|w| w == "expectedDischarge"),
-        "expectedDischarge must be a witness, got: {ws:?}"
+        "expectedDischarge must be a covenant input, got: {ws:?}"
     );
     assert!(
         ws.iter().any(|w| w == "outIdxPool"),
-        "outIdxPool must be a witness (variable output index), got: {ws:?}"
+        "outIdxPool must be a covenant input (variable output index), got: {ws:?}"
     );
     assert!(
         ws.iter().any(|w| w == "borrowerSig"),
-        "borrowerSig must be a witness (blocks force-liquidation attack), got: {ws:?}"
+        "borrowerSig must be a covenant input (blocks force-liquidation attack), got: {ws:?}"
     );
 
     // Exactly one user signature: the borrower's. The pool-side sig is the
@@ -669,7 +669,7 @@ fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
     // vault + the credit destination + the pool recreation, all at witness
     // output indices.
     let output = compile(CODE).expect("compilation failed");
-    let asm = asm_of(&output, "rollIn");
+    let asm = arkade_asm(&output, "rollIn");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
         "rollIn verifies oracle sig"
@@ -703,11 +703,11 @@ fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
         "rollIn needs borrower sig (consent)"
     );
 
-    let ws = witness_names(&output, "rollIn");
+    let ws = arkade_inputs(&output, "rollIn");
     for name in ["outIdxPool", "outIdxVault", "outIdxCredit"] {
         assert!(
             ws.iter().any(|w| w == name),
-            "{name} must be a witness (variable output index), got: {ws:?}"
+            "{name} must be a covenant input (variable output index), got: {ws:?}"
         );
     }
 
@@ -729,7 +729,7 @@ fn test_roll_pair_enforces_all_deployment_invariants() {
     // [0, 10000)). Without these re-checks a misconfigured pool that
     // somehow escaped issue could still mint fresh vaults via rollIn.
     let output = compile(CODE).expect("compilation failed");
-    let gt = opcode_count(&output, "rollIn", "OP_GREATERTHAN");
+    let gt = opcode_count_in_arkade(&output, "rollIn", "OP_GREATERTHAN");
     // 3 `> 0` value guards (newMintedAmount, newCollateral, oraclePrice) +
     // 3 deployment invariants (initRatioBps > liqThresholdBps,
     // liqThresholdBps > 0, auctionWindow > 0) = 6 OP_GREATERTHAN, matching
@@ -768,9 +768,15 @@ fn test_roll_pair_enforces_all_deployment_invariants() {
 }
 
 #[test]
-fn test_exit_variants_are_unilateral_fallback() {
+fn test_default_leaves_carry_no_introspection() {
+    // In the new ABI every covenant function has a synthesized default leaf:
+    //   `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:fn> OP_CHECKSIG`
+    // All covenant introspection lives in the arkade block; the leaves are
+    // pure cosig. This test verifies no introspection opcode leaked into any
+    // default leaf — equivalent to the old "exit variants must not carry
+    // covenant introspection" invariant.
     let output = compile(CODE).expect("compilation failed");
-    for name in [
+    for fn_name in [
         "issue",
         "acceptRepayment",
         "rollOut",
@@ -779,15 +785,16 @@ fn test_exit_variants_are_unilateral_fallback() {
         "acceptAuction",
         "redeem",
     ] {
-        let asm = asm_variant(&output, name, false);
+        let leaf_asm = common::leaf_asm(&output, fn_name, fn_name);
         assert!(
-            asm.contains(OP_CHECKSEQUENCEVERIFY),
-            "{name} exit must be CSV-timelocked"
+            !leaf_asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY)
+                && !leaf_asm.contains(OP_INSPECTASSETGROUPSUM),
+            "{fn_name} default leaf must not carry covenant introspection (got: {leaf_asm})"
         );
-        assert!(asm.contains(OP_CHECKSIG), "{name} exit must check sigs");
+        // Each default leaf is exactly the synthesized cosig form.
         assert!(
-            !asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY) && !asm.contains(OP_INSPECTASSETGROUPSUM),
-            "{name} exit must not carry covenant introspection"
+            leaf_asm.contains("OP_CHECKSIGVERIFY"),
+            "{fn_name} default leaf must have SERVER_KEY OP_CHECKSIGVERIFY EMULATOR_KEY OP_CHECKSIG form"
         );
     }
 }
