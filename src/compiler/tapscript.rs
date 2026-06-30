@@ -1,7 +1,7 @@
 //! Tapscript (L1 leaf) compilation: closure assembly, validation, and ASM
 //! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
 
-use crate::models::{HashFn, KeyExpr, NamedTapscript, TapItem};
+use crate::models::{Contract, HashFn, KeyExpr, NamedTapscript, TapItem};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Context {
@@ -197,9 +197,99 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Binding {
+    /// Leaf name matches a covenant function; bare `emulator` is implicitly tweaked.
+    NameMatched,
+    /// Unmatched leaf that explicitly tweaks exactly one function's emulator key.
+    Tweaked(String),
+    /// Unmatched leaf with no emulator binding at all.
+    Standalone,
+}
+
+/// Resolve a tapscript's binding and enforce the `emulator` rule + key
+/// resolution (§5.3). `contract` supplies the covenant function names.
+pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Binding, String> {
+    let name_matches = contract.functions.iter().any(|f| f.name == ts.name);
+
+    // Collect bare-emulator usage and explicit tweak targets across all keys.
+    let mut uses_bare_emulator = false;
+    let mut tweak_targets: Vec<String> = Vec::new();
+    for item in &ts.items {
+        if let TapItem::Sig { keys, .. } = item {
+            for k in keys {
+                match k {
+                    KeyExpr::Ident(id) if id == "emulator" => uses_bare_emulator = true,
+                    KeyExpr::Tweak { func } => tweak_targets.push(func.clone()),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if name_matches {
+        if !tweak_targets.is_empty() {
+            return Err(format!(
+                "`tweak(emulator, ...)` not allowed in name-matched tapscript `{}`",
+                ts.name
+            ));
+        }
+        if !uses_bare_emulator {
+            return Err(format!(
+                "function-bound tapscript `{}` must include `emulator`",
+                ts.name
+            ));
+        }
+        return Ok(Binding::NameMatched);
+    }
+
+    // Unmatched leaf: bare emulator forbidden.
+    if uses_bare_emulator {
+        return Err(format!(
+            "`emulator` not allowed in standalone tapscript `{}`; \
+             use tweak(emulator, funcName) in a signature check",
+            ts.name
+        ));
+    }
+
+    // Validate explicit tweak targets: all must reference one existing function.
+    tweak_targets.dedup();
+    match tweak_targets.as_slice() {
+        [] => Ok(Binding::Standalone),
+        [func] => {
+            if !contract.functions.iter().any(|f| &f.name == func) {
+                return Err(format!(
+                    "tweak(emulator, {func}) in tapscript `{}`: no function named `{func}`",
+                    ts.name
+                ));
+            }
+            Ok(Binding::Tweaked(func.clone()))
+        }
+        _ => {
+            // Could still be the same name repeated; dedup above handles that.
+            if tweak_targets.windows(2).all(|w| w[0] == w[1]) {
+                let func = tweak_targets[0].clone();
+                if !contract.functions.iter().any(|f| f.name == func) {
+                    return Err(format!(
+                        "tweak(emulator, {func}) in tapscript `{}`: no function named `{func}`",
+                        ts.name
+                    ));
+                }
+                Ok(Binding::Tweaked(func))
+            } else {
+                Err(format!(
+                    "ambiguous emulator tweak targets in tapscript `{}`",
+                    ts.name
+                ))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{Contract, Function, Parameter};
 
     fn ts(items: Vec<TapItem>) -> NamedTapscript {
         NamedTapscript {
@@ -373,5 +463,157 @@ mod tests {
         }]))
         .unwrap();
         assert!(validate_closure_shape(&c, "t").is_err());
+    }
+
+    fn contract_with(funcs: &[&str], tapscripts: Vec<NamedTapscript>) -> Contract {
+        Contract {
+            name: "C".into(),
+            parameters: vec![
+                Parameter {
+                    name: "owner".into(),
+                    param_type: "pubkey".into(),
+                },
+                Parameter {
+                    name: "backup".into(),
+                    param_type: "pubkey".into(),
+                },
+            ],
+            renewal_timelock: None,
+            exit_timelock: None,
+            has_server_key: false,
+            functions: funcs
+                .iter()
+                .map(|n| Function {
+                    name: (*n).into(),
+                    parameters: vec![],
+                    statements: vec![],
+                    is_internal: false,
+                })
+                .collect(),
+            tapscripts,
+            imports: vec![],
+        }
+    }
+
+    fn sig(keys: Vec<KeyExpr>) -> TapItem {
+        let sigs = keys
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("s{i}"))
+            .collect();
+        TapItem::Sig {
+            keys,
+            sigs,
+            threshold: None,
+        }
+    }
+
+    #[test]
+    fn name_matched_requires_bare_emulator() {
+        // claim covenant exists; leaf named claim with bare emulator → NameMatched
+        let leaf = NamedTapscript {
+            name: "claim".into(),
+            inputs: vec![],
+            items: vec![sig(vec![ident("server"), ident("emulator")])],
+        };
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        assert_eq!(resolve_binding(&c, &leaf).unwrap(), Binding::NameMatched);
+    }
+
+    #[test]
+    fn name_matched_without_emulator_is_error() {
+        let leaf = NamedTapscript {
+            name: "claim".into(),
+            inputs: vec![],
+            items: vec![sig(vec![ident("server"), ident("owner")])],
+        };
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        let err = resolve_binding(&c, &leaf).unwrap_err();
+        assert!(err.contains("must include `emulator`"), "got: {err}");
+    }
+
+    #[test]
+    fn standalone_with_bare_emulator_is_error() {
+        let leaf = NamedTapscript {
+            name: "weird".into(),
+            inputs: vec![],
+            items: vec![sig(vec![ident("server"), ident("emulator")])],
+        };
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        let err = resolve_binding(&c, &leaf).unwrap_err();
+        assert!(err.contains("not allowed in standalone"), "got: {err}");
+    }
+
+    #[test]
+    fn standalone_tweak_groups_under_target() {
+        let leaf = NamedTapscript {
+            name: "direct".into(),
+            inputs: vec![],
+            items: vec![sig(vec![KeyExpr::Tweak {
+                func: "claim".into(),
+            }])],
+        };
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        assert_eq!(
+            resolve_binding(&c, &leaf).unwrap(),
+            Binding::Tweaked("claim".into())
+        );
+    }
+
+    #[test]
+    fn name_matched_with_explicit_tweak_is_error() {
+        let leaf = NamedTapscript {
+            name: "claim".into(),
+            inputs: vec![],
+            items: vec![sig(vec![KeyExpr::Tweak {
+                func: "claim".into(),
+            }])],
+        };
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        let err = resolve_binding(&c, &leaf).unwrap_err();
+        assert!(err.contains("not allowed in name-matched"), "got: {err}");
+    }
+
+    #[test]
+    fn tweak_to_missing_function_is_error() {
+        let leaf = NamedTapscript {
+            name: "direct".into(),
+            inputs: vec![],
+            items: vec![sig(vec![KeyExpr::Tweak {
+                func: "nope".into(),
+            }])],
+        };
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        assert!(resolve_binding(&c, &leaf).is_err());
+    }
+
+    #[test]
+    fn ambiguous_tweak_targets_are_error() {
+        let leaf = NamedTapscript {
+            name: "direct".into(),
+            inputs: vec![],
+            items: vec![sig(vec![
+                KeyExpr::Tweak {
+                    func: "claim".into(),
+                },
+                KeyExpr::Tweak {
+                    func: "refund".into(),
+                },
+            ])],
+        };
+        let c = contract_with(&["claim", "refund"], vec![leaf.clone()]);
+        let err = resolve_binding(&c, &leaf).unwrap_err();
+        assert!(err.contains("ambiguous"), "got: {err}");
+    }
+
+    #[test]
+    fn pure_standalone_has_no_emulator_no_tweak() {
+        let leaf = NamedTapscript {
+            name: "unilateral".into(),
+            inputs: vec![],
+            items: vec![sig(vec![ident("owner")])],
+        };
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        assert_eq!(resolve_binding(&c, &leaf).unwrap(), Binding::Standalone);
     }
 }
