@@ -522,10 +522,6 @@ sig_arg = { array_index_access | identifier }
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }
 
-check_legacy_multisig = {
-    "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")"
-}
-
 // checkMultisig([keys], [sigs]?, threshold?) — keys may be tweak()s; the
 // optional second array carries the aligned signature inputs; optional final
 // number is the threshold. Existing single-array and [keys],[sigs] forms still

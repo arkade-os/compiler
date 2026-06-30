@@ -39,11 +39,11 @@ pub struct FunctionInput {
     pub param_type: String,
 }
 
-/// A single element in the tapscript witness stack.
+/// A single element in a tapleaf's `witness` array.
 ///
-/// `witnessSchema` lists every value the caller must supply at spend time,
-/// in the order they appear as `<name>` placeholders in the `asm` array
-/// (constructor parameters, which are baked into the script, are excluded).
+/// Each leaf's `witness` lists every value the caller must supply at spend time,
+/// in source-declared order (constructor parameters, which are baked into the
+/// script, are excluded).
 ///
 /// The `encoding` field is a stable identifier that code generators
 /// (TypeScript, Go, …) can switch on to pick the correct serializer:
