@@ -8,22 +8,11 @@ import_stmt = { "import" ~ string_literal ~ ";" }
 // Main entry point - must consume the entire input
 main = { SOI ~ import_stmt* ~ contract ~ EOI }
 
-// Contract definition with strict structure and optional options block
+// Contract definition
 contract = {
-    options_block? ~
     "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     "{" ~ function* ~ "}"
-}
-
-// Options block for contract configuration
-options_block = {
-    "options" ~ "{" ~ (option_setting ~ ";")* ~ "}"
-}
-
-// Option setting with assignment
-option_setting = {
-    identifier ~ "=" ~ (number_literal | identifier | string_literal)
 }
 
 // Parameter list with proper comma separation

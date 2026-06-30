@@ -173,13 +173,6 @@ pub struct Contract {
     pub name: String,
     /// Contract parameters
     pub parameters: Vec<Parameter>,
-    /// Arkade renewal timelock — integer literal (e.g. "1008") or constructor param name (e.g. "renew")
-    pub renewal_timelock: Option<String>,
-    /// Arkade exit timelock — integer literal (e.g. "144") or constructor param name (e.g. "exit")
-    pub exit_timelock: Option<String>,
-    /// Whether this contract uses the Arkade operator key for the cooperative path.
-    /// The operator key is always injected externally — it is never a constructor parameter.
-    pub has_server_key: bool,
     /// Contract functions
     pub functions: Vec<Function>,
     /// Tapscript (L1 leaf) declarations, parsed from `function … tapscript { }`.

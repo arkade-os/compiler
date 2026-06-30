@@ -27,9 +27,6 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
         parameters: Vec::new(),
-        renewal_timelock: None,
-        exit_timelock: None,
-        has_server_key: false,
         functions: Vec::new(),
         tapscripts: Vec::new(),
         imports: Vec::new(),
@@ -66,19 +63,9 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     Ok(contract)
 }
 
-/// Parse a contract definition including options block, name, parameters, and functions
+/// Parse a contract definition: name, parameters, and functions
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
     let mut inner_pairs = pair.into_inner().peekable();
-
-    // Optional options block
-    if inner_pairs
-        .peek()
-        .map_or(false, |p| p.as_rule() == Rule::options_block)
-    {
-        if let Some(options_block) = inner_pairs.next() {
-            parse_options_block(contract, options_block)?;
-        }
-    }
 
     // Contract name (required)
     contract.name = match inner_pairs.next() {
@@ -103,41 +90,6 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
         } else {
             let func = parse_function(func_pair)?;
             contract.functions.push(func);
-        }
-    }
-    Ok(())
-}
-
-/// Parse the options block (server key, exit timelock, renewal timelock)
-fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
-    for option_pair in pair.into_inner() {
-        if option_pair.as_rule() == Rule::option_setting {
-            let mut inner = option_pair.into_inner();
-            let option_name = match inner.next() {
-                Some(name) => name.as_str(),
-                None => continue,
-            };
-            let option_value = match inner.next() {
-                Some(value) => value.as_str(),
-                None => return Err(format!("Missing {} option value", option_name)),
-            };
-
-            match option_name {
-                "server" => {
-                    // The Arkade operator key is always injected externally as <SERVER_KEY>.
-                    // The RHS value is a naming convention only and is never emitted to ASM.
-                    contract.has_server_key = true;
-                }
-                "renew" => {
-                    // Accept integer literal ("1008") or constructor param name ("renew")
-                    contract.renewal_timelock = Some(option_value.to_string());
-                }
-                "exit" => {
-                    // Accept integer literal ("144") or constructor param name ("exit")
-                    contract.exit_timelock = Some(option_value.to_string());
-                }
-                _ => {} // Ignore unknown options
-            }
         }
     }
     Ok(())

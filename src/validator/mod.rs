@@ -712,9 +712,6 @@ mod tests {
                 name: "owner".to_string(),
                 param_type: "pubkey".to_string(),
             }],
-            renewal_timelock: None,
-            exit_timelock: None,
-            has_server_key: false,
             functions: vec![Function {
                 name: "spend".to_string(),
                 parameters: vec![],

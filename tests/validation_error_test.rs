@@ -209,6 +209,21 @@ contract MinTimelock(pubkey owner, pubkey server) {
     );
 }
 
+// ─── Post-removal: options block must be rejected ────────────────────────────
+
+#[test]
+fn options_block_is_rejected_after_removal() {
+    let src = r#"
+options { exit = 144; server = server; }
+contract Broken(pubkey owner) {
+    function spend(signature ownerSig) tapscript {
+        require(checkSig(ownerSig, owner));
+    }
+}
+"#;
+    assert!(compile(src).is_err(), "options block must no longer parse");
+}
+
 // ─── Error message quality ────────────────────────────────────────────────────
 
 #[test]

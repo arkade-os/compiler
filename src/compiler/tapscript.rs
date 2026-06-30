@@ -771,9 +771,6 @@ mod tests {
                     param_type: "pubkey".into(),
                 },
             ],
-            renewal_timelock: None,
-            exit_timelock: None,
-            has_server_key: false,
             functions: funcs
                 .iter()
                 .map(|n| Function {
