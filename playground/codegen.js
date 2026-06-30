@@ -56,29 +56,33 @@ function inferEncoding(typeStr) {
 
 // ─── IR construction ─────────────────────────────────────────────────
 
+// Signatures injected by Arkade infrastructure — excluded from user-facing witness structs.
+const INJECTED_SIGS = new Set(['serverSig', 'emulatorSig']);
+
 function buildIR(artifact) {
     const constructorFields = (artifact.constructorInputs || []).map(p => ({
         name: p.name, arkType: p.type, encoding: inferEncoding(p.type),
     }));
 
-    // Group functions by name, pair cooperative + exit
-    const groups = new Map();
-    for (const func of artifact.functions) {
-        if (!groups.has(func.name)) groups.set(func.name, []);
-        groups.get(func.name).push(func);
-    }
-
-    const functions = [];
-    for (const [name, variants] of groups) {
-        const coop = variants.find(v => v.serverVariant === true);
-        const exit = variants.find(v => v.serverVariant === false);
-        if (!coop || !exit) continue;
-        functions.push({
-            name,
-            cooperative: buildVariant(coop),
-            exit: buildVariant(exit),
+    const functions = (artifact.functions || []).map(group => {
+        const leaves = (group.leaves || []).map(leaf => {
+            const allFields = (leaf.witness || []).map(w => ({
+                name: w.name, arkType: w.type, encoding: w.encoding,
+                isInjected: INJECTED_SIGS.has(w.name),
+            }));
+            return {
+                name: leaf.name,
+                allFields,
+                userFields: allFields.filter(f => !f.isInjected),
+                asm: leaf.asm || [],
+            };
         });
-    }
+        return {
+            name: group.name,
+            arkade: group.arkade || null,
+            leaves,
+        };
+    });
 
     return {
         name: artifact.contractName,
@@ -88,30 +92,10 @@ function buildIR(artifact) {
     };
 }
 
-function buildVariant(func) {
-    const hasSchema = func.witnessSchema && func.witnessSchema.length > 0;
-    const userDeclaredServerSig = (func.functionInputs || []).some(fi => fi.name === 'serverSig');
-
-    let allFields;
-    if (hasSchema) {
-        allFields = func.witnessSchema.map(w => ({
-            name: w.name, arkType: w.type, encoding: w.encoding,
-            isServerInjected: func.serverVariant && w.name === 'serverSig' && !userDeclaredServerSig,
-        }));
-    } else {
-        allFields = (func.functionInputs || []).map(fi => ({
-            name: fi.name, arkType: fi.type, encoding: inferEncoding(fi.type),
-            isServerInjected: false,
-        }));
-        if (func.serverVariant && !userDeclaredServerSig) {
-            allFields.push({ name: 'serverSig', arkType: 'signature', encoding: 'schnorr-64', isServerInjected: true });
-        }
-    }
-
-    const userFields = allFields.filter(f => !f.isServerInjected);
-    const isNofnFallback = (func.require || []).some(r => r.type === 'nOfNMultisig');
-
-    return { userFields, allFields, isNofnFallback };
+// Returns a disambiguated method/struct suffix for a leaf within a group.
+// When the leaf name matches the group name (the common case), returns ''.
+function leafSuffix(groupName, leafName) {
+    return leafName === groupName ? '' : toPascalCase(leafName);
 }
 
 // ─── TypeScript backend ──────────────────────────────────────────────
@@ -139,7 +123,7 @@ function generateTypeScript(ir) {
     const sdkAliases = { 'compressed-33': 'Pubkey', 'schnorr-64': 'Signature', 'raw': 'Bytes', 'raw-20': 'Bytes20', 'raw-32': 'Bytes32' };
     const collectAliases = (fields) => fields.forEach(f => { if (sdkAliases[f.encoding]) aliases.add(sdkAliases[f.encoding]); });
     collectAliases(ir.constructorFields);
-    ir.functions.forEach(fn => { collectAliases(fn.cooperative.userFields); collectAliases(fn.exit.userFields); });
+    ir.functions.forEach(fn => fn.leaves.forEach(l => collectAliases(l.userFields)));
 
     const imports = ['ArkContract', ...[...aliases].map(a => `type ${a}`)];
     out += `import { ${imports.join(', ')} } from "@arkade-os/contract-sdk";\n`;
@@ -153,19 +137,17 @@ function generateTypeScript(ir) {
     }
     out += `}\n\n`;
 
-    // Witness interfaces + class
+    // Witness interfaces — one per leaf
     for (const func of ir.functions) {
-        for (const [variant, label] of [[func.cooperative, 'Cooperative'], [func.exit, 'Exit']]) {
-            const name = `${ir.name}${toPascalCase(func.name)}${label}Witness`;
-            const pathLabel = label === 'Cooperative' ? 'cooperative path' : 'exit path';
-            out += `/** Witness for ${ir.name}.${func.name} (${pathLabel}) */\n`;
-            out += `export interface ${name} {\n`;
-            for (const f of variant.userFields) {
+        for (const leaf of func.leaves) {
+            const suffix = leafSuffix(func.name, leaf.name);
+            const ifaceName = `${ir.name}${toPascalCase(func.name)}${suffix}Witness`;
+            out += `/** Witness for ${ir.name}.${func.name} leaf "${leaf.name}" */\n`;
+            out += `export interface ${ifaceName} {\n`;
+            for (const f of leaf.userFields) {
                 out += `  /** ${f.arkType} (${f.encoding}) */\n  ${toCamelCase(f.name)}: ${tsTypeForField(f)};\n`;
             }
-            if (label === 'Cooperative') out += `  // serverSig injected by Arkade server\n`;
-            else if (variant.isNofnFallback) out += `  // N-of-N multisig exit fallback\n`;
-            else out += `  // exit timelock enforced by script\n`;
+            out += `  // serverSig and emulatorSig injected by Arkade infrastructure\n`;
             out += `}\n\n`;
         }
     }
@@ -177,14 +159,25 @@ function generateTypeScript(ir) {
     out += `  }\n`;
 
     for (const func of ir.functions) {
-        const method = toCamelCase(func.name);
         const pascal = toPascalCase(func.name);
-        out += `\n  ${method} = {\n`;
-        out += `    cooperative: (witness: ${ir.name}${pascal}CooperativeWitness) =>\n`;
-        out += `      this.buildWitness("${func.name}", true, witness),\n`;
-        out += `    exit: (witness: ${ir.name}${pascal}ExitWitness) =>\n`;
-        out += `      this.buildWitness("${func.name}", false, witness),\n`;
-        out += `  };\n`;
+        if (func.leaves.length === 1 && func.leaves[0].name === func.name) {
+            // Single leaf matching group name — flat method
+            const leaf = func.leaves[0];
+            const ifaceName = `${ir.name}${pascal}Witness`;
+            out += `\n  ${toCamelCase(func.name)} = (witness: ${ifaceName}) =>\n`;
+            out += `    this.buildWitness("${func.name}", "${leaf.name}", witness);\n`;
+        } else {
+            // Multiple leaves or mismatched name — group object
+            out += `\n  ${toCamelCase(func.name)} = {\n`;
+            for (const leaf of func.leaves) {
+                const suffix = leafSuffix(func.name, leaf.name);
+                const ifaceName = `${ir.name}${pascal}${suffix}Witness`;
+                const leafMethod = toCamelCase(leaf.name);
+                out += `    ${leafMethod}: (witness: ${ifaceName}) =>\n`;
+                out += `      this.buildWitness("${func.name}", "${leaf.name}", witness),\n`;
+            }
+            out += `  };\n`;
+        }
     }
     out += `}\n`;
     return out;
@@ -245,19 +238,17 @@ function generateGo(ir) {
     }
     out += `}\n\n`;
 
-    // Witness structs
+    // Witness structs — one per leaf
     for (const func of ir.functions) {
-        for (const [variant, label] of [[func.cooperative, 'Cooperative'], [func.exit, 'Exit']]) {
-            const structName = `${ir.name}${toPascalCase(func.name)}${label}Witness`;
-            const pathLabel = label === 'Cooperative' ? 'cooperative path' : 'exit path';
-            out += `// ${structName} holds witness data for ${ir.name}.${func.name} (${pathLabel}).\n`;
+        for (const leaf of func.leaves) {
+            const suffix = leafSuffix(func.name, leaf.name);
+            const structName = `${ir.name}${toPascalCase(func.name)}${suffix}Witness`;
+            out += `// ${structName} holds witness data for ${ir.name}.${func.name} leaf "${leaf.name}".\n`;
             out += `type ${structName} struct {\n`;
-            for (const f of variant.userFields) {
+            for (const f of leaf.userFields) {
                 out += `\t${toPascalCase(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
             }
-            if (label === 'Cooperative') out += `\t// ServerSig injected by Arkade server\n`;
-            else if (variant.isNofnFallback) out += `\t// N-of-N multisig exit fallback\n`;
-            else out += `\t// Exit timelock enforced by script\n`;
+            out += `\t// ServerSig and EmulatorSig injected by Arkade infrastructure\n`;
             out += `}\n\n`;
         }
     }
@@ -277,16 +268,16 @@ function generateGo(ir) {
     out += `\tif err != nil {\n\t\treturn nil, err\n\t}\n`;
     out += `\treturn &${ir.name}{Contract: c}, nil\n}\n\n`;
 
-    // Methods
+    // Methods — one per leaf, keyed by (groupName, leafName)
     for (const func of ir.functions) {
-        for (const [variant, label] of [[func.cooperative, 'Cooperative'], [func.exit, 'Exit']]) {
-            const methodName = `${toPascalCase(func.name)}${label}`;
-            const witnessType = `${ir.name}${toPascalCase(func.name)}${label}Witness`;
-            const serverVariant = label === 'Cooperative';
-            out += `// ${methodName} executes the ${label.toLowerCase()} path of ${func.name}.\n`;
+        for (const leaf of func.leaves) {
+            const suffix = leafSuffix(func.name, leaf.name);
+            const methodName = `${toPascalCase(func.name)}${suffix}`;
+            const witnessType = `${ir.name}${toPascalCase(func.name)}${suffix}Witness`;
+            out += `// ${methodName} spends the "${leaf.name}" tapscript leaf of ${func.name}.\n`;
             out += `func (${receiver} *${ir.name}) ${methodName}(w ${witnessType}) (*ark.WitnessStack, error) {\n`;
-            out += `\treturn ${receiver}.BuildWitness("${func.name}", ${serverVariant}, []ark.WitnessField{\n`;
-            for (const f of variant.userFields) {
+            out += `\treturn ${receiver}.BuildWitness("${func.name}", "${leaf.name}", []ark.WitnessField{\n`;
+            for (const f of leaf.userFields) {
                 out += `\t\t{Name: "${f.name}", Value: ${goValueExpr(f, 'w')}, Encoding: ${ENCODING_CONST[f.encoding] || 'ark.Raw'}},\n`;
             }
             out += `\t})\n}\n\n`;

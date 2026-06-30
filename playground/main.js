@@ -1177,12 +1177,17 @@ function displayAsm(jsonStr) {
         let html = '';
 
         if (data.functions && data.functions.length > 0) {
-            for (const func of data.functions) {
-                const variant = func.serverVariant ? 'Cooperative' : 'Exit';
-                html += `<span class="asm-function">${func.name} <span class="asm-variant">(${variant} path)</span></span>\n`;
-
-                if (func.asm) {
-                    html += highlightAsm(func.asm) + '\n\n';
+            for (const group of data.functions) {
+                if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
+                    html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
+                    html += highlightAsm(group.arkade.asm) + '\n\n';
+                }
+                for (const leaf of (group.leaves || [])) {
+                    const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
+                    html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
+                    if (leaf.asm && leaf.asm.length > 0) {
+                        html += highlightAsm(leaf.asm) + '\n\n';
+                    }
                 }
             }
         } else {
