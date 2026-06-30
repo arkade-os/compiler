@@ -19,7 +19,7 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
-use crate::models::{Contract, ContractJson, Expression, Parameter, Requirement, Statement};
+use crate::models::{Contract, ContractJson, Expression, Requirement, Statement};
 use crate::typechecker::{build_scope, infer_type, ArkType, Scope};
 use std::collections::HashSet;
 

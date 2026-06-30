@@ -2,20 +2,14 @@
 //! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
 
 use crate::models::{
-    AbiFunctionGroup, AbiLeaf, ArkadeCovenant, Contract, FunctionInput, HashFn, KeyExpr,
-    NamedTapscript, Parameter, TapItem, WitnessElement,
+    AbiFunctionGroup, AbiLeaf, ArkadeCovenant, Contract, HashFn, KeyExpr, NamedTapscript,
+    Parameter, TapItem, WitnessElement,
 };
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_VERIFY,
 };
 use crate::typechecker::ArkType;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Context {
-    Covenant,
-    Tapscript,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -47,7 +41,6 @@ pub struct Closure {
     pub condition: Option<(HashFn, String)>, // (hashFn, hash value name)
     pub timelock: Option<String>,            // CSV or CLTV bound (literal or param)
     pub keys: Vec<KeyExpr>,
-    pub sigs: Vec<String>,
     pub threshold: Option<u16>,
 }
 
@@ -120,7 +113,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
         }
     }
 
-    let (keys, sigs, threshold) = multisig.ok_or_else(|| {
+    let (keys, _sigs, threshold) = multisig.ok_or_else(|| {
         format!(
             "tapscript `{}`: missing checkSig/checkMultisig suffix (no multisig)",
             ts.name
@@ -158,7 +151,6 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
         condition: condition.map(|(f, _p, h)| (f, h)), // keep (hashFn, hash) for emission
         timelock,
         keys,
-        sigs,
         threshold,
     })
 }
@@ -557,7 +549,6 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
             KeyExpr::Ident("server".into()),
             KeyExpr::Tweak { func: func.into() },
         ],
-        sigs: vec!["serverSig".into(), "emulatorSig".into()],
         threshold: Some(2),
     };
     let sig_encoding = ArkType::Signature.encoding().to_string();

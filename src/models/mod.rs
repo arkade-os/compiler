@@ -39,17 +39,6 @@ pub struct FunctionInput {
     pub param_type: String,
 }
 
-/// Requirement for a function
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RequireStatement {
-    /// Requirement type
-    #[serde(rename = "type")]
-    pub req_type: String,
-    /// Custom message
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
 /// A single element in the tapscript witness stack.
 ///
 /// `witnessSchema` lists every value the caller must supply at spend time,
@@ -78,30 +67,6 @@ pub struct WitnessElement {
     pub elem_type: String,
     /// Wire-encoding descriptor for client stub generators
     pub encoding: String,
-}
-
-/// Function definition in the ABI
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AbiFunction {
-    /// Function name
-    pub name: String,
-    /// Function inputs (parameter names + declared types)
-    #[serde(rename = "functionInputs")]
-    pub function_inputs: Vec<FunctionInput>,
-    /// Ordered witness stack elements the caller must supply at spend time.
-    ///
-    /// Includes all function inputs plus any server/exit-path signatures.
-    /// Constructor parameters are **not** listed here — they are baked into
-    /// the tapscript leaf and not part of the witness.
-    #[serde(rename = "witnessSchema")]
-    pub witness_schema: Vec<WitnessElement>,
-    /// Whether this is a server variant
-    #[serde(rename = "serverVariant")]
-    pub server_variant: bool,
-    /// Requirements
-    pub require: Vec<RequireStatement>,
-    /// Assembly instructions
-    pub asm: Vec<String>,
 }
 
 /// The emulator-run covenant for a function-backed spend group.
@@ -261,11 +226,12 @@ pub enum HashFn {
 impl HashFn {
     /// The Bitcoin opcode string this hash function emits.
     pub fn opcode(&self) -> &'static str {
+        use crate::opcodes::{OP_HASH160, OP_HASH256, OP_RIPEMD160, OP_SHA256};
         match self {
-            HashFn::Sha256 => "OP_SHA256",
-            HashFn::Hash160 => "OP_HASH160",
-            HashFn::Hash256 => "OP_HASH256",
-            HashFn::Ripemd160 => "OP_RIPEMD160",
+            HashFn::Sha256 => OP_SHA256,
+            HashFn::Hash160 => OP_HASH160,
+            HashFn::Hash256 => OP_HASH256,
+            HashFn::Ripemd160 => OP_RIPEMD160,
         }
     }
 
