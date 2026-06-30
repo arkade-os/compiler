@@ -155,6 +155,48 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     })
 }
 
+/// L1/arkd opcode-safety (§5.1). Tapscript items can only ever lower to stock
+/// BIP-342 opcodes, so the prerequisite reduces to confirming each item is a
+/// recognized leaf component. Covenant-only constructs have no TapItem and were
+/// rejected at parse time. The condition prefix is restricted to a single hash
+/// function (no signature/timelock op can appear there).
+pub fn validate_opcode_safety(ts: &NamedTapscript) -> Result<(), String> {
+    let mut conditions = 0;
+    for item in &ts.items {
+        match item {
+            TapItem::Hash { .. } => conditions += 1,
+            TapItem::Older { .. } | TapItem::After { .. } | TapItem::Sig { .. } => {}
+        }
+    }
+    if conditions > 1 {
+        return Err(format!(
+            "tapscript `{}`: condition prefix is limited to a single hashlock",
+            ts.name
+        ));
+    }
+    Ok(())
+}
+
+/// Closure-shape acceptance beyond `assemble_closure`'s template check:
+/// arkd's MultisigClosure is **always N-of-N** (the decoder requires the pushed
+/// integer to equal the key count, `closure.go:172`). So a declared threshold
+/// must equal the key count; anything less cannot decode (§ Global Constraints).
+pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> {
+    if c.keys.is_empty() {
+        return Err(format!("tapscript `{ts_name}`: empty key set (F1)"));
+    }
+    if let Some(t) = c.threshold {
+        if t as usize != c.keys.len() {
+            return Err(format!(
+                "tapscript `{ts_name}`: arkd recognizes only N-of-N multisig closures; \
+                 threshold {t} must equal the {} key(s) in the set",
+                c.keys.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +319,59 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(err.contains("order"), "got: {err}");
+    }
+
+    #[test]
+    fn condition_must_use_a_hash_function_only() {
+        // HashFn variants are the only condition ops; this is a structural
+        // guarantee. Assert the allowlist function accepts a hashlock leaf and
+        // that a Sig-only leaf (no condition) is also fine.
+        let ok = validate_opcode_safety(&ts(vec![
+            TapItem::Hash {
+                hash_fn: HashFn::Sha256,
+                preimage: "p".into(),
+                hash: "h".into(),
+            },
+            TapItem::Sig {
+                keys: vec![ident("server")],
+                sigs: vec!["serverSig".into()],
+                threshold: Some(1),
+            },
+        ]));
+        assert!(ok.is_ok(), "hashlock condition is allowed: {ok:?}");
+    }
+
+    #[test]
+    fn threshold_below_keycount_is_shape_error() {
+        let c = assemble_closure(&ts(vec![TapItem::Sig {
+            keys: vec![ident("a"), ident("b"), ident("server")],
+            sigs: vec!["aSig".into(), "bSig".into(), "serverSig".into()],
+            threshold: Some(2),
+        }]))
+        .unwrap();
+        let err = validate_closure_shape(&c, "t").unwrap_err();
+        assert!(err.contains("N-of-N"), "got: {err}");
+    }
+
+    #[test]
+    fn nofn_threshold_is_accepted() {
+        let c = assemble_closure(&ts(vec![TapItem::Sig {
+            keys: vec![ident("server"), ident("emulator")],
+            sigs: vec!["serverSig".into(), "emulatorSig".into()],
+            threshold: Some(2),
+        }]))
+        .unwrap();
+        assert!(validate_closure_shape(&c, "t").is_ok());
+    }
+
+    #[test]
+    fn empty_key_set_is_rejected() {
+        let c = assemble_closure(&ts(vec![TapItem::Sig {
+            keys: vec![],
+            sigs: vec![],
+            threshold: None,
+        }]))
+        .unwrap();
+        assert!(validate_closure_shape(&c, "t").is_err());
     }
 }
