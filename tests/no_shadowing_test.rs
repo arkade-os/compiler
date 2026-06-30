@@ -191,27 +191,9 @@ contract Demo(int[] xs) {
     );
 }
 
-#[test]
-fn rejects_param_colliding_with_server_signature() {
-    let src = r#"
-options {
-  server = server;
-  exit = 144;
-}
-contract Demo(int limit) {
-  function f(signature serverSig) {
-    require(limit >= 1);
-  }
-}
-"#;
-    let err = compile(src)
-        .expect_err("expected a namespace collision error")
-        .to_string();
-    assert!(
-        err.contains("collide in the emitted namespace"),
-        "unexpected error: {err}"
-    );
-}
+// Note: the old `rejects_param_colliding_with_server_signature` test was
+// removed — covenant functions no longer auto-generate a `serverSig`, so a
+// param named `serverSig` no longer collides with a reserved emitted name.
 
 #[test]
 fn accepts_sibling_scope_reuse() {

@@ -4,6 +4,9 @@
 //! rejected with a meaningful error message rather than producing silent broken
 //! output.  They exercise the semantic validator, parser error handling, and the
 //! contract → compiler pipeline boundary.
+//!
+//! Note: the `options { … }` block was removed from the language; exit-timelock
+//! validation (zero/positive exit) no longer exists, so those cases are gone.
 
 use arkade_compiler::compile;
 
@@ -26,8 +29,7 @@ fn whitespace_only_source_is_rejected() {
 #[test]
 fn syntax_error_produces_parse_error_message() {
     let source = r#"
-options { exit = 144; server = server; }
-contract Broken(pubkey owner, pubkey server) {
+contract Broken(pubkey owner) {
     function spend(signature sig) {
         require(INVALID!!!);
     }
@@ -45,8 +47,7 @@ contract Broken(pubkey owner, pubkey server) {
 #[test]
 fn unclosed_brace_is_rejected() {
     let source = r#"
-options { exit = 144; server = server; }
-contract Unclosed(pubkey owner, pubkey server) {
+contract Unclosed(pubkey owner) {
     function spend(signature sig) {
         require(checkSig(sig, owner));
     }
@@ -58,32 +59,9 @@ contract Unclosed(pubkey owner, pubkey server) {
 // ─── Semantic validation errors ───────────────────────────────────────────────
 
 #[test]
-fn zero_exit_timelock_is_rejected() {
-    let source = r#"
-options { exit = 0; server = server; }
-contract ZeroExit(pubkey owner, pubkey server) {
-    function spend(signature sig) {
-        require(checkSig(sig, owner));
-    }
-}"#;
-    let result = compile(source);
-    assert!(
-        result.is_err(),
-        "exit timelock of 0 must be rejected; compiler would produce an unusable exit path"
-    );
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("greater than 0") || msg.contains("timelock"),
-        "error must mention the timelock issue; got: {}",
-        msg
-    );
-}
-
-#[test]
 fn duplicate_function_names_are_rejected() {
     let source = r#"
-options { exit = 144; server = server; }
-contract DupFuncs(pubkey owner, pubkey server) {
+contract DupFuncs(pubkey owner) {
     function spend(signature sig) {
         require(checkSig(sig, owner));
     }
@@ -104,8 +82,7 @@ contract DupFuncs(pubkey owner, pubkey server) {
 #[test]
 fn duplicate_constructor_params_are_rejected() {
     let source = r#"
-options { exit = 144; server = server; }
-contract DupParam(pubkey owner, pubkey owner, pubkey server) {
+contract DupParam(pubkey owner, pubkey owner) {
     function spend(signature sig) {
         require(checkSig(sig, owner));
     }
@@ -121,10 +98,9 @@ contract DupParam(pubkey owner, pubkey owner, pubkey server) {
 
 #[test]
 fn no_functions_is_rejected() {
-    // options is optional; contract with zero functions should fail validation
+    // contract with zero functions and zero tapscripts should fail validation
     let source = r#"
-options { exit = 144; server = server; }
-contract Empty(pubkey owner, pubkey server) {
+contract Empty(pubkey owner) {
 }"#;
     let result = compile(source);
     assert!(
@@ -133,7 +109,7 @@ contract Empty(pubkey owner, pubkey server) {
     );
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("function") || msg.contains("Function"),
+        msg.contains("function") || msg.contains("Function") || msg.contains("tapscript"),
         "error must mention the missing function; got: {}",
         msg
     );
@@ -142,8 +118,7 @@ contract Empty(pubkey owner, pubkey server) {
 #[test]
 fn only_internal_functions_is_rejected() {
     let source = r#"
-options { exit = 144; server = server; }
-contract AllInternal(pubkey owner, pubkey server) {
+contract AllInternal(pubkey owner) {
     function helper(signature sig) internal {
         require(checkSig(sig, owner));
     }
@@ -158,28 +133,10 @@ contract AllInternal(pubkey owner, pubkey server) {
 // ─── Valid edge cases (must compile successfully) ─────────────────────────────
 
 #[test]
-fn contract_without_options_block_succeeds() {
-    // options block is optional per the grammar
+fn minimal_contract_succeeds() {
+    // A single covenant function gets a synthesized default collaborative leaf.
     let source = r#"
-contract NoOptions(pubkey owner) {
-    function spend(signature sig) {
-        require(checkSig(sig, owner));
-    }
-}"#;
-    // Without server key, no exit timelock is required; should compile fine
-    let result = compile(source);
-    assert!(
-        result.is_ok(),
-        "contract without options block must succeed; got: {:?}",
-        result.err()
-    );
-}
-
-#[test]
-fn contract_without_server_key_needs_no_exit_timelock() {
-    let source = r#"
-options { exit = 144; }
-contract NoServer(pubkey owner) {
+contract Minimal(pubkey owner) {
     function spend(signature sig) {
         require(checkSig(sig, owner));
     }
@@ -187,24 +144,7 @@ contract NoServer(pubkey owner) {
     let result = compile(source);
     assert!(
         result.is_ok(),
-        "contract without server key must compile; got: {:?}",
-        result.err()
-    );
-}
-
-#[test]
-fn positive_exit_timelock_succeeds() {
-    let source = r#"
-options { exit = 1; server = server; }
-contract MinTimelock(pubkey owner, pubkey server) {
-    function spend(signature sig) {
-        require(checkSig(sig, owner));
-    }
-}"#;
-    let result = compile(source);
-    assert!(
-        result.is_ok(),
-        "minimum positive timelock (1 block) must succeed; got: {:?}",
+        "minimal contract must succeed; got: {:?}",
         result.err()
     );
 }
@@ -229,16 +169,15 @@ contract Broken(pubkey owner) {
 #[test]
 fn all_validation_errors_have_non_empty_messages() {
     let bad_inputs = vec![
-        // zero timelock
-        r#"options { exit = 0; server = server; }
-contract A(pubkey o, pubkey server) { function f(signature s) { require(checkSig(s, o)); } }"#,
         // no functions
-        r#"options { exit = 144; server = server; }
-contract A(pubkey o, pubkey server) { }"#,
+        r#"contract A(pubkey o) { }"#,
         // duplicate function
-        r#"options { exit = 144; server = server; }
-contract A(pubkey o, pubkey server) {
+        r#"contract A(pubkey o) {
   function f(signature s) { require(checkSig(s, o)); }
+  function f(signature s) { require(checkSig(s, o)); }
+}"#,
+        // duplicate constructor param
+        r#"contract A(pubkey o, pubkey o) {
   function f(signature s) { require(checkSig(s, o)); }
 }"#,
     ];
