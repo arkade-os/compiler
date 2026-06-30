@@ -36,11 +36,6 @@
 
 import "single_sig.ark";
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract CashSecuredPut(
   pubkey  sellerPk,         // option writer; locks the stable
   pubkey  buyerPk,          // option holder
@@ -65,7 +60,7 @@ contract CashSecuredPut(
     // Output 0: seller receives the BTC.
     require(tx.outputs[0].value >= btcSats, "seller underpaid");
     require(
-      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
+      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk, exit),
       "output 0 not seller"
     );
 
@@ -75,7 +70,7 @@ contract CashSecuredPut(
       "buyer underpaid"
     );
     require(
-      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
+      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk, exit),
       "output 1 not buyer"
     );
   }
@@ -130,5 +125,14 @@ contract CashSecuredPut(
       tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
       "collateral not preserved"
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // UNILATERAL EXIT (CSV)
+  // Seller recovers locked stablecoin after exit delay (Arkade operator offline).
+  // -------------------------------------------------------------------------
+  function unilateral(signature sellerSig) tapscript {
+    require(older(exit));
+    require(checkSig(sellerSig, sellerPk));
   }
 }

@@ -1,22 +1,12 @@
 // Non-Interactive Swap Contract
 // Allows users to exchange assets without requiring both parties to be online simultaneously.
 //
-// VTXO
-// - Cooperative path: Server emulates/validates introspection, co-signs for fast settlement
-// - Exit path: N-of-N user signatures when introspection is used (pure Bitcoin fallback)
-//
 // Paths:
 // - swap cooperative: takerSig + serverSig + OP_INSPECT* (trustless via introspection)
-// - swap exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin)
 // - cancel cooperative: makerSig + serverSig + after(expiration)
-// - cancel exit: makerSig + after(expiration) + CSV (normal exit)
+// - unilateral: makerSig + CSV (maker recovers if no taker)
 
-options {
-  // Server key is injected from getInfo(), not passed in constructor
-  server = server;
-  // Exit delay: 144 blocks (~24 hours) for unilateral recovery
-  exit = 144;
-}
+import "single_sig.ark";
 
 contract NonInteractiveSwap(
   // Maker's public key (creator of the swap offer)
@@ -32,11 +22,11 @@ contract NonInteractiveSwap(
   // Amount of want asset required for the swap
   int wantAmount,
   // Expiration timestamp (block height) after which maker can cancel
-  int expirationTime
+  int expirationTime,
+  // Exit timelock in blocks
+  int exit
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
-  // Cooperative: takerSig + serverSig + OP_INSPECT* (server validates outputs)
-  // Exit: makerSig + takerSig + CSV (N-of-N users, pure Bitcoin - no introspection)
   function swap(pubkey takerPk, signature takerSig) {
     // Taker must sign to authorize spending their wantAsset
     require(checkSig(takerSig, takerPk), "invalid taker signature");
@@ -48,7 +38,7 @@ contract NonInteractiveSwap(
       "insufficient want asset for maker"
     );
     require(
-      tx.outputs[0].scriptPubKey == new SingleSig(makerPk),
+      tx.outputs[0].scriptPubKey == new SingleSig(makerPk, exit),
       "output 0 not spendable by maker"
     );
 
@@ -58,17 +48,20 @@ contract NonInteractiveSwap(
       "insufficient offer asset for taker"
     );
     require(
-      tx.outputs[1].scriptPubKey == new SingleSig(takerPk),
+      tx.outputs[1].scriptPubKey == new SingleSig(takerPk, exit),
       "output 1 not spendable by taker"
     );
   }
 
   // Cancel: Maker reclaims after expiration if no taker
-  // No introspection used, so normal exit path applies
-  // Cooperative: makerSig + serverSig + after(expiration)
-  // Exit: makerSig + after(expiration) + CSV
   function cancel(signature makerSig) {
     require(tx.time >= expirationTime, "swap not expired");
     require(checkSig(makerSig, makerPk), "invalid maker signature");
+  }
+
+  // Unilateral exit (CSV): maker recovers after exit delay.
+  function unilateral(signature makerSig) tapscript {
+    require(older(exit));
+    require(checkSig(makerSig, makerPk));
   }
 }

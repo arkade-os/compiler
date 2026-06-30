@@ -8,18 +8,14 @@
 // Uses asset lookups on tx.inputs and tx.outputs with arithmetic
 // comparisons for balance verification.
 
-options {
-  server = server;
-  exit = 144;
-}
-
 contract FeeAdapter(
   pubkey senderPk,
   pubkey operatorPk,
   pubkey recipientPk,
   bytes32 paymentAssetIdTxid,
   int paymentAssetIdGidx,
-  int minFee
+  int minFee,
+  int exit
 ) {
   // Execute: process payment with fee deduction
   // Verifies that the output asset balance reflects the fee deduction
@@ -41,5 +37,11 @@ contract FeeAdapter(
   function adjust(signature operatorSig) {
     // Operator must sign
     require(checkSig(operatorSig, operatorPk), "invalid operator signature");
+  }
+
+  // Unilateral exit (CSV): sender recovers after exit delay.
+  function unilateral(signature senderSig) tapscript {
+    require(older(exit));
+    require(checkSig(senderSig, senderPk));
   }
 }

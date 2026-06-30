@@ -24,11 +24,6 @@
 //     keeps the BTC for free at the cost of one premium they already
 //     received.
 //
-// This is the MM-friendly capital model: the option writer doesn't tie
-// up the strike value of every option they write — they only need to
-// have stablecoin liquidity at exercise time. Capital efficiency is the
-// reason Rysk's RFQ counterparties can quote at scale.
-//
 // No oracle. The buyer's exercise decision IS the settlement signal.
 //
 // Transaction layout for exercise:
@@ -43,11 +38,6 @@
 // just the BTC value.
 
 import "single_sig.ark";
-
-options {
-  server = server;
-  exit = exit;
-}
 
 contract CoveredCall(
   pubkey  sellerPk,         // option writer; locks the BTC
@@ -64,9 +54,7 @@ contract CoveredCall(
   // -------------------------------------------------------------------------
   // EXERCISE
   // Buyer exercises by paying `strikeAmount` of `stableAssetId` to seller
-  // and receiving the locked BTC. Valid from `expiryHeight` onward; in
-  // practice the buyer should broadcast within `graceBlocks` because once
-  // the reclaim path matures, the seller races them and wins by default.
+  // and receiving the locked BTC.
   // -------------------------------------------------------------------------
   function exercise(signature buyerSig) {
     require(tx.time >= expiryHeight, "before expiry");
@@ -78,25 +66,21 @@ contract CoveredCall(
       "seller underpaid"
     );
     require(
-      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
+      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk, exit),
       "output 0 not seller"
     );
 
     // Output 1: buyer receives the BTC collateral.
     require(tx.outputs[1].value >= btcSats, "buyer underpaid");
     require(
-      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
+      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk, exit),
       "output 1 not buyer"
     );
   }
 
   // -------------------------------------------------------------------------
   // RECLAIM
-  // Seller takes the BTC back once the grace window closes. After this
-  // block, the seller and the buyer's exercise tx are in a race — the
-  // first to confirm wins. A rational buyer who hasn't exercised by now
-  // has chosen not to (likely OTM); seller broadcasts immediately at
-  // reclaimHeight.
+  // Seller takes the BTC back once the grace window closes.
   // -------------------------------------------------------------------------
   function reclaim(signature sellerSig) {
     int reclaimHeight = expiryHeight + graceBlocks;
@@ -138,5 +122,14 @@ contract CoveredCall(
       "invalid transfer output"
     );
     require(tx.outputs[0].value >= btcSats, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // UNILATERAL EXIT (CSV)
+  // Seller recovers locked BTC after exit delay (Arkade operator offline).
+  // -------------------------------------------------------------------------
+  function unilateral(signature sellerSig) tapscript {
+    require(older(exit));
+    require(checkSig(sellerSig, sellerPk));
   }
 }

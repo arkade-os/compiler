@@ -5,20 +5,16 @@
 // 1. deposit() - Owner deposits tokens; output must hold at least as many as input
 // 2. withdraw() - Owner withdraws tokens with server co-signature
 //
-// Asset lookups use the OP_INSPECTINASSETLOOKUP / OP_INSPECTOUTASSETLOOKUP
-// opcodes with sentinel-guard patterns for safe balance verification.
-
-options {
-  server = server;
-  exit = 144;
-}
+// Uses asset lookups on tx.inputs and tx.outputs with arithmetic
+// comparisons for balance verification.
 
 contract TokenVault(
   pubkey ownerPk,
   bytes32 tokenAssetIdTxid,
   int tokenAssetIdGidx,
   bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx
+  int ctrlAssetIdGidx,
+  int exit
 ) {
   // Deposit: ensure the control asset stays in the output
   // and output token balance >= input token balance
@@ -47,5 +43,11 @@ contract TokenVault(
 
     // Owner must sign
     require(checkSig(ownerSig, ownerPk), "invalid owner signature");
+  }
+
+  // Unilateral exit (CSV): owner recovers after exit delay.
+  function unilateral(signature ownerSig) tapscript {
+    require(older(exit));
+    require(checkSig(ownerSig, ownerPk));
   }
 }

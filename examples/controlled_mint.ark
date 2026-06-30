@@ -9,17 +9,15 @@
 // Asset groups provide aggregate views of asset flows across all inputs/outputs,
 // enabling balance verification without iterating individual UTXOs.
 
-options {
-  server = server;
-  exit = 288;
-}
+import "single_sig.ark";
 
 contract ControlledMint(
   bytes32 tokenAssetIdTxid,
   int tokenAssetIdGidx,
   bytes32 ctrlAssetIdTxid,
   int ctrlAssetIdGidx,
-  pubkey issuerPk
+  pubkey issuerPk,
+  int exit
 ) {
   // Mint: delta > 0, control asset present and retained
   function mint(int amount, pubkey recipientPk, signature issuerSig) {
@@ -31,7 +29,7 @@ contract ControlledMint(
     require(ctrlGroup.delta == 0, "ctrl supply changed");
 
     require(tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "mint short");
-    require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
+    require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk, exit), "wrong dest");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 
@@ -47,5 +45,11 @@ contract ControlledMint(
     let ctrlGroup = tx.assetGroups.find(ctrlAssetIdTxid, ctrlAssetIdGidx);
     require(ctrlGroup.sumOutputs == 0, "ctrl not burned");
     require(checkSig(issuerSig, issuerPk), "bad sig");
+  }
+
+  // Unilateral exit (CSV): issuer recovers after exit delay.
+  function unilateral(signature issuerSig) tapscript {
+    require(older(exit));
+    require(checkSig(issuerSig, issuerPk));
   }
 }
