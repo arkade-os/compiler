@@ -10,300 +10,132 @@
       "type": "pubkey"
     },
     {
-      "name": "hash",
-      "type": "bytes"
+      "name": "preimageHash",
+      "type": "bytes20"
     },
     {
       "name": "refundTime",
+      "type": "int"
+    },
+    {
+      "name": "exit",
       "type": "int"
     }
   ],
   "functions": [
     {
-      "name": "together",
-      "functionInputs": [
+      "name": "claim",
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "0",
+          "OP_INSPECTOUTPUTVALUE",
+          "0",
+          "OP_INSPECTINPUTVALUE",
+          "OP_GREATERTHANOREQUAL64",
+          "OP_VERIFY"
+        ]
+      },
+      "leaves": [
         {
-          "name": "senderSig",
-          "type": "signature"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature"
+          "name": "claim",
+          "witness": [
+            {
+              "name": "preimage",
+              "type": "bytes",
+              "encoding": "raw"
+            },
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "OP_HASH160",
+            "<preimageHash>",
+            "OP_EQUAL",
+            "OP_VERIFY",
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:claim>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "comparison"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<checkMultisig([sender, receiver], [senderSig, receiverSig])>",
-        "OP_EQUAL",
-        "true",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "together",
-      "functionInputs": [
-        {
-          "name": "senderSig",
-          "type": "signature"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "comparison"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 144 blocks"
-        }
-      ],
-      "asm": [
-        "<checkMultisig([sender, receiver], [senderSig, receiverSig])>",
-        "OP_EQUAL",
-        "true",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     },
     {
       "name": "refund",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [],
+        "asm": [
+          "0",
+          "OP_INSPECTOUTPUTVALUE",
+          "0",
+          "OP_INSPECTINPUTVALUE",
+          "OP_GREATERTHANOREQUAL64",
+          "OP_VERIFY"
+        ]
+      },
+      "leaves": [
         {
-          "name": "senderSig",
-          "type": "signature"
+          "name": "refund",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<refundTime>",
+            "OP_CHECKLOCKTIMEVERIFY",
+            "OP_DROP",
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:refund>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "after",
-          "message": "Timelock of 0 blocks"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<sender>",
-        "<senderSig>",
-        "OP_CHECKSIG",
-        "<refundTime>",
-        "OP_CHECKLOCKTIMEVERIFY",
-        "OP_DROP",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
       ]
     },
     {
-      "name": "refund",
-      "functionInputs": [
+      "name": "unilateral",
+      "leaves": [
         {
-          "name": "senderSig",
-          "type": "signature"
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "senderSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<exit>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<sender>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "after",
-          "message": "Timelock of 0 blocks"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 144 blocks"
-        }
-      ],
-      "asm": [
-        "<sender>",
-        "<senderSig>",
-        "OP_CHECKSIG",
-        "<refundTime>",
-        "OP_CHECKLOCKTIMEVERIFY",
-        "OP_DROP",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
-      ]
-    },
-    {
-      "name": "claim",
-      "functionInputs": [
-        {
-          "name": "receiverSig",
-          "type": "signature"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes",
-          "encoding": "raw"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "hash"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<receiver>",
-        "<receiverSig>",
-        "OP_CHECKSIG",
-        "<preimage>",
-        "OP_SHA256",
-        "<hash>",
-        "OP_EQUAL",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "claim",
-      "functionInputs": [
-        {
-          "name": "receiverSig",
-          "type": "signature"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes",
-          "encoding": "raw"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "hash"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 144 blocks"
-        }
-      ],
-      "asm": [
-        "<receiver>",
-        "<receiverSig>",
-        "OP_CHECKSIG",
-        "<preimage>",
-        "OP_SHA256",
-        "<hash>",
-        "OP_EQUAL",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     }
   ],
-  "source": "options {\n  server = server;\n  \n  renew = 1008;\n  \n  exit = 144;\n}\n\ncontract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes hash,\n  int refundTime\n) {\n  function together(signature senderSig, signature receiverSig) {\n    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));\n  }\n  \n  function refund(signature senderSig) {\n    require(checkSig(senderSig, sender));\n    require(tx.time >= refundTime);\n  }\n  \n  function claim(signature receiverSig, bytes preimage) {\n    require(checkSig(receiverSig, receiver));\n    require(sha256(preimage) == hash);\n  }\n} ",
+  "source": "contract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes20 preimageHash,\n  int refundTime,\n  int exit\n) {\n  function claim() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n  function refund() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n\n  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n  function refund(signature serverSig, signature emulatorSig) tapscript {\n    require(tx.time >= refundTime);\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n\n  function unilateral(signature senderSig) tapscript {\n    require(older(exit));\n    require(checkSig(senderSig, sender));\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-08T15:43:11.086095424+00:00"
+  "updatedAt": "2026-06-30T08:52:03.968177+00:00"
 }

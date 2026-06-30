@@ -4,86 +4,79 @@
     {
       "name": "user",
       "type": "pubkey"
+    },
+    {
+      "name": "exit",
+      "type": "int"
     }
   ],
   "functions": [
     {
       "name": "spend",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [
+          {
+            "name": "userSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "<user>",
+          "<userSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
         {
-          "name": "userSig",
-          "type": "signature"
+          "name": "spend",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:spend>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "userSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<user>",
-        "<userSig>",
-        "OP_CHECKSIG",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
       ]
     },
     {
-      "name": "spend",
-      "functionInputs": [
+      "name": "unilateral",
+      "leaves": [
         {
-          "name": "userSig",
-          "type": "signature"
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "userSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<exit>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<user>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "userSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 144 blocks"
-        }
-      ],
-      "asm": [
-        "<user>",
-        "<userSig>",
-        "OP_CHECKSIG",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     }
   ],
-  "source": "options {\n  server = server;\n  \n  renew = 1008;\n  \n  exit = 144;\n}\n\ncontract SingleSig(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n} ",
+  "source": "contract SingleSig(\n  pubkey user,\n  int exit\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n\n  function unilateral(signature userSig) tapscript {\n    require(older(exit));\n    require(checkSig(userSig, user));\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-08T15:43:11.335634707+00:00"
+  "updatedAt": "2026-06-30T08:52:03.967051+00:00"
 }

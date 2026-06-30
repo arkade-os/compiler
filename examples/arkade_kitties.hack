@@ -2,7 +2,8 @@
 #
 #
 
-# Function: breed (cooperative)
+# Function: breed
+## arkade covenant
 <sireIdTxid>
 <sireIdGidx>
 OP_FINDASSETGROUPBYASSETID
@@ -140,19 +141,14 @@ OP_VERIFY
 1
 OP_EQUAL
 OP_VERIFY
+## leaf: breed
 <SERVER_KEY>
-<serverSig>
+OP_CHECKSIGVERIFY
+<EMULATOR_KEY:breed>
 OP_CHECKSIG
 
-# Function: breed (exit)
-<oraclePk>
-<oraclePkSig>
-OP_CHECKSIG
-576
-OP_CHECKSEQUENCEVERIFY
-OP_DROP
-
-# Function: transfer (cooperative)
+# Function: transfer
+## arkade covenant
 <kittyIdTxid>
 <kittyIdGidx>
 OP_FINDASSETGROUPBYASSETID
@@ -193,26 +189,14 @@ OP_EQUAL
 OP_VERIFY
 0
 OP_INSPECTOUTPUTSCRIPTPUBKEY
-<VTXO:SingleSig(<newOwnerPk>)>
+<VTXO:SingleSig(<newOwnerPk>,<exit>)>
 OP_EQUAL
 <ownerPk>
 <ownerSig>
 OP_CHECKSIG
+## leaf: transfer
 <SERVER_KEY>
-<serverSig>
-OP_CHECKSIG
-
-# Function: transfer (exit)
-<oraclePk>
-<oraclePkSig>
 OP_CHECKSIGVERIFY
-<newOwnerPk>
-<newOwnerPkSig>
-OP_CHECKSIGVERIFY
-<ownerPk>
-<ownerPkSig>
+<EMULATOR_KEY:transfer>
 OP_CHECKSIG
-576
-OP_CHECKSEQUENCEVERIFY
-OP_DROP
 

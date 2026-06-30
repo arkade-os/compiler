@@ -12,605 +12,301 @@
     {
       "name": "issuerPk",
       "type": "pubkey"
+    },
+    {
+      "name": "exit",
+      "type": "int"
     }
   ],
   "functions": [
     {
       "name": "mint",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [
+          {
+            "name": "nftAssetIdTxid",
+            "type": "bytes32"
+          },
+          {
+            "name": "nftAssetIdGidx",
+            "type": "int"
+          },
+          {
+            "name": "recipientPk",
+            "type": "pubkey"
+          },
+          {
+            "name": "issuerSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "<nftAssetIdTxid>",
+          "<nftAssetIdGidx>",
+          "OP_FINDASSETGROUPBYASSETID",
+          "OP_VERIFY",
+          "<nftGroup>",
+          "OP_INSPECTASSETGROUPASSETID",
+          "OP_DROP",
+          "OP_TXHASH",
+          "OP_EQUAL",
+          "1",
+          "OP_EQUAL",
+          "<nftGroup>",
+          "OP_1",
+          "OP_INSPECTASSETGROUPSUM",
+          "<nftGroup>",
+          "OP_0",
+          "OP_INSPECTASSETGROUPSUM",
+          "OP_SUB64",
+          "OP_VERIFY",
+          "1",
+          "OP_EQUAL",
+          "<nftGroup>",
+          "OP_INSPECTASSETGROUPCTRL",
+          "OP_DROP",
+          "<collectionCtrlIdGidx>",
+          "OP_EQUAL",
+          "OP_SWAP",
+          "<collectionCtrlIdTxid>",
+          "OP_EQUAL",
+          "OP_BOOLAND",
+          "<collectionCtrlIdTxid>",
+          "<collectionCtrlIdGidx>",
+          "OP_FINDASSETGROUPBYASSETID",
+          "OP_VERIFY",
+          "<ctrlGroup>",
+          "OP_1",
+          "OP_INSPECTASSETGROUPSUM",
+          "<ctrlGroup>",
+          "OP_0",
+          "OP_INSPECTASSETGROUPSUM",
+          "OP_SUB64",
+          "OP_VERIFY",
+          "0",
+          "OP_EQUAL",
+          "0",
+          "<nftAssetIdTxid>",
+          "<nftAssetIdGidx>",
+          "OP_INSPECTOUTASSETLOOKUP",
+          "OP_VERIFY",
+          "1",
+          "OP_EQUAL",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<recipientPk>,<exit>)>",
+          "OP_EQUAL",
+          "<issuerPk>",
+          "<issuerSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
         {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int"
-        },
-        {
-          "name": "recipientPk",
-          "type": "pubkey"
-        },
-        {
-          "name": "issuerSig",
-          "type": "signature"
+          "name": "mint",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:mint>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32",
-          "encoding": "raw-32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int",
-          "encoding": "scriptnum"
-        },
-        {
-          "name": "recipientPk",
-          "type": "pubkey",
-          "encoding": "compressed-33"
-        },
-        {
-          "name": "issuerSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "assetCheck"
-        },
-        {
-          "type": "comparison"
-        },
-        {
-          "type": "signature"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<nftAssetIdTxid>",
-        "<nftAssetIdGidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "OP_VERIFY",
-        "<nftGroup>",
-        "OP_INSPECTASSETGROUPASSETID",
-        "OP_DROP",
-        "OP_TXHASH",
-        "OP_EQUAL",
-        "1",
-        "OP_EQUAL",
-        "<nftGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<nftGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "<nftGroup>",
-        "OP_INSPECTASSETGROUPCTRL",
-        "OP_DROP",
-        "<collectionCtrlIdGidx>",
-        "OP_EQUAL",
-        "OP_SWAP",
-        "<collectionCtrlIdTxid>",
-        "OP_EQUAL",
-        "OP_BOOLAND",
-        "<collectionCtrlIdTxid>",
-        "<collectionCtrlIdGidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "OP_VERIFY",
-        "<ctrlGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<ctrlGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "0",
-        "OP_EQUAL",
-        "0",
-        "<nftAssetIdTxid>",
-        "<nftAssetIdGidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "OP_VERIFY",
-        "0",
-        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:SingleSig(<recipientPk>)>",
-        "OP_EQUAL",
-        "<issuerPk>",
-        "<issuerSig>",
-        "OP_CHECKSIG",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "mint",
-      "functionInputs": [
-        {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int"
-        },
-        {
-          "name": "recipientPk",
-          "type": "pubkey"
-        },
-        {
-          "name": "issuerSig",
-          "type": "signature"
-        },
-        {
-          "name": "issuerPkSig",
-          "type": "signature"
-        },
-        {
-          "name": "recipientPkSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "issuerPkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "recipientPkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "nOfNMultisig",
-          "message": "2-of-2 signatures required (introspection fallback)"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 288 blocks"
-        }
-      ],
-      "asm": [
-        "<issuerPk>",
-        "<issuerPkSig>",
-        "OP_CHECKSIGVERIFY",
-        "<recipientPk>",
-        "<recipientPkSig>",
-        "OP_CHECKSIG",
-        "288",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     },
     {
       "name": "transfer",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [
+          {
+            "name": "nftAssetIdTxid",
+            "type": "bytes32"
+          },
+          {
+            "name": "nftAssetIdGidx",
+            "type": "int"
+          },
+          {
+            "name": "newOwnerPk",
+            "type": "pubkey"
+          },
+          {
+            "name": "ownerSig",
+            "type": "signature"
+          },
+          {
+            "name": "ownerPk",
+            "type": "pubkey"
+          }
+        ],
+        "asm": [
+          "<nftAssetIdTxid>",
+          "<nftAssetIdGidx>",
+          "OP_FINDASSETGROUPBYASSETID",
+          "OP_VERIFY",
+          "<nftGroup>",
+          "OP_INSPECTASSETGROUPASSETID",
+          "OP_DROP",
+          "OP_TXHASH",
+          "OP_EQUAL",
+          "0",
+          "OP_EQUAL",
+          "<nftGroup>",
+          "OP_1",
+          "OP_INSPECTASSETGROUPSUM",
+          "<nftGroup>",
+          "OP_0",
+          "OP_INSPECTASSETGROUPSUM",
+          "OP_SUB64",
+          "OP_VERIFY",
+          "0",
+          "OP_EQUAL",
+          "<nftGroup>",
+          "OP_INSPECTASSETGROUPCTRL",
+          "OP_DROP",
+          "<collectionCtrlIdGidx>",
+          "OP_EQUAL",
+          "OP_SWAP",
+          "<collectionCtrlIdTxid>",
+          "OP_EQUAL",
+          "OP_BOOLAND",
+          "0",
+          "<nftAssetIdTxid>",
+          "<nftAssetIdGidx>",
+          "OP_INSPECTOUTASSETLOOKUP",
+          "OP_VERIFY",
+          "1",
+          "OP_EQUAL",
+          "OP_VERIFY",
+          "0",
+          "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+          "<VTXO:SingleSig(<newOwnerPk>,<exit>)>",
+          "OP_EQUAL",
+          "<ownerPk>",
+          "<ownerSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
         {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int"
-        },
-        {
-          "name": "newOwnerPk",
-          "type": "pubkey"
-        },
-        {
-          "name": "ownerSig",
-          "type": "signature"
-        },
-        {
-          "name": "ownerPk",
-          "type": "pubkey"
+          "name": "transfer",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:transfer>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32",
-          "encoding": "raw-32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int",
-          "encoding": "scriptnum"
-        },
-        {
-          "name": "newOwnerPk",
-          "type": "pubkey",
-          "encoding": "compressed-33"
-        },
-        {
-          "name": "ownerSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "ownerPk",
-          "type": "pubkey",
-          "encoding": "compressed-33"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "assetCheck"
-        },
-        {
-          "type": "comparison"
-        },
-        {
-          "type": "signature"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<nftAssetIdTxid>",
-        "<nftAssetIdGidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "OP_VERIFY",
-        "<nftGroup>",
-        "OP_INSPECTASSETGROUPASSETID",
-        "OP_DROP",
-        "OP_TXHASH",
-        "OP_EQUAL",
-        "0",
-        "OP_EQUAL",
-        "<nftGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "<nftGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "OP_SUB64",
-        "OP_VERIFY",
-        "0",
-        "OP_EQUAL",
-        "<nftGroup>",
-        "OP_INSPECTASSETGROUPCTRL",
-        "OP_DROP",
-        "<collectionCtrlIdGidx>",
-        "OP_EQUAL",
-        "OP_SWAP",
-        "<collectionCtrlIdTxid>",
-        "OP_EQUAL",
-        "OP_BOOLAND",
-        "0",
-        "<nftAssetIdTxid>",
-        "<nftAssetIdGidx>",
-        "OP_INSPECTOUTASSETLOOKUP",
-        "OP_VERIFY",
-        "1",
-        "OP_EQUAL",
-        "OP_VERIFY",
-        "0",
-        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:SingleSig(<newOwnerPk>)>",
-        "OP_EQUAL",
-        "<ownerPk>",
-        "<ownerSig>",
-        "OP_CHECKSIG",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "transfer",
-      "functionInputs": [
-        {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int"
-        },
-        {
-          "name": "newOwnerPk",
-          "type": "pubkey"
-        },
-        {
-          "name": "ownerSig",
-          "type": "signature"
-        },
-        {
-          "name": "ownerPk",
-          "type": "pubkey"
-        },
-        {
-          "name": "issuerPkSig",
-          "type": "signature"
-        },
-        {
-          "name": "newOwnerPkSig",
-          "type": "signature"
-        },
-        {
-          "name": "ownerPkSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "issuerPkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "newOwnerPkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "ownerPkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "nOfNMultisig",
-          "message": "3-of-3 signatures required (introspection fallback)"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 288 blocks"
-        }
-      ],
-      "asm": [
-        "<issuerPk>",
-        "<issuerPkSig>",
-        "OP_CHECKSIGVERIFY",
-        "<newOwnerPk>",
-        "<newOwnerPkSig>",
-        "OP_CHECKSIGVERIFY",
-        "<ownerPk>",
-        "<ownerPkSig>",
-        "OP_CHECKSIG",
-        "288",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     },
     {
       "name": "burn",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [
+          {
+            "name": "nftAssetIdTxid",
+            "type": "bytes32"
+          },
+          {
+            "name": "nftAssetIdGidx",
+            "type": "int"
+          },
+          {
+            "name": "ownerSig",
+            "type": "signature"
+          },
+          {
+            "name": "ownerPk",
+            "type": "pubkey"
+          }
+        ],
+        "asm": [
+          "<nftAssetIdTxid>",
+          "<nftAssetIdGidx>",
+          "OP_FINDASSETGROUPBYASSETID",
+          "OP_VERIFY",
+          "<nftGroup>",
+          "OP_INSPECTASSETGROUPASSETID",
+          "OP_DROP",
+          "OP_TXHASH",
+          "OP_EQUAL",
+          "0",
+          "OP_EQUAL",
+          "<nftGroup>",
+          "OP_0",
+          "OP_INSPECTASSETGROUPSUM",
+          "<nftGroup>",
+          "OP_1",
+          "OP_INSPECTASSETGROUPSUM",
+          "1",
+          "OP_ADD64",
+          "OP_VERIFY",
+          "OP_GREATERTHANOREQUAL",
+          "<ownerPk>",
+          "<ownerSig>",
+          "OP_CHECKSIG"
+        ]
+      },
+      "leaves": [
         {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int"
-        },
-        {
-          "name": "ownerSig",
-          "type": "signature"
-        },
-        {
-          "name": "ownerPk",
-          "type": "pubkey"
+          "name": "burn",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:burn>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32",
-          "encoding": "raw-32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int",
-          "encoding": "scriptnum"
-        },
-        {
-          "name": "ownerSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "ownerPk",
-          "type": "pubkey",
-          "encoding": "compressed-33"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "groupCheck"
-        },
-        {
-          "type": "signature"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<nftAssetIdTxid>",
-        "<nftAssetIdGidx>",
-        "OP_FINDASSETGROUPBYASSETID",
-        "OP_VERIFY",
-        "<nftGroup>",
-        "OP_INSPECTASSETGROUPASSETID",
-        "OP_DROP",
-        "OP_TXHASH",
-        "OP_EQUAL",
-        "0",
-        "OP_EQUAL",
-        "<nftGroup>",
-        "OP_0",
-        "OP_INSPECTASSETGROUPSUM",
-        "<nftGroup>",
-        "OP_1",
-        "OP_INSPECTASSETGROUPSUM",
-        "1",
-        "OP_ADD64",
-        "OP_VERIFY",
-        "OP_GREATERTHANOREQUAL",
-        "<ownerPk>",
-        "<ownerSig>",
-        "OP_CHECKSIG",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "burn",
-      "functionInputs": [
-        {
-          "name": "nftAssetIdTxid",
-          "type": "bytes32"
-        },
-        {
-          "name": "nftAssetIdGidx",
-          "type": "int"
-        },
-        {
-          "name": "ownerSig",
-          "type": "signature"
-        },
-        {
-          "name": "ownerPk",
-          "type": "pubkey"
-        },
-        {
-          "name": "issuerPkSig",
-          "type": "signature"
-        },
-        {
-          "name": "ownerPkSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "issuerPkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "ownerPkSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "nOfNMultisig",
-          "message": "2-of-2 signatures required (introspection fallback)"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 288 blocks"
-        }
-      ],
-      "asm": [
-        "<issuerPk>",
-        "<issuerPkSig>",
-        "OP_CHECKSIGVERIFY",
-        "<ownerPk>",
-        "<ownerPkSig>",
-        "OP_CHECKSIG",
-        "288",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     }
   ],
-  "source": "\noptions {\n  server = server;\n  exit = 288;\n}\n\ncontract NFTMint(\n    bytes32 collectionCtrlIdTxid,\n    int collectionCtrlIdGidx,\n    pubkey issuerPk\n) {\n    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey recipientPk, signature issuerSig) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 1, \"must be fresh\");\n\n        require(nftGroup.delta == 1, \"must mint exactly 1\");\n\n        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), \"wrong collection\");\n\n        let ctrlGroup = tx.assetGroups.find(collectionCtrlIdTxid, collectionCtrlIdGidx);\n        require(ctrlGroup.delta == 0, \"control must be retained\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), \"wrong recipient\");\n\n        require(checkSig(issuerSig, issuerPk), \"bad issuer sig\");\n    }\n\n    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 0, \"cannot be fresh\");\n\n        require(nftGroup.delta == 0, \"must be transfer\");\n\n        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), \"wrong collection\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), \"wrong dest\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n\n    function burn(bytes32 nftAssetIdTxid, int nftAssetIdGidx, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 0, \"cannot burn fresh asset\");\n\n        require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, \"must burn exactly 1\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n}",
+  "source": "\nimport \"single_sig.ark\";\n\ncontract NFTMint(\n    bytes32 collectionCtrlIdTxid,\n    int collectionCtrlIdGidx,\n    pubkey issuerPk,\n    int exit\n) {\n    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey recipientPk, signature issuerSig) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 1, \"must be fresh\");\n\n        require(nftGroup.delta == 1, \"must mint exactly 1\");\n\n        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), \"wrong collection\");\n\n        let ctrlGroup = tx.assetGroups.find(collectionCtrlIdTxid, collectionCtrlIdGidx);\n        require(ctrlGroup.delta == 0, \"control must be retained\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk, exit), \"wrong recipient\");\n\n        require(checkSig(issuerSig, issuerPk), \"bad issuer sig\");\n    }\n\n    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 0, \"cannot be fresh\");\n\n        require(nftGroup.delta == 0, \"must be transfer\");\n\n        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), \"wrong collection\");\n\n        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, \"NFT not in output\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk, exit), \"wrong dest\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n\n    function burn(bytes32 nftAssetIdTxid, int nftAssetIdGidx, signature ownerSig, pubkey ownerPk) {\n        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);\n\n        require(nftGroup.isFresh == 0, \"cannot burn fresh asset\");\n\n        require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, \"must burn exactly 1\");\n\n        require(checkSig(ownerSig, ownerPk), \"bad owner sig\");\n    }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-06-15T12:19:44.398758+00:00",
+  "updatedAt": "2026-06-30T08:52:04.534427+00:00",
   "warnings": [
     "warning[type]: fn mint: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn mint: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn mint: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <ctrlGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ctrlGroup'",
-    "warning[output-invariant]: fn 'mint' (serverVariant=true): placeholder <ctrlGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ctrlGroup'",
-    "warning[output-invariant]: fn 'mint' (serverVariant=false): placeholder <recipientPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'recipientPk'",
-    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'transfer' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'transfer' (serverVariant=false): placeholder <newOwnerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newOwnerPk'",
-    "warning[output-invariant]: fn 'transfer' (serverVariant=false): placeholder <ownerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ownerPk'",
-    "warning[output-invariant]: fn 'burn' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'burn' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'burn' (serverVariant=true): placeholder <nftGroup> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'nftGroup'",
-    "warning[output-invariant]: fn 'burn' (serverVariant=false): placeholder <ownerPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'ownerPk'"
+    "warning[type]: fn transfer: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
   ]
 }
