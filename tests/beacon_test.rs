@@ -3,26 +3,21 @@ use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
 };
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // LEGACY BEACON (loop-unrolling primitive test)
 // Tests compile-time for-loop unrolling over tx.assetGroups.
-// This contract exercises the OP_INSPECTASSETGROUPSUM primitive and is kept
-// as a regression fixture for that language feature.
+// options { } block removed; oracleServerPk removed (was only used for options.server).
 // ---------------------------------------------------------------------------
 const BEACON_LOOP_CODE: &str = r#"
-options {
-  server = oracleServerPk;
-  exit = 144;
-}
-
 contract PriceBeacon(
   bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
   pubkey oraclePk,
-  pubkey oracleServerPk,
   int numGroups
 ) {
   function passthrough() {
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, oracleServerPk, numGroups), "broken");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, numGroups), "broken");
 
     for (k, group) in tx.assetGroups {
       require(group.sumOutputs >= group.sumInputs, "drained");
@@ -31,7 +26,7 @@ contract PriceBeacon(
 
   function update(signature oracleSig) {
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, oracleServerPk, numGroups), "broken");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, numGroups), "broken");
     require(checkSig(oracleSig, oraclePk), "bad sig");
   }
 }
@@ -39,15 +34,9 @@ contract PriceBeacon(
 
 // ---------------------------------------------------------------------------
 // PRICE BEACON (dual-asset design with timestampAssetId)
-// Tests the production PriceBeacon: price + timestamp assets, monotone
-// timestamp enforcement, passthrough preservation, and migrate.
+// options { } block removed (server key is now handled by default-leaf synthesis).
 // ---------------------------------------------------------------------------
 const PRICE_BEACON_CODE: &str = r#"
-options {
-  server = server;
-  exit = exit;
-}
-
 contract PriceBeacon(
   bytes32 tickerTxid, int tickerGidx,
   bytes32 clockTxid, int clockGidx,
@@ -131,50 +120,26 @@ fn test_beacon_structure() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
 
     assert_eq!(output.name, "PriceBeacon");
-    // 2 functions x 2 variants = 4
-    assert_eq!(output.functions.len(), 4);
+    // 2 covenant functions → 2 groups (no exit variants in new model)
+    assert_eq!(output.functions.len(), 2);
 
-    let passthrough_server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "passthrough" && f.server_variant);
-    let passthrough_exit = output
-        .functions
-        .iter()
-        .find(|f| f.name == "passthrough" && !f.server_variant);
-    let update_server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "update" && f.server_variant);
-    let update_exit = output
-        .functions
-        .iter()
-        .find(|f| f.name == "update" && !f.server_variant);
-
+    // Both groups should exist
     assert!(
-        passthrough_server.is_some(),
-        "Missing passthrough server variant"
+        common::group(&output, "passthrough").arkade.is_some(),
+        "Missing passthrough arkade covenant"
     );
     assert!(
-        passthrough_exit.is_some(),
-        "Missing passthrough exit variant"
+        common::group(&output, "update").arkade.is_some(),
+        "Missing update arkade covenant"
     );
-    assert!(update_server.is_some(), "Missing update server variant");
-    assert!(update_exit.is_some(), "Missing update exit variant");
 }
 
 #[test]
 fn test_beacon_passthrough_has_loop_unrolling() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
 
-    let passthrough = output
-        .functions
-        .iter()
-        .find(|f| f.name == "passthrough" && f.server_variant)
-        .unwrap();
-
-    let sum_count = passthrough
-        .asm
+    let asm_tokens = common::arkade_asm_tokens(&output, "passthrough");
+    let sum_count = asm_tokens
         .iter()
         .filter(|s| s.contains(OP_INSPECTASSETGROUPSUM))
         .count();
@@ -191,22 +156,14 @@ fn test_beacon_passthrough_has_loop_unrolling() {
 fn test_beacon_update_has_asset_lookup() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
 
-    let update = output
-        .functions
-        .iter()
-        .find(|f| f.name == "update" && f.server_variant)
-        .unwrap();
+    let update_asm = common::arkade_asm(&output, "update");
 
     assert!(
-        update
-            .asm
-            .iter()
-            .any(|s| s.contains(OP_INSPECTINASSETLOOKUP)),
+        update_asm.contains(OP_INSPECTINASSETLOOKUP),
         "Missing {OP_INSPECTINASSETLOOKUP} in update function"
     );
-
     assert!(
-        update.asm.iter().any(|s| s == OP_CHECKSIG),
+        update_asm.contains(OP_CHECKSIG),
         "Missing {OP_CHECKSIG} in update function"
     );
 }
@@ -215,22 +172,15 @@ fn test_beacon_update_has_asset_lookup() {
 fn test_beacon_update_has_covenant_recursion() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
 
-    let update = output
-        .functions
-        .iter()
-        .find(|f| f.name == "update" && f.server_variant)
-        .unwrap();
+    let update_asm = common::arkade_asm(&output, "update");
 
-    let has_constructor = update.asm.iter().any(|s| s.contains("new PriceBeacon("));
-    let has_output_inspect = update
-        .asm
-        .iter()
-        .any(|s| s.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY));
+    let has_constructor = update_asm.contains("new PriceBeacon(");
+    let has_output_inspect = update_asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY);
 
     assert!(
         has_constructor || has_output_inspect,
-        "Missing constructor placeholder or {OP_INSPECTOUTPUTSCRIPTPUBKEY} in update function. ASM: {:?}",
-        update.asm
+        "Missing constructor placeholder or {OP_INSPECTOUTPUTSCRIPTPUBKEY} in update function. ASM: {}",
+        update_asm
     );
 }
 
@@ -248,23 +198,13 @@ fn test_price_beacon_parses() {
 fn test_price_beacon_structure() {
     let output = compile(PRICE_BEACON_CODE).unwrap();
     assert_eq!(output.name, "PriceBeacon");
-    // 3 functions x 2 variants = 6
-    assert_eq!(output.functions.len(), 6);
+    // 3 covenant functions → 3 groups
+    assert_eq!(output.functions.len(), 3);
 
     for name in &["update", "passthrough", "migrate"] {
         assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && f.server_variant),
-            "Missing {name} server variant"
-        );
-        assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && !f.server_variant),
-            "Missing {name} exit variant"
+            common::group(&output, name).arkade.is_some(),
+            "Missing {name} arkade covenant"
         );
     }
 }
@@ -273,17 +213,10 @@ fn test_price_beacon_structure() {
 fn test_price_beacon_update_enforces_timestamp_monotonicity() {
     let output = compile(PRICE_BEACON_CODE).unwrap();
 
-    let update = output
-        .functions
-        .iter()
-        .find(|f| f.name == "update" && f.server_variant)
-        .unwrap();
+    let update_asm_tokens = common::arkade_asm_tokens(&output, "update");
 
     // update() reads the current timestamp from input for the monotonicity check.
-    // newPrice is a witness argument — no input price lookup required.
-    // Expect exactly 1 OP_INSPECTINASSETLOOKUP (the timestamp read).
-    let lookup_count = update
-        .asm
+    let lookup_count = update_asm_tokens
         .iter()
         .filter(|s| s.contains(OP_INSPECTINASSETLOOKUP))
         .count();
@@ -299,15 +232,10 @@ fn test_price_beacon_update_enforces_timestamp_monotonicity() {
 fn test_price_beacon_passthrough_preserves_both_assets() {
     let output = compile(PRICE_BEACON_CODE).unwrap();
 
-    let passthrough = output
-        .functions
-        .iter()
-        .find(|f| f.name == "passthrough" && f.server_variant)
-        .unwrap();
+    let passthrough_asm_tokens = common::arkade_asm_tokens(&output, "passthrough");
 
     // passthrough reads both assets from input — expect 2 INSPECTINASSETLOOKUP calls
-    let in_lookup_count = passthrough
-        .asm
+    let in_lookup_count = passthrough_asm_tokens
         .iter()
         .filter(|s| s.contains(OP_INSPECTINASSETLOOKUP))
         .count();
@@ -319,8 +247,7 @@ fn test_price_beacon_passthrough_preserves_both_assets() {
     );
 
     // and verifies both assets survive on the output
-    let out_lookup_count = passthrough
-        .asm
+    let out_lookup_count = passthrough_asm_tokens
         .iter()
         .filter(|s| s.contains("OP_INSPECTOUTASSETLOOKUP"))
         .count();

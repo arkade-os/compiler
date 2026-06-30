@@ -1,48 +1,24 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_EQUAL, OP_NUMEQUAL,
-    OP_SHA256,
+    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY,
+    OP_GREATERTHANOREQUAL64, OP_HASH160,
 };
 use serde_json::Value;
 use std::fs;
 use tempfile::tempdir;
 
+mod common;
+
+// HTLC contract using the tapscript model.
+// Covenant functions enforce output-value preservation; tapscript leaves handle
+// the hash-preimage claim path, the timelock refund path, and a unilateral CSV exit.
+// (Old options { } block and pubkey server constructor param removed — server key is
+//  now auto-injected by Arkade infrastructure as <SERVER_KEY> in leaf ASM.)
+const HTLC_CODE: &str = include_str!("../examples/htlc.ark");
+
 #[test]
 fn test_htlc_contract() {
-    // HTLC contract source code
-    let htlc_code = r#"// Contract configuration options
-options {
-  // Server key parameter from contract parameters
-  server = server;
-  
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
-contract HTLC(
-  pubkey sender,
-  pubkey receiver,
-  bytes32 hash,
-  int refundTime,
-  pubkey server
-) {
-  function together(signature senderSig, signature receiverSig) {
-    require(checkMultisig([sender, receiver]));
-  }
-  
-  function refund(signature senderSig) {
-    require(checkSig(senderSig, sender));
-    require(tx.time >= refundTime);
-  }
-  
-  function claim(signature receiverSig, bytes32 preimage) {
-    require(checkSig(receiverSig, receiver));
-    require(sha256(preimage) == hash);
-  }
-}"#;
-
-    // Compile the contract
-    let result = compile(htlc_code);
+    let result = compile(HTLC_CODE);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
@@ -50,131 +26,157 @@ contract HTLC(
     // Verify contract name
     assert_eq!(output.name, "HTLC");
 
-    // Verify parameters
+    // Verify parameters: sender, receiver, preimageHash (bytes20), refundTime, exit
     assert_eq!(output.parameters.len(), 5);
     assert_eq!(output.parameters[0].name, "sender");
     assert_eq!(output.parameters[0].param_type, "pubkey");
     assert_eq!(output.parameters[1].name, "receiver");
     assert_eq!(output.parameters[1].param_type, "pubkey");
-    assert_eq!(output.parameters[2].name, "hash");
-    assert_eq!(output.parameters[2].param_type, "bytes32");
+    assert_eq!(output.parameters[2].name, "preimageHash");
+    assert_eq!(output.parameters[2].param_type, "bytes20");
     assert_eq!(output.parameters[3].name, "refundTime");
     assert_eq!(output.parameters[3].param_type, "int");
-    assert_eq!(output.parameters[4].name, "server");
-    assert_eq!(output.parameters[4].param_type, "pubkey");
+    assert_eq!(output.parameters[4].name, "exit");
+    assert_eq!(output.parameters[4].param_type, "int");
 
-    // Verify functions - now we have 6 functions (3 functions x 2 variants)
-    assert_eq!(output.functions.len(), 6);
+    // 2 covenant groups (claim, refund) + 1 standalone unilateral = 3 groups
+    assert_eq!(
+        output.functions.len(),
+        3,
+        "expected 3 groups: claim, refund, unilateral"
+    );
 
-    // Verify together function with server variant
-    let together_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "together" && f.server_variant)
-        .unwrap();
+    // --- claim group -------------------------------------------------------
+    // Covenant: checks output value >= input value
+    let claim_cov = common::arkade_asm(&output, "claim");
+    assert!(
+        claim_cov.contains(OP_GREATERTHANOREQUAL64),
+        "claim covenant should enforce output >= input value: {}",
+        claim_cov
+    );
 
-    // Check function inputs
-    assert_eq!(together_function.function_inputs.len(), 2);
-    assert_eq!(together_function.function_inputs[0].name, "senderSig");
-    assert_eq!(together_function.function_inputs[0].param_type, "signature");
-    assert_eq!(together_function.function_inputs[1].name, "receiverSig");
-    assert_eq!(together_function.function_inputs[1].param_type, "signature");
+    // Leaf: hash-preimage check + server/emulator multisig
+    let claim_leaf = common::leaf_asm(&output, "claim", "claim");
+    assert!(
+        claim_leaf.contains(OP_HASH160),
+        "claim leaf should hash the preimage: {}",
+        claim_leaf
+    );
+    assert!(
+        claim_leaf.contains("<SERVER_KEY>"),
+        "claim leaf should require server cosig: {}",
+        claim_leaf
+    );
+    assert!(
+        claim_leaf.contains(OP_CHECKSIGVERIFY),
+        "claim leaf should have CHECKSIGVERIFY: {}",
+        claim_leaf
+    );
+    assert!(
+        claim_leaf.contains(OP_CHECKSIG),
+        "claim leaf should have final CHECKSIG: {}",
+        claim_leaf
+    );
 
-    // Check assembly instructions
-    assert_eq!(together_function.asm.len(), 9);
-    assert_eq!(together_function.asm[0], "<sender>");
-    assert_eq!(together_function.asm[1], OP_CHECKSIG);
-    assert_eq!(together_function.asm[2], "<receiver>");
-    assert_eq!(together_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(together_function.asm[4], OP_2);
-    assert_eq!(together_function.asm[5], OP_NUMEQUAL);
-    assert_eq!(together_function.asm[6], "<SERVER_KEY>");
-    assert_eq!(together_function.asm[7], "<serverSig>");
-    assert_eq!(together_function.asm[8], OP_CHECKSIG);
-    // Verify refund function with server variant
-    let refund_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "refund" && f.server_variant)
-        .unwrap();
+    // Witness: preimage + serverSig + emulatorSig
+    let claim_witnesses = common::witness_names(&output, "claim", "claim");
+    assert!(
+        claim_witnesses.contains(&"preimage".to_string()),
+        "claim leaf should require preimage: {:?}",
+        claim_witnesses
+    );
+    assert!(
+        claim_witnesses.contains(&"serverSig".to_string()),
+        "claim leaf should require serverSig: {:?}",
+        claim_witnesses
+    );
+    assert!(
+        claim_witnesses.contains(&"emulatorSig".to_string()),
+        "claim leaf should require emulatorSig: {:?}",
+        claim_witnesses
+    );
 
-    // Check assembly instructions
-    assert_eq!(refund_function.asm.len(), 9);
-    assert_eq!(refund_function.asm[0], "<sender>");
-    assert_eq!(refund_function.asm[1], "<senderSig>");
-    assert_eq!(refund_function.asm[2], OP_CHECKSIG);
-    assert_eq!(refund_function.asm[3], "<refundTime>"); // Variable reference
-    assert_eq!(refund_function.asm[4], OP_CHECKLOCKTIMEVERIFY);
-    assert_eq!(refund_function.asm[5], OP_DROP);
-    assert_eq!(refund_function.asm[6], "<SERVER_KEY>");
-    assert_eq!(refund_function.asm[7], "<serverSig>");
-    assert_eq!(refund_function.asm[8], OP_CHECKSIG);
+    // --- refund group ------------------------------------------------------
+    // Covenant: checks output value >= input value
+    let refund_cov = common::arkade_asm(&output, "refund");
+    assert!(
+        refund_cov.contains(OP_GREATERTHANOREQUAL64),
+        "refund covenant should enforce output >= input value: {}",
+        refund_cov
+    );
 
-    // Verify claim function with server variant
-    let claim_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "claim" && f.server_variant)
-        .unwrap();
+    // Leaf: absolute timelock (CLTV) + server/emulator multisig
+    let refund_leaf = common::leaf_asm(&output, "refund", "refund");
+    assert!(
+        refund_leaf.contains("<refundTime>"),
+        "refund leaf should push refundTime: {}",
+        refund_leaf
+    );
+    assert!(
+        refund_leaf.contains(OP_CHECKLOCKTIMEVERIFY),
+        "refund leaf should enforce timelock: {}",
+        refund_leaf
+    );
+    assert!(
+        refund_leaf.contains("<SERVER_KEY>"),
+        "refund leaf should require server cosig: {}",
+        refund_leaf
+    );
 
-    // Check assembly instructions
-    assert_eq!(claim_function.asm.len(), 10);
-    assert_eq!(claim_function.asm[0], "<receiver>");
-    assert_eq!(claim_function.asm[1], "<receiverSig>");
-    assert_eq!(claim_function.asm[2], OP_CHECKSIG);
-    assert_eq!(claim_function.asm[3], "<preimage>");
-    assert_eq!(claim_function.asm[4], OP_SHA256);
-    assert_eq!(claim_function.asm[5], "<hash>");
-    assert_eq!(claim_function.asm[6], OP_EQUAL);
-    assert_eq!(claim_function.asm[7], "<SERVER_KEY>");
-    assert_eq!(claim_function.asm[8], "<serverSig>");
-    assert_eq!(claim_function.asm[9], OP_CHECKSIG);
+    // Witness: serverSig + emulatorSig
+    let refund_witnesses = common::witness_names(&output, "refund", "refund");
+    assert!(
+        refund_witnesses.contains(&"serverSig".to_string()),
+        "refund leaf should require serverSig: {:?}",
+        refund_witnesses
+    );
+    assert!(
+        refund_witnesses.contains(&"emulatorSig".to_string()),
+        "refund leaf should require emulatorSig: {:?}",
+        refund_witnesses
+    );
+
+    // --- unilateral group --------------------------------------------------
+    // Standalone CSV exit leaf: no arkade covenant, pure Bitcoin.
+    let unilateral_group = common::group(&output, "unilateral");
+    assert!(
+        unilateral_group.arkade.is_none(),
+        "unilateral should have no arkade covenant"
+    );
+
+    let unilateral_leaf = common::leaf_asm(&output, "unilateral", "unilateral");
+    assert!(
+        unilateral_leaf.contains("<exit>"),
+        "unilateral leaf should push exit timelock: {}",
+        unilateral_leaf
+    );
+    assert!(
+        unilateral_leaf.contains(OP_CHECKSEQUENCEVERIFY),
+        "unilateral leaf should have CSV: {}",
+        unilateral_leaf
+    );
+    assert!(
+        unilateral_leaf.contains("<sender>"),
+        "unilateral leaf should check sender key: {}",
+        unilateral_leaf
+    );
+    assert!(
+        unilateral_leaf.contains(OP_CHECKSIG),
+        "unilateral leaf should have CHECKSIG: {}",
+        unilateral_leaf
+    );
 }
 
 #[test]
 fn test_htlc_cli() {
-    // Create a temporary directory for our test files
     let temp_dir = tempdir().unwrap();
     let input_path = temp_dir.path().join("htlc.ark");
     let output_path = temp_dir.path().join("htlc.json");
 
-    // HTLC contract source code
-    let htlc_code = r#"// Contract configuration options
-options {
-  // Server key parameter from contract parameters
-  server = server;
-  
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
+    fs::write(&input_path, HTLC_CODE).unwrap();
 
-contract HTLC(
-  pubkey sender,
-  pubkey receiver,
-  bytes32 hash,
-  int refundTime,
-  pubkey server
-) {
-  function together(signature senderSig, signature receiverSig) {
-    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
-  }
-  
-  function refund(signature senderSig) {
-    require(checkSig(senderSig, sender));
-    require(tx.time >= refundTime);
-  }
-  
-  function claim(signature receiverSig, bytes32 preimage) {
-    require(checkSig(receiverSig, receiver));
-    require(sha256(preimage) == hash);
-  }
-}"#;
-
-    // Write the contract to a file
-    fs::write(&input_path, htlc_code).unwrap();
-
-    // Compile the contract using the library
-    let result = compile(htlc_code);
+    // Compile via library
+    let result = compile(HTLC_CODE);
     assert!(result.is_ok());
 
     // Run the CLI command
@@ -187,26 +189,24 @@ contract HTLC(
 
     assert!(status.success());
 
-    // Read the output file
     let actual_json_str = fs::read_to_string(&output_path).unwrap();
 
-    // Parse both JSONs to compare them ignoring the updatedAt field
+    // Compare CLI output to library output, ignoring updatedAt timestamp
     let mut expected_output = result.unwrap();
-    expected_output.updated_at = None; // Remove the timestamp for comparison
+    expected_output.updated_at = None;
     let expected_json_str = serde_json::to_string_pretty(&expected_output).unwrap();
 
     let mut actual_json: Value = serde_json::from_str(&actual_json_str).unwrap();
     if let Some(obj) = actual_json.as_object_mut() {
-        obj.remove("updatedAt"); // Remove the timestamp for comparison
+        obj.remove("updatedAt");
     }
     let actual_json_str = serde_json::to_string_pretty(&actual_json).unwrap();
 
     let mut expected_json: Value = serde_json::from_str(&expected_json_str).unwrap();
     if let Some(obj) = expected_json.as_object_mut() {
-        obj.remove("updatedAt"); // Remove the timestamp for comparison
+        obj.remove("updatedAt");
     }
     let expected_json_str = serde_json::to_string_pretty(&expected_json).unwrap();
 
-    // Compare the outputs
     assert_eq!(actual_json_str, expected_json_str);
 }
