@@ -104,6 +104,38 @@ pub struct AbiFunction {
     pub asm: Vec<String>,
 }
 
+/// The emulator-run covenant for a function-backed spend group.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ArkadeCovenant {
+    /// Covenant inputs (function parameters, array-expanded). No server/emulator sigs.
+    pub inputs: Vec<FunctionInput>,
+    /// Covenant assembly.
+    pub asm: Vec<String>,
+}
+
+/// One L1 tapleaf within a spend group.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AbiLeaf {
+    /// Leaf name (source tapscript name, or covenant name for a synthesized default).
+    pub name: String,
+    /// Ordered witness stack the caller supplies at spend time.
+    pub witness: Vec<WitnessElement>,
+    /// Tapleaf assembly (pubkeys + ops; signatures live in `witness`).
+    pub asm: Vec<String>,
+}
+
+/// A spend group: an optional covenant plus its L1 leaves.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AbiFunctionGroup {
+    /// Group name (covenant function name, or a standalone leaf's own name).
+    pub name: String,
+    /// Emulator covenant; absent for groups containing only standalone leaves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arkade: Option<ArkadeCovenant>,
+    /// L1 tapleaves grouped under this entry.
+    pub leaves: Vec<AbiLeaf>,
+}
+
 /// JSON output for a contract
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContractJson {
@@ -111,7 +143,7 @@ pub struct ContractJson {
     pub name: String,
     #[serde(rename = "constructorInputs")]
     pub parameters: Vec<Parameter>,
-    pub functions: Vec<AbiFunction>,
+    pub functions: Vec<AbiFunctionGroup>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

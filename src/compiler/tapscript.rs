@@ -2,7 +2,8 @@
 //! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
 
 use crate::models::{
-    Contract, HashFn, KeyExpr, NamedTapscript, Parameter, TapItem, WitnessElement,
+    AbiFunctionGroup, AbiLeaf, ArkadeCovenant, Contract, FunctionInput, HashFn, KeyExpr,
+    NamedTapscript, Parameter, TapItem, WitnessElement,
 };
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
@@ -464,6 +465,117 @@ fn push_witness_param(p: &Parameter, out: &mut Vec<WitnessElement>) {
             elem_type: p.param_type.clone(),
             encoding: t.encoding().to_string(),
         });
+    }
+}
+
+/// Build the unified `functions[]` ABI: one group per covenant function plus
+/// one group per pure-standalone leaf. Runs validation per leaf.
+pub fn build_function_groups(
+    contract: &Contract,
+    // covenant ASM/inputs are produced by mod.rs and passed in to avoid a cycle.
+    covenant_of: &dyn Fn(&str) -> Option<ArkadeCovenant>,
+) -> Result<(Vec<AbiFunctionGroup>, Vec<String>), String> {
+    let mut warnings = Vec::new();
+
+    // Resolve + validate every author-written tapscript; bucket by group key.
+    // group key = function name for NameMatched / Tweaked(func); leaf's own name for Standalone.
+    use std::collections::BTreeMap;
+    let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
+    let mut function_has_explicit_leaf: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut standalone_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for ts in &contract.tapscripts {
+        validate_opcode_safety(ts)?;
+        let closure = assemble_closure(ts)?;
+        validate_closure_shape(&closure, &ts.name)?;
+        let binding = resolve_binding(contract, ts)?;
+        let w = validate_arkd_rules(contract, ts, &closure, &binding, None)?;
+        warnings.extend(w);
+
+        let group_key = match &binding {
+            Binding::NameMatched => {
+                function_has_explicit_leaf.insert(ts.name.clone());
+                ts.name.clone()
+            }
+            Binding::Tweaked(func) => {
+                function_has_explicit_leaf.insert(func.clone());
+                func.clone()
+            }
+            Binding::Standalone => {
+                if !standalone_names.insert(ts.name.clone()) {
+                    return Err(format!("duplicate standalone tapscript name `{}`", ts.name));
+                }
+                ts.name.clone()
+            }
+        };
+
+        grouped.entry(group_key).or_default().push(AbiLeaf {
+            name: ts.name.clone(),
+            witness: leaf_witness(ts),
+            asm: emit_leaf_asm(&closure, &ts.name, &binding),
+        });
+    }
+
+    let mut groups = Vec::new();
+
+    // One group per covenant function, in declaration order.
+    for f in contract.functions.iter().filter(|f| !f.is_internal) {
+        let arkade = covenant_of(&f.name);
+        let mut leaves = grouped.remove(&f.name).unwrap_or_default();
+        // Synthesize default collaborative leaf if the function has neither a
+        // name-matched leaf nor a leaf that tweaks its emulator key.
+        if !function_has_explicit_leaf.contains(&f.name) {
+            leaves.push(synthesize_default_leaf(&f.name));
+        }
+        groups.push(AbiFunctionGroup {
+            name: f.name.clone(),
+            arkade,
+            leaves,
+        });
+    }
+
+    // Remaining groups are pure-standalone leaves (no covenant). Stable order.
+    for (name, leaves) in grouped {
+        groups.push(AbiFunctionGroup {
+            name,
+            arkade: None,
+            leaves,
+        });
+    }
+
+    Ok((groups, warnings))
+}
+
+/// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], …, 2).
+fn synthesize_default_leaf(func: &str) -> AbiLeaf {
+    let closure = Closure {
+        class: ClosureClass::Multisig,
+        condition: None,
+        timelock: None,
+        keys: vec![
+            KeyExpr::Ident("server".into()),
+            KeyExpr::Tweak { func: func.into() },
+        ],
+        sigs: vec!["serverSig".into(), "emulatorSig".into()],
+        threshold: Some(2),
+    };
+    let sig_encoding = ArkType::Signature.encoding().to_string();
+    AbiLeaf {
+        name: func.to_string(),
+        witness: vec![
+            WitnessElement {
+                name: "serverSig".into(),
+                elem_type: "signature".into(),
+                encoding: sig_encoding.clone(),
+            },
+            WitnessElement {
+                name: "emulatorSig".into(),
+                elem_type: "signature".into(),
+                encoding: sig_encoding,
+            },
+        ],
+        asm: emit_leaf_asm(&closure, func, &Binding::NameMatched),
     }
 }
 
