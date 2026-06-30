@@ -6,18 +6,15 @@
 //! - OP_IF / OP_ELSE / OP_ENDIF are balanced (no dangling branches).
 //! - No empty instruction strings (would silently produce malformed scripts).
 //! - Every `<placeholder>` token is syntactically well-formed.
-//! - Every `<placeholder>` is resolvable (appears in witnessSchema or
-//!   constructorInputs).
+//! - Every `<placeholder>` is resolvable (appears in covenant inputs,
+//!   leaf witness, or constructorInputs).
 //! - Stack depth never goes negative at known opcode sites.
 //!
-//! These checks run over all 16 canonical example contracts to give us broad
+//! These checks run over all canonical example contracts to give us broad
 //! coverage, and over targeted synthetic contracts to verify each check fires
 //! correctly when the invariant is violated.
 
 use arkade_compiler::compile;
-use arkade_compiler::validator::{
-    validate_asm_structure, validate_placeholder_consistency, ValidationIssue,
-};
 use std::fs;
 use std::path::PathBuf;
 
@@ -25,11 +22,92 @@ fn examples_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples")
 }
 
-fn count_errors(issues: &[ValidationIssue]) -> usize {
-    issues
-        .iter()
-        .filter(|i| matches!(i.severity, arkade_compiler::validator::Severity::Error))
-        .count()
+// ─── Local structural-check helpers ──────────────────────────────────────────
+//
+// `validate_asm_structure` and `validate_placeholder_consistency` were removed
+// from the public validator API when the ABI migrated to AbiFunctionGroup.
+// These local implementations preserve the same intent for the unit tests below.
+
+/// Check ASM for structural validity (IF balance, empty tokens, placeholder
+/// syntax). Returns a list of human-readable error strings; empty ⇒ all OK.
+fn local_check_asm_structure(asm: &[String]) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut depth: i32 = 0;
+    for (i, tok) in asm.iter().enumerate() {
+        if tok.is_empty() {
+            errors.push(format!("empty instruction at index {}", i));
+            continue;
+        }
+        if tok.starts_with('<') {
+            if tok == "<>" {
+                errors.push(format!("empty placeholder '<>' at index {}", i));
+            } else if !tok.ends_with('>') {
+                errors.push(format!(
+                    "malformed placeholder (missing '>') at index {}: {}",
+                    i, tok
+                ));
+            }
+        }
+        match tok.as_str() {
+            "OP_IF" | "OP_NOTIF" => depth += 1,
+            "OP_ENDIF" => {
+                if depth <= 0 {
+                    errors.push(format!(
+                        "stray OP_ENDIF at index {} (depth was {})",
+                        i, depth
+                    ));
+                }
+                depth -= 1;
+            }
+            "OP_ELSE" => {
+                if depth <= 0 {
+                    errors.push(format!(
+                        "stray OP_ELSE at index {} without matching OP_IF",
+                        i
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth > 0 {
+        errors.push(format!("unclosed OP_IF: missing {} OP_ENDIF(s)", depth));
+    }
+    errors
+}
+
+/// Warn when a `<name>` placeholder in `asm` cannot be resolved from
+/// `witness_names`, `ctor_names`, or the built-in special token set.
+/// Returns warning strings; empty ⇒ all placeholders resolved.
+fn local_check_placeholder_consistency(
+    asm: &[String],
+    witness_names: &[&str],
+    ctor_names: &[&str],
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for tok in asm {
+        if !(tok.starts_with('<') && tok.ends_with('>') && tok.len() > 2) {
+            continue;
+        }
+        let inner = &tok[1..tok.len() - 1];
+        // Built-in / runtime-injected names that are always resolved.
+        if inner == "SERVER_KEY"
+            || inner == "serverSig"
+            || inner == "emulatorSig"
+            || inner.starts_with("EMULATOR_KEY:")
+            || inner.starts_with("VTXO:")
+            || inner.starts_with("checkMultisig(")
+        {
+            continue;
+        }
+        if !witness_names.contains(&inner) && !ctor_names.contains(&inner) {
+            warnings.push(format!(
+                "placeholder <{}> cannot be constructed from witness or constructor inputs",
+                inner
+            ));
+        }
+    }
+    warnings
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -49,7 +127,7 @@ fn if_else_endif_balance(asm: &[String]) -> i32 {
 
 // ─── All-examples sweep ───────────────────────────────────────────────────────
 
-/// Compile every example and assert no structural errors in any function's ASM.
+/// Compile every example and assert no structural errors in any ASM segment.
 #[test]
 fn all_examples_have_balanced_if_else_endif() {
     let dir = examples_dir();
@@ -66,13 +144,23 @@ fn all_examples_have_balanced_if_else_endif() {
         let source = fs::read_to_string(&path).unwrap();
         let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
-        for func in &output.functions {
-            let balance = if_else_endif_balance(&func.asm);
-            assert_eq!(
-                balance, 0,
-                "{}: fn '{}' (serverVariant={}) has unbalanced OP_IF/OP_ENDIF (net depth={})",
-                filename, func.name, func.server_variant, balance
-            );
+        for group in &output.functions {
+            if let Some(arkade) = &group.arkade {
+                let balance = if_else_endif_balance(&arkade.asm);
+                assert_eq!(
+                    balance, 0,
+                    "{}: group '{}' covenant has unbalanced OP_IF/OP_ENDIF (net depth={})",
+                    filename, group.name, balance
+                );
+            }
+            for leaf in &group.leaves {
+                let balance = if_else_endif_balance(&leaf.asm);
+                assert_eq!(
+                    balance, 0,
+                    "{}: group '{}' leaf '{}' has unbalanced OP_IF/OP_ENDIF (net depth={})",
+                    filename, group.name, leaf.name, balance
+                );
+            }
         }
     }
 }
@@ -93,16 +181,29 @@ fn all_examples_have_no_empty_asm_instructions() {
         let source = fs::read_to_string(&path).unwrap();
         let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
-        for func in &output.functions {
-            for (i, instr) in func.asm.iter().enumerate() {
-                assert!(
-                    !instr.is_empty(),
-                    "{}: fn '{}' (serverVariant={}) has empty instruction at index {}",
-                    filename,
-                    func.name,
-                    func.server_variant,
-                    i
-                );
+        for group in &output.functions {
+            if let Some(arkade) = &group.arkade {
+                for (i, instr) in arkade.asm.iter().enumerate() {
+                    assert!(
+                        !instr.is_empty(),
+                        "{}: group '{}' covenant has empty instruction at index {}",
+                        filename,
+                        group.name,
+                        i
+                    );
+                }
+            }
+            for leaf in &group.leaves {
+                for (i, instr) in leaf.asm.iter().enumerate() {
+                    assert!(
+                        !instr.is_empty(),
+                        "{}: group '{}' leaf '{}' has empty instruction at index {}",
+                        filename,
+                        group.name,
+                        leaf.name,
+                        i
+                    );
+                }
             }
         }
     }
@@ -111,8 +212,7 @@ fn all_examples_have_no_empty_asm_instructions() {
 #[test]
 fn all_examples_have_well_formed_placeholders() {
     // Every <placeholder> token must be syntactically valid: starts with '<',
-    // ends with '>', and is non-empty.  The validate_asm_structure check covers
-    // this.  Compound-expression placeholders like
+    // ends with '>', and is non-empty.  Compound-expression placeholders like
     // <checkMultisig([a,b],[c,d])> are legitimately emitted by the compiler
     // and are checked here only for delimiter correctness.
     let dir = examples_dir();
@@ -129,23 +229,28 @@ fn all_examples_have_well_formed_placeholders() {
         let source = fs::read_to_string(&path).unwrap();
         let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
-        for func in &output.functions {
-            // Run the validator and check no structural errors
-            let issues = validate_asm_structure(&func.name, func.server_variant, &func.asm);
-            let errors = count_errors(&issues);
-            assert_eq!(
-                errors,
-                0,
-                "{}: fn '{}' (serverVariant={}) has ASM structure errors: {:?}",
-                filename,
-                func.name,
-                func.server_variant,
-                issues
-                    .iter()
-                    .filter(|i| matches!(i.severity, arkade_compiler::validator::Severity::Error))
-                    .map(|i| &i.message)
-                    .collect::<Vec<_>>()
-            );
+        for group in &output.functions {
+            if let Some(arkade) = &group.arkade {
+                let errors = local_check_asm_structure(&arkade.asm);
+                assert!(
+                    errors.is_empty(),
+                    "{}: group '{}' covenant has ASM structure errors: {:?}",
+                    filename,
+                    group.name,
+                    errors
+                );
+            }
+            for leaf in &group.leaves {
+                let errors = local_check_asm_structure(&leaf.asm);
+                assert!(
+                    errors.is_empty(),
+                    "{}: group '{}' leaf '{}' has ASM structure errors: {:?}",
+                    filename,
+                    group.name,
+                    leaf.name,
+                    errors
+                );
+            }
         }
     }
 }
@@ -155,7 +260,7 @@ fn all_examples_have_well_formed_placeholders() {
 /// arkade_kitties use `let sireGroup = tx.assetGroups.find(...)` which emits
 /// `<sireGroup>` — an unresolved local-variable placeholder (a known current
 /// compiler limitation tracked by the variable-binding TODO).  Those are
-/// correctly surfaced as warnings by `validate_placeholder_consistency` and
+/// correctly surfaced as warnings by `local_check_placeholder_consistency` and
 /// tested separately below.
 #[test]
 fn simple_contracts_have_fully_resolvable_placeholders() {
@@ -170,36 +275,54 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
             .unwrap_or_else(|e| panic!("{} must exist in examples/: {}", filename, e));
         let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
-        for func in &output.functions {
-            let issues = validate_placeholder_consistency(
-                &func.name,
-                func.server_variant,
-                &func.asm,
-                &func.witness_schema,
-                &output.parameters,
-            );
-            let unresolvable: Vec<_> = issues
-                .iter()
-                .filter(|i| i.message.contains("cannot be constructed"))
-                .collect();
-            assert!(
-                unresolvable.is_empty(),
-                "{}: fn '{}' (serverVariant={}) has unresolvable placeholders: {:?}",
-                filename,
-                func.name,
-                func.server_variant,
-                unresolvable.iter().map(|i| &i.message).collect::<Vec<_>>()
-            );
+        let ctor_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
+
+        for group in &output.functions {
+            if let Some(arkade) = &group.arkade {
+                let input_names: Vec<&str> =
+                    arkade.inputs.iter().map(|i| i.name.as_str()).collect();
+                let warnings =
+                    local_check_placeholder_consistency(&arkade.asm, &input_names, &ctor_names);
+                let unresolvable: Vec<_> = warnings
+                    .iter()
+                    .filter(|w| w.contains("cannot be constructed"))
+                    .collect();
+                assert!(
+                    unresolvable.is_empty(),
+                    "{}: group '{}' covenant has unresolvable placeholders: {:?}",
+                    filename,
+                    group.name,
+                    unresolvable
+                );
+            }
+            for leaf in &group.leaves {
+                let witness_names: Vec<&str> =
+                    leaf.witness.iter().map(|w| w.name.as_str()).collect();
+                let warnings =
+                    local_check_placeholder_consistency(&leaf.asm, &witness_names, &ctor_names);
+                let unresolvable: Vec<_> = warnings
+                    .iter()
+                    .filter(|w| w.contains("cannot be constructed"))
+                    .collect();
+                assert!(
+                    unresolvable.is_empty(),
+                    "{}: group '{}' leaf '{}' has unresolvable placeholders: {:?}",
+                    filename,
+                    group.name,
+                    leaf.name,
+                    unresolvable
+                );
+            }
         }
     }
 }
 
 /// Contracts that use `let` bindings for intermediate values (e.g.
 /// `let sireGroup = tx.assetGroups.find(sireId)`) currently emit those
-/// names as `<sireGroup>` placeholders that are not in the witnessSchema or
-/// constructorInputs.  The validator correctly surfaces these as warnings —
-/// this test verifies that the warning mechanism works and the placeholder is
-/// named in the message.
+/// names as `<sireGroup>` placeholders that are not in the covenant inputs or
+/// constructorInputs.  The local consistency check correctly surfaces these as
+/// warnings — this test verifies that the warning mechanism works and the
+/// placeholder is named in the message.
 #[test]
 fn local_variable_placeholders_are_surfaced_as_warnings() {
     let path = examples_dir().join("arkade_kitties.ark");
@@ -209,45 +332,38 @@ fn local_variable_placeholders_are_surfaced_as_warnings() {
     let source = fs::read_to_string(&path).unwrap();
     let output = compile(&source).expect("arkade_kitties.ark must compile");
 
-    // Find a function that uses let-binding placeholders
-    let breed = output
-        .functions
-        .iter()
-        .find(|f| f.name == "breed" && f.server_variant);
+    // Find the breed function group
+    let breed_group = output.functions.iter().find(|g| g.name == "breed");
 
-    if let Some(func) = breed {
-        let issues = validate_placeholder_consistency(
-            &func.name,
-            func.server_variant,
-            &func.asm,
-            &func.witness_schema,
-            &output.parameters,
-        );
-        // There should be warnings about unresolved local variables
-        let unresolved_warnings: Vec<_> = issues
-            .iter()
-            .filter(|i| {
-                matches!(i.severity, arkade_compiler::validator::Severity::Warning)
-                    && i.message.contains("cannot be constructed")
-            })
-            .collect();
-        assert!(
-            !unresolved_warnings.is_empty(),
-            "arkade_kitties breed should have unresolvable placeholder warnings \
-             (known compiler limitation: let-binding variables not tracked)"
-        );
-        // Each warning must name the problematic placeholder
-        for w in &unresolved_warnings {
+    if let Some(group) = breed_group {
+        if let Some(arkade) = &group.arkade {
+            let ctor_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
+            let input_names: Vec<&str> = arkade.inputs.iter().map(|i| i.name.as_str()).collect();
+            let warnings =
+                local_check_placeholder_consistency(&arkade.asm, &input_names, &ctor_names);
+            // There should be warnings about unresolved local variables
+            let unresolved: Vec<_> = warnings
+                .iter()
+                .filter(|w| w.contains("cannot be constructed"))
+                .collect();
             assert!(
-                w.message.contains('<') && w.message.contains('>'),
-                "warning must name the unresolvable placeholder: {}",
-                w.message
+                !unresolved.is_empty(),
+                "arkade_kitties breed should have unresolvable placeholder warnings \
+                 (known compiler limitation: let-binding variables not tracked)"
             );
+            // Each warning must name the problematic placeholder
+            for w in &unresolved {
+                assert!(
+                    w.contains('<') && w.contains('>'),
+                    "warning must name the unresolvable placeholder: {}",
+                    w
+                );
+            }
         }
     }
 }
 
-// ─── validate_asm_structure — unit tests ─────────────────────────────────────
+// ─── local_check_asm_structure — unit tests ───────────────────────────────────
 
 #[test]
 fn balanced_if_endif_is_clean() {
@@ -261,13 +377,8 @@ fn balanced_if_endif_is_clean() {
         "OP_CHECKSIG".to_string(),
         "OP_ENDIF".to_string(),
     ];
-    let issues = validate_asm_structure("f", false, &asm);
-    assert_eq!(
-        count_errors(&issues),
-        0,
-        "balanced IF/ELSE/ENDIF: {:?}",
-        issues
-    );
+    let errors = local_check_asm_structure(&asm);
+    assert!(errors.is_empty(), "balanced IF/ELSE/ENDIF: {:?}", errors);
 }
 
 #[test]
@@ -279,14 +390,14 @@ fn unbalanced_if_without_endif_is_error() {
         "OP_CHECKSIG".to_string(),
         // Missing OP_ENDIF
     ];
-    let issues = validate_asm_structure("f", false, &asm);
-    assert!(count_errors(&issues) > 0, "unclosed OP_IF must be detected");
+    let errors = local_check_asm_structure(&asm);
+    assert!(!errors.is_empty(), "unclosed OP_IF must be detected");
     assert!(
-        issues
+        errors
             .iter()
-            .any(|i| i.message.contains("unclosed") || i.message.contains("missing")),
+            .any(|e| e.contains("unclosed") || e.contains("missing")),
         "error message must mention unclosed branch; got: {:?}",
-        issues.iter().map(|i| &i.message).collect::<Vec<_>>()
+        errors
     );
 }
 
@@ -297,8 +408,8 @@ fn stray_endif_without_if_is_error() {
         "OP_CHECKSIG".to_string(),
         "OP_ENDIF".to_string(), // no matching OP_IF
     ];
-    let issues = validate_asm_structure("f", false, &asm);
-    assert!(count_errors(&issues) > 0, "stray OP_ENDIF must be detected");
+    let errors = local_check_asm_structure(&asm);
+    assert!(!errors.is_empty(), "stray OP_ENDIF must be detected");
 }
 
 #[test]
@@ -311,8 +422,8 @@ fn stray_else_without_if_is_error() {
         "OP_CHECKSIG".to_string(),
         "OP_ENDIF".to_string(),
     ];
-    let issues = validate_asm_structure("f", false, &asm);
-    assert!(count_errors(&issues) > 0, "stray OP_ELSE must be detected");
+    let errors = local_check_asm_structure(&asm);
+    assert!(!errors.is_empty(), "stray OP_ELSE must be detected");
 }
 
 #[test]
@@ -322,13 +433,13 @@ fn empty_asm_instruction_is_error() {
         "".to_string(),
         "OP_CHECKSIG".to_string(),
     ];
-    let issues = validate_asm_structure("f", false, &asm);
+    let errors = local_check_asm_structure(&asm);
     assert!(
-        count_errors(&issues) > 0,
+        !errors.is_empty(),
         "empty instruction string must be an error"
     );
     assert!(
-        issues.iter().any(|i| i.message.contains("empty")),
+        errors.iter().any(|e| e.contains("empty")),
         "error must mention 'empty'"
     );
 }
@@ -336,9 +447,9 @@ fn empty_asm_instruction_is_error() {
 #[test]
 fn malformed_placeholder_missing_close_is_error() {
     let asm = vec!["<sig".to_string(), "OP_CHECKSIG".to_string()];
-    let issues = validate_asm_structure("f", false, &asm);
+    let errors = local_check_asm_structure(&asm);
     assert!(
-        count_errors(&issues) > 0,
+        !errors.is_empty(),
         "placeholder without closing '>' must be an error"
     );
 }
@@ -347,14 +458,14 @@ fn malformed_placeholder_missing_close_is_error() {
 fn empty_placeholder_is_error() {
     // "<>" is invalid
     let asm = vec!["<>".to_string(), "OP_CHECKSIG".to_string()];
-    let issues = validate_asm_structure("f", false, &asm);
+    let errors = local_check_asm_structure(&asm);
     assert!(
-        count_errors(&issues) > 0,
+        !errors.is_empty(),
         "empty placeholder '<>' must be an error"
     );
 }
 
-// ─── validate_placeholder_consistency — unit tests ───────────────────────────
+// ─── local_check_placeholder_consistency — unit tests ────────────────────────
 
 #[test]
 fn placeholder_in_witness_schema_is_clean() {
@@ -365,11 +476,12 @@ fn placeholder_in_witness_schema_is_clean() {
         elem_type: "signature".to_string(),
         encoding: "schnorr-64".to_string(),
     }];
-    let issues = validate_placeholder_consistency("f", false, &asm, &witness, &[]);
+    let witness_names: Vec<&str> = witness.iter().map(|w| w.name.as_str()).collect();
+    let warnings = local_check_placeholder_consistency(&asm, &witness_names, &[]);
     assert!(
-        issues.is_empty(),
+        warnings.is_empty(),
         "known witness placeholder must produce no issues: {:?}",
-        issues
+        warnings
     );
 }
 
@@ -390,24 +502,26 @@ fn placeholder_in_constructor_inputs_is_clean() {
         name: "owner".to_string(),
         param_type: "pubkey".to_string(),
     }];
-    let issues = validate_placeholder_consistency("f", false, &asm, &witness, &ctor);
+    let witness_names: Vec<&str> = witness.iter().map(|w| w.name.as_str()).collect();
+    let ctor_names: Vec<&str> = ctor.iter().map(|p| p.name.as_str()).collect();
+    let warnings = local_check_placeholder_consistency(&asm, &witness_names, &ctor_names);
     assert!(
-        issues.is_empty(),
+        warnings.is_empty(),
         "constructor-bound placeholder must produce no issues: {:?}",
-        issues
+        warnings
     );
 }
 
 #[test]
 fn orphaned_placeholder_is_warned() {
     let asm = vec!["<mystery>".to_string(), "OP_CHECKSIG".to_string()];
-    let issues = validate_placeholder_consistency("f", false, &asm, &[], &[]);
+    let warnings = local_check_placeholder_consistency(&asm, &[], &[]);
     assert!(
-        !issues.is_empty(),
+        !warnings.is_empty(),
         "unresolvable placeholder must produce a warning"
     );
     assert!(
-        issues.iter().any(|i| i.message.contains("mystery")),
+        warnings.iter().any(|w| w.contains("mystery")),
         "warning must name the unresolvable placeholder"
     );
 }
@@ -415,17 +529,17 @@ fn orphaned_placeholder_is_warned() {
 #[test]
 fn server_key_placeholder_is_always_resolved() {
     // <SERVER_KEY> is injected at runtime by the Arkade operator — it must not be
-    // flagged as unresolvable even though it is not in the schema.
+    // flagged as unresolvable even though it is not in any schema.
     let asm = vec![
         "<SERVER_KEY>".to_string(),
         "<serverSig>".to_string(),
         "OP_CHECKSIG".to_string(),
     ];
-    let issues = validate_placeholder_consistency("f", true, &asm, &[], &[]);
-    // serverSig is special-cased; SERVER_KEY must not be flagged
-    let orphan: Vec<_> = issues
+    let warnings = local_check_placeholder_consistency(&asm, &[], &[]);
+    // SERVER_KEY and serverSig are both special-cased
+    let orphan: Vec<_> = warnings
         .iter()
-        .filter(|i| i.message.contains("SERVER_KEY"))
+        .filter(|w| w.contains("SERVER_KEY"))
         .collect();
     assert!(
         orphan.is_empty(),
@@ -439,11 +553,8 @@ fn vtxo_placeholder_is_always_resolved() {
         "<VTXO:SomeContract(x,y)>".to_string(),
         "OP_EQUAL".to_string(),
     ];
-    let issues = validate_placeholder_consistency("f", false, &asm, &[], &[]);
-    let orphan: Vec<_> = issues
-        .iter()
-        .filter(|i| i.message.contains("VTXO:"))
-        .collect();
+    let warnings = local_check_placeholder_consistency(&asm, &[], &[]);
+    let orphan: Vec<_> = warnings.iter().filter(|w| w.contains("VTXO:")).collect();
     assert!(
         orphan.is_empty(),
         "<VTXO:...> placeholders must never be flagged as unresolvable"
@@ -457,8 +568,7 @@ fn function_with_no_require_produces_warning() {
     // A function that has only variable assignments but no require() is a security hole.
     // The compiler should surface a warning[validation] for it.
     let source = r#"
-options { exit = 144; server = server; }
-contract AlwaysPass(pubkey owner, pubkey server) {
+contract AlwaysPass(pubkey owner) {
     function spend(signature sig) {
         let x = 1;
     }
@@ -485,8 +595,7 @@ contract AlwaysPass(pubkey owner, pubkey server) {
 fn function_with_require_in_if_branch_suppresses_warning() {
     // require() inside an if branch counts as having a guard.
     let source = r#"
-options { exit = 144; server = server; }
-contract Guarded(pubkey owner, pubkey server) {
+contract Guarded(pubkey owner) {
     function spend(signature sig) {
         if (checkSig(sig, owner)) {
             require(checkSig(sig, owner));
