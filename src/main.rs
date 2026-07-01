@@ -2,12 +2,7 @@ use clap::Parser as ClapParser;
 use std::fs;
 use std::path::Path;
 
-mod compiler;
-mod models;
-mod opcodes;
-mod parser;
-mod typechecker;
-mod validator;
+use arkade_compiler::compile;
 
 /// Arkade Compiler CLI
 ///
@@ -57,11 +52,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_code = fs::read_to_string(&args.file)?;
 
     // Compile source code to JSON
-    let output = match compiler::compile(&source_code) {
+    let output = match compile(&source_code) {
         Ok(json) => json,
         Err(err) => {
             eprintln!("Compilation error: {}", err);
-            return Err(err.into());
+            return Err(err);
         }
     };
 
