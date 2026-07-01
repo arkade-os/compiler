@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     hack_content.push_str(&format!("{}\n", opcode));
                 }
             }
-            hack_content.push_str("\n");
+            hack_content.push('\n');
         }
 
         let hack_path = Path::new("examples").join(hack_file);

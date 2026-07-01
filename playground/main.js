@@ -173,7 +173,7 @@ function createFileInFolder(folderId, fileName) {
     const project = projects[folderId];
     if (!project) return;
     if (project.files[fileName]) return; // already exists
-    const defaultCode = `// ${fileName}\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract MyContract(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
+    const defaultCode = `// ${fileName}\n\ncontract MyContract(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
     project.files[fileName] = defaultCode;
     saveToStorage();
     selectProjectFile(folderId, fileName);
@@ -183,7 +183,7 @@ function createStandaloneFile(name) {
     if (!name.endsWith('.ark')) name += '.ark';
     const displayName = name.replace(/\.ark$/, '');
     const id = uniqueId(generateId(displayName), examples);
-    const defaultCode = `// ${displayName} Contract\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract ${displayName}(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
+    const defaultCode = `// ${displayName} Contract\n\ncontract ${displayName}(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
     examples[id] = { name: displayName, code: defaultCode };
     expandedFolders.add('_examples');
     saveToStorage();

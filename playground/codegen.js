@@ -56,9 +56,6 @@ function inferEncoding(typeStr) {
 
 // ─── IR construction ─────────────────────────────────────────────────
 
-// Signatures injected by Arkade infrastructure — excluded from user-facing witness structs.
-const INJECTED_SIGS = new Set(['serverSig', 'emulatorSig']);
-
 function buildIR(artifact) {
     const constructorFields = (artifact.constructorInputs || []).map(p => ({
         name: p.name, arkType: p.type, encoding: inferEncoding(p.type),
@@ -68,7 +65,7 @@ function buildIR(artifact) {
         const leaves = (group.leaves || []).map(leaf => {
             const allFields = (leaf.witness || []).map(w => ({
                 name: w.name, arkType: w.type, encoding: w.encoding,
-                isInjected: INJECTED_SIGS.has(w.name),
+                isInjected: w.injected === true,
             }));
             return {
                 name: leaf.name,
@@ -147,7 +144,8 @@ function generateTypeScript(ir) {
             for (const f of leaf.userFields) {
                 out += `  /** ${f.arkType} (${f.encoding}) */\n  ${toCamelCase(f.name)}: ${tsTypeForField(f)};\n`;
             }
-            out += `  // serverSig and emulatorSig injected by Arkade infrastructure\n`;
+            const injected = leaf.allFields.filter(f => f.isInjected).map(f => f.name).join(', ');
+            if (injected) out += `  // ${injected} injected by Arkade infrastructure\n`;
             out += `}\n\n`;
         }
     }
@@ -248,7 +246,8 @@ function generateGo(ir) {
             for (const f of leaf.userFields) {
                 out += `\t${toPascalCase(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
             }
-            out += `\t// ServerSig and EmulatorSig injected by Arkade infrastructure\n`;
+            const injected = leaf.allFields.filter(f => f.isInjected).map(f => toPascalCase(f.name)).join(', ');
+            if (injected) out += `\t// ${injected} injected by Arkade infrastructure\n`;
             out += `}\n\n`;
         }
     }

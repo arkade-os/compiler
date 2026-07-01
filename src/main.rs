@@ -17,14 +17,9 @@ mod validator;
 ///
 /// The JSON output includes:
 /// - Contract name
-/// - Parameters
-/// - Server key placeholder
-/// - Script paths for each function
-///
-/// Each script path includes a serverVariant flag. When using the script:
-/// - If serverVariant is true, use the script as-is
-/// - If serverVariant is false, libraries should add an exit delay timelock
-///   (default 48 hours) for additional security
+/// - Constructor parameters
+/// - Spend groups with optional arkade covenants
+/// - L1 tapleaves and witness schemas
 
 // CLI arguments
 #[derive(ClapParser, Debug)]

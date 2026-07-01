@@ -109,7 +109,7 @@ project-root/
     2. Add AST representation in `src/models/mod.rs` (gated).
     3. Parse rule to AST in `src/parser/mod.rs`.
     4. Emit requirements/ASM in `src/compiler/mod.rs` (gated).
-    5. If semantics affect dual-path logic, verify `generate_function` behavior for both variants.
+    5. If semantics affect spend paths, verify covenant ASM and tapleaf ASM separately.
     6. Add tests in `tests/` covering happy path + edge conditions.
     7. Run `cargo fmt --check` and `cargo test`.
     8. If playground examples depend on feature, update `examples/*.ark` and regenerate `playground/contracts.js`.

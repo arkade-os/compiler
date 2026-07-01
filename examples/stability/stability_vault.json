@@ -82,12 +82,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -181,12 +183,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -375,12 +379,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -475,12 +481,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -536,12 +544,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -700,12 +710,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -896,12 +908,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -1080,12 +1094,14 @@
             {
               "name": "serverSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             },
             {
               "name": "emulatorSig",
               "type": "signature",
-              "encoding": "schnorr-64"
+              "encoding": "schnorr-64",
+              "injected": true
             }
           ],
           "asm": [
@@ -1125,7 +1141,7 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-06-30T08:52:05.675831+00:00",
+  "updatedAt": "2026-07-01T06:37:15.361612+00:00",
   "warnings": [
     "warning[type]: fn transfer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
     "warning[type]: fn split: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",

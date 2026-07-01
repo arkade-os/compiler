@@ -10,6 +10,8 @@
 //! covenants use `tx.outputs[0]` / `tx.inputs[0]` — irrelevant to leaf parity).
 use arkade_compiler::compile;
 
+mod common;
+
 const HTLC: &str = r#"
 contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTime, int exit) {
     function claim() {
@@ -33,24 +35,11 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
 }
 "#;
 
-fn leaf_asm(out: &arkade_compiler::ContractJson, group: &str, leaf: &str) -> Vec<String> {
-    out.functions
-        .iter()
-        .find(|g| g.name == group)
-        .unwrap_or_else(|| panic!("group {group} missing"))
-        .leaves
-        .iter()
-        .find(|l| l.name == leaf)
-        .unwrap_or_else(|| panic!("leaf {leaf} missing"))
-        .asm
-        .clone()
-}
-
 #[test]
 fn claim_matches_condition_multisig_closure() {
     let out = compile(HTLC).unwrap();
     assert_eq!(
-        leaf_asm(&out, "claim", "claim").join(" "),
+        common::leaf_asm(&out, "claim", "claim"),
         "OP_HASH160 <preimageHash> OP_EQUAL OP_VERIFY \
          <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:claim> OP_CHECKSIG"
     );
@@ -60,7 +49,7 @@ fn claim_matches_condition_multisig_closure() {
 fn refund_matches_cltv_multisig_closure() {
     let out = compile(HTLC).unwrap();
     assert_eq!(
-        leaf_asm(&out, "refund", "refund").join(" "),
+        common::leaf_asm(&out, "refund", "refund"),
         "<refundTime> OP_CHECKLOCKTIMEVERIFY OP_DROP \
          <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:refund> OP_CHECKSIG"
     );
@@ -70,7 +59,7 @@ fn refund_matches_cltv_multisig_closure() {
 fn unilateral_matches_csv_multisig_closure() {
     let out = compile(HTLC).unwrap();
     assert_eq!(
-        leaf_asm(&out, "unilateral", "unilateral").join(" "),
+        common::leaf_asm(&out, "unilateral", "unilateral"),
         "<exit> OP_CHECKSEQUENCEVERIFY OP_DROP <sender> OP_CHECKSIG"
     );
 }

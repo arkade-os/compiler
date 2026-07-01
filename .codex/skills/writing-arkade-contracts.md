@@ -215,8 +215,8 @@ When writing a new contract:
 3. **For each function, write the output layout** before the body. Diagram which outputs exist conditionally.
 4. **Start from a reference example** (table above). Copy the closest pattern and adapt; don't write from scratch.
 5. **Compile early and often.** `cargo run -- examples/foo.ark -o /tmp/foo.json` surfaces parse errors fast.
-6. **Read the `output-invariant` warnings** in compile output. They identify placeholders that aren't bound to witness or constructor params — sometimes that's intentional (`<tx.offchainTime>`, `<SERVER_KEY>`), sometimes it's a bug (forgot to declare a witness param).
-7. **Add a roundtrip test** in `tests/compilation_roundtrip_test.rs` (it auto-validates structural invariants — both variants emitted, non-empty witness schemas, etc).
+6. **Read compiler warnings** in compile output. Type, validation, and output-invariant warnings flag malformed contracts or compiler self-check failures.
+7. **Add a roundtrip test** in `tests/compilation_roundtrip_test.rs` (it auto-validates structural invariants — non-empty spend groups, covenants, leaves, and witness entries).
 8. **Add behavioral tests** for any non-trivial logic — what opcodes must be emitted, what placeholders, what dust thresholds.
 9. **`cargo fmt && cargo test`** before committing.
 10. **Regenerate playground**: `./playground/generate_contracts.sh` if you touched `examples/**/*.ark`.

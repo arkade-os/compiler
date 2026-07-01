@@ -49,12 +49,8 @@ fn strip_comments(source: &str) -> String {
 ///
 /// Takes source code, parses it into an AST, and transforms it into a ContractJson
 /// structure. The output includes contract name, constructor inputs (with asset ID
-/// decomposition for lookup parameters), functions with inputs, requirements, and
-/// assembly code.
-///
-/// Each non-internal function produces two variants:
-/// - `serverVariant: true` — cooperative path (user sig + server sig)
-/// - `serverVariant: false` — exit path (user sig + timelock)
+/// decomposition for lookup parameters), spend groups, optional arkade covenants,
+/// and L1 tapleaf assemblies.
 ///
 /// # Arguments
 ///
@@ -100,9 +96,6 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
             warnings.push(format!("warning[validation]: {}", issue.message));
         }
     }
-
-    // The Arkade operator key is always injected externally (via getInfo()).
-    // It is never a constructor parameter — options.server is a boolean flag only.
 
     // Build constructor inputs (array params expand to indexed scalars).
     let parameters = decompose_constructor_params(&contract.parameters);

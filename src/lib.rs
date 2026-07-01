@@ -22,11 +22,7 @@ pub use typechecker::{ArkType, TypeError};
 /// The output includes:
 /// - Contract name
 /// - Parameters
-/// - Functions with their inputs, requirements, and assembly code
-///
-/// Each function includes a serverVariant flag. When using the function:
-/// - If serverVariant is true, the function requires a server signature
-/// - If serverVariant is false, the function requires an exit timelock
+/// - Spend groups with optional arkade covenants and L1 tapleaves
 ///
 /// # Arguments
 ///
@@ -42,17 +38,13 @@ pub use typechecker::{ArkType, TypeError};
 /// use arkade_compiler::compile;
 ///
 /// let source_code = r#"
-/// // Contract configuration options
-/// options {
-///   // Server key
-///   server = server;
-///
-///   // Exit timelock: 24 hours (144 blocks)
-///   exit = 144;
-/// }
-///
-/// contract Example(pubkey owner) {
+/// contract Example(pubkey owner, int exit) {
 ///     function spend(signature ownerSig) {
+///         require(checkSig(ownerSig, owner));
+///     }
+///
+///     function unilateral(signature ownerSig) tapscript {
+///         require(older(exit));
 ///         require(checkSig(ownerSig, owner));
 ///     }
 /// }"#;

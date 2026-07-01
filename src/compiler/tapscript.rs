@@ -52,13 +52,13 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     let mut condition: Option<(HashFn, String)> = None;
     let mut timelock: Option<String> = None;
     let mut is_csv = false; // older() → CSV; after()/tx.time → CLTV
-    let mut multisig: Option<(Vec<KeyExpr>, Vec<String>, Option<u16>)> = None;
+    let mut multisig: Option<(Vec<KeyExpr>, Option<u16>)> = None;
 
     for item in &ts.items {
         match item {
             TapItem::Hash {
                 hash_fn,
-                preimage,
+                preimage: _,
                 hash,
             } => {
                 if multisig.is_some() {
@@ -79,7 +79,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                         ts.name
                     ));
                 }
-                condition = Some((hash_fn.clone(), format!("{}|{}", preimage, hash)));
+                condition = Some((hash_fn.clone(), hash.clone()));
             }
             TapItem::Older { value } | TapItem::After { value } => {
                 if multisig.is_some() {
@@ -99,7 +99,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
             }
             TapItem::Sig {
                 keys,
-                sigs,
+                sigs: _,
                 threshold,
             } => {
                 if multisig.is_some() {
@@ -108,28 +108,17 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                         ts.name
                     ));
                 }
-                multisig = Some((keys.clone(), sigs.clone(), *threshold));
+                multisig = Some((keys.clone(), *threshold));
             }
         }
     }
 
-    let (keys, _sigs, threshold) = multisig.ok_or_else(|| {
+    let (keys, threshold) = multisig.ok_or_else(|| {
         format!(
             "tapscript `{}`: missing checkSig/checkMultisig suffix (no multisig)",
             ts.name
         )
     })?;
-
-    // Re-decompose the encoded condition (preimage|hash) back into fields.
-    let condition = match condition {
-        Some((hash_fn, joined)) => {
-            let (preimage, hash) = joined
-                .split_once('|')
-                .ok_or("internal: malformed condition encoding")?;
-            Some((hash_fn, preimage.to_string(), hash.to_string()))
-        }
-        None => None,
-    };
 
     let class = match (&condition, &timelock, is_csv) {
         (None, None, _) => ClosureClass::Multisig,
@@ -148,33 +137,11 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
 
     Ok(Closure {
         class,
-        condition: condition.map(|(f, _p, h)| (f, h)), // keep (hashFn, hash) for emission
+        condition,
         timelock,
         keys,
         threshold,
     })
-}
-
-/// L1/arkd opcode-safety (§5.1). Tapscript items can only ever lower to stock
-/// BIP-342 opcodes, so the prerequisite reduces to confirming each item is a
-/// recognized leaf component. Covenant-only constructs have no TapItem and were
-/// rejected at parse time. The condition prefix is restricted to a single hash
-/// function (no signature/timelock op can appear there).
-pub fn validate_opcode_safety(ts: &NamedTapscript) -> Result<(), String> {
-    let mut conditions = 0;
-    for item in &ts.items {
-        match item {
-            TapItem::Hash { .. } => conditions += 1,
-            TapItem::Older { .. } | TapItem::After { .. } | TapItem::Sig { .. } => {}
-        }
-    }
-    if conditions > 1 {
-        return Err(format!(
-            "tapscript `{}`: condition prefix is limited to a single hashlock",
-            ts.name
-        ));
-    }
-    Ok(())
 }
 
 /// Closure-shape acceptance beyond `assemble_closure`'s template check:
@@ -253,10 +220,11 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
     }
 
     // Validate explicit tweak targets: all must reference one existing function.
-    tweak_targets.dedup();
-    match tweak_targets.as_slice() {
-        [] => Ok(Binding::Standalone),
-        [func] => {
+    let unique_targets: std::collections::BTreeSet<String> = tweak_targets.into_iter().collect();
+    match unique_targets.len() {
+        0 => Ok(Binding::Standalone),
+        1 => {
+            let func = unique_targets.iter().next().expect("one target");
             if !contract.functions.iter().any(|f| &f.name == func) {
                 return Err(format!(
                     "tweak(emulator, {func}) in tapscript `{}`: no function named `{func}`",
@@ -265,24 +233,10 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
             }
             Ok(Binding::Tweaked(func.clone()))
         }
-        _ => {
-            // Could still be the same name repeated; dedup above handles that.
-            if tweak_targets.windows(2).all(|w| w[0] == w[1]) {
-                let func = tweak_targets[0].clone();
-                if !contract.functions.iter().any(|f| f.name == func) {
-                    return Err(format!(
-                        "tweak(emulator, {func}) in tapscript `{}`: no function named `{func}`",
-                        ts.name
-                    ));
-                }
-                Ok(Binding::Tweaked(func))
-            } else {
-                Err(format!(
-                    "ambiguous emulator tweak targets in tapscript `{}`",
-                    ts.name
-                ))
-            }
-        }
+        _ => Err(format!(
+            "ambiguous emulator tweak targets in tapscript `{}`",
+            ts.name
+        )),
     }
 }
 
@@ -292,11 +246,8 @@ pub fn validate_arkd_rules(
     contract: &Contract,
     ts: &NamedTapscript,
     c: &Closure,
-    _binding: &Binding,
     min_exit_delay: Option<u64>,
 ) -> Result<Vec<String>, String> {
-    let mut warnings = Vec::new();
-
     // Pubkeys in scope: constructor pubkey params + pubkey tapscript inputs.
     let in_scope = |name: &str| -> bool {
         name == "server"
@@ -359,11 +310,9 @@ pub fn validate_arkd_rules(
         }
     }
 
-    // Operand scope (restores the placeholder-consistency check the removed
-    // two-variant validator provided): the condition preimage/hash and the
-    // timelock value are emitted as `<name>` placeholders, so each must resolve
-    // to a declared input or constructor parameter (timelocks may also be a
-    // numeric literal). A typo would otherwise compile to a dangling placeholder.
+    // Operand scope: condition preimage/hash and timelock values are emitted as
+    // `<name>` placeholders, so each must resolve to a declared input or
+    // constructor parameter (timelocks may also be numeric literals).
     for item in &ts.items {
         match item {
             TapItem::Hash { preimage, hash, .. } => {
@@ -404,15 +353,6 @@ pub fn validate_arkd_rules(
                 ts.name
             ));
         }
-        // Threshold nuance: warn on k-of-n forfeits where server could be excluded.
-        if let Some(t) = c.threshold {
-            if (t as usize) < c.keys.len() {
-                warnings.push(format!(
-                    "tapscript `{}`: k-of-n forfeit closure may exclude `server` from the satisfying set",
-                    ts.name
-                ));
-            }
-        }
     }
 
     // E3: literal exit-delay magnitude (CSV closures only).
@@ -434,7 +374,7 @@ pub fn validate_arkd_rules(
     // literal locktimes with a known block-type policy; with literals-only and
     // no policy source wired yet, defer to arkd. (Placeholder for future config.)
 
-    Ok(warnings)
+    Ok(Vec::new())
 }
 
 /// Lower a key operand to its ASM placeholder. `leaf_func` is the function name
@@ -506,13 +446,32 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
 /// expansion behavior as covenant function inputs (DEFAULT_ARRAY_LENGTH).
 pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
     let mut out = Vec::new();
+    let injected = injected_signature_names(ts);
     for p in &ts.inputs {
-        push_witness_param(p, &mut out);
+        push_witness_param(p, injected.contains(&p.name), &mut out);
     }
     out
 }
 
-fn push_witness_param(p: &Parameter, out: &mut Vec<WitnessElement>) {
+fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for item in &ts.items {
+        if let TapItem::Sig { keys, sigs, .. } = item {
+            for (key, sig) in keys.iter().zip(sigs) {
+                if matches!(
+                    key,
+                    KeyExpr::Ident(id) if id == "server" || id == "emulator"
+                ) || matches!(key, KeyExpr::Tweak { .. })
+                {
+                    names.insert(sig.clone());
+                }
+            }
+        }
+    }
+    names
+}
+
+fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElement>) {
     if let Some(base) = p.param_type.strip_suffix("[]") {
         let t = ArkType::parse(base);
         for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
@@ -520,6 +479,7 @@ fn push_witness_param(p: &Parameter, out: &mut Vec<WitnessElement>) {
                 name: format!("{}_{}", p.name, i),
                 elem_type: base.to_string(),
                 encoding: t.encoding().to_string(),
+                injected,
             });
         }
     } else {
@@ -528,6 +488,7 @@ fn push_witness_param(p: &Parameter, out: &mut Vec<WitnessElement>) {
             name: p.name.clone(),
             elem_type: p.param_type.clone(),
             encoding: t.encoding().to_string(),
+            injected,
         });
     }
 }
@@ -545,27 +506,18 @@ pub fn build_function_groups(
     // group key = function name for NameMatched / Tweaked(func); leaf's own name for Standalone.
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
-    let mut function_has_explicit_leaf: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
     let mut standalone_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for ts in &contract.tapscripts {
-        validate_opcode_safety(ts)?;
         let closure = assemble_closure(ts)?;
         validate_closure_shape(&closure, &ts.name)?;
         let binding = resolve_binding(contract, ts)?;
-        let w = validate_arkd_rules(contract, ts, &closure, &binding, None)?;
+        let w = validate_arkd_rules(contract, ts, &closure, None)?;
         warnings.extend(w);
 
         let group_key = match &binding {
-            Binding::NameMatched => {
-                function_has_explicit_leaf.insert(ts.name.clone());
-                ts.name.clone()
-            }
-            Binding::Tweaked(func) => {
-                function_has_explicit_leaf.insert(func.clone());
-                func.clone()
-            }
+            Binding::NameMatched => ts.name.clone(),
+            Binding::Tweaked(func) => func.clone(),
             Binding::Standalone => {
                 if !standalone_names.insert(ts.name.clone()) {
                     return Err(format!("duplicate standalone tapscript name `{}`", ts.name));
@@ -587,9 +539,7 @@ pub fn build_function_groups(
     for f in contract.functions.iter().filter(|f| !f.is_internal) {
         let arkade = covenant_of(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
-        // Synthesize default collaborative leaf if the function has neither a
-        // name-matched leaf nor a leaf that tweaks its emulator key.
-        if !function_has_explicit_leaf.contains(&f.name) {
+        if leaves.is_empty() {
             leaves.push(synthesize_default_leaf(&f.name));
         }
         groups.push(AbiFunctionGroup {
@@ -631,11 +581,13 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
                 name: "serverSig".into(),
                 elem_type: "signature".into(),
                 encoding: sig_encoding.clone(),
+                injected: true,
             },
             WitnessElement {
                 name: "emulatorSig".into(),
                 elem_type: "signature".into(),
                 encoding: sig_encoding,
+                injected: true,
             },
         ],
         asm: emit_leaf_asm(&closure, func, &Binding::NameMatched),
@@ -765,26 +717,6 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(err.contains("order"), "got: {err}");
-    }
-
-    #[test]
-    fn condition_must_use_a_hash_function_only() {
-        // HashFn variants are the only condition ops; this is a structural
-        // guarantee. Assert the allowlist function accepts a hashlock leaf and
-        // that a Sig-only leaf (no condition) is also fine.
-        let ok = validate_opcode_safety(&ts(vec![
-            TapItem::Hash {
-                hash_fn: HashFn::Sha256,
-                preimage: "p".into(),
-                hash: "h".into(),
-            },
-            TapItem::Sig {
-                keys: vec![ident("server")],
-                sigs: vec!["serverSig".into()],
-                threshold: Some(1),
-            },
-        ]));
-        assert!(ok.is_ok(), "hashlock condition is allowed: {ok:?}");
     }
 
     #[test]
@@ -993,8 +925,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("server"), "got: {err}");
     }
 
@@ -1020,8 +952,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        assert!(validate_arkd_rules(&c, &leaf, &cl, &b, None).is_ok());
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        assert!(validate_arkd_rules(&c, &leaf, &cl, None).is_ok());
     }
 
     #[test]
@@ -1033,8 +965,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("unknown key"), "got: {err}");
     }
 
@@ -1050,8 +982,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, &b, Some(144)).unwrap_err();
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, Some(144)).unwrap_err();
         assert!(err.contains("exit delay too short"), "got: {err}");
     }
 
@@ -1074,8 +1006,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        assert!(validate_arkd_rules(&c, &leaf, &cl, &b, Some(144)).is_ok());
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        assert!(validate_arkd_rules(&c, &leaf, &cl, Some(144)).is_ok());
     }
 
     #[test]
@@ -1095,8 +1027,8 @@ mod tests {
         };
         let c = contract_with(&["x"], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("align 1:1"), "got: {err}");
     }
 
@@ -1114,8 +1046,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
         assert!(
             err.contains("not a declared `signature` input"),
             "got: {err}"
@@ -1137,8 +1069,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("timelock `typoDelay`"), "got: {err}");
     }
 
@@ -1172,8 +1104,8 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let b = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, &b, None).unwrap_err();
+        let _binding = resolve_binding(&c, &leaf).unwrap();
+        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("hash value `typoHash`"), "got: {err}");
     }
 

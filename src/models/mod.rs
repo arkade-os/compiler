@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// The number of elements that array-typed parameters (e.g. `pubkey[]`) are
 /// flattened into throughout the pipeline.
 ///
@@ -14,11 +18,8 @@ use serde::{Deserialize, Serialize};
 /// only need fewer elements.
 pub const DEFAULT_ARRAY_LENGTH: usize = 3;
 
-/// JSON output structures
-///
-/// These structures are used to represent the compiled contract in a format
-/// that can be serialized to JSON.
-
+// JSON output structures.
+// These represent the compiled contract in a serializable format.
 /// Parameter in a contract or function
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Parameter {
@@ -67,6 +68,9 @@ pub struct WitnessElement {
     pub elem_type: String,
     /// Wire-encoding descriptor for client stub generators
     pub encoding: String,
+    /// True when Arkade infrastructure supplies this witness field.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub injected: bool,
 }
 
 /// The emulator-run covenant for a function-backed spend group.
@@ -126,10 +130,8 @@ pub struct CompilerInfo {
     pub version: String,
 }
 
-/// AST structures
-///
-/// These structures represent the parsed abstract syntax tree (AST)
-/// of an Arkade Script contract.
+// AST structures.
+// These represent the parsed abstract syntax tree of an Arkade Script contract.
 
 /// Contract AST
 #[derive(Debug, Clone)]

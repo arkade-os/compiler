@@ -118,22 +118,19 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
     }
 
     // Check for function modifier (internal) and body
-    match inner_pairs.next() {
-        Some(next_pair) => {
-            if next_pair.as_rule() == Rule::function_modifier {
-                func.is_internal = true;
-                for req_pair in inner_pairs {
-                    parse_function_body(&mut func, req_pair)?;
-                }
-            } else {
-                parse_function_body(&mut func, next_pair)?;
-                for req_pair in inner_pairs {
-                    parse_function_body(&mut func, req_pair)?;
-                }
+    if let Some(next_pair) = inner_pairs.next() {
+        if next_pair.as_rule() == Rule::function_modifier {
+            func.is_internal = true;
+            for req_pair in inner_pairs {
+                parse_function_body(&mut func, req_pair)?;
+            }
+        } else {
+            parse_function_body(&mut func, next_pair)?;
+            for req_pair in inner_pairs {
+                parse_function_body(&mut func, req_pair)?;
             }
         }
-        None => {} // Empty function body
-    };
+    }
 
     Ok(func)
 }
@@ -2220,10 +2217,9 @@ fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     if text.starts_with("tx.input.current") {
         let property = if text == "tx.input.current" {
             None
-        } else if let Some(rest) = text.strip_prefix("tx.input.current.") {
-            Some(rest.to_string())
         } else {
-            None
+            text.strip_prefix("tx.input.current.")
+                .map(|rest| rest.to_string())
         };
         return Ok(Expression::CurrentInput(property));
     }

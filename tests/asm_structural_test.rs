@@ -59,14 +59,13 @@ fn local_check_asm_structure(asm: &[String]) -> Vec<String> {
                 }
                 depth -= 1;
             }
-            "OP_ELSE" => {
-                if depth <= 0 {
-                    errors.push(format!(
-                        "stray OP_ELSE at index {} without matching OP_IF",
-                        i
-                    ));
-                }
+            "OP_ELSE" if depth <= 0 => {
+                errors.push(format!(
+                    "stray OP_ELSE at index {} without matching OP_IF",
+                    i
+                ));
             }
+            "OP_ELSE" => {}
             _ => {}
         }
     }
@@ -471,10 +470,11 @@ fn empty_placeholder_is_error() {
 fn placeholder_in_witness_schema_is_clean() {
     use arkade_compiler::models::WitnessElement;
     let asm = vec!["<sig>".to_string(), "OP_CHECKSIG".to_string()];
-    let witness = vec![WitnessElement {
+    let witness = [WitnessElement {
         name: "sig".to_string(),
         elem_type: "signature".to_string(),
         encoding: "schnorr-64".to_string(),
+        injected: false,
     }];
     let witness_names: Vec<&str> = witness.iter().map(|w| w.name.as_str()).collect();
     let warnings = local_check_placeholder_consistency(&asm, &witness_names, &[]);
@@ -493,12 +493,13 @@ fn placeholder_in_constructor_inputs_is_clean() {
         "<sig>".to_string(),
         "OP_CHECKSIG".to_string(),
     ];
-    let witness = vec![WitnessElement {
+    let witness = [WitnessElement {
         name: "sig".to_string(),
         elem_type: "signature".to_string(),
         encoding: "schnorr-64".to_string(),
+        injected: false,
     }];
-    let ctor = vec![Parameter {
+    let ctor = [Parameter {
         name: "owner".to_string(),
         param_type: "pubkey".to_string(),
     }];

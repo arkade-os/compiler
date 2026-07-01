@@ -77,3 +77,40 @@ contract Demo(pubkey owner) {
     let wnames: Vec<_> = leaf.witness.iter().map(|w| w.name.clone()).collect();
     assert_eq!(wnames, vec!["serverSig", "emulatorSig"]);
 }
+
+#[test]
+fn infrastructure_signatures_are_marked_as_injected() {
+    let src = r#"
+contract Demo(pubkey owner) {
+    function claim() {
+        require(tx.outputs[0].value >= 1);
+    }
+    function claim(signature serverSig, signature emulatorSig, signature ownerSig) tapscript {
+        require(checkMultisig([server, emulator, owner], [serverSig, emulatorSig, ownerSig], 3));
+    }
+}
+"#;
+    let out = compile(src).expect("compile");
+    let leaf = &out
+        .functions
+        .iter()
+        .find(|g| g.name == "claim")
+        .expect("claim group")
+        .leaves[0];
+
+    let injected: Vec<_> = leaf
+        .witness
+        .iter()
+        .filter(|w| w.injected)
+        .map(|w| w.name.as_str())
+        .collect();
+    let user_supplied: Vec<_> = leaf
+        .witness
+        .iter()
+        .filter(|w| !w.injected)
+        .map(|w| w.name.as_str())
+        .collect();
+
+    assert_eq!(injected, vec!["serverSig", "emulatorSig"]);
+    assert_eq!(user_supplied, vec!["ownerSig"]);
+}

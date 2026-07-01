@@ -74,7 +74,7 @@ impl ArkType {
         }
     }
 
-    /// Wire-encoding descriptor used in `witnessSchema` / client stub output.
+    /// Wire-encoding descriptor used in leaf `witness` / client stub output.
     ///
     /// These strings are stable identifiers; downstream code generators
     /// (TypeScript, Go, etc.) can switch on them to pick the right serializer.

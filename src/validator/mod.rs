@@ -4,7 +4,7 @@
 //!
 //! 1. **AST validation** (`validate_ast`) — runs after parsing, before compilation.
 //!    Catches semantic errors that the PEG grammar cannot express, such as duplicate
-//!    function names, missing required options, and invalid timelock values.
+//!    names, reserved tapscript roles, and invalid Asset ID operands.
 //!    Also performs CashScript-style require-guard checks (warn when a function has
 //!    no `require()` statements — it would trivially pass all spends).
 //!
@@ -72,8 +72,8 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Function names are unique within the contract.
 /// - Constructor parameter names are unique.
 /// - Each function's parameter names are unique within that function.
-/// - `options.exit` is required whenever `options.server` is set.
-/// - Timelock values must be positive (> 0).
+/// - Tapscript inputs do not collide with reserved key roles.
+/// - Asset ID operands have the expected txid/gidx types.
 pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
@@ -442,7 +442,7 @@ fn describe_operand(expr: &Expression) -> String {
 /// Returns `true` if any statement in the slice contains a `Require` (recursing
 /// into if/else branches and for-loop bodies).
 fn statements_have_require(stmts: &[Statement]) -> bool {
-    stmts.iter().any(|s| statement_has_require(s))
+    stmts.iter().any(statement_has_require)
 }
 
 fn statement_has_require(stmt: &Statement) -> bool {
@@ -457,7 +457,7 @@ fn statement_has_require(stmt: &Statement) -> bool {
             statements_have_require(then_body)
                 || else_body
                     .as_ref()
-                    .map_or(false, |b| statements_have_require(b))
+                    .is_some_and(|b| statements_have_require(b))
         }
         Statement::ForIn { body, .. } => statements_have_require(body),
     }
@@ -779,6 +779,7 @@ mod tests {
             name: "sig".to_string(),
             elem_type: "signature".to_string(),
             encoding: "schnorr-64".to_string(),
+            injected: false,
         }];
         ContractJson {
             name: name.to_string(),
