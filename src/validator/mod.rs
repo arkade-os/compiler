@@ -312,7 +312,6 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         | Expression::TxIntrospection { .. }
         | Expression::GroupProperty { .. }
         | Expression::AssetGroupsLength
-        | Expression::ArrayLength(_)
         | Expression::CheckSigExpr { .. }
         | Expression::CheckSigFromStackExpr { .. }
         | Expression::CheckSigFromStackVerify { .. } => vec![],
@@ -360,7 +359,6 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             io_index,
             ..
         } => vec![group_index, io_index],
-        Expression::ArrayIndex { array, index } => vec![array, index],
         Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
         Expression::Sha256Update { context, chunk } => vec![context, chunk],
         Expression::Sha256Finalize {
@@ -612,7 +610,7 @@ fn walk_scope(
 /// still collide here (e.g. `int[] xs` vs `int xs_0`).
 fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     // Constructor params expanded exactly as the emitter expands them (array flattening).
-    let ctor_expanded = crate::compiler::decompose_constructor_params(&contract.parameters);
+    let ctor_expanded = crate::compiler::expand_abi_params(&contract.parameters);
 
     for func in contract.functions.iter().filter(|f| !f.is_internal) {
         let mut seen: HashSet<String> = HashSet::new();
@@ -621,15 +619,8 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
             record_name(p.name.clone(), &func.name, &mut seen, issues);
         }
 
-        // Function parameters: array flattening only (mirrors generate_witness_schema).
-        for p in &func.parameters {
-            if p.param_type.ends_with("[]") {
-                for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
-                    record_name(format!("{}_{}", p.name, i), &func.name, &mut seen, issues);
-                }
-            } else {
-                record_name(p.name.clone(), &func.name, &mut seen, issues);
-            }
+        for p in crate::compiler::expand_abi_params(&func.parameters) {
+            record_name(p.name, &func.name, &mut seen, issues);
         }
     }
 }

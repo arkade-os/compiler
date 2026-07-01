@@ -241,13 +241,13 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
 }
 
 /// arkd structural rules F2/F3/E1/E3 + key resolution (§5.3). `min_exit_delay`
-/// enables literal-only E3 magnitude checks. Returns non-fatal warnings on success.
+/// enables literal-only E3 magnitude checks.
 pub fn validate_arkd_rules(
     contract: &Contract,
     ts: &NamedTapscript,
     c: &Closure,
     min_exit_delay: Option<u64>,
-) -> Result<Vec<String>, String> {
+) -> Result<(), String> {
     // Pubkeys in scope: constructor pubkey params + pubkey tapscript inputs.
     let in_scope = |name: &str| -> bool {
         name == "server"
@@ -374,7 +374,7 @@ pub fn validate_arkd_rules(
     // literal locktimes with a known block-type policy; with literals-only and
     // no policy source wired yet, defer to arkd. (Placeholder for future config.)
 
-    Ok(Vec::new())
+    Ok(())
 }
 
 /// Lower a key operand to its ASM placeholder. `leaf_func` is the function name
@@ -499,9 +499,7 @@ pub fn build_function_groups(
     contract: &Contract,
     // covenant ASM/inputs are produced by mod.rs and passed in to avoid a cycle.
     covenant_of: &dyn Fn(&str) -> Option<ArkadeCovenant>,
-) -> Result<(Vec<AbiFunctionGroup>, Vec<String>), String> {
-    let mut warnings = Vec::new();
-
+) -> Result<Vec<AbiFunctionGroup>, String> {
     // Resolve + validate every author-written tapscript; bucket by group key.
     // group key = function name for NameMatched / Tweaked(func); leaf's own name for Standalone.
     use std::collections::BTreeMap;
@@ -512,8 +510,7 @@ pub fn build_function_groups(
         let closure = assemble_closure(ts)?;
         validate_closure_shape(&closure, &ts.name)?;
         let binding = resolve_binding(contract, ts)?;
-        let w = validate_arkd_rules(contract, ts, &closure, None)?;
-        warnings.extend(w);
+        validate_arkd_rules(contract, ts, &closure, None)?;
 
         let group_key = match &binding {
             Binding::NameMatched => ts.name.clone(),
@@ -558,7 +555,7 @@ pub fn build_function_groups(
         });
     }
 
-    Ok((groups, warnings))
+    Ok(groups)
 }
 
 /// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], …, 2).

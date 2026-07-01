@@ -4,14 +4,12 @@ use arkade_compiler::opcodes::{OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_SHA
 mod common;
 use common::arkade_asm;
 
-// StabilityVault + StabilityOffer: already-migrated ark files used directly.
 const VAULT_CODE: &str = include_str!("../examples/stability/stability_vault.ark");
 const OFFER_CODE: &str = include_str!("../examples/stability/stability_offer.ark");
 
 #[test]
 fn test_vault_compiles_with_9_groups() {
     // 8 covenant functions + 1 unilateral tapscript = 9 groups
-    // (OLD: 8 fns × 2 variants = 16 entries)
     let out = compile(VAULT_CODE).expect("vault compile");
     assert_eq!(out.name, "StabilityVault");
     assert_eq!(out.functions.len(), 9);
@@ -123,7 +121,6 @@ fn test_remove_capital_verifies_oracle() {
 #[test]
 fn test_offer_compiles_with_3_groups() {
     // 2 covenant functions + 1 unilateral tapscript = 3 groups
-    // (OLD: 2 fns × 2 variants = 4 entries)
     let out = compile(OFFER_CODE).expect("offer compile");
     assert_eq!(out.name, "StabilityOffer");
     assert_eq!(out.functions.len(), 3);

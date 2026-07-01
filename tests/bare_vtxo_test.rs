@@ -9,8 +9,7 @@ use common::{arkade_asm, arkade_asm_tokens, arkade_inputs, leaf_asm};
 
 #[test]
 fn test_bare_vtxo_contract() {
-    // Bare VTXO contract source code (no options block; server is a real
-    // constructor pubkey used in the multisig check; timelock is an int param)
+    // `server` is a constructor pubkey used in the multisig check.
     let vtxo_code = r#"
 contract SingleSig(
   pubkey user,
@@ -47,7 +46,6 @@ contract SingleSig(
     assert_eq!(output.parameters[2].name, "timelock");
     assert_eq!(output.parameters[2].param_type, "int");
 
-    // NEW: 2 function groups (one per function), not 4 variants
     assert_eq!(output.functions.len(), 2);
 
     // ── cooperative group ─────────────────────────────────────────────────────

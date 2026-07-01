@@ -226,7 +226,6 @@ When writing a new contract:
 <antipatterns>
 
 - Putting `pubkey serverPk`/`operatorPk` (or `server`/`emulator`) in the constructor.
-- Writing an `options { ... }` block (removed from the language).
 - Putting `server`/`emulator` co-signers in a covenant `function` body instead of a `tapscript` leaf.
 - Computing output indices via expression (they're constants).
 - Comparing `value` against an arithmetic expression directly (bind first).

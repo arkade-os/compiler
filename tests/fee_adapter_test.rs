@@ -108,8 +108,7 @@ fn test_fee_adapter_contract() {
     assert_eq!(adjust_inputs.len(), 1);
     assert_eq!(adjust_inputs[0].name, "operatorSig");
 
-    // Unilateral exit: standalone CSV leaf — replaces old server_variant=false exit path.
-    // Pure Bitcoin (no introspection).
+    // Unilateral exit: standalone CSV leaf with no introspection.
     let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
 
     assert!(

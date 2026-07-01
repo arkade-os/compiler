@@ -9,8 +9,6 @@ use tempfile::tempdir;
 mod common;
 use common::{arkade_asm_tokens, arkade_inputs, leaf_asm};
 
-// Threshold multisig example source code.
-// options { } removed (server key auto-injected); pubkey server removed (was only for options.server).
 const THRESHOLD_MULTISIG_CODE: &str = r#"contract ThresholdMultisig(
   pubkey signer,
   pubkey signer1,
@@ -44,7 +42,6 @@ fn test_threshold_multisig() {
     // Verify contract name
     assert_eq!(output.name, "ThresholdMultisig");
 
-    // Verify parameters (pubkey server removed — server key is auto-injected by Arkade)
     assert_eq!(output.parameters.len(), 5);
     assert_eq!(output.parameters[0].name, "signer");
     assert_eq!(output.parameters[0].param_type, "pubkey");
@@ -57,7 +54,6 @@ fn test_threshold_multisig() {
     assert_eq!(output.parameters[4].name, "signer4");
     assert_eq!(output.parameters[4].param_type, "pubkey");
 
-    // 3 function groups (one per function); old model emitted 6 (3 functions × 2 variants).
     assert_eq!(output.functions.len(), 3);
 
     // ── twoOfTwo group ────────────────────────────────────────────────────────
@@ -67,9 +63,7 @@ fn test_threshold_multisig() {
     assert_eq!(tof_inputs[0], "signerSig");
     assert_eq!(tof_inputs[1], "signer1Sig");
 
-    // Covenant ASM: 2-of-2 CHECKSIGADD form (6 tokens).
-    // Old cooperative path was 9 tokens; the trailing 3 (<SERVER_KEY> <serverSig> OP_CHECKSIG)
-    // are now in the synthesized default leaf.
+    // Covenant ASM: 2-of-2 CHECKSIGADD form.
     let tof_tokens = arkade_asm_tokens(&output, "twoOfTwo");
     assert_eq!(tof_tokens.len(), 6);
     assert_eq!(tof_tokens[0], "<signer>");
@@ -104,8 +98,7 @@ fn test_threshold_multisig() {
     assert_eq!(fof_inputs[3], "signer3Sig");
     assert_eq!(fof_inputs[4], "signer4Sig");
 
-    // Covenant ASM: 5-of-5 CHECKSIGADD form (12 tokens).
-    // Old cooperative path was 15 tokens; the trailing 3 are now in the default leaf.
+    // Covenant ASM: 5-of-5 CHECKSIGADD form.
     let fof_tokens = arkade_asm_tokens(&output, "fiveOfFive");
     assert_eq!(fof_tokens.len(), 12);
     assert_eq!(fof_tokens[0], "<signer>");
@@ -149,7 +142,6 @@ fn test_threshold_multisig() {
     // Covenant ASM: 3-of-5 CHECKSIGADD form (12 tokens, threshold=OP_3).
     // m-of-n (k < n) is valid in a covenant body; the covenant emitter uses
     // CHECKSIGADD + OP_NUMEQUAL form regardless of threshold value.
-    // Old cooperative path was 15 tokens; the trailing 3 are now in the default leaf.
     let three_tokens = arkade_asm_tokens(&output, "threeOfFive");
     assert_eq!(three_tokens.len(), 12);
     assert_eq!(three_tokens[0], "<signer>");
@@ -180,9 +172,7 @@ fn test_threshold_multisig() {
         "threeOfFive leaf: missing OP_CHECKSIG"
     );
 
-    // NOTE: Exit-path variants (server_variant=false + CSV) are gone in the tapscript ABI.
-    // ThresholdMultisig has no explicit tapscript exit leaf; the synthesized default leaf
-    // (SERVER_KEY + EMULATOR_KEY cosig guard) is the only L1 spend path per function.
+    // ThresholdMultisig has no explicit exit leaf; each function gets the default cosig leaf.
 }
 
 #[test]

@@ -421,13 +421,6 @@ pub enum Expression {
         source: GroupIOSource,
         property: Option<String>, // Optional property like "amount", "type", "inputIndex", "outputIndex"
     },
-    /// Array indexing (e.g., arr[i])
-    ArrayIndex {
-        array: Box<Expression>,
-        index: Box<Expression>,
-    },
-    /// Array/collection length (e.g., arr.length)
-    ArrayLength(String),
     /// CheckSig expression result (for use in if conditions)
     CheckSigExpr { signature: String, pubkey: String },
     /// CheckSigFromStack expression result

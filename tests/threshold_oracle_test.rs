@@ -6,16 +6,7 @@ use arkade_compiler::opcodes::{
 mod common;
 use common::{arkade_asm, arkade_inputs};
 
-/// Test contract from PLAN.md Commit 6: Array Types + Threshold Verification
-///
-/// This test validates:
-/// - Array type parsing (pubkey[], signature[])
-/// - Array indexing (oracles[i])
-/// - Array length property (arr.length)
-/// - Loop iteration over arrays
-///
-/// The migrated ark file (examples/threshold_oracle.ark) is used directly.
-/// It has no options block and carries `int exit` as a constructor parameter.
+/// Exercises array flattening and threshold verification over unrolled oracle signatures.
 const THRESHOLD_ORACLE_CODE: &str = include_str!("../examples/threshold_oracle.ark");
 
 #[test]
@@ -29,7 +20,6 @@ fn test_threshold_oracle_structure() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
     assert_eq!(output.name, "ThresholdOracle");
-    // NEW: 1 function group (not 2 variants)
     assert_eq!(output.functions.len(), 1);
     assert_eq!(output.functions[0].name, "attest");
 }
@@ -55,7 +45,7 @@ fn test_threshold_oracle_has_control_flow() {
     assert!(!tokens.is_empty(), "Assembly should not be empty");
 }
 
-// ─── Commit 6: Array ABI Flattening Tests ──────────────────────────────────────
+// ─── Array ABI Flattening ──────────────────────────────────────────────────────
 
 #[test]
 fn test_threshold_oracle_constructor_array_flattening() {
@@ -196,8 +186,3 @@ fn test_threshold_oracle_quorum_uses_csn_comparison() {
         asm_str
     );
 }
-
-// NOTE: test_threshold_oracle_structure previously checked for 2 function
-// entries (server variant + exit variant). In the new tapscript ABI there is
-// only 1 group per function. The exit variant assertion is DROPPED because
-// ThresholdOracle has no standalone unilateral tapscript.

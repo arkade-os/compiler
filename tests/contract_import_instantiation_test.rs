@@ -196,9 +196,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "Default leaf must NOT contain VTXO placeholder, got {:?}",
         send_leaf
     );
-    // NOTE: global exit timelock (OP_CHECKSEQUENCEVERIFY + CSV) is no longer in the
-    // synthesized default leaf — it was a server_variant=false construct that is gone
-    // in the tapscript ABI. Explicit exit paths require a named tapscript leaf.
+    // Explicit CSV exits require a named tapscript leaf.
 }
 
 #[test]
@@ -232,7 +230,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "Unexpected covenant ASM"
     );
 
-    // Default leaf ASM: server+emulator cosig guard (replaces old server-variant tail)
+    // Default leaf ASM: server+emulator cosig guard.
     let expected_leaf: Vec<&str> = vec![
         "<SERVER_KEY>",
         "OP_CHECKSIGVERIFY",
@@ -248,10 +246,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_exit_path_asm_order() {
-    // The only L1 leaf for a covenant-only function is the synthesized default leaf
-    // (server+emulator cosig guard). The old exit path (pure N-of-N CHECKSIG + CSV)
-    // was a server_variant=false construct that no longer exists in the tapscript ABI.
-    // Verify the exact default leaf ASM.
+    // Covenant-only functions get the synthesized server+emulator cosig leaf.
     let code = r#"
 import "single_sig.ark";
 
@@ -498,8 +493,7 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
 #[test]
 fn test_mixed_contract_instance_and_checksig_exit_path() {
     // The synthesized default leaf has no introspection opcodes and no VTXO
-    // placeholders. The old server_variant=false exit path (CHECKSIG + CSV) is
-    // gone — explicit exit paths require a named tapscript leaf.
+    // placeholders. Explicit exits require a named tapscript leaf.
     let code = r#"
 import "single_sig.ark";
 
@@ -530,8 +524,7 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
         "Default leaf must not contain VTXO placeholders, got {:?}",
         send_leaf
     );
-    // NOTE: OP_CHECKSEQUENCEVERIFY was in the old server_variant=false exit path;
-    // it is not emitted in the synthesized default leaf. Explicit CSV requires a tapscript.
+    // Explicit CSV exits require a named tapscript leaf.
 }
 
 // ─── Per-function introspection detection ─────────────────────────────────────
@@ -597,8 +590,7 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
         "spend() default leaf must contain OP_CHECKSIG, got {:?}",
         spend_leaf
     );
-    // NOTE: OP_CHECKSEQUENCEVERIFY was in the old server_variant=false exit path;
-    // it is not emitted in the synthesized default leaf.
+    // Default leaves do not carry CSV timelocks.
 }
 
 // ─── ContractInstance on current-input scriptPubKey ───────────────────────────

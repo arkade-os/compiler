@@ -6,14 +6,11 @@ use arkade_compiler::opcodes::{
 mod common;
 use common::{arkade_asm, arkade_inputs, group};
 
-// CashSecuredPut: already migrated ark file used directly.
 const PUT_CODE: &str = include_str!("../examples/options/cash_secured_put.ark");
 
 #[test]
 fn test_compiles_with_5_groups() {
     // 4 covenant functions + 1 standalone unilateral tapscript = 5 groups
-    // (OLD: 4 fns × 2 variants = 8 entries; DROPPED per-function exit variants
-    //  are now replaced by the single `unilateral` tapscript leaf.)
     let out = compile(PUT_CODE).expect("compile");
     assert_eq!(out.name, "CashSecuredPut");
     assert_eq!(out.functions.len(), 5);
@@ -51,8 +48,6 @@ fn test_no_oracle_anywhere() {
             "{fn_name}: must not invoke oracle"
         );
     }
-    // NOTE: per-function exit variants no longer exist in the new ABI; the
-    // unilateral tapscript carries no oracle either, but is checked separately.
 }
 
 #[test]
@@ -159,10 +154,3 @@ fn test_unilateral_leaf_has_no_introspection() {
         "unilateral must use CSV (CHECKSEQUENCEVERIFY), not CLTV"
     );
 }
-
-// NOTE: test_exit_leaves_have_no_introspection DROPPED.
-// The old ABI had per-function exit variants (server_variant=false) that stripped
-// introspection. In the new tapscript ABI there are no per-function exit variants;
-// each covenant function has exactly one synthesized default leaf with only cosig
-// opcodes (no introspection). The unilateral CSV exit is a separate tapscript group
-// tested by test_unilateral_leaf_has_no_introspection above.

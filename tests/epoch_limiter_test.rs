@@ -6,16 +6,7 @@ use arkade_compiler::opcodes::{
 mod common;
 use common::{arkade_asm, arkade_asm_tokens, leaf_asm};
 
-/// Test contract from PLAN.md Commit 4: If/Else + Variable Reassignment
-///
-/// This test validates the architectural requirements for:
-/// - `let` bindings for variable declarations
-/// - `if/else` control flow statements
-/// - Variable reassignment
-/// - Virtual stack model for branch normalization
-///
-/// options block and unused pubkey params (adminPk, adminServerPk) removed;
-/// the function body never referenced them.
+/// Exercises let bindings, branch emission, reassignment, and branch stack normalization.
 const EPOCH_LIMITER_CODE: &str = r#"
 contract EpochLimiter(
   bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
@@ -59,7 +50,6 @@ fn test_epoch_limiter_structure() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
 
     assert_eq!(output.name, "EpochLimiter");
-    // NEW: 1 function group (not 2 variants)
     assert_eq!(output.functions.len(), 1);
     assert_eq!(output.functions[0].name, "check");
 }
@@ -144,8 +134,3 @@ fn test_epoch_limiter_default_leaf_has_checksig() {
         l
     );
 }
-
-// NOTE: test_epoch_limiter_exit_variant_has_timelock DROPPED.
-// In the new tapscript ABI there is no per-function exit variant; the CSV exit
-// path is an explicit standalone tapscript (e.g. `function unilateral … tapscript`).
-// EpochLimiter has no such leaf, so there is nothing to assert here.

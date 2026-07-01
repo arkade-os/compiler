@@ -180,12 +180,8 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
 
 #[test]
 fn test_unilateral_exit_is_csv_timelocked() {
-    // The unilateral tapscript is the single exit leaf — used when the Arkade
-    // operator is offline. It must be CSV-timelocked (no covenant introspection)
-    // and require only the borrower's signature.
-    //
-    // In the new ABI, per-function exit variants (server_variant=false) are
-    // gone. The exit path is the shared `unilateral` tapscript leaf instead.
+    // The shared unilateral exit leaf must be CSV-timelocked, avoid covenant
+    // introspection, and require only the borrower's signature.
     use arkade_compiler::opcodes::OP_DROP;
     let output = compile(CODE).expect("compilation failed");
     let asm = common::leaf_asm(&output, "unilateral", "unilateral");

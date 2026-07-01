@@ -1,6 +1,7 @@
 use crate::models::{
     ArkadeCovenant, AssetLookupSource, CompilerInfo, ContractJson, Expression, Function,
-    FunctionInput, GroupIOSource, GroupSumSource, Requirement, Statement, DEFAULT_ARRAY_LENGTH,
+    FunctionInput, GroupIOSource, GroupSumSource, Parameter, Requirement, Statement,
+    DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD64, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD,
@@ -98,7 +99,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     }
 
     // Build constructor inputs (array params expand to indexed scalars).
-    let parameters = decompose_constructor_params(&contract.parameters);
+    let parameters = expand_abi_params(&contract.parameters);
 
     let mut json = ContractJson {
         name: contract.name.clone(),
@@ -120,10 +121,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         covenants.insert(function.name.clone(), covenant_for(function)?);
     }
 
-    let (groups, ts_warnings) =
+    json.functions =
         tapscript::build_function_groups(&contract, &|name| covenants.get(name).cloned())?;
-    json.functions = groups;
-    json.warnings.extend(ts_warnings);
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants. Issues here
@@ -141,26 +140,14 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     Ok(json)
 }
 
-/// Expand constructor params for emission. Array types (e.g., `pubkey[]`) are
-/// flattened to `name_0`, `name_1`, `name_2`, …; every other param passes
-/// through unchanged.
-pub(crate) fn decompose_constructor_params(
-    params: &[crate::models::Parameter],
-) -> Vec<crate::models::Parameter> {
+/// Expand ABI params for emission. Array types (e.g., `pubkey[]`) are flattened
+/// to `name_0`, `name_1`, `name_2`, …; every other param passes through unchanged.
+pub(crate) fn expand_abi_params(params: &[Parameter]) -> Vec<Parameter> {
     let mut result = Vec::new();
     for param in params {
-        if param.param_type.ends_with("[]") {
-            // Array type: flatten to name_0, name_1, name_2, etc.
-            let base_type = param.param_type.trim_end_matches("[]");
-            for i in 0..DEFAULT_ARRAY_LENGTH {
-                result.push(crate::models::Parameter {
-                    name: format!("{}_{}", param.name, i),
-                    param_type: base_type.to_string(),
-                });
-            }
-        } else {
-            result.push(param.clone());
-        }
+        for_each_expanded_param(param, |name, param_type| {
+            result.push(Parameter { name, param_type });
+        });
     }
     result
 }
@@ -168,28 +155,29 @@ pub(crate) fn decompose_constructor_params(
 /// Build an `ArkadeCovenant` for a non-internal function: array-expand inputs,
 /// emit ASM from statements (no server cosig, no exit timelock).
 fn covenant_for(function: &Function) -> Result<ArkadeCovenant, String> {
-    let inputs: Vec<FunctionInput> = function
-        .parameters
-        .iter()
-        .flat_map(|param| {
-            if param.param_type.ends_with("[]") {
-                let base_type = param.param_type.trim_end_matches("[]");
-                (0..DEFAULT_ARRAY_LENGTH)
-                    .map(|i| FunctionInput {
-                        name: format!("{}_{}", param.name, i),
-                        param_type: base_type.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![FunctionInput {
-                    name: param.name.clone(),
-                    param_type: param.param_type.clone(),
-                }]
-            }
-        })
-        .collect();
+    let inputs = expand_function_inputs(&function.parameters);
     let asm = generate_asm_from_statements(&function.statements)?;
     Ok(ArkadeCovenant { inputs, asm })
+}
+
+fn expand_function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
+    let mut inputs = Vec::new();
+    for param in params {
+        for_each_expanded_param(param, |name, param_type| {
+            inputs.push(FunctionInput { name, param_type });
+        });
+    }
+    inputs
+}
+
+fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String)) {
+    if let Some(base_type) = param.param_type.strip_suffix("[]") {
+        for i in 0..DEFAULT_ARRAY_LENGTH {
+            f(format!("{}_{}", param.name, i), base_type.to_string());
+        }
+    } else {
+        f(param.name.clone(), param.param_type.clone());
+    }
 }
 
 /// Generate assembly instructions from statements
@@ -235,48 +223,17 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                // Commit 5 & 6: Compile-time loop unrolling
-                // Determine if this is iterating over tx.assetGroups or an array variable
-                let is_asset_groups = match iterable {
-                    Expression::Property(prop) => prop == "tx.assetGroups",
-                    _ => false,
-                };
-
-                // Check if iterating over an array variable (e.g., oracleSigs)
-                let array_name = match iterable {
-                    Expression::Variable(name) => Some(name.clone()),
-                    _ => None,
-                };
-
-                if is_asset_groups {
-                    // Default to 3 iterations (can be overridden by numGroups param)
-                    let num_iterations = DEFAULT_ARRAY_LENGTH;
-
-                    for k in 0..num_iterations {
-                        // Substitute loop variables and generate ASM for each iteration
-                        let substituted_body =
-                            substitute_loop_body(body, index_var, value_var, k, None);
-                        generate_asm_from_statements_recursive(&substituted_body, asm)?;
+                match iterable {
+                    Expression::Property(prop) if prop == "tx.assetGroups" => {
+                        unroll_loop_body(body, index_var, value_var, None, asm)?;
                     }
-                } else if array_name.is_some() {
-                    // Iterating over an array variable - unroll with array substitution
-                    let num_iterations = DEFAULT_ARRAY_LENGTH;
-
-                    for k in 0..num_iterations {
-                        // Substitute loop variables and generate ASM for each iteration
-                        // Pass the array name so value_var can be substituted to array_name_{k}
-                        let substituted_body = substitute_loop_body(
-                            body,
-                            index_var,
-                            value_var,
-                            k,
-                            array_name.as_ref(),
-                        );
-                        generate_asm_from_statements_recursive(&substituted_body, asm)?;
+                    Expression::Variable(array_name) => {
+                        unroll_loop_body(body, index_var, value_var, Some(array_name), asm)?;
                     }
-                } else {
-                    // For other iterables, process body once (fallback)
-                    generate_asm_from_statements_recursive(body, asm)?;
+                    _ => {
+                        // Unsupported iterables keep the historical fallback behavior.
+                        generate_asm_from_statements_recursive(body, asm)?;
+                    }
                 }
             }
             Statement::LetBinding { name: _, value } => {
@@ -470,14 +427,6 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             } else {
                 asm.push(OP_INPUTBYTECODE.to_string());
             }
-        }
-        Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            generate_expression_asm(array, asm);
-            generate_expression_asm(index, asm);
-        }
-        Expression::ArrayLength(_) => {
-            // TODO: Implement array length in Commit 6
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
@@ -806,58 +755,6 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
     }
 }
 
-/// Generate assembly instructions for a requirement (legacy function)
-#[allow(dead_code)]
-fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
-    let mut asm = Vec::new();
-
-    for req in requirements {
-        match req {
-            Requirement::CheckSig { signature, pubkey } => {
-                asm.push(format!("<{}>", pubkey));
-                asm.push(format!("<{}>", signature));
-                asm.push(OP_CHECKSIG.to_string());
-            }
-            Requirement::CheckSigFromStack {
-                signature,
-                pubkey,
-                message,
-            } => {
-                asm.push(format!("<{}>", message));
-                asm.push(format!("<{}>", pubkey));
-                asm.push(format!("<{}>", signature));
-                asm.push(OP_CHECKSIGFROMSTACK.to_string());
-            }
-            Requirement::CheckMultisig { .. } => {
-                // Covenant-body multisig is handled elsewhere; nothing to emit here.
-            }
-            Requirement::After {
-                blocks,
-                timelock_var,
-            } => {
-                if let Some(var) = timelock_var {
-                    asm.push(format!("<{}>", var));
-                } else {
-                    asm.push(format!("{}", blocks));
-                }
-                asm.push(OP_CHECKLOCKTIMEVERIFY.to_string());
-                asm.push(OP_DROP.to_string());
-            }
-            Requirement::HashEqual { preimage, hash } => {
-                asm.push(format!("<{}>", preimage));
-                asm.push(OP_SHA256.to_string());
-                asm.push(format!("<{}>", hash));
-                asm.push(OP_EQUAL.to_string());
-            }
-            Requirement::Comparison { left, op, right } => {
-                emit_comparison_asm(left, op, right, &mut asm);
-            }
-        }
-    }
-
-    asm
-}
-
 /// Emit assembly for a comparison requirement.
 ///
 /// Handles both simple comparisons (variable/literal/property) and complex
@@ -1055,14 +952,6 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             args,
         } => {
             emit_contract_instance_asm(contract_name, args, asm);
-        }
-        Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            emit_expression_asm(array, asm);
-            emit_expression_asm(index, asm);
-        }
-        Expression::ArrayLength(_) => {
-            // TODO: Implement array length in Commit 6
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
@@ -1625,7 +1514,21 @@ fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
     }
 }
 
-// ─── Loop Unrolling (Commit 5 & 6) ──────────────────────────────────────────────
+// ─── Loop Unrolling ─────────────────────────────────────────────────────────────
+
+fn unroll_loop_body(
+    body: &[Statement],
+    index_var: &str,
+    value_var: &str,
+    array_name: Option<&str>,
+    asm: &mut Vec<String>,
+) -> Result<(), String> {
+    for k in 0..DEFAULT_ARRAY_LENGTH {
+        let substituted_body = substitute_loop_body(body, index_var, value_var, k, array_name);
+        generate_asm_from_statements_recursive(&substituted_body, asm)?;
+    }
+    Ok(())
+}
 
 /// Substitute loop variables in the body for a specific iteration index k.
 ///
@@ -1634,13 +1537,13 @@ fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
 /// - `GroupProperty { group: value_var, property: "sumInputs" }` → `GroupSum { index: k, source: Inputs }`
 /// - `Variable(index_var)` → `Literal(k)`
 /// - `Variable(value_var)` when array_name is Some → `Variable("array_name_{k}")`
-/// - Array indexing `arr[index_var]` → `Variable("arr_{k}")`
+/// - Property-form indexing `arr[index_var]` → `Variable("arr_{k}")`
 fn substitute_loop_body(
     body: &[Statement],
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Vec<Statement> {
     body.iter()
         .map(|stmt| substitute_statement(stmt, index_var, value_var, k, array_name))
@@ -1652,7 +1555,7 @@ fn substitute_statement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Statement {
     match stmt {
         Statement::Require(req) => Statement::Require(substitute_requirement(
@@ -1699,7 +1602,7 @@ fn substitute_requirement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Requirement {
     match req {
         Requirement::Comparison { left, op, right } => Requirement::Comparison {
@@ -1718,10 +1621,9 @@ fn substitute_requirement(
             } else {
                 signature.clone()
             };
-            let new_pk = pubkey.clone();
             Requirement::CheckSig {
                 signature: new_sig,
-                pubkey: new_pk,
+                pubkey: pubkey.clone(),
             }
         }
         Requirement::CheckSigFromStack {
@@ -1739,12 +1641,10 @@ fn substitute_requirement(
             } else {
                 signature.clone()
             };
-            let new_pk = pubkey.clone();
-            let new_msg = message.clone();
             Requirement::CheckSigFromStack {
                 signature: new_sig,
-                pubkey: new_pk,
-                message: new_msg,
+                pubkey: pubkey.clone(),
+                message: message.clone(),
             }
         }
         // Other requirement types don't need substitution
@@ -1757,7 +1657,7 @@ fn substitute_expression(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Expression {
     match expr {
         // Replace index variable with literal k
@@ -1788,28 +1688,7 @@ fn substitute_expression(
                 },
             }
         }
-        // Handle array indexing: arr[index_var] → Variable("arr_{k}")
-        Expression::ArrayIndex { array, index } => {
-            // Check if the index is the loop index variable
-            if let Expression::Variable(idx_name) = index.as_ref() {
-                if idx_name == index_var {
-                    // Get the array name
-                    if let Expression::Variable(arr_name) = array.as_ref() {
-                        return Expression::Variable(format!("{}_{}", arr_name, k));
-                    }
-                }
-            }
-            // Recursively substitute in array and index
-            Expression::ArrayIndex {
-                array: Box::new(substitute_expression(
-                    array, index_var, value_var, k, array_name,
-                )),
-                index: Box::new(substitute_expression(
-                    index, index_var, value_var, k, array_name,
-                )),
-            }
-        }
-        // Handle Property expressions that look like array indexing (e.g., "oracles[i]")
+        // Handle property strings that represent array indexing (e.g., "oracles[i]").
         Expression::Property(prop) => {
             // Check if this looks like array indexing
             if let Some(bracket_start) = prop.find('[') {
@@ -2221,22 +2100,6 @@ fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Expression, Ar
                     value: Box::new(nv),
                 },
                 ArkType::Uint64Le,
-            )
-        }
-        Expression::ArrayIndex { array, index } => {
-            let (na, at) = rewrite_expression_concat(*array, scope);
-            let (ni, _) = rewrite_expression_concat(*index, scope);
-            let elem_type = if let ArkType::Array(inner) = at {
-                *inner
-            } else {
-                ArkType::Unknown
-            };
-            (
-                Expression::ArrayIndex {
-                    array: Box::new(na),
-                    index: Box::new(ni),
-                },
-                elem_type,
             )
         }
         Expression::ContractInstance {

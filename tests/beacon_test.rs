@@ -5,11 +5,7 @@ use arkade_compiler::opcodes::{
 
 mod common;
 
-// ---------------------------------------------------------------------------
-// LEGACY BEACON (loop-unrolling primitive test)
-// Tests compile-time for-loop unrolling over tx.assetGroups.
-// options { } block removed; oracleServerPk removed (was only used for options.server).
-// ---------------------------------------------------------------------------
+// Loop-unrolling primitive test over tx.assetGroups.
 const BEACON_LOOP_CODE: &str = r#"
 contract PriceBeacon(
   bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
@@ -32,10 +28,7 @@ contract PriceBeacon(
 }
 "#;
 
-// ---------------------------------------------------------------------------
-// PRICE BEACON (dual-asset design with timestampAssetId)
-// options { } block removed (server key is now handled by default-leaf synthesis).
-// ---------------------------------------------------------------------------
+// Price beacon with separate ticker and clock assets.
 const PRICE_BEACON_CODE: &str = r#"
 contract PriceBeacon(
   bytes32 tickerTxid, int tickerGidx,
@@ -105,9 +98,7 @@ contract PriceBeacon(
 }
 "#;
 
-// ---------------------------------------------------------------------------
-// Legacy loop-unrolling tests
-// ---------------------------------------------------------------------------
+// Loop-unrolling tests.
 
 #[test]
 fn test_beacon_parses() {
@@ -120,7 +111,6 @@ fn test_beacon_structure() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
 
     assert_eq!(output.name, "PriceBeacon");
-    // 2 covenant functions → 2 groups (no exit variants in new model)
     assert_eq!(output.functions.len(), 2);
 
     // Both groups should exist

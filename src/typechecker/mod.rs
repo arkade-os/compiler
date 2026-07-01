@@ -136,27 +136,22 @@ impl TypeError {
 pub type Scope = HashMap<String, ArkType>;
 
 pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
-    params
-        .iter()
-        .flat_map(|p| {
-            if p.param_type.ends_with("[]") {
-                let base = p.param_type.trim_end_matches("[]");
-                let elem_type = ArkType::parse(base);
-                // Register the bare name as the array type, plus each flattened
-                // index form (name_0 … name_{N-1}).  The count must match
-                // DEFAULT_ARRAY_LENGTH so the type checker and the compiler
-                // always agree on how many elements exist.
-                let mut entries =
-                    vec![(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())))];
-                for i in 0..DEFAULT_ARRAY_LENGTH {
-                    entries.push((format!("{}_{}", p.name, i), elem_type.clone()));
-                }
-                entries
-            } else {
-                vec![(p.name.clone(), ArkType::parse(&p.param_type))]
+    let mut scope = Scope::new();
+    for p in params {
+        if let Some(base) = p.param_type.strip_suffix("[]") {
+            let elem_type = ArkType::parse(base);
+            // Register the bare name as the array type, plus each flattened
+            // index form (name_0 … name_{N-1}). The count must match
+            // DEFAULT_ARRAY_LENGTH so the type checker and compiler agree.
+            scope.insert(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())));
+            for i in 0..DEFAULT_ARRAY_LENGTH {
+                scope.insert(format!("{}_{}", p.name, i), elem_type.clone());
             }
-        })
-        .collect()
+        } else {
+            scope.insert(p.name.clone(), ArkType::parse(&p.param_type));
+        }
+    }
+    scope
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -503,17 +498,6 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         | Expression::CheckSigFromStackVerify { .. }
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => ArkType::Bool,
-
-        // Array operations
-        Expression::ArrayIndex { array, .. } => {
-            // The element type is the array's inner type.
-            if let ArkType::Array(inner) = infer_type(array, scope) {
-                *inner
-            } else {
-                ArkType::Unknown
-            }
-        }
-        Expression::ArrayLength(_) => ArkType::Int,
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,

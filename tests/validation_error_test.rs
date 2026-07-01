@@ -5,9 +5,6 @@
 //! output.  They exercise the semantic validator, parser error handling, and the
 //! contract → compiler pipeline boundary.
 //!
-//! Note: the `options { … }` block was removed from the language; exit-timelock
-//! validation (zero/positive exit) no longer exists, so those cases are gone.
-
 use arkade_compiler::compile;
 
 // ─── Parse-level errors ───────────────────────────────────────────────────────

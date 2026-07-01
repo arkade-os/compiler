@@ -93,8 +93,7 @@ fn test_token_vault_contract() {
         deposit_leaf
     );
 
-    // Unilateral exit: standalone CSV leaf, pure Bitcoin (no introspection)
-    // Replaces old server_variant=false exit path.
+    // Unilateral exit: standalone CSV leaf with no introspection.
     let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
 
     assert!(
