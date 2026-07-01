@@ -121,8 +121,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         covenants.insert(function.name.clone(), covenant_for(function)?);
     }
 
-    json.functions =
-        tapscript::build_function_groups(&contract, &|name| covenants.get(name).cloned())?;
+    json.functions = tapscript::build_function_groups(&contract, covenants)?;
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants. Issues here

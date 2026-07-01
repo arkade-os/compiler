@@ -259,6 +259,24 @@ pub enum KeyExpr {
     Tweak { func: String },
 }
 
+impl KeyExpr {
+    /// The reserved arkd-operator role.
+    pub fn is_server(&self) -> bool {
+        matches!(self, KeyExpr::Ident(id) if id == "server")
+    }
+
+    /// A bare (implicitly-tweaked) emulator role.
+    pub fn is_emulator(&self) -> bool {
+        matches!(self, KeyExpr::Ident(id) if id == "emulator")
+    }
+
+    /// An infra-injected co-signer whose signature is generated, not user pubkey:
+    /// `server`, bare `emulator`, or an explicit `tweak(emulator, …)`.
+    pub fn is_cosigner(&self) -> bool {
+        self.is_server() || self.is_emulator() || matches!(self, KeyExpr::Tweak { .. })
+    }
+}
+
 /// One ordered component of a tapscript leaf body. Source order must follow the
 /// closure template: condition? · timelock? · multisig (validated in Context::Tapscript).
 #[derive(Debug, Clone)]

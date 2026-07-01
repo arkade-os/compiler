@@ -343,11 +343,7 @@ pub fn validate_arkd_rules(
 
     // F2: forfeit closures must contain `server`.
     if c.class.is_forfeit() {
-        let has_server = c
-            .keys
-            .iter()
-            .any(|k| matches!(k, KeyExpr::Ident(id) if id == "server"));
-        if !has_server {
+        if !c.keys.iter().any(KeyExpr::is_server) {
             return Err(format!(
                 "forfeit tapscript `{}` must include `server` (arkd co-signer)",
                 ts.name
@@ -458,11 +454,7 @@ fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<St
     for item in &ts.items {
         if let TapItem::Sig { keys, sigs, .. } = item {
             for (key, sig) in keys.iter().zip(sigs) {
-                if matches!(
-                    key,
-                    KeyExpr::Ident(id) if id == "server" || id == "emulator"
-                ) || matches!(key, KeyExpr::Tweak { .. })
-                {
+                if key.is_cosigner() {
                     names.insert(sig.clone());
                 }
             }
@@ -494,11 +486,12 @@ fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElemen
 }
 
 /// Build the unified `functions[]` ABI: one group per covenant function plus
-/// one group per pure-standalone leaf. Runs validation per leaf.
+/// one group per pure-standalone leaf. Runs validation per leaf. `covenants`
+/// holds each function's emulator covenant (built by mod.rs to avoid a cycle);
+/// it is consumed as groups are assembled.
 pub fn build_function_groups(
     contract: &Contract,
-    // covenant ASM/inputs are produced by mod.rs and passed in to avoid a cycle.
-    covenant_of: &dyn Fn(&str) -> Option<ArkadeCovenant>,
+    mut covenants: std::collections::HashMap<String, ArkadeCovenant>,
 ) -> Result<Vec<AbiFunctionGroup>, String> {
     // Resolve + validate every author-written tapscript; bucket by group key.
     // group key = function name for NameMatched / Tweaked(func); leaf's own name for Standalone.
@@ -534,7 +527,7 @@ pub fn build_function_groups(
 
     // One group per covenant function, in declaration order.
     for f in contract.functions.iter().filter(|f| !f.is_internal) {
-        let arkade = covenant_of(&f.name);
+        let arkade = covenants.remove(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
         if leaves.is_empty() {
             leaves.push(synthesize_default_leaf(&f.name));
