@@ -46,7 +46,7 @@ contract Foo(
 
 Rules:
 - **`options { ... }` no longer exists** — do not write it (the grammar rejects it).
-- **NEVER** put `pubkey serverPk` / `operatorPk` (or `server`/`emulator`) in the constructor. `server` → `<SERVER_KEY>` and `emulator` → `<EMULATOR_KEY:fn>` are reserved tapscript key roles, injected automatically; they appear only as key operands inside a `tapscript` block's `checkSig`/`checkMultisig`.
+- Do not put reserved tapscript roles (`server`, `emulator`) in the constructor. `server` → `<SERVER_KEY>` and `emulator` → `<EMULATOR_KEY:fn>` are injected automatically and appear only as key operands inside a `tapscript` block's `checkSig`/`checkMultisig`. Ordinary application pubkeys, including names like `operatorPk`, are valid constructor parameters when covenant code explicitly verifies them.
 - Co-signer signatures (`serverSig`, `emulatorSig`, …) are source-declared `signature` inputs on author-written tapscripts; the synthesized default leaf generates them for you.
 - `exit` (and `renew` if applicable) are `int` constructor parameters referenced by `older(...)` / `tx.time >= ...`. A contract with no exit tapscript is valid — it simply has no unilateral-exit path.
 - A tapscript must assemble to one of arkd's 5 closures (source order `condition? · timelock? · multisig`; multisig is always N-of-N; forfeit closures must include `server`). See `docs/tapscript-leaves-spec.md`.
@@ -225,7 +225,7 @@ When writing a new contract:
 
 <antipatterns>
 
-- Putting `pubkey serverPk`/`operatorPk` (or `server`/`emulator`) in the constructor.
+- Putting reserved tapscript roles (`server`, `emulator`) in the constructor.
 - Putting `server`/`emulator` co-signers in a covenant `function` body instead of a `tapscript` leaf.
 - Computing output indices via expression (they're constants).
 - Comparing `value` against an arithmetic expression directly (bind first).

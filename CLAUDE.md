@@ -81,7 +81,7 @@ project-root/
       - Do not change grammar ordering casually; PEG alternative order changes parse behavior.
       - Do not add new Expression/Requirement variants without compiler emission and tests.
       - `options { ... }` was REMOVED from the language — do not write it (the grammar rejects it). Cooperative signing, exit, and renewal are expressed via tapscript leaves and constructor params, not options.
-      - NEVER put `pubkey serverPk`, `pubkey operatorPk`, or any Arkade Operator key in a constructor. `server` and `emulator` are reserved tapscript key roles (lowered to `<SERVER_KEY>`/`<EMULATOR_KEY:fn>`), never constructor parameters.
+      - Do not put reserved tapscript roles (`server`, `emulator`) in a constructor. They lower to `<SERVER_KEY>` / `<EMULATOR_KEY:fn>` only inside `tapscript` key operands. Ordinary application pubkeys, including names like `operatorPk`, are valid constructor parameters when covenant code explicitly verifies them.
       - `server` and `emulator` may only appear as key operands inside a `tapscript` block's `checkSig`/`checkMultisig`; their signatures (`serverSig`, `emulatorSig`, …) are source-declared `signature` inputs on author-written tapscripts. Covenant (`function`-body) code uses only the contract's own pubkeys.
       - NEVER use "ASP" or "ARK" — always "Arkade".
     </dont>
@@ -190,7 +190,7 @@ Load only the skill required for the active task domain.
     - [2026-06-30] Two co-signer roles, both reserved to tapscript context only: `server` → `<SERVER_KEY>` (arkd operator), `emulator` → `<EMULATOR_KEY:fn>` (emulator key tweaked by `fn`'s covenant hash). Covenant function bodies no longer carry `<SERVER_KEY>`/`<serverSig>` — that cosignature lives only in leaves.
     - [2026-03-02] Array parameters are flattened with `DEFAULT_ARRAY_LENGTH=3` in ABI/function input generation.
     - [2026-05-08] Taproot dust threshold is 330 sats — use for ALL minimum output value checks.
-    - [2026-05-08] Server/emulator keys NEVER go in constructors. They are reserved tapscript key roles, injected as `<SERVER_KEY>`/`<EMULATOR_KEY:fn>` in leaf ASM.
+    - [2026-05-08] Reserved tapscript roles (`server`, `emulator`) are not constructor parameters. They are injected as `<SERVER_KEY>`/`<EMULATOR_KEY:fn>` in leaf ASM. Ordinary application pubkeys such as `operatorPk` may be constructor parameters when the covenant verifies them directly.
     - [2026-05-08] `tx.time` is block height throughout (Bitcoin nLockTime). Beacon `clock` asset quantity = block height of last update. Staleness check = 144 blocks (≈ 24 hours), not 86400 seconds.
     - [2026-05-08] Always "Arkade" — never "ARK" or "ASP" in comments, docs, or contract code.
     - [2026-05-19] StabilityVault + StabilityOffer use oracle-signed price witness (Fuji-style), not on-chain beacon UTXO. Oracle constructs msg = sha256(ticker || price || timestamp), signs it. Contract verifies via checkSigFromStack(sig, oraclePk, sha256(ticker + price + time)). The `+` operator auto-coerces int operands to 8-byte LE for correct on-chain hash reconstruction. Replay protection: ticker (feed id), price (value), timestamp (uniqueness + 144-block freshness check).
