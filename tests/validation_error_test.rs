@@ -53,6 +53,79 @@ contract Unclosed(pubkey owner) {
     assert!(result.is_err(), "unclosed contract brace must fail");
 }
 
+#[test]
+fn malformed_reserved_require_calls_are_rejected_before_generic_fallback() {
+    let cases = [
+        (
+            "checkSig extra argument",
+            r#"
+contract BadCheckSig(pubkey owner) {
+    function spend(signature sig) {
+        require(checkSig(sig, owner, extra));
+    }
+}"#,
+            "checkSig(signature, pubkey)",
+        ),
+        (
+            "checkMultisig extra argument",
+            r#"
+contract BadCheckMultisig(pubkey owner) {
+    function spend(signature sig) {
+        require(checkMultisig([owner], [sig], 1, extra));
+    }
+}"#,
+            "checkMultisig([pubkeys], [sigs]?, threshold?)",
+        ),
+    ];
+
+    for (label, source, expected) in cases {
+        let result = compile(source);
+        assert!(result.is_err(), "{label} must be rejected");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("malformed reserved function call") && msg.contains(expected),
+            "unexpected error for {label}: {msg}"
+        );
+    }
+}
+
+#[test]
+fn malformed_reserved_expression_calls_are_rejected_before_generic_fallback() {
+    let source = r#"
+contract BadShaInit(pubkey owner) {
+    function spend(signature sig) {
+        require(checkSig(sig, owner));
+        let ctx = sha256Initialize(owner, extra);
+    }
+}"#;
+
+    let result = compile(source);
+    assert!(result.is_err(), "sha256Initialize extra argument must fail");
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("malformed reserved function call") && msg.contains("sha256Initialize(data)"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn unsupported_generic_function_calls_remain_opaque_properties() {
+    let source = r#"
+contract GenericCall(pubkey owner) {
+    function spend(signature sig) {
+        require(foo(sig, owner, extra));
+        let ctx = bar(owner, extra);
+    }
+}"#;
+
+    let result = compile(source);
+    assert!(
+        result.is_ok(),
+        "non-reserved generic calls should keep compiling as opaque properties: {:?}",
+        result.err()
+    );
+}
+
 // ─── Semantic validation errors ───────────────────────────────────────────────
 
 #[test]

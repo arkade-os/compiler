@@ -243,8 +243,18 @@ fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
                 .as_str()
                 .to_string();
             match name.as_str() {
-                "older" => Ok(TapItem::Older { value: arg }),
-                "after" => Ok(TapItem::After { value: arg }),
+                "older" => {
+                    if inner.next().is_some() {
+                        return Err(format!("{name}() requires one argument"));
+                    }
+                    Ok(TapItem::Older { value: arg })
+                }
+                "after" => {
+                    if inner.next().is_some() {
+                        return Err(format!("{name}() requires one argument"));
+                    }
+                    Ok(TapItem::After { value: arg })
+                }
                 other => Err(format!("unsupported tapscript call `{other}(...)`")),
             }
         }
@@ -575,6 +585,52 @@ fn parse_multiplicative_expr(pair: Pair<Rule>) -> Result<Expression, String> {
 }
 
 // Parse primary expression (atoms)
+fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), String> {
+    if pair.as_rule() != Rule::function_call {
+        return Ok(());
+    }
+
+    let name = pair
+        .clone()
+        .into_inner()
+        .next()
+        .ok_or("Missing call name")?
+        .as_str()
+        .to_string();
+
+    if let Some(signature) = reserved_function_signature(&name) {
+        return Err(format!(
+            "malformed reserved function call `{name}(...)`; expected {signature}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn reserved_function_signature(name: &str) -> Option<&'static str> {
+    match name {
+        "checkSig" => Some("checkSig(signature, pubkey)"),
+        "checkSigFromStack" => Some("checkSigFromStack(signature, pubkey, message)"),
+        "checkSigFromStackVerify" => Some("checkSigFromStackVerify(signature, pubkey, message)"),
+        "checkMultisig" => Some("checkMultisig([pubkeys], [sigs]?, threshold?)"),
+        "sha256" => Some("sha256(data)"),
+        "hash160" => Some("hash160(data)"),
+        "hash256" => Some("hash256(data)"),
+        "ripemd160" => Some("ripemd160(data)"),
+        "sha256Initialize" => Some("sha256Initialize(data)"),
+        "sha256Update" => Some("sha256Update(ctx, chunk)"),
+        "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
+        "neg64" => Some("neg64(value)"),
+        "le64ToScriptNum" => Some("le64ToScriptNum(value)"),
+        "le32ToLe64" => Some("le32ToLe64(value)"),
+        "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
+        "tweakVerify" => Some("tweakVerify(P, k, Q)"),
+        "older" => Some("older(value)"),
+        "after" => Some("after(value)"),
+        _ => None,
+    }
+}
+
 fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         Rule::primary_expr | Rule::unary_expr => {
@@ -643,7 +699,10 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => parse_constructor_to_expression(pair),
-        Rule::function_call => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::function_call => {
+            reject_reserved_function_call(&pair)?;
+            Ok(Expression::Property(pair.as_str().to_string()))
+        }
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         _ => {
@@ -762,6 +821,7 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             parse_property_access_as_requirement(pair)
         }
         Rule::function_call => {
+            reject_reserved_function_call(&pair)?;
             let function_call = pair.as_str().to_string();
             Ok(Requirement::Comparison {
                 left: Expression::Property(function_call),

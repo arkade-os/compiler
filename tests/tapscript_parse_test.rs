@@ -104,3 +104,41 @@ contract Demo(pubkey owner) {
         other => panic!("expected Sig, got {other:?}"),
     }
 }
+
+#[test]
+fn rejects_extra_arguments_to_tapscript_time_locks() {
+    for call in ["older(exitDelay, extra)", "after(cancelTime, extra)"] {
+        let src = format!(
+            r#"
+contract Demo(pubkey owner) {{
+    function exit(signature ownerSig) tapscript {{
+        require({call});
+    }}
+}}
+"#
+        );
+
+        assert!(
+            parser::parse(&src).is_err(),
+            "{call} should reject extra arguments"
+        );
+    }
+}
+
+#[test]
+fn keeps_unsupported_tapscript_calls_on_unsupported_error_path() {
+    let src = r#"
+contract Demo(pubkey owner) {
+    function exit(signature ownerSig) tapscript {
+        require(foo(exitDelay, extra));
+    }
+}
+"#;
+
+    let err = parser::parse(src).expect_err("unsupported tapscript call should fail");
+    assert!(
+        err.to_string()
+            .contains("unsupported tapscript call `foo(...)`"),
+        "unexpected error: {err}"
+    );
+}
