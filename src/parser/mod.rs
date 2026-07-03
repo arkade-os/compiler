@@ -1013,8 +1013,12 @@ fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
     let hash_func = inner.next().ok_or("Missing hash function")?;
     let mut hash_func_inner = hash_func.into_inner();
-    // skip hash_fn_name ("sha256", "hash256", …)
-    let _fn_name = hash_func_inner.next().ok_or("Missing hash function name")?;
+    let fn_name = hash_func_inner
+        .next()
+        .ok_or("Missing hash function name")?
+        .as_str();
+    let hash_fn = crate::models::HashFn::parse(fn_name)
+        .ok_or_else(|| format!("unknown hash function {fn_name}"))?;
     let preimage = hash_func_inner
         .next()
         .ok_or("Missing preimage")?
@@ -1022,7 +1026,11 @@ fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
         .to_string();
     let hash = inner.next().ok_or("Missing the hash")?.as_str().to_string();
 
-    Ok(Requirement::HashEqual { preimage, hash })
+    Ok(Requirement::HashEqual {
+        hash_fn,
+        preimage,
+        hash,
+    })
 }
 
 /// Parse binary operation: expr op expr → Comparison requirement

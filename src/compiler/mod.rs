@@ -325,9 +325,13 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             asm.push(OP_DROP.to_string());
             Ok(())
         }
-        Requirement::HashEqual { preimage, hash } => {
+        Requirement::HashEqual {
+            hash_fn,
+            preimage,
+            hash,
+        } => {
             asm.push(format!("<{}>", preimage));
-            asm.push(OP_SHA256.to_string());
+            asm.push(hash_fn.opcode().to_string());
             asm.push(format!("<{}>", hash));
             asm.push(OP_EQUAL.to_string());
             Ok(())

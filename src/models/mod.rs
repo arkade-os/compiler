@@ -207,7 +207,11 @@ pub enum Requirement {
         timelock_var: Option<String>,
     },
     /// Hash equal requirement
-    HashEqual { preimage: String, hash: String },
+    HashEqual {
+        hash_fn: HashFn,
+        preimage: String,
+        hash: String,
+    },
     /// Comparison requirement
     Comparison {
         left: Expression,
