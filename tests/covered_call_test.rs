@@ -3,100 +3,28 @@ use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTOUTASSETLOOKUP,
 };
 
-// CoveredCall: single-locked, no-oracle, physically-settled European call
-// matching Rysk v12's mechanics. Only the seller's BTC is escrowed. Buyer
-// brings the strike payment at exercise time IF they choose to exercise.
-const CALL_CODE: &str = r#"
-import "single_sig.ark";
+mod common;
+use common::{arkade_asm, arkade_inputs, group};
 
-options {
-  server = server;
-  exit = exit;
-}
-
-contract CoveredCall(
-  pubkey  sellerPk,
-  pubkey  buyerPk,
-  bytes32 stableAssetIdTxid, int stableAssetIdGidx,
-  int     btcSats,
-  int     strikeAmount,
-  int     expiryHeight,
-  int     graceBlocks,
-  int     exit
-) {
-  function exercise(signature buyerSig) {
-    require(tx.time >= expiryHeight, "before expiry");
-    require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
-
-    require(
-      tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= strikeAmount,
-      "seller underpaid"
-    );
-    require(
-      tx.outputs[0].scriptPubKey == new SingleSig(sellerPk),
-      "output 0 not seller"
-    );
-
-    require(tx.outputs[1].value >= btcSats, "buyer underpaid");
-    require(
-      tx.outputs[1].scriptPubKey == new SingleSig(buyerPk),
-      "output 1 not buyer"
-    );
-  }
-
-  function reclaim(signature sellerSig) {
-    int reclaimHeight = expiryHeight + graceBlocks;
-    require(tx.time >= reclaimHeight, "reclaim window not open");
-    require(checkSig(sellerSig, sellerPk), "invalid seller sig");
-  }
-
-  function transferSeller(signature sellerSig, pubkey newSellerPk) {
-    require(tx.time < expiryHeight, "no transfers after expiry");
-    require(checkSig(sellerSig, sellerPk), "invalid seller sig");
-    require(
-      tx.outputs[0].scriptPubKey == new CoveredCall(
-        newSellerPk, buyerPk, stableAssetId,
-        btcSats, strikeAmount, expiryHeight, graceBlocks, exit
-      ),
-      "invalid transfer output"
-    );
-    require(tx.outputs[0].value >= btcSats, "collateral not preserved");
-  }
-
-  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
-    require(tx.time < expiryHeight, "no transfers after expiry");
-    require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
-    require(
-      tx.outputs[0].scriptPubKey == new CoveredCall(
-        sellerPk, newBuyerPk, stableAssetId,
-        btcSats, strikeAmount, expiryHeight, graceBlocks, exit
-      ),
-      "invalid transfer output"
-    );
-    require(tx.outputs[0].value >= btcSats, "collateral not preserved");
-  }
-}
-"#;
+const CALL_CODE: &str = include_str!("../examples/options/covered_call.ark");
 
 #[test]
-fn test_compiles_with_8_tapleaves() {
-    // 4 functions x 2 variants (cooperative + exit) = 8 leaves
+fn test_compiles_with_5_groups() {
+    // 4 covenant functions + 1 standalone unilateral tapscript = 5 groups
     let out = compile(CALL_CODE).expect("compile");
     assert_eq!(out.name, "CoveredCall");
-    assert_eq!(out.functions.len(), 8);
+    assert_eq!(out.functions.len(), 5);
 }
 
 #[test]
 fn test_exercise_takes_only_buyer_signature() {
     // Single-locked design: exercise is buyer-gated. No oracle, no seller.
     let out = compile(CALL_CODE).unwrap();
-    let ex = out
-        .functions
-        .iter()
-        .find(|f| f.name == "exercise" && f.server_variant)
-        .unwrap();
-    let names: Vec<&str> = ex.function_inputs.iter().map(|i| i.name.as_str()).collect();
-    assert!(names.contains(&"buyerSig"), "exercise must take buyerSig");
+    let names = arkade_inputs(&out, "exercise");
+    assert!(
+        names.contains(&"buyerSig".to_string()),
+        "exercise must take buyerSig"
+    );
     for forbidden in [
         "sellerSig",
         "oracleSig",
@@ -105,7 +33,7 @@ fn test_exercise_takes_only_buyer_signature() {
         "oraclePk",
     ] {
         assert!(
-            !names.contains(&forbidden),
+            !names.contains(&forbidden.to_string()),
             "exercise must not require {forbidden}"
         );
     }
@@ -116,33 +44,18 @@ fn test_exercise_has_no_oracle() {
     // No checkSigFromStack — there is no oracle dependency in this design.
     let out = compile(CALL_CODE).unwrap();
     for fn_name in ["exercise", "reclaim", "transferSeller", "transferBuyer"] {
-        for &sv in &[true, false] {
-            let f = out
-                .functions
-                .iter()
-                .find(|f| f.name == fn_name && f.server_variant == sv)
-                .unwrap();
-            let asm = f.asm.join(" ");
-            assert!(
-                !asm.contains(OP_CHECKSIGFROMSTACK),
-                "{fn_name} ({}): must not invoke oracle",
-                if sv { "coop" } else { "exit" }
-            );
-        }
+        let asm = arkade_asm(&out, fn_name);
+        assert!(
+            !asm.contains(OP_CHECKSIGFROMSTACK),
+            "{fn_name}: must not invoke oracle"
+        );
     }
 }
 
 #[test]
 fn test_exercise_verifies_strike_payment() {
-    // Output 0 must hold strikeAmount of stableAssetId, output 1 must hold
-    // btcSats of BTC value. Both checks emitted in the cooperative ASM.
     let out = compile(CALL_CODE).unwrap();
-    let ex = out
-        .functions
-        .iter()
-        .find(|f| f.name == "exercise" && f.server_variant)
-        .unwrap();
-    let asm = ex.asm.join(" ");
+    let asm = arkade_asm(&out, "exercise");
     assert!(
         asm.contains(OP_INSPECTOUTASSETLOOKUP),
         "exercise must look up stablecoin balance on output 0"
@@ -161,18 +74,16 @@ fn test_exercise_verifies_strike_payment() {
 #[test]
 fn test_reclaim_is_seller_only_with_cltv() {
     let out = compile(CALL_CODE).unwrap();
-    let r = out
-        .functions
-        .iter()
-        .find(|f| f.name == "reclaim" && f.server_variant)
-        .unwrap();
-    let names: Vec<&str> = r.function_inputs.iter().map(|i| i.name.as_str()).collect();
-    assert!(names.contains(&"sellerSig"), "reclaim must take sellerSig");
+    let names = arkade_inputs(&out, "reclaim");
     assert!(
-        !names.contains(&"buyerSig"),
+        names.contains(&"sellerSig".to_string()),
+        "reclaim must take sellerSig"
+    );
+    assert!(
+        !names.contains(&"buyerSig".to_string()),
         "reclaim must not require buyerSig"
     );
-    let asm = r.asm.join(" ");
+    let asm = arkade_asm(&out, "reclaim");
     assert!(
         asm.contains(OP_CHECKLOCKTIMEVERIFY),
         "reclaim must enforce timelock"
@@ -202,19 +113,13 @@ fn test_asset_id_is_two_explicit_params() {
 
 #[test]
 fn test_transfers_guarded_by_expiry() {
-    // Cooperative variant carries the `tx.time < expiryHeight` guard. The
-    // exit variant strips introspection (Arkade-wide constraint) and falls
-    // back to N-of-N consent, which provides equivalent protection.
+    // Cooperative covenant carries the `tx.time < expiryHeight` guard.
     let out = compile(CALL_CODE).unwrap();
     for name in ["transferSeller", "transferBuyer"] {
-        let t = out
-            .functions
-            .iter()
-            .find(|f| f.name == name && f.server_variant)
-            .unwrap();
+        let asm = arkade_asm(&out, name);
         assert!(
-            t.asm.iter().any(|op| op.as_str() == "<expiryHeight>"),
-            "{name}: cooperative variant must reference <expiryHeight>"
+            asm.contains("<expiryHeight>"),
+            "{name}: covenant must reference <expiryHeight>"
         );
     }
 }
@@ -225,12 +130,7 @@ fn test_transfers_preserve_btc_collateral() {
     // continuation's BTC value, not asset balance.
     let out = compile(CALL_CODE).unwrap();
     for name in ["transferSeller", "transferBuyer"] {
-        let t = out
-            .functions
-            .iter()
-            .find(|f| f.name == name && f.server_variant)
-            .unwrap();
-        let asm = t.asm.join(" ");
+        let asm = arkade_asm(&out, name);
         assert!(
             !asm.contains(OP_INSPECTOUTASSETLOOKUP),
             "{name}: CoveredCall transfers should not need asset lookup (vault is BTC-only)"
@@ -240,36 +140,26 @@ fn test_transfers_preserve_btc_collateral() {
             "{name}: must verify BTC value preserved on continuation"
         );
         assert!(
-            t.asm.iter().any(|s| s == OP_CHECKSIG),
+            asm.contains(OP_CHECKSIG),
             "{name}: must require party signature"
         );
     }
 }
 
 #[test]
-fn test_exit_leaves_have_no_introspection() {
-    // Exit variants are pure Bitcoin script: N-of-N CHECKSIG + CSV.
-    // No introspection opcodes (OP_INSPECT*, OP_CHECKLOCKTIMEVERIFY).
+fn test_unilateral_leaf_has_no_introspection() {
+    // The unilateral tapscript (CSV exit) must carry no introspection opcodes.
     let out = compile(CALL_CODE).unwrap();
-    for fn_name in ["exercise", "reclaim", "transferSeller", "transferBuyer"] {
-        let exit = out
-            .functions
-            .iter()
-            .find(|f| f.name == fn_name && !f.server_variant)
-            .unwrap();
-        let asm = exit.asm.join(" ");
-        assert!(
-            !asm.contains("OP_INSPECT"),
-            "{fn_name} exit must not use introspection opcodes"
-        );
-        // reclaim's exit DOES legitimately have CLTV (because reclaim's
-        // cooperative path also has it, and CLTV is pure Bitcoin script).
-        // The other functions should not.
-        if fn_name != "reclaim" {
-            assert!(
-                !asm.contains(OP_CHECKLOCKTIMEVERIFY),
-                "{fn_name} exit must not use OP_CHECKLOCKTIMEVERIFY"
-            );
-        }
-    }
+    let g = group(&out, "unilateral");
+    assert_eq!(g.leaves.len(), 1);
+    let leaf_asm = g.leaves[0].asm.join(" ");
+    assert!(
+        !leaf_asm.contains("OP_INSPECT"),
+        "unilateral leaf must not use introspection: {}",
+        leaf_asm
+    );
+    assert!(
+        !leaf_asm.contains(OP_CHECKLOCKTIMEVERIFY),
+        "unilateral must use CSV (CHECKSEQUENCEVERIFY), not CLTV"
+    );
 }

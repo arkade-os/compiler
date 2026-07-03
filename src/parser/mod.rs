@@ -27,10 +27,8 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
         parameters: Vec::new(),
-        renewal_timelock: None,
-        exit_timelock: None,
-        has_server_key: false,
         functions: Vec::new(),
+        tapscripts: Vec::new(),
         imports: Vec::new(),
     };
 
@@ -65,19 +63,9 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     Ok(contract)
 }
 
-/// Parse a contract definition including options block, name, parameters, and functions
+/// Parse a contract definition: name, parameters, and functions
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
     let mut inner_pairs = pair.into_inner().peekable();
-
-    // Optional options block
-    if inner_pairs
-        .peek()
-        .map_or(false, |p| p.as_rule() == Rule::options_block)
-    {
-        if let Some(options_block) = inner_pairs.next() {
-            parse_options_block(contract, options_block)?;
-        }
-    }
 
     // Contract name (required)
     contract.name = match inner_pairs.next() {
@@ -90,46 +78,18 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
         contract.parameters = parse_parameters(param_list)?;
     }
 
-    // Functions
+    // Functions (covenant) and tapscript declarations share the `function` rule;
+    // a tapscript carries a `tapscript_block` body.
     for func_pair in inner_pairs {
-        if func_pair.as_rule() == Rule::function {
+        if func_pair.as_rule() != Rule::function {
+            continue;
+        }
+        if function_pair_is_tapscript(&func_pair) {
+            let ts = parse_named_tapscript(func_pair)?;
+            contract.tapscripts.push(ts);
+        } else {
             let func = parse_function(func_pair)?;
             contract.functions.push(func);
-        }
-    }
-    Ok(())
-}
-
-/// Parse the options block (server key, exit timelock, renewal timelock)
-fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
-    for option_pair in pair.into_inner() {
-        if option_pair.as_rule() == Rule::option_setting {
-            let mut inner = option_pair.into_inner();
-            let option_name = match inner.next() {
-                Some(name) => name.as_str(),
-                None => continue,
-            };
-            let option_value = match inner.next() {
-                Some(value) => value.as_str(),
-                None => return Err(format!("Missing {} option value", option_name)),
-            };
-
-            match option_name {
-                "server" => {
-                    // The Arkade operator key is always injected externally as <SERVER_KEY>.
-                    // The RHS value is a naming convention only and is never emitted to ASM.
-                    contract.has_server_key = true;
-                }
-                "renew" => {
-                    // Accept integer literal ("1008") or constructor param name ("renew")
-                    contract.renewal_timelock = Some(option_value.to_string());
-                }
-                "exit" => {
-                    // Accept integer literal ("144") or constructor param name ("exit")
-                    contract.exit_timelock = Some(option_value.to_string());
-                }
-                _ => {} // Ignore unknown options
-            }
         }
     }
     Ok(())
@@ -158,24 +118,216 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
     }
 
     // Check for function modifier (internal) and body
-    match inner_pairs.next() {
-        Some(next_pair) => {
-            if next_pair.as_rule() == Rule::function_modifier {
-                func.is_internal = true;
-                for req_pair in inner_pairs {
-                    parse_function_body(&mut func, req_pair)?;
-                }
-            } else {
-                parse_function_body(&mut func, next_pair)?;
-                for req_pair in inner_pairs {
-                    parse_function_body(&mut func, req_pair)?;
-                }
+    if let Some(next_pair) = inner_pairs.next() {
+        if next_pair.as_rule() == Rule::function_modifier {
+            func.is_internal = true;
+            for req_pair in inner_pairs {
+                parse_function_body(&mut func, req_pair)?;
+            }
+        } else {
+            parse_function_body(&mut func, next_pair)?;
+            for req_pair in inner_pairs {
+                parse_function_body(&mut func, req_pair)?;
             }
         }
-        None => {} // Empty function body
-    };
+    }
 
     Ok(func)
+}
+
+/// True if a `function` pair carries a `tapscript_block` body.
+fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
+    pair.clone()
+        .into_inner()
+        .any(|p| p.as_rule() == Rule::tapscript_block)
+}
+
+/// Parse a `function <name>(<params>) tapscript { … }` declaration.
+fn parse_named_tapscript(pair: Pair<Rule>) -> Result<crate::models::NamedTapscript, String> {
+    let mut inner = pair.into_inner();
+    let name = inner
+        .next()
+        .ok_or("Missing tapscript name")?
+        .as_str()
+        .to_string();
+    let params = inner.next().ok_or("Missing tapscript parameter list")?;
+    let inputs = parse_parameters(params)?;
+    let block = inner.next().ok_or("Missing tapscript body")?;
+    let mut items = Vec::new();
+    for stmt in block.into_inner() {
+        if stmt.as_rule() == Rule::require_stmt {
+            let expr = stmt
+                .into_inner()
+                .next()
+                .ok_or("Empty require() in tapscript")?;
+            items.push(parse_tap_item(expr)?);
+        }
+    }
+    Ok(crate::models::NamedTapscript {
+        name,
+        inputs,
+        items,
+    })
+}
+
+/// Interpret one `require(...)` inner expression as a tapscript item.
+fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
+    use crate::models::{HashFn, TapItem};
+    match pair.as_rule() {
+        Rule::hash_comparison => {
+            let mut inner = pair.into_inner();
+            let func = inner.next().ok_or("Missing hash function")?; // hash_func
+            let mut f_inner = func.into_inner();
+            let fn_name = f_inner.next().ok_or("Missing hash fn name")?.as_str();
+            let hash_fn =
+                HashFn::parse(fn_name).ok_or_else(|| format!("unknown hash function {fn_name}"))?;
+            let preimage = f_inner
+                .next()
+                .ok_or("Missing hash preimage")?
+                .as_str()
+                .to_string();
+            let hash = inner
+                .next()
+                .ok_or("Missing hash value")?
+                .as_str()
+                .to_string();
+            Ok(TapItem::Hash {
+                hash_fn,
+                preimage,
+                hash,
+            })
+        }
+        Rule::time_comparison => {
+            // tx.time >= ident  → absolute (CLTV)
+            let mut inner = pair.into_inner();
+            let value = inner
+                .next()
+                .ok_or("Missing tx.time bound")?
+                .as_str()
+                .to_string();
+            Ok(TapItem::After { value })
+        }
+        Rule::check_sig => {
+            let mut inner = pair.into_inner();
+            let sig = inner
+                .next()
+                .ok_or("Missing signature")?
+                .as_str()
+                .to_string();
+            let key = parse_key_expr(inner.next().ok_or("Missing key")?)?;
+            Ok(TapItem::Sig {
+                keys: vec![key],
+                sigs: vec![sig],
+                threshold: Some(1),
+            })
+        }
+        Rule::check_multisig => {
+            // check_multisig wraps check_threshold_multisig.
+            let inner = pair
+                .into_inner()
+                .next()
+                .ok_or("Missing checkMultisig body")?;
+            parse_tap_multisig(inner)
+        }
+        Rule::function_call => {
+            // older(n) / after(n)
+            let mut inner = pair.into_inner();
+            let name = inner
+                .next()
+                .ok_or("Missing call name")?
+                .as_str()
+                .to_string();
+            let arg = inner
+                .next()
+                .ok_or_else(|| format!("{name}() requires one argument"))?
+                .as_str()
+                .to_string();
+            match name.as_str() {
+                "older" => {
+                    if inner.next().is_some() {
+                        return Err(format!("{name}() requires one argument"));
+                    }
+                    Ok(TapItem::Older { value: arg })
+                }
+                "after" => {
+                    if inner.next().is_some() {
+                        return Err(format!("{name}() requires one argument"));
+                    }
+                    Ok(TapItem::After { value: arg })
+                }
+                other => Err(format!("unsupported tapscript call `{other}(...)`")),
+            }
+        }
+        other => Err(format!(
+            "unsupported expression in tapscript require(): {other:?}"
+        )),
+    }
+}
+
+/// Parse `check_threshold_multisig` inner pairs into a Sig item.
+fn parse_tap_multisig(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
+    use crate::models::TapItem;
+    let mut keys = Vec::new();
+    let mut sigs = Vec::new();
+    let mut threshold = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::key_array => {
+                for k in child.into_inner() {
+                    keys.push(parse_key_expr(k)?);
+                }
+            }
+            Rule::array => {
+                for s in child.into_inner() {
+                    sigs.push(s.as_str().to_string());
+                }
+            }
+            Rule::number_literal => {
+                threshold = Some(
+                    child
+                        .as_str()
+                        .parse::<u16>()
+                        .map_err(|e| format!("invalid threshold: {e}"))?,
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(TapItem::Sig {
+        keys,
+        sigs,
+        threshold,
+    })
+}
+
+/// Parse a `key_expr` (bare identifier or `tweak(emulator, func)`).
+fn parse_key_expr(pair: Pair<Rule>) -> Result<crate::models::KeyExpr, String> {
+    use crate::models::KeyExpr;
+    match pair.as_rule() {
+        Rule::identifier => Ok(KeyExpr::Ident(pair.as_str().to_string())),
+        Rule::key_expr => {
+            let inner = pair.into_inner().next().ok_or("Empty key expression")?;
+            parse_key_expr(inner)
+        }
+        Rule::tweak_key => {
+            let mut inner = pair.into_inner();
+            let base = inner
+                .next()
+                .ok_or("Missing tweak base")?
+                .as_str()
+                .to_string();
+            if base != "emulator" {
+                return Err(format!("tweak() base must be `emulator`, got `{base}`"));
+            }
+            let func = inner
+                .next()
+                .ok_or("Missing tweak func name")?
+                .as_str()
+                .to_string();
+            Ok(KeyExpr::Tweak { func })
+        }
+        other => Err(format!("unexpected key expression: {other:?}")),
+    }
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
@@ -433,6 +585,52 @@ fn parse_multiplicative_expr(pair: Pair<Rule>) -> Result<Expression, String> {
 }
 
 // Parse primary expression (atoms)
+fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), String> {
+    if pair.as_rule() != Rule::function_call {
+        return Ok(());
+    }
+
+    let name = pair
+        .clone()
+        .into_inner()
+        .next()
+        .ok_or("Missing call name")?
+        .as_str()
+        .to_string();
+
+    if let Some(signature) = reserved_function_signature(&name) {
+        return Err(format!(
+            "malformed reserved function call `{name}(...)`; expected {signature}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn reserved_function_signature(name: &str) -> Option<&'static str> {
+    match name {
+        "checkSig" => Some("checkSig(signature, pubkey)"),
+        "checkSigFromStack" => Some("checkSigFromStack(signature, pubkey, message)"),
+        "checkSigFromStackVerify" => Some("checkSigFromStackVerify(signature, pubkey, message)"),
+        "checkMultisig" => Some("checkMultisig([pubkeys], [sigs]?, threshold?)"),
+        "sha256" => Some("sha256(data)"),
+        "hash160" => Some("hash160(data)"),
+        "hash256" => Some("hash256(data)"),
+        "ripemd160" => Some("ripemd160(data)"),
+        "sha256Initialize" => Some("sha256Initialize(data)"),
+        "sha256Update" => Some("sha256Update(ctx, chunk)"),
+        "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
+        "neg64" => Some("neg64(value)"),
+        "le64ToScriptNum" => Some("le64ToScriptNum(value)"),
+        "le32ToLe64" => Some("le32ToLe64(value)"),
+        "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
+        "tweakVerify" => Some("tweakVerify(P, k, Q)"),
+        "older" => Some("older(value)"),
+        "after" => Some("after(value)"),
+        _ => None,
+    }
+}
+
 fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         Rule::primary_expr | Rule::unary_expr => {
@@ -501,7 +699,10 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => parse_constructor_to_expression(pair),
-        Rule::function_call => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::function_call => {
+            reject_reserved_function_call(&pair)?;
+            Ok(Expression::Property(pair.as_str().to_string()))
+        }
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         _ => {
@@ -620,6 +821,7 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             parse_property_access_as_requirement(pair)
         }
         Rule::function_call => {
+            reject_reserved_function_call(&pair)?;
             let function_call = pair.as_str().to_string();
             Ok(Requirement::Comparison {
                 left: Expression::Property(function_call),
@@ -687,7 +889,7 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     })
 }
 
-/// Parse checkMultisig([pubkeys], threshold) → CheckMultisig requirement
+/// Parse checkMultisig([pubkeys], [sigs]?, threshold?) → CheckMultisig requirement
 fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair
         .into_inner()
@@ -696,28 +898,31 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         .into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
 
-    // We support threshold multisig only, so signatures are not required
-    // The next item is a threshold number
-    let next = inner.next();
-
     let pubkeys: Vec<String> = pubkeys_array
         .into_inner()
         .map(|p| p.as_str().to_string())
         .collect();
-    match next {
+
+    // Next may be an optional sigs array (Rule::array) or a threshold number.
+    // Skip the sigs array if present; use number_literal as threshold.
+    let mut threshold_pair = inner.next();
+    if let Some(ref tp) = threshold_pair {
+        if tp.as_rule() == Rule::array {
+            threshold_pair = inner.next();
+        }
+    }
+
+    match threshold_pair {
         Some(next_pair) => {
             // m-of-n threshold multisig
             let threshold = match u16::from_str(next_pair.as_str()) {
                 Ok(threshold) => threshold,
-                Err(e) => {
-                    return Err(format!("{}", e));
-                }
+                Err(e) => return Err(format!("{}", e)),
             };
-
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
         None => {
-            // An n-of-n multisig should be created by optionally omitting the threshold from checkMultisig arguments
+            // n-of-n multisig when threshold is omitted
             let threshold = pubkeys.len() as u16;
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
@@ -806,16 +1011,26 @@ fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
 /// Parse sha256(preimage) == hash → HashEqual requirement
 fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let sha256_func = inner.next().ok_or("Missing hash function")?;
-    let mut sha256_inner = sha256_func.into_inner();
-    let preimage = sha256_inner
+    let hash_func = inner.next().ok_or("Missing hash function")?;
+    let mut hash_func_inner = hash_func.into_inner();
+    let fn_name = hash_func_inner
+        .next()
+        .ok_or("Missing hash function name")?
+        .as_str();
+    let hash_fn = crate::models::HashFn::parse(fn_name)
+        .ok_or_else(|| format!("unknown hash function {fn_name}"))?;
+    let preimage = hash_func_inner
         .next()
         .ok_or("Missing preimage")?
         .as_str()
         .to_string();
     let hash = inner.next().ok_or("Missing the hash")?.as_str().to_string();
 
-    Ok(Requirement::HashEqual { preimage, hash })
+    Ok(Requirement::HashEqual {
+        hash_fn,
+        preimage,
+        hash,
+    })
 }
 
 /// Parse binary operation: expr op expr → Comparison requirement
@@ -2070,10 +2285,9 @@ fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     if text.starts_with("tx.input.current") {
         let property = if text == "tx.input.current" {
             None
-        } else if let Some(rest) = text.strip_prefix("tx.input.current.") {
-            Some(rest.to_string())
         } else {
-            None
+            text.strip_prefix("tx.input.current.")
+                .map(|rest| rest.to_string())
         };
         return Ok(Expression::CurrentInput(property));
     }
@@ -2131,8 +2345,7 @@ fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, String> {
             let mut param_inner = param_pair.into_inner();
             let param_type = match param_inner.next() {
                 Some(type_pair) => {
-                    // data_type is now a compound rule: base_type ~ ("[]")?
-                    // Extract the base type and check for array suffix
+                    // Extract the base type and check for an array suffix.
                     let type_text = type_pair.as_str().trim();
                     if type_text.ends_with("[]") {
                         type_text.to_string()

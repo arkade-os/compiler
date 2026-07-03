@@ -7,15 +7,13 @@
 // - group.delta: net change across inputs/outputs
 // - group.controlIs(txid, gidx): collection control membership
 
-options {
-  server = server;
-  exit = 288;
-}
+import "single_sig.ark";
 
 contract NFTMint(
     bytes32 collectionCtrlIdTxid,
     int collectionCtrlIdGidx,
-    pubkey issuerPk
+    pubkey issuerPk,
+    int exit
 ) {
     // Mint a new NFT: must be fresh with delta=1
     function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey recipientPk, signature issuerSig) {
@@ -36,7 +34,7 @@ contract NFTMint(
 
         // NFT goes to recipient
         require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk), "wrong recipient");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk, exit), "wrong recipient");
 
         require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
@@ -56,7 +54,7 @@ contract NFTMint(
 
         // NFT goes to new owner
         require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk), "wrong dest");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk, exit), "wrong dest");
 
         require(checkSig(ownerSig, ownerPk), "bad owner sig");
     }

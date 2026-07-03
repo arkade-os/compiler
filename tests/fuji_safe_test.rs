@@ -1,11 +1,14 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{
+    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY, OP_LESSTHAN,
+};
+
+mod common;
 
 #[test]
 fn test_fuji_safe_contract() {
-    // Fuji Safe contract source code
     let fuji_code = include_str!("../examples/fuji_safe.ark");
 
-    // Compile the contract
     let result = compile(fuji_code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
@@ -15,7 +18,7 @@ fn test_fuji_safe_contract() {
     assert_eq!(output.name, "FujiSafe");
 
     // Verify parameters
-    assert_eq!(output.parameters.len(), 9);
+    assert_eq!(output.parameters.len(), 10);
     assert_eq!(output.parameters[0].name, "assetCommitmentHash");
     assert_eq!(output.parameters[0].param_type, "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
@@ -25,90 +28,123 @@ fn test_fuji_safe_contract() {
     assert_eq!(output.parameters[3].name, "treasuryPk");
     assert_eq!(output.parameters[3].param_type, "pubkey");
 
-    // Verify functions
-    let functions = output
-        .functions
-        .iter()
-        .map(|f| f.name.clone())
-        .collect::<Vec<_>>();
-    assert!(functions.contains(&"claim".to_string()));
-    assert!(functions.contains(&"liquidate".to_string()));
-    assert!(functions.contains(&"redeem".to_string()));
-    assert!(functions.contains(&"renew".to_string()));
+    // 4 covenant functions + 1 standalone unilateral = 5 groups
+    assert_eq!(
+        output.functions.len(),
+        5,
+        "expected 5 groups (claim, liquidate, redeem, renew, unilateral)"
+    );
 
-    // Verify server variants
-    let server_variants = output
-        .functions
-        .iter()
-        .filter(|f| f.server_variant)
-        .map(|f| f.name.clone())
-        .collect::<Vec<_>>();
+    // All expected covenant function names should appear as group names
+    let group_names: Vec<&str> = output.functions.iter().map(|g| g.name.as_str()).collect();
+    assert!(group_names.contains(&"claim"), "missing claim group");
+    assert!(
+        group_names.contains(&"liquidate"),
+        "missing liquidate group"
+    );
+    assert!(group_names.contains(&"redeem"), "missing redeem group");
+    assert!(group_names.contains(&"renew"), "missing renew group");
+    assert!(
+        group_names.contains(&"unilateral"),
+        "missing unilateral group"
+    );
 
-    let non_server_variants = output
-        .functions
-        .iter()
-        .filter(|f| !f.server_variant)
-        .map(|f| f.name.clone())
-        .collect::<Vec<_>>();
+    // Verify claim function: checks expiration timeout (CLTV) in arkade covenant
+    let claim_asm = common::arkade_asm(&output, "claim");
+    assert!(
+        claim_asm.contains(OP_CHECKLOCKTIMEVERIFY),
+        "claim covenant should enforce expiration timeout: {}",
+        claim_asm
+    );
+    assert!(
+        claim_asm.contains(OP_CHECKSIG),
+        "claim covenant should verify treasury sig: {}",
+        claim_asm
+    );
 
-    // Each function should have both server and non-server variants
-    for func_name in ["claim", "liquidate", "redeem", "renew"] {
-        assert!(server_variants.contains(&func_name.to_string()));
-        assert!(non_server_variants.contains(&func_name.to_string()));
-    }
+    // claim leaf carries server + emulator cosig
+    let claim_leaf = common::leaf_asm(&output, "claim", "claim");
+    assert!(
+        claim_leaf.contains("<SERVER_KEY>"),
+        "claim leaf should have SERVER_KEY: {}",
+        claim_leaf
+    );
+    assert!(
+        claim_leaf.contains(OP_CHECKSIGVERIFY),
+        "claim leaf should have CHECKSIGVERIFY: {}",
+        claim_leaf
+    );
 
-    // Verify claim function requirements
-    let claim_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "claim" && f.server_variant)
-        .unwrap();
-    assert!(claim_func.require.iter().any(|r| r.req_type == "after"));
-    assert!(claim_func
-        .require
-        .iter()
-        .any(|r| r.req_type == "serverSignature"));
+    // Verify liquidate function: price comparison + oracle sig + CLTV
+    let liquidate_asm = common::arkade_asm(&output, "liquidate");
+    assert!(
+        liquidate_asm.contains(OP_LESSTHAN),
+        "liquidate covenant should compare price: {}",
+        liquidate_asm
+    );
+    assert!(
+        liquidate_asm.contains(OP_CHECKSIGFROMSTACK),
+        "liquidate covenant should verify oracle sig: {}",
+        liquidate_asm
+    );
+    assert!(
+        liquidate_asm.contains(OP_CHECKSIG),
+        "liquidate covenant should verify treasury sig: {}",
+        liquidate_asm
+    );
 
-    // Verify liquidate function requirements
-    let liquidate_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "liquidate" && f.server_variant)
-        .unwrap();
-    assert!(liquidate_func
-        .require
-        .iter()
-        .any(|r| r.req_type == "comparison"));
-    assert!(liquidate_func
-        .require
-        .iter()
-        .any(|r| r.req_type == "serverSignature"));
+    // liquidate leaf carries server + emulator cosig
+    let liquidate_leaf = common::leaf_asm(&output, "liquidate", "liquidate");
+    assert!(
+        liquidate_leaf.contains("<SERVER_KEY>"),
+        "liquidate leaf should have SERVER_KEY: {}",
+        liquidate_leaf
+    );
 
-    // Verify redeem function requirements
-    let redeem_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "redeem" && f.server_variant)
-        .unwrap();
-    assert!(redeem_func
-        .require
-        .iter()
-        .any(|r| r.req_type == "signature"));
-    assert!(redeem_func
-        .require
-        .iter()
-        .any(|r| r.req_type == "serverSignature"));
+    // Verify redeem function: borrower signature
+    let redeem_asm = common::arkade_asm(&output, "redeem");
+    assert!(
+        redeem_asm.contains(OP_CHECKSIG),
+        "redeem covenant should verify borrower sig: {}",
+        redeem_asm
+    );
 
-    // Verify renew function requirements
-    let renew_func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "renew" && f.server_variant)
-        .unwrap();
-    assert!(renew_func
-        .require
-        .iter()
-        .any(|r| r.req_type == "serverSignature"));
+    // redeem leaf carries server + emulator cosig
+    let redeem_leaf = common::leaf_asm(&output, "redeem", "redeem");
+    assert!(
+        redeem_leaf.contains("<SERVER_KEY>"),
+        "redeem leaf should have SERVER_KEY: {}",
+        redeem_leaf
+    );
+
+    // Verify renew function: treasury signature
+    let renew_asm = common::arkade_asm(&output, "renew");
+    assert!(
+        renew_asm.contains(OP_CHECKSIG),
+        "renew covenant should verify treasury sig: {}",
+        renew_asm
+    );
+
+    // renew leaf carries server + emulator cosig
+    let renew_leaf = common::leaf_asm(&output, "renew", "renew");
+    assert!(
+        renew_leaf.contains("<SERVER_KEY>"),
+        "renew leaf should have SERVER_KEY: {}",
+        renew_leaf
+    );
+
+    // Unilateral exit: CSV-based, borrower only (no server involvement)
+    let unilateral_leaf = common::leaf_asm(&output, "unilateral", "unilateral");
+    assert!(
+        unilateral_leaf.contains("OP_CHECKSEQUENCEVERIFY"),
+        "unilateral leaf should have CSV: {}",
+        unilateral_leaf
+    );
+    assert!(
+        unilateral_leaf.contains(OP_CHECKSIG),
+        "unilateral leaf should verify borrower sig: {}",
+        unilateral_leaf
+    );
 }
 
 #[test]
@@ -117,16 +153,13 @@ fn test_fuji_safe_cli() {
     use std::path::Path;
     use tempfile::tempdir;
 
-    // Create a temporary directory
     let temp_dir = tempdir().unwrap();
     let input_path = temp_dir.path().join("fuji_safe.ark");
     let output_path = temp_dir.path().join("fuji_safe.json");
 
-    // Copy the example file to temp directory
     let fuji_code = include_str!("../examples/fuji_safe.ark");
     fs::write(&input_path, fuji_code).unwrap();
 
-    // Run the compiler CLI using the built binary
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(input_path.to_str().unwrap())
         .arg("-o")
@@ -140,18 +173,16 @@ fn test_fuji_safe_cli() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Check that the output file exists
     assert!(Path::new(&output_path).exists());
 
-    // Read the output file
     let json_output = fs::read_to_string(&output_path).unwrap();
 
-    // Basic validation of the JSON output (note: pretty-printed JSON has spaces)
     assert!(json_output.contains("\"contractName\": \"FujiSafe\""));
     assert!(json_output.contains("\"assetCommitmentHash\""));
     assert!(json_output.contains("\"borrowAmount\""));
     assert!(json_output.contains("\"borrowerPk\""));
     assert!(json_output.contains("\"treasuryPk\""));
-    assert!(json_output.contains("\"serverVariant\": true"));
-    assert!(json_output.contains("\"serverVariant\": false"));
+    // New model uses groups with leaves; no serverVariant field
+    assert!(json_output.contains("\"arkade\""));
+    assert!(json_output.contains("\"leaves\""));
 }

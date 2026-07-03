@@ -1,3 +1,5 @@
+mod common;
+
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{OP_ADD64, OP_CAT, OP_SCRIPTNUMTOLE64, OP_SHA256};
 
@@ -5,17 +7,11 @@ use arkade_compiler::opcodes::{OP_ADD64, OP_CAT, OP_SCRIPTNUMTOLE64, OP_SHA256};
 // Ints concatenated with bytes get an OP_SCRIPTNUMTOLE64 coercion first
 // so off-chain hashing can use a fixed 8-byte LE encoding.
 const CONCAT_CODE: &str = r#"
-options {
-  server = server;
-  exit = exit;
-}
-
 contract Mix(
   pubkey  signer,
   bytes32 ticker,
   int     price,
-  int     time,
-  int     exit
+  int     time
 ) {
   function check(signature sig) {
     require(checkSig(sig, signer), "bad sig");
@@ -28,12 +24,7 @@ contract Mix(
 #[test]
 fn test_plus_on_bytes32_emits_op_cat() {
     let out = compile(CONCAT_CODE).expect("compile");
-    let f = out
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .unwrap();
-    let asm = f.asm.join(" ");
+    let asm = common::arkade_asm(&out, "check");
 
     assert!(
         asm.contains(OP_CAT),
@@ -60,12 +51,7 @@ fn test_plus_on_bytes32_emits_op_cat() {
 #[test]
 fn test_plus_on_ints_still_emits_op_add64() {
     let code = r#"
-options {
-  server = server;
-  exit = exit;
-}
-
-contract IntMath(int a, int b, int exit) {
+contract IntMath(int a, int b) {
   function check() {
     int sum = a + b;
     require(sum > 0, "neg");
@@ -73,12 +59,7 @@ contract IntMath(int a, int b, int exit) {
 }
 "#;
     let out = compile(code).expect("compile");
-    let f = out
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .unwrap();
-    let asm = f.asm.join(" ");
+    let asm = common::arkade_asm(&out, "check");
     assert!(
         asm.contains(OP_ADD64),
         "int + int should still use OP_ADD64; asm:\n{}",

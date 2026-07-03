@@ -37,8 +37,7 @@ fn swapped_checksig_args_produces_warning() {
     // The contract declares `pubkey sig, signature owner` — the *names* clearly
     // describe the types but are passed in the wrong order to checkSig.
     let source = r#"
-options { exit = 144; server = server; }
-contract Swapped(pubkey owner, pubkey server) {
+contract Swapped(pubkey owner) {
     function spend(pubkey sig, signature ownerSig) {
         require(checkSig(sig, ownerSig));
     }
@@ -55,8 +54,7 @@ contract Swapped(pubkey owner, pubkey server) {
 #[test]
 fn correct_checksig_order_produces_no_type_warning() {
     let source = r#"
-options { exit = 144; server = server; }
-contract Correct(pubkey owner, pubkey server) {
+contract Correct(pubkey owner) {
     function spend(signature ownerSig) {
         require(checkSig(ownerSig, owner));
     }
@@ -75,8 +73,7 @@ contract Correct(pubkey owner, pubkey server) {
 #[test]
 fn assignment_to_undeclared_variable_produces_warning() {
     let source = r#"
-options { exit = 144; server = server; }
-contract UndeclaredAssign(pubkey owner, pubkey server) {
+contract UndeclaredAssign(pubkey owner) {
     function spend(signature ownerSig) {
         undeclaredVar = 42;
         require(checkSig(ownerSig, owner));
@@ -93,8 +90,7 @@ contract UndeclaredAssign(pubkey owner, pubkey server) {
 #[test]
 fn assignment_to_declared_let_binding_produces_no_warning() {
     let source = r#"
-options { exit = 144; server = server; }
-contract DeclaredAssign(pubkey owner, pubkey server) {
+contract DeclaredAssign(pubkey owner) {
     function spend(signature ownerSig) {
         let x = 1;
         x = 2;
@@ -117,8 +113,7 @@ fn uint64le_vs_int_comparison_produces_warning() {
     // tx.inputs[0].value is uint64le; comparing directly with an int literal
     // triggers the implicit-conversion warning.
     let source = r#"
-options { exit = 144; server = server; }
-contract MixedTypes(pubkey owner, pubkey server, int minValue) {
+contract MixedTypes(pubkey owner, int minValue) {
     function spend(signature ownerSig) {
         require(tx.inputs[0].value >= minValue);
         require(checkSig(ownerSig, owner));
@@ -136,8 +131,7 @@ contract MixedTypes(pubkey owner, pubkey server, int minValue) {
 fn uint64le_vs_uint64le_comparison_produces_no_type_warning() {
     // Comparing two introspection values of the same uint64le type is fine.
     let source = r#"
-options { exit = 144; server = server; }
-contract SameTypes(pubkey owner, pubkey server) {
+contract SameTypes(pubkey owner) {
     function spend(signature ownerSig) {
         require(tx.inputs[0].value >= tx.outputs[0].value);
         require(checkSig(ownerSig, owner));
@@ -160,8 +154,7 @@ fn non_bytes32_hash_param_produces_warning() {
     // sha256(preimage) == hashVal where hashVal is declared as `int`
     // The typechecker should flag that the hash comparison target is not bytes32.
     let source = r#"
-options { exit = 144; server = server; }
-contract BadHashType(pubkey owner, pubkey server, int hashVal) {
+contract BadHashType(pubkey owner, int hashVal) {
     function claim(bytes32 preimage) {
         require(sha256(preimage) == hashVal);
     }
@@ -177,8 +170,7 @@ contract BadHashType(pubkey owner, pubkey server, int hashVal) {
 #[test]
 fn bytes32_hash_param_produces_no_type_warning() {
     let source = r#"
-options { exit = 144; server = server; }
-contract CorrectHashType(pubkey owner, pubkey server, bytes32 hashVal) {
+contract CorrectHashType(pubkey owner, bytes32 hashVal) {
     function claim(bytes32 preimage) {
         require(sha256(preimage) == hashVal);
     }
@@ -198,8 +190,7 @@ contract CorrectHashType(pubkey owner, pubkey server, bytes32 hashVal) {
 fn non_boolean_if_condition_produces_warning() {
     // `tx.inputs[0].value` is uint64le, not bool — using it as an if condition.
     let source = r#"
-options { exit = 144; server = server; }
-contract NonBoolCond(pubkey owner, pubkey server) {
+contract NonBoolCond(pubkey owner) {
     function spend(signature ownerSig) {
         if (tx.inputs[0].value) {
             require(checkSig(ownerSig, owner));
@@ -218,8 +209,7 @@ contract NonBoolCond(pubkey owner, pubkey server) {
 fn checksig_expr_if_condition_is_valid() {
     // checkSig(...) as a condition returns bool — no warning expected.
     let source = r#"
-options { exit = 144; server = server; }
-contract BoolCond(pubkey owner, pubkey server) {
+contract BoolCond(pubkey owner) {
     function spend(signature ownerSig, signature altSig) {
         if (checkSig(ownerSig, owner)) {
             require(checkSig(ownerSig, owner));
@@ -243,8 +233,7 @@ contract BoolCond(pubkey owner, pubkey server) {
 fn type_errors_are_non_fatal_compilation_succeeds() {
     // Multiple type errors in one contract — compilation must still succeed.
     let source = r#"
-options { exit = 144; server = server; }
-contract MultiTypeError(pubkey owner, pubkey server, int badHash) {
+contract MultiTypeError(pubkey owner, int badHash) {
     function spend(pubkey sigSwapped, signature ownerSwapped) {
         require(checkSig(sigSwapped, ownerSwapped));
         require(sha256(sigSwapped) == badHash);
@@ -275,8 +264,7 @@ contract MultiTypeError(pubkey owner, pubkey server, int badHash) {
 fn swapped_checksigfromstack_args_produces_warning() {
     // checkSigFromStack(pubkey, sig, msg) — first two are swapped
     let source = r#"
-options { exit = 144; server = server; }
-contract SwappedCsfs(pubkey owner, pubkey server) {
+contract SwappedCsfs(pubkey owner) {
     function spend(pubkey sigSwapped, signature pkSwapped, bytes32 msg) {
         require(checkSigFromStack(sigSwapped, pkSwapped, msg));
     }
@@ -294,8 +282,7 @@ contract SwappedCsfs(pubkey owner, pubkey server) {
 #[test]
 fn type_warnings_appear_in_contract_json_warnings_field() {
     let source = r#"
-options { exit = 144; server = server; }
-contract HasWarnings(pubkey owner, pubkey server, int minVal) {
+contract HasWarnings(pubkey owner, int minVal) {
     function spend(signature ownerSig) {
         require(tx.inputs[0].value >= minVal);
         require(checkSig(ownerSig, owner));

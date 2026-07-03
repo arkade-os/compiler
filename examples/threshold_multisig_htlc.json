@@ -16,300 +16,181 @@
     {
       "name": "refundTime",
       "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
     }
   ],
   "functions": [
     {
       "name": "together",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [
+          {
+            "name": "senderSig",
+            "type": "signature"
+          },
+          {
+            "name": "receiverSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "<sender>",
+          "OP_CHECKSIG",
+          "<receiver>",
+          "OP_CHECKSIGADD",
+          "OP_2",
+          "OP_NUMEQUAL"
+        ]
+      },
+      "leaves": [
         {
-          "name": "senderSig",
-          "type": "signature"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature"
+          "name": "together",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:together>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "multisig"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<sender>",
-        "OP_CHECKSIG",
-        "<receiver>",
-        "OP_CHECKSIGADD",
-        "OP_2",
-        "OP_NUMEQUAL",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "together",
-      "functionInputs": [
-        {
-          "name": "senderSig",
-          "type": "signature"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "multisig"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 144 blocks"
-        }
-      ],
-      "asm": [
-        "<sender>",
-        "OP_CHECKSIG",
-        "<receiver>",
-        "OP_CHECKSIGADD",
-        "OP_2",
-        "OP_NUMEQUAL",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     },
     {
       "name": "refund",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [
+          {
+            "name": "senderSig",
+            "type": "signature"
+          }
+        ],
+        "asm": [
+          "<sender>",
+          "<senderSig>",
+          "OP_CHECKSIG",
+          "<refundTime>",
+          "OP_CHECKLOCKTIMEVERIFY",
+          "OP_DROP"
+        ]
+      },
+      "leaves": [
         {
-          "name": "senderSig",
-          "type": "signature"
+          "name": "refund",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:refund>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "after",
-          "message": "Timelock of 0 blocks"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<sender>",
-        "<senderSig>",
-        "OP_CHECKSIG",
-        "<refundTime>",
-        "OP_CHECKLOCKTIMEVERIFY",
-        "OP_DROP",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "refund",
-      "functionInputs": [
-        {
-          "name": "senderSig",
-          "type": "signature"
-        }
-      ],
-      "witnessSchema": [
-        {
-          "name": "senderSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "after",
-          "message": "Timelock of 0 blocks"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 144 blocks"
-        }
-      ],
-      "asm": [
-        "<sender>",
-        "<senderSig>",
-        "OP_CHECKSIG",
-        "<refundTime>",
-        "OP_CHECKLOCKTIMEVERIFY",
-        "OP_DROP",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     },
     {
       "name": "claim",
-      "functionInputs": [
+      "arkade": {
+        "inputs": [
+          {
+            "name": "receiverSig",
+            "type": "signature"
+          },
+          {
+            "name": "preimage",
+            "type": "bytes"
+          }
+        ],
+        "asm": [
+          "<receiver>",
+          "<receiverSig>",
+          "OP_CHECKSIG",
+          "<preimage>",
+          "OP_SHA256",
+          "<hash>",
+          "OP_EQUAL"
+        ]
+      },
+      "leaves": [
         {
-          "name": "receiverSig",
-          "type": "signature"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes"
+          "name": "claim",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:claim>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes",
-          "encoding": "raw"
-        },
-        {
-          "name": "serverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        }
-      ],
-      "serverVariant": true,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "hash"
-        },
-        {
-          "type": "serverSignature"
-        }
-      ],
-      "asm": [
-        "<receiver>",
-        "<receiverSig>",
-        "OP_CHECKSIG",
-        "<preimage>",
-        "OP_SHA256",
-        "<hash>",
-        "OP_EQUAL",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
       ]
     },
     {
-      "name": "claim",
-      "functionInputs": [
+      "name": "unilateral",
+      "leaves": [
         {
-          "name": "receiverSig",
-          "type": "signature"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes"
+          "name": "unilateral",
+          "witness": [
+            {
+              "name": "senderSig",
+              "type": "signature",
+              "encoding": "schnorr-64"
+            }
+          ],
+          "asm": [
+            "<exit>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<sender>",
+            "OP_CHECKSIG"
+          ]
         }
-      ],
-      "witnessSchema": [
-        {
-          "name": "receiverSig",
-          "type": "signature",
-          "encoding": "schnorr-64"
-        },
-        {
-          "name": "preimage",
-          "type": "bytes",
-          "encoding": "raw"
-        }
-      ],
-      "serverVariant": false,
-      "require": [
-        {
-          "type": "signature"
-        },
-        {
-          "type": "hash"
-        },
-        {
-          "type": "older",
-          "message": "Exit timelock of 144 blocks"
-        }
-      ],
-      "asm": [
-        "<receiver>",
-        "<receiverSig>",
-        "OP_CHECKSIG",
-        "<preimage>",
-        "OP_SHA256",
-        "<hash>",
-        "OP_EQUAL",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
       ]
     }
   ],
-  "source": "options {\n  server = server;\n  \n  renew = 1008;\n  \n  exit = 144;\n}\n\ncontract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes hash,\n  int refundTime\n) {\n  function together(signature senderSig, signature receiverSig) {\n    require(checkMultisig([sender, receiver]));\n  }\n  \n  function refund(signature senderSig) {\n    require(checkSig(senderSig, sender));\n    require(tx.time >= refundTime);\n  }\n  \n  function claim(signature receiverSig, bytes preimage) {\n    require(checkSig(receiverSig, receiver));\n    require(sha256(preimage) == hash);\n  }\n} ",
+  "source": "contract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes hash,\n  int refundTime,\n  int exit\n) {\n  function together(signature senderSig, signature receiverSig) {\n    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));\n  }\n\n  function refund(signature senderSig) {\n    require(checkSig(senderSig, sender));\n    require(tx.time >= refundTime);\n  }\n\n  function claim(signature receiverSig, bytes preimage) {\n    require(checkSig(receiverSig, receiver));\n    require(sha256(preimage) == hash);\n  }\n\n  function unilateral(signature senderSig) tapscript {\n    require(older(exit));\n    require(checkSig(senderSig, sender));\n  }\n}",
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-05-08T15:43:11.396829222+00:00"
+  "updatedAt": "2026-07-01T06:37:18.569137+00:00"
 }

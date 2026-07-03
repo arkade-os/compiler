@@ -3,48 +3,11 @@ use arkade_compiler::opcodes::{
     OP_CHECKSIGFROMSTACK, OP_GREATERTHANOREQUAL, OP_INSPECTINASSETLOOKUP,
 };
 
-/// Test contract from PLAN.md Commit 6: Array Types + Threshold Verification
-///
-/// This test validates:
-/// - Array type parsing (pubkey[], signature[])
-/// - Array indexing (oracles[i])
-/// - Array length property (arr.length)
-/// - Loop iteration over arrays
-const THRESHOLD_ORACLE_CODE: &str = r#"
-options {
-  server = server;
-  exit = 288;
-}
+mod common;
+use common::{arkade_asm, arkade_inputs};
 
-contract ThresholdOracle(
-  bytes32 tokenAssetIdTxid, int tokenAssetIdGidx,
-  bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
-  pubkey[] oracles,
-  int threshold
-) {
-  function attest(
-    int amount,
-    bytes32 messageHash,
-    pubkey recipientPk,
-    signature[] oracleSigs
-  ) {
-    require(amount > 0, "zero");
-
-    int valid = 0;
-    for (i, sig) in oracleSigs {
-      if (checkSigFromStack(sig, oracles[i], messageHash)) {
-        valid = valid + 1;
-      }
-    }
-    require(valid >= threshold, "quorum failed");
-
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
-    require(tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "short");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
-    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetId, ctrlAssetId, oracles, threshold), "broken");
-  }
-}
-"#;
+/// Exercises array flattening and threshold verification over unrolled oracle signatures.
+const THRESHOLD_ORACLE_CODE: &str = include_str!("../examples/threshold_oracle.ark");
 
 #[test]
 fn test_threshold_oracle_parses() {
@@ -57,36 +20,18 @@ fn test_threshold_oracle_structure() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
     assert_eq!(output.name, "ThresholdOracle");
-    // 1 function x 2 variants = 2
-    assert_eq!(output.functions.len(), 2);
-
-    // Verify we have both server and exit variants
-    let server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && f.server_variant);
-    let exit = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && !f.server_variant);
-
-    assert!(server.is_some(), "Missing server variant");
-    assert!(exit.is_some(), "Missing exit variant");
+    assert_eq!(output.functions.len(), 1);
+    assert_eq!(output.functions[0].name, "attest");
 }
 
 #[test]
 fn test_threshold_oracle_has_asset_lookup() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
-
-    let server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && f.server_variant)
-        .unwrap();
+    let asm = arkade_asm(&output, "attest");
 
     // Should have asset lookup for control asset check
     assert!(
-        server.asm.iter().any(|s| s == OP_INSPECTINASSETLOOKUP),
+        asm.contains(OP_INSPECTINASSETLOOKUP),
         "Missing {OP_INSPECTINASSETLOOKUP} in attest function"
     );
 }
@@ -94,20 +39,13 @@ fn test_threshold_oracle_has_asset_lookup() {
 #[test]
 fn test_threshold_oracle_has_control_flow() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
+    let tokens = common::arkade_asm_tokens(&output, "attest");
 
-    let server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && f.server_variant)
-        .unwrap();
-
-    // Should have if/else for counting valid signatures
-    // (or at least some form of control flow from the for loop)
-    // For now, just verify the function compiles and has the basic structure
-    assert!(server.asm.len() > 0, "Assembly should not be empty");
+    // Should have assembly (for loop unrolled etc.)
+    assert!(!tokens.is_empty(), "Assembly should not be empty");
 }
 
-// ─── Commit 6: Array ABI Flattening Tests ──────────────────────────────────────
+// ─── Array ABI Flattening ──────────────────────────────────────────────────────
 
 #[test]
 fn test_threshold_oracle_constructor_array_flattening() {
@@ -150,38 +88,29 @@ fn test_threshold_oracle_constructor_array_flattening() {
 fn test_threshold_oracle_witness_array_flattening() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && f.server_variant)
-        .unwrap();
-
     // signature[] oracleSigs should be flattened to oracleSigs_0, oracleSigs_1, oracleSigs_2
-    let input_names: Vec<&str> = server
-        .function_inputs
-        .iter()
-        .map(|p| p.name.as_str())
-        .collect();
+    // in the arkade covenant inputs (function parameters going into the covenant)
+    let input_names = arkade_inputs(&output, "attest");
 
     assert!(
-        input_names.contains(&"oracleSigs_0"),
-        "Missing oracleSigs_0 in function inputs. Got: {:?}",
+        input_names.contains(&"oracleSigs_0".to_string()),
+        "Missing oracleSigs_0 in covenant inputs. Got: {:?}",
         input_names
     );
     assert!(
-        input_names.contains(&"oracleSigs_1"),
-        "Missing oracleSigs_1 in function inputs. Got: {:?}",
+        input_names.contains(&"oracleSigs_1".to_string()),
+        "Missing oracleSigs_1 in covenant inputs. Got: {:?}",
         input_names
     );
     assert!(
-        input_names.contains(&"oracleSigs_2"),
-        "Missing oracleSigs_2 in function inputs. Got: {:?}",
+        input_names.contains(&"oracleSigs_2".to_string()),
+        "Missing oracleSigs_2 in covenant inputs. Got: {:?}",
         input_names
     );
 
     // Should NOT contain the original array name
     assert!(
-        !input_names.contains(&"oracleSigs"),
+        !input_names.contains(&"oracleSigs".to_string()),
         "Should not contain unflatten array 'oracleSigs' in inputs. Got: {:?}",
         input_names
     );
@@ -191,23 +120,15 @@ fn test_threshold_oracle_witness_array_flattening() {
 fn test_threshold_oracle_checksig_from_stack_unrolled() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && f.server_variant)
-        .unwrap();
+    let tokens = common::arkade_asm_tokens(&output, "attest");
 
     // The for loop should unroll to 3 OP_CHECKSIGFROMSTACK calls
-    let checksig_count = server
-        .asm
-        .iter()
-        .filter(|s| *s == OP_CHECKSIGFROMSTACK)
-        .count();
+    let checksig_count = tokens.iter().filter(|s| *s == OP_CHECKSIGFROMSTACK).count();
 
     assert_eq!(
         checksig_count, 3,
         "Expected 3 {OP_CHECKSIGFROMSTACK} calls (one per oracle). Got: {}. ASM: {:?}",
-        checksig_count, server.asm
+        checksig_count, tokens
     );
 }
 
@@ -215,44 +136,40 @@ fn test_threshold_oracle_checksig_from_stack_unrolled() {
 fn test_threshold_oracle_array_indexing_in_loop() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && f.server_variant)
-        .unwrap();
+    let asm_str = arkade_asm(&output, "attest");
 
     // When loop unrolls, oracles[i] should become <oracles_0>, <oracles_1>, <oracles_2>
     assert!(
-        server.asm.iter().any(|s| s == "<oracles_0>"),
-        "Missing <oracles_0> in assembly (from oracles[0]). ASM: {:?}",
-        server.asm
+        asm_str.contains("<oracles_0>"),
+        "Missing <oracles_0> in assembly (from oracles[0]). ASM: {}",
+        asm_str
     );
     assert!(
-        server.asm.iter().any(|s| s == "<oracles_1>"),
-        "Missing <oracles_1> in assembly (from oracles[1]). ASM: {:?}",
-        server.asm
+        asm_str.contains("<oracles_1>"),
+        "Missing <oracles_1> in assembly (from oracles[1]). ASM: {}",
+        asm_str
     );
     assert!(
-        server.asm.iter().any(|s| s == "<oracles_2>"),
-        "Missing <oracles_2> in assembly (from oracles[2]). ASM: {:?}",
-        server.asm
+        asm_str.contains("<oracles_2>"),
+        "Missing <oracles_2> in assembly (from oracles[2]). ASM: {}",
+        asm_str
     );
 
     // Similarly, sig (the value var) should become oracleSigs_0, etc.
     assert!(
-        server.asm.iter().any(|s| s == "<oracleSigs_0>"),
-        "Missing <oracleSigs_0> in assembly. ASM: {:?}",
-        server.asm
+        asm_str.contains("<oracleSigs_0>"),
+        "Missing <oracleSigs_0> in assembly. ASM: {}",
+        asm_str
     );
     assert!(
-        server.asm.iter().any(|s| s == "<oracleSigs_1>"),
-        "Missing <oracleSigs_1> in assembly. ASM: {:?}",
-        server.asm
+        asm_str.contains("<oracleSigs_1>"),
+        "Missing <oracleSigs_1> in assembly. ASM: {}",
+        asm_str
     );
     assert!(
-        server.asm.iter().any(|s| s == "<oracleSigs_2>"),
-        "Missing <oracleSigs_2> in assembly. ASM: {:?}",
-        server.asm
+        asm_str.contains("<oracleSigs_2>"),
+        "Missing <oracleSigs_2> in assembly. ASM: {}",
+        asm_str
     );
 }
 
@@ -260,17 +177,12 @@ fn test_threshold_oracle_array_indexing_in_loop() {
 fn test_threshold_oracle_quorum_uses_csn_comparison() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let server = output
-        .functions
-        .iter()
-        .find(|f| f.name == "attest" && f.server_variant)
-        .unwrap();
+    let asm_str = arkade_asm(&output, "attest");
 
     // The quorum check (valid >= threshold) should use OP_GREATERTHANOREQUAL
-    // (not the 64-bit variant) because valid is a small counter, not an asset amount
     assert!(
-        server.asm.iter().any(|s| s == OP_GREATERTHANOREQUAL),
-        "Missing {OP_GREATERTHANOREQUAL} for quorum check. ASM: {:?}",
-        server.asm
+        asm_str.contains(OP_GREATERTHANOREQUAL),
+        "Missing {OP_GREATERTHANOREQUAL} for quorum check. ASM: {}",
+        asm_str
     );
 }
