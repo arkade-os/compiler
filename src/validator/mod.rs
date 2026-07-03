@@ -157,6 +157,17 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
+    // Reserved key roles may only appear as key operands inside a tapscript's
+    // checkSig/checkMultisig — never as constructor parameters.
+    for p in &contract.parameters {
+        if p.name == "server" || p.name == "emulator" {
+            issues.push(ValidationIssue::error(format!(
+                "constructor parameter '{}' collides with a reserved key role",
+                p.name
+            )));
+        }
+    }
+
     for ts in &contract.tapscripts {
         for p in &ts.inputs {
             if p.name == "server" || p.name == "emulator" {

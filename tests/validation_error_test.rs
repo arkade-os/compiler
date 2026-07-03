@@ -150,6 +150,30 @@ contract DupFuncs(pubkey owner) {
 }
 
 #[test]
+fn reserved_role_as_constructor_param_is_rejected() {
+    for role in ["server", "emulator"] {
+        let source = format!(
+            r#"
+contract Reserved(pubkey {role}) {{
+    function spend() {{
+        require(tx.outputs[0].value >= 1);
+    }}
+}}"#
+        );
+        let result = compile(&source);
+        assert!(
+            result.is_err(),
+            "reserved role '{role}' as constructor param must be rejected"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains(role) && msg.to_lowercase().contains("reserved"),
+            "error must flag reserved role '{role}'; got: {msg}"
+        );
+    }
+}
+
+#[test]
 fn duplicate_tapscript_names_are_rejected() {
     let source = r#"
 contract DupLeaves(pubkey owner) {

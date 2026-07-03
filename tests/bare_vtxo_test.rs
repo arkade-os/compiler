@@ -9,16 +9,17 @@ use common::{arkade_asm, arkade_asm_tokens, arkade_inputs, leaf_asm};
 
 #[test]
 fn test_bare_vtxo_contract() {
-    // `server` is a constructor pubkey used in the multisig check.
+    // `serverPk` is an ordinary constructor pubkey used in the multisig check.
+    // (`server`/`emulator` are reserved key roles and may not be constructor params.)
     let vtxo_code = r#"
 contract SingleSig(
   pubkey user,
-  pubkey server,
+  pubkey serverPk,
   int timelock
 ) {
-  // Cooperative spend path (user + server)
+  // Cooperative spend path (user + serverPk)
   function cooperative(signature userSig) {
-    require(checkMultisig([user, server]));
+    require(checkMultisig([user, serverPk]));
   }
 
   // Timeout path (user after timelock)
@@ -41,7 +42,7 @@ contract SingleSig(
     assert_eq!(output.parameters.len(), 3);
     assert_eq!(output.parameters[0].name, "user");
     assert_eq!(output.parameters[0].param_type, "pubkey");
-    assert_eq!(output.parameters[1].name, "server");
+    assert_eq!(output.parameters[1].name, "serverPk");
     assert_eq!(output.parameters[1].param_type, "pubkey");
     assert_eq!(output.parameters[2].name, "timelock");
     assert_eq!(output.parameters[2].param_type, "int");
@@ -74,8 +75,8 @@ contract SingleSig(
         "cooperative: missing <user> pubkey"
     );
     assert!(
-        coop_asm.contains("<server>"),
-        "cooperative: missing <server> pubkey"
+        coop_asm.contains("<serverPk>"),
+        "cooperative: missing <serverPk> pubkey"
     );
 
     // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY guard
