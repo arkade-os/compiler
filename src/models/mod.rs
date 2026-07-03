@@ -155,7 +155,7 @@ pub struct Function {
     pub name: String,
     /// Function arguments
     pub parameters: Vec<Parameter>,
-    /// Function body statements (replaces requirements for Commits 4-6)
+    /// Function body statements.
     pub statements: Vec<Statement>,
     /// Whether this is an internal function
     pub is_internal: bool,

@@ -23,10 +23,6 @@ fn examples_dir() -> PathBuf {
 }
 
 // ─── Local structural-check helpers ──────────────────────────────────────────
-//
-// `validate_asm_structure` and `validate_placeholder_consistency` were removed
-// from the public validator API when the ABI migrated to AbiFunctionGroup.
-// These local implementations preserve the same intent for the unit tests below.
 
 /// Check ASM for structural validity (IF balance, empty tokens, placeholder
 /// syntax). Returns a list of human-readable error strings; empty ⇒ all OK.

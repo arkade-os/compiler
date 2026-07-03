@@ -62,7 +62,6 @@ contract SingleSig(pubkey ownerPk) {
 fn test_new_expression_compiles() {
     // `new SingleSig(ownerPk, exit)` on the right of an output scriptPubKey comparison.
     // This is the canonical recursion-enforcement pattern.
-    // SingleSig is now 2-param (pubkey user, int exit).
     let code = r#"
 import "single_sig.ark";
 
@@ -79,8 +78,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_new_expression_asm_output() {
-    // Verify the covenant ASM contains the scriptPubKey check
-    // and the VTXO placeholder (now in arkade_asm, not a server-variant flat asm).
+    // Verify the covenant ASM contains the scriptPubKey check and VTXO placeholder.
     let code = r#"
 import "single_sig.ark";
 
@@ -118,8 +116,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_new_expression_multi_arg() {
-    // Constructor with multiple arguments: new HTLC(sender, receiver, hash, refundTime, exit)
-    // HTLC is now 5-param (sender, receiver, preimageHash, refundTime, exit).
+    // Constructor with multiple arguments: new HTLC(sender, receiver, hash, refundTime, exit).
     let code = r#"
 import "htlc.ark";
 
@@ -274,13 +271,12 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
     );
 }
 
-// ─── Options inheritance ───────────────────────────────────────────────────────
+// ─── Placeholder formatting ────────────────────────────────────────────────────
 
 #[test]
 fn test_placeholder_format() {
     // The VTXO placeholder format is `<VTXO:ContractName(<arg1>,<arg2>)>`.
     // Variable args are wrapped in `<>`; literals are not.
-    // SingleSig is now 2-param, so the placeholder includes <exit>.
     let code = r#"
 import "single_sig.ark";
 
@@ -310,7 +306,6 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 #[test]
 fn test_new_expression_on_input_scriptpubkey() {
     // `new` can also appear on the right of an input scriptPubKey comparison.
-    // SingleSig is now 2-param, so we pass exit.
     let code = r#"
 import "single_sig.ark";
 
@@ -413,7 +408,6 @@ contract TimedForwarder(pubkey ownerPk) {
 fn test_multiple_contract_instances_in_one_function() {
     // A function that enforces two different outputs each matching a different
     // VTXO contract.  Both covenant-path placeholders must appear in ASM.
-    // SingleSig is now 2-param; Splitter passes its own exit to both instances.
     let code = r#"
 import "single_sig.ark";
 import "htlc.ark";

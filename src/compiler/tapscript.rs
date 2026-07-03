@@ -342,13 +342,11 @@ pub fn validate_arkd_rules(
     }
 
     // F2: forfeit closures must contain `server`.
-    if c.class.is_forfeit() {
-        if !c.keys.iter().any(KeyExpr::is_server) {
-            return Err(format!(
-                "forfeit tapscript `{}` must include `server` (arkd co-signer)",
-                ts.name
-            ));
-        }
+    if c.class.is_forfeit() && !c.keys.iter().any(KeyExpr::is_server) {
+        return Err(format!(
+            "forfeit tapscript `{}` must include `server` (arkd co-signer)",
+            ts.name
+        ));
     }
 
     // E3: literal exit-delay magnitude (CSV closures only).
@@ -497,7 +495,6 @@ pub fn build_function_groups(
     // group key = function name for NameMatched / Tweaked(func); leaf's own name for Standalone.
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
-    let mut standalone_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for ts in &contract.tapscripts {
         let closure = assemble_closure(ts)?;
@@ -508,12 +505,7 @@ pub fn build_function_groups(
         let group_key = match &binding {
             Binding::NameMatched => ts.name.clone(),
             Binding::Tweaked(func) => func.clone(),
-            Binding::Standalone => {
-                if !standalone_names.insert(ts.name.clone()) {
-                    return Err(format!("duplicate standalone tapscript name `{}`", ts.name));
-                }
-                ts.name.clone()
-            }
+            Binding::Standalone => ts.name.clone(),
         };
 
         grouped.entry(group_key).or_default().push(AbiLeaf {
@@ -921,10 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn exit_using_after_is_rejected() {
-        // after()+server is a CLTV forfeit; an *exit* must use older(). This
-        // leaf is actually a valid CLTV forfeit, so instead test the inverse:
-        // a CSV (older) leaf is an exit and needs no server — accepted.
+    fn csv_exit_without_server_is_accepted() {
         let mut inputs = sig_params(1);
         inputs.push(Parameter {
             name: "exitDelay".into(),

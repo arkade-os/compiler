@@ -12,8 +12,6 @@ mod common;
 // HTLC contract using the tapscript model.
 // Covenant functions enforce output-value preservation; tapscript leaves handle
 // the hash-preimage claim path, the timelock refund path, and a unilateral CSV exit.
-// (Old options { } block and pubkey server constructor param removed — server key is
-//  now auto-injected by Arkade infrastructure as <SERVER_KEY> in leaf ASM.)
 const HTLC_CODE: &str = include_str!("../examples/htlc.ark");
 
 #[test]

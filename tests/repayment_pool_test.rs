@@ -18,8 +18,7 @@ fn test_repayment_pool_compiles() {
     let output = compile(CODE).expect("compilation failed");
     assert_eq!(output.name, "RepaymentPool");
     // 7 covenant functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
-    // acceptAuction, redeem) → 7 groups (one per function; no per-function exit
-    // variants in the new ABI).
+    // acceptAuction, redeem) produce 7 function groups.
     assert_eq!(output.functions.len(), 7, "expected 7 function groups");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
@@ -769,12 +768,11 @@ fn test_roll_pair_enforces_all_deployment_invariants() {
 
 #[test]
 fn test_default_leaves_carry_no_introspection() {
-    // In the new ABI every covenant function has a synthesized default leaf:
+    // Every covenant function has a synthesized default leaf:
     //   `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:fn> OP_CHECKSIG`
     // All covenant introspection lives in the arkade block; the leaves are
     // pure cosig. This test verifies no introspection opcode leaked into any
-    // default leaf — equivalent to the old "exit variants must not carry
-    // covenant introspection" invariant.
+    // default leaf.
     let output = compile(CODE).expect("compilation failed");
     for fn_name in [
         "issue",

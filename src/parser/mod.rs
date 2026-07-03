@@ -2277,8 +2277,7 @@ fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, String> {
             let mut param_inner = param_pair.into_inner();
             let param_type = match param_inner.next() {
                 Some(type_pair) => {
-                    // data_type is now a compound rule: base_type ~ ("[]")?
-                    // Extract the base type and check for array suffix
+                    // Extract the base type and check for an array suffix.
                     let type_text = type_pair.as_str().trim();
                     if type_text.ends_with("[]") {
                         type_text.to_string()

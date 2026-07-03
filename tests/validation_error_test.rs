@@ -77,6 +77,33 @@ contract DupFuncs(pubkey owner) {
 }
 
 #[test]
+fn duplicate_tapscript_names_are_rejected() {
+    let source = r#"
+contract DupLeaves(pubkey owner) {
+    function spend() {
+        require(tx.outputs[0].value >= 1);
+    }
+    function spend(signature serverSig, signature emulatorSig) tapscript {
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    }
+    function spend(signature serverSig, signature emulatorSig) tapscript {
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    }
+}"#;
+    let result = compile(source);
+    assert!(
+        result.is_err(),
+        "duplicate tapscript names must be rejected"
+    );
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("spend") || msg.to_lowercase().contains("duplicate"),
+        "error must reference the duplicate tapscript name; got: {}",
+        msg
+    );
+}
+
+#[test]
 fn duplicate_constructor_params_are_rejected() {
     let source = r#"
 contract DupParam(pubkey owner, pubkey owner) {

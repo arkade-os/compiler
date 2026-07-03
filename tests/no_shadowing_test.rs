@@ -191,10 +191,6 @@ contract Demo(int[] xs) {
     );
 }
 
-// Note: the old `rejects_param_colliding_with_server_signature` test was
-// removed — covenant functions no longer auto-generate a `serverSig`, so a
-// param named `serverSig` no longer collides with a reserved emitted name.
-
 #[test]
 fn accepts_sibling_scope_reuse() {
     // let x in both branches; the same loop vars in two separate loops.

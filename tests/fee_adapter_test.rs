@@ -131,8 +131,6 @@ fn test_fee_adapter_contract() {
         "exit leaf should not have introspection: {}",
         unilateral_asm
     );
-    // NOTE: old "nOfNMultisig" requirement assertion dropped — the require field no longer
-    // exists in AbiFunctionGroup; the unilateral leaf is a simple sender-sig + CSV path.
 }
 
 #[test]

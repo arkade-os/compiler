@@ -11,10 +11,10 @@
 //! 2. **Output validation** (`validate_output`) — runs after compilation.
 //!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
 //!    bugs before the output reaches callers: every spend group has at least one
-//!    leaf, each leaf has non-empty `asm` and `witness`, each present `arkade`
-//!    covenant has non-empty `asm`, and no leaf `asm` carries a signature
-//!    placeholder (signatures are witness-only). Tapscript-source-level operand
-//!    scope checks live in `compiler::tapscript::validate_arkd_rules`.
+//!    leaf, each leaf has non-empty `asm`, each present `arkade` covenant has
+//!    non-empty `asm`, and no leaf `asm` carries a signature placeholder
+//!    (signatures are witness-only). Tapscript-source-level operand scope checks
+//!    live in `compiler::tapscript::validate_arkd_rules`.
 //!
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
@@ -70,6 +70,7 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Contract name is non-empty.
 /// - At least one non-internal function is declared.
 /// - Function names are unique within the contract.
+/// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
 /// - Each function's parameter names are unique within that function.
 /// - Tapscript inputs do not collide with reserved key roles.
@@ -143,7 +144,19 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
-    // ── Tapscript reserved-name + duplicate-input checks ──────────────────
+    // ── Tapscript reserved-name + duplicate checks ────────────────────────
+    {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for ts in &contract.tapscripts {
+            if !seen.insert(ts.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "duplicate tapscript name '{}'; each tapscript must have a unique name",
+                    ts.name
+                )));
+            }
+        }
+    }
+
     for ts in &contract.tapscripts {
         for p in &ts.inputs {
             if p.name == "server" || p.name == "emulator" {
