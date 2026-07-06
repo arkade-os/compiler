@@ -14,6 +14,16 @@ const projects = {
             'stability_offer.ark': contracts.stability_offer,
         }
     },
+    layerzero: {
+        name: 'LayerZero / USDT0',
+        description: 'LayerZero pathway Endpoint + USDT0 OApp with receive/send invocation markers',
+        files: {
+            'endpoint.ark': contracts.endpoint,
+            'oapp.ark': contracts.oapp,
+            'receive_marker.ark': contracts.receive_marker,
+            'send_marker.ark': contracts.send_marker,
+        }
+    },
     options: {
         name: 'Options',
         description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
