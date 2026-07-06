@@ -403,6 +403,12 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             point_q,
         } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter().collect(),
+        Expression::Substr { data, offset, size } => vec![data, offset, size],
+        Expression::Cat { left, right } => vec![left, right],
+        Expression::Bin2Num { data } | Expression::SizeOf { data } => vec![data],
+        Expression::Num2Bin { value, size } => vec![value, size],
+        Expression::PacketInspect { packet_type } => vec![packet_type],
+        Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
     }
 }
 
@@ -701,7 +707,14 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 )));
             }
             // Leaf ASM must not carry signature placeholders (sigs are witness).
-            if leaf.asm.iter().any(|t| t.contains("Sig>")) {
+            // Case-insensitive: a leaked placeholder may be named `<sig>`,
+            // `<ownersig>`, or `<serverSig>` depending on the source naming —
+            // all must trip this compiler-bug self-check.
+            if leaf
+                .asm
+                .iter()
+                .any(|t| t.to_ascii_lowercase().contains("sig>"))
+            {
                 issues.push(ValidationIssue::error(format!(
                     "leaf '{}' in group '{}' has a signature in asm (must be witness-only)",
                     leaf.name, group.name
@@ -829,5 +842,28 @@ mod tests {
         let issues = validate_output(&output);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("empty asm")));
+    }
+
+    #[test]
+    fn signature_placeholder_in_leaf_asm_is_output_error() {
+        // The sig-leak self-check must fire regardless of placeholder casing:
+        // <serverSig>, <ownersig>, and <sig> are all signature placeholders.
+        for leaked in ["<serverSig>", "<ownersig>", "<sig>"] {
+            let mut output = make_output("Leak");
+            output.functions[0].leaves[0].asm = vec![leaked.to_string()];
+            let issues = validate_output(&output);
+            assert!(
+                has_errors(&issues),
+                "leaked placeholder {} must be an output error",
+                leaked
+            );
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.message.contains("signature in asm")),
+                "expected sig-leak message for {}",
+                leaked
+            );
+        }
     }
 }

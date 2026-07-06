@@ -4,22 +4,24 @@ use crate::models::{
     DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_ADD64, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD,
-    OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_DIV64, OP_DROP, OP_ECMULSCALARVERIFY,
-    OP_ELSE, OP_ENDIF, OP_EQUAL, OP_FALSE, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN,
-    OP_GREATERTHAN64, OP_GREATERTHANOREQUAL, OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE,
-    OP_INPUTOUTPOINT, OP_INPUTSEQUENCE, OP_INPUTVALUE, OP_INSPECTASSETGROUP,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
-    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT,
-    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME,
-    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
-    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTVERSION, OP_LE32TOLE64,
-    OP_LE64TOSCRIPTNUM, OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64,
-    OP_MUL64, OP_NEG64, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64,
-    OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SUB64, OP_SWAP,
-    OP_TWEAKVERIFY, OP_TXHASH, OP_TXWEIGHT, OP_VERIFY,
+    OP_0, OP_1, OP_ADD64, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_DIV64, OP_DROP,
+    OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FALSE,
+    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
+    OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE,
+    OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
+    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTISSUANCE,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
+    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
+    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM,
+    OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64,
+    OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64,
+    OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIZE, OP_SUB64,
+    OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXHASH, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::parser;
 use crate::typechecker::{self, ArkType};
@@ -353,10 +355,13 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(lit.clone());
         }
         Expression::Property(prop) => {
-            if prop == "this.activeInputIndex" {
-                asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            } else {
-                asm.push(format!("<{}>", prop));
+            // Map the introspector "this" properties to their dedicated opcodes
+            // (the parser stores them as Property strings; resolving them here
+            // keeps the placeholder pipeline untouched for everything else).
+            match prop.as_str() {
+                "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                _ => asm.push(format!("<{}>", prop)),
             }
         }
         Expression::BinaryOp { left, op, right } => {
@@ -447,6 +452,10 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         // Streaming SHA256
+        Expression::Sha256 { data } => {
+            generate_expression_asm(data, asm);
+            asm.push(OP_SHA256.to_string());
+        }
         Expression::Sha256Initialize { data } => {
             generate_expression_asm(data, asm);
             asm.push(OP_SHA256INITIALIZE.to_string());
@@ -463,11 +472,6 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             generate_expression_asm(context, asm);
             generate_expression_asm(last_chunk, asm);
             asm.push(OP_SHA256FINALIZE.to_string());
-        }
-        // One-shot SHA256: sha256(data) → OP_SHA256
-        Expression::Sha256 { data } => {
-            generate_expression_asm(data, asm);
-            asm.push(OP_SHA256.to_string());
         }
         // Byte-string concatenation: bytes-like + value → OP_CAT
         // Coercion flags decide whether to convert a scriptnum side to LE64
@@ -645,6 +649,50 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_contract_instance_asm(contract_name, args, asm);
         }
+        // Byte-string manipulation (introspector extensions)
+        Expression::Substr { data, offset, size } => {
+            generate_expression_asm(data, asm);
+            generate_expression_asm(offset, asm);
+            generate_expression_asm(size, asm);
+            asm.push(OP_SUBSTR.to_string());
+        }
+        Expression::Cat { left, right } => {
+            generate_expression_asm(left, asm);
+            generate_expression_asm(right, asm);
+            asm.push(OP_CAT.to_string());
+        }
+        Expression::Bin2Num { data } => {
+            generate_expression_asm(data, asm);
+            asm.push(OP_BIN2NUM.to_string());
+        }
+        Expression::Num2Bin { value, size } => {
+            generate_expression_asm(value, asm);
+            generate_expression_asm(size, asm);
+            asm.push(OP_NUM2BIN.to_string());
+        }
+        Expression::SizeOf { data } => {
+            generate_expression_asm(data, asm);
+            // OP_SIZE pushes len next to original bytes; OP_NIP drops the
+            // original so only the size remains on the stack.
+            asm.push(OP_SIZE.to_string());
+            asm.push(OP_NIP.to_string());
+        }
+        // Packet introspection
+        Expression::PacketInspect { packet_type } => {
+            generate_expression_asm(packet_type, asm);
+            asm.push(OP_INSPECTPACKET.to_string());
+            // OP_INSPECTPACKET returns (content, 1) on hit, () then 0 on miss.
+            // Assert present and discard the bool, leaving content on the stack.
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
+        }
+        Expression::InputPacketInspect { index, packet_type } => {
+            generate_expression_asm(packet_type, asm);
+            generate_expression_asm(index, asm);
+            asm.push(OP_INSPECTINPUTPACKET.to_string());
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
+        }
     }
 }
 
@@ -717,9 +765,23 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
             asm.push(format!("<{}>", var));
         }
         (Expression::Property(prop), "==", Expression::Literal(value)) => {
-            asm.push(format!("<{}>", prop));
-            asm.push(OP_EQUAL.to_string());
-            asm.push(value.clone());
+            // Map "this" properties to their dedicated opcodes (mirrors
+            // generate_expression_asm); otherwise keep the placeholder.
+            let emit_left = |asm: &mut Vec<String>| match prop.as_str() {
+                "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                _ => asm.push(format!("<{}>", prop)),
+            };
+            if value == "true" {
+                // `require(expr)` is parsed as `expr == true`; this dummy
+                // comparison just pushes the introspection result.
+                emit_left(asm);
+            } else {
+                // Correct Bitcoin Script order is left, right, OP_EQUAL.
+                emit_left(asm);
+                asm.push(value.clone());
+                asm.push(OP_EQUAL.to_string());
+            }
         }
         (Expression::Property(prop), ">=", Expression::Literal(value)) => {
             asm.push(format!("<{}>", prop));
@@ -834,10 +896,13 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(lit.clone());
         }
         Expression::Property(prop) => {
-            if prop == "this.activeInputIndex" {
-                asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            } else {
-                asm.push(format!("<{}>", prop));
+            // Map the introspector "this" properties to their dedicated opcodes
+            // (the parser stores them as Property strings; resolving them here
+            // keeps the placeholder pipeline untouched for everything else).
+            match prop.as_str() {
+                "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                _ => asm.push(format!("<{}>", prop)),
             }
         }
         Expression::CurrentInput(property) => {
@@ -972,6 +1037,10 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         // Streaming SHA256
+        Expression::Sha256 { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_SHA256.to_string());
+        }
         Expression::Sha256Initialize { data } => {
             emit_expression_asm(data, asm);
             asm.push(OP_SHA256INITIALIZE.to_string());
@@ -988,11 +1057,6 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(context, asm);
             emit_expression_asm(last_chunk, asm);
             asm.push(OP_SHA256FINALIZE.to_string());
-        }
-        // One-shot SHA256: sha256(data) → OP_SHA256
-        Expression::Sha256 { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256.to_string());
         }
         // Byte-string concatenation: bytes-like + value → OP_CAT
         Expression::Concat {
@@ -1054,6 +1118,46 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
+        }
+        // Byte-string manipulation (introspector extensions)
+        Expression::Substr { data, offset, size } => {
+            emit_expression_asm(data, asm);
+            emit_expression_asm(offset, asm);
+            emit_expression_asm(size, asm);
+            asm.push(OP_SUBSTR.to_string());
+        }
+        Expression::Cat { left, right } => {
+            emit_expression_asm(left, asm);
+            emit_expression_asm(right, asm);
+            asm.push(OP_CAT.to_string());
+        }
+        Expression::Bin2Num { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_BIN2NUM.to_string());
+        }
+        Expression::Num2Bin { value, size } => {
+            emit_expression_asm(value, asm);
+            emit_expression_asm(size, asm);
+            asm.push(OP_NUM2BIN.to_string());
+        }
+        Expression::SizeOf { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_SIZE.to_string());
+            asm.push(OP_NIP.to_string());
+        }
+        // Packet introspection
+        Expression::PacketInspect { packet_type } => {
+            emit_expression_asm(packet_type, asm);
+            asm.push(OP_INSPECTPACKET.to_string());
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
+        }
+        Expression::InputPacketInspect { index, packet_type } => {
+            emit_expression_asm(packet_type, asm);
+            emit_expression_asm(index, asm);
+            asm.push(OP_INSPECTINPUTPACKET.to_string());
+            asm.push(OP_1.to_string());
+            asm.push(OP_EQUALVERIFY.to_string());
         }
     }
 }
@@ -1284,6 +1388,7 @@ fn emit_tx_introspection_asm(property: &str, asm: &mut Vec<String>) {
         "numInputs" => asm.push(OP_INSPECTNUMINPUTS.to_string()),
         "numOutputs" => asm.push(OP_INSPECTNUMOUTPUTS.to_string()),
         "weight" => asm.push(OP_TXWEIGHT.to_string()),
+        "id" => asm.push(OP_TXID.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.{}>", property));
@@ -1303,6 +1408,8 @@ fn emit_input_introspection_asm(index: &Expression, property: &str, asm: &mut Ve
         "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
         "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
         "issuance" => asm.push(OP_INSPECTINPUTISSUANCE.to_string()),
+        "arkadeScriptHash" => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
+        "arkadeWitnessHash" => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.inputs[?].{}>", property));
