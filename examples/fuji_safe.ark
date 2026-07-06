@@ -1,12 +1,3 @@
-// Contract configuration options
-options {
-  // Arkade operator key (always external, never a contract party)
-  server = server;
-  
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
 // Fuji Safe Contract
 contract FujiSafe(
   // The asset commitment hash (client-side validated)
@@ -26,7 +17,9 @@ contract FujiSafe(
   // The oracle's public key
   pubkey oraclePk,
   // The asset pair identifier
-  bytes assetPair
+  bytes assetPair,
+  // Exit timelock in blocks
+  int exit
 ) {
   // Helper function to verify Fuji token burning via Taproot output
   // Takes the pubkey to use as the internal key for the P2TR output
@@ -34,7 +27,7 @@ contract FujiSafe(
     // In Taproot, we verify the output is a P2TR that commits to our asset
     // Using the provided pubkey as the internal key
     bytes p2trScript = new P2TR(internalKey, assetCommitmentHash);
-    
+
     // Verify output 0 has the correct P2TR scriptPubKey and value
     require(tx.outputs[0].scriptPubKey == p2trScript, "P2TR output mismatch");
     require(tx.outputs[0].value == borrowAmount, "Value mismatch");
@@ -44,44 +37,44 @@ contract FujiSafe(
   function claim(signature treasurySig) {
     // Check that expiration timeout has passed
     require(tx.time >= expirationTimeout, "Expiration timeout not reached");
-    
+
     // Verify burning of Fuji token using treasury key
     verifyFujiBurning(treasuryPk);
-    
+
     // Require treasury signature
     require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
   }
-  
+
   // Liquidation: Treasury can unlock all collateral with attestation price below the liquidation target
   function liquidate(int currentPrice, signature oracleSig, signature treasurySig) {
     // Check price is below liquidation threshold
     require(currentPrice < priceLevel, "Price not below liquidation threshold");
-    
+
     // Verify timestamp is after setup
     require(tx.time >= setupTimestamp, "Timestamp before setup");
-    
+
     // Create message for oracle signature verification
     bytes message = sha256(assetPair);
-    
+
     // Verify oracle signature on price data
     require(checkSigFromStack(oracleSig, oraclePk, message), "Invalid oracle signature");
-    
+
     // Verify burning of Fuji token using treasury key
     verifyFujiBurning(treasuryPk);
-    
+
     // Require treasury signature
     require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
   }
-  
+
   // Private Redemption: Only owner can unlock all collateral with key when burning Fuji
   function redeem(signature borrowerSig) {
     // Verify burning of Fuji token using borrower key
     verifyFujiBurning(borrowerPk);
-    
+
     // Require borrower signature
     require(checkSig(borrowerSig, borrowerPk), "Invalid borrower signature");
   }
-  
+
   // Treasury Renew: Treasury can unilaterally renew the expiration time
   function renew(signature treasurySig) {
     int currentValue = tx.input.current.value;
@@ -90,7 +83,7 @@ contract FujiSafe(
     require(
       tx.outputs[0].scriptPubKey == new FujiSafe(
         assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,
-        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair
+        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair, exit
       ),
       "contract mismatch"
     );
@@ -99,4 +92,10 @@ contract FujiSafe(
     // Require treasury signature
     require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
   }
-} 
+
+  // Unilateral exit (CSV): borrower recovers after exit delay.
+  function unilateral(signature borrowerSig) tapscript {
+    require(older(exit));
+    require(checkSig(borrowerSig, borrowerPk));
+  }
+}

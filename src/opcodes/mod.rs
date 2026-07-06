@@ -16,7 +16,6 @@ pub const OP_13: &str = "OP_13";
 pub const OP_14: &str = "OP_14";
 pub const OP_15: &str = "OP_15";
 pub const OP_16: &str = "OP_16";
-pub const OP_1NEGATE: &str = "OP_1NEGATE";
 
 // Absolute and relative timelock verification
 pub const OP_CHECKLOCKTIMEVERIFY: &str = "OP_CHECKLOCKTIMEVERIFY";
@@ -47,14 +46,17 @@ pub const OP_SHA256: &str = "OP_SHA256";
 pub const OP_SHA256UPDATE: &str = "OP_SHA256UPDATE";
 pub const OP_SHA256INITIALIZE: &str = "OP_SHA256INITIALIZE";
 pub const OP_SHA256FINALIZE: &str = "OP_SHA256FINALIZE";
+pub const OP_HASH160: &str = "OP_HASH160";
+pub const OP_HASH256: &str = "OP_HASH256";
+pub const OP_RIPEMD160: &str = "OP_RIPEMD160";
 
 // Byte-string manipulation
 pub const OP_CAT: &str = "OP_CAT";
 
 // Stack manipulation
 pub const OP_DROP: &str = "OP_DROP";
-pub const OP_DUP: &str = "OP_DUP";
 pub const OP_NIP: &str = "OP_NIP";
+pub const OP_SWAP: &str = "OP_SWAP";
 
 // Type conversions
 pub const OP_LE64TOSCRIPTNUM: &str = "OP_LE64TOSCRIPTNUM";
@@ -66,6 +68,7 @@ pub const OP_ECMULSCALARVERIFY: &str = "OP_ECMULSCALARVERIFY";
 pub const OP_TWEAKVERIFY: &str = "OP_TWEAKVERIFY";
 
 // Conditionals
+pub const OP_BOOLAND: &str = "OP_BOOLAND";
 pub const OP_NOT: &str = "OP_NOT";
 pub const OP_FALSE: &str = "OP_FALSE";
 pub const OP_IF: &str = "OP_IF";
@@ -104,11 +107,11 @@ pub const OP_MAX: &str = "OP_MAX";
 pub const OP_EQUALVERIFY: &str = "OP_EQUALVERIFY";
 pub const OP_NUMEQUALVERIFY: &str = "OP_NUMEQUALVERIFY";
 pub const OP_NUMNOTEQUAL: &str = "OP_NUMNOTEQUAL";
-pub const OP_BOOLAND: &str = "OP_BOOLAND";
 pub const OP_BOOLOR: &str = "OP_BOOLOR";
 
 // Stack manipulation (extended)
-pub const OP_SWAP: &str = "OP_SWAP";
+pub const OP_1NEGATE: &str = "OP_1NEGATE";
+pub const OP_DUP: &str = "OP_DUP";
 pub const OP_ROT: &str = "OP_ROT";
 pub const OP_OVER: &str = "OP_OVER";
 pub const OP_PICK: &str = "OP_PICK";
@@ -140,10 +143,7 @@ pub const OP_BIN2NUM: &str = "OP_BIN2NUM";
 pub const OP_NUM2BIN: &str = "OP_NUM2BIN";
 
 // Hashing (additional)
-pub const OP_RIPEMD160: &str = "OP_RIPEMD160";
 pub const OP_SHA1: &str = "OP_SHA1";
-pub const OP_HASH160: &str = "OP_HASH160";
-pub const OP_HASH256: &str = "OP_HASH256";
 
 // Merkle proof verification (introspector extension)
 pub const OP_MERKLEBRANCHVERIFY: &str = "OP_MERKLEBRANCHVERIFY";

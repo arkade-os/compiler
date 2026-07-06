@@ -1,103 +1,98 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{
-    OP_2, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_NUMEQUAL,
-};
+use arkade_compiler::opcodes::{OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP};
 
+mod common;
+use common::{group, leaf_asm, witness_names};
+
+// A bare VTXO has no arkade covenant — it is just L1 taproot leaves:
+//   • a collaborative forfeit closure (server + user), and
+//   • a unilateral CSV exit closure (user alone after a delay).
+// Both are standalone `tapscript`s, so `server` is the reserved key role (→ <SERVER_KEY>).
 #[test]
 fn test_bare_vtxo_contract() {
-    // Bare VTXO contract source code
-    let vtxo_code = r#"// Contract configuration options
-options {
-  // Arkade operator key (always external, never a contract party)
-  server = operator;
-  
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
+    let vtxo_code = r#"
 contract SingleSig(
   pubkey user,
-  pubkey server
+  int exitDelay
 ) {
-  // Cooperative spend path (user + server)
-  function cooperative(signature userSig, signature serverSig) {
-    require(checkMultisig([user, server]));
+  // Collaborative path: server + user (N-of-N forfeit closure).
+  function cooperative(signature serverSig, signature userSig) tapscript {
+    require(checkMultisig([server, user], [serverSig, userSig], 2));
   }
-  
-  // Timeout path (user after timelock)
-  function timeout(signature userSig) {
+
+  // Unilateral exit: user alone after a CSV delay (exit closure).
+  function unilateral(signature userSig) tapscript {
+    require(older(exitDelay));
     require(checkSig(userSig, user));
-    require(tx.time >= timelock);
   }
 }"#;
 
-    // Compile the contract
     let result = compile(vtxo_code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
-
     let output = result.unwrap();
 
-    // Verify contract name
     assert_eq!(output.name, "SingleSig");
 
-    // Verify parameters
+    // Parameters: user pubkey + exitDelay int (no serverPk — server is a reserved role).
     assert_eq!(output.parameters.len(), 2);
     assert_eq!(output.parameters[0].name, "user");
     assert_eq!(output.parameters[0].param_type, "pubkey");
-    assert_eq!(output.parameters[1].name, "server");
-    assert_eq!(output.parameters[1].param_type, "pubkey");
+    assert_eq!(output.parameters[1].name, "exitDelay");
+    assert_eq!(output.parameters[1].param_type, "int");
 
-    // Verify functions - we have 4 functions (2 functions x 2 variants)
-    assert_eq!(output.functions.len(), 4);
+    assert_eq!(output.functions.len(), 2);
 
-    // Verify cooperative function with server variant
-    let cooperative_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "cooperative" && f.server_variant)
-        .unwrap();
-
-    // Check function inputs
-    assert_eq!(cooperative_function.function_inputs.len(), 2);
-    assert_eq!(cooperative_function.function_inputs[0].name, "userSig");
-    assert_eq!(
-        cooperative_function.function_inputs[0].param_type,
-        "signature"
-    );
-    assert_eq!(cooperative_function.function_inputs[1].name, "serverSig");
-    assert_eq!(
-        cooperative_function.function_inputs[1].param_type,
-        "signature"
+    // ── cooperative closure: no covenant, [server, user] ──────────────
+    let coop = group(&output, "cooperative");
+    assert!(
+        coop.arkade.is_none(),
+        "bare VTXO cooperative path has no arkade covenant"
     );
 
-    // Check assembly instructions
-    assert_eq!(cooperative_function.asm.len(), 9);
-    assert_eq!(cooperative_function.asm[0], "<user>");
-    assert_eq!(cooperative_function.asm[1], OP_CHECKSIG);
-    assert_eq!(cooperative_function.asm[2], "<server>");
-    assert_eq!(cooperative_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(cooperative_function.asm[4], OP_2);
-    assert_eq!(cooperative_function.asm[5], OP_NUMEQUAL);
-    assert_eq!(cooperative_function.asm[6], "<SERVER_KEY>");
-    assert_eq!(cooperative_function.asm[7], "<serverSig>");
-    assert_eq!(cooperative_function.asm[8], OP_CHECKSIG);
+    let coop_leaf = leaf_asm(&output, "cooperative", "cooperative");
+    assert!(
+        coop_leaf.contains("<SERVER_KEY>"),
+        "cooperative: server role must lower to <SERVER_KEY>: {coop_leaf}"
+    );
+    assert!(
+        coop_leaf.contains("<user>"),
+        "cooperative: missing <user> pubkey: {coop_leaf}"
+    );
+    // N-of-N multisig: verify all-but-last, checksig the last.
+    assert!(
+        coop_leaf.contains(OP_CHECKSIGVERIFY) && coop_leaf.contains(OP_CHECKSIG),
+        "cooperative: expected N-of-N checksig chain: {coop_leaf}"
+    );
 
-    // Verify timeout function with server variant
-    let timeout_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "timeout" && f.server_variant)
-        .unwrap();
+    // Witness carries both sigs; serverSig is infra-injected, userSig author-supplied.
+    let coop_witness = witness_names(&output, "cooperative", "cooperative");
+    assert_eq!(coop_witness, vec!["serverSig", "userSig"]);
 
-    // Check assembly instructions
-    assert_eq!(timeout_function.asm.len(), 9);
-    assert_eq!(timeout_function.asm[0], "<user>");
-    assert_eq!(timeout_function.asm[1], "<userSig>");
-    assert_eq!(timeout_function.asm[2], OP_CHECKSIG);
-    assert_eq!(timeout_function.asm[3], "<timelock>"); // Variable reference
-    assert_eq!(timeout_function.asm[4], OP_CHECKLOCKTIMEVERIFY);
-    assert_eq!(timeout_function.asm[5], OP_DROP);
-    assert_eq!(timeout_function.asm[6], "<SERVER_KEY>");
-    assert_eq!(timeout_function.asm[7], "<serverSig>");
-    assert_eq!(timeout_function.asm[8], OP_CHECKSIG);
+    // ── unilateral closure: CSV delay + user checksig (exit closure) ─────────
+    let uni = group(&output, "unilateral");
+    assert!(
+        uni.arkade.is_none(),
+        "bare VTXO unilateral exit has no arkade covenant"
+    );
+
+    let uni_leaf = leaf_asm(&output, "unilateral", "unilateral");
+    assert!(
+        uni_leaf.contains("<exitDelay>"),
+        "unilateral: missing <exitDelay> CSV operand: {uni_leaf}"
+    );
+    assert!(
+        uni_leaf.contains(OP_CHECKSEQUENCEVERIFY),
+        "unilateral: missing OP_CHECKSEQUENCEVERIFY: {uni_leaf}"
+    );
+    assert!(
+        uni_leaf.contains(OP_DROP),
+        "unilateral: missing OP_DROP after CSV: {uni_leaf}"
+    );
+    assert!(
+        uni_leaf.contains("<user>") && uni_leaf.contains(OP_CHECKSIG),
+        "unilateral: missing user checksig: {uni_leaf}"
+    );
+
+    let uni_witness = witness_names(&output, "unilateral", "unilateral");
+    assert_eq!(uni_witness, vec!["userSig"]);
 }

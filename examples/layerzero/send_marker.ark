@@ -14,15 +14,10 @@
 //      Arkade closure (OP_INSPECTINPUTARKADESCRIPTHASH).
 //   3. Defense-in-depth: Endpoint control singleton on the Endpoint state input.
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract SendMarker(
   bytes32 endpointSendScriptHash,
-  bytes32 endpointCtrlAssetId,
-  int     exit
+  bytes32 endpointCtrlAssetIdTxid,
+  int     endpointCtrlAssetIdGidx
 ) {
   // Single execution path: consumed inside Endpoint.send().
   //
@@ -42,7 +37,7 @@ contract SendMarker(
 
     // (3) defense-in-depth: Endpoint control singleton on the consuming input.
     require(
-      tx.inputs[0].assets.lookup(endpointCtrlAssetId) == 1,
+      tx.inputs[0].assets.lookup(endpointCtrlAssetIdTxid, endpointCtrlAssetIdGidx) == 1,
       "endpoint state input missing control asset"
     );
   }

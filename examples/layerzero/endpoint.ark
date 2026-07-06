@@ -82,23 +82,21 @@
 //     117..149 remoteRecipient
 //     149..181 messageHash
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract Endpoint(
-  bytes32 endpointCtrlAssetId,
-  bytes32 endpointIDAssetId,
-  bytes32 oappCtrlAssetId,
-  bytes32 oappIDAssetId,
+  bytes32 endpointCtrlAssetIdTxid,
+  int     endpointCtrlAssetIdGidx,
+  bytes32 endpointIDAssetIdTxid,
+  int     endpointIDAssetIdGidx,
+  bytes32 oappCtrlAssetIdTxid,
+  int     oappCtrlAssetIdGidx,
+  bytes32 oappIDAssetIdTxid,
+  int     oappIDAssetIdGidx,
   bytes32 endpointID,
   bytes32 oappID,
   int     remoteEID,
   bytes32 remoteOApp,
   pubkey  dvn0Pk,
-  pubkey  dvn1Pk,
-  int     exit
+  pubkey  dvn1Pk
 ) {
 
   // -------------------------------------------------------------------------
@@ -191,7 +189,7 @@ contract Endpoint(
       "endpoint state must continue"
     );
     require(
-      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,
+      tx.outputs[0].assets.lookup(endpointCtrlAssetIdTxid, endpointCtrlAssetIdGidx) == 1,
       "endpoint control missing on next state"
     );
 
@@ -201,18 +199,18 @@ contract Endpoint(
     // here as a function input — the deployment runtime computes it from
     // the OApp contract definition).
     require(
-      tx.outputs[1].assets.lookup(endpointIDAssetId) == 1,
+      tx.outputs[1].assets.lookup(endpointIDAssetIdTxid, endpointIDAssetIdGidx) == 1,
       "marker asset missing"
     );
     require(
       tx.outputs[1].scriptPubKey == new ReceiveMarker(
-        receiveMarkerScriptHash, oappCtrlAssetId, exit
+        receiveMarkerScriptHash, oappCtrlAssetIdTxid, oappCtrlAssetIdGidx
       ),
       "marker pkScript not canonical"
     );
 
     // Exactly one EndpointID asset minted (no extras).
-    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);
+    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetIdTxid, endpointIDAssetIdGidx);
     require(endpointIDGroup.sumOutputs == 1, "extra marker minted");
   }
 
@@ -281,7 +279,7 @@ contract Endpoint(
     );
 
     // OAppID marker fully burned.
-    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);
+    let oappIDGroup = tx.assetGroups.find(oappIDAssetIdTxid, oappIDAssetIdGidx);
     require(oappIDGroup.sumInputs == 1, "send marker missing");
     require(oappIDGroup.sumOutputs == 0, "send marker not burned");
 
@@ -292,7 +290,7 @@ contract Endpoint(
       "endpoint state must continue"
     );
     require(
-      tx.outputs[0].assets.lookup(endpointCtrlAssetId) == 1,
+      tx.outputs[0].assets.lookup(endpointCtrlAssetIdTxid, endpointCtrlAssetIdGidx) == 1,
       "endpoint control missing on next state"
     );
   }

@@ -2,76 +2,60 @@
 #
 #
 
-# Function: swap (cooperative)
+# Function: swap
+## arkade covenant
 <takerPk>
 <takerSig>
 OP_CHECKSIG
 0
-<wantAssetId_txid>
-<wantAssetId_gidx>
+<wantAssetIdTxid>
+<wantAssetIdGidx>
 OP_INSPECTOUTASSETLOOKUP
-OP_DUP
-OP_1NEGATE
-OP_EQUAL
-OP_NOT
 OP_VERIFY
 <wantAmount>
 OP_GREATERTHANOREQUAL64
 OP_VERIFY
 0
 OP_INSPECTOUTPUTSCRIPTPUBKEY
-<new P2TR(makerPk)>
+<VTXO:SingleSig(<makerPk>,<exit>)>
 OP_EQUAL
 1
-<offerAssetId_txid>
-<offerAssetId_gidx>
+<offerAssetIdTxid>
+<offerAssetIdGidx>
 OP_INSPECTOUTASSETLOOKUP
-OP_DUP
-OP_1NEGATE
-OP_EQUAL
-OP_NOT
 OP_VERIFY
 <offerAmount>
 OP_GREATERTHANOREQUAL64
 OP_VERIFY
 1
 OP_INSPECTOUTPUTSCRIPTPUBKEY
-<new P2TR(takerPk)>
+<VTXO:SingleSig(<takerPk>,<exit>)>
 OP_EQUAL
+## leaf: swap
 <SERVER_KEY>
-<serverSig>
-OP_CHECKSIG
-
-# Function: swap (exit)
-<makerPk>
-<makerPkSig>
 OP_CHECKSIGVERIFY
-<takerPk>
-<takerPkSig>
+<EMULATOR_KEY:swap>
 OP_CHECKSIG
-144
-OP_CHECKSEQUENCEVERIFY
-OP_DROP
 
-# Function: cancel (cooperative)
+# Function: cancel
+## arkade covenant
 <expirationTime>
 OP_CHECKLOCKTIMEVERIFY
 OP_DROP
 <makerPk>
 <makerSig>
 OP_CHECKSIG
+## leaf: cancel
 <SERVER_KEY>
-<serverSig>
+OP_CHECKSIGVERIFY
+<EMULATOR_KEY:cancel>
 OP_CHECKSIG
 
-# Function: cancel (exit)
-<expirationTime>
-OP_CHECKLOCKTIMEVERIFY
-OP_DROP
-<makerPk>
-<makerSig>
-OP_CHECKSIG
-144
+# Function: unilateral
+## leaf: unilateral
+<exit>
 OP_CHECKSEQUENCEVERIFY
 OP_DROP
+<makerPk>
+OP_CHECKSIG
 

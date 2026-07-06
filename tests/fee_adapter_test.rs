@@ -1,8 +1,10 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_1NEGATE, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_GREATERTHAN64,
-    OP_GREATERTHANOREQUAL, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_NOT, OP_VERIFY,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
+
+mod common;
 
 #[test]
 fn test_fee_adapter_contract() {
@@ -23,56 +25,38 @@ fn test_fee_adapter_contract() {
     assert!(param_names.contains(&"recipientPk"));
     assert!(param_names.contains(&"minFee"));
 
-    // paymentAssetId (bytes32 used in lookup) should be decomposed
     assert!(
-        param_names.contains(&"paymentAssetId_txid"),
-        "missing paymentAssetId_txid decomposition, got: {:?}",
+        param_names.contains(&"paymentAssetIdTxid"),
+        "missing explicit paymentAssetIdTxid, got: {:?}",
         param_names
     );
     assert!(
-        param_names.contains(&"paymentAssetId_gidx"),
-        "missing paymentAssetId_gidx decomposition"
+        param_names.contains(&"paymentAssetIdGidx"),
+        "missing explicit paymentAssetIdGidx"
     );
 
-    // Verify functions: 2 functions x 2 variants = 4
-    assert_eq!(output.functions.len(), 4, "expected 4 functions");
+    // 2 covenant functions (execute, adjust) + 1 standalone unilateral = 3 groups
+    assert_eq!(output.functions.len(), 3, "expected 3 groups");
 
-    // Verify execute function with server variant
-    let execute = output
-        .functions
-        .iter()
-        .find(|f| f.name == "execute" && f.server_variant)
-        .expect("execute server variant not found");
+    // Verify execute function arkade covenant
+    let execute_group = common::group(&output, "execute");
+    let execute_inputs = &execute_group.arkade.as_ref().unwrap().inputs;
+    assert_eq!(execute_inputs.len(), 2);
+    assert_eq!(execute_inputs[0].name, "senderSig");
+    assert_eq!(execute_inputs[0].param_type, "signature");
+    assert_eq!(execute_inputs[1].name, "fee");
+    assert_eq!(execute_inputs[1].param_type, "int");
 
-    // Should have comparison requirement (fee >= minFee)
+    let execute_asm = common::arkade_asm(&output, "execute");
+
+    // fee >= minFee comparison
     assert!(
-        execute.require.iter().any(|r| r.req_type == "comparison"),
-        "missing comparison requirement in execute"
+        execute_asm.contains(OP_GREATERTHANOREQUAL),
+        "missing {OP_GREATERTHANOREQUAL} (fee >= minFee) in execute: {}",
+        execute_asm
     );
 
-    // Should have asset check requirements (tx.inputs/outputs lookups)
-    assert!(
-        execute.require.iter().any(|r| r.req_type == "assetCheck"),
-        "missing assetCheck requirement in execute"
-    );
-
-    // Should have signature requirement
-    assert!(
-        execute.require.iter().any(|r| r.req_type == "signature"),
-        "missing signature requirement in execute"
-    );
-
-    // Should have server signature requirement
-    assert!(
-        execute
-            .require
-            .iter()
-            .any(|r| r.req_type == "serverSignature"),
-        "missing serverSignature requirement"
-    );
-
-    // Check assembly for asset lookup opcodes
-    let execute_asm = execute.asm.join(" ");
+    // Asset lookup opcodes for payment asset verification
     assert!(
         execute_asm.contains(OP_INSPECTINASSETLOOKUP),
         "missing {OP_INSPECTINASSETLOOKUP} in execute: {}",
@@ -84,93 +68,68 @@ fn test_fee_adapter_contract() {
         execute_asm
     );
 
-    // Should have sentinel guard pattern
-    let sentinel_guard = format!("{OP_DUP} {OP_1NEGATE} {OP_EQUAL} {OP_NOT} {OP_VERIFY}");
+    // Lookups assert presence by consuming the opcode success flag with OP_VERIFY
     assert!(
-        execute_asm.contains(&sentinel_guard),
-        "missing sentinel guard in execute: {}",
+        execute_asm.contains(&format!("{OP_INSPECTINASSETLOOKUP} {OP_VERIFY}")),
+        "input lookup must be followed by OP_VERIFY flag-consume: {}",
+        execute_asm
+    );
+    assert!(
+        execute_asm.contains(&format!("{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY}")),
+        "output lookup must be followed by OP_VERIFY flag-consume: {}",
         execute_asm
     );
 
-    // Should have 64-bit comparison opcodes for asset comparisons
+    // 64-bit comparison for asset amounts
     assert!(
         execute_asm.contains(OP_GREATERTHAN64),
         "missing {OP_GREATERTHAN64} in execute: {}",
         execute_asm
     );
 
-    // Should also have standard comparison opcodes (fee >= minFee)
-    assert!(
-        execute_asm.contains(OP_GREATERTHANOREQUAL),
-        "missing {OP_GREATERTHANOREQUAL} in execute: {}",
-        execute_asm
-    );
-
+    // Sender signature check
     assert!(
         execute_asm.contains(OP_CHECKSIG),
         "missing {OP_CHECKSIG} in execute: {}",
         execute_asm
     );
 
-    // Verify execute function inputs
-    assert_eq!(execute.function_inputs.len(), 2);
-    assert_eq!(execute.function_inputs[0].name, "senderSig");
-    assert_eq!(execute.function_inputs[0].param_type, "signature");
-    assert_eq!(execute.function_inputs[1].name, "fee");
-    assert_eq!(execute.function_inputs[1].param_type, "int");
+    // execute leaf carries server + emulator cosig
+    let execute_leaf = common::leaf_asm(&output, "execute", "execute");
+    assert!(
+        execute_leaf.contains("<SERVER_KEY>"),
+        "execute leaf should have SERVER_KEY: {}",
+        execute_leaf
+    );
 
     // Verify adjust function
-    let adjust = output
-        .functions
-        .iter()
-        .find(|f| f.name == "adjust" && f.server_variant)
-        .expect("adjust server variant not found");
+    let adjust_group = common::group(&output, "adjust");
+    let adjust_inputs = &adjust_group.arkade.as_ref().unwrap().inputs;
+    assert_eq!(adjust_inputs.len(), 1);
+    assert_eq!(adjust_inputs[0].name, "operatorSig");
 
-    assert_eq!(adjust.function_inputs.len(), 1);
-    assert_eq!(adjust.function_inputs[0].name, "operatorSig");
+    // Unilateral exit: standalone CSV leaf with no introspection.
+    let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
 
-    // Verify exit variants exist
-    let execute_exit = output
-        .functions
-        .iter()
-        .find(|f| f.name == "execute" && !f.server_variant)
-        .expect("execute exit variant not found");
-
-    let exit_asm = execute_exit.asm.join(" ");
-
-    // Exit path with introspection should have:
-    // 1. N-of-N CHECKSIG chain (pure Bitcoin, no introspection)
-    // 2. CSV timelock (relative, not absolute CLTV)
     assert!(
-        exit_asm.contains(OP_CHECKSIG),
-        "missing {OP_CHECKSIG} in exit path: {}",
-        exit_asm
+        unilateral_asm.contains(OP_CHECKSIG),
+        "missing {OP_CHECKSIG} in unilateral exit: {}",
+        unilateral_asm
     );
     assert!(
-        exit_asm.contains(OP_CHECKSEQUENCEVERIFY),
-        "missing CSV exit timelock: {}",
-        exit_asm
-    );
-
-    // Exit path should NOT have introspection opcodes (pure Bitcoin fallback)
-    assert!(
-        !exit_asm.contains(OP_INSPECTINASSETLOOKUP),
-        "exit path should not have introspection: {}",
-        exit_asm
+        unilateral_asm.contains(OP_CHECKSEQUENCEVERIFY),
+        "missing CSV exit timelock in unilateral leaf: {}",
+        unilateral_asm
     );
     assert!(
-        !exit_asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "exit path should not have introspection: {}",
-        exit_asm
+        !unilateral_asm.contains(OP_INSPECTINASSETLOOKUP),
+        "exit leaf should not have introspection: {}",
+        unilateral_asm
     );
-
-    // Should have N-of-N multisig requirement
     assert!(
-        execute_exit
-            .require
-            .iter()
-            .any(|r| r.req_type == "nOfNMultisig"),
-        "missing nOfNMultisig requirement in exit path"
+        !unilateral_asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "exit leaf should not have introspection: {}",
+        unilateral_asm
     );
 }
 
@@ -203,8 +162,9 @@ fn test_fee_adapter_cli() {
 
     let json = fs::read_to_string(&output_path).unwrap();
     assert!(json.contains("\"contractName\": \"FeeAdapter\""));
-    assert!(json.contains("\"serverVariant\": true"));
-    assert!(json.contains("\"serverVariant\": false"));
+    // New model uses arkade groups and leaves; no serverVariant field
+    assert!(json.contains("\"arkade\""));
+    assert!(json.contains("\"leaves\""));
     assert!(json.contains(OP_INSPECTINASSETLOOKUP));
     assert!(json.contains(OP_INSPECTOUTASSETLOOKUP));
 }

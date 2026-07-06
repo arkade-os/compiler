@@ -11,15 +11,7 @@
 // - Processor receives fee (basis points of payment)
 // - Customer receives change if overpayment
 
-options {
-  server = server;
-  exit = 144;
-}
-
 contract PaymentAuthorization(
-  // Server key for cooperative path
-  pubkey server,
-
   // Payment terms
   int invoiceAmount,
   int feeRateBasisPoints,
@@ -33,7 +25,10 @@ contract PaymentAuthorization(
   int refundBlockHeight,
 
   // Authorization key
-  pubkey merchantPubkey
+  pubkey merchantPubkey,
+
+  // Exit timelock in blocks
+  int exit
 ) {
 
   // Capture: merchant-authorized settlement
@@ -108,5 +103,12 @@ contract PaymentAuthorization(
     require(tx.numOutputs == 1, "Expected 1 output for refund");
     require(tx.outputs[0].value == vtxoValue, "Refund amount incorrect");
     require(tx.outputs[0].scriptPubKey == customerScript, "Refund script incorrect");
+  }
+
+  // Unilateral exit (CSV): merchant reclaims cooperatively after CSV delay.
+  // Note: customer's exit is via the refund path above; no single customer pubkey exists.
+  function unilateral(signature merchantSig) tapscript {
+    require(older(exit));
+    require(checkSig(merchantSig, merchantPubkey));
   }
 }

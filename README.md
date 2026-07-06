@@ -71,8 +71,9 @@ The compiler produces a JSON file containing:
 
 - Contract metadata (name, version, etc.)
 - Constructor parameters
-- Function definitions with both cooperative and exit spending paths
-- Assembly for each path
+- Spend groups in `functions[]`
+- Optional `arkade` covenant assembly per function-backed group
+- One or more L1 tapleaves per group, each with witness metadata and ASM
 
 Example — `SingleSig` compiled output:
 
@@ -80,51 +81,46 @@ Example — `SingleSig` compiled output:
 {
   "contractName": "SingleSig",
   "constructorInputs": [
-    { "name": "user", "type": "pubkey" }
+    { "name": "user", "type": "pubkey" },
+    { "name": "exit", "type": "int" }
   ],
   "functions": [
     {
       "name": "spend",
-      "functionInputs": [
-        { "name": "userSig", "type": "signature" }
-      ],
-      "serverVariant": true,
-      "require": [
-        { "type": "signature" },
-        { "type": "serverSignature" }
-      ],
-      "asm": [
-        "<user>",
-        "<userSig>",
-        "OP_CHECKSIG",
-        "<SERVER_KEY>",
-        "<serverSig>",
-        "OP_CHECKSIG"
-      ]
-    },
-    {
-      "name": "spend",
-      "functionInputs": [
-        { "name": "userSig", "type": "signature" }
-      ],
-      "serverVariant": false,
-      "require": [
-        { "type": "signature" },
-        { "type": "older", "message": "Exit timelock of 144 blocks" }
-      ],
-      "asm": [
-        "<user>",
-        "<userSig>",
-        "OP_CHECKSIG",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP"
+      "arkade": {
+        "inputs": [{ "name": "userSig", "type": "signature" }],
+        "asm": ["<user>", "<userSig>", "OP_CHECKSIG"]
+      },
+      "leaves": [
+        {
+          "name": "spend",
+          "witness": [
+            {
+              "name": "serverSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            },
+            {
+              "name": "emulatorSig",
+              "type": "signature",
+              "encoding": "schnorr-64",
+              "injected": true
+            }
+          ],
+          "asm": [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:spend>",
+            "OP_CHECKSIG"
+          ]
+        }
       ]
     }
   ],
   "source": "...",
   "compiler": {
-    "name": "arkade-script",
+    "name": "arkade-compiler",
     "version": "0.1.0"
   },
   "updatedAt": "2024-01-01T00:00:00Z"
@@ -138,53 +134,49 @@ Example — `SingleSig` compiled output:
 The simplest VTXO: a single public key controls spending.
 
 ```solidity
-options {
-  server = server;
-  renew = renew;
-  exit = exit;
-}
-
-contract SingleSig(pubkey user, int renew, int exit) {
+contract SingleSig(pubkey user, int exit) {
   function spend(signature userSig) {
+    require(checkSig(userSig, user));
+  }
+
+  function unilateral(signature userSig) tapscript {
+    require(older(exit));
     require(checkSig(userSig, user));
   }
 }
 ```
 
-Each function compiles to two variants automatically:
-
-- **Cooperative** (`serverVariant: true`): `checkSig(user) && checkSig(server)`
-- **Exit** (`serverVariant: false`): `checkSig(user) && after exit blocks`
+The covenant function emits arkade ASM. The `unilateral` tapscript is a pure L1 CSV exit leaf.
 
 ### HTLC — Hash Time-Locked Contract
 
 ```solidity
-options {
-  server = server;
-  renew = renew;
-  exit = exit;
-}
-
 contract HTLC(
   pubkey sender,
   pubkey receiver,
-  bytes hash,
+  bytes20 preimageHash,
   int refundTime,
-  int renew,
   int exit
 ) {
-  function together(signature senderSig, signature receiverSig) {
-    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
+  function claim() {
+    require(tx.outputs[0].value >= tx.inputs[0].value);
+  }
+  function refund() {
+    require(tx.outputs[0].value >= tx.inputs[0].value);
   }
 
-  function refund(signature senderSig) {
-    require(checkSig(senderSig, sender));
+  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+  }
+  function refund(signature serverSig, signature emulatorSig) tapscript {
     require(tx.time >= refundTime);
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
   }
 
-  function claim(signature receiverSig, bytes preimage) {
-    require(checkSig(receiverSig, receiver));
-    require(sha256(preimage) == hash);
+  function unilateral(signature senderSig) tapscript {
+    require(older(exit));
+    require(checkSig(senderSig, sender));
   }
 }
 ```
@@ -196,33 +188,26 @@ Use `import` and `new ContractName(args)` to enforce that a transaction output c
 ```solidity
 import "single_sig.ark";
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract RecursiveVtxo(pubkey ownerPk, int exit) {
   // Forward ownership to output 0, maintaining the SingleSig VTXO shape.
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 ```
 
-The `new SingleSig(ownerPk)` expression compiles to a `<VTXO:SingleSig(<ownerPk>)>` placeholder. At runtime the Arkade Operator resolves this placeholder to the actual Taproot scriptPubKey of the child contract, so the introspection check is pure Bitcoin Script.
+The `new SingleSig(ownerPk, exit)` expression compiles to a `<VTXO:SingleSig(<ownerPk>,<exit>)>` placeholder. At runtime the Arkade Operator resolves this placeholder to the actual Taproot scriptPubKey of the child contract, so the introspection check is pure Bitcoin Script.
 
-**Cooperative path ASM:**
+**Arkade covenant ASM:**
 
 ```text
-0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
-<SERVER_KEY> <serverSig> OP_CHECKSIG
+0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>,<exit>)> OP_EQUAL
 ```
 
-**Exit path ASM** — because introspection opcodes are not available on pure Bitcoin Script exit paths, the compiler automatically falls back to N-of-N CHECKSIG:
+If no matching tapscript is declared for `send`, the compiler synthesizes a default collaborative leaf:
 
 ```text
-<ownerPk> <ownerPkSig> OP_CHECKSIG
-<exit> OP_CHECKSEQUENCEVERIFY OP_DROP
+<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:send> OP_CHECKSIG
 ```
 
 #### Splitting to two outputs
@@ -230,15 +215,10 @@ The `new SingleSig(ownerPk)` expression compiles to a `<VTXO:SingleSig(<ownerPk>
 ```solidity
 import "single_sig.ark";
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
   function split() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk));
-    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk, exit));
+    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk, exit));
   }
 }
 ```
@@ -247,11 +227,6 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 
 ```solidity
 import "self.ark";
-
-options {
-  server = server;
-  exit = exit;
-}
 
 contract FujiSafe(
   bytes assetCommitmentHash,
@@ -297,39 +272,36 @@ contract FujiSafe(
 
 ### Contract Structure
 
-An Arkade Language file may start with zero or more `import` declarations, followed by an `options` block and a `contract` declaration:
+An Arkade Language file may start with zero or more `import` declarations, followed by a `contract` declaration:
 
 ```solidity
 import "other_contract.ark";   // optional — imports for contract instantiation
 
-options {
-  server = server;    // Arkade Operator co-signing capability (auto-injected as <SERVER_KEY>)
-  renew = renew;      // renewal timelock in blocks (optional)
-  exit = exit;        // exit timelock in blocks
-}
-
-contract MyContract(pubkey user, int renew, int exit) {
+contract MyContract(pubkey user, int exit) {
   function spend(signature userSig) {
+    require(checkSig(userSig, user));
+  }
+
+  function unilateral(signature userSig) tapscript {
+    require(older(exit));
     require(checkSig(userSig, user));
   }
 }
 ```
 
-### Options Block
-
-| Field    | Required | Description                                                                          |
-|----------|----------|--------------------------------------------------------------------------------------|
-| `server` | yes      | Always `server = server`; Arkade Operator key is auto-injected as `<SERVER_KEY>`     |
-| `exit`   | yes      | Unilateral exit timelock in blocks; bind to an `int exit` constructor parameter      |
-| `renew`  | no       | Cooperative renewal timelock in blocks; bind to an `int renew` constructor parameter |
-
 ### Functions
 
-Functions define spending paths. Every non-`internal` function produces two compiled variants:
+Functions without a modifier define arkade covenants. `tapscript` functions define L1 tapleaves. A covenant function with no matching or tweaked tapleaf receives a synthesized collaborative leaf using `server` and `tweak(emulator, functionName)`.
 
 ```solidity
-// Spending path — compiled to cooperative + exit variants
+// Arkade covenant.
 function spend(signature userSig) {
+  require(checkSig(userSig, user));
+}
+
+// L1 CSV exit leaf.
+function unilateral(signature userSig) tapscript {
+  require(older(exit));
   require(checkSig(userSig, user));
 }
 
@@ -367,7 +339,7 @@ require(tx.input.current.scriptPubKey == new SingleSig(ownerPk));
 require(tx.outputs[0].scriptPubKey == new StaticContract());
 ```
 
-**Exit path fallback:** any function that uses `new ContractName(...)` automatically falls back to an N-of-N CHECKSIG chain on the exit path, because the `OP_INSPECTOUTPUTSCRIPTPUBKEY` opcode is not available in pure Bitcoin Script.
+Pure L1 exits are expressed as explicit `tapscript` functions, usually with `older(exit)`.
 
 ### Expressions
 
@@ -431,11 +403,12 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 | Field               | Description                                                              |
 |---------------------|--------------------------------------------------------------------------|
 | `contractName`      | Contract identifier                                                      |
-| `constructorInputs` | Parameters baked into the tapscript leaf at instantiation                |
-| `functions`         | Spending paths — each appears twice (cooperative + exit)                 |
-| `serverVariant`     | `true` = cooperative (needs server sig), `false` = exit (needs timelock) |
-| `require`           | Human-readable spending conditions                                       |
-| `asm`               | Arkade Script assembly; `<name>` = placeholder resolved at runtime       |
+| `constructorInputs` | Constructor parameters baked into instantiated scripts                   |
+| `functions`         | Spend groups: `{ name, arkade?, leaves[] }`                              |
+| `arkade`            | Optional emulator-run covenant `{ inputs, asm }`                         |
+| `leaves`            | L1 tapleaf objects `{ name, witness, asm }`                              |
+| `witness`           | Spend-time witness fields, with `injected: true` for infrastructure sigs |
+| `asm`               | Assembly tokens; `<name>` = placeholder resolved at runtime              |
 
 ### VTXO Placeholder Format
 
@@ -445,4 +418,4 @@ Contract instantiation expressions in ASM use the format:
 <VTXO:ContractName(<arg1>,<arg2>)>
 ```
 
-The Arkade runtime resolves this placeholder to the Taproot scriptPubKey of the named contract instantiated with the given arguments. Options (`server`, `exit`, `renew`) are inherited from the enclosing contract.
+The Arkade runtime resolves this placeholder to the Taproot scriptPubKey of the named contract instantiated with the given arguments.

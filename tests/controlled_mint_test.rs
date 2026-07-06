@@ -4,6 +4,8 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTASSETLOOKUP, OP_SUB64,
 };
 
+mod common;
+
 #[test]
 fn test_controlled_mint_contract() {
     let code = include_str!("../examples/controlled_mint.ark");
@@ -20,39 +22,31 @@ fn test_controlled_mint_contract() {
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"issuerPk"), "missing issuerPk");
 
-    // tokenAssetId (bytes32 used in lookups) should be decomposed into _txid + _gidx
+    // Asset IDs are authored as explicit (Txid, Gidx) param pairs.
     assert!(
-        param_names.contains(&"tokenAssetId_txid"),
-        "missing tokenAssetId_txid decomposition, got: {:?}",
+        param_names.contains(&"tokenAssetIdTxid"),
+        "missing explicit tokenAssetIdTxid, got: {:?}",
         param_names
     );
     assert!(
-        param_names.contains(&"tokenAssetId_gidx"),
-        "missing tokenAssetId_gidx decomposition"
+        param_names.contains(&"tokenAssetIdGidx"),
+        "missing explicit tokenAssetIdGidx"
     );
-
-    // ctrlAssetId should also be decomposed (used in find and lookup)
     assert!(
-        param_names.contains(&"ctrlAssetId_txid"),
-        "missing ctrlAssetId_txid decomposition, got: {:?}",
+        param_names.contains(&"ctrlAssetIdTxid"),
+        "missing explicit ctrlAssetIdTxid, got: {:?}",
         param_names
     );
     assert!(
-        param_names.contains(&"ctrlAssetId_gidx"),
-        "missing ctrlAssetId_gidx decomposition"
+        param_names.contains(&"ctrlAssetIdGidx"),
+        "missing explicit ctrlAssetIdGidx"
     );
 
-    // Verify functions: 3 functions x 2 variants = 6
-    assert_eq!(output.functions.len(), 6, "expected 6 functions");
+    // 3 covenant functions + 1 standalone unilateral tapscript = 4 groups
+    assert_eq!(output.functions.len(), 4, "expected 4 groups");
 
     // Verify mint function
-    let mint = output
-        .functions
-        .iter()
-        .find(|f| f.name == "mint" && f.server_variant)
-        .expect("mint server variant not found");
-
-    let mint_asm = mint.asm.join(" ");
+    let mint_asm = common::arkade_asm(&output, "mint");
 
     // Should have asset group find opcode
     assert!(
@@ -89,13 +83,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Verify burn function
-    let burn = output
-        .functions
-        .iter()
-        .find(|f| f.name == "burn" && f.server_variant)
-        .expect("burn server variant not found");
-
-    let burn_asm = burn.asm.join(" ");
+    let burn_asm = common::arkade_asm(&output, "burn");
 
     // Burn uses group sumInputs >= sumOutputs + amount
     assert!(
@@ -115,13 +103,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Verify lockSupply function
-    let lock = output
-        .functions
-        .iter()
-        .find(|f| f.name == "lockSupply" && f.server_variant)
-        .expect("lockSupply server variant not found");
-
-    let lock_asm = lock.asm.join(" ");
+    let lock_asm = common::arkade_asm(&output, "lockSupply");
 
     // lockSupply checks sumOutputs == 0
     assert!(
@@ -133,6 +115,14 @@ fn test_controlled_mint_contract() {
         lock_asm.contains(OP_INSPECTASSETGROUPSUM),
         "missing group sum in lockSupply: {}",
         lock_asm
+    );
+
+    // Unilateral exit leaf (CSV-based, pure L1)
+    let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
+    assert!(
+        unilateral_asm.contains("OP_CHECKSEQUENCEVERIFY"),
+        "unilateral leaf should have CSV: {}",
+        unilateral_asm
     );
 }
 

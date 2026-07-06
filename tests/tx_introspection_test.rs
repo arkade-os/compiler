@@ -1,3 +1,5 @@
+mod common;
+
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTLOCKTIME, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTVERSION, OP_TXWEIGHT,
@@ -7,12 +9,7 @@ use arkade_compiler::opcodes::{
 #[test]
 fn test_tx_version() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract VersionChecker(pubkey serverKey, pubkey owner) {
+        contract VersionChecker(pubkey owner) {
             function checkVersion(signature ownerSig, int expectedVersion) {
                 require(checkSig(ownerSig, owner));
                 require(tx.version == expectedVersion);
@@ -28,13 +25,7 @@ fn test_tx_version() {
     );
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkVersion" && f.server_variant)
-        .expect("Should have checkVersion server variant");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = common::arkade_asm(&output, "checkVersion");
     assert!(
         asm_str.contains(OP_INSPECTVERSION),
         "Expected {OP_INSPECTVERSION} in ASM: {}",
@@ -45,12 +36,7 @@ fn test_tx_version() {
 #[test]
 fn test_tx_locktime() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract LocktimeChecker(pubkey serverKey, pubkey owner) {
+        contract LocktimeChecker(pubkey owner) {
             function checkLocktime(signature ownerSig, int minLocktime) {
                 require(checkSig(ownerSig, owner));
                 require(tx.locktime >= minLocktime);
@@ -66,13 +52,7 @@ fn test_tx_locktime() {
     );
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkLocktime" && f.server_variant)
-        .expect("Should have checkLocktime server variant");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = common::arkade_asm(&output, "checkLocktime");
     assert!(
         asm_str.contains(OP_INSPECTLOCKTIME),
         "Expected {OP_INSPECTLOCKTIME} in ASM: {}",
@@ -83,12 +63,7 @@ fn test_tx_locktime() {
 #[test]
 fn test_tx_num_inputs() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract InputCounter(pubkey serverKey, pubkey owner) {
+        contract InputCounter(pubkey owner) {
             function checkInputs(signature ownerSig, int minInputs) {
                 require(checkSig(ownerSig, owner));
                 require(tx.numInputs >= minInputs);
@@ -104,13 +79,7 @@ fn test_tx_num_inputs() {
     );
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkInputs" && f.server_variant)
-        .expect("Should have checkInputs server variant");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = common::arkade_asm(&output, "checkInputs");
     assert!(
         asm_str.contains(OP_INSPECTNUMINPUTS),
         "Expected {OP_INSPECTNUMINPUTS} in ASM: {}",
@@ -121,12 +90,7 @@ fn test_tx_num_inputs() {
 #[test]
 fn test_tx_num_outputs() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract OutputCounter(pubkey serverKey, pubkey owner) {
+        contract OutputCounter(pubkey owner) {
             function checkOutputs(signature ownerSig, int minOutputs) {
                 require(checkSig(ownerSig, owner));
                 require(tx.numOutputs >= minOutputs);
@@ -142,13 +106,7 @@ fn test_tx_num_outputs() {
     );
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkOutputs" && f.server_variant)
-        .expect("Should have checkOutputs server variant");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = common::arkade_asm(&output, "checkOutputs");
     assert!(
         asm_str.contains(OP_INSPECTNUMOUTPUTS),
         "Expected {OP_INSPECTNUMOUTPUTS} in ASM: {}",
@@ -159,12 +117,7 @@ fn test_tx_num_outputs() {
 #[test]
 fn test_tx_weight() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract WeightChecker(pubkey serverKey, pubkey owner) {
+        contract WeightChecker(pubkey owner) {
             function checkWeight(signature ownerSig, int maxWeight) {
                 require(checkSig(ownerSig, owner));
                 require(tx.weight <= maxWeight);
@@ -180,13 +133,7 @@ fn test_tx_weight() {
     );
 
     let output = result.unwrap();
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkWeight" && f.server_variant)
-        .expect("Should have checkWeight server variant");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = common::arkade_asm(&output, "checkWeight");
     assert!(
         asm_str.contains(OP_TXWEIGHT),
         "Expected {OP_TXWEIGHT} in ASM: {}",

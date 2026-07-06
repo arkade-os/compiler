@@ -1,5 +1,8 @@
 use arkade_compiler::compile;
 
+mod common;
+use common::{arkade_asm, arkade_asm_tokens, leaf_asm, leaf_asm_tokens};
+
 // ─── Import statement parsing ──────────────────────────────────────────────────
 
 #[test]
@@ -8,11 +11,6 @@ fn test_import_statement_is_parsed() {
     // The import path is captured in the AST (not resolved at compile time).
     let code = r#"
 import "single_sig.ark";
-
-options {
-  server = operator;
-  exit = 144;
-}
 
 contract BareVtxo(pubkey ownerPk) {
   function spend(signature ownerSig) {
@@ -31,11 +29,6 @@ fn test_multiple_import_statements() {
 import "single_sig.ark";
 import "htlc.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
 contract MultiImport(pubkey ownerPk) {
   function spend(signature ownerSig) {
     require(checkSig(ownerSig, ownerPk));
@@ -51,11 +44,6 @@ contract MultiImport(pubkey ownerPk) {
 fn test_contract_without_imports_still_compiles() {
     // Regression: existing contracts with no import should still compile.
     let code = r#"
-options {
-  server = operator;
-  exit = 144;
-}
-
 contract SingleSig(pubkey ownerPk) {
   function spend(signature ownerSig) {
     require(checkSig(ownerSig, ownerPk));
@@ -72,19 +60,14 @@ contract SingleSig(pubkey ownerPk) {
 
 #[test]
 fn test_new_expression_compiles() {
-    // `new SingleSig(ownerPk)` on the right of an output scriptPubKey comparison.
+    // `new SingleSig(ownerPk, exit)` on the right of an output scriptPubKey comparison.
     // This is the canonical recursion-enforcement pattern.
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
+contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -95,73 +78,51 @@ contract RecursiveVtxo(pubkey ownerPk) {
 
 #[test]
 fn test_new_expression_asm_output() {
-    // Verify the cooperative path ASM contains the scriptPubKey check
-    // and the VTXO placeholder.
+    // Verify the covenant ASM contains the scriptPubKey check and VTXO placeholder.
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
+contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
 
-    let send_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && f.server_variant)
-        .expect("No cooperative send function");
-
-    // Must contain the output introspection opcode
+    // Must contain the output introspection opcode (in covenant/arkade asm)
+    let send_asm = arkade_asm(&result, "send");
     assert!(
-        send_coop
-            .asm
-            .iter()
-            .any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        send_asm.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
         "Missing OP_INSPECTOUTPUTSCRIPTPUBKEY in {:?}",
-        send_coop.asm
+        send_asm
     );
 
-    // Must contain the VTXO placeholder with the correct contract name and arg
+    // Must contain the VTXO placeholder with the correct contract name and args
     assert!(
-        send_coop
-            .asm
-            .iter()
-            .any(|op| op.contains("VTXO:SingleSig") && op.contains("<ownerPk>")),
-        "Missing VTXO:SingleSig(<ownerPk>) placeholder in {:?}",
-        send_coop.asm
+        send_asm.contains("VTXO:SingleSig") && send_asm.contains("<ownerPk>"),
+        "Missing VTXO:SingleSig(<ownerPk>,...) placeholder in {:?}",
+        send_asm
     );
 
     // The comparison operator must be present
     assert!(
-        send_coop.asm.iter().any(|op| op == "OP_EQUAL"),
+        send_asm.contains("OP_EQUAL"),
         "Missing OP_EQUAL in {:?}",
-        send_coop.asm
+        send_asm
     );
 }
 
 #[test]
 fn test_new_expression_multi_arg() {
-    // Constructor with multiple arguments: new HTLC(sender, receiver, hash, refundTime)
+    // Constructor with multiple arguments: new HTLC(sender, receiver, hash, refundTime, exit).
     let code = r#"
 import "htlc.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTime) {
+contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTime, int exit) {
   function forward(signature senderSig) {
-    require(tx.outputs[0].scriptPubKey == new HTLC(sender, receiver, hash, refundTime));
+    require(tx.outputs[0].scriptPubKey == new HTLC(sender, receiver, hash, refundTime, exit));
     require(checkSig(senderSig, sender));
   }
 }
@@ -169,16 +130,9 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
 
     let result = compile(code).expect("Compile failed");
 
-    let forward_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "forward" && f.server_variant)
-        .expect("No cooperative forward function");
-
-    // The VTXO placeholder must include all four args
-    let vtxo_op = forward_coop
-        .asm
-        .iter()
+    let forward_asm = arkade_asm(&result, "forward");
+    let vtxo_op = arkade_asm_tokens(&result, "forward")
+        .into_iter()
         .find(|op| op.contains("VTXO:HTLC"))
         .expect("No VTXO:HTLC placeholder in ASM");
 
@@ -198,6 +152,8 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
         "Missing <refundTime> in {}",
         vtxo_op
     );
+    assert!(vtxo_op.contains("<exit>"), "Missing <exit> in {}", vtxo_op);
+    let _ = forward_asm; // used implicitly above via arkade_asm_tokens
 }
 
 // ─── Exit-path behavior for ContractInstance ──────────────────────────────────
@@ -205,192 +161,141 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
 #[test]
 fn test_new_expression_exit_path_uses_nofn_checksig() {
     // ContractInstance uses non-Bitcoin-Script opcodes (OP_INSPECTOUTPUTSCRIPTPUBKEY),
-    // so the exit path MUST fall back to N-of-N CHECKSIG — same rule as all
-    // other introspection-using functions.  No introspection opcodes on exit.
+    // so the only L1 leaf is the synthesized server+emulator cosig guard — no
+    // introspection opcodes appear there.
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
+contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
-    let send_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && !f.server_variant)
-        .expect("No exit send function");
 
-    // Must fall back to N-of-N CHECKSIG (pure Bitcoin Script)
+    // The synthesized default leaf must use CHECKSIG (server+emulator N-of-N cosig)
+    let send_leaf = leaf_asm(&result, "send", "send");
     assert!(
-        send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
-        "Exit path must use N-of-N CHECKSIG fallback, got {:?}",
-        send_exit.asm
+        send_leaf.contains("OP_CHECKSIG") || send_leaf.contains("OP_CHECKSIGVERIFY"),
+        "Default leaf must use CHECKSIG guard, got {:?}",
+        send_leaf
     );
-    // Must NOT contain any introspection opcodes
+    // The leaf must NOT contain any introspection opcodes
     assert!(
-        !send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Exit path must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
-        send_exit.asm
+        !send_leaf.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        "Default leaf must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
+        send_leaf
     );
     assert!(
-        !send_exit.asm.iter().any(|op| op.contains("VTXO:")),
-        "Exit path must NOT contain VTXO placeholder, got {:?}",
-        send_exit.asm
+        !send_leaf.contains("VTXO:"),
+        "Default leaf must NOT contain VTXO placeholder, got {:?}",
+        send_leaf
     );
-    // Exit timelock must still be appended after the CHECKSIG chain
-    assert!(
-        send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
-        "Exit path missing OP_CHECKSEQUENCEVERIFY, got {:?}",
-        send_exit.asm
-    );
+    // Explicit CSV exits require a named tapscript leaf.
 }
 
 #[test]
 fn test_cooperative_path_asm_order() {
-    // Verify exact cooperative ASM (only the user's require statement + server sig):
-    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
-    //   <SERVER_KEY> <serverSig> OP_CHECKSIG
+    // Verify exact covenant ASM (arkade) for 'send':
+    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>,<exit>)> OP_EQUAL
+    // And verify exact default-leaf ASM:
+    //   <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:send> OP_CHECKSIG
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
+contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
-    let send_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && f.server_variant)
-        .expect("No cooperative send function");
 
-    let expected: &[&str] = &[
+    // Covenant (arkade) ASM: introspection check + VTXO placeholder + comparison
+    let expected_arkade: Vec<&str> = vec![
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "<VTXO:SingleSig(<ownerPk>)>",
+        "<VTXO:SingleSig(<ownerPk>,<exit>)>",
         "OP_EQUAL",
+    ];
+    assert_eq!(
+        arkade_asm_tokens(&result, "send"),
+        expected_arkade,
+        "Unexpected covenant ASM"
+    );
+
+    // Default leaf ASM: server+emulator cosig guard.
+    let expected_leaf: Vec<&str> = vec![
         "<SERVER_KEY>",
-        "<serverSig>",
+        "OP_CHECKSIGVERIFY",
+        "<EMULATOR_KEY:send>",
         "OP_CHECKSIG",
     ];
-
     assert_eq!(
-        send_coop.asm.as_slice(),
-        expected,
-        "Unexpected cooperative ASM: {:?}",
-        send_coop.asm
+        leaf_asm_tokens(&result, "send", "send"),
+        expected_leaf,
+        "Unexpected default leaf ASM"
     );
 }
 
 #[test]
 fn test_exit_path_asm_order() {
-    // Verify exact exit ASM: N-of-N CHECKSIG chain + timelock.
-    // ContractInstance uses non-Bitcoin-Script opcodes, so exit path falls
-    // back to pure Bitcoin Script (no introspection opcodes allowed).
-    //   <ownerPk> <ownerPkSig> OP_CHECKSIG
-    //   144 OP_CHECKSEQUENCEVERIFY OP_DROP
+    // Covenant-only functions get the synthesized server+emulator cosig leaf.
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
+contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
-    let send_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && !f.server_variant)
-        .expect("No exit send function");
 
-    let expected: &[&str] = &[
-        "<ownerPk>",
-        "<ownerPkSig>",
+    // Default leaf: server+emulator cosig guard — no introspection, no VTXO, no CSV
+    let expected_leaf: Vec<&str> = vec![
+        "<SERVER_KEY>",
+        "OP_CHECKSIGVERIFY",
+        "<EMULATOR_KEY:send>",
         "OP_CHECKSIG",
-        "144",
-        "OP_CHECKSEQUENCEVERIFY",
-        "OP_DROP",
     ];
-
     assert_eq!(
-        send_exit.asm.as_slice(),
-        expected,
-        "Unexpected exit ASM: {:?}",
-        send_exit.asm
+        leaf_asm_tokens(&result, "send", "send"),
+        expected_leaf,
+        "Unexpected default leaf ASM: {:?}",
+        leaf_asm_tokens(&result, "send", "send")
     );
 }
 
-// ─── Options inheritance ───────────────────────────────────────────────────────
+// ─── Placeholder formatting ────────────────────────────────────────────────────
 
 #[test]
 fn test_placeholder_format() {
     // The VTXO placeholder format is `<VTXO:ContractName(<arg1>,<arg2>)>`.
-    // Verify the exact format the runtime expects.
+    // Variable args are wrapped in `<>`; literals are not.
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract RecursiveVtxo(pubkey ownerPk) {
+contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
 
-    let send_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && f.server_variant)
-        .expect("No cooperative send function");
-
-    let vtxo_op = send_coop
-        .asm
-        .iter()
+    let vtxo_op = arkade_asm_tokens(&result, "send")
+        .into_iter()
         .find(|op| op.contains("VTXO:"))
-        .expect("No VTXO placeholder in ASM");
+        .expect("No VTXO placeholder in arkade ASM");
 
     assert_eq!(
-        vtxo_op, "<VTXO:SingleSig(<ownerPk>)>",
+        vtxo_op, "<VTXO:SingleSig(<ownerPk>,<exit>)>",
         "Unexpected placeholder format: {}",
         vtxo_op
     );
@@ -404,14 +309,9 @@ fn test_new_expression_on_input_scriptpubkey() {
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract SpendChecker(pubkey ownerPk) {
+contract SpendChecker(pubkey ownerPk, int exit) {
   function check(signature ownerSig) {
-    require(tx.inputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.inputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -419,28 +319,17 @@ contract SpendChecker(pubkey ownerPk) {
 
     let result = compile(code).expect("Compile failed");
 
-    let check_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "check" && f.server_variant)
-        .expect("No cooperative check function");
-
+    let check_asm = arkade_asm(&result, "check");
     assert!(
-        check_coop
-            .asm
-            .iter()
-            .any(|op| op == "OP_INSPECTINPUTSCRIPTPUBKEY"),
+        check_asm.contains("OP_INSPECTINPUTSCRIPTPUBKEY"),
         "Missing OP_INSPECTINPUTSCRIPTPUBKEY in {:?}",
-        check_coop.asm
+        check_asm
     );
 
     assert!(
-        check_coop
-            .asm
-            .iter()
-            .any(|op| op.contains("VTXO:SingleSig")),
+        check_asm.contains("VTXO:SingleSig"),
         "Missing VTXO:SingleSig placeholder in {:?}",
-        check_coop.asm
+        check_asm
     );
 }
 
@@ -453,11 +342,6 @@ fn test_zero_arg_constructor_compiles() {
     let code = r#"
 import "random_num.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
 contract ZeroArgUser(pubkey ownerPk) {
   function spend() {
     require(tx.outputs[0].scriptPubKey == new RandomNum());
@@ -467,17 +351,12 @@ contract ZeroArgUser(pubkey ownerPk) {
 
     let result = compile(code).expect("Compile failed");
 
-    let spend_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "spend" && f.server_variant)
-        .expect("No cooperative spend function");
-
+    let spend_asm = arkade_asm(&result, "spend");
     // Zero-arg placeholder must use empty parens, not omit them.
     assert!(
-        spend_coop.asm.iter().any(|op| op == "<VTXO:RandomNum()>"),
+        spend_asm.contains("<VTXO:RandomNum()>"),
         "Expected <VTXO:RandomNum()> placeholder in {:?}",
-        spend_coop.asm
+        spend_asm
     );
 }
 
@@ -490,11 +369,6 @@ fn test_literal_arg_constructor() {
     let code = r#"
 import "time_locked.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
 contract TimedForwarder(pubkey ownerPk) {
   function forward() {
     require(tx.outputs[0].scriptPubKey == new TimeLocked(ownerPk, 144));
@@ -504,15 +378,8 @@ contract TimedForwarder(pubkey ownerPk) {
 
     let result = compile(code).expect("Compile failed");
 
-    let fwd_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "forward" && f.server_variant)
-        .expect("No cooperative forward function");
-
-    let vtxo_op = fwd_coop
-        .asm
-        .iter()
+    let vtxo_op = arkade_asm_tokens(&result, "forward")
+        .into_iter()
         .find(|op| op.contains("VTXO:TimeLocked"))
         .expect("No VTXO:TimeLocked placeholder in ASM");
 
@@ -540,69 +407,46 @@ contract TimedForwarder(pubkey ownerPk) {
 #[test]
 fn test_multiple_contract_instances_in_one_function() {
     // A function that enforces two different outputs each matching a different
-    // VTXO contract.  Both cooperative-path placeholders must appear in ASM.
+    // VTXO contract.  Both covenant-path placeholders must appear in ASM.
     let code = r#"
 import "single_sig.ark";
 import "htlc.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract Splitter(pubkey alicePk, pubkey bobPk) {
+contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
   function split() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk));
-    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk, exit));
+    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk, exit));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
 
-    let split_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "split" && f.server_variant)
-        .expect("No cooperative split function");
+    let split_asm = arkade_asm(&result, "split");
 
-    // Both placeholders must appear.
+    // Both placeholders must appear in the covenant ASM.
     assert!(
-        split_coop
-            .asm
-            .iter()
-            .any(|op| op.contains("VTXO:SingleSig") && op.contains("<alicePk>")),
-        "Missing VTXO:SingleSig(<alicePk>) in {:?}",
-        split_coop.asm
+        split_asm.contains("VTXO:SingleSig") && split_asm.contains("<alicePk>"),
+        "Missing VTXO:SingleSig(<alicePk>,...) in {:?}",
+        split_asm
     );
     assert!(
-        split_coop
-            .asm
-            .iter()
-            .any(|op| op.contains("VTXO:SingleSig") && op.contains("<bobPk>")),
-        "Missing VTXO:SingleSig(<bobPk>) in {:?}",
-        split_coop.asm
+        split_asm.contains("VTXO:SingleSig") && split_asm.contains("<bobPk>"),
+        "Missing VTXO:SingleSig(<bobPk>,...) in {:?}",
+        split_asm
     );
 
-    // Exit path must fall back to N-of-N CHECKSIG (no introspection).
-    let split_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "split" && !f.server_variant)
-        .expect("No exit split function");
-
+    // The synthesized default leaf has no introspection opcodes and no VTXO placeholders.
+    let split_leaf = leaf_asm(&result, "split", "split");
     assert!(
-        split_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
-        "Exit path must use N-of-N CHECKSIG, got {:?}",
-        split_exit.asm
+        split_leaf.contains("OP_CHECKSIG") || split_leaf.contains("OP_CHECKSIGVERIFY"),
+        "Default leaf must use CHECKSIG guard, got {:?}",
+        split_leaf
     );
     assert!(
-        !split_exit.asm.iter().any(|op| op.contains("VTXO:")),
-        "Exit path must not contain VTXO placeholders, got {:?}",
-        split_exit.asm
+        !split_leaf.contains("VTXO:"),
+        "Default leaf must not contain VTXO placeholders, got {:?}",
+        split_leaf
     );
 }
 
@@ -610,19 +454,14 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 
 #[test]
 fn test_mixed_contract_instance_and_checksig_cooperative_path() {
-    // Cooperative path must include BOTH the introspection check and the
+    // Covenant ASM must include BOTH the introspection check and the
     // explicit checkSig requirement when they appear in the same function.
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract ForwardAndSign(pubkey ownerPk) {
+contract ForwardAndSign(pubkey ownerPk, int exit) {
   function send(signature ownerSig) {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -630,41 +469,31 @@ contract ForwardAndSign(pubkey ownerPk) {
 
     let result = compile(code).expect("Compile failed");
 
-    let send_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && f.server_variant)
-        .expect("No cooperative send function");
+    let send_asm = arkade_asm(&result, "send");
 
-    // Both checks present on cooperative path.
+    // Both checks present in covenant ASM.
     assert!(
-        send_coop.asm.iter().any(|op| op.contains("VTXO:SingleSig")),
-        "Cooperative path missing VTXO placeholder in {:?}",
-        send_coop.asm
+        send_asm.contains("VTXO:SingleSig"),
+        "Covenant ASM missing VTXO placeholder in {:?}",
+        send_asm
     );
     assert!(
-        send_coop.asm.iter().any(|op| op == "OP_CHECKSIG"),
-        "Cooperative path missing OP_CHECKSIG in {:?}",
-        send_coop.asm
+        send_asm.contains("OP_CHECKSIG"),
+        "Covenant ASM missing OP_CHECKSIG in {:?}",
+        send_asm
     );
 }
 
 #[test]
 fn test_mixed_contract_instance_and_checksig_exit_path() {
-    // When a function uses ContractInstance the exit path falls back to the
-    // N-of-N CHECKSIG chain and does NOT include the introspection check —
-    // the exit path is pure Bitcoin Script only.
+    // The synthesized default leaf has no introspection opcodes and no VTXO
+    // placeholders. Explicit exits require a named tapscript leaf.
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract ForwardAndSign(pubkey ownerPk) {
+contract ForwardAndSign(pubkey ownerPk, int exit) {
   function send(signature ownerSig) {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -672,62 +501,39 @@ contract ForwardAndSign(pubkey ownerPk) {
 
     let result = compile(code).expect("Compile failed");
 
-    let send_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && !f.server_variant)
-        .expect("No exit send function");
-
-    // Exit path: N-of-N CHECKSIG present, no introspection opcodes, no VTXO placeholders.
+    // Default leaf: server+emulator cosig guard — no introspection, no VTXO.
+    let send_leaf = leaf_asm(&result, "send", "send");
     assert!(
-        send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
-        "Exit path must use N-of-N CHECKSIG, got {:?}",
-        send_exit.asm
+        send_leaf.contains("OP_CHECKSIG") || send_leaf.contains("OP_CHECKSIGVERIFY"),
+        "Default leaf must use CHECKSIG guard, got {:?}",
+        send_leaf
     );
     assert!(
-        !send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Exit path must not contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
-        send_exit.asm
+        !send_leaf.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        "Default leaf must not contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
+        send_leaf
     );
     assert!(
-        !send_exit.asm.iter().any(|op| op.contains("VTXO:")),
-        "Exit path must not contain VTXO placeholders, got {:?}",
-        send_exit.asm
+        !send_leaf.contains("VTXO:"),
+        "Default leaf must not contain VTXO placeholders, got {:?}",
+        send_leaf
     );
-    assert!(
-        send_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
-        "Exit path missing OP_CHECKSEQUENCEVERIFY, got {:?}",
-        send_exit.asm
-    );
+    // Explicit CSV exits require a named tapscript leaf.
 }
 
 // ─── Per-function introspection detection ─────────────────────────────────────
 
 #[test]
 fn test_introspection_detection_is_per_function() {
-    // Only the function that contains a ContractInstance should use the N-of-N
-    // CHECKSIG exit fallback.  A sibling function with plain checkSig must keep
-    // its normal exit path (checkSig + timelock).
+    // Only the function that contains a ContractInstance gets its introspection
+    // in the covenant ASM; the sibling function stays as a plain checkSig covenant.
+    // Both get the synthesized default leaf (server+emulator cosig guard).
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract TwoFunctions(pubkey ownerPk) {
+contract TwoFunctions(pubkey ownerPk, int exit) {
   function forward() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
   }
 
   function spend(signature ownerSig) {
@@ -738,47 +544,47 @@ contract TwoFunctions(pubkey ownerPk) {
 
     let result = compile(code).expect("Compile failed");
 
-    // forward() exit path → N-of-N CHECKSIG (has ContractInstance)
-    let forward_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "forward" && !f.server_variant)
-        .expect("No exit forward function");
-
+    // forward() covenant ASM has introspection; its default leaf does not
+    let forward_asm = arkade_asm(&result, "forward");
     assert!(
-        forward_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
-        "forward() exit must use N-of-N CHECKSIG, got {:?}",
-        forward_exit.asm
-    );
-    assert!(
-        !forward_exit.asm.iter().any(|op| op.contains("VTXO:")),
-        "forward() exit must not contain VTXO placeholders, got {:?}",
-        forward_exit.asm
+        forward_asm.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
+        "forward() covenant must have introspection, got {:?}",
+        forward_asm
     );
 
-    // spend() exit path → normal (checkSig + timelock), no N-of-N fallback
-    let spend_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "spend" && !f.server_variant)
-        .expect("No exit spend function");
+    let forward_leaf = leaf_asm(&result, "forward", "forward");
+    assert!(
+        forward_leaf.contains("OP_CHECKSIG") || forward_leaf.contains("OP_CHECKSIGVERIFY"),
+        "forward() default leaf must use CHECKSIG guard, got {:?}",
+        forward_leaf
+    );
+    assert!(
+        !forward_leaf.contains("VTXO:"),
+        "forward() default leaf must not contain VTXO placeholders, got {:?}",
+        forward_leaf
+    );
 
+    // spend() covenant ASM: plain checkSig, no introspection
+    let spend_asm = arkade_asm(&result, "spend");
     assert!(
-        spend_exit.asm.iter().any(|op| op == "OP_CHECKSIG"),
-        "spend() exit must contain OP_CHECKSIG, got {:?}",
-        spend_exit.asm
+        spend_asm.contains("OP_CHECKSIG"),
+        "spend() covenant must contain OP_CHECKSIG, got {:?}",
+        spend_asm
     );
     assert!(
-        spend_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSEQUENCEVERIFY"),
-        "spend() exit must contain OP_CHECKSEQUENCEVERIFY, got {:?}",
-        spend_exit.asm
+        !spend_asm.contains("VTXO:"),
+        "spend() covenant must not have VTXO placeholders, got {:?}",
+        spend_asm
     );
+
+    // spend() default leaf: server+emulator cosig guard
+    let spend_leaf = leaf_asm(&result, "spend", "spend");
+    assert!(
+        spend_leaf.contains("OP_CHECKSIG"),
+        "spend() default leaf must contain OP_CHECKSIG, got {:?}",
+        spend_leaf
+    );
+    // Default leaves do not carry CSV timelocks.
 }
 
 // ─── ContractInstance on current-input scriptPubKey ───────────────────────────
@@ -790,49 +596,33 @@ fn test_new_expression_on_current_input_scriptpubkey() {
     let code = r#"
 import "single_sig.ark";
 
-options {
-  server = operator;
-  exit = 144;
-}
-
-contract SelfEnforcing(pubkey ownerPk) {
+contract SelfEnforcing(pubkey ownerPk, int exit) {
   function renew() {
-    require(tx.input.current.scriptPubKey == new SingleSig(ownerPk));
+    require(tx.input.current.scriptPubKey == new SingleSig(ownerPk, exit));
   }
 }
 "#;
 
     let result = compile(code).expect("Compile failed");
 
-    let renew_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "renew" && f.server_variant)
-        .expect("No cooperative renew function");
-
+    let renew_asm = arkade_asm(&result, "renew");
     assert!(
-        renew_coop
-            .asm
-            .iter()
-            .any(|op| op.contains("VTXO:SingleSig")),
+        renew_asm.contains("VTXO:SingleSig"),
         "Missing VTXO:SingleSig placeholder in {:?}",
-        renew_coop.asm
+        renew_asm
     );
 
-    // Exit path must still fall back to N-of-N CHECKSIG (ContractInstance present).
-    let renew_exit = result
-        .functions
-        .iter()
-        .find(|f| f.name == "renew" && !f.server_variant)
-        .expect("No exit renew function");
-
+    // Default leaf: server+emulator cosig guard (no introspection opcodes).
+    let renew_leaf = leaf_asm(&result, "renew", "renew");
     assert!(
-        renew_exit
-            .asm
-            .iter()
-            .any(|op| op == "OP_CHECKSIG" || op == "OP_CHECKSIGVERIFY"),
-        "Exit path must use N-of-N CHECKSIG, got {:?}",
-        renew_exit.asm
+        renew_leaf.contains("OP_CHECKSIG") || renew_leaf.contains("OP_CHECKSIGVERIFY"),
+        "Default leaf must use CHECKSIG guard, got {:?}",
+        renew_leaf
+    );
+    assert!(
+        !renew_leaf.contains("VTXO:"),
+        "Default leaf must not contain VTXO, got {:?}",
+        renew_leaf
     );
 }
 
@@ -841,14 +631,10 @@ contract SelfEnforcing(pubkey ownerPk) {
 #[test]
 fn test_self_referential_contract() {
     // A contract that enforces its own output script matches itself (the most
-    // common recursion pattern for VTXOs).
+    // common recursion pattern for VTXOs). SelfRef has 1 param (ownerPk only)
+    // as the inline contract defines it; renew passes ownerPk back to itself.
     let code = r#"
 import "self.ark";
-
-options {
-  server = operator;
-  exit = 144;
-}
 
 contract SelfRef(pubkey ownerPk) {
   function renew() {
@@ -858,18 +644,11 @@ contract SelfRef(pubkey ownerPk) {
 "#;
 
     let result = compile(code).expect("Compile failed");
-    let renew_coop = result
-        .functions
-        .iter()
-        .find(|f| f.name == "renew" && f.server_variant)
-        .expect("No cooperative renew function");
 
+    let renew_asm = arkade_asm(&result, "renew");
     assert!(
-        renew_coop
-            .asm
-            .iter()
-            .any(|op| op.contains("VTXO:SelfRef(<ownerPk>)")),
+        renew_asm.contains("VTXO:SelfRef(<ownerPk>)"),
         "Missing VTXO:SelfRef(<ownerPk>) in {:?}",
-        renew_coop.asm
+        renew_asm
     );
 }

@@ -31,22 +31,21 @@
 //     111..143  remoteRecipient
 //     143..175  messageHash
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract OApp(
-  bytes32 oappCtrlAssetId,
-  bytes32 oappIDAssetId,
-  bytes32 usdt0AssetId,
-  bytes32 endpointCtrlAssetId,
-  bytes32 endpointIDAssetId,
+  bytes32 oappCtrlAssetIdTxid,
+  int     oappCtrlAssetIdGidx,
+  bytes32 oappIDAssetIdTxid,
+  int     oappIDAssetIdGidx,
+  bytes32 usdt0AssetIdTxid,
+  int     usdt0AssetIdGidx,
+  bytes32 endpointCtrlAssetIdTxid,
+  int     endpointCtrlAssetIdGidx,
+  bytes32 endpointIDAssetIdTxid,
+  int     endpointIDAssetIdGidx,
   bytes32 endpointID,
   bytes32 oappID,
   int     remoteEID,
-  bytes32 remoteOApp,
-  int     exit
+  bytes32 remoteOApp
 ) {
 
   // -------------------------------------------------------------------------
@@ -73,10 +72,10 @@ contract OApp(
     // The receive-invocation marker (1 EndpointID asset) is consumed on
     // input 0 and fully burned.
     require(
-      tx.inputs[0].assets.lookup(endpointIDAssetId) == 1,
+      tx.inputs[0].assets.lookup(endpointIDAssetIdTxid, endpointIDAssetIdGidx) == 1,
       "marker asset not on input 0"
     );
-    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetId);
+    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetIdTxid, endpointIDAssetIdGidx);
     require(endpointIDGroup.sumOutputs == 0, "marker not burned");
 
     // LzReceive route fields are pinned by the contract configuration.
@@ -123,13 +122,13 @@ contract OApp(
 
     // Recipient output receives exactly CreditMessage.amount USDT0.
     require(
-      tx.outputs[1].assets.lookup(usdt0AssetId)
+      tx.outputs[1].assets.lookup(usdt0AssetIdTxid, usdt0AssetIdGidx)
         == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),
       "recipient amount mismatch"
     );
 
     // USDT0 delta equals the credited amount.
-    let usdt0Group = tx.assetGroups.find(usdt0AssetId);
+    let usdt0Group = tx.assetGroups.find(usdt0AssetIdTxid, usdt0AssetIdGidx);
     require(
       usdt0Group.delta == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),
       "usdt0 delta != credit amount"
@@ -144,8 +143,8 @@ contract OApp(
       tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
       "oapp state must continue"
     );
-    require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, "oapp control missing");
-    require(tx.outputs[0].assets.lookup(oappIDAssetId) == 1, "oapp id missing");
+    require(tx.outputs[0].assets.lookup(oappCtrlAssetIdTxid, oappCtrlAssetIdGidx) == 1, "oapp control missing");
+    require(tx.outputs[0].assets.lookup(oappIDAssetIdTxid, oappIDAssetIdGidx) == 1, "oapp id missing");
   }
 
   // -------------------------------------------------------------------------
@@ -158,10 +157,9 @@ contract OApp(
   //   (a) the OApp control singleton, which only sits on the real OApp state;
   //   (b) the USDT0 input UTXOs, each requiring their own owner sig under
   //       their per-UTXO scripts;
-  //   (c) the Arkade server cosign on the cooperative path (added
-  //       automatically by serverVariant=true) or the exit CSV on the
-  //       fallback path. No contract-level owner signature exists or is
-  //       needed.
+  //   (c) the Arkade server + emulator cosign on the synthesized default
+  //       collaborative tapleaf. No contract-level owner signature exists or
+  //       is needed.
   // -------------------------------------------------------------------------
   function send(bytes32 sendMarkerScriptHash) {
     // Current-tx OAppSendInvocation packet: v1, fixed size.
@@ -182,7 +180,7 @@ contract OApp(
     // USDT0 input sum minus output sum equals the invocation amount
     // (i.e. delta == -amount). Expressed as monotonic equality on sumInputs
     // - sumOutputs using the existing group_property arithmetic.
-    let usdt0Group = tx.assetGroups.find(usdt0AssetId);
+    let usdt0Group = tx.assetGroups.find(usdt0AssetIdTxid, usdt0AssetIdGidx);
     require(
       usdt0Group.sumInputs == usdt0Group.sumOutputs + bin2num(substr(tx.packet(20), 103, 8)),
       "burn amount mismatch"
@@ -190,16 +188,16 @@ contract OApp(
 
     // Send-invocation marker emitted at output 1.
     require(
-      tx.outputs[1].assets.lookup(oappIDAssetId) == 1,
+      tx.outputs[1].assets.lookup(oappIDAssetIdTxid, oappIDAssetIdGidx) == 1,
       "send marker asset missing"
     );
     require(
       tx.outputs[1].scriptPubKey == new SendMarker(
-        sendMarkerScriptHash, endpointCtrlAssetId, exit
+        sendMarkerScriptHash, endpointCtrlAssetIdTxid, endpointCtrlAssetIdGidx
       ),
       "send marker pkScript not canonical"
     );
-    let oappIDGroup = tx.assetGroups.find(oappIDAssetId);
+    let oappIDGroup = tx.assetGroups.find(oappIDAssetIdTxid, oappIDAssetIdGidx);
     require(oappIDGroup.sumOutputs == 1, "extra send marker minted");
 
     // OApp state continues at output 0: recursive covenant via the spent
@@ -208,6 +206,6 @@ contract OApp(
       tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
       "oapp state must continue"
     );
-    require(tx.outputs[0].assets.lookup(oappCtrlAssetId) == 1, "oapp control missing");
+    require(tx.outputs[0].assets.lookup(oappCtrlAssetIdTxid, oappCtrlAssetIdGidx) == 1, "oapp control missing");
   }
 }

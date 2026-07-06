@@ -13,15 +13,10 @@
 //      closure (OP_INSPECTINPUTARKADESCRIPTHASH).
 //   3. Defense-in-depth: OApp control singleton on the OApp state input.
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract ReceiveMarker(
   bytes32 oappReceiveScriptHash,
-  bytes32 oappCtrlAssetId,
-  int     exit
+  bytes32 oappCtrlAssetIdTxid,
+  int     oappCtrlAssetIdGidx
 ) {
   // Single execution path: consumed inside OApp.receive().
   //
@@ -41,7 +36,7 @@ contract ReceiveMarker(
 
     // (3) defense-in-depth: OApp control singleton on the consuming input.
     require(
-      tx.inputs[1].assets.lookup(oappCtrlAssetId) == 1,
+      tx.inputs[1].assets.lookup(oappCtrlAssetIdTxid, oappCtrlAssetIdGidx) == 1,
       "oapp state input missing control asset"
     );
   }

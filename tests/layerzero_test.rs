@@ -1,4 +1,5 @@
 use arkade_compiler::compile;
+use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPSUM,
     OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTPACKET,
@@ -6,7 +7,22 @@ use arkade_compiler::opcodes::{
     OP_INSPECTPACKET, OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SUBSTR,
 };
 
-/// Assert the recursive-covenant continuation pattern: the function's asm must
+/// Return the emulator covenant ASM for a spend group (the function body).
+/// Cooperative signing now lives in a synthesized L1 tapleaf, so the covenant
+/// carries the introspection logic and no operator co-signature.
+fn covenant<'a>(output: &'a ContractJson, name: &str) -> &'a [String] {
+    &output
+        .functions
+        .iter()
+        .find(|g| g.name == name)
+        .unwrap_or_else(|| panic!("missing spend group {name}"))
+        .arkade
+        .as_ref()
+        .unwrap_or_else(|| panic!("group {name} has no arkade covenant"))
+        .asm
+}
+
+/// Assert the recursive-covenant continuation pattern: the covenant asm must
 /// contain `OP_INSPECTOUTPUTSCRIPTPUBKEY OP_PUSHCURRENTINPUTINDEX
 /// OP_INSPECTINPUTSCRIPTPUBKEY`, i.e. output[k].scriptPubKey is pinned to the
 /// spent input's own pkScript (mirrors the Go reference's state-continuation
@@ -57,25 +73,23 @@ fn test_endpoint_structure() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
     assert_eq!(output.name, "Endpoint");
-    // 2 functions × 2 variants = 4
-    assert_eq!(output.functions.len(), 4);
+    // One spend group per covenant function; each carries a synthesized
+    // collaborative tapleaf.
+    assert_eq!(output.functions.len(), 2);
 
     for name in &["receive", "send"] {
+        let group = output
+            .functions
+            .iter()
+            .find(|g| &g.name == name)
+            .unwrap_or_else(|| panic!("missing {name} spend group"));
         assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && f.server_variant),
-            "missing {} server variant",
-            name
+            group.arkade.is_some(),
+            "{name} must have an arkade covenant"
         );
         assert!(
-            output
-                .functions
-                .iter()
-                .any(|f| &f.name == name && !f.server_variant),
-            "missing {} exit variant",
-            name
+            !group.leaves.is_empty(),
+            "{name} must have at least the synthesized collaborative leaf"
         );
     }
 }
@@ -84,12 +98,7 @@ fn test_endpoint_structure() {
 fn test_endpoint_receive_verifies_both_dvn_signatures() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
-
-    let receive = output
-        .functions
-        .iter()
-        .find(|f| f.name == "receive" && f.server_variant)
-        .unwrap();
+    let receive = covenant(&output, "receive");
 
     // Both DVNs are verified via require(checkSigFromStack(...)) — the
     // introspector has no OP_CHECKSIGFROMSTACKVERIFY variant, so the contract
@@ -97,7 +106,6 @@ fn test_endpoint_receive_verifies_both_dvn_signatures() {
     // prover-supplied attestedHash, pinned on chain to both the LzReceive
     // header hash and the DvnAttestation packet field.
     let sig_count = receive
-        .asm
         .iter()
         .filter(|s| *s == OP_CHECKSIGFROMSTACK)
         .count();
@@ -117,15 +125,11 @@ fn test_endpoint_receive_uses_packet_introspection() {
     // binding to the LzReceive header.
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
-    let receive = output
-        .functions
-        .iter()
-        .find(|f| f.name == "receive" && f.server_variant)
-        .unwrap();
+    let receive = covenant(&output, "receive");
 
     for op in [OP_INSPECTPACKET, OP_SUBSTR, OP_SHA256] {
         assert!(
-            receive.asm.iter().any(|s| s == op),
+            receive.iter().any(|s| s == op),
             "endpoint.receive() must use {} for native packet enforcement",
             op
         );
@@ -136,34 +140,23 @@ fn test_endpoint_receive_uses_packet_introspection() {
 fn test_endpoint_receive_emits_receive_marker_output() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
+    let receive = covenant(&output, "receive");
 
-    let receive = output
-        .functions
-        .iter()
-        .find(|f| f.name == "receive" && f.server_variant)
-        .unwrap();
-
-    let has_receive_marker = receive
-        .asm
-        .iter()
-        .any(|s| s.contains("VTXO:ReceiveMarker("));
+    let has_receive_marker = receive.iter().any(|s| s.contains("VTXO:ReceiveMarker("));
     assert!(
         has_receive_marker,
         "endpoint.receive() must pin output[1] to the canonical ReceiveMarker pkScript: {:?}",
-        receive.asm
+        receive
     );
 
     assert!(
-        has_self_continuation(&receive.asm),
+        has_self_continuation(receive),
         "endpoint.receive() must continue Endpoint state via the recursive \
          covenant (output pkScript == current input pkScript): {:?}",
-        receive.asm
+        receive
     );
 
-    let has_asset_lookup = receive
-        .asm
-        .iter()
-        .any(|s| s.contains(OP_INSPECTOUTASSETLOOKUP));
+    let has_asset_lookup = receive.iter().any(|s| s.contains(OP_INSPECTOUTASSETLOOKUP));
     assert!(
         has_asset_lookup,
         "endpoint.receive() must check output asset balances via {}",
@@ -175,24 +168,16 @@ fn test_endpoint_receive_emits_receive_marker_output() {
 fn test_endpoint_send_burns_send_marker() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
-
-    let send = output
-        .functions
-        .iter()
-        .find(|f| f.name == "send" && f.server_variant)
-        .unwrap();
+    let send = covenant(&output, "send");
 
     // Marker burn proof: OAppID asset group → outputSum == 0.
-    let has_group_sum = send.asm.iter().any(|s| s.contains(OP_INSPECTASSETGROUPSUM));
+    let has_group_sum = send.iter().any(|s| s.contains(OP_INSPECTASSETGROUPSUM));
     assert!(
         has_group_sum,
         "endpoint.send() must inspect asset group sums to verify marker burn"
     );
 
-    let has_find = send
-        .asm
-        .iter()
-        .any(|s| s.contains(OP_FINDASSETGROUPBYASSETID));
+    let has_find = send.iter().any(|s| s.contains(OP_FINDASSETGROUPBYASSETID));
     assert!(
         has_find,
         "endpoint.send() must locate OAppID asset group via {}",
@@ -216,33 +201,25 @@ fn test_oapp_structure() {
     let code = load_example("oapp");
     let output = compile(&code).unwrap();
     assert_eq!(output.name, "OApp");
-    assert_eq!(output.functions.len(), 4);
+    assert_eq!(output.functions.len(), 2);
 }
 
 #[test]
 fn test_oapp_receive_consumes_endpoint_marker_and_mints_usdt0() {
     let code = load_example("oapp");
     let output = compile(&code).unwrap();
-
-    let receive = output
-        .functions
-        .iter()
-        .find(|f| f.name == "receive" && f.server_variant)
-        .unwrap();
+    let receive = covenant(&output, "receive");
 
     // Marker consumed from input 0 (asset lookup on input side).
     assert!(
-        receive
-            .asm
-            .iter()
-            .any(|s| s.contains(OP_INSPECTINASSETLOOKUP)),
+        receive.iter().any(|s| s.contains(OP_INSPECTINASSETLOOKUP)),
         "oapp.receive() must inspect input assets to consume the receive marker"
     );
 
     // Previous-tx packet introspection (OP_INSPECTINPUTPACKET) is now used
     // to read the LzReceivePacket from the marker input.
     assert!(
-        receive.asm.iter().any(|s| s == OP_INSPECTINPUTPACKET),
+        receive.iter().any(|s| s == OP_INSPECTINPUTPACKET),
         "oapp.receive() must read the LzReceive packet via {}",
         OP_INSPECTINPUTPACKET
     );
@@ -251,14 +228,13 @@ fn test_oapp_receive_consumes_endpoint_marker_and_mints_usdt0() {
     // x-only key via OP_INSPECTOUTPUTSCRIPTPUBKEY + OP_SUBSTR.
     assert!(
         receive
-            .asm
             .iter()
             .any(|s| s.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY)),
         "oapp.receive() must pin recipient output scriptPubKey"
     );
 
     assert!(
-        has_self_continuation(&receive.asm),
+        has_self_continuation(receive),
         "oapp.receive() must continue OApp state via the recursive covenant \
          (output pkScript == current input pkScript)"
     );
@@ -272,22 +248,15 @@ fn test_marker_contracts_use_input_arkade_script_hash() {
     for name in &["receive_marker", "send_marker"] {
         let code = load_example(name);
         let output = compile(&code).unwrap();
-        let consume = output
-            .functions
-            .iter()
-            .find(|f| f.name == "consume" && f.server_variant)
-            .unwrap();
+        let consume = covenant(&output, "consume");
         assert!(
-            consume
-                .asm
-                .iter()
-                .any(|s| s == OP_INSPECTINPUTARKADESCRIPTHASH),
+            consume.iter().any(|s| s == OP_INSPECTINPUTARKADESCRIPTHASH),
             "{}.consume() must check the consumer's Arkade-script hash via {}",
             name,
             OP_INSPECTINPUTARKADESCRIPTHASH
         );
         assert!(
-            consume.asm.iter().any(|s| s == OP_PUSHCURRENTINPUTINDEX),
+            consume.iter().any(|s| s == OP_PUSHCURRENTINPUTINDEX),
             "{}.consume() must pin its own input position via {}",
             name,
             OP_PUSHCURRENTINPUTINDEX
@@ -299,39 +268,33 @@ fn test_marker_contracts_use_input_arkade_script_hash() {
 fn test_oapp_send_emits_send_marker() {
     let code = load_example("oapp");
     let output = compile(&code).unwrap();
-
-    let send = output
+    let send_group = output
         .functions
         .iter()
-        .find(|f| f.name == "send" && f.server_variant)
-        .unwrap();
+        .find(|g| g.name == "send")
+        .expect("missing send spend group");
+    let send = send_group.arkade.as_ref().unwrap().asm.as_slice();
 
-    let has_send_marker = send.asm.iter().any(|s| s.contains("VTXO:SendMarker("));
+    let has_send_marker = send.iter().any(|s| s.contains("VTXO:SendMarker("));
     assert!(
         has_send_marker,
         "oapp.send() must pin output[1] to the canonical SendMarker pkScript"
     );
 
-    // The only OP_CHECKSIG in the server variant must be the server cosign
-    // added by the compiler — there is NO contract-level owner sig (mirrors
+    // There is NO contract-level owner sig in the covenant (mirrors
     // BuildOAppSendScript). Authority comes from the OApp control singleton
-    // and the per-UTXO USDT0 input scripts.
-    let server_key_pos = send
-        .asm
-        .iter()
-        .position(|s| s == "<SERVER_KEY>")
-        .expect("server variant must contain <SERVER_KEY>");
-    let checksigs_before_server: usize = send
-        .asm
-        .iter()
-        .take(server_key_pos)
-        .filter(|s| *s == OP_CHECKSIG)
-        .count();
-    assert_eq!(
-        checksigs_before_server, 0,
-        "oapp.send() must not perform a contract-level owner signature check; \
-         found {} OP_CHECKSIG before <SERVER_KEY>",
-        checksigs_before_server
+    // and the per-UTXO USDT0 input scripts. The operator co-signature lives
+    // only in the synthesized collaborative tapleaf.
+    assert!(
+        !send.iter().any(|s| s == OP_CHECKSIG),
+        "oapp.send() covenant must not perform a contract-level owner signature check"
+    );
+    assert!(
+        send_group
+            .leaves
+            .iter()
+            .any(|l| l.asm.iter().any(|s| s == "<SERVER_KEY>")),
+        "oapp.send() must carry a server-cosigned collaborative tapleaf"
     );
 }
 
@@ -351,17 +314,9 @@ fn test_receive_marker_pins_to_oapp_control_singleton() {
     let code = load_example("receive_marker");
     let output = compile(&code).unwrap();
     assert_eq!(output.name, "ReceiveMarker");
+    let consume = covenant(&output, "consume");
 
-    let consume = output
-        .functions
-        .iter()
-        .find(|f| f.name == "consume" && f.server_variant)
-        .unwrap();
-
-    let has_in_lookup = consume
-        .asm
-        .iter()
-        .any(|s| s.contains(OP_INSPECTINASSETLOOKUP));
+    let has_in_lookup = consume.iter().any(|s| s.contains(OP_INSPECTINASSETLOOKUP));
     assert!(
         has_in_lookup,
         "receive marker must check the OApp control singleton on the consuming input"
@@ -384,17 +339,9 @@ fn test_send_marker_pins_to_endpoint_control_singleton() {
     let code = load_example("send_marker");
     let output = compile(&code).unwrap();
     assert_eq!(output.name, "SendMarker");
+    let consume = covenant(&output, "consume");
 
-    let consume = output
-        .functions
-        .iter()
-        .find(|f| f.name == "consume" && f.server_variant)
-        .unwrap();
-
-    let has_in_lookup = consume
-        .asm
-        .iter()
-        .any(|s| s.contains(OP_INSPECTINASSETLOOKUP));
+    let has_in_lookup = consume.iter().any(|s| s.contains(OP_INSPECTINASSETLOOKUP));
     assert!(
         has_in_lookup,
         "send marker must check the Endpoint control singleton on the consuming input"
@@ -409,10 +356,15 @@ fn test_layerzero_contracts_continue_via_taproot_introspection() {
     for name in &["endpoint", "oapp"] {
         let code = load_example(name);
         let output = compile(&code).unwrap();
-        let any_has_inspect = output.functions.iter().any(|f| {
-            f.asm
-                .iter()
-                .any(|s| s.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY))
+        let any_has_inspect = output.functions.iter().any(|g| {
+            g.arkade
+                .as_ref()
+                .map(|a| {
+                    a.asm
+                        .iter()
+                        .any(|s| s.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY))
+                })
+                .unwrap_or(false)
         });
         assert!(
             any_has_inspect,

@@ -1,404 +1,34 @@
 use crate::models::{
-    AbiFunction, AssetLookupSource, CompilerInfo, ContractJson, Expression, Function,
-    FunctionInput, GroupIOSource, GroupSumSource, RequireStatement, Requirement, Statement,
-    WitnessElement, DEFAULT_ARRAY_LENGTH,
+    ArkadeCovenant, AssetLookupSource, CompilerInfo, ContractJson, Expression, Function,
+    FunctionInput, GroupIOSource, GroupSumSource, Parameter, Requirement, Statement,
+    DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_1NEGATE, OP_ADD64, OP_BIN2NUM, OP_CAT, OP_CHECKLOCKTIMEVERIFY,
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK,
-    OP_CHECKSIGFROMSTACKVERIFY, OP_CHECKSIGVERIFY, OP_DIV64, OP_DROP, OP_DUP, OP_ECMULSCALARVERIFY,
-    OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FALSE, OP_FINDASSETGROUPBYASSETID,
-    OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL, OP_GREATERTHANOREQUAL64, OP_IF,
-    OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE, OP_INPUTVALUE, OP_INSPECTASSETGROUP,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
-    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
-    OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET,
-    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME,
-    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
-    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION,
-    OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL,
-    OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL,
-    OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIZE, OP_SUB64, OP_SUBSTR, OP_TWEAKVERIFY, OP_TXHASH,
-    OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+    OP_0, OP_1, OP_ADD64, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_DIV64, OP_DROP,
+    OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FALSE,
+    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
+    OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE,
+    OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
+    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTISSUANCE,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
+    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
+    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM,
+    OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64,
+    OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64,
+    OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIZE, OP_SUB64,
+    OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXHASH, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::parser;
 use crate::typechecker::{self, ArkType};
 use crate::validator::{self, Severity};
 use chrono::Utc;
 
-// ─── Introspection Detection ────────────────────────────────────────────────────
-//
-// These helpers detect if a function uses introspection opcodes (OP_INSPECT*).
-// When introspection is detected, the exit path requires N-of-N signatures
-// instead of the normal user sig + timelock pattern.
-
-/// Check if a function uses any introspection opcodes
-fn function_uses_introspection(function: &Function) -> bool {
-    function
-        .statements
-        .iter()
-        .any(|s| statement_uses_introspection(s))
-}
-
-/// Check if a statement uses introspection
-fn statement_uses_introspection(stmt: &Statement) -> bool {
-    match stmt {
-        Statement::Require(req) => requirement_uses_introspection(req),
-        Statement::IfElse {
-            condition,
-            then_body,
-            else_body,
-        } => {
-            expression_uses_introspection(condition)
-                || then_body.iter().any(|s| statement_uses_introspection(s))
-                || else_body
-                    .as_ref()
-                    .map_or(false, |b| b.iter().any(|s| statement_uses_introspection(s)))
-        }
-        Statement::ForIn { iterable, body, .. } => {
-            expression_uses_introspection(iterable)
-                || body.iter().any(|s| statement_uses_introspection(s))
-        }
-        Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
-            expression_uses_introspection(value)
-        }
-    }
-}
-
-/// Check if a requirement uses introspection
-fn requirement_uses_introspection(req: &Requirement) -> bool {
-    match req {
-        Requirement::Comparison { left, right, .. } => {
-            expression_uses_introspection(left) || expression_uses_introspection(right)
-        }
-        _ => false,
-    }
-}
-
-/// Check if an expression uses introspection opcodes
-fn expression_uses_introspection(expr: &Expression) -> bool {
-    match expr {
-        // Direct introspection opcodes
-        Expression::TxIntrospection { .. } => true,
-        Expression::InputIntrospection { .. } => true,
-        Expression::OutputIntrospection { .. } => true,
-        Expression::AssetLookup { .. } => true,
-        Expression::AssetCount { .. } => true,
-        Expression::AssetAt { .. } => true,
-        Expression::GroupFind { .. } => true,
-        Expression::GroupProperty { .. } => true,
-        Expression::AssetGroupsLength => true,
-        Expression::GroupSum { .. } => true,
-        Expression::GroupNumIO { .. } => true,
-        Expression::GroupIOAccess { .. } => true,
-        Expression::CurrentInput(_) => true,
-
-        // Recursive checks for compound expressions
-        Expression::BinaryOp { left, right, .. } => {
-            expression_uses_introspection(left) || expression_uses_introspection(right)
-        }
-        Expression::ArrayIndex { array, index } => {
-            expression_uses_introspection(array) || expression_uses_introspection(index)
-        }
-        Expression::Sha256 { data } => expression_uses_introspection(data),
-        Expression::Sha256Initialize { data } => expression_uses_introspection(data),
-        Expression::Sha256Update { context, chunk } => {
-            expression_uses_introspection(context) || expression_uses_introspection(chunk)
-        }
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => expression_uses_introspection(context) || expression_uses_introspection(last_chunk),
-        Expression::Sha256 { data } => expression_uses_introspection(data),
-        Expression::Concat { left, right, .. } => {
-            expression_uses_introspection(left) || expression_uses_introspection(right)
-        }
-        Expression::Neg64 { value } => expression_uses_introspection(value),
-        Expression::Le64ToScriptNum { value } => expression_uses_introspection(value),
-        Expression::Le32ToLe64 { value } => expression_uses_introspection(value),
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => {
-            expression_uses_introspection(scalar)
-                || expression_uses_introspection(point_p)
-                || expression_uses_introspection(point_q)
-        }
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => {
-            expression_uses_introspection(point_p)
-                || expression_uses_introspection(tweak)
-                || expression_uses_introspection(point_q)
-        }
-
-        // Contract instantiation resolves to a scriptPubKey via introspection
-        Expression::ContractInstance { .. } => true,
-
-        // Packet introspection — always uses introspection opcodes.
-        Expression::PacketInspect { .. } => true,
-        Expression::InputPacketInspect { .. } => true,
-
-        // Byte-string ops are introspection-aware iff their inputs are.
-        Expression::Substr { data, offset, size } => {
-            expression_uses_introspection(data)
-                || expression_uses_introspection(offset)
-                || expression_uses_introspection(size)
-        }
-        Expression::Cat { left, right } => {
-            expression_uses_introspection(left) || expression_uses_introspection(right)
-        }
-        Expression::Bin2Num { data } => expression_uses_introspection(data),
-        Expression::Num2Bin { value, size } => {
-            expression_uses_introspection(value) || expression_uses_introspection(size)
-        }
-        Expression::SizeOf { data } => expression_uses_introspection(data),
-
-        // Non-introspection expressions
-        Expression::Property(_) => false,
-        Expression::Variable(_) => false,
-        Expression::Literal(_) => false,
-        Expression::ArrayLength(_) => false,
-        Expression::CheckSigExpr { .. } => false,
-        Expression::CheckSigFromStackExpr { .. } => false,
-        Expression::CheckSigFromStackVerify { .. } => false,
-    }
-}
-
-/// Walk an expression tree, recording the names of pubkey identifiers that
-/// appear as the `pubkey` operand of `checkSig` (transaction-signing
-/// context) vs `checkSigFromStack` / `checkSigFromStackVerify` (data-signing
-/// context — verifies a signature over an arbitrary byte string).
-fn collect_pubkey_usage_in_expr(
-    expr: &Expression,
-    tx_sigs: &mut std::collections::HashSet<String>,
-    data_sigs: &mut std::collections::HashSet<String>,
-) {
-    match expr {
-        Expression::CheckSigExpr { pubkey, .. } => {
-            tx_sigs.insert(pubkey.clone());
-        }
-        Expression::CheckSigFromStackExpr { pubkey, .. }
-        | Expression::CheckSigFromStackVerify { pubkey, .. } => {
-            data_sigs.insert(pubkey.clone());
-        }
-        Expression::AssetLookup { index, .. } | Expression::AssetCount { index, .. } => {
-            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
-        }
-        Expression::AssetAt {
-            io_index,
-            asset_index,
-            ..
-        } => {
-            collect_pubkey_usage_in_expr(io_index, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(asset_index, tx_sigs, data_sigs);
-        }
-        Expression::InputIntrospection { index, .. }
-        | Expression::OutputIntrospection { index, .. } => {
-            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
-        }
-        Expression::BinaryOp { left, right, .. } => {
-            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
-        }
-        Expression::GroupSum { index, .. } | Expression::GroupNumIO { index, .. } => {
-            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
-        }
-        Expression::GroupIOAccess {
-            group_index,
-            io_index,
-            ..
-        } => {
-            collect_pubkey_usage_in_expr(group_index, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(io_index, tx_sigs, data_sigs);
-        }
-        Expression::ArrayIndex { array, index } => {
-            collect_pubkey_usage_in_expr(array, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
-        }
-        Expression::Concat { left, right, .. } => {
-            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
-        }
-        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => {
-            collect_pubkey_usage_in_expr(data, tx_sigs, data_sigs);
-        }
-        Expression::Sha256Update { context, chunk } => {
-            collect_pubkey_usage_in_expr(context, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(chunk, tx_sigs, data_sigs);
-        }
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => {
-            collect_pubkey_usage_in_expr(context, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(last_chunk, tx_sigs, data_sigs);
-        }
-        Expression::Neg64 { value }
-        | Expression::Le64ToScriptNum { value }
-        | Expression::Le32ToLe64 { value } => {
-            collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
-        }
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => {
-            collect_pubkey_usage_in_expr(scalar, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(point_p, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(point_q, tx_sigs, data_sigs);
-        }
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => {
-            collect_pubkey_usage_in_expr(point_p, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(tweak, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(point_q, tx_sigs, data_sigs);
-        }
-        Expression::ContractInstance { args, .. } => {
-            for arg in args {
-                collect_pubkey_usage_in_expr(arg, tx_sigs, data_sigs);
-            }
-        }
-        Expression::Substr { data, offset, size } => {
-            collect_pubkey_usage_in_expr(data, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(offset, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(size, tx_sigs, data_sigs);
-        }
-        Expression::Cat { left, right } => {
-            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
-        }
-        Expression::Num2Bin { value, size } => {
-            collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(size, tx_sigs, data_sigs);
-        }
-        Expression::Bin2Num { data } | Expression::SizeOf { data } => {
-            collect_pubkey_usage_in_expr(data, tx_sigs, data_sigs);
-        }
-        Expression::PacketInspect { packet_type } => {
-            collect_pubkey_usage_in_expr(packet_type, tx_sigs, data_sigs);
-        }
-        Expression::InputPacketInspect { index, packet_type } => {
-            collect_pubkey_usage_in_expr(index, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(packet_type, tx_sigs, data_sigs);
-        }
-        // Leaves with no nested expressions / no pubkey usage
-        Expression::Variable(_)
-        | Expression::Literal(_)
-        | Expression::Property(_)
-        | Expression::CurrentInput(_)
-        | Expression::TxIntrospection { .. }
-        | Expression::GroupFind { .. }
-        | Expression::GroupProperty { .. }
-        | Expression::AssetGroupsLength
-        | Expression::ArrayLength(_) => {}
-    }
-}
-
-/// Walk a requirement, recording pubkey usage. CheckMultisig keys are
-/// transaction-signing (they go into OP_CHECKSIGADD / OP_CHECKMULTISIG).
-fn collect_pubkey_usage_in_req(
-    req: &Requirement,
-    tx_sigs: &mut std::collections::HashSet<String>,
-    data_sigs: &mut std::collections::HashSet<String>,
-) {
-    match req {
-        Requirement::CheckSig { pubkey, .. } => {
-            tx_sigs.insert(pubkey.clone());
-        }
-        Requirement::CheckSigFromStack { pubkey, .. } => {
-            data_sigs.insert(pubkey.clone());
-        }
-        Requirement::CheckMultisig { pubkeys, .. } => {
-            for pk in pubkeys {
-                tx_sigs.insert(pk.clone());
-            }
-        }
-        Requirement::Comparison { left, right, .. } => {
-            collect_pubkey_usage_in_expr(left, tx_sigs, data_sigs);
-            collect_pubkey_usage_in_expr(right, tx_sigs, data_sigs);
-        }
-        Requirement::After { .. } | Requirement::HashEqual { .. } => {}
-    }
-}
-
-/// Walk a statement list, recursing into bodies and conditions.
-fn collect_pubkey_usage_in_stmts(
-    stmts: &[Statement],
-    tx_sigs: &mut std::collections::HashSet<String>,
-    data_sigs: &mut std::collections::HashSet<String>,
-) {
-    for stmt in stmts {
-        match stmt {
-            Statement::Require(req) => collect_pubkey_usage_in_req(req, tx_sigs, data_sigs),
-            Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
-                collect_pubkey_usage_in_expr(value, tx_sigs, data_sigs);
-            }
-            Statement::IfElse {
-                condition,
-                then_body,
-                else_body,
-            } => {
-                collect_pubkey_usage_in_expr(condition, tx_sigs, data_sigs);
-                collect_pubkey_usage_in_stmts(then_body, tx_sigs, data_sigs);
-                if let Some(eb) = else_body {
-                    collect_pubkey_usage_in_stmts(eb, tx_sigs, data_sigs);
-                }
-            }
-            Statement::ForIn { iterable, body, .. } => {
-                collect_pubkey_usage_in_expr(iterable, tx_sigs, data_sigs);
-                collect_pubkey_usage_in_stmts(body, tx_sigs, data_sigs);
-            }
-        }
-    }
-}
-
-/// Compute the set of pubkey identifiers that appear **only** in
-/// `checkSigFromStack` contexts across every function in the contract,
-/// never in `checkSig`. These keys verify oracle-signed data, not Bitcoin
-/// transactions — an off-chain price oracle (Stork, Pyth, …) publishes
-/// signatures over byte strings, it does not co-sign individual L1 spends.
-/// Including such a key in the N-of-N exit leaf would make the exit path
-/// unreachable in practice. Filtering them out here lets the exit leaf
-/// stay broadcastable by the remaining transaction signers.
-fn collect_data_only_pubkeys(
-    contract: &crate::models::Contract,
-) -> std::collections::HashSet<String> {
-    let mut tx_sigs = std::collections::HashSet::new();
-    let mut data_sigs = std::collections::HashSet::new();
-    for function in &contract.functions {
-        collect_pubkey_usage_in_stmts(&function.statements, &mut tx_sigs, &mut data_sigs);
-    }
-    data_sigs.difference(&tx_sigs).cloned().collect()
-}
-
-/// Collect pubkey parameters from constructor and function for the N-of-N
-/// exit fallback. Excludes pubkeys that only ever appear as the key in a
-/// `checkSigFromStack` call — those verify oracle-signed data and have no
-/// runtime tx-signing role.
-///
-/// The Arkade operator key is always external and never appears as a
-/// constructor parameter, so no further exclusion is needed.
-fn collect_all_pubkeys(contract: &crate::models::Contract, function: &Function) -> Vec<String> {
-    let excluded = collect_data_only_pubkeys(contract);
-    contract
-        .parameters
-        .iter()
-        .chain(function.parameters.iter())
-        .filter(|p| p.param_type == "pubkey")
-        .map(|p| p.name.clone())
-        .filter(|name| !excluded.contains(name))
-        .collect()
-}
+pub mod tapscript;
 
 fn strip_comments(source: &str) -> String {
     source
@@ -422,12 +52,8 @@ fn strip_comments(source: &str) -> String {
 ///
 /// Takes source code, parses it into an AST, and transforms it into a ContractJson
 /// structure. The output includes contract name, constructor inputs (with asset ID
-/// decomposition for lookup parameters), functions with inputs, requirements, and
-/// assembly code.
-///
-/// Each non-internal function produces two variants:
-/// - `serverVariant: true` — cooperative path (user sig + server sig)
-/// - `serverVariant: false` — exit path (user sig + timelock)
+/// decomposition for lookup parameters), spend groups, optional arkade covenants,
+/// and L1 tapleaf assemblies.
 ///
 /// # Arguments
 ///
@@ -474,14 +100,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         }
     }
 
-    // The Arkade operator key is always injected externally (via getInfo()).
-    // It is never a constructor parameter — options.server is a boolean flag only.
-
-    // Collect asset IDs used in lookups for constructor param decomposition
-    let lookup_asset_ids = collect_lookup_asset_ids(&contract);
-
-    // Build constructor inputs with asset ID decomposition
-    let parameters = decompose_constructor_params(&contract.parameters, &lookup_asset_ids);
+    // Build constructor inputs (array params expand to indexed scalars).
+    let parameters = expand_abi_params(&contract.parameters);
 
     let mut json = ContractJson {
         name: contract.name.clone(),
@@ -496,17 +116,14 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         warnings,
     };
 
-    for function in &contract.functions {
-        if function.is_internal {
-            continue;
-        }
-
-        let collaborative = generate_function(function, &contract, true)?;
-        json.functions.push(collaborative);
-
-        let exit = generate_function(function, &contract, false)?;
-        json.functions.push(exit);
+    // Build covenant objects for non-internal functions.
+    let mut covenants: std::collections::HashMap<String, ArkadeCovenant> =
+        std::collections::HashMap::new();
+    for function in contract.functions.iter().filter(|f| !f.is_internal) {
+        covenants.insert(function.name.clone(), covenant_for(function)?);
     }
+
+    json.functions = tapscript::build_function_groups(&contract, covenants)?;
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants. Issues here
@@ -524,433 +141,43 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     Ok(json)
 }
 
-/// Collect all asset ID parameter names used in AssetLookup expressions
-fn collect_lookup_asset_ids(contract: &crate::models::Contract) -> Vec<String> {
-    let mut ids = Vec::new();
-    for function in &contract.functions {
-        for stmt in &function.statements {
-            collect_asset_ids_from_statement(stmt, &mut ids);
-        }
-    }
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
-fn collect_asset_ids_from_statement(stmt: &Statement, ids: &mut Vec<String>) {
-    match stmt {
-        Statement::Require(req) => {
-            collect_asset_ids_from_requirement(req, ids);
-        }
-        Statement::IfElse {
-            condition,
-            then_body,
-            else_body,
-        } => {
-            collect_asset_ids_from_expression(condition, ids);
-            for s in then_body {
-                collect_asset_ids_from_statement(s, ids);
-            }
-            if let Some(else_stmts) = else_body {
-                for s in else_stmts {
-                    collect_asset_ids_from_statement(s, ids);
-                }
-            }
-        }
-        Statement::ForIn { body, .. } => {
-            for s in body {
-                collect_asset_ids_from_statement(s, ids);
-            }
-        }
-        Statement::LetBinding { value, .. } | Statement::VarAssign { value, .. } => {
-            collect_asset_ids_from_expression(value, ids);
-        }
-    }
-}
-
-fn collect_asset_ids_from_requirement(req: &Requirement, ids: &mut Vec<String>) {
-    match req {
-        Requirement::Comparison { left, op: _, right } => {
-            collect_asset_ids_from_expression(left, ids);
-            collect_asset_ids_from_expression(right, ids);
-        }
-        _ => {}
-    }
-}
-
-fn collect_asset_ids_from_expression(expr: &Expression, ids: &mut Vec<String>) {
-    match expr {
-        Expression::AssetLookup { asset_id, .. } => {
-            ids.push(asset_id.clone());
-        }
-        Expression::BinaryOp { left, right, .. } => {
-            collect_asset_ids_from_expression(left, ids);
-            collect_asset_ids_from_expression(right, ids);
-        }
-        Expression::GroupFind { asset_id } => {
-            ids.push(asset_id.clone());
-        }
-        _ => {}
-    }
-}
-
-/// Decompose constructor params: bytes32 params used in asset lookups become _txid + _gidx pairs
-/// Array types (e.g., pubkey[]) are flattened to name_0, name_1, name_2, etc.
-fn decompose_constructor_params(
-    params: &[crate::models::Parameter],
-    lookup_asset_ids: &[String],
-) -> Vec<crate::models::Parameter> {
+/// Expand ABI params for emission. Array types (e.g., `pubkey[]`) are flattened
+/// to `name_0`, `name_1`, `name_2`, …; every other param passes through unchanged.
+pub(crate) fn expand_abi_params(params: &[Parameter]) -> Vec<Parameter> {
     let mut result = Vec::new();
     for param in params {
-        if lookup_asset_ids.contains(&param.name) && param.param_type == "bytes32" {
-            // Decompose into txid (bytes32) + gidx (int)
-            result.push(crate::models::Parameter {
-                name: format!("{}_txid", param.name),
-                param_type: "bytes32".to_string(),
-            });
-            result.push(crate::models::Parameter {
-                name: format!("{}_gidx", param.name),
-                param_type: "int".to_string(),
-            });
-        } else if param.param_type.ends_with("[]") {
-            // Array type: flatten to name_0, name_1, name_2, etc.
-            let base_type = param.param_type.trim_end_matches("[]");
-            for i in 0..DEFAULT_ARRAY_LENGTH {
-                result.push(crate::models::Parameter {
-                    name: format!("{}_{}", param.name, i),
-                    param_type: base_type.to_string(),
-                });
-            }
-        } else {
-            result.push(param.clone());
-        }
+        for_each_expanded_param(param, |name, param_type| {
+            result.push(Parameter { name, param_type });
+        });
     }
     result
 }
 
-/// Build the `witnessSchema` for a function variant.
-///
-/// The schema lists every value the *caller* must supply in the witness,
-/// in the order they appear as `<name>` placeholders in the generated ASM.
-/// Constructor parameters are excluded — they are baked into the tapscript leaf.
-///
-/// For exit paths that fall back to N-of-N (introspection functions), the
-/// schema lists one `<pkName>Sig` entry per constructor pubkey.
-fn generate_witness_schema(
-    function: &crate::models::Function,
-    contract: &crate::models::Contract,
-    server_variant: bool,
-    uses_introspection: bool,
-    all_pubkeys: &[String],
-) -> Vec<WitnessElement> {
-    let mut schema: Vec<WitnessElement> = Vec::new();
+/// Build an `ArkadeCovenant` for a non-internal function: array-expand inputs,
+/// emit ASM from statements (no server cosig, no exit timelock).
+fn covenant_for(function: &Function) -> Result<ArkadeCovenant, String> {
+    let inputs = expand_function_inputs(&function.parameters);
+    let asm = generate_asm_from_statements(&function.statements)?;
+    Ok(ArkadeCovenant { inputs, asm })
+}
 
-    if !server_variant && uses_introspection {
-        // N-of-N exit path: one signature per constructor pubkey.
-        for pk in all_pubkeys {
-            schema.push(WitnessElement {
-                name: format!("{}Sig", pk),
-                elem_type: "signature".to_string(),
-                encoding: ArkType::Signature.encoding().to_string(),
-            });
-        }
-    } else {
-        // Normal path: function parameters form the witness elements.
-        for param in &function.parameters {
-            if param.param_type.ends_with("[]") {
-                let base = param.param_type.trim_end_matches("[]");
-                let ark_type = ArkType::parse(base);
-                for i in 0..DEFAULT_ARRAY_LENGTH {
-                    schema.push(WitnessElement {
-                        name: format!("{}_{}", param.name, i),
-                        elem_type: base.to_string(),
-                        encoding: ark_type.encoding().to_string(),
-                    });
-                }
-            } else {
-                let ark_type = ArkType::parse(&param.param_type);
-                schema.push(WitnessElement {
-                    name: param.name.clone(),
-                    elem_type: param.param_type.clone(),
-                    encoding: ark_type.encoding().to_string(),
-                });
-            }
-        }
-    }
-
-    // Append the server signature for cooperative paths.
-    if server_variant && contract.has_server_key {
-        schema.push(WitnessElement {
-            name: "serverSig".to_string(),
-            elem_type: "signature".to_string(),
-            encoding: ArkType::Signature.encoding().to_string(),
+fn expand_function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
+    let mut inputs = Vec::new();
+    for param in params {
+        for_each_expanded_param(param, |name, param_type| {
+            inputs.push(FunctionInput { name, param_type });
         });
     }
-
-    schema
+    inputs
 }
 
-/// Generate a function ABI with server variant flag.
-///
-/// **Introspection path** (including `ContractInstance` — `new ContractName(args)` present):
-/// - Cooperative path: normal ASM (including `<VTXO:...>` placeholders) + server signature
-/// - Exit path: N-of-N CHECKSIG chain (pure Bitcoin Script) + exit timelock
-///
-/// **No introspection**:
-/// - Cooperative path: normal ASM + server signature
-/// - Exit path: normal ASM + exit timelock
-fn generate_function(
-    function: &Function,
-    contract: &crate::models::Contract,
-    server_variant: bool,
-) -> Result<AbiFunction, String> {
-    let uses_introspection = function_uses_introspection(function);
-    let all_pubkeys = collect_all_pubkeys(contract, function);
-
-    // Flatten array types in function inputs
-    let mut function_inputs: Vec<FunctionInput> = function
-        .parameters
-        .iter()
-        .flat_map(|param| {
-            if param.param_type.ends_with("[]") {
-                let base_type = param.param_type.trim_end_matches("[]");
-                (0..DEFAULT_ARRAY_LENGTH)
-                    .map(|i| FunctionInput {
-                        name: format!("{}_{}", param.name, i),
-                        param_type: base_type.to_string(),
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                vec![FunctionInput {
-                    name: param.name.clone(),
-                    param_type: param.param_type.clone(),
-                }]
-            }
-        })
-        .collect();
-
-    // Exit path with any introspection (including ContractInstance): inject
-    // N-of-N signature inputs for the CHECKSIG fallback.
-    // Non-Bitcoin-Script opcodes cannot appear on the exit path.
-    if !server_variant && uses_introspection {
-        let existing_sig_names: Vec<String> = function_inputs
-            .iter()
-            .filter(|i| i.param_type == "signature")
-            .map(|i| i.name.clone())
-            .collect();
-
-        for pk in &all_pubkeys {
-            let sig_name = format!("{}Sig", pk);
-            let has_sig = existing_sig_names
-                .iter()
-                .any(|s| s.contains(pk) || s == &sig_name);
-            if !has_sig {
-                function_inputs.push(FunctionInput {
-                    name: sig_name,
-                    param_type: "signature".to_string(),
-                });
-            }
+fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String)) {
+    if let Some(base_type) = param.param_type.strip_suffix("[]") {
+        for i in 0..DEFAULT_ARRAY_LENGTH {
+            f(format!("{}_{}", param.name, i), base_type.to_string());
         }
-    }
-
-    let mut require = if !server_variant && uses_introspection {
-        // Exit path with any introspection: N-of-N multisig fallback.
-        // No non-Bitcoin-Script opcodes are allowed on the exit path.
-        vec![RequireStatement {
-            req_type: "nOfNMultisig".to_string(),
-            message: Some(format!(
-                "{}-of-{} signatures required (introspection fallback)",
-                all_pubkeys.len(),
-                all_pubkeys.len()
-            )),
-        }]
     } else {
-        generate_requirements(function)
-    };
-
-    if server_variant {
-        if contract.has_server_key {
-            require.push(RequireStatement {
-                req_type: "serverSignature".to_string(),
-                message: None,
-            });
-        }
-    } else if let Some(ref exit_timelock) = contract.exit_timelock {
-        require.push(RequireStatement {
-            req_type: "older".to_string(),
-            message: Some(format!("Exit timelock of {} blocks", exit_timelock)),
-        });
-    }
-
-    // Generate assembly.
-    // Exit path with any introspection falls back to N-of-N CHECKSIG
-    // (pure Bitcoin Script — no non-Bitcoin-Script opcodes allowed).
-    // Cooperative path always uses the full statement ASM.
-    let mut asm = if !server_variant && uses_introspection {
-        generate_nofn_checksig_asm(&all_pubkeys, function)
-    } else {
-        // Normal path: generate ASM from statements (includes introspection opcodes)
-        generate_asm_from_statements(&function.statements)?
-    };
-
-    // Append server signature or exit timelock
-    if server_variant {
-        if contract.has_server_key {
-            asm.push("<SERVER_KEY>".to_string());
-            asm.push("<serverSig>".to_string());
-            asm.push(OP_CHECKSIG.to_string());
-        }
-    } else if let Some(ref exit_timelock) = contract.exit_timelock {
-        // Emit integer literal directly, or <param> placeholder for identifier references
-        if exit_timelock.parse::<u64>().is_ok() {
-            asm.push(exit_timelock.clone());
-        } else {
-            asm.push(format!("<{}>", exit_timelock));
-        }
-        asm.push(OP_CHECKSEQUENCEVERIFY.to_string());
-        asm.push(OP_DROP.to_string());
-    }
-
-    let witness_schema = generate_witness_schema(
-        function,
-        contract,
-        server_variant,
-        uses_introspection,
-        &all_pubkeys,
-    );
-
-    Ok(AbiFunction {
-        name: function.name.clone(),
-        function_inputs,
-        witness_schema,
-        server_variant,
-        require,
-        asm,
-    })
-}
-
-/// Generate N-of-N CHECKSIG chain assembly (Tapscript style)
-///
-/// For N pubkeys, generates pure Bitcoin script with no introspection:
-/// ```text
-/// <pk1> <pk1Sig> OP_CHECKSIGVERIFY
-/// <pk2> <pk2Sig> OP_CHECKSIGVERIFY
-/// ...
-/// <pkN> <pkNSig> OP_CHECKSIG
-/// ```
-///
-/// This is the fallback for exit paths when introspection is used.
-/// All parties must agree to spend - no introspection opcodes are included.
-fn generate_nofn_checksig_asm(pubkeys: &[String], _function: &Function) -> Vec<String> {
-    let mut asm = Vec::new();
-
-    // Generate ONLY N-of-N CHECKSIG chain - no original requirements
-    // This is pure Bitcoin script with no Arkade-specific opcodes
-    for (i, pk) in pubkeys.iter().enumerate() {
-        asm.push(format!("<{}>", pk));
-        asm.push(format!("<{}Sig>", pk));
-        if i < pubkeys.len() - 1 {
-            asm.push(OP_CHECKSIGVERIFY.to_string());
-        } else {
-            asm.push(OP_CHECKSIG.to_string());
-        }
-    }
-
-    asm
-}
-
-/// Generate requirements from function statements
-fn generate_requirements(function: &Function) -> Vec<RequireStatement> {
-    let mut requirements = Vec::new();
-
-    // Recursively collect requirements from statements
-    collect_requirements_from_statements(&function.statements, &mut requirements);
-
-    requirements
-}
-
-fn contains_asset_lookup(expr: &Expression) -> bool {
-    matches!(expr, Expression::AssetLookup { .. })
-        || matches!(expr, Expression::BinaryOp { left, .. } if contains_asset_lookup(left))
-}
-
-fn contains_group_expression(expr: &Expression) -> bool {
-    matches!(
-        expr,
-        Expression::GroupFind { .. }
-            | Expression::GroupProperty { .. }
-            | Expression::GroupSum { .. }
-            | Expression::AssetGroupsLength
-    )
-}
-/// Recursively collect requirements from a list of statements
-fn collect_requirements_from_statements(
-    statements: &[Statement],
-    requirements: &mut Vec<RequireStatement>,
-) {
-    for stmt in statements {
-        match stmt {
-            Statement::Require(req) => {
-                let req_statement = requirement_to_statement(req);
-                requirements.push(req_statement);
-            }
-            Statement::IfElse {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_requirements_from_statements(then_body, requirements);
-                if let Some(else_stmts) = else_body {
-                    collect_requirements_from_statements(else_stmts, requirements);
-                }
-            }
-            Statement::ForIn { body, .. } => {
-                collect_requirements_from_statements(body, requirements);
-            }
-            Statement::LetBinding { .. } | Statement::VarAssign { .. } => {
-                // Variable bindings and assignments don't generate requirements
-            }
-        }
-    }
-}
-
-/// Convert a Requirement to a RequireStatement
-fn requirement_to_statement(req: &Requirement) -> RequireStatement {
-    match req {
-        Requirement::CheckSig { .. } => RequireStatement {
-            req_type: "signature".to_string(),
-            message: None,
-        },
-        Requirement::CheckSigFromStack { .. } => RequireStatement {
-            req_type: "signatureFromStack".to_string(),
-            message: None,
-        },
-        Requirement::CheckMultisig { .. } => RequireStatement {
-            req_type: "multisig".to_string(),
-            message: None,
-        },
-        Requirement::After { blocks, .. } => RequireStatement {
-            req_type: "after".to_string(),
-            message: Some(format!("Timelock of {} blocks", blocks)),
-        },
-        Requirement::HashEqual { .. } => RequireStatement {
-            req_type: "hash".to_string(),
-            message: None,
-        },
-        Requirement::Comparison { left, .. } => {
-            // Detect asset-related comparisons
-            let req_type = if contains_asset_lookup(left) {
-                "assetCheck"
-            } else if contains_group_expression(left) {
-                "groupCheck"
-            } else {
-                "comparison"
-            };
-            RequireStatement {
-                req_type: req_type.to_string(),
-                message: None,
-            }
-        }
+        f(param.name.clone(), param.param_type.clone());
     }
 }
 
@@ -997,48 +224,17 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                // Commit 5 & 6: Compile-time loop unrolling
-                // Determine if this is iterating over tx.assetGroups or an array variable
-                let is_asset_groups = match iterable {
-                    Expression::Property(prop) => prop == "tx.assetGroups",
-                    _ => false,
-                };
-
-                // Check if iterating over an array variable (e.g., oracleSigs)
-                let array_name = match iterable {
-                    Expression::Variable(name) => Some(name.clone()),
-                    _ => None,
-                };
-
-                if is_asset_groups {
-                    // Default to 3 iterations (can be overridden by numGroups param)
-                    let num_iterations = DEFAULT_ARRAY_LENGTH;
-
-                    for k in 0..num_iterations {
-                        // Substitute loop variables and generate ASM for each iteration
-                        let substituted_body =
-                            substitute_loop_body(body, index_var, value_var, k, None);
-                        generate_asm_from_statements_recursive(&substituted_body, asm)?;
+                match iterable {
+                    Expression::Property(prop) if prop == "tx.assetGroups" => {
+                        unroll_loop_body(body, index_var, value_var, None, asm)?;
                     }
-                } else if array_name.is_some() {
-                    // Iterating over an array variable - unroll with array substitution
-                    let num_iterations = DEFAULT_ARRAY_LENGTH;
-
-                    for k in 0..num_iterations {
-                        // Substitute loop variables and generate ASM for each iteration
-                        // Pass the array name so value_var can be substituted to array_name_{k}
-                        let substituted_body = substitute_loop_body(
-                            body,
-                            index_var,
-                            value_var,
-                            k,
-                            array_name.as_ref(),
-                        );
-                        generate_asm_from_statements_recursive(&substituted_body, asm)?;
+                    Expression::Variable(array_name) => {
+                        unroll_loop_body(body, index_var, value_var, Some(array_name), asm)?;
                     }
-                } else {
-                    // For other iterables, process body once (fallback)
-                    generate_asm_from_statements_recursive(body, asm)?;
+                    _ => {
+                        // Unsupported iterables keep the historical fallback behavior.
+                        generate_asm_from_statements_recursive(body, asm)?;
+                    }
                 }
             }
             Statement::LetBinding { name: _, value } => {
@@ -1131,9 +327,13 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             asm.push(OP_DROP.to_string());
             Ok(())
         }
-        Requirement::HashEqual { preimage, hash } => {
+        Requirement::HashEqual {
+            hash_fn,
+            preimage,
+            hash,
+        } => {
             asm.push(format!("<{}>", preimage));
-            asm.push(OP_SHA256.to_string());
+            asm.push(hash_fn.opcode().to_string());
             asm.push(format!("<{}>", hash));
             asm.push(OP_EQUAL.to_string());
             Ok(())
@@ -1236,14 +436,6 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 asm.push(OP_INPUTBYTECODE.to_string());
             }
         }
-        Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            generate_expression_asm(array, asm);
-            generate_expression_asm(index, asm);
-        }
-        Expression::ArrayLength(_) => {
-            // TODO: Implement array length in Commit 6
-        }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
@@ -1280,11 +472,6 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             generate_expression_asm(context, asm);
             generate_expression_asm(last_chunk, asm);
             asm.push(OP_SHA256FINALIZE.to_string());
-        }
-        // One-shot SHA256: sha256(data) → OP_SHA256
-        Expression::Sha256 { data } => {
-            generate_expression_asm(data, asm);
-            asm.push(OP_SHA256.to_string());
         }
         // Byte-string concatenation: bytes-like + value → OP_CAT
         // Coercion flags decide whether to convert a scriptnum side to LE64
@@ -1352,9 +539,18 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetLookup {
             source,
             index,
-            asset_id,
+            asset_txid,
+            asset_gidx,
         } => {
-            emit_asset_lookup_asm(source, index, asset_id, asm);
+            emit_asset_lookup_asm(source, index, asset_txid, asset_gidx, asm);
+        }
+        Expression::AssetHas {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
         }
         Expression::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
@@ -1376,10 +572,24 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::OutputIntrospection { index, property } => {
             emit_output_introspection_asm(index, property, asm);
         }
-        Expression::GroupFind { asset_id } => {
-            asm.push(format!("<{}_txid>", asset_id));
-            asm.push(format!("<{}_gidx>", asset_id));
-            asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_find_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_has_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupControlIs {
+            group,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
         }
         Expression::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
@@ -1610,72 +820,6 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
     }
 }
 
-/// Generate assembly instructions for a requirement (legacy function)
-#[allow(dead_code)]
-fn generate_base_asm_instructions(requirements: &[Requirement]) -> Vec<String> {
-    let mut asm = Vec::new();
-
-    for req in requirements {
-        match req {
-            Requirement::CheckSig { signature, pubkey } => {
-                asm.push(format!("<{}>", pubkey));
-                asm.push(format!("<{}>", signature));
-                asm.push(OP_CHECKSIG.to_string());
-            }
-            Requirement::CheckSigFromStack {
-                signature,
-                pubkey,
-                message,
-            } => {
-                asm.push(format!("<{}>", message));
-                asm.push(format!("<{}>", pubkey));
-                asm.push(format!("<{}>", signature));
-                asm.push(OP_CHECKSIGFROMSTACK.to_string());
-            }
-            Requirement::CheckMultisig {
-                // signatures,
-                pubkeys,
-                threshold,
-            } => {
-                // We cannot update here, this is dead code
-
-                /*asm.push(format!("OP_{}", pubkeys.len()));
-                for pubkey in pubkeys {
-                    asm.push(format!("<{}>", pubkey));
-                }
-                asm.push(format!("OP_{}", signatures.len()));
-                for signature in signatures {
-                    asm.push(format!("<{}>", signature));
-                }
-                asm.push(OP_CHECKMULTISIG.to_string());*/
-            }
-            Requirement::After {
-                blocks,
-                timelock_var,
-            } => {
-                if let Some(var) = timelock_var {
-                    asm.push(format!("<{}>", var));
-                } else {
-                    asm.push(format!("{}", blocks));
-                }
-                asm.push(OP_CHECKLOCKTIMEVERIFY.to_string());
-                asm.push(OP_DROP.to_string());
-            }
-            Requirement::HashEqual { preimage, hash } => {
-                asm.push(format!("<{}>", preimage));
-                asm.push(OP_SHA256.to_string());
-                asm.push(format!("<{}>", hash));
-                asm.push(OP_EQUAL.to_string());
-            }
-            Requirement::Comparison { left, op, right } => {
-                emit_comparison_asm(left, op, right, &mut asm);
-            }
-        }
-    }
-
-    asm
-}
-
 /// Emit assembly for a comparison requirement.
 ///
 /// Handles both simple comparisons (variable/literal/property) and complex
@@ -1685,7 +829,23 @@ fn emit_comparison_asm(left: &Expression, op: &str, right: &Expression, asm: &mu
     if op == "==" {
         if let Expression::Literal(val) = right {
             if val == "true" {
-                // This is a dummy comparison wrapping an introspection expression
+                // Bare `tx.assetGroups.find(...)`: the find already asserts
+                // existence via its internal OP_VERIFY and leaves the resolved
+                // packet position k. k is NOT a boolean (k == 0 is a valid
+                // successful find), so drop it and leave an explicit OP_1 as the
+                // requirement's true result.
+                if let Expression::GroupFind {
+                    asset_txid,
+                    asset_gidx,
+                } = left
+                {
+                    emit_group_find_asm(asset_txid, asset_gidx, asm);
+                    asm.push(OP_DROP.to_string());
+                    asm.push(OP_1.to_string());
+                    return;
+                }
+                // Other dummy-wrapped expressions (has/controlIs/checkSig/…)
+                // already leave a boolean — emit directly.
                 emit_expression_asm(left, asm);
                 return;
             }
@@ -1751,9 +911,18 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetLookup {
             source,
             index,
-            asset_id,
+            asset_txid,
+            asset_gidx,
         } => {
-            emit_asset_lookup_asm(source, index, asset_id, asm);
+            emit_asset_lookup_asm(source, index, asset_txid, asset_gidx, asm);
+        }
+        Expression::AssetHas {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
         }
         Expression::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
@@ -1778,11 +947,24 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::BinaryOp { left, op, right } => {
             emit_binary_op_asm(left, op, right, asm);
         }
-        Expression::GroupFind { asset_id } => {
-            // tx.assetGroups.find(assetId) → OP_FINDASSETGROUPBYASSETID
-            asm.push(format!("<{}_txid>", asset_id));
-            asm.push(format!("<{}_gidx>", asset_id));
-            asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_find_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_has_asm(asset_txid, asset_gidx, asm);
+        }
+        Expression::GroupControlIs {
+            group,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
         }
         Expression::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
@@ -1839,14 +1021,6 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_contract_instance_asm(contract_name, args, asm);
         }
-        Expression::ArrayIndex { array, index } => {
-            // TODO: Implement array indexing in Commit 6
-            emit_expression_asm(array, asm);
-            emit_expression_asm(index, asm);
-        }
-        Expression::ArrayLength(_) => {
-            // TODO: Implement array length in Commit 6
-        }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
@@ -1883,11 +1057,6 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(context, asm);
             emit_expression_asm(last_chunk, asm);
             asm.push(OP_SHA256FINALIZE.to_string());
-        }
-        // One-shot SHA256: sha256(data) → OP_SHA256
-        Expression::Sha256 { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256.to_string());
         }
         // Byte-string concatenation: bytes-like + value → OP_CAT
         Expression::Concat {
@@ -2056,39 +1225,91 @@ fn emit_contract_instance_asm(contract_name: &str, args: &[Expression], asm: &mu
     asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
 }
 
-/// Emit assembly for an asset lookup: tx.inputs[i].assets.lookup(assetId)
+/// Push the lookup operands and the source-appropriate lookup opcode.
 ///
-/// Emits the lookup opcode followed by sentinel guard pattern.
-/// The sentinel guard verifies the result is not -1 (asset not found).
+/// Push order follows the opcode (`popAssetID` pops gidx top, then txid; then
+/// the io index `o`/`i`): index, then txid, then gidx. Stack after the opcode is
+/// `[amount, success_flag]` (flag on top).
+fn emit_asset_lookup_operands(
+    source: &AssetLookupSource,
+    index: &Expression,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    asm: &mut Vec<String>,
+) {
+    emit_expression_asm(index, asm);
+    emit_expression_asm(asset_txid, asm); // -> <fooTxid>
+    emit_expression_asm(asset_gidx, asm); // -> <fooGidx> or pushed literal
+    match source {
+        AssetLookupSource::Input => asm.push(OP_INSPECTINASSETLOOKUP.to_string()),
+        AssetLookupSource::Output => asm.push(OP_INSPECTOUTASSETLOOKUP.to_string()),
+    }
+}
+
+/// Emit `tx.{inputs,outputs}[i].assets.lookup(txid, gidx)`: assert the asset is
+/// present (consume the success flag with OP_VERIFY) and leave the typed amount.
 fn emit_asset_lookup_asm(
     source: &AssetLookupSource,
     index: &Expression,
-    asset_id: &str,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
     asm: &mut Vec<String>,
 ) {
-    // Push the index
-    emit_expression_asm(index, asm);
+    emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
+    asm.push(OP_VERIFY.to_string()); // consume success flag, leave amount
+}
 
-    // Push decomposed asset ID (txid + gidx)
-    asm.push(format!("<{}_txid>", asset_id));
-    asm.push(format!("<{}_gidx>", asset_id));
+/// Emit `tx.{inputs,outputs}[i].assets.has(txid, gidx)`: boolean presence —
+/// keep the success flag, drop the amount below it with OP_NIP.
+fn emit_asset_has_asm(
+    source: &AssetLookupSource,
+    index: &Expression,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    asm: &mut Vec<String>,
+) {
+    emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
+    asm.push(OP_NIP.to_string()); // drop amount, leave success flag (Bool)
+}
 
-    // Emit the appropriate lookup opcode
-    match source {
-        AssetLookupSource::Input => {
-            asm.push(OP_INSPECTINASSETLOOKUP.to_string());
-        }
-        AssetLookupSource::Output => {
-            asm.push(OP_INSPECTOUTASSETLOOKUP.to_string());
-        }
-    }
+/// Emit `tx.assetGroups.find(txid, gidx)`: assert existence (consume the success
+/// flag with OP_VERIFY) and leave the resolved packet position k.
+fn emit_group_find_asm(asset_txid: &Expression, asset_gidx: &Expression, asm: &mut Vec<String>) {
+    emit_expression_asm(asset_txid, asm);
+    emit_expression_asm(asset_gidx, asm);
+    asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+    asm.push(OP_VERIFY.to_string()); // consume success flag, leave k; fail if absent
+}
 
-    // Sentinel guard: verify result is not -1 (asset not found)
-    asm.push(OP_DUP.to_string());
-    asm.push(OP_1NEGATE.to_string());
-    asm.push(OP_EQUAL.to_string());
-    asm.push(OP_NOT.to_string());
-    asm.push(OP_VERIFY.to_string());
+/// Emit `tx.assetGroups.has(txid, gidx)`: boolean presence — keep the success
+/// flag, drop the resolved position k below it with OP_NIP.
+fn emit_group_has_asm(asset_txid: &Expression, asset_gidx: &Expression, asm: &mut Vec<String>) {
+    emit_expression_asm(asset_txid, asm);
+    emit_expression_asm(asset_gidx, asm);
+    asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
+    asm.push(OP_NIP.to_string()); // drop k, leave success flag (Bool)
+}
+
+/// Emit `group.controlIs(txid, gidx)`: boolean equality over the complete
+/// canonical control Asset ID. Stack after OP_INSPECTASSETGROUPCTRL is
+/// `[ctrl_txid, ctrl_gidx, flag]`; drop the flag, compare gidx then txid (no
+/// OP_EQUALVERIFY), and AND the two booleans. The absent tuple
+/// `[empty_bytes, 0, 0]` cannot equal a valid bytes32 txid, so absence is false.
+fn emit_group_control_is_asm(
+    group: &str,
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    asm: &mut Vec<String>,
+) {
+    asm.push(format!("<{}>", group));
+    asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
+    asm.push(OP_DROP.to_string()); // drop success flag -> [ctrl_txid, ctrl_gidx]
+    emit_expression_asm(asset_gidx, asm);
+    asm.push(OP_EQUAL.to_string()); // ctrl_gidx == gidx -> [ctrl_txid, bool]
+    asm.push(OP_SWAP.to_string()); // -> [bool, ctrl_txid]
+    emit_expression_asm(asset_txid, asm);
+    asm.push(OP_EQUAL.to_string()); // ctrl_txid == txid -> [bool, bool]
+    asm.push(OP_BOOLAND.to_string()); // combine -> Bool
 }
 
 /// Emit assembly for asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -2140,7 +1361,11 @@ fn emit_asset_at_asm(
     // Extract based on property
     match property {
         "assetId" => {
-            // Drop the amount, keep txid32 and gidx_u16
+            // Drop the amount, keep the canonical Asset ID (asset_txid, asset_gidx).
+            // TODO(asset-id-struct): this intentionally leaves TWO stack items, so
+            // `.assetId` needs a composite `AssetId` struct return type before it
+            // can be destructured (.txid/.gidx) or compared safely. Deferred to a
+            // separate PR.
             asm.push(OP_DROP.to_string());
         }
         "amount" => {
@@ -2308,16 +1533,24 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
             asm.push(OP_SUB64.to_string());
             asm.push(OP_VERIFY.to_string());
         }
-        "control" => {
+        "hasControl" => {
+            // group.hasControl: presence only.
+            // [ctrl_txid, ctrl_gidx, flag] -> OP_NIP OP_NIP -> flag (Bool)
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
+            asm.push(OP_NIP.to_string());
+            asm.push(OP_NIP.to_string());
         }
         "metadataHash" => {
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string());
         }
         "assetId" => {
-            // Returns (txid32, gidx_u16) tuple on stack
+            // Returns the canonical Asset ID (asset_txid, asset_gidx) — TWO stack items.
+            // TODO(asset-id-struct): like asset_at `.assetId`, this needs a composite
+            // `AssetId` struct return type before it can be destructured (.txid/.gidx)
+            // or compared with `==` (a single OP_EQUAL only sees the top item, the
+            // gidx). Deferred to a separate PR.
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
         }
@@ -2391,7 +1624,21 @@ fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
     }
 }
 
-// ─── Loop Unrolling (Commit 5 & 6) ──────────────────────────────────────────────
+// ─── Loop Unrolling ─────────────────────────────────────────────────────────────
+
+fn unroll_loop_body(
+    body: &[Statement],
+    index_var: &str,
+    value_var: &str,
+    array_name: Option<&str>,
+    asm: &mut Vec<String>,
+) -> Result<(), String> {
+    for k in 0..DEFAULT_ARRAY_LENGTH {
+        let substituted_body = substitute_loop_body(body, index_var, value_var, k, array_name);
+        generate_asm_from_statements_recursive(&substituted_body, asm)?;
+    }
+    Ok(())
+}
 
 /// Substitute loop variables in the body for a specific iteration index k.
 ///
@@ -2400,13 +1647,13 @@ fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
 /// - `GroupProperty { group: value_var, property: "sumInputs" }` → `GroupSum { index: k, source: Inputs }`
 /// - `Variable(index_var)` → `Literal(k)`
 /// - `Variable(value_var)` when array_name is Some → `Variable("array_name_{k}")`
-/// - Array indexing `arr[index_var]` → `Variable("arr_{k}")`
+/// - Property-form indexing `arr[index_var]` → `Variable("arr_{k}")`
 fn substitute_loop_body(
     body: &[Statement],
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Vec<Statement> {
     body.iter()
         .map(|stmt| substitute_statement(stmt, index_var, value_var, k, array_name))
@@ -2418,7 +1665,7 @@ fn substitute_statement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Statement {
     match stmt {
         Statement::Require(req) => Statement::Require(substitute_requirement(
@@ -2465,7 +1712,7 @@ fn substitute_requirement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Requirement {
     match req {
         Requirement::Comparison { left, op, right } => Requirement::Comparison {
@@ -2484,10 +1731,9 @@ fn substitute_requirement(
             } else {
                 signature.clone()
             };
-            let new_pk = pubkey.clone();
             Requirement::CheckSig {
                 signature: new_sig,
-                pubkey: new_pk,
+                pubkey: pubkey.clone(),
             }
         }
         Requirement::CheckSigFromStack {
@@ -2505,12 +1751,10 @@ fn substitute_requirement(
             } else {
                 signature.clone()
             };
-            let new_pk = pubkey.clone();
-            let new_msg = message.clone();
             Requirement::CheckSigFromStack {
                 signature: new_sig,
-                pubkey: new_pk,
-                message: new_msg,
+                pubkey: pubkey.clone(),
+                message: message.clone(),
             }
         }
         // Other requirement types don't need substitution
@@ -2523,7 +1767,7 @@ fn substitute_expression(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&String>,
+    array_name: Option<&str>,
 ) -> Expression {
     match expr {
         // Replace index variable with literal k
@@ -2554,28 +1798,7 @@ fn substitute_expression(
                 },
             }
         }
-        // Handle array indexing: arr[index_var] → Variable("arr_{k}")
-        Expression::ArrayIndex { array, index } => {
-            // Check if the index is the loop index variable
-            if let Expression::Variable(idx_name) = index.as_ref() {
-                if idx_name == index_var {
-                    // Get the array name
-                    if let Expression::Variable(arr_name) = array.as_ref() {
-                        return Expression::Variable(format!("{}_{}", arr_name, k));
-                    }
-                }
-            }
-            // Recursively substitute in array and index
-            Expression::ArrayIndex {
-                array: Box::new(substitute_expression(
-                    array, index_var, value_var, k, array_name,
-                )),
-                index: Box::new(substitute_expression(
-                    index, index_var, value_var, k, array_name,
-                )),
-            }
-        }
-        // Handle Property expressions that look like array indexing (e.g., "oracles[i]")
+        // Handle property strings that represent array indexing (e.g., "oracles[i]").
         Expression::Property(prop) => {
             // Check if this looks like array indexing
             if let Some(bracket_start) = prop.find('[') {
@@ -2680,6 +1903,82 @@ fn substitute_expression(
                 .iter()
                 .map(|a| substitute_expression(a, index_var, value_var, k, array_name))
                 .collect(),
+        },
+        // Asset lookups/has: substitute the io index and both Asset ID operands
+        // (e.g. `tx.outputs[i].assets.lookup(assetTxid, i)` unrolls i -> 0,1,2…).
+        Expression::AssetLookup {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => Expression::AssetLookup {
+            source: source.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::AssetHas {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => Expression::AssetHas {
+            source: source.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        } => Expression::GroupFind {
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => Expression::GroupHas {
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupControlIs {
+            group,
+            asset_txid,
+            asset_gidx,
+        } => Expression::GroupControlIs {
+            // Replace the group name with the loop index when iterating groups.
+            group: if group == value_var {
+                k.to_string()
+            } else {
+                group.clone()
+            },
+            asset_txid: Box::new(substitute_expression(
+                asset_txid, index_var, value_var, k, array_name,
+            )),
+            asset_gidx: Box::new(substitute_expression(
+                asset_gidx, index_var, value_var, k, array_name,
+            )),
         },
         // All other expressions are returned as-is
         _ => expr.clone(),
@@ -2911,22 +2210,6 @@ fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Expression, Ar
                     value: Box::new(nv),
                 },
                 ArkType::Uint64Le,
-            )
-        }
-        Expression::ArrayIndex { array, index } => {
-            let (na, at) = rewrite_expression_concat(*array, scope);
-            let (ni, _) = rewrite_expression_concat(*index, scope);
-            let elem_type = if let ArkType::Array(inner) = at {
-                *inner
-            } else {
-                ArkType::Unknown
-            };
-            (
-                Expression::ArrayIndex {
-                    array: Box::new(na),
-                    index: Box::new(ni),
-                },
-                elem_type,
             )
         }
         Expression::ContractInstance {

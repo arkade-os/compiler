@@ -20,17 +20,19 @@ use arkade_compiler::opcodes::{
 
 fn compile_first_function_asm(src: &str) -> Vec<String> {
     let out = compile(src).unwrap_or_else(|e| panic!("compile: {:?}", e));
+    // The covenant (function body) carries the introspection logic; cooperative
+    // signing lives in a synthesized tapleaf, not the covenant.
     out.functions
         .iter()
-        .find(|f| f.server_variant)
-        .expect("server variant")
+        .find_map(|g| g.arkade.as_ref())
+        .expect("covenant group")
         .asm
         .clone()
 }
 
-const PROLOGUE: &str = r#"
-options { server = server; exit = exit; }
-"#;
+// Cooperative signing and exit are now expressed via tapscript leaves, not an
+// `options` block, so the inline demo contracts need no prologue.
+const PROLOGUE: &str = "";
 
 #[test]
 fn test_packet_inspect_emits_op_inspectpacket_with_presence_check() {
