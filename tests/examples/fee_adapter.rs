@@ -6,7 +6,7 @@ use arkade_compiler::opcodes::{
 
 #[test]
 fn test_fee_adapter_contract() {
-    let code = include_str!("../../examples/fees/fee_adapter.ark");
+    let code = include_str!("../../examples/fee_adapter/fee_adapter.ark");
 
     let result = compile(code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -141,7 +141,7 @@ fn test_fee_adapter_cli() {
     let input_path = temp_dir.path().join("fee_adapter.ark");
     let output_path = temp_dir.path().join("fee_adapter.json");
 
-    let code = include_str!("../../examples/fees/fee_adapter.ark");
+    let code = include_str!("../../examples/fee_adapter/fee_adapter.ark");
     fs::write(&input_path, code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

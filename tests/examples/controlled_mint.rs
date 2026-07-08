@@ -6,7 +6,7 @@ use arkade_compiler::opcodes::{
 
 #[test]
 fn test_controlled_mint_contract() {
-    let code = include_str!("../../examples/tokens/controlled_mint.ark");
+    let code = include_str!("../../examples/controlled_mint/controlled_mint.ark");
 
     let result = compile(code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -134,7 +134,7 @@ fn test_controlled_mint_cli() {
     let input_path = temp_dir.path().join("controlled_mint.ark");
     let output_path = temp_dir.path().join("controlled_mint.json");
 
-    let code = include_str!("../../examples/tokens/controlled_mint.ark");
+    let code = include_str!("../../examples/controlled_mint/controlled_mint.ark");
     fs::write(&input_path, code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

@@ -263,7 +263,7 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
     // example file in examples/, so it's not listed here.
     // htlc.ark uses checkMultisig with explicit sig arrays; those are
     // emitted as compound-expression placeholders and are also tested.
-    let simple = ["payments/single_sig.ark", "swaps/htlc.ark"];
+    let simple = ["single_sig/single_sig.ark", "htlc/htlc.ark"];
     for filename in &simple {
         let path = examples_dir().join(filename);
         let source = fs::read_to_string(&path)
@@ -320,7 +320,7 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
 /// placeholder is named in the message.
 #[test]
 fn local_variable_placeholders_are_surfaced_as_warnings() {
-    let path = examples_dir().join("tokens/arkade_kitties.ark");
+    let path = examples_dir().join("arkade_kitties/arkade_kitties.ark");
     if !path.exists() {
         return;
     }

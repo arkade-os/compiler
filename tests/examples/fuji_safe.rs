@@ -5,7 +5,7 @@ use arkade_compiler::opcodes::{
 
 #[test]
 fn test_fuji_safe_contract() {
-    let fuji_code = include_str!("../../examples/stability/fuji_safe.ark");
+    let fuji_code = include_str!("../../examples/fuji_safe/fuji_safe.ark");
 
     let result = compile(fuji_code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -155,7 +155,7 @@ fn test_fuji_safe_cli() {
     let input_path = temp_dir.path().join("fuji_safe.ark");
     let output_path = temp_dir.path().join("fuji_safe.json");
 
-    let fuji_code = include_str!("../../examples/stability/fuji_safe.ark");
+    let fuji_code = include_str!("../../examples/fuji_safe/fuji_safe.ark");
     fs::write(&input_path, fuji_code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

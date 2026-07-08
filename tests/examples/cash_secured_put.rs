@@ -5,7 +5,7 @@ use arkade_compiler::opcodes::{
 
 use crate::common::{arkade_asm, arkade_inputs, group};
 
-const PUT_CODE: &str = include_str!("../../examples/options/cash_secured_put.ark");
+const PUT_CODE: &str = include_str!("../../examples/cash_secured_put/cash_secured_put.ark");
 
 #[test]
 fn test_compiles_with_5_groups() {
