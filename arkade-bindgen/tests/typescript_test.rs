@@ -10,14 +10,19 @@ fn load_fixture(name: &str) -> String {
         .unwrap_or_else(|e| panic!("Failed to load fixture '{}': {}", path, e))
 }
 
+fn gen(name: &str) -> String {
+    let json = load_fixture(name);
+    generate_from_str(&json, Target::TypeScript, &Options::default())
+        .expect("codegen should succeed")
+        .content
+}
+
 #[test]
 fn test_htlc_typescript_generates() {
     let json = load_fixture("htlc");
-    let result = generate_from_str(&json, Target::TypeScript, &Options::default());
-    let generated = result.expect("codegen should succeed");
-
+    let generated =
+        generate_from_str(&json, Target::TypeScript, &Options::default()).expect("codegen");
     assert_eq!(generated.filename, "htlc.ts");
-
     let code = &generated.content;
 
     // Header
@@ -35,88 +40,66 @@ fn test_htlc_typescript_generates() {
     assert!(code.contains("export interface HTLCParams {"));
     assert!(code.contains("sender: Pubkey;"));
     assert!(code.contains("receiver: Pubkey;"));
-    assert!(code.contains("hash: Bytes;"));
+    assert!(code.contains("preimageHash: Bytes20;"));
     assert!(code.contains("refundTime: bigint;"));
 
-    // Claim witness interfaces
-    assert!(code.contains("export interface HTLCClaimCooperativeWitness {"));
-    assert!(code.contains("receiverSig: Signature;"));
+    // Per-leaf witness interfaces (name collapses when leaf == group)
+    assert!(code.contains("export interface HTLCClaimWitness {"));
     assert!(code.contains("preimage: Bytes;"));
-    assert!(code.contains("// serverSig injected by Arkade server"));
-
-    assert!(code.contains("export interface HTLCClaimExitWitness {"));
-    assert!(code.contains("// exit timelock enforced by script"));
+    assert!(code.contains("// serverSig injected by Arkade"));
+    assert!(code.contains("// emulatorSig injected by Arkade"));
+    assert!(code.contains("export interface HTLCUnilateralWitness {"));
+    assert!(code.contains("senderSig: Signature;"));
 
     // Class
     assert!(code.contains("export class HTLC extends ArkContract<HTLCParams>"));
     assert!(code.contains("static readonly artifact = artifact"));
 
-    // Function methods — object grouping pattern
+    // Per-group method objects keyed by leaf, calling buildWitness(group, leaf, w)
     assert!(code.contains("claim = {"));
-    assert!(code.contains("cooperative: (witness: HTLCClaimCooperativeWitness)"));
-    assert!(code.contains("this.buildWitness(\"claim\", true, witness)"));
-    assert!(code.contains("exit: (witness: HTLCClaimExitWitness)"));
-    assert!(code.contains("this.buildWitness(\"claim\", false, witness)"));
-
-    // Together and refund methods also exist
-    assert!(code.contains("together = {"));
-    assert!(code.contains("refund = {"));
+    assert!(code.contains("claim: (witness: HTLCClaimWitness) =>"));
+    assert!(code.contains("this.buildWitness(\"claim\", \"claim\", witness)"));
+    assert!(code.contains("unilateral = {"));
+    assert!(code.contains("this.buildWitness(\"unilateral\", \"unilateral\", witness)"));
 }
 
 #[test]
 fn test_single_sig_typescript() {
-    let json = load_fixture("single_sig");
-    let result = generate_from_str(&json, Target::TypeScript, &Options::default());
-    let generated = result.expect("codegen should succeed");
-
+    let generated = generate_from_str(
+        &load_fixture("single_sig"),
+        Target::TypeScript,
+        &Options::default(),
+    )
+    .expect("codegen");
     assert_eq!(generated.filename, "single_sig.ts");
 
     let code = &generated.content;
     assert!(code.contains("export interface SingleSigParams {"));
-    assert!(code.contains("ownerPk: Pubkey;"));
+    assert!(code.contains("user: Pubkey;"));
     assert!(code.contains("export class SingleSig extends ArkContract<SingleSigParams>"));
     assert!(code.contains("spend = {"));
-}
-
-#[test]
-fn test_legacy_artifact_without_witness_schema() {
-    let json = load_fixture("htlc_legacy");
-    let result = generate_from_str(&json, Target::TypeScript, &Options::default());
-    let generated = result.expect("legacy artifact should still generate");
-
-    let code = &generated.content;
-    // Should still produce witness interfaces with inferred types
-    assert!(code.contains("export interface HTLCClaimCooperativeWitness {"));
-    assert!(code.contains("receiverSig: Signature;"));
-    assert!(code.contains("preimage: Bytes;"));
+    assert!(code.contains("unilateral = {"));
 }
 
 #[test]
 fn test_typescript_embed_mode() {
-    let json = load_fixture("single_sig");
     let opts = Options {
         embed: true,
         package: None,
     };
-    let result = generate_from_str(&json, Target::TypeScript, &opts);
-    let generated = result.expect("codegen should succeed");
-
-    let code = &generated.content;
-    // Should have inline artifact instead of import
+    let code = generate_from_str(&load_fixture("single_sig"), Target::TypeScript, &opts)
+        .expect("codegen")
+        .content;
     assert!(code.contains("const artifact ="));
     assert!(!code.contains("import artifact from"));
 }
 
 #[test]
-fn test_typescript_function_order_preserved() {
-    let json = load_fixture("htlc");
-    let result = generate_from_str(&json, Target::TypeScript, &Options::default());
-    let code = result.unwrap().content;
-
-    // together should appear before refund, which should appear before claim
-    let together_pos = code.find("together = {").unwrap();
-    let refund_pos = code.find("refund = {").unwrap();
-    let claim_pos = code.find("claim = {").unwrap();
-    assert!(together_pos < refund_pos);
-    assert!(refund_pos < claim_pos);
+fn test_typescript_group_order_preserved() {
+    let code = gen("htlc");
+    let claim = code.find("claim = {").unwrap();
+    let refund = code.find("refund = {").unwrap();
+    let uni = code.find("unilateral = {").unwrap();
+    assert!(claim < refund);
+    assert!(refund < uni);
 }

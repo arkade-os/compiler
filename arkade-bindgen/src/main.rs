@@ -151,7 +151,7 @@ fn collect_artifacts(input: &Path) -> Vec<PathBuf> {
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
-                if path.extension().map_or(false, |ext| ext == "json") {
+                if path.extension().is_some_and(|ext| ext == "json") {
                     Some(path)
                 } else {
                     None

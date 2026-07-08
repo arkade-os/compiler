@@ -1,5 +1,5 @@
-use crate::ir::{ContractIR, Encoding, Field, FunctionIR, VariantIR};
-use crate::naming::{to_camel_case, to_snake_case};
+use crate::ir::{ContractIR, Encoding, Field, GroupIR, LeafIR};
+use crate::naming::{to_camel_case, to_pascal_case, to_snake_case};
 use crate::targets::{CodegenOptions, CodegenTarget, GeneratedFile};
 
 pub struct TypeScriptTarget;
@@ -45,6 +45,22 @@ fn sdk_type_alias(encoding: &Encoding) -> Option<&'static str> {
     }
 }
 
+/// Witness interface name for a leaf. Collapses the redundant name when a group
+/// has a single leaf sharing its name (e.g. `HTLCClaimWitness`, not
+/// `HTLCClaimClaimWitness`).
+fn witness_iface_name(ir: &ContractIR, group: &GroupIR, leaf: &LeafIR) -> String {
+    if leaf.name == group.name {
+        format!("{}{}Witness", ir.name, to_pascal_case(&group.name))
+    } else {
+        format!(
+            "{}{}{}Witness",
+            ir.name,
+            to_pascal_case(&group.name),
+            to_pascal_case(&leaf.name)
+        )
+    }
+}
+
 fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
     let mut out = String::new();
 
@@ -58,22 +74,19 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
         ir.name, version,
     ));
 
-    // Collect needed SDK type aliases from all fields
+    // Collect needed SDK type aliases from all user-supplied fields.
     let mut type_aliases = std::collections::BTreeSet::new();
     for field in &ir.constructor_fields {
         if let Some(alias) = sdk_type_alias(&field.encoding) {
             type_aliases.insert(alias);
         }
     }
-    for func in &ir.functions {
-        for field in &func.cooperative.user_fields {
-            if let Some(alias) = sdk_type_alias(&field.encoding) {
-                type_aliases.insert(alias);
-            }
-        }
-        for field in &func.exit.user_fields {
-            if let Some(alias) = sdk_type_alias(&field.encoding) {
-                type_aliases.insert(alias);
+    for group in &ir.groups {
+        for leaf in &group.leaves {
+            for field in leaf.user_fields() {
+                if let Some(alias) = sdk_type_alias(&field.encoding) {
+                    type_aliases.insert(alias);
+                }
             }
         }
     }
@@ -117,21 +130,21 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
     out.push_str(&format!("/** Constructor parameters for {} */\n", ir.name));
     out.push_str(&format!("export interface {}Params {{\n", ir.name));
     for field in &ir.constructor_fields {
-        let ts = field_ts_type(field);
         out.push_str(&format!(
             "  /** {} ({}) */\n  {}: {};\n",
             field.ark_type,
             field.encoding.as_str(),
             to_camel_case(&field.name),
-            ts,
+            field_ts_type(field),
         ));
     }
     out.push_str("}\n\n");
 
-    // Per-function witness interfaces
-    for func in &ir.functions {
-        emit_witness_interface(&mut out, ir, func, &func.cooperative, "Cooperative");
-        emit_witness_interface(&mut out, ir, func, &func.exit, "Exit");
+    // Per-leaf witness interfaces
+    for group in &ir.groups {
+        for leaf in &group.leaves {
+            emit_witness_interface(&mut out, ir, group, leaf);
+        }
     }
 
     // Contract class
@@ -147,71 +160,50 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
         ir.name, ir.name,
     ));
 
-    // Function methods
-    for func in &ir.functions {
-        let method_name = to_camel_case(&func.name);
-        let pascal_name = crate::naming::to_pascal_case(&func.name);
-
-        let coop_type = format!("{}{}CooperativeWitness", ir.name, pascal_name);
-        let exit_type = format!("{}{}ExitWitness", ir.name, pascal_name);
-
-        out.push_str(&format!(
-            "\n\
-             \x20 {} = {{\n\
-             \x20   cooperative: (witness: {}) =>\n\
-             \x20     this.buildWitness(\"{}\", true, witness),\n\
-             \x20   exit: (witness: {}) =>\n\
-             \x20     this.buildWitness(\"{}\", false, witness),\n\
-             \x20 }};\n",
-            method_name, coop_type, func.name, exit_type, func.name,
-        ));
+    // Per-group spend methods: an object keyed by leaf name.
+    for group in &ir.groups {
+        let method_name = to_camel_case(&group.name);
+        out.push_str(&format!("\n  {} = {{\n", method_name));
+        for leaf in &group.leaves {
+            let iface = witness_iface_name(ir, group, leaf);
+            out.push_str(&format!(
+                "    {}: (witness: {}) =>\n\
+                 \x20     this.buildWitness(\"{}\", \"{}\", witness),\n",
+                to_camel_case(&leaf.name),
+                iface,
+                group.name,
+                leaf.name,
+            ));
+        }
+        out.push_str("  };\n");
     }
 
     out.push_str("}\n");
     out
 }
 
-fn emit_witness_interface(
-    out: &mut String,
-    ir: &ContractIR,
-    func: &FunctionIR,
-    variant: &VariantIR,
-    variant_label: &str,
-) {
-    let pascal_name = crate::naming::to_pascal_case(&func.name);
-    let iface_name = format!("{}{}{}Witness", ir.name, pascal_name, variant_label);
+fn emit_witness_interface(out: &mut String, ir: &ContractIR, group: &GroupIR, leaf: &LeafIR) {
+    let iface_name = witness_iface_name(ir, group, leaf);
 
-    // Doc comment
-    let path_label = if variant_label == "Cooperative" {
-        "cooperative path"
-    } else {
-        "exit path"
-    };
     out.push_str(&format!(
-        "/** Witness for {}.{} ({}) */\n",
-        ir.name, func.name, path_label,
+        "/** Witness for {}.{} (leaf: {}) */\n",
+        ir.name, group.name, leaf.name,
     ));
-
     out.push_str(&format!("export interface {} {{\n", iface_name));
 
-    for field in &variant.user_fields {
-        let ts = field_ts_type(field);
+    for field in leaf.user_fields() {
         out.push_str(&format!(
             "  /** {} ({}) */\n  {}: {};\n",
             field.ark_type,
             field.encoding.as_str(),
             to_camel_case(&field.name),
-            ts,
+            field_ts_type(field),
         ));
     }
 
-    // Comments for server-injected or timelock fields
-    if variant_label == "Cooperative" {
-        out.push_str("  // serverSig injected by Arkade server\n");
-    } else if variant.is_nofn_fallback {
-        out.push_str("  // N-of-N multisig exit fallback\n");
-    } else {
-        out.push_str("  // exit timelock enforced by script\n");
+    // Note infrastructure-injected witness fields the caller does not supply.
+    for field in leaf.witness_fields.iter().filter(|f| f.is_injected) {
+        out.push_str(&format!("  // {} injected by Arkade\n", field.name));
     }
 
     out.push_str("}\n\n");
