@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD64, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
+    OP_ADD, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
 };
 
 mod common;
@@ -113,8 +113,8 @@ fn test_epoch_limiter_64bit_arithmetic() {
     let asm_str = arkade_asm(&output, "check");
 
     // Should use 64-bit arithmetic for asset amounts
-    let has_add64 = asm_str.contains(OP_ADD64);
-    assert!(has_add64, "Missing 64-bit arithmetic opcodes");
+    let has_add = asm_str.contains(OP_ADD);
+    assert!(has_add, "Missing 64-bit arithmetic opcodes");
 }
 
 #[test]

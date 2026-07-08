@@ -2,9 +2,8 @@ mod common;
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTNONCE,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
 };
 
 /// Test input introspection opcodes
@@ -116,33 +115,6 @@ fn test_input_outpoint() {
     );
 }
 
-#[test]
-fn test_input_issuance() {
-    let code = r#"
-        contract IssuanceChecker(pubkey owner, bytes32 expectedIssuance) {
-            function checkIssuance(signature ownerSig) {
-                require(checkSig(ownerSig, owner));
-                require(tx.inputs[0].issuance == expectedIssuance);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result.is_ok(),
-        "Failed to parse tx.inputs[0].issuance: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkIssuance");
-    assert!(
-        asm_str.contains(OP_INSPECTINPUTISSUANCE),
-        "Expected {OP_INSPECTINPUTISSUANCE} in ASM: {}",
-        asm_str
-    );
-}
-
 /// Test output introspection opcodes
 #[test]
 fn test_output_value() {
@@ -194,33 +166,6 @@ fn test_output_script_pubkey() {
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
         "Expected {OP_INSPECTOUTPUTSCRIPTPUBKEY} in ASM: {}",
-        asm_str
-    );
-}
-
-#[test]
-fn test_output_nonce() {
-    let code = r#"
-        contract NonceChecker(pubkey owner, bytes32 expectedNonce) {
-            function checkNonce(signature ownerSig) {
-                require(checkSig(ownerSig, owner));
-                require(tx.outputs[0].nonce == expectedNonce);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result.is_ok(),
-        "Failed to parse tx.outputs[0].nonce: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkNonce");
-    assert!(
-        asm_str.contains(OP_INSPECTOUTPUTNONCE),
-        "Expected {OP_INSPECTOUTPUTNONCE} in ASM: {}",
         asm_str
     );
 }

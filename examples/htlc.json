@@ -32,7 +32,7 @@
           "OP_INSPECTOUTPUTVALUE",
           "0",
           "OP_INSPECTINPUTVALUE",
-          "OP_GREATERTHANOREQUAL64",
+          "OP_GREATERTHANOREQUAL",
           "OP_VERIFY"
         ]
       },
@@ -80,7 +80,7 @@
           "OP_INSPECTOUTPUTVALUE",
           "0",
           "OP_INSPECTINPUTVALUE",
-          "OP_GREATERTHANOREQUAL64",
+          "OP_GREATERTHANOREQUAL",
           "OP_VERIFY"
         ]
       },
@@ -141,5 +141,5 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-07-01T06:37:17.333800+00:00"
+  "updatedAt": "2026-07-08T14:53:39.135561278+00:00"
 }

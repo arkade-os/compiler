@@ -2,7 +2,7 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPASSETID,
     OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_SUB64, OP_TXHASH,
+    OP_INSPECTASSETGROUPSUM, OP_SUB, OP_TXID,
 };
 
 mod common;
@@ -38,7 +38,7 @@ fn test_group_asset_id_basic() {
 }
 
 /// Test that group.isFresh emits the correct opcode sequence:
-/// OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXHASH OP_EQUAL
+/// OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL
 #[test]
 fn test_group_is_fresh_basic() {
     let code = r#"
@@ -59,7 +59,7 @@ fn test_group_is_fresh_basic() {
 
     let asm_str = arkade_asm(&output, "verifyFresh");
 
-    // isFresh emits: OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXHASH OP_EQUAL
+    // isFresh emits: OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPASSETID),
         "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check: {}",
@@ -71,8 +71,8 @@ fn test_group_is_fresh_basic() {
         asm_str
     );
     assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH} for isFresh check: {}",
+        asm_str.contains(OP_TXID),
+        "Expected {OP_TXID} for isFresh check: {}",
         asm_str
     );
 }
@@ -105,14 +105,14 @@ fn test_is_fresh_with_delta_combo() {
         asm_str
     );
     assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH} for isFresh: {}",
+        asm_str.contains(OP_TXID),
+        "Expected {OP_TXID} for isFresh: {}",
         asm_str
     );
-    // delta uses OP_SUB64 for sumOutputs - sumInputs
+    // delta uses OP_SUB for sumOutputs - sumInputs
     assert!(
-        asm_str.contains(OP_SUB64),
-        "Expected {OP_SUB64} for delta: {}",
+        asm_str.contains(OP_SUB),
+        "Expected {OP_SUB} for delta: {}",
         asm_str
     );
     assert!(
@@ -148,11 +148,7 @@ fn test_is_fresh_zero_for_existing_asset() {
         "Expected {OP_INSPECTASSETGROUPASSETID}: {}",
         asm_str
     );
-    assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH}: {}",
-        asm_str
-    );
+    assert!(asm_str.contains(OP_TXID), "Expected {OP_TXID}: {}", asm_str);
 }
 
 /// Test group.metadataHash emits OP_INSPECTASSETGROUPMETADATAHASH
@@ -222,13 +218,13 @@ fn test_all_group_properties() {
         asm_str
     );
     assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH} for isFresh: {}",
+        asm_str.contains(OP_TXID),
+        "Expected {OP_TXID} for isFresh: {}",
         asm_str
     );
     assert!(
-        asm_str.contains(OP_SUB64),
-        "Expected {OP_SUB64} for delta: {}",
+        asm_str.contains(OP_SUB),
+        "Expected {OP_SUB} for delta: {}",
         asm_str
     );
     assert!(

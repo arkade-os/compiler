@@ -199,7 +199,8 @@
           }
         ],
         "asm": [
-          "OP_INPUTVALUE",
+          "OP_PUSHCURRENTINPUTINDEX",
+          "OP_INSPECTINPUTVALUE",
           "0",
           "OP_INSPECTOUTPUTSCRIPTPUBKEY",
           "<VTXO:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,<exit>)>",
@@ -268,8 +269,8 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-07-01T06:37:17.082993+00:00",
+  "updatedAt": "2026-07-08T14:53:39.072434633+00:00",
   "warnings": [
-    "warning[type]: fn verifyFujiBurning: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn verifyFujiBurning: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — both are BigNums on-stack; the comparison works as-is"
   ]
 }

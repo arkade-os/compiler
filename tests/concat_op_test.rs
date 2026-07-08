@@ -1,10 +1,10 @@
 mod common;
 
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_ADD64, OP_CAT, OP_SCRIPTNUMTOLE64, OP_SHA256};
+use arkade_compiler::opcodes::{OP_ADD, OP_CAT, OP_NUM2BIN, OP_SHA256};
 
-// `+` between bytes-like values should compile to OP_CAT, not OP_ADD64.
-// Ints concatenated with bytes get an OP_SCRIPTNUMTOLE64 coercion first
+// `+` between bytes-like values should compile to OP_CAT, not OP_ADD.
+// Ints concatenated with bytes get an OP_NUM2BIN coercion first
 // so off-chain hashing can use a fixed 8-byte LE encoding.
 const CONCAT_CODE: &str = r#"
 contract Mix(
@@ -37,13 +37,13 @@ fn test_plus_on_bytes32_emits_op_cat() {
         asm
     );
     assert!(
-        asm.contains(OP_SCRIPTNUMTOLE64),
-        "Expected OP_SCRIPTNUMTOLE64 to coerce int sides; asm:\n{}",
+        asm.contains(OP_NUM2BIN),
+        "Expected OP_NUM2BIN to coerce int sides; asm:\n{}",
         asm
     );
     assert!(
-        !asm.contains(OP_ADD64),
-        "OP_ADD64 should not appear — bytes32 + int must route to OP_CAT, not arithmetic; asm:\n{}",
+        !asm.contains(OP_ADD),
+        "OP_ADD should not appear — bytes32 + int must route to OP_CAT, not arithmetic; asm:\n{}",
         asm
     );
 }
@@ -61,8 +61,8 @@ contract IntMath(int a, int b) {
     let out = compile(code).expect("compile");
     let asm = common::arkade_asm(&out, "check");
     assert!(
-        asm.contains(OP_ADD64),
-        "int + int should still use OP_ADD64; asm:\n{}",
+        asm.contains(OP_ADD),
+        "int + int should still use OP_ADD; asm:\n{}",
         asm
     );
     assert!(

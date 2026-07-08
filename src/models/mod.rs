@@ -454,7 +454,7 @@ pub enum Expression {
     // ─── Byte-string operations ────────────────────────────────────────
     /// Byte-string concatenation: produced by the rewrite pass when `+`
     /// has at least one bytes-like operand. `coerce_left` / `coerce_right`
-    /// tell the emitter to insert `OP_SCRIPTNUMTOLE64` on a side that is
+    /// tell the emitter to insert `OP_8 OP_NUM2BIN` on a side that is
     /// an integer (mixed `bytes + int` writes the int as fixed 8-byte LE
     /// before OP_CAT, so off-chain hashing matches deterministically).
     Concat {
@@ -481,11 +481,11 @@ pub enum Expression {
         last_chunk: Box<Expression>,
     },
     // ─── Conversion & Arithmetic ───────────────────────────────────────
-    /// Negate 64-bit value: neg64(value)
+    /// Negate value: neg64(value) → OP_NEGATE
     Neg64 { value: Box<Expression> },
-    /// Convert LE64 to script number: le64ToScriptNum(value)
+    /// Normalize fixed-width LE bytes to a BigNum: le64ToScriptNum(value) → OP_BIN2NUM
     Le64ToScriptNum { value: Box<Expression> },
-    /// Convert LE32 to LE64: le32ToLe64(value)
+    /// Normalize fixed-width LE bytes to a BigNum: le32ToLe64(value) → OP_BIN2NUM
     Le32ToLe64 { value: Box<Expression> },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)

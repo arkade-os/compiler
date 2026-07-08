@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL64,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN, OP_GREATERTHANOREQUAL,
     OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
 
@@ -73,7 +73,7 @@ fn test_token_vault_contract() {
 
     // Check 64-bit comparison opcodes
     assert!(
-        deposit_asm.contains(OP_GREATERTHAN64) || deposit_asm.contains(OP_GREATERTHANOREQUAL64),
+        deposit_asm.contains(OP_GREATERTHAN) || deposit_asm.contains(OP_GREATERTHANOREQUAL),
         "missing 64-bit comparison opcodes in deposit asm: {}",
         deposit_asm
     );

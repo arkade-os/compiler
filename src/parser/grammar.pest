@@ -640,17 +640,17 @@ sha256_finalize = {
 
 // ─── Conversion & Arithmetic ───────────────────────────────────────────
 
-// Negate 64-bit value: neg64(value) → OP_NEG64
+// Negate value: neg64(value) → OP_NEGATE
 neg64_func = {
     "neg64" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
 
-// Convert LE64 to script number: le64ToScriptNum(value) → OP_LE64TOSCRIPTNUM
+// Normalize LE64 bytes to BigNum: le64ToScriptNum(value) → OP_BIN2NUM
 le64_to_script_num = {
     "le64ToScriptNum" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
 
-// Convert LE32 to LE64: le32ToLe64(value) → OP_LE32TOLE64
+// Normalize LE32 bytes to BigNum: le32ToLe64(value) → OP_BIN2NUM
 le32_to_le64 = {
     "le32ToLe64" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
@@ -667,7 +667,7 @@ tweak_verify = {
     "tweakVerify" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACKVERIFY
+// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }

@@ -2,8 +2,8 @@ mod common;
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_NEG64,
-    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
+    OP_BIN2NUM, OP_CHECKSIGFROMSTACK, OP_ECMULSCALARVERIFY, OP_NEGATE, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
 };
 // ─── Streaming SHA256 Tests ────────────────────────────────────────────
 
@@ -107,8 +107,8 @@ fn test_neg64() {
     let output = result.unwrap();
     let asm_str = common::arkade_asm(&output, "negateValue");
     assert!(
-        asm_str.contains(OP_NEG64),
-        "Expected {OP_NEG64} in ASM: {}",
+        asm_str.contains(OP_NEGATE),
+        "Expected {OP_NEGATE} in ASM: {}",
         asm_str
     );
 }
@@ -134,8 +134,8 @@ fn test_le64_to_script_num() {
     let output = result.unwrap();
     let asm_str = common::arkade_asm(&output, "convertToScriptNum");
     assert!(
-        asm_str.contains(OP_LE64TOSCRIPTNUM),
-        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}",
+        asm_str.contains(OP_BIN2NUM),
+        "Expected {OP_BIN2NUM} in ASM: {}",
         asm_str
     );
 }
@@ -161,8 +161,8 @@ fn test_le32_to_le64() {
     let output = result.unwrap();
     let asm_str = common::arkade_asm(&output, "extendTo64Bit");
     assert!(
-        asm_str.contains(OP_LE32TOLE64),
-        "Expected {OP_LE32TOLE64} in ASM: {}",
+        asm_str.contains(OP_BIN2NUM),
+        "Expected {OP_BIN2NUM} in ASM: {}",
         asm_str
     );
 }
@@ -244,8 +244,8 @@ fn test_check_sig_from_stack_verify() {
     let output = result.unwrap();
     let asm_str = common::arkade_asm(&output, "verifyMessageSig");
     assert!(
-        asm_str.contains(OP_CHECKSIGFROMSTACKVERIFY),
-        "Expected {OP_CHECKSIGFROMSTACKVERIFY} in ASM: {}",
+        asm_str.contains(OP_CHECKSIGFROMSTACK),
+        "Expected {OP_CHECKSIGFROMSTACK} in ASM: {}",
         asm_str
     );
 }
@@ -314,18 +314,18 @@ fn test_conversion_chain() {
     let output = result.unwrap();
     let asm_str = common::arkade_asm(&output, "convertAndNegate");
     assert!(
-        asm_str.contains(OP_LE32TOLE64),
-        "Expected {OP_LE32TOLE64} in ASM: {}",
+        asm_str.contains(OP_BIN2NUM),
+        "Expected {OP_BIN2NUM} in ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains(OP_NEG64),
-        "Expected {OP_NEG64} in ASM: {}",
+        asm_str.contains(OP_NEGATE),
+        "Expected {OP_NEGATE} in ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains(OP_LE64TOSCRIPTNUM),
-        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}",
+        asm_str.contains(OP_BIN2NUM),
+        "Expected {OP_BIN2NUM} in ASM: {}",
         asm_str
     );
 }

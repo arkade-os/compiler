@@ -4,24 +4,20 @@ use crate::models::{
     DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_ADD64, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
-    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_DIV64, OP_DROP,
-    OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FALSE,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
-    OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE,
-    OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
-    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
-    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTISSUANCE,
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
-    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM,
-    OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64,
-    OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64,
-    OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIZE, OP_SUB64,
-    OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXHASH, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+    OP_0, OP_1, OP_8, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_DIV, OP_DROP, OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF,
+    OP_EQUAL, OP_EQUALVERIFY, OP_FALSE, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN,
+    OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID,
+    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
+    OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
+    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTOUTPOINT,
+    OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS,
+    OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION,
+    OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL,
+    OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE,
+    OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::parser;
 use crate::typechecker::{self, ArkType};
@@ -360,7 +356,10 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // keeps the placeholder pipeline untouched for everything else).
             match prop.as_str() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
-                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                "this.activeBytecode" => {
+                    asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+                    asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+                }
                 _ => asm.push(format!("<{}>", prop)),
             }
         }
@@ -368,51 +367,31 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // Emit left operand
             generate_expression_asm(left, asm);
 
-            // Convert to u64le if needed (witness inputs arrive as CScriptNum)
-            if needs_u64_conversion(left) {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
-            }
-
             // Emit right operand
             generate_expression_asm(right, asm);
 
-            // Convert to u64le if needed
-            if needs_u64_conversion(right) {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
-            }
-
-            // Emit opcode with OP_VERIFY for 64-bit ops (same as emit_binary_op_asm)
+            // Operands are minimally encoded BigNums — no conversion opcodes
+            // needed (same as emit_binary_op_asm). Comparisons keep the
+            // trailing OP_VERIFY to enforce the requirement inline.
             match op.as_str() {
-                "+" => {
-                    asm.push(OP_ADD64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "-" => {
-                    asm.push(OP_SUB64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "*" => {
-                    asm.push(OP_MUL64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "/" => {
-                    asm.push(OP_DIV64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
+                "+" => asm.push(OP_ADD.to_string()),
+                "-" => asm.push(OP_SUB.to_string()),
+                "*" => asm.push(OP_MUL.to_string()),
+                "/" => asm.push(OP_DIV.to_string()),
                 ">=" => {
-                    asm.push(OP_GREATERTHANOREQUAL64.to_string());
+                    asm.push(OP_GREATERTHANOREQUAL.to_string());
                     asm.push(OP_VERIFY.to_string());
                 }
                 "<=" => {
-                    asm.push(OP_LESSTHANOREQUAL64.to_string());
+                    asm.push(OP_LESSTHANOREQUAL.to_string());
                     asm.push(OP_VERIFY.to_string());
                 }
                 ">" => {
-                    asm.push(OP_GREATERTHAN64.to_string());
+                    asm.push(OP_GREATERTHAN.to_string());
                     asm.push(OP_VERIFY.to_string());
                 }
                 "<" => {
-                    asm.push(OP_LESSTHAN64.to_string());
+                    asm.push(OP_LESSTHAN.to_string());
                     asm.push(OP_VERIFY.to_string());
                 }
                 "==" => asm.push(OP_EQUAL.to_string()),
@@ -424,17 +403,7 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         Expression::CurrentInput(property) => {
-            if let Some(prop) = property {
-                match prop.as_str() {
-                    "scriptPubKey" => asm.push(OP_INPUTBYTECODE.to_string()),
-                    "value" => asm.push(OP_INPUTVALUE.to_string()),
-                    "sequence" => asm.push(OP_INPUTSEQUENCE.to_string()),
-                    "outpoint" => asm.push(OP_INPUTOUTPOINT.to_string()),
-                    _ => asm.push(OP_INPUTBYTECODE.to_string()),
-                }
-            } else {
-                asm.push(OP_INPUTBYTECODE.to_string());
-            }
+            emit_current_input_asm(property.as_deref(), asm);
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
@@ -474,8 +443,9 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_SHA256FINALIZE.to_string());
         }
         // Byte-string concatenation: bytes-like + value → OP_CAT
-        // Coercion flags decide whether to convert a scriptnum side to LE64
-        // before the cat (so off-chain hashing uses fixed 8-byte ints).
+        // Coercion flags decide whether to pad a numeric side to a fixed
+        // 8-byte string (OP_8 OP_NUM2BIN) before the cat, so off-chain
+        // hashing uses fixed 8-byte ints.
         Expression::Concat {
             left,
             right,
@@ -484,26 +454,28 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             generate_expression_asm(left, asm);
             if *coerce_left {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+                asm.push(OP_8.to_string());
+                asm.push(OP_NUM2BIN.to_string());
             }
             generate_expression_asm(right, asm);
             if *coerce_right {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+                asm.push(OP_8.to_string());
+                asm.push(OP_NUM2BIN.to_string());
             }
             asm.push(OP_CAT.to_string());
         }
         // Conversion & Arithmetic
         Expression::Neg64 { value } => {
             generate_expression_asm(value, asm);
-            asm.push(OP_NEG64.to_string());
+            asm.push(OP_NEGATE.to_string());
         }
         Expression::Le64ToScriptNum { value } => {
             generate_expression_asm(value, asm);
-            asm.push(OP_LE64TOSCRIPTNUM.to_string());
+            asm.push(OP_BIN2NUM.to_string());
         }
         Expression::Le32ToLe64 { value } => {
             generate_expression_asm(value, asm);
-            asm.push(OP_LE32TOLE64.to_string());
+            asm.push(OP_BIN2NUM.to_string());
         }
         // Crypto Opcodes
         Expression::EcMulScalarVerify {
@@ -534,7 +506,8 @@ fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
+            asm.push(OP_CHECKSIGFROMSTACK.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         Expression::AssetLookup {
             source,
@@ -769,7 +742,10 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
             // generate_expression_asm); otherwise keep the placeholder.
             let emit_left = |asm: &mut Vec<String>| match prop.as_str() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
-                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                "this.activeBytecode" => {
+                    asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+                    asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+                }
                 _ => asm.push(format!("<{}>", prop)),
             };
             if value == "true" {
@@ -800,17 +776,7 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
         }
         (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
             if value == "true" {
-                if let Some(prop) = property {
-                    match prop.as_str() {
-                        "scriptPubKey" => asm.push(OP_INPUTBYTECODE.to_string()),
-                        "value" => asm.push(OP_INPUTVALUE.to_string()),
-                        "sequence" => asm.push(OP_INPUTSEQUENCE.to_string()),
-                        "outpoint" => asm.push(OP_INPUTOUTPOINT.to_string()),
-                        _ => asm.push(OP_INPUTBYTECODE.to_string()),
-                    }
-                } else {
-                    asm.push(OP_INPUTBYTECODE.to_string());
-                }
+                emit_current_input_asm(property.as_deref(), asm);
             }
         }
         _ => {
@@ -901,7 +867,10 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // keeps the placeholder pipeline untouched for everything else).
             match prop.as_str() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
-                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                "this.activeBytecode" => {
+                    asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+                    asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+                }
                 _ => asm.push(format!("<{}>", prop)),
             }
         }
@@ -1067,26 +1036,28 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_expression_asm(left, asm);
             if *coerce_left {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+                asm.push(OP_8.to_string());
+                asm.push(OP_NUM2BIN.to_string());
             }
             emit_expression_asm(right, asm);
             if *coerce_right {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+                asm.push(OP_8.to_string());
+                asm.push(OP_NUM2BIN.to_string());
             }
             asm.push(OP_CAT.to_string());
         }
         // Conversion & Arithmetic
         Expression::Neg64 { value } => {
             emit_expression_asm(value, asm);
-            asm.push(OP_NEG64.to_string());
+            asm.push(OP_NEGATE.to_string());
         }
         Expression::Le64ToScriptNum { value } => {
             emit_expression_asm(value, asm);
-            asm.push(OP_LE64TOSCRIPTNUM.to_string());
+            asm.push(OP_BIN2NUM.to_string());
         }
         Expression::Le32ToLe64 { value } => {
             emit_expression_asm(value, asm);
-            asm.push(OP_LE32TOLE64.to_string());
+            asm.push(OP_BIN2NUM.to_string());
         }
         // Crypto Opcodes
         Expression::EcMulScalarVerify {
@@ -1117,7 +1088,8 @@ fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
+            asm.push(OP_CHECKSIGFROMSTACK.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         // Byte-string manipulation (introspector extensions)
         Expression::Substr { data, offset, size } => {
@@ -1407,7 +1379,6 @@ fn emit_input_introspection_asm(index: &Expression, property: &str, asm: &mut Ve
         "scriptPubKey" => asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string()),
         "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
         "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
-        "issuance" => asm.push(OP_INSPECTINPUTISSUANCE.to_string()),
         "arkadeScriptHash" => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
         "arkadeWitnessHash" => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
         _ => {
@@ -1426,7 +1397,6 @@ fn emit_output_introspection_asm(index: &Expression, property: &str, asm: &mut V
     match property {
         "value" => asm.push(OP_INSPECTOUTPUTVALUE.to_string()),
         "scriptPubKey" => asm.push(OP_INSPECTOUTPUTSCRIPTPUBKEY.to_string()),
-        "nonce" => asm.push(OP_INSPECTOUTPUTNONCE.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.outputs[?].{}>", property));
@@ -1434,68 +1404,24 @@ fn emit_output_introspection_asm(index: &Expression, property: &str, asm: &mut V
     }
 }
 
-/// Emit assembly for a binary arithmetic operation (64-bit)
+/// Emit assembly for a binary arithmetic operation (BigNum)
 fn emit_binary_op_asm(left: &Expression, op: &str, right: &Expression, asm: &mut Vec<String>) {
     // Emit left operand
     emit_expression_asm(left, asm);
 
-    // Convert to u64le if needed (witness inputs arrive as csn)
-    if needs_u64_conversion(left) {
-        asm.push(OP_SCRIPTNUMTOLE64.to_string());
-    }
-
     // Emit right operand
     emit_expression_asm(right, asm);
 
-    // Convert to u64le if needed
-    if needs_u64_conversion(right) {
-        asm.push(OP_SCRIPTNUMTOLE64.to_string());
-    }
-
-    // Emit 64-bit arithmetic opcode + overflow verify
+    // All numeric values (witness inputs, introspected amounts, sums) are
+    // minimally encoded BigNums, so no conversion opcodes are needed.
     match op {
-        "+" => {
-            asm.push(OP_ADD64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
-        "-" => {
-            asm.push(OP_SUB64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
-        "*" => {
-            asm.push(OP_MUL64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
-        "/" => {
-            asm.push(OP_DIV64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
+        "+" => asm.push(OP_ADD.to_string()),
+        "-" => asm.push(OP_SUB.to_string()),
+        "*" => asm.push(OP_MUL.to_string()),
+        "/" => asm.push(OP_DIV.to_string()),
         _ => {
             asm.push(format!("OP_{}", op.to_uppercase()));
         }
-    }
-}
-
-/// Check if an expression needs csn→u64le conversion for 64-bit arithmetic
-fn needs_u64_conversion(expr: &Expression) -> bool {
-    match expr {
-        // Variables (witness inputs) arrive as CScriptNum
-        Expression::Variable(_) => true,
-        // Literals are emitted as-is (caller should provide 8-byte LE)
-        Expression::Literal(_) => false,
-        // Asset lookups already produce u64le
-        Expression::AssetLookup { .. } => false,
-        // Asset count produces CScriptNum
-        Expression::AssetCount { .. } => false,
-        // AssetAt "amount" produces u64le, "assetId" produces (txid32, gidx_u16)
-        Expression::AssetAt { property, .. } => property != "amount",
-        // Group sums already produce u64le
-        Expression::GroupSum { .. } => false,
-        // Binary ops produce u64le
-        Expression::BinaryOp { .. } => false,
-        // Properties depend on context
-        Expression::Property(_) => false,
-        _ => false,
     }
 }
 
@@ -1530,8 +1456,7 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", group));
             asm.push(OP_0.to_string());
             asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-            asm.push(OP_SUB64.to_string());
-            asm.push(OP_VERIFY.to_string());
+            asm.push(OP_SUB.to_string());
         }
         "hasControl" => {
             // group.hasControl: presence only.
@@ -1562,7 +1487,7 @@ fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
             // 2. Drop gidx_u16, keep txid32
             asm.push(OP_DROP.to_string());
             // 3. Get current transaction hash
-            asm.push(OP_TXHASH.to_string());
+            asm.push(OP_TXID.to_string());
             // 4. Compare txids - result is bool
             asm.push(OP_EQUAL.to_string());
         }
@@ -1589,7 +1514,7 @@ fn emit_comparison_op(op: &str, asm: &mut Vec<String>) {
     }
 }
 
-/// Emit 64-bit comparison operator (u64le operands)
+/// Emit comparison operator with inline OP_VERIFY (BigNum amount operands)
 fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
     match op {
         "==" => {
@@ -1602,19 +1527,19 @@ fn emit_comparison_op_64(op: &str, asm: &mut Vec<String>) {
             asm.push(OP_VERIFY.to_string());
         }
         ">=" => {
-            asm.push(OP_GREATERTHANOREQUAL64.to_string());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(OP_VERIFY.to_string());
         }
         ">" => {
-            asm.push(OP_GREATERTHAN64.to_string());
+            asm.push(OP_GREATERTHAN.to_string());
             asm.push(OP_VERIFY.to_string());
         }
         "<=" => {
-            asm.push(OP_LESSTHANOREQUAL64.to_string());
+            asm.push(OP_LESSTHANOREQUAL.to_string());
             asm.push(OP_VERIFY.to_string());
         }
         "<" => {
-            asm.push(OP_LESSTHAN64.to_string());
+            asm.push(OP_LESSTHAN.to_string());
             asm.push(OP_VERIFY.to_string());
         }
         _ => {
@@ -1990,7 +1915,7 @@ fn substitute_expression(
 // Walk every function's AST and convert `BinaryOp { op: "+" }` into
 // `Concat { ... }` when at least one operand resolves to a bytes-like type
 // (Bytes, Bytes20, Bytes32). Pure int+int additions stay as `BinaryOp` and
-// continue to emit OP_ADD64.
+// continue to emit OP_ADD.
 //
 // We need types to make the decision, so the walk threads a `Scope` and
 // uses `typechecker::infer_type` on rewritten subtrees. The rewrite is
@@ -1998,7 +1923,7 @@ fn substitute_expression(
 // rewrite type (e.g. `bytes32 + int` rewrites to `Concat` of type Bytes,
 // which then makes the outer `+ int` also a Concat).
 
-use crate::typechecker::{is_bytes_like, needs_scriptnum_to_le64, Scope};
+use crate::typechecker::{is_bytes_like, needs_num2bin_coercion, Scope};
 
 fn rewrite_concat_ops(contract: &mut crate::models::Contract) {
     let constructor_scope = crate::typechecker::build_scope(&contract.parameters);
@@ -2091,8 +2016,8 @@ fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Expression, Ar
             let (new_l, lt) = rewrite_expression_concat(*left, scope);
             let (new_r, rt) = rewrite_expression_concat(*right, scope);
             if op == "+" && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
-                let coerce_left = needs_scriptnum_to_le64(&lt);
-                let coerce_right = needs_scriptnum_to_le64(&rt);
+                let coerce_left = needs_num2bin_coercion(&lt);
+                let coerce_right = needs_num2bin_coercion(&rt);
                 (
                     Expression::Concat {
                         left: Box::new(new_l),

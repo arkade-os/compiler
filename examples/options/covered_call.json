@@ -61,7 +61,7 @@
           "OP_INSPECTOUTASSETLOOKUP",
           "OP_VERIFY",
           "<strikeAmount>",
-          "OP_GREATERTHANOREQUAL64",
+          "OP_GREATERTHANOREQUAL",
           "OP_VERIFY",
           "0",
           "OP_INSPECTOUTPUTSCRIPTPUBKEY",
@@ -70,7 +70,7 @@
           "1",
           "OP_INSPECTOUTPUTVALUE",
           "<btcSats>",
-          "OP_GREATERTHANOREQUAL64",
+          "OP_GREATERTHANOREQUAL",
           "OP_VERIFY",
           "1",
           "OP_INSPECTOUTPUTSCRIPTPUBKEY",
@@ -115,11 +115,8 @@
         ],
         "asm": [
           "<expiryHeight>",
-          "OP_SCRIPTNUMTOLE64",
           "<graceBlocks>",
-          "OP_SCRIPTNUMTOLE64",
-          "OP_ADD64",
-          "OP_VERIFY",
+          "OP_ADD",
           "<reclaimHeight>",
           "OP_CHECKLOCKTIMEVERIFY",
           "OP_DROP",
@@ -181,7 +178,7 @@
           "0",
           "OP_INSPECTOUTPUTVALUE",
           "<btcSats>",
-          "OP_GREATERTHANOREQUAL64",
+          "OP_GREATERTHANOREQUAL",
           "OP_VERIFY"
         ]
       },
@@ -238,7 +235,7 @@
           "0",
           "OP_INSPECTOUTPUTVALUE",
           "<btcSats>",
-          "OP_GREATERTHANOREQUAL64",
+          "OP_GREATERTHANOREQUAL",
           "OP_VERIFY"
         ]
       },
@@ -296,11 +293,11 @@
     "name": "arkade-compiler",
     "version": "0.1.0"
   },
-  "updatedAt": "2026-07-01T06:37:14.355857+00:00",
+  "updatedAt": "2026-07-08T14:53:39.639642943+00:00",
   "warnings": [
-    "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn transferSeller: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
-    "warning[type]: fn transferBuyer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+    "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — both are BigNums on-stack; the comparison works as-is",
+    "warning[type]: fn exercise: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — both are BigNums on-stack; the comparison works as-is",
+    "warning[type]: fn transferSeller: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — both are BigNums on-stack; the comparison works as-is",
+    "warning[type]: fn transferBuyer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — both are BigNums on-stack; the comparison works as-is"
   ]
 }

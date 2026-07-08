@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB64, OP_TXHASH,
+    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB, OP_TXID,
 };
 
 mod common;
@@ -48,15 +48,15 @@ fn test_breed_function_has_is_fresh() {
 
     let asm_str = common::arkade_asm(&output, "breed");
 
-    // isFresh emits: <group> OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXHASH OP_EQUAL
+    // isFresh emits: <group> OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPASSETID),
         "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check in breed: {}",
         asm_str
     );
     assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH} for isFresh check in breed: {}",
+        asm_str.contains(OP_TXID),
+        "Expected {OP_TXID} for isFresh check in breed: {}",
         asm_str
     );
 }
@@ -93,15 +93,15 @@ fn test_breed_function_has_delta_checks() {
 
     let asm_str = common::arkade_asm(&output, "breed");
 
-    // delta uses OP_INSPECTASSETGROUPSUM twice (outputs - inputs) and OP_SUB64
+    // delta uses OP_INSPECTASSETGROUPSUM twice (outputs - inputs) and OP_SUB
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPSUM),
         "Expected {OP_INSPECTASSETGROUPSUM} for delta in breed: {}",
         asm_str
     );
     assert!(
-        asm_str.contains(OP_SUB64),
-        "Expected {OP_SUB64} for delta calculation in breed: {}",
+        asm_str.contains(OP_SUB),
+        "Expected {OP_SUB} for delta calculation in breed: {}",
         asm_str
     );
 }
@@ -119,8 +119,8 @@ fn test_transfer_verifies_not_fresh() {
         asm_str
     );
     assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH} for isFresh check in transfer: {}",
+        asm_str.contains(OP_TXID),
+        "Expected {OP_TXID} for isFresh check in transfer: {}",
         asm_str
     );
 }

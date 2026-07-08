@@ -1,9 +1,9 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV64, OP_FINDASSETGROUPBYASSETID,
+    OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV, OP_FINDASSETGROUPBYASSETID,
     OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY,
     OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
-    OP_LESSTHANOREQUAL, OP_MUL64, OP_SHA256,
+    OP_LESSTHANOREQUAL, OP_MUL, OP_SHA256,
 };
 
 mod common;
@@ -214,7 +214,7 @@ fn test_issue_is_oracle_priced_and_dual_mints() {
         "issue rebuilds oracle msg"
     );
     assert!(
-        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        asm.contains(OP_MUL) && asm.contains(OP_DIV),
         "issue computes collateral value"
     );
     assert!(
@@ -270,7 +270,7 @@ fn test_issue_enforces_deployment_invariants() {
     // Targeted check for `auctionDiscountBps >= 0` — must anchor to the
     // specific guard's tokens, not just count any `>=` opcode. arkanaai O1
     // and CodeRabbit's review both flagged that a bare `gte >= 1` floor on
-    // OP_GREATERTHANOREQUAL64 would still pass if the discount guard were
+    // OP_GREATERTHANOREQUAL would still pass if the discount guard were
     // deleted, because issue() emits many asset-amount `>=` checks
     // (`output.assets.lookup(...) >= N`) that satisfy that floor.
     //
@@ -338,7 +338,7 @@ fn test_issue_uses_ceiling_division_on_required_collateral() {
     // auctioneers to settle.
     //
     // The signature of the ceiling form in the emitted ASM is the literal
-    // 9999 pushed before the OP_ADD64 that precedes the OP_DIV64. Asserting
+    // 9999 pushed before the OP_ADD that precedes the OP_DIV. Asserting
     // on the presence of `9999` as a token in both issue + rollIn locks in
     // the fix at the ASM level — a regression to floor division (or to
     // a different bias like + 5000) trips this test.
@@ -403,7 +403,7 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
         "acceptAuction burns the debit"
     );
     assert!(
-        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        asm.contains(OP_MUL) && asm.contains(OP_DIV),
         "acceptAuction computes collateralValue + discount math"
     );
     assert!(
@@ -461,7 +461,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
         "liquidate burns the debit"
     );
     assert!(
-        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        asm.contains(OP_MUL) && asm.contains(OP_DIV),
         "liquidate computes collateralValue + health-threshold + payout"
     );
     assert!(
@@ -528,7 +528,7 @@ fn test_redeem_is_pro_rata_post_window() {
     let output = compile(CODE).expect("compilation failed");
     let asm = arkade_asm(&output, "redeem");
     assert!(
-        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        asm.contains(OP_MUL) && asm.contains(OP_DIV),
         "redeem computes pro-rata payout"
     );
     assert!(
@@ -678,7 +678,7 @@ fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
         "rollIn rebuilds oracle msg"
     );
     assert!(
-        asm.contains(OP_MUL64) && asm.contains(OP_DIV64),
+        asm.contains(OP_MUL) && asm.contains(OP_DIV),
         "rollIn computes collateralValue + origination ratio"
     );
     assert!(

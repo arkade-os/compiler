@@ -41,7 +41,8 @@ pub enum ArkType {
     // ── Internal / introspection types ─────────────────────────────────────
     /// 8-byte little-endian unsigned 64-bit integer.
     /// Produced by: asset amounts, UTXO values, group sums.
-    /// Requires OP_ADD64/OP_SUB64/etc. for arithmetic; cannot mix with Int.
+    /// Minimally encoded BigNum on-stack, same as Int; kept as a distinct
+    /// type to flag amount/scriptnum mixing to contract authors.
     Uint64Le,
     /// 4-byte little-endian unsigned 32-bit integer.
     /// Produced by: tx.version, tx.locktime.
@@ -346,17 +347,17 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
         Requirement::Comparison { left, op, right } => {
             let lt = infer_type(left, scope);
             let rt = infer_type(right, scope);
-            // Warn when one side is Uint64Le and the other is a plain Int —
-            // these require explicit conversion opcodes (OP_SCRIPTNUMTOLE64 /
-            // OP_LE64TOSCRIPTNUM) and the compiler inserts them automatically,
-            // but it's good to flag the mismatch for contract authors.
+            // Warn when one side is Uint64Le and the other is a plain Int.
+            // Both sides are minimally encoded BigNums on-stack, so the
+            // comparison works, but it's good to flag the mismatch for
+            // contract authors.
             if lt != ArkType::Unknown && rt != ArkType::Unknown {
                 let left_64 = lt == ArkType::Uint64Le;
                 let right_64 = rt == ArkType::Uint64Le;
                 if left_64 != right_64 {
                     errors.push(TypeError::new(format!(
                         "fn {}: comparison '{}' mixes uint64le ('{}') with scriptnum ('{}') — \
-                         implicit conversion applied; use le64ToScriptNum() for explicit control",
+                         both are BigNums on-stack; the comparison works as-is",
                         fn_name,
                         op,
                         lt.as_str(),
@@ -550,8 +551,9 @@ pub fn is_bytes_like(t: &ArkType) -> bool {
     matches!(t, ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32)
 }
 
-/// Returns true when the type is an integer/scriptnum that needs
-/// `OP_SCRIPTNUMTOLE64` before being concatenated with a bytes value.
-pub fn needs_scriptnum_to_le64(t: &ArkType) -> bool {
+/// Returns true when the type is an integer/scriptnum that needs padding to
+/// a fixed 8-byte string (`OP_8 OP_NUM2BIN`) before being concatenated with
+/// a bytes value.
+pub fn needs_num2bin_coercion(t: &ArkType) -> bool {
     matches!(t, ArkType::Int | ArkType::Bool | ArkType::Uint32Le)
 }

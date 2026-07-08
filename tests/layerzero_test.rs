@@ -101,7 +101,7 @@ fn test_endpoint_receive_verifies_both_dvn_signatures() {
     let receive = covenant(&output, "receive");
 
     // Both DVNs are verified via require(checkSigFromStack(...)) — the
-    // introspector has no OP_CHECKSIGFROMSTACKVERIFY variant, so the contract
+    // engine has no VERIFY variant of OP_CHECKSIGFROMSTACK, so the contract
     // uses the plain opcode wrapped in require(). The signed message is the
     // prover-supplied attestedHash, pinned on chain to both the LzReceive
     // header hash and the DvnAttestation packet field.

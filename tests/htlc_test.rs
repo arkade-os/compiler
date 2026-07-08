@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY,
-    OP_GREATERTHANOREQUAL64, OP_HASH160,
+    OP_GREATERTHANOREQUAL, OP_HASH160,
 };
 use serde_json::Value;
 use std::fs;
@@ -48,7 +48,7 @@ fn test_htlc_contract() {
     // Covenant: checks output value >= input value
     let claim_cov = common::arkade_asm(&output, "claim");
     assert!(
-        claim_cov.contains(OP_GREATERTHANOREQUAL64),
+        claim_cov.contains(OP_GREATERTHANOREQUAL),
         "claim covenant should enforce output >= input value: {}",
         claim_cov
     );
@@ -98,7 +98,7 @@ fn test_htlc_contract() {
     // Covenant: checks output value >= input value
     let refund_cov = common::arkade_asm(&output, "refund");
     assert!(
-        refund_cov.contains(OP_GREATERTHANOREQUAL64),
+        refund_cov.contains(OP_GREATERTHANOREQUAL),
         "refund covenant should enforce output >= input value: {}",
         refund_cov
     );
