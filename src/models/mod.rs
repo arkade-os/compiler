@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// The number of elements that array-typed parameters (e.g. `pubkey[]`) are
 /// flattened into throughout the pipeline.
 ///
@@ -14,11 +18,8 @@ use serde::{Deserialize, Serialize};
 /// only need fewer elements.
 pub const DEFAULT_ARRAY_LENGTH: usize = 3;
 
-/// JSON output structures
-///
-/// These structures are used to represent the compiled contract in a format
-/// that can be serialized to JSON.
-
+// JSON output structures.
+// These represent the compiled contract in a serializable format.
 /// Parameter in a contract or function
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Parameter {
@@ -39,22 +40,11 @@ pub struct FunctionInput {
     pub param_type: String,
 }
 
-/// Requirement for a function
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RequireStatement {
-    /// Requirement type
-    #[serde(rename = "type")]
-    pub req_type: String,
-    /// Custom message
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-/// A single element in the tapscript witness stack.
+/// A single element in a tapleaf's `witness` array.
 ///
-/// `witnessSchema` lists every value the caller must supply at spend time,
-/// in the order they appear as `<name>` placeholders in the `asm` array
-/// (constructor parameters, which are baked into the script, are excluded).
+/// Each leaf's `witness` lists every value the caller must supply at spend time,
+/// in source-declared order (constructor parameters, which are baked into the
+/// script, are excluded).
 ///
 /// The `encoding` field is a stable identifier that code generators
 /// (TypeScript, Go, …) can switch on to pick the correct serializer:
@@ -78,30 +68,41 @@ pub struct WitnessElement {
     pub elem_type: String,
     /// Wire-encoding descriptor for client stub generators
     pub encoding: String,
+    /// True when Arkade infrastructure supplies this witness field.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub injected: bool,
 }
 
-/// Function definition in the ABI
+/// The emulator-run covenant for a function-backed spend group.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AbiFunction {
-    /// Function name
-    pub name: String,
-    /// Function inputs (parameter names + declared types)
-    #[serde(rename = "functionInputs")]
-    pub function_inputs: Vec<FunctionInput>,
-    /// Ordered witness stack elements the caller must supply at spend time.
-    ///
-    /// Includes all function inputs plus any server/exit-path signatures.
-    /// Constructor parameters are **not** listed here — they are baked into
-    /// the tapscript leaf and not part of the witness.
-    #[serde(rename = "witnessSchema")]
-    pub witness_schema: Vec<WitnessElement>,
-    /// Whether this is a server variant
-    #[serde(rename = "serverVariant")]
-    pub server_variant: bool,
-    /// Requirements
-    pub require: Vec<RequireStatement>,
-    /// Assembly instructions
+pub struct ArkadeCovenant {
+    /// Covenant inputs (function parameters, array-expanded). No server/emulator sigs.
+    pub inputs: Vec<FunctionInput>,
+    /// Covenant assembly.
     pub asm: Vec<String>,
+}
+
+/// One L1 tapleaf within a spend group.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AbiLeaf {
+    /// Leaf name (source tapscript name, or covenant name for a synthesized default).
+    pub name: String,
+    /// Ordered witness stack the caller supplies at spend time.
+    pub witness: Vec<WitnessElement>,
+    /// Tapleaf assembly (pubkeys + ops; signatures live in `witness`).
+    pub asm: Vec<String>,
+}
+
+/// A spend group: an optional covenant plus its L1 leaves.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AbiFunctionGroup {
+    /// Group name (covenant function name, or a standalone leaf's own name).
+    pub name: String,
+    /// Emulator covenant; absent for groups containing only standalone leaves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arkade: Option<ArkadeCovenant>,
+    /// L1 tapleaves grouped under this entry.
+    pub leaves: Vec<AbiLeaf>,
 }
 
 /// JSON output for a contract
@@ -111,7 +112,7 @@ pub struct ContractJson {
     pub name: String,
     #[serde(rename = "constructorInputs")]
     pub parameters: Vec<Parameter>,
-    pub functions: Vec<AbiFunction>,
+    pub functions: Vec<AbiFunctionGroup>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -129,10 +130,8 @@ pub struct CompilerInfo {
     pub version: String,
 }
 
-/// AST structures
-///
-/// These structures represent the parsed abstract syntax tree (AST)
-/// of an Arkade Script contract.
+// AST structures.
+// These represent the parsed abstract syntax tree of an Arkade Script contract.
 
 /// Contract AST
 #[derive(Debug, Clone)]
@@ -141,15 +140,10 @@ pub struct Contract {
     pub name: String,
     /// Contract parameters
     pub parameters: Vec<Parameter>,
-    /// Arkade renewal timelock — integer literal (e.g. "1008") or constructor param name (e.g. "renew")
-    pub renewal_timelock: Option<String>,
-    /// Arkade exit timelock — integer literal (e.g. "144") or constructor param name (e.g. "exit")
-    pub exit_timelock: Option<String>,
-    /// Whether this contract uses the Arkade operator key for the cooperative path.
-    /// The operator key is always injected externally — it is never a constructor parameter.
-    pub has_server_key: bool,
     /// Contract functions
     pub functions: Vec<Function>,
+    /// Tapscript (L1 leaf) declarations, parsed from `function … tapscript { }`.
+    pub tapscripts: Vec<NamedTapscript>,
     /// Imported contract file paths (declared via `import "path.ark";`)
     pub imports: Vec<String>,
 }
@@ -161,7 +155,7 @@ pub struct Function {
     pub name: String,
     /// Function arguments
     pub parameters: Vec<Parameter>,
-    /// Function body statements (replaces requirements for Commits 4-6)
+    /// Function body statements.
     pub statements: Vec<Statement>,
     /// Whether this is an internal function
     pub is_internal: bool,
@@ -213,13 +207,111 @@ pub enum Requirement {
         timelock_var: Option<String>,
     },
     /// Hash equal requirement
-    HashEqual { preimage: String, hash: String },
+    HashEqual {
+        hash_fn: HashFn,
+        preimage: String,
+        hash: String,
+    },
     /// Comparison requirement
     Comparison {
         left: Expression,
         op: String,
         right: Expression,
     },
+}
+
+/// Hash function used in a tapscript condition prefix (`hashFn(x) == h`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum HashFn {
+    Sha256,
+    Hash160,
+    Hash256,
+    Ripemd160,
+}
+
+impl HashFn {
+    /// The Bitcoin opcode string this hash function emits.
+    pub fn opcode(&self) -> &'static str {
+        use crate::opcodes::{OP_HASH160, OP_HASH256, OP_RIPEMD160, OP_SHA256};
+        match self {
+            HashFn::Sha256 => OP_SHA256,
+            HashFn::Hash160 => OP_HASH160,
+            HashFn::Hash256 => OP_HASH256,
+            HashFn::Ripemd160 => OP_RIPEMD160,
+        }
+    }
+
+    /// Parse a hash function name; returns None for unknown names.
+    pub fn parse(name: &str) -> Option<HashFn> {
+        match name {
+            "sha256" => Some(HashFn::Sha256),
+            "hash160" => Some(HashFn::Hash160),
+            "hash256" => Some(HashFn::Hash256),
+            "ripemd160" => Some(HashFn::Ripemd160),
+            _ => None,
+        }
+    }
+}
+
+/// A key operand in a tapscript `checkSig`/`checkMultisig`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeyExpr {
+    /// A bare pubkey identifier: a reserved role (`server`, `emulator`) or any
+    /// pubkey in scope (constructor pubkey, etc.).
+    Ident(String),
+    /// `tweak(emulator, func)`: the emulator key tweaked by `func`'s covenant hash.
+    Tweak { func: String },
+}
+
+impl KeyExpr {
+    /// The reserved arkd-operator role.
+    pub fn is_server(&self) -> bool {
+        matches!(self, KeyExpr::Ident(id) if id == "server")
+    }
+
+    /// A bare (implicitly-tweaked) emulator role.
+    pub fn is_emulator(&self) -> bool {
+        matches!(self, KeyExpr::Ident(id) if id == "emulator")
+    }
+
+    /// An infra-injected co-signer whose signature is generated, not user pubkey:
+    /// `server`, bare `emulator`, or an explicit `tweak(emulator, …)`.
+    pub fn is_cosigner(&self) -> bool {
+        self.is_server() || self.is_emulator() || matches!(self, KeyExpr::Tweak { .. })
+    }
+}
+
+/// One ordered component of a tapscript leaf body. Source order must follow the
+/// closure template: condition? · timelock? · multisig (validated in Context::Tapscript).
+#[derive(Debug, Clone)]
+pub enum TapItem {
+    /// `hashFn(preimage) == hash` → condition prefix.
+    Hash {
+        hash_fn: HashFn,
+        preimage: String,
+        hash: String,
+    },
+    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal or param name.
+    Older { value: String },
+    /// `after(n)` or `tx.time >= n` → CLTV (absolute timelock, forfeit class).
+    After { value: String },
+    /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
+    Sig {
+        keys: Vec<KeyExpr>,
+        sigs: Vec<String>,
+        threshold: Option<u16>,
+    },
+}
+
+/// A `tapscript`-modified function declaration: an L1 tapleaf source member.
+#[derive(Debug, Clone)]
+pub struct NamedTapscript {
+    /// Declared name (decides function-binding by exact match).
+    pub name: String,
+    /// Declared witness inputs (signatures, preimages, …), in source order.
+    pub inputs: Vec<Parameter>,
+    /// Ordered closure components.
+    pub items: Vec<TapItem>,
 }
 
 /// Source of an asset lookup (input or output)
@@ -260,11 +352,23 @@ pub enum Expression {
     Property(String),
     /// Current input access (tx.input.current)
     CurrentInput(Option<String>),
-    /// Asset lookup: tx.inputs[i].assets.lookup(assetId) or tx.outputs[o].assets.lookup(assetId)
+    /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
+    /// tx.outputs[o].assets.lookup(txid, gidx). Asserts the asset is present
+    /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
     AssetLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_id: String,
+        asset_txid: Box<Expression>, // bytes32 reference
+        asset_gidx: Box<Expression>, // int reference or literal (0..65535)
+    },
+    /// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) or
+    /// tx.outputs[o].assets.has(txid, gidx). Boolean — true when the asset is
+    /// present, false when absent (keeps the opcode success flag, drops amount).
+    AssetHas {
+        source: AssetLookupSource,
+        index: Box<Expression>,
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
     },
     /// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
     AssetCount {
@@ -296,10 +400,29 @@ pub enum Expression {
         op: String,
         right: Box<Expression>,
     },
-    /// Asset group find: tx.assetGroups.find(assetId) → csn index
-    GroupFind { asset_id: String },
+    /// Asset group find: tx.assetGroups.find(txid, gidx) → resolved packet
+    /// position k. Asserts existence (consumes the success flag with OP_VERIFY).
+    GroupFind {
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
+    /// Asset group presence predicate: tx.assetGroups.has(txid, gidx). Boolean —
+    /// true when a group with that Asset ID exists, false otherwise.
+    GroupHas {
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
     /// Asset group property: group.sumInputs, group.delta, etc.
     GroupProperty { group: String, property: String },
+    /// Boolean equality over the complete canonical control Asset ID:
+    /// group.controlIs(txid, gidx). False when control is absent or either
+    /// component differs. `group.hasControl` (presence only) is modeled as a
+    /// plain `GroupProperty { property: "hasControl" }`.
+    GroupControlIs {
+        group: String,
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
     /// Asset group sum with explicit index: tx.assetGroups[k].sumInputs/sumOutputs
@@ -320,13 +443,6 @@ pub enum Expression {
         source: GroupIOSource,
         property: Option<String>, // Optional property like "amount", "type", "inputIndex", "outputIndex"
     },
-    /// Array indexing (e.g., arr[i])
-    ArrayIndex {
-        array: Box<Expression>,
-        index: Box<Expression>,
-    },
-    /// Array/collection length (e.g., arr.length)
-    ArrayLength(String),
     /// CheckSig expression result (for use in if conditions)
     CheckSigExpr { signature: String, pubkey: String },
     /// CheckSigFromStack expression result
@@ -347,10 +463,11 @@ pub enum Expression {
         coerce_left: bool,
         coerce_right: bool,
     },
-    /// One-shot SHA256: sha256(data) → 32-byte digest. Used for small
-    /// fixed messages where streaming would be overkill.
-    Sha256 { data: Box<Expression> },
     // ─── Streaming SHA256 ──────────────────────────────────────────────
+    /// Plain SHA256: sha256(data) → emits `<data> OP_SHA256`.
+    /// One-shot hashing of byte-string expressions like substr; used for
+    /// small fixed messages where streaming would be overkill.
+    Sha256 { data: Box<Expression> },
     /// Streaming SHA256 initialize: sha256Initialize(data)
     Sha256Initialize { data: Box<Expression> },
     /// Streaming SHA256 update: sha256Update(ctx, chunk)
@@ -400,5 +517,37 @@ pub enum Expression {
         contract_name: String,
         /// Constructor arguments (typically Variable or Literal)
         args: Vec<Expression>,
+    },
+    // ─── Byte-string Manipulation (introspector extensions) ────────────
+    /// Substring extraction: substr(data, offset, size) → OP_SUBSTR
+    Substr {
+        data: Box<Expression>,
+        offset: Box<Expression>,
+        size: Box<Expression>,
+    },
+    /// Byte concatenation: cat(a, b) → OP_CAT
+    Cat {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    /// Bytes-to-number (little-endian, leading-zero-stripped BigNum): bin2num(bytes) → OP_BIN2NUM
+    Bin2Num { data: Box<Expression> },
+    /// Number-to-bytes (little-endian, zero-padded): num2bin(num, size) → OP_NUM2BIN
+    Num2Bin {
+        value: Box<Expression>,
+        size: Box<Expression>,
+    },
+    /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
+    SizeOf { data: Box<Expression> },
+    // ─── Packet Introspection ──────────────────────────────────────────
+    /// Current-tx packet content: tx.packet(packetType)
+    /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
+    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`.
+    PacketInspect { packet_type: Box<Expression> },
+    /// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
+    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`.
+    InputPacketInspect {
+        index: Box<Expression>,
+        packet_type: Box<Expression>,
     },
 }

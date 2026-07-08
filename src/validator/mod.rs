@@ -4,23 +4,23 @@
 //!
 //! 1. **AST validation** (`validate_ast`) — runs after parsing, before compilation.
 //!    Catches semantic errors that the PEG grammar cannot express, such as duplicate
-//!    function names, missing required options, and invalid timelock values.
+//!    names, reserved tapscript roles, and invalid Asset ID operands.
 //!    Also performs CashScript-style require-guard checks (warn when a function has
 //!    no `require()` statements — it would trivially pass all spends).
 //!
 //! 2. **Output validation** (`validate_output`) — runs after compilation.
 //!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
-//!    bugs before the output reaches callers.  Includes:
-//!    - BSST-style ASM structure analysis (OP_IF/OP_ELSE/OP_ENDIF balance,
-//!      placeholder syntax, no empty instructions).
-//!    - CashScript-style placeholder consistency check (every `<name>` in ASM must
-//!      resolve against the witnessSchema or constructorInputs).
+//!    bugs before the output reaches callers: every spend group has at least one
+//!    leaf, each leaf has non-empty `asm`, each present `arkade` covenant has
+//!    non-empty `asm`, and no leaf `asm` carries a signature placeholder
+//!    (signatures are witness-only). Tapscript-source-level operand scope checks
+//!    live in `compiler::tapscript::validate_arkd_rules`.
 //!
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
-use crate::models::{Contract, ContractJson, Parameter, Statement};
-use std::collections::HashMap;
+use crate::models::{Contract, ContractJson, Expression, Requirement, Statement};
+use crate::typechecker::{build_scope, infer_type, ArkType, Scope};
 use std::collections::HashSet;
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
@@ -70,10 +70,11 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Contract name is non-empty.
 /// - At least one non-internal function is declared.
 /// - Function names are unique within the contract.
+/// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
 /// - Each function's parameter names are unique within that function.
-/// - `options.exit` is required whenever `options.server` is set.
-/// - Timelock values must be positive (> 0).
+/// - Tapscript inputs do not collide with reserved key roles.
+/// - Asset ID operands have the expected txid/gidx types.
 pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
@@ -82,9 +83,9 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         issues.push(ValidationIssue::error("contract name must not be empty"));
     }
 
-    // ── At least one non-internal function ────────────────────────────────
+    // ── At least one non-internal function or tapscript ──────────────────
     let non_internal_count = contract.functions.iter().filter(|f| !f.is_internal).count();
-    if non_internal_count == 0 {
+    if non_internal_count == 0 && contract.tapscripts.is_empty() {
         issues.push(ValidationIssue::error(
             "contract must declare at least one non-internal function",
         ));
@@ -129,42 +130,6 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
-    // ── Timelock requirements ──────────────────────────────────────────────
-    if contract.has_server_key && contract.exit_timelock.is_none() {
-        issues.push(ValidationIssue::error(
-            "options.exit timelock is required when options.server is set; \
-             the exit path cannot be generated without a timelock",
-        ));
-    }
-
-    // Timelocks may be a literal integer ("144") or a constructor param name
-    // ("exit"). Param names are resolved at deploy time and cannot be checked
-    // here. For literal values, reject zero and negatives — the grammar
-    // (number_literal = ASCII_DIGIT+) already rejects negative literals at parse
-    // time, but the validator double-checks as defense-in-depth in case the
-    // grammar ever permits signed integers.
-    if let Some(ref exit) = contract.exit_timelock {
-        if let Ok(v) = exit.parse::<i64>() {
-            if v <= 0 {
-                issues.push(ValidationIssue::error(format!(
-                    "options.exit timelock must be a positive block count; got {}",
-                    v
-                )));
-            }
-        }
-    }
-
-    if let Some(ref renewal) = contract.renewal_timelock {
-        if let Ok(v) = renewal.parse::<i64>() {
-            if v <= 0 {
-                issues.push(ValidationIssue::warning(format!(
-                    "options.renew timelock should be a positive block count; got {}",
-                    v
-                )));
-            }
-        }
-    }
-
     // ── Require-guard check (CashScript-style) ────────────────────────────
     // A non-internal function with no require() statements (directly or inside
     // branches/loops) will always succeed — any spend attempt will pass.
@@ -179,10 +144,325 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
+    // ── Tapscript reserved-name + duplicate checks ────────────────────────
+    {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for ts in &contract.tapscripts {
+            if !seen.insert(ts.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "duplicate tapscript name '{}'; each tapscript must have a unique name",
+                    ts.name
+                )));
+            }
+        }
+    }
+
+    // Reserved key roles may only appear as key operands inside a tapscript's
+    // checkSig/checkMultisig — never as constructor parameters.
+    for p in &contract.parameters {
+        if p.name == "server" || p.name == "emulator" {
+            issues.push(ValidationIssue::error(format!(
+                "constructor parameter '{}' collides with a reserved key role",
+                p.name
+            )));
+        }
+    }
+
+    for ts in &contract.tapscripts {
+        for p in &ts.inputs {
+            if p.name == "server" || p.name == "emulator" {
+                issues.push(ValidationIssue::error(format!(
+                    "tapscript '{}' input '{}' collides with a reserved key role",
+                    ts.name, p.name
+                )));
+            }
+        }
+        // Duplicate input names within a tapscript.
+        let mut seen = std::collections::HashSet::new();
+        for p in &ts.inputs {
+            if !seen.insert(p.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "duplicate input '{}' in tapscript '{}'",
+                    p.name, ts.name
+                )));
+            }
+        }
+    }
+
     check_shadowing(contract, &mut issues);
     check_expanded_namespace(contract, &mut issues);
+    check_asset_id_operands(contract, &mut issues);
 
     issues
+}
+
+// ─── Asset ID operand validation (fatal) ───────────────────────────────────────
+
+/// Reject malformed canonical Asset ID operands at compile time instead of
+/// relying on the emulator's runtime `popAssetID` check. For every
+/// `lookup`/`find`/`has`/`controlIs` operand:
+/// - `asset_txid` must resolve to `Bytes32` (rejects `Unknown`/swapped types),
+/// - `asset_gidx` must resolve to `Int` (rejects `Unknown`); a numeric literal
+///   must additionally be in `0..=65535`.
+///
+/// Scope-aware: seeds constructor + function params, infers `let`/assignment
+/// values, binds a `for` loop's index variable as `Int`. The loop value
+/// variable stays `Unknown` (no iterable-element typing yet) and is therefore
+/// not accepted as an Asset ID component.
+fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let ctor_scope = build_scope(&contract.parameters);
+    for func in &contract.functions {
+        let mut scope = ctor_scope.clone();
+        scope.extend(build_scope(&func.parameters));
+        walk_asset_id_stmts(&func.statements, &mut scope, &func.name, issues);
+    }
+}
+
+fn walk_asset_id_stmts(
+    stmts: &[Statement],
+    scope: &mut Scope,
+    fname: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for stmt in stmts {
+        match stmt {
+            Statement::Require(req) => {
+                if let Requirement::Comparison { left, right, .. } = req {
+                    check_asset_id_expr(left, scope, fname, issues);
+                    check_asset_id_expr(right, scope, fname, issues);
+                }
+            }
+            Statement::LetBinding { name, value } => {
+                check_asset_id_expr(value, scope, fname, issues);
+                let t = infer_type(value, scope);
+                scope.insert(name.clone(), t);
+            }
+            Statement::VarAssign { name, value } => {
+                check_asset_id_expr(value, scope, fname, issues);
+                let t = infer_type(value, scope);
+                scope.insert(name.clone(), t);
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                check_asset_id_expr(condition, scope, fname, issues);
+                walk_asset_id_stmts(then_body, &mut scope.clone(), fname, issues);
+                if let Some(eb) = else_body {
+                    walk_asset_id_stmts(eb, &mut scope.clone(), fname, issues);
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                body,
+                ..
+            } => {
+                let mut loop_scope = scope.clone();
+                loop_scope.insert(index_var.clone(), ArkType::Int);
+                loop_scope.insert(value_var.clone(), ArkType::Unknown);
+                walk_asset_id_stmts(body, &mut loop_scope, fname, issues);
+            }
+        }
+    }
+}
+
+/// Walk an expression, validating the operands of every Asset ID construct and
+/// recursing through every sub-expression that can nest one.
+///
+/// Traversal and validation are deliberately split: this function validates the
+/// Asset ID operands of the constructs that carry them, then recurses into *all*
+/// direct sub-expressions via [`child_exprs`]. Because `child_exprs` is an
+/// exhaustive match with no wildcard, any future `Expression` variant forces a
+/// decision there and can never silently bypass this validation by falling
+/// through a catch-all.
+fn check_asset_id_expr(
+    expr: &Expression,
+    scope: &Scope,
+    fname: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    // Variant-specific Asset ID operand validation.
+    match expr {
+        Expression::AssetLookup {
+            asset_txid,
+            asset_gidx,
+            ..
+        }
+        | Expression::AssetHas {
+            asset_txid,
+            asset_gidx,
+            ..
+        }
+        | Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupControlIs {
+            asset_txid,
+            asset_gidx,
+            ..
+        } => {
+            validate_asset_id(asset_txid, asset_gidx, scope, fname, issues);
+        }
+        _ => {}
+    }
+
+    // Generic recursion through every sub-expression.
+    for child in child_exprs(expr) {
+        check_asset_id_expr(child, scope, fname, issues);
+    }
+}
+
+/// Return the direct sub-expressions of `expr`.
+///
+/// This is the single source of truth for expression-tree traversal in the
+/// validator. The match is intentionally exhaustive (no `_` arm): adding a new
+/// [`Expression`] variant will fail to compile here until its nested
+/// expressions — if any — are declared, guaranteeing that walkers built on top
+/// of this (e.g. [`check_asset_id_expr`]) cover every new construct.
+fn child_exprs(expr: &Expression) -> Vec<&Expression> {
+    match expr {
+        // Leaf nodes: no nested expressions.
+        Expression::Variable(_)
+        | Expression::Literal(_)
+        | Expression::Property(_)
+        | Expression::CurrentInput(_)
+        | Expression::TxIntrospection { .. }
+        | Expression::GroupProperty { .. }
+        | Expression::AssetGroupsLength
+        | Expression::CheckSigExpr { .. }
+        | Expression::CheckSigFromStackExpr { .. }
+        | Expression::CheckSigFromStackVerify { .. } => vec![],
+
+        Expression::AssetLookup {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        }
+        | Expression::AssetHas {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        } => vec![index, asset_txid, asset_gidx],
+        Expression::AssetCount { index, .. }
+        | Expression::InputIntrospection { index, .. }
+        | Expression::OutputIntrospection { index, .. }
+        | Expression::GroupSum { index, .. }
+        | Expression::GroupNumIO { index, .. } => vec![index],
+        Expression::AssetAt {
+            io_index,
+            asset_index,
+            ..
+        } => vec![io_index, asset_index],
+        Expression::BinaryOp { left, right, .. } | Expression::Concat { left, right, .. } => {
+            vec![left, right]
+        }
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => vec![asset_txid, asset_gidx],
+        Expression::GroupControlIs {
+            asset_txid,
+            asset_gidx,
+            ..
+        } => vec![asset_txid, asset_gidx],
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => vec![group_index, io_index],
+        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
+        Expression::Sha256Update { context, chunk } => vec![context, chunk],
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => vec![context, last_chunk],
+        Expression::Neg64 { value }
+        | Expression::Le64ToScriptNum { value }
+        | Expression::Le32ToLe64 { value } => vec![value],
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => vec![scalar, point_p, point_q],
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => vec![point_p, tweak, point_q],
+        Expression::ContractInstance { args, .. } => args.iter().collect(),
+        Expression::Substr { data, offset, size } => vec![data, offset, size],
+        Expression::Cat { left, right } => vec![left, right],
+        Expression::Bin2Num { data } | Expression::SizeOf { data } => vec![data],
+        Expression::Num2Bin { value, size } => vec![value, size],
+        Expression::PacketInspect { packet_type } => vec![packet_type],
+        Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+    }
+}
+
+/// Validate one `(asset_txid, asset_gidx)` pair.
+fn validate_asset_id(
+    asset_txid: &Expression,
+    asset_gidx: &Expression,
+    scope: &Scope,
+    fname: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let txid_type = infer_type(asset_txid, scope);
+    if txid_type != ArkType::Bytes32 {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': asset id txid operand {} must be bytes32, got {}",
+            fname,
+            describe_operand(asset_txid),
+            txid_type.as_str()
+        )));
+    }
+
+    // gidx: a numeric literal is range-checked directly; anything else must
+    // resolve to Int through the scope.
+    if let Expression::Literal(lit) = asset_gidx {
+        match lit.parse::<i64>() {
+            Ok(v) if (0..=65535).contains(&v) => {}
+            Ok(v) => issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx literal {} is out of range 0..65535",
+                fname, v
+            ))),
+            Err(_) => issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx literal '{}' is not a valid integer",
+                fname, lit
+            ))),
+        }
+    } else {
+        let gidx_type = infer_type(asset_gidx, scope);
+        if gidx_type != ArkType::Int {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx operand {} must be int (0..65535), got {}",
+                fname,
+                describe_operand(asset_gidx),
+                gidx_type.as_str()
+            )));
+        }
+    }
+}
+
+fn describe_operand(expr: &Expression) -> String {
+    match expr {
+        Expression::Variable(v) => format!("'{}'", v),
+        Expression::Literal(l) => format!("'{}'", l),
+        _ => "<expr>".to_string(),
+    }
 }
 
 // ─── AST helpers ─────────────────────────────────────────────────────────────
@@ -190,7 +470,7 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
 /// Returns `true` if any statement in the slice contains a `Require` (recursing
 /// into if/else branches and for-loop bodies).
 fn statements_have_require(stmts: &[Statement]) -> bool {
-    stmts.iter().any(|s| statement_has_require(s))
+    stmts.iter().any(statement_has_require)
 }
 
 fn statement_has_require(stmt: &Statement) -> bool {
@@ -205,7 +485,7 @@ fn statement_has_require(stmt: &Statement) -> bool {
             statements_have_require(then_body)
                 || else_body
                     .as_ref()
-                    .map_or(false, |b| statements_have_require(b))
+                    .is_some_and(|b| statements_have_require(b))
         }
         Statement::ForIn { body, .. } => statements_have_require(body),
     }
@@ -355,14 +635,12 @@ fn walk_scope(
 }
 
 /// Check 2: the names a function's parameters and the constructor's parameters
-/// contribute to the *emitted* placeholder namespace — after array flattening,
-/// asset decomposition, and reserved generated names — must be unique. Distinct
-/// source names can still collide here (e.g. `int[] xs` vs `int xs_0`).
+/// contribute to the *emitted* placeholder namespace — after array flattening
+/// and reserved generated names — must be unique. Distinct source names can
+/// still collide here (e.g. `int[] xs` vs `int xs_0`).
 fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    let lookup_ids = crate::compiler::collect_lookup_asset_ids(contract);
-    // Constructor params expanded exactly as the emitter decomposes them.
-    let ctor_expanded =
-        crate::compiler::decompose_constructor_params(&contract.parameters, &lookup_ids);
+    // Constructor params expanded exactly as the emitter expands them (array flattening).
+    let ctor_expanded = crate::compiler::expand_abi_params(&contract.parameters);
 
     for func in contract.functions.iter().filter(|f| !f.is_internal) {
         let mut seen: HashSet<String> = HashSet::new();
@@ -371,26 +649,9 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
             record_name(p.name.clone(), &func.name, &mut seen, issues);
         }
 
-        // Function parameters: array flattening only (mirrors generate_witness_schema).
-        for p in &func.parameters {
-            if p.param_type.ends_with("[]") {
-                for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
-                    record_name(format!("{}_{}", p.name, i), &func.name, &mut seen, issues);
-                }
-            } else {
-                record_name(p.name.clone(), &func.name, &mut seen, issues);
-            }
+        for p in crate::compiler::expand_abi_params(&func.parameters) {
+            record_name(p.name, &func.name, &mut seen, issues);
         }
-
-        // `serverSig` is appended unconditionally to the cooperative witness
-        // schema (no dedup), so a parameter of that name genuinely collides.
-        if contract.has_server_key {
-            record_name("serverSig".to_string(), &func.name, &mut seen, issues);
-        }
-        // N-of-N exit signatures (`{pubkey}Sig`) are intentionally NOT reserved:
-        // the emitter deduplicates them against existing signature parameters by
-        // name (src/compiler/mod.rs ~690), so a param like `senderSig` for a
-        // `sender` pubkey is reused rather than duplicated — no collision.
     }
 }
 
@@ -414,248 +675,49 @@ fn record_name(
 /// Validate the compiled [`ContractJson`] output for structural invariants.
 ///
 /// This pass acts as a compiler self-check: a valid source contract should always
-/// produce output that satisfies these invariants.  Any error here indicates a
+/// produce output that satisfies these invariants. Any error here indicates a
 /// compiler bug rather than a user error.
-///
-/// Checks performed:
-/// - `contractName` is non-empty.
-/// - `functions` array is non-empty.
-/// - Every function variant has non-empty `asm`.
-/// - Every function variant has non-empty `witnessSchema`.
-/// - Every unique function name has both a `serverVariant=true` and
-///   `serverVariant=false` entry.
-/// - **BSST-style ASM structure**: OP_IF/OP_ELSE/OP_ENDIF are balanced, no empty
-///   instructions, all `<placeholder>` tokens are syntactically well-formed.
-/// - **Placeholder consistency**: every `<name>` in the ASM resolves to a
-///   witnessSchema element or a constructorInput (CashScript-style).
 pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
-    // ── Contract name ──────────────────────────────────────────────────────
-    if output.name.is_empty() {
-        issues.push(ValidationIssue::error(
-            "compiled output has an empty contractName (compiler bug)",
-        ));
-    }
-
-    // ── Functions present ──────────────────────────────────────────────────
     if output.functions.is_empty() {
-        issues.push(ValidationIssue::error(
-            "compiled output has no functions (compiler bug)",
-        ));
-        // Cannot continue further checks without functions
-        return issues;
+        issues.push(ValidationIssue::error("contract produced no spend groups"));
     }
 
-    // ── Per-function invariants ────────────────────────────────────────────
-    for func in &output.functions {
-        if func.asm.is_empty() {
+    for group in &output.functions {
+        if group.leaves.is_empty() {
             issues.push(ValidationIssue::error(format!(
-                "function '{}' (serverVariant={}) has empty ASM (compiler bug)",
-                func.name, func.server_variant
+                "spend group '{}' has no leaves (compiler bug)",
+                group.name
             )));
         }
-        if func.witness_schema.is_empty() {
-            issues.push(ValidationIssue::warning(format!(
-                "function '{}' (serverVariant={}) has empty witnessSchema",
-                func.name, func.server_variant
-            )));
-        }
-
-        // BSST-style ASM structure analysis
-        for issue in validate_asm_structure(&func.name, func.server_variant, &func.asm) {
-            issues.push(issue);
-        }
-
-        // Placeholder consistency (CashScript-style)
-        for issue in validate_placeholder_consistency(
-            &func.name,
-            func.server_variant,
-            &func.asm,
-            &func.witness_schema,
-            &output.parameters,
-        ) {
-            issues.push(issue);
-        }
-    }
-
-    // ── Both variants present for each function name ───────────────────────
-    let mut by_name: HashMap<&str, (bool, bool)> = HashMap::new();
-    for func in &output.functions {
-        let entry = by_name.entry(func.name.as_str()).or_insert((false, false));
-        if func.server_variant {
-            entry.0 = true;
-        } else {
-            entry.1 = true;
-        }
-    }
-    for (name, (has_server, has_exit)) in &by_name {
-        if !has_server {
-            issues.push(ValidationIssue::warning(format!(
-                "function '{}' has no serverVariant=true entry",
-                name
-            )));
-        }
-        if !has_exit {
-            issues.push(ValidationIssue::warning(format!(
-                "function '{}' has no serverVariant=false (exit) entry",
-                name
-            )));
-        }
-    }
-
-    issues
-}
-
-// ─── BSST-style ASM structure analysis ───────────────────────────────────────
-
-/// Analyse the ASM instruction array for structural correctness.
-///
-/// Inspired by BSST (Bitcoin Script Symbolic Tracer) — checks that are feasible
-/// without full symbolic execution (which would require accurate witness-stack
-/// depth context):
-///
-/// - No empty instruction strings (would produce malformed script bytes).
-/// - All `<placeholder>` tokens are syntactically well-formed: non-empty name,
-///   no spaces, properly closed with `>`.
-/// - `OP_IF` / `OP_NOTIF` are balanced by a matching `OP_ENDIF`.
-/// - `OP_ELSE` only appears inside an open `OP_IF` / `OP_NOTIF` block.
-///
-/// Note: Stack-depth tracking is intentionally omitted.  In Arkade's execution
-/// model the witness stack is pre-populated before the script runs, and accurately
-/// accounting for those initial elements requires the full witness schema (which
-/// belongs to `validate_placeholder_consistency`).  Attempting depth tracking
-/// here without that context produces false-positive underflow errors on every
-/// standard function.
-pub fn validate_asm_structure(
-    func_name: &str,
-    server_variant: bool,
-    asm: &[String],
-) -> Vec<ValidationIssue> {
-    let mut issues = Vec::new();
-    let label = format!("fn '{}' (serverVariant={})", func_name, server_variant);
-
-    let mut if_depth: i32 = 0;
-
-    for (idx, instr) in asm.iter().enumerate() {
-        // ── Empty instruction ──────────────────────────────────────────────
-        if instr.is_empty() {
-            issues.push(ValidationIssue::error(format!(
-                "{}: empty ASM instruction at index {}",
-                label, idx
-            )));
-            continue;
-        }
-
-        // ── Placeholder syntax ────────────────────────────────────────────
-        if instr.starts_with('<') {
-            if !instr.ends_with('>') {
+        if let Some(arkade) = &group.arkade {
+            if arkade.asm.is_empty() {
                 issues.push(ValidationIssue::error(format!(
-                    "{}: malformed placeholder '{}' at index {} — missing closing '>'",
-                    label, instr, idx
-                )));
-            } else if instr.len() < 3 {
-                issues.push(ValidationIssue::error(format!(
-                    "{}: empty placeholder '<>' at index {}",
-                    label, idx
+                    "group '{}' arkade covenant has empty asm",
+                    group.name
                 )));
             }
-            // Note: compound-expression placeholders like
-            // <checkMultisig([a,b],[c,d])> legitimately contain spaces and
-            // brackets — the compiler emits them as-is for expressions it
-            // cannot yet fully inline.  A space-presence check would produce
-            // false positives for every such emission, so we skip it here.
-            // The placeholder-consistency check handles unknown names separately.
-            continue;
         }
-
-        // ── Control-flow balance ──────────────────────────────────────────
-        match instr.as_str() {
-            "OP_IF" | "OP_NOTIF" => {
-                if_depth += 1;
+        for leaf in &group.leaves {
+            if leaf.asm.is_empty() {
+                issues.push(ValidationIssue::error(format!(
+                    "leaf '{}' in group '{}' has empty asm",
+                    leaf.name, group.name
+                )));
             }
-            "OP_ELSE" => {
-                if if_depth == 0 {
-                    issues.push(ValidationIssue::error(format!(
-                        "{}: OP_ELSE at index {} has no matching OP_IF",
-                        label, idx
-                    )));
-                }
-            }
-            "OP_ENDIF" => {
-                if if_depth == 0 {
-                    issues.push(ValidationIssue::error(format!(
-                        "{}: OP_ENDIF at index {} has no matching OP_IF",
-                        label, idx
-                    )));
-                } else {
-                    if_depth -= 1;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // ── Unclosed branches ─────────────────────────────────────────────────
-    if if_depth > 0 {
-        issues.push(ValidationIssue::error(format!(
-            "{}: {} unclosed OP_IF/OP_NOTIF — missing OP_ENDIF",
-            label, if_depth
-        )));
-    }
-
-    issues
-}
-
-// ─── Placeholder consistency (CashScript-style) ───────────────────────────────
-
-/// Cross-check every `<name>` placeholder in the ASM against the function's
-/// `witnessSchema` and the contract's `constructorInputs`.
-///
-/// Every placeholder must resolve to one of:
-/// - A name in `witnessSchema` (caller-supplied witness element).
-/// - A name in `constructorInputs` (constructor-bound script parameter).
-/// - A well-known runtime placeholder: `SERVER_KEY` (operator key), or any token
-///   starting with `VTXO:` (contract instance reference resolved by the Arkade node).
-///
-/// Orphaned placeholders mean the transaction can never be constructed because
-/// there is no known binding for that name.
-pub fn validate_placeholder_consistency(
-    func_name: &str,
-    server_variant: bool,
-    asm: &[String],
-    witness_schema: &[crate::models::WitnessElement],
-    constructor_inputs: &[Parameter],
-) -> Vec<ValidationIssue> {
-    let mut issues = Vec::new();
-    let label = format!("fn '{}' (serverVariant={})", func_name, server_variant);
-
-    let witness_names: HashSet<&str> = witness_schema.iter().map(|w| w.name.as_str()).collect();
-    let ctor_names: HashSet<&str> = constructor_inputs.iter().map(|p| p.name.as_str()).collect();
-
-    for instr in asm {
-        if instr.starts_with('<') && instr.ends_with('>') && instr.len() >= 3 {
-            let name = &instr[1..instr.len() - 1];
-
-            // Well-known runtime-resolved tokens
-            if name == "SERVER_KEY" || name.starts_with("VTXO:") || name.starts_with("serverSig") {
-                continue;
-            }
-
-            // Compound-expression placeholders like
-            // <checkMultisig([a,b],[c,d])> or <sha256(preimage)>
-            // are emitted verbatim when the compiler cannot fully inline an
-            // expression.  They are evaluated by the Arkade node at spend time —
-            // not looked up by name — so we skip the name-resolution check.
-            if name.contains('(') || name.contains('[') || name.contains(',') {
-                continue;
-            }
-
-            if !witness_names.contains(name) && !ctor_names.contains(name) {
-                issues.push(ValidationIssue::warning(format!(
-                    "{}: placeholder <{}> is not in witnessSchema or constructorInputs; \
-                     this transaction cannot be constructed without a binding for '{}'",
-                    label, name, name
+            // Leaf ASM must not carry signature placeholders (sigs are witness).
+            // Case-insensitive: a leaked placeholder may be named `<sig>`,
+            // `<ownersig>`, or `<serverSig>` depending on the source naming —
+            // all must trip this compiler-bug self-check.
+            if leaf
+                .asm
+                .iter()
+                .any(|t| t.to_ascii_lowercase().contains("sig>"))
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "leaf '{}' in group '{}' has a signature in asm (must be witness-only)",
+                    leaf.name, group.name
                 )));
             }
         }
@@ -669,38 +731,36 @@ pub fn validate_placeholder_consistency(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AbiFunction, Contract, Function, Parameter, WitnessElement};
+    use crate::models::{AbiFunctionGroup, AbiLeaf, Contract, Function, Parameter, WitnessElement};
 
-    fn make_contract(name: &str, has_server_key: bool, exit_timelock: Option<&str>) -> Contract {
+    fn make_contract(name: &str) -> Contract {
         Contract {
             name: name.to_string(),
             parameters: vec![Parameter {
                 name: "owner".to_string(),
                 param_type: "pubkey".to_string(),
             }],
-            renewal_timelock: None,
-            exit_timelock: exit_timelock.map(|s| s.to_string()),
-            has_server_key,
             functions: vec![Function {
                 name: "spend".to_string(),
                 parameters: vec![],
                 statements: vec![],
                 is_internal: false,
             }],
+            tapscripts: Vec::new(),
             imports: vec![],
         }
     }
 
     #[test]
     fn valid_contract_has_no_issues() {
-        let contract = make_contract("Simple", true, Some("144"));
+        let contract = make_contract("Simple");
         let issues = validate_ast(&contract);
         assert!(!has_errors(&issues));
     }
 
     #[test]
     fn empty_contract_name_is_error() {
-        let contract = make_contract("", true, Some("144"));
+        let contract = make_contract("");
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("name")));
@@ -708,7 +768,7 @@ mod tests {
 
     #[test]
     fn no_functions_is_error() {
-        let mut contract = make_contract("Empty", true, Some("144"));
+        let mut contract = make_contract("Empty");
         contract.functions.clear();
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
@@ -719,7 +779,7 @@ mod tests {
 
     #[test]
     fn only_internal_functions_is_error() {
-        let mut contract = make_contract("AllInternal", true, Some("144"));
+        let mut contract = make_contract("AllInternal");
         contract.functions[0].is_internal = true;
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
@@ -727,7 +787,7 @@ mod tests {
 
     #[test]
     fn duplicate_function_name_is_error() {
-        let mut contract = make_contract("Dup", true, Some("144"));
+        let mut contract = make_contract("Dup");
         contract.functions.push(contract.functions[0].clone());
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
@@ -736,50 +796,10 @@ mod tests {
 
     #[test]
     fn duplicate_constructor_param_is_error() {
-        let mut contract = make_contract("Dup", true, Some("144"));
+        let mut contract = make_contract("Dup");
         contract.parameters.push(contract.parameters[0].clone());
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
-    }
-
-    #[test]
-    fn server_key_without_exit_timelock_is_error() {
-        let contract = make_contract("NoExit", true, None);
-        let issues = validate_ast(&contract);
-        assert!(has_errors(&issues));
-        assert!(issues.iter().any(|i| i.message.contains("exit")));
-    }
-
-    #[test]
-    fn zero_exit_timelock_is_error() {
-        let contract = make_contract("ZeroExit", true, Some("0"));
-        let issues = validate_ast(&contract);
-        assert!(has_errors(&issues));
-        assert!(issues.iter().any(|i| i.message.contains("positive")));
-    }
-
-    #[test]
-    fn negative_exit_timelock_is_error() {
-        let contract = make_contract("NegExit", true, Some("-1"));
-        let issues = validate_ast(&contract);
-        assert!(has_errors(&issues));
-        assert!(issues.iter().any(|i| i.message.contains("positive")));
-    }
-
-    #[test]
-    fn param_name_exit_timelock_is_not_checked_for_value() {
-        // "exit" is a constructor param name, value not known at compile time
-        let contract = make_contract("ParamExit", true, Some("exit"));
-        let issues = validate_ast(&contract);
-        assert!(!has_errors(&issues));
-    }
-
-    #[test]
-    fn no_server_key_without_exit_timelock_is_valid() {
-        // A contract without server key doesn't need an exit timelock
-        let contract = make_contract("NoServer", false, None);
-        let issues = validate_ast(&contract);
-        assert!(!has_errors(&issues));
     }
 
     fn make_output(name: &str) -> ContractJson {
@@ -787,28 +807,20 @@ mod tests {
             name: "sig".to_string(),
             elem_type: "signature".to_string(),
             encoding: "schnorr-64".to_string(),
+            injected: false,
         }];
         ContractJson {
             name: name.to_string(),
             parameters: vec![],
-            functions: vec![
-                AbiFunction {
+            functions: vec![AbiFunctionGroup {
+                name: "spend".to_string(),
+                arkade: None,
+                leaves: vec![AbiLeaf {
                     name: "spend".to_string(),
-                    function_inputs: vec![],
-                    witness_schema: witness.clone(),
-                    server_variant: true,
-                    require: vec![],
+                    witness,
                     asm: vec!["OP_CHECKSIG".to_string()],
-                },
-                AbiFunction {
-                    name: "spend".to_string(),
-                    function_inputs: vec![],
-                    witness_schema: witness,
-                    server_variant: false,
-                    require: vec![],
-                    asm: vec!["OP_CHECKSIG".to_string()],
-                },
-            ],
+                }],
+            }],
             source: None,
             compiler: None,
             updated_at: None,
@@ -826,21 +838,32 @@ mod tests {
     #[test]
     fn empty_asm_is_output_error() {
         let mut output = make_output("Bad");
-        output.functions[0].asm.clear();
+        output.functions[0].leaves[0].asm.clear();
         let issues = validate_output(&output);
         assert!(has_errors(&issues));
-        assert!(issues.iter().any(|i| i.message.contains("empty ASM")));
+        assert!(issues.iter().any(|i| i.message.contains("empty asm")));
     }
 
     #[test]
-    fn missing_exit_variant_is_output_warning() {
-        let mut output = make_output("NoExit");
-        output.functions.retain(|f| f.server_variant);
-        let issues = validate_output(&output);
-        // Missing exit variant → warning (not fatal; might be intentional)
-        assert!(!has_errors(&issues));
-        assert!(issues
-            .iter()
-            .any(|i| i.message.contains("serverVariant=false")));
+    fn signature_placeholder_in_leaf_asm_is_output_error() {
+        // The sig-leak self-check must fire regardless of placeholder casing:
+        // <serverSig>, <ownersig>, and <sig> are all signature placeholders.
+        for leaked in ["<serverSig>", "<ownersig>", "<sig>"] {
+            let mut output = make_output("Leak");
+            output.functions[0].leaves[0].asm = vec![leaked.to_string()];
+            let issues = validate_output(&output);
+            assert!(
+                has_errors(&issues),
+                "leaked placeholder {} must be an output error",
+                leaked
+            );
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.message.contains("signature in asm")),
+                "expected sig-leak message for {}",
+                leaked
+            );
+        }
     }
 }

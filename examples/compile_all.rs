@@ -18,6 +18,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             "non_interactive_swap.json",
             "non_interactive_swap.hack",
         ),
+        (
+            "threshold_multisig_htlc.ark",
+            "threshold_multisig_htlc.json",
+            "threshold_multisig_htlc.hack",
+        ),
     ];
 
     // Compile each file
@@ -45,18 +50,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         hack_content.push_str("#\n");
         hack_content.push_str("#\n\n");
 
-        for func in &output.functions {
-            let variant = if func.server_variant {
-                "cooperative"
-            } else {
-                "exit"
-            };
-            hack_content.push_str(&format!("# Function: {} ({})\n", func.name, variant));
-
-            for opcode in &func.asm {
-                hack_content.push_str(&format!("{}\n", opcode));
+        for group in &output.functions {
+            hack_content.push_str(&format!("# Function: {}\n", group.name));
+            if let Some(arkade) = &group.arkade {
+                hack_content.push_str("## arkade covenant\n");
+                for opcode in &arkade.asm {
+                    hack_content.push_str(&format!("{}\n", opcode));
+                }
             }
-            hack_content.push_str("\n");
+            for leaf in &group.leaves {
+                hack_content.push_str(&format!("## leaf: {}\n", leaf.name));
+                for opcode in &leaf.asm {
+                    hack_content.push_str(&format!("{}\n", opcode));
+                }
+            }
+            hack_content.push('\n');
         }
 
         let hack_path = Path::new("examples").join(hack_file);

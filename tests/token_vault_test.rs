@@ -1,8 +1,10 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_1NEGATE, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_GREATERTHAN64,
-    OP_GREATERTHANOREQUAL64, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_NOT, OP_VERIFY,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL64,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
+
+mod common;
 
 #[test]
 fn test_token_vault_contract() {
@@ -16,45 +18,36 @@ fn test_token_vault_contract() {
     // Verify contract name
     assert_eq!(output.name, "TokenVault");
 
-    // Verify parameters - bytes32 params used in lookups should be decomposed
-    // ownerPk (pubkey, no decomposition)
-    // tokenAssetId (bytes32 → _txid + _gidx)
-    // ctrlAssetId (bytes32 → _txid + _gidx)
+    // Verify parameters, including explicit Asset ID (Txid, Gidx) pairs.
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"ownerPk"), "missing ownerPk");
     assert!(
-        param_names.contains(&"tokenAssetId_txid"),
-        "missing tokenAssetId_txid decomposition"
+        param_names.contains(&"tokenAssetIdTxid"),
+        "missing explicit tokenAssetIdTxid"
     );
     assert!(
-        param_names.contains(&"tokenAssetId_gidx"),
-        "missing tokenAssetId_gidx decomposition"
+        param_names.contains(&"tokenAssetIdGidx"),
+        "missing explicit tokenAssetIdGidx"
     );
     assert!(
-        param_names.contains(&"ctrlAssetId_txid"),
-        "missing ctrlAssetId_txid decomposition"
+        param_names.contains(&"ctrlAssetIdTxid"),
+        "missing explicit ctrlAssetIdTxid"
     );
     assert!(
-        param_names.contains(&"ctrlAssetId_gidx"),
-        "missing ctrlAssetId_gidx decomposition"
+        param_names.contains(&"ctrlAssetIdGidx"),
+        "missing explicit ctrlAssetIdGidx"
     );
 
-    // Verify functions: 2 functions x 2 variants = 4
+    // 2 covenant functions (deposit, withdraw) + 1 standalone unilateral = 3 groups
     assert_eq!(
         output.functions.len(),
-        4,
-        "expected 4 functions (2x2 variants)"
+        3,
+        "expected 3 groups (deposit, withdraw, unilateral)"
     );
 
-    // Verify deposit function with server variant
-    let deposit = output
-        .functions
-        .iter()
-        .find(|f| f.name == "deposit" && f.server_variant)
-        .expect("deposit server variant not found");
+    // Verify deposit function: arkade covenant holds all introspection logic
+    let deposit_asm = common::arkade_asm(&output, "deposit");
 
-    // Check that assembly contains asset lookup opcodes
-    let deposit_asm = deposit.asm.join(" ");
     assert!(
         deposit_asm.contains(OP_INSPECTINASSETLOOKUP),
         "missing {OP_INSPECTINASSETLOOKUP} in deposit asm: {}",
@@ -66,11 +59,15 @@ fn test_token_vault_contract() {
         deposit_asm
     );
 
-    // Check sentinel guard pattern (DUP, 1NEGATE, EQUAL, NOT, VERIFY)
-    let sentinel_guard = format!("{OP_DUP} {OP_1NEGATE} {OP_EQUAL} {OP_NOT} {OP_VERIFY}");
+    // Lookups assert presence by consuming the opcode success flag with OP_VERIFY
     assert!(
-        deposit_asm.contains(&sentinel_guard),
-        "missing sentinel guard pattern in deposit asm: {}",
+        deposit_asm.contains(&format!("{OP_INSPECTINASSETLOOKUP} {OP_VERIFY}")),
+        "input lookup must be followed by OP_VERIFY flag-consume: {}",
+        deposit_asm
+    );
+    assert!(
+        deposit_asm.contains(&format!("{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY}")),
+        "output lookup must be followed by OP_VERIFY flag-consume: {}",
         deposit_asm
     );
 
@@ -81,61 +78,38 @@ fn test_token_vault_contract() {
         deposit_asm
     );
 
-    // Check requirement types
+    // deposit covenant should verify owner signature
     assert!(
-        deposit.require.iter().any(|r| r.req_type == "assetCheck"),
-        "missing assetCheck requirement type"
-    );
-    assert!(
-        deposit.require.iter().any(|r| r.req_type == "signature"),
-        "missing signature requirement type"
-    );
-    assert!(
-        deposit
-            .require
-            .iter()
-            .any(|r| r.req_type == "serverSignature"),
-        "missing serverSignature requirement type"
+        deposit_asm.contains(OP_CHECKSIG),
+        "missing {OP_CHECKSIG} in deposit covenant: {}",
+        deposit_asm
     );
 
-    // Verify withdraw function with exit variant
-    // Exit path with introspection should have N-of-N + CSV (no introspection opcodes)
-    let withdraw_exit = output
-        .functions
-        .iter()
-        .find(|f| f.name == "withdraw" && !f.server_variant)
-        .expect("withdraw exit variant not found");
-
-    let withdraw_asm = withdraw_exit.asm.join(" ");
-
-    // Exit path should have N-of-N CHECKSIG chain (pure Bitcoin)
+    // deposit leaf carries server + emulator cosig
+    let deposit_leaf = common::leaf_asm(&output, "deposit", "deposit");
     assert!(
-        withdraw_asm.contains(OP_CHECKSIG),
-        "missing {OP_CHECKSIG} in withdraw exit: {}",
-        withdraw_asm
+        deposit_leaf.contains("<SERVER_KEY>"),
+        "deposit leaf should have SERVER_KEY: {}",
+        deposit_leaf
     );
 
-    // Exit path should use CSV (relative timelock)
-    assert!(
-        withdraw_asm.contains(OP_CHECKSEQUENCEVERIFY),
-        "missing CSV exit timelock in withdraw exit variant: {}",
-        withdraw_asm
-    );
+    // Unilateral exit: standalone CSV leaf with no introspection.
+    let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
 
-    // Exit path should NOT have introspection opcodes (pure Bitcoin fallback)
     assert!(
-        !withdraw_asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "exit path should not have introspection: {}",
-        withdraw_asm
+        unilateral_asm.contains(OP_CHECKSIG),
+        "missing {OP_CHECKSIG} in unilateral exit: {}",
+        unilateral_asm
     );
-
-    // Should have N-of-N multisig requirement
     assert!(
-        withdraw_exit
-            .require
-            .iter()
-            .any(|r| r.req_type == "nOfNMultisig"),
-        "missing nOfNMultisig requirement in exit path"
+        unilateral_asm.contains(OP_CHECKSEQUENCEVERIFY),
+        "missing CSV exit timelock in unilateral leaf: {}",
+        unilateral_asm
+    );
+    assert!(
+        !unilateral_asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "exit leaf should not have introspection: {}",
+        unilateral_asm
     );
 }
 
@@ -170,6 +144,8 @@ fn test_token_vault_cli() {
     assert!(json_output.contains("\"contractName\": \"TokenVault\""));
     assert!(json_output.contains(OP_INSPECTINASSETLOOKUP));
     assert!(json_output.contains(OP_INSPECTOUTASSETLOOKUP));
-    assert!(json_output.contains("tokenAssetId_txid"));
-    assert!(json_output.contains("ctrlAssetId_txid"));
+    assert!(json_output.contains("tokenAssetIdTxid"));
+    assert!(json_output.contains("ctrlAssetIdTxid"));
+    assert!(json_output.contains("tokenAssetIdGidx"));
+    assert!(json_output.contains("ctrlAssetIdGidx"));
 }

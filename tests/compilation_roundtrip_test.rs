@@ -4,17 +4,15 @@
 //! asserts output invariants that must hold for every well-formed contract:
 //!
 //! - `contractName` is non-empty.
-//! - `functions` array is non-empty.
-//! - Every function variant (server and exit) has non-empty `asm`.
-//! - Every function variant has non-empty `witnessSchema`.
-//! - For every unique function name, both `serverVariant=true` and
-//!   `serverVariant=false` entries are present.
+//! - `functions` (spend groups) array is non-empty.
+//! - Every leaf has non-empty `asm` and non-empty `witness`.
+//! - Every present `arkade` covenant has non-empty `asm`.
+//! - Every group has at least one leaf.
 //!
 //! These tests catch regressions where the compiler silently emits structurally
 //! broken output without failing.
 
 use arkade_compiler::compile;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -41,48 +39,41 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
 
     assert!(
         !output.functions.is_empty(),
-        "{}: functions array must not be empty",
+        "{}: functions (spend groups) array must not be empty",
         filename
     );
 
-    for func in &output.functions {
+    for group in &output.functions {
         assert!(
-            !func.asm.is_empty(),
-            "{}: function '{}' (serverVariant={}) must have non-empty ASM",
+            !group.leaves.is_empty(),
+            "{}: group '{}' must have at least one leaf",
             filename,
-            func.name,
-            func.server_variant
+            group.name
         );
-        assert!(
-            !func.witness_schema.is_empty(),
-            "{}: function '{}' (serverVariant={}) must have non-empty witnessSchema",
-            filename,
-            func.name,
-            func.server_variant
-        );
-    }
-
-    // Both variants (server + exit) should be present for every function name
-    let mut by_name: HashMap<&str, (bool, bool)> = HashMap::new();
-    for func in &output.functions {
-        let entry = by_name.entry(func.name.as_str()).or_insert((false, false));
-        if func.server_variant {
-            entry.0 = true;
-        } else {
-            entry.1 = true;
+        if let Some(arkade) = &group.arkade {
+            assert!(
+                !arkade.asm.is_empty(),
+                "{}: group '{}' arkade covenant must have non-empty ASM",
+                filename,
+                group.name
+            );
         }
-    }
-    for (name, (has_server, has_exit)) in &by_name {
-        assert!(
-            has_server,
-            "{}: function '{}' is missing serverVariant=true",
-            filename, name
-        );
-        assert!(
-            has_exit,
-            "{}: function '{}' is missing serverVariant=false (exit variant)",
-            filename, name
-        );
+        for leaf in &group.leaves {
+            assert!(
+                !leaf.asm.is_empty(),
+                "{}: group '{}' leaf '{}' must have non-empty ASM",
+                filename,
+                group.name,
+                leaf.name
+            );
+            assert!(
+                !leaf.witness.is_empty(),
+                "{}: group '{}' leaf '{}' must have non-empty witness",
+                filename,
+                group.name,
+                leaf.name
+            );
+        }
     }
 
     // Output must contain no output-invariant-error warnings (would indicate compiler bug)
@@ -113,8 +104,8 @@ fn roundtrip_htlc() {
     let output = compile_example("htlc.ark");
     assert_output_invariants(&output, "htlc.ark");
     assert_eq!(output.name, "HTLC");
-    // 3 functions × 2 variants = 6
-    assert_eq!(output.functions.len(), 6);
+    // 3 spend groups: claim, refund (function-backed) + unilateral (standalone)
+    assert_eq!(output.functions.len(), 3);
 }
 
 #[test]
@@ -194,9 +185,9 @@ fn roundtrip_repayment_pool() {
     let output = compile_example("bonds/repayment_pool.ark");
     assert_output_invariants(&output, "bonds/repayment_pool.ark");
     assert_eq!(output.name, "RepaymentPool");
-    // 7 functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
-    // acceptAuction, redeem) × 2 variants = 14
-    assert_eq!(output.functions.len(), 14);
+    // 7 function-backed spend groups (issue, acceptRepayment, rollOut, rollIn,
+    // liquidate, acceptAuction, redeem); no standalone exit tapscript.
+    assert_eq!(output.functions.len(), 7);
 }
 
 #[test]
@@ -204,8 +195,9 @@ fn roundtrip_bond_mint() {
     let output = compile_example("bonds/bond_mint.ark");
     assert_output_invariants(&output, "bonds/bond_mint.ark");
     assert_eq!(output.name, "BondMint");
-    // 4 functions (repay, liquidate, auction, roll) × 2 variants = 8
-    assert_eq!(output.functions.len(), 8);
+    // 4 function-backed groups (repay, liquidate, auction, roll) + 1 standalone
+    // unilateral exit tapscript = 5 spend groups.
+    assert_eq!(output.functions.len(), 5);
 }
 
 // ─── Cross-cutting invariant: scan ALL examples ───────────────────────────────

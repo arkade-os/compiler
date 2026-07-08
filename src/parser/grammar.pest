@@ -8,22 +8,11 @@ import_stmt = { "import" ~ string_literal ~ ";" }
 // Main entry point - must consume the entire input
 main = { SOI ~ import_stmt* ~ contract ~ EOI }
 
-// Contract definition with strict structure and optional options block
+// Contract definition
 contract = {
-    options_block? ~
     "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     "{" ~ function* ~ "}"
-}
-
-// Options block for contract configuration
-options_block = {
-    "options" ~ "{" ~ (option_setting ~ ";")* ~ "}"
-}
-
-// Option setting with assignment
-option_setting = {
-    identifier ~ "=" ~ (number_literal | identifier | string_literal)
 }
 
 // Parameter list with proper comma separation
@@ -40,13 +29,17 @@ parameter = { data_type ~ identifier }
 base_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
 data_type = { base_type ~ ("[]")? }
 
-// Function definition with strict structure
+// Function definition. A `tapscript` modifier selects an L1 tapleaf body
+// (require-only); otherwise it is an ordinary covenant function body.
 function = {
     "function" ~ identifier ~
     "(" ~ param_list ~ ")" ~
-    function_modifier? ~
-    "{" ~ statement* ~ "}"
+    ( "tapscript" ~ tapscript_block
+    | function_modifier? ~ "{" ~ statement* ~ "}" )
 }
+
+// Tapscript body: only require() statements (single-interpreter leaf).
+tapscript_block = { "{" ~ require_stmt* ~ "}" }
 
 // Function modifier (internal, etc.)
 function_modifier = { "internal" }
@@ -138,12 +131,21 @@ primary_expr = {
     le32_to_le64 |
     ec_mul_scalar_verify |
     tweak_verify |
+    substr_func |
+    cat_func |
+    bin2num_func |
+    num2bin_func |
+    size_func |
+    input_packet_inspect |
+    packet_inspect |
     asset_at |
     asset_count |
+    asset_has |
     asset_lookup |
     input_introspection |
     output_introspection |
     tx_introspection |
+    group_control_is |
     tx_property_access |
     this_property_access |
     constructor |
@@ -174,12 +176,15 @@ complex_expression = _{
     check_multisig |
     time_comparison |
     hash_comparison |
+    byte_expr_comparison |
     asset_lookup_comparison |
     asset_count_comparison |
+    asset_has_comparison |
     asset_at_comparison |
     input_introspection_comparison |
     output_introspection_comparison |
     tx_introspection_comparison |
+    group_control_is_comparison |
     group_property_comparison |
     property_comparison |
     identifier_comparison |
@@ -192,12 +197,21 @@ complex_expression = _{
     le32_to_le64 |
     ec_mul_scalar_verify |
     tweak_verify |
+    substr_func |
+    cat_func |
+    bin2num_func |
+    num2bin_func |
+    size_func |
+    input_packet_inspect |
+    packet_inspect |
     asset_at |
     asset_count |
+    asset_has |
     asset_lookup |
     input_introspection |
     output_introspection |
     tx_introspection |
+    group_control_is |
     asset_group_access |
     constructor |
     tx_property_access |
@@ -210,9 +224,17 @@ complex_expression = _{
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
-// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(assetId)
+// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
+// txid is a bytes32 identifier; gidx is an int identifier or a 0..65535 literal.
 asset_lookup = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ "." ~ "lookup" ~ "(" ~ identifier ~ ")"
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
+        ~ "." ~ "lookup" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) → Bool
+asset_has = {
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
+        ~ "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
 // Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -236,14 +258,22 @@ asset_lookup_source = { "inputs" | "outputs" }
 // Handles: tx.inputs[0].assets.lookup(id) >= 0
 //          tx.outputs[0].assets.lookup(id) >= tx.inputs[0].assets.lookup(id)
 //          tx.outputs[0].assets.lookup(id) >= tx.inputs[0].assets.lookup(id) + amount
+//          tx.outputs[1].assets.lookup(id) == bin2num(substr(packet, off, 8))
+//            (used by LayerZero OApp.receive to credit USDT0 from the packet)
 asset_lookup_comparison = {
-    asset_lookup ~ binary_operator ~ (asset_lookup_arith_expr | asset_lookup | identifier | number_literal)
+    asset_lookup ~ binary_operator ~ (asset_lookup_arith_expr | asset_lookup | bin2num_func | identifier | number_literal)
 }
 
 // Asset count comparison: asset_count op expression
 // Handles: tx.outputs[0].assets.length >= 1
 asset_count_comparison = {
     asset_count ~ binary_operator ~ (identifier | number_literal)
+}
+
+// Asset has comparison: asset_has op expression
+// Handles: tx.outputs[0].assets.has(txid, gidx) == 0 (assert absent)
+asset_has_comparison = {
+    asset_has ~ comparison_operator ~ (identifier | number_literal)
 }
 
 // Asset at comparison: asset_at op expression
@@ -264,8 +294,10 @@ tx_introspection = {
     "tx" ~ "." ~ tx_introspection_property
 }
 
-// Transaction introspection properties
-tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" }
+// Transaction introspection properties.
+// Note: "id" is the introspector OP_TXID; do not rename to "txid" (matches
+// the SDK convention used in docs/arkade-script-with-assets.md).
+tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" | "id" }
 
 // Transaction introspection comparison: tx_introspection op expression
 tx_introspection_comparison = {
@@ -279,8 +311,14 @@ input_introspection = {
     "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ input_introspection_property
 }
 
-// Input introspection properties (excluding asset - use .assets.* API instead)
-input_introspection_property = { "value" | "scriptPubKey" | "sequence" | "outpoint" | "issuance" }
+// Input introspection properties (excluding asset - use .assets.* API instead).
+// arkadeScriptHash / arkadeWitnessHash compile to the introspector hash
+// opcodes and are used by invocation-marker contracts to pin themselves to
+// a specific consuming Arkade closure.
+input_introspection_property = {
+    "value" | "scriptPubKey" | "sequence" | "outpoint" | "issuance" |
+    "arkadeScriptHash" | "arkadeWitnessHash"
+}
 
 // Output introspection: tx.outputs[o].property (value, scriptPubKey, nonce)
 output_introspection = {
@@ -290,14 +328,20 @@ output_introspection = {
 // Output introspection properties (excluding asset - use .assets.* API instead)
 output_introspection_property = { "value" | "scriptPubKey" | "nonce" }
 
-// Input introspection comparison: input_introspection op expression
+// Input introspection comparison: input_introspection op expression.
+// substr_func is permitted on the RHS so contracts can match packet-derived
+// byte fields against introspection results (e.g. arkadeScriptHash equality
+// or scriptPubKey == substr(packet, ...)).
 input_introspection_comparison = {
-    input_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
+    input_introspection ~ binary_operator ~ (substr_func | input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
 }
 
-// Output introspection comparison: output_introspection op expression
+// Output introspection comparison: output_introspection op expression.
+// See input_introspection_comparison for the substr_func extension rationale —
+// LayerZero's OApp.receive() pins the recipient output's x-only key to the
+// CreditMessage byte slice.
 output_introspection_comparison = {
-    output_introspection ~ binary_operator ~ (input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
+    output_introspection ~ binary_operator ~ (substr_func | input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
 }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
@@ -306,7 +350,8 @@ output_introspection_comparison = {
 // tx.assetGroups[k].sumInputs, etc.
 asset_group_access = {
     "tx" ~ "." ~ "assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ ")" |
+        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
         "." ~ "length" |
         array_access ~ "." ~ group_property
     )
@@ -314,21 +359,46 @@ asset_group_access = {
 
 // Group property names — atomic to prevent partial matches
 // numInputs/numOutputs must come before sumInputs/sumOutputs to prevent partial matches
+// Control membership is tested with `controlIs(txid, gidx)` / `hasControl`.
 group_property = @{
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
+}
+
+// Group control predicates (struct-free, replace the old `.control ==`):
+//   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
+//   group.hasControl            → Bool (handled as a plain group_property)
+group_control_is = {
+    identifier ~ "." ~ "controlIs" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// controlIs comparison: group.controlIs(txid, gidx) == 0 (assert absent/unequal)
+group_control_is_comparison = {
+    group_control_is ~ comparison_operator ~ (identifier | number_literal)
 }
 
 // Group property comparison: variable.property op expression
 // Matches patterns like: tokenGroup.delta == amount, tokenGroup.sumOutputs >= 0
 // Also supports: group.sumOutputs >= group.sumInputs (both sides can have group property)
 // Also supports: group.sumInputs >= group.sumOutputs + amount (arithmetic on right side)
+// Also supports: usdt0Group.delta == bin2num(substr(packet, off, 8))
+//   (used by LayerZero OApp.receive to credit USDT0 from a packet field)
 group_property_comparison = {
-    identifier ~ "." ~ group_property ~ binary_operator ~ (group_property_arith_expr | identifier_property_access | asset_lookup | asset_group_access | identifier | number_literal)
+    identifier ~ "." ~ group_property ~ binary_operator ~ (
+        group_property_arith_expr |
+        identifier_property_access |
+        asset_lookup |
+        asset_group_access |
+        bin2num_func |
+        identifier |
+        number_literal
+    )
 }
 
 // Arithmetic expression with group properties: group.property +/- value
+// RHS may include bin2num(...) so packet-derived amounts can balance against
+// group sums (used by LayerZero OApp.send burn-amount check).
 group_property_arith_expr = {
-    identifier_property_access ~ arith_op ~ (identifier | number_literal)
+    identifier_property_access ~ arith_op ~ (bin2num_func | identifier | number_literal)
 }
 
 // Arithmetic operator for group property expressions
@@ -357,10 +427,50 @@ property_comparison = {
     (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)
 }
 
-// Hash comparison (sha256(preimage) == hash)
+// Generalized hash condition function name.
+hash_fn_name = { "sha256" | "hash256" | "hash160" | "ripemd160" }
+
+// Generalized hash function: hashFn(expr)
+hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
+
+// Hash comparison: hashFn(preimage) == hash. The RHS may be a simple
+// identifier (legacy fast path, e.g. htlc), or any byte-producing term so
+// that constructions like `sha256(substr(packet, ...)) == substr(other, ...)`
+// — used by the LayerZero scripts — parse natively.
 hash_comparison = {
-    sha256_func ~ "==" ~ identifier
+    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | identifier)
 }
+
+// Byte-string / packet-field comparison.
+// Lets contracts compare results of substr/cat/bin2num/size against
+// constructor parameters, witnesses, integer literals, or each other —
+// e.g. `require(substr(state, 1, 32) == endpointID)` or
+// `require(bin2num(substr(state, 167, 8)) + 1 == bin2num(substr(recv, 69, 8)))`.
+byte_expr_comparison = {
+    byte_expr_term ~ binary_operator ~ byte_expr_rhs
+}
+
+// A single byte-string-producing or numeric-from-bytes term.
+// sha256_func is included so `sha256(substr(...)) == substr(...)` works
+// (the legacy hash_comparison shape, `sha256(x) == identifier`, keeps its
+// fast path because PEG ordering puts hash_comparison earlier).
+byte_expr_term = {
+    sha256_func | substr_func | cat_func | bin2num_func | num2bin_func | size_func
+}
+
+// RHS of a byte comparison: another term, a small arithmetic expression
+// over numeric byte-derived values, or a plain identifier / literal.
+byte_expr_rhs = {
+    byte_expr_arith | byte_expr_term | identifier | number_literal
+}
+
+// A two-operand arithmetic expression where either side may be a
+// bin2num/size term, an identifier, or a number literal.
+byte_expr_arith = {
+    byte_expr_atom ~ ("+" | "-") ~ byte_expr_atom
+}
+
+byte_expr_atom = { bin2num_func | size_func | identifier | number_literal }
 
 // Binary operations between literals or identifiers
 binary_operation = {
@@ -391,9 +501,10 @@ tx_property_access = {
 tx_property_body = {
     // Input.current syntax - first-class support for current input introspection
     ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
-    // Asset groups access: find, length, or indexed property access
+    // Asset groups access: find, has, length, or indexed property access
     ("assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ ")" |
+        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
         "." ~ "length" |
         array_access ~ ("." ~ asset_group_property)?
     )?) |
@@ -408,7 +519,7 @@ tx_property_suffix = {
 
 // Asset group properties
 asset_group_property = {
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "control" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
 }
 
 // This property access
@@ -463,9 +574,19 @@ function_call = {
 
 // ─── Cryptographic Primitives ──────────────────────────────────────────────────
 
-// CheckSig expression
+// Key expression: a bare pubkey identifier (server, emulator, owner, …) or an
+// explicit emulator tweak. Used only inside checkSig/checkMultisig.
+key_expr = { tweak_key | identifier }
+
+// Explicit emulator tweak: tweak(emulator, funcName)
+tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" }
+
+// Array of key expressions (widens `array`, which is identifier-only).
+key_array = { "[" ~ key_expr ~ ("," ~ key_expr)* ~ "]" }
+
+// CheckSig expression — key position accepts a key expression (incl. tweak()).
 check_sig = {
-    "checkSig" ~ "(" ~ identifier ~ "," ~ identifier ~ ")"
+    "checkSig" ~ "(" ~ identifier ~ "," ~ key_expr ~ ")"
 }
 
 // CheckSigFromStack expression
@@ -480,12 +601,12 @@ sig_arg = { array_index_access | identifier }
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }
 
-check_legacy_multisig = {
-    "checkMultisig" ~ "(" ~ array ~ "," ~ array ~ ")"
-}
-
+// checkMultisig([keys], [sigs]?, threshold?) — keys may be tweak()s; the
+// optional second array carries the aligned signature inputs; optional final
+// number is the threshold. Existing single-array and [keys],[sigs] forms still
+// match (key_array accepts identifier-only arrays).
 check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ array ~ ("," ~ number_literal)? ~ ")"
+    "checkMultisig" ~ "(" ~ key_array ~ ("," ~ array)? ~ ("," ~ number_literal)? ~ ")"
 }
 
 // Array of identifiers
@@ -549,6 +670,68 @@ tweak_verify = {
 // CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACKVERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
+}
+
+// ─── Byte-string Manipulation ──────────────────────────────────────────
+// These map to the introspector's byte-string opcodes and are used to slice,
+// concat, and parse fixed-width fields out of extension packets.
+
+// A byte-producing operand. Accepted as a child of substr/cat/bin2num/size
+// so packet introspection results can flow directly into slicing:
+//   substr(tx.packet(EndpointState), 1, 32)
+//   sha256(substr(tx.inputs[1].packet(LzReceive), 1, 140))
+byte_value = {
+    substr_func |
+    cat_func |
+    num2bin_func |
+    packet_inspect |
+    input_packet_inspect |
+    input_introspection |
+    output_introspection |
+    asset_at |
+    identifier
+}
+
+// Substring extraction: substr(data, offset, size) → OP_SUBSTR
+substr_func = {
+    "substr" ~ "(" ~ byte_value ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Byte concatenation: cat(a, b) → OP_CAT
+cat_func = {
+    "cat" ~ "(" ~ byte_value ~ "," ~ byte_value ~ ")"
+}
+
+// Bytes → BigNum: bin2num(bytes) → OP_BIN2NUM
+bin2num_func = {
+    "bin2num" ~ "(" ~ byte_value ~ ")"
+}
+
+// BigNum → fixed-width bytes: num2bin(num, size) → OP_NUM2BIN
+num2bin_func = {
+    "num2bin" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Byte-array length: size(bytes) → OP_SIZE OP_NIP (returns size only)
+size_func = {
+    "size" ~ "(" ~ byte_value ~ ")"
+}
+
+// ─── Packet Introspection ──────────────────────────────────────────────
+// Extension-packet introspection over the current transaction or a previous
+// Arkade transaction referenced by an input. Returns the raw packet bytes;
+// presence is enforced by OP_INSPECTPACKET's bool flag — emission verifies
+// it. Use substr / bin2num / sha256 to parse fields.
+
+// Current-tx packet: tx.packet(packetType) → <packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY
+packet_inspect = {
+    "tx" ~ "." ~ "packet" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
+// → <packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY
+input_packet_inspect = {
+    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────

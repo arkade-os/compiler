@@ -1,3 +1,5 @@
+mod common;
+
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_DROP, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTOUTASSETAT,
@@ -8,12 +10,7 @@ use arkade_compiler::opcodes::{
 #[test]
 fn test_asset_count_parsing() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract AssetCounter(pubkey serverKey, pubkey owner) {
+        contract AssetCounter(pubkey owner) {
             function checkAssetCount(signature ownerSig, int expectedCount) {
                 require(checkSig(ownerSig, owner));
                 require(tx.outputs[0].assets.length >= expectedCount);
@@ -31,15 +28,8 @@ fn test_asset_count_parsing() {
     let output = result.unwrap();
     assert_eq!(output.name, "AssetCounter");
 
-    // Find the server variant function
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkAssetCount" && f.server_variant)
-        .expect("Should have checkAssetCount server variant");
-
-    // Check that the ASM contains the asset count opcode
-    let asm_str = func.asm.join(" ");
+    // Check that the covenant ASM contains the asset count opcode
+    let asm_str = common::arkade_asm(&output, "checkAssetCount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETCOUNT),
         "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {}",
@@ -50,12 +40,7 @@ fn test_asset_count_parsing() {
 #[test]
 fn test_asset_at_amount_parsing() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract AssetInspector(pubkey serverKey, pubkey owner) {
+        contract AssetInspector(pubkey owner) {
             function checkAssetAmount(signature ownerSig, int minAmount) {
                 require(checkSig(ownerSig, owner));
                 require(tx.outputs[0].assets[0].amount >= minAmount);
@@ -72,15 +57,8 @@ fn test_asset_at_amount_parsing() {
 
     let output = result.unwrap();
 
-    // Find the server variant function
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkAssetAmount" && f.server_variant)
-        .expect("Should have checkAssetAmount server variant");
-
-    // Check that the ASM contains the asset at opcode
-    let asm_str = func.asm.join(" ");
+    // Check that the covenant ASM contains the asset at opcode
+    let asm_str = common::arkade_asm(&output, "checkAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETAT),
         "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
@@ -97,12 +75,7 @@ fn test_asset_at_amount_parsing() {
 #[test]
 fn test_asset_at_assetid_parsing() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract AssetIdInspector(pubkey serverKey, pubkey owner, bytes32 expectedTxid) {
+        contract AssetIdInspector(pubkey owner, bytes32 expectedTxid) {
             function checkAssetId(signature ownerSig) {
                 require(checkSig(ownerSig, owner));
                 let assetId = tx.outputs[0].assets[0].assetId;
@@ -119,15 +92,8 @@ fn test_asset_at_assetid_parsing() {
 
     let output = result.unwrap();
 
-    // Find the server variant function
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkAssetId" && f.server_variant)
-        .expect("Should have checkAssetId server variant");
-
-    // Check that the ASM contains the asset at opcode
-    let asm_str = func.asm.join(" ");
+    // Check that the covenant ASM contains the asset at opcode
+    let asm_str = common::arkade_asm(&output, "checkAssetId");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETAT),
         "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
@@ -144,12 +110,7 @@ fn test_asset_at_assetid_parsing() {
 #[test]
 fn test_input_asset_count() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract InputAssetCounter(pubkey serverKey, pubkey owner) {
+        contract InputAssetCounter(pubkey owner) {
             function checkInputAssets(signature ownerSig) {
                 require(checkSig(ownerSig, owner));
                 require(tx.inputs[0].assets.length >= 1);
@@ -166,15 +127,8 @@ fn test_input_asset_count() {
 
     let output = result.unwrap();
 
-    // Find the server variant function
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkInputAssets" && f.server_variant)
-        .expect("Should have checkInputAssets server variant");
-
-    // Check that the ASM contains the input asset count opcode
-    let asm_str = func.asm.join(" ");
+    // Check that the covenant ASM contains the input asset count opcode
+    let asm_str = common::arkade_asm(&output, "checkInputAssets");
     assert!(
         asm_str.contains(OP_INSPECTINASSETCOUNT),
         "Expected {OP_INSPECTINASSETCOUNT} in ASM: {}",
@@ -185,12 +139,7 @@ fn test_input_asset_count() {
 #[test]
 fn test_input_asset_at() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract InputAssetInspector(pubkey serverKey, pubkey owner) {
+        contract InputAssetInspector(pubkey owner) {
             function checkInputAssetAmount(signature ownerSig, int minAmount) {
                 require(checkSig(ownerSig, owner));
                 require(tx.inputs[0].assets[0].amount >= minAmount);
@@ -207,15 +156,8 @@ fn test_input_asset_at() {
 
     let output = result.unwrap();
 
-    // Find the server variant function
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkInputAssetAmount" && f.server_variant)
-        .expect("Should have checkInputAssetAmount server variant");
-
-    // Check that the ASM contains the input asset at opcode
-    let asm_str = func.asm.join(" ");
+    // Check that the covenant ASM contains the input asset at opcode
+    let asm_str = common::arkade_asm(&output, "checkInputAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTINASSETAT),
         "Expected {OP_INSPECTINASSETAT} in ASM: {}",
@@ -226,12 +168,7 @@ fn test_input_asset_at() {
 #[test]
 fn test_asset_count_with_variable_index() {
     let code = r#"
-        options {
-            server = serverKey;
-            exit = 144;
-        }
-
-        contract DynamicAssetCounter(pubkey serverKey, pubkey owner) {
+        contract DynamicAssetCounter(pubkey owner) {
             function checkAssets(signature ownerSig, int outputIdx) {
                 require(checkSig(ownerSig, owner));
                 require(tx.outputs[outputIdx].assets.length >= 1);
@@ -248,13 +185,7 @@ fn test_asset_count_with_variable_index() {
 
     let output = result.unwrap();
 
-    let func = output
-        .functions
-        .iter()
-        .find(|f| f.name == "checkAssets" && f.server_variant)
-        .expect("Should have checkAssets server variant");
-
-    let asm_str = func.asm.join(" ");
+    let asm_str = common::arkade_asm(&output, "checkAssets");
     // Should have the variable index placeholder
     assert!(
         asm_str.contains("<outputIdx>"),

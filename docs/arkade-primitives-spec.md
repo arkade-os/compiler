@@ -1,6 +1,6 @@
 # Arkade Primitives: Compiler Specification
 
-A single contract compiled to audit-grade opcodes, exercising every primitive in the Arkade compilation stack. The vehicle is `USDT0Bridge.receive()`: it touches recursive covenants, control asset gating, loop unrolling, streaming hashes, `checkSigFromStack`, asset lookup sentinels, type conversions, multi-group introspection, and branch normalization.
+A single contract compiled to audit-grade opcodes, exercising every primitive in the Arkade compilation stack. The vehicle is `USDT0Bridge.receive()`: it touches recursive covenants, control asset gating, loop unrolling, streaming hashes, `checkSigFromStack`, asset lookup success flags, type conversions, multi-group introspection, and branch normalization.
 
 ---
 
@@ -15,7 +15,7 @@ Each primitive gets a section number. The opcode listing references these.
 | P3 | Loop unrolling | `for index, value in array` → flat `OP_CHECKSIGFROMSTACK` sequence |
 | P4 | Streaming hash | `SHA256INITIALIZE / UPDATE / FINALIZE` for >520B |
 | P5 | `checkSigFromStack` | BIP340 Schnorr signature over arbitrary message |
-| P6 | Sentinel handling | `-1` from asset lookup must branch before arithmetic |
+| P6 | Asset lookup success flags | Consume the returned success flag with `OP_VERIFY` before arithmetic |
 | P7 | Type conversion | csn↔u64le↔u32le at every boundary |
 | P8 | Multi-group introspection | `INSPECTASSETGROUPSUM`, `INSPECTOUTASSETLOOKUP` |
 | P9 | Branch normalization | IF/ELSE arms leave identical stack depth/types |
@@ -34,10 +34,10 @@ options {
 }
 
 contract USDT0Bridge(
-  bytes32 usdt0AssetId_txid,
-  int     usdt0AssetId_gidx,
-  bytes32 ctrlAssetId_txid,
-  int     ctrlAssetId_gidx,
+  bytes32 usdt0AssetIdTxid,
+  int     usdt0AssetIdGidx,
+  bytes32 ctrlAssetIdTxid,
+  int     ctrlAssetIdGidx,
   bytes32 thisArkId,
   pubkey  issuerPk,
   pubkey  serverPk,
@@ -79,18 +79,18 @@ contract USDT0Bridge(
     require(valid >= dvnThreshold, "quorum failed");
 
     // --- Control asset present ---
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
+    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
 
     // --- Mint output correct ---
-    require(tx.outputs[1].assets.lookup(usdt0AssetId) >= amount, "mint short");
+    require(tx.outputs[1].assets.lookup(usdt0AssetIdTxid, usdt0AssetIdGidx) >= amount, "mint short");
     require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk), "wrong dest");
 
     // --- Recursive covenant ---
     require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
 
     // --- Control asset not leaked ---
-    require(tx.outputs[0].assets.lookup(ctrlAssetId) >=
-            tx.inputs[0].assets.lookup(ctrlAssetId), "ctrl leaked");
+    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) >=
+            tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx), "ctrl leaked");
   }
 }
 ```
@@ -105,8 +105,7 @@ contract USDT0Bridge(
 |---|---|---|---|---|
 | `csn` | 1-4 bytes | CScriptNum | Witness inputs, OP_0..16, OP_PICK | OP_PICK, OP_IF, OP_EQUAL, OP_VERIFY |
 | `u32le` | 4 bytes | Unsigned LE | OP_INSPECTLOCKTIME | OP_LE32TOLE64 |
-| `u64le` | 8 bytes | Signed LE | INSPECTASSETGROUPSUM, ADD64, INSPECTINASSETLOOKUP (non-sentinel) | ADD64, GREATERTHAN64, EQUAL |
-| `sentinel` | varies | CScriptNum `-1` | INSPECTINASSETLOOKUP (not found), INSPECTOUTASSETLOOKUP (not found) | Must branch before arithmetic |
+| `u64le` | 8 bytes | Unsigned LE | INSPECTASSETGROUPSUM, ADD64, asset lookup result | ADD64, GREATERTHAN64, EQUAL |
 | `bytes32` | 32 bytes | Raw | SHA256FINALIZE, witness pushes | SHA256UPDATE, EQUAL, CHECKSIGFROMSTACK |
 | `pubkey` | 32 bytes | x-only (BIP340) | Witness, constructor literal | CHECKSIG, CHECKSIGFROMSTACK, SingleSig |
 | `signature` | 64 bytes | BIP340 Schnorr | Witness | CHECKSIG, CHECKSIGFROMSTACK |
@@ -116,7 +115,6 @@ contract USDT0Bridge(
 - `csn → u64le`: `OP_SCRIPTNUMTOLE64`
 - `u32le → u64le`: `OP_LE32TOLE64`
 - `u64le → csn`: `OP_LE64TOSCRIPTNUM`
-- `sentinel → u64le`: Illegal. Branch on `OP_1NEGATE OP_EQUAL` first.
 
 ---
 
@@ -141,7 +139,7 @@ Server variant: serverSig on top. Non-server variant: absent.
 ## Opcode Listing: Server Variant
 
 Stack annotation: `// [bottom ... | top]`
-Type suffixes: `(c)` = csn, `(u)` = u64le, `(4)` = u32le, `(s)` = sentinel-or-u64le, `(32)` = bytes32, `(pk)` = pubkey, `(sig)` = signature, `(hc)` = hash context
+Type suffixes: `(c)` = csn, `(u)` = u64le, `(4)` = u32le, `(32)` = bytes32, `(pk)` = pubkey, `(sig)` = signature, `(hc)` = hash context
 
 Constructor literals shown as `<name>`. These are byte-pushes baked into the tapscript.
 
@@ -313,19 +311,13 @@ OP_VERIFY                               ; [srcId, burnTx, recip, sig0, sig1, sig
 ; ╔═══════════════════════════════════════════════════════════╗
 ; ║  PHASE 6: CONTROL ASSET PRESENT IN INPUT          [P6, P8] ║
 ; ╚═══════════════════════════════════════════════════════════╝
-; require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0)
+; require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0)
 
 OP_0                                    ; input index 0
-<ctrlAssetId_txid>                      ; 32-byte push
-<ctrlAssetId_gidx>                      ; 2-byte push (u16 LE)
-OP_INSPECTINASSETLOOKUP                 ; [.., msg, ctrlIn(s)]
-
-; SENTINEL GUARD: -1 means asset not found at this input
-OP_DUP                                  ; [.., ctrlIn(s), ctrlIn(s)]
-OP_1NEGATE                              ; [.., ctrlIn(s), ctrlIn(s), -1(c)]
-OP_EQUAL                                ; [.., ctrlIn(s), isMissing(c)]
-OP_NOT                                  ; [.., ctrlIn(s), isPresent(c)]
-OP_VERIFY                               ; [.., ctrlIn(u)]  -- now known to be u64le
+<ctrlAssetIdTxid>                       ; 32-byte push
+<ctrlAssetIdGidx>                       ; minimally encoded ScriptNum
+OP_INSPECTINASSETLOOKUP                 ; [.., msg, ctrlIn(u), successFlag(c)]
+OP_VERIFY                               ; [.., ctrlIn(u)]
                                         ; Save for Phase 9 (ctrl leak check)
                                         ; [srcId, burnTx, recip, sig0, sig1, sig2,
                                         ;  amt(u), msg(32), ctrlIn(u)]
@@ -333,31 +325,20 @@ OP_VERIFY                               ; [.., ctrlIn(u)]  -- now known to be u6
 ; ╔═══════════════════════════════════════════════════════════╗
 ; ║  PHASE 7: MINT OUTPUT CORRECT                    [P6, P8] ║
 ; ╚═══════════════════════════════════════════════════════════╝
-; require(tx.outputs[1].assets.lookup(usdt0AssetId) >= amount)
+; require(tx.outputs[1].assets.lookup(usdt0AssetIdTxid, usdt0AssetIdGidx) >= amount)
 ; require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk))
 
 ; Check mint amount
 OP_1                                    ; output index 1
-<usdt0AssetId_txid>                     ; 32-byte push
-<usdt0AssetId_gidx>                     ; 2-byte push
-OP_INSPECTOUTASSETLOOKUP                ; [.., ctrlIn, mintAmt(s)]
-
-; SENTINEL GUARD
-OP_DUP
-OP_1NEGATE
-OP_EQUAL
-OP_NOT
+<usdt0AssetIdTxid>                      ; 32-byte push
+<usdt0AssetIdGidx>                      ; minimally encoded ScriptNum
+OP_INSPECTOUTASSETLOOKUP                ; [.., ctrlIn, mintAmt(u), successFlag(c)]
 OP_VERIFY                               ; [.., ctrlIn, mintAmt(u)]
 
 ; mintAmt >= amount (both u64le)
 OP_3 OP_PICK                            ; copy amt(u)
-                                        ; depth from top: ctrlIn=1, msg=2, amt=3... 
-                                        ; Recount:
-                                        ; [srcId(8), burnTx(7), recip(6), sig0(5), sig1(4),
-                                        ;  sig2(3), amt(2), msg(1), ctrlIn(0), mintAmt(top)]
-                                        ; Wait, mintAmt IS top. amt at depth 3 from mintAmt.
-                                        ; But OP_PICK index counts from top-1.
-                                        ; top=mintAmt(0), ctrlIn(1), msg(2), amt(3).
+                                        ; depth from top: mintAmt=0, ctrlIn=1,
+                                        ; msg=2, amt=3
                                         ; OP_3 OP_PICK copies amt. Correct.
 OP_SWAP                                 ; [.., amt(u), mintAmt(u)]
 OP_GREATERTHANOREQUAL64                 ; [.., flag(c)]
@@ -397,19 +378,13 @@ OP_VERIFY                               ; [srcId, burnTx, recip, sig0, sig1, sig
 ; ╔═══════════════════════════════════════════════════════════╗
 ; ║  PHASE 9: CONTROL ASSET NOT LEAKED              [P2, P6] ║
 ; ╚═══════════════════════════════════════════════════════════╝
-; require(tx.outputs[0].assets.lookup(ctrlAssetId) >= tx.inputs[0].assets.lookup(ctrlAssetId))
+; require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) >= tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx))
 ; ctrlIn is already on the stack from Phase 6.
 
 OP_0                                    ; output index 0
-<ctrlAssetId_txid>
-<ctrlAssetId_gidx>
-OP_INSPECTOUTASSETLOOKUP                ; [.., msg, ctrlIn(u), ctrlOut(s)]
-
-; SENTINEL GUARD
-OP_DUP
-OP_1NEGATE
-OP_EQUAL
-OP_NOT
+<ctrlAssetIdTxid>
+<ctrlAssetIdGidx>
+OP_INSPECTOUTASSETLOOKUP                ; [.., msg, ctrlIn(u), ctrlOut(u), successFlag(c)]
 OP_VERIFY                               ; [.., msg, ctrlIn(u), ctrlOut(u)]
 
 ; ctrlOut >= ctrlIn
@@ -446,14 +421,14 @@ The DVN valid counter uses standard `OP_ADD` on CScriptNum values (0 or 1, accum
 
 **Verified:** Correct. Using `OP_ADD64` here would be wasteful (extra overflow flag to consume) and require converting the bool result to u64le first.
 
-### A3: Sentinel guard on every asset lookup
+### A3: Success flag consumption on every asset lookup
 
 Three asset lookups in the contract:
-1. Phase 6: `INSPECTINASSETLOOKUP` for ctrl in input 0 (guarded)
-2. Phase 7: `INSPECTOUTASSETLOOKUP` for usdt0 in output 1 (guarded)
-3. Phase 9: `INSPECTOUTASSETLOOKUP` for ctrl in output 0 (guarded)
+1. Phase 6: `INSPECTINASSETLOOKUP` for ctrl in input 0
+2. Phase 7: `INSPECTOUTASSETLOOKUP` for usdt0 in output 1
+3. Phase 9: `INSPECTOUTASSETLOOKUP` for ctrl in output 0
 
-All three have the 5-opcode sentinel guard: `OP_DUP OP_1NEGATE OP_EQUAL OP_NOT OP_VERIFY`. Correct.
+All three return `(result, successFlag)` and consume `successFlag` immediately with `OP_VERIFY`, leaving the typed result for the comparison. Correct.
 
 ### A4: Streaming hash argument order
 
@@ -494,7 +469,7 @@ After Phase 6, the stack is:
 ```
 [srcId, burnTx, recip, sig0, sig1, sig2, amt(u), msg(32), ctrlIn(u)]
 ```
-Phase 7 does `INSPECTOUTASSETLOOKUP` which pushes `mintAmt(s)`. After sentinel guard, stack is:
+Phase 7 does `INSPECTOUTASSETLOOKUP`, which pushes `mintAmt(u)` and `successFlag(c)`. After `OP_VERIFY` consumes the flag, the stack is:
 ```
 [srcId(9), burnTx(8), recip(7), sig0(6), sig1(5), sig2(4), amt(3), msg(2), ctrlIn(1), mintAmt(0)]
 ```
@@ -521,14 +496,14 @@ After Phase 9, stack is:
 | Phase 4: streaming hash | 16 | 32 | 0 |
 | Phase 5: DVN quorum (3 iters) | 24 | 96 (3 x 32-byte pubkeys) | 0 |
 | Phase 5: quorum check | 3 | 1 (threshold) | 0 |
-| Phase 6: ctrl present | 9 | 34 | 0 |
-| Phase 7: mint output | 14 | 36 | 0 |
+| Phase 6: ctrl present | 5 | 34 | 0 |
+| Phase 7: mint output | 10 | 36 | 0 |
 | Phase 8: recursive covenant | 5 | 0 | 0 |
-| Phase 9: ctrl not leaked | 12 | 34 | 0 |
+| Phase 9: ctrl not leaked | 8 | 34 | 0 |
 | Phase 10: cleanup | 5 | 0 | 0 |
-| **Total** | **~102** | **~305** | **1** |
+| **Total** | **~90** | **~305** | **1** |
 
-**Script size:** ~102 opcodes + ~305 bytes push data + ~20 push-length prefixes = **~427 bytes**.
+**Script size:** ~90 opcodes + ~305 bytes push data + ~20 push-length prefixes = **~415 bytes**.
 
 **Sigops budget:** 50 + witness_size. Witness = 1 serverSig (64B) + 3 dvnSigs (192B) + 1 amount (~4B) + 1 sourceArkId (32B) + 1 burnTxId (32B) + 1 recipientPk (32B) + CompactSize prefixes (~8B) = ~364B. Budget = 50 + 364 = **414**. Cost = 50 (one CHECKSIGVERIFY). Passes with 364 remaining.
 
@@ -544,7 +519,7 @@ These apply to any Arkade contract, not just Bridge.
 
 1. **Type boundary conversion.** Every u64le arithmetic operand is exactly 8 bytes. Insert `OP_SCRIPTNUMTOLE64` at csn→u64le boundaries. Insert `OP_LE32TOLE64` at u32le→u64le boundaries. Constructor constants used in u64le context are pre-converted at compile time.
 
-2. **Sentinel branching.** Every `INSPECTINASSETLOOKUP` and `INSPECTOUTASSETLOOKUP` result is guarded with `OP_DUP OP_1NEGATE OP_EQUAL OP_NOT OP_VERIFY` before any arithmetic or comparison.
+2. **Asset lookup success flag consumption.** Every `INSPECTINASSETLOOKUP` and `INSPECTOUTASSETLOOKUP` pushes `(result, successFlag)`. The compiler consumes `successFlag` immediately with `OP_VERIFY` before using the result in arithmetic or comparison.
 
 3. **Overflow flag consumption.** Every `OP_ADD64`, `OP_SUB64`, `OP_MUL64`, `OP_DIV64` pushes result + overflow flag. The flag is consumed by `OP_VERIFY` immediately. The compiler never leaves an overflow flag on the stack across a branch boundary.
 

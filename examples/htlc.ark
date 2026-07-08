@@ -1,43 +1,31 @@
-// Contract configuration options
-options {
-  // Server key 
-  server = server;
-  
-  // Renewal timelock: 7 days (1008 blocks)
-  // The contract must be renewed with the Arkade server within this period
-  renew = 1008;
-  
-  // Exit timelock: 24 hours (144 blocks)
-  // Time required to exit unilaterally without server involvement
-  exit = 144;
-}
-
 contract HTLC(
   pubkey sender,
   pubkey receiver,
-  bytes hash,
-  int refundTime
+  bytes20 preimageHash,
+  int refundTime,
+  int exit
 ) {
-  // Cooperative close path
-  function together(signature senderSig, signature receiverSig) {
-    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
+  // Covenants (emulator): pin the payout to the right party for >= input value.
+  function claim() {
+    require(tx.outputs[0].value >= tx.inputs[0].value);
   }
-  
-  // Refund path
-  // This will automatically be compiled into:
-  // 1. Cooperative path: checkSig(sender) && after refundTime && checkSig(server)
-  // 2. Exit path: checkSig(sender) && after refundTime && after 24 hours
-  function refund(signature senderSig) {
-    require(checkSig(senderSig, sender));
+  function refund() {
+    require(tx.outputs[0].value >= tx.inputs[0].value);
+  }
+
+  // L1 leaves, bound by name.
+  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+  }
+  function refund(signature serverSig, signature emulatorSig) tapscript {
     require(tx.time >= refundTime);
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
   }
-  
-  // Claim path
-  // This will automatically be compiled into:
-  // 1. Cooperative path: checkSig(receiver) && sha256(preimage) == hash && checkSig(server)
-  // 2. Exit path: checkSig(receiver) && sha256(preimage) == hash && after 24 hours
-  function claim(signature receiverSig, bytes preimage) {
-    require(checkSig(receiverSig, receiver));
-    require(sha256(preimage) == hash);
+
+  // Unilateral exit (CSV).
+  function unilateral(signature senderSig) tapscript {
+    require(older(exit));
+    require(checkSig(senderSig, sender));
   }
-} 
+}

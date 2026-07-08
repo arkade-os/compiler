@@ -74,7 +74,7 @@ impl ArkType {
         }
     }
 
-    /// Wire-encoding descriptor used in `witnessSchema` / client stub output.
+    /// Wire-encoding descriptor used in leaf `witness` / client stub output.
     ///
     /// These strings are stable identifiers; downstream code generators
     /// (TypeScript, Go, etc.) can switch on them to pick the right serializer.
@@ -136,27 +136,22 @@ impl TypeError {
 pub type Scope = HashMap<String, ArkType>;
 
 pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
-    params
-        .iter()
-        .flat_map(|p| {
-            if p.param_type.ends_with("[]") {
-                let base = p.param_type.trim_end_matches("[]");
-                let elem_type = ArkType::parse(base);
-                // Register the bare name as the array type, plus each flattened
-                // index form (name_0 … name_{N-1}).  The count must match
-                // DEFAULT_ARRAY_LENGTH so the type checker and the compiler
-                // always agree on how many elements exist.
-                let mut entries =
-                    vec![(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())))];
-                for i in 0..DEFAULT_ARRAY_LENGTH {
-                    entries.push((format!("{}_{}", p.name, i), elem_type.clone()));
-                }
-                entries
-            } else {
-                vec![(p.name.clone(), ArkType::parse(&p.param_type))]
+    let mut scope = Scope::new();
+    for p in params {
+        if let Some(base) = p.param_type.strip_suffix("[]") {
+            let elem_type = ArkType::parse(base);
+            // Register the bare name as the array type, plus each flattened
+            // index form (name_0 … name_{N-1}). The count must match
+            // DEFAULT_ARRAY_LENGTH so the type checker and compiler agree.
+            scope.insert(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())));
+            for i in 0..DEFAULT_ARRAY_LENGTH {
+                scope.insert(format!("{}_{}", p.name, i), elem_type.clone());
             }
-        })
-        .collect()
+        } else {
+            scope.insert(p.name.clone(), ArkType::parse(&p.param_type));
+        }
+    }
+    scope
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -423,6 +418,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::TxIntrospection { property } => match property.as_str() {
             "version" | "locktime" => ArkType::Uint32Le,
             "numInputs" | "numOutputs" | "weight" => ArkType::Int,
+            "id" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
@@ -433,6 +429,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             "sequence" => ArkType::Uint32Le,
             "outpoint" => ArkType::Bytes32,
             "issuance" => ArkType::Bytes,
+            "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
@@ -446,23 +443,35 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Asset introspection
         Expression::AssetLookup { .. } => ArkType::Uint64Le,
+        Expression::AssetHas { .. } => ArkType::Bool,
         Expression::AssetCount { .. } => ArkType::Int,
         Expression::AssetAt { property, .. } => match property.as_str() {
             "amount" => ArkType::Uint64Le,
+            // TODO(asset-id-struct): `.assetId` is really a two-item canonical
+            // Asset ID (asset_txid, asset_gidx), NOT a single bytes32. Typed as
+            // Bytes32 only as a stopgap until the composite `AssetId` struct
+            // return type lands (separate PR).
             "assetId" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // Asset group introspection
         Expression::GroupFind { .. } => ArkType::Int,
+        Expression::GroupHas { .. } => ArkType::Bool,
+        Expression::GroupControlIs { .. } => ArkType::Bool,
         Expression::GroupSum { .. } => ArkType::Uint64Le,
         Expression::GroupNumIO { .. } => ArkType::Int,
         Expression::AssetGroupsLength => ArkType::Int,
         Expression::GroupProperty { property, .. } => match property.as_str() {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Uint64Le,
             "numInputs" | "numOutputs" => ArkType::Int,
-            "control" | "metadataHash" | "assetId" => ArkType::Bytes32,
-            "isFresh" => ArkType::Bool,
+            // TODO(asset-id-struct): `assetId` is really a two-item canonical
+            // Asset ID (asset_txid, asset_gidx), not a single bytes32; typed
+            // Bytes32 only as a stopgap until the composite `AssetId` struct
+            // lands, so `==` over it is unsound until then. `metadataHash`
+            // is genuinely a 32-byte hash and is correct.
+            "metadataHash" | "assetId" => ArkType::Bytes32,
+            "isFresh" | "hasControl" => ArkType::Bool,
             _ => ArkType::Unknown,
         },
         Expression::GroupIOAccess { property, .. } => match property.as_deref() {
@@ -471,14 +480,14 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             _ => ArkType::Unknown,
         },
 
-        // Streaming SHA256 — all produce a 32-byte digest or midstate
-        Expression::Sha256Initialize { .. }
+        // SHA256 — all produce a 32-byte digest or midstate
+        Expression::Sha256 { .. }
+        | Expression::Sha256Initialize { .. }
         | Expression::Sha256Update { .. }
         | Expression::Sha256Finalize { .. } => ArkType::Bytes32,
 
         // Byte-string ops
         Expression::Concat { .. } => ArkType::Bytes,
-        Expression::Sha256 { .. } => ArkType::Bytes32,
 
         // Conversion and arithmetic
         Expression::Neg64 { .. } => ArkType::Uint64Le,
@@ -492,19 +501,19 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => ArkType::Bool,
 
-        // Array operations
-        Expression::ArrayIndex { array, .. } => {
-            // The element type is the array's inner type.
-            if let ArkType::Array(inner) = infer_type(array, scope) {
-                *inner
-            } else {
-                ArkType::Unknown
-            }
-        }
-        Expression::ArrayLength(_) => ArkType::Int,
-
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,
+
+        // Byte-string manipulation (introspector extensions)
+        Expression::Substr { .. } => ArkType::Bytes,
+        Expression::Cat { .. } => ArkType::Bytes,
+        Expression::Bin2Num { .. } => ArkType::Uint64Le,
+        Expression::Num2Bin { .. } => ArkType::Bytes,
+        Expression::SizeOf { .. } => ArkType::Int,
+
+        // Packet introspection — returns raw packet bytes.
+        Expression::PacketInspect { .. } => ArkType::Bytes,
+        Expression::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.
         Expression::BinaryOp { left, op, right } => {

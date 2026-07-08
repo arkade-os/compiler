@@ -23,11 +23,6 @@
 
 import "stability_vault.ark";
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract StabilityOffer(
   pubkey  providerPk,
   pubkey  oraclePk,
@@ -84,11 +79,6 @@ contract StabilityOffer(
     int remainingCapacity     = maxExposureBTC - userBTC;
     int remainingCollateral   = remainingCapacity * collateralRatioPct / 100;
 
-    // takeFeeSats > 330  → fee is its own output (output[1]); remaining offer
-    //                       (if any) goes at output[2].
-    // takeFeeSats ≤ 330  → fee is rolled into the vault output (provider
-    //                       reclaims it on exit since vault.value > totalCollateral
-    //                       always flows to provider). Remaining offer at output[1].
     if (takeFeeSats > 330) {
       require(
         tx.outputs[0].scriptPubKey == new StabilityVault(
@@ -99,7 +89,7 @@ contract StabilityOffer(
         "invalid vault output"
       );
       require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
-      require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
+      require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk, exit), "output 1 not provider");
       require(tx.outputs[1].value >= takeFeeSats, "provider underpaid take fee");
       if (remainingCapacity > 0) {
         require(
@@ -113,7 +103,6 @@ contract StabilityOffer(
         require(tx.outputs[2].value >= remainingCollateral, "insufficient offer collateral");
       }
     } else {
-      // Dust fee rolled into the vault — vault collects totalCollateral + takeFeeSats.
       require(
         tx.outputs[0].scriptPubKey == new StabilityVault(
           seekerPk, providerPk, oraclePk, ticker,
@@ -143,5 +132,14 @@ contract StabilityOffer(
   // -------------------------------------------------------------------------
   function withdraw(signature providerSig) {
     require(checkSig(providerSig, providerPk), "invalid provider sig");
+  }
+
+  // -------------------------------------------------------------------------
+  // UNILATERAL EXIT (CSV)
+  // Provider recovers locked collateral after exit delay (Arkade operator offline).
+  // -------------------------------------------------------------------------
+  function unilateral(signature providerSig) tapscript {
+    require(older(exit));
+    require(checkSig(providerSig, providerPk));
   }
 }

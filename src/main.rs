@@ -2,12 +2,7 @@ use clap::Parser as ClapParser;
 use std::fs;
 use std::path::Path;
 
-mod compiler;
-mod models;
-mod opcodes;
-mod parser;
-mod typechecker;
-mod validator;
+use arkade_compiler::compile;
 
 /// Arkade Compiler CLI
 ///
@@ -17,14 +12,9 @@ mod validator;
 ///
 /// The JSON output includes:
 /// - Contract name
-/// - Parameters
-/// - Server key placeholder
-/// - Script paths for each function
-///
-/// Each script path includes a serverVariant flag. When using the script:
-/// - If serverVariant is true, use the script as-is
-/// - If serverVariant is false, libraries should add an exit delay timelock
-///   (default 48 hours) for additional security
+/// - Constructor parameters
+/// - Spend groups with optional arkade covenants
+/// - L1 tapleaves and witness schemas
 
 // CLI arguments
 #[derive(ClapParser, Debug)]
@@ -62,11 +52,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_code = fs::read_to_string(&args.file)?;
 
     // Compile source code to JSON
-    let output = match compiler::compile(&source_code) {
+    let output = match compile(&source_code) {
         Ok(json) => json,
         Err(err) => {
             eprintln!("Compilation error: {}", err);
-            return Err(err.into());
+            return Err(err);
         }
     };
 

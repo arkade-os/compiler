@@ -14,6 +14,16 @@ const projects = {
             'stability_offer.ark': contracts.stability_offer,
         }
     },
+    layerzero: {
+        name: 'LayerZero / USDT0',
+        description: 'LayerZero pathway Endpoint + USDT0 OApp with receive/send invocation markers',
+        files: {
+            'endpoint.ark': contracts.endpoint,
+            'oapp.ark': contracts.oapp,
+            'receive_marker.ark': contracts.receive_marker,
+            'send_marker.ark': contracts.send_marker,
+        }
+    },
     options: {
         name: 'Options',
         description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
@@ -173,7 +183,7 @@ function createFileInFolder(folderId, fileName) {
     const project = projects[folderId];
     if (!project) return;
     if (project.files[fileName]) return; // already exists
-    const defaultCode = `// ${fileName}\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract MyContract(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
+    const defaultCode = `// ${fileName}\n\ncontract MyContract(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
     project.files[fileName] = defaultCode;
     saveToStorage();
     selectProjectFile(folderId, fileName);
@@ -183,7 +193,7 @@ function createStandaloneFile(name) {
     if (!name.endsWith('.ark')) name += '.ark';
     const displayName = name.replace(/\.ark$/, '');
     const id = uniqueId(generateId(displayName), examples);
-    const defaultCode = `// ${displayName} Contract\n\noptions {\n  server = serverPk;\n  exit = 144;\n}\n\ncontract ${displayName}(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
+    const defaultCode = `// ${displayName} Contract\n\ncontract ${displayName}(\n  pubkey user\n) {\n  function spend(signature userSig) {\n    require(checkSig(userSig, user));\n  }\n}\n`;
     examples[id] = { name: displayName, code: defaultCode };
     expandedFolders.add('_examples');
     saveToStorage();
@@ -1177,12 +1187,17 @@ function displayAsm(jsonStr) {
         let html = '';
 
         if (data.functions && data.functions.length > 0) {
-            for (const func of data.functions) {
-                const variant = func.serverVariant ? 'Cooperative' : 'Exit';
-                html += `<span class="asm-function">${func.name} <span class="asm-variant">(${variant} path)</span></span>\n`;
-
-                if (func.asm) {
-                    html += highlightAsm(func.asm) + '\n\n';
+            for (const group of data.functions) {
+                if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
+                    html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
+                    html += highlightAsm(group.arkade.asm) + '\n\n';
+                }
+                for (const leaf of (group.leaves || [])) {
+                    const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
+                    html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
+                    if (leaf.asm && leaf.asm.length > 0) {
+                        html += highlightAsm(leaf.asm) + '\n\n';
+                    }
                 }
             }
         } else {

@@ -5,32 +5,30 @@
 // 1. deposit() - Owner deposits tokens; output must hold at least as many as input
 // 2. withdraw() - Owner withdraws tokens with server co-signature
 //
-// Asset lookups use the OP_INSPECTINASSETLOOKUP / OP_INSPECTOUTASSETLOOKUP
-// opcodes with sentinel-guard patterns for safe balance verification.
-
-options {
-  server = server;
-  exit = 144;
-}
+// Uses asset lookups on tx.inputs and tx.outputs with arithmetic
+// comparisons for balance verification.
 
 contract TokenVault(
   pubkey ownerPk,
-  bytes32 tokenAssetId,
-  bytes32 ctrlAssetId
+  bytes32 tokenAssetIdTxid,
+  int tokenAssetIdGidx,
+  bytes32 ctrlAssetIdTxid,
+  int ctrlAssetIdGidx,
+  int exit
 ) {
   // Deposit: ensure the control asset stays in the output
   // and output token balance >= input token balance
   function deposit(signature ownerSig) {
     // Control asset must be present in input 0
-    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in input");
+    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in input");
 
     // Control asset must be present in output 0
-    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
+    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in output");
 
     // Output tokens >= input tokens (no leaking tokens)
     require(
-      tx.outputs[0].assets.lookup(tokenAssetId) >=
-        tx.inputs[0].assets.lookup(tokenAssetId),
+      tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >=
+        tx.inputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx),
       "token balance decreased"
     );
 
@@ -41,9 +39,15 @@ contract TokenVault(
   // Withdraw: owner withdraws tokens cooperatively with server
   function withdraw(signature ownerSig, int amount) {
     // Control asset must stay in the output
-    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
+    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in output");
 
     // Owner must sign
     require(checkSig(ownerSig, ownerPk), "invalid owner signature");
+  }
+
+  // Unilateral exit (CSV): owner recovers after exit delay.
+  function unilateral(signature ownerSig) tapscript {
+    require(older(exit));
+    require(checkSig(ownerSig, ownerPk));
   }
 }

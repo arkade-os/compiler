@@ -1,28 +1,20 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_2, OP_3, OP_5, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP, OP_NUMEQUAL,
+    OP_2, OP_3, OP_5, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGVERIFY, OP_NUMEQUAL,
 };
 use serde_json::Value;
 use std::fs;
 use tempfile::tempdir;
 
-// Threshold multisig example source code
-const THRESHOLD_MULTISIG_CODE: &str = r#"// Contract configuration options
-options {
-  // Server key parameter from contract parameters
-  server = server;
+mod common;
+use common::{arkade_asm_tokens, arkade_inputs, leaf_asm};
 
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
-contract ThresholdMultisig(
+const THRESHOLD_MULTISIG_CODE: &str = r#"contract ThresholdMultisig(
   pubkey signer,
   pubkey signer1,
   pubkey signer2,
   pubkey signer3,
-  pubkey signer4,
-  pubkey server
+  pubkey signer4
 ) {
   // n-of-n using no literal threshold
   function twoOfTwo(signature signerSig, signature signer1Sig) {
@@ -42,7 +34,6 @@ contract ThresholdMultisig(
 
 #[test]
 fn test_threshold_multisig() {
-    // Compile the contract
     let result = compile(THRESHOLD_MULTISIG_CODE);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
@@ -51,8 +42,7 @@ fn test_threshold_multisig() {
     // Verify contract name
     assert_eq!(output.name, "ThresholdMultisig");
 
-    // Verify parameters
-    assert_eq!(output.parameters.len(), 6);
+    assert_eq!(output.parameters.len(), 5);
     assert_eq!(output.parameters[0].name, "signer");
     assert_eq!(output.parameters[0].param_type, "pubkey");
     assert_eq!(output.parameters[1].name, "signer1");
@@ -63,204 +53,134 @@ fn test_threshold_multisig() {
     assert_eq!(output.parameters[3].param_type, "pubkey");
     assert_eq!(output.parameters[4].name, "signer4");
     assert_eq!(output.parameters[4].param_type, "pubkey");
-    assert_eq!(output.parameters[5].name, "server");
-    assert_eq!(output.parameters[5].param_type, "pubkey");
 
-    // Verify functions - now we have 6 functions (3 functions x 2 variants)
-    assert_eq!(output.functions.len(), 6);
+    assert_eq!(output.functions.len(), 3);
 
-    // Verify twoOfTwo function with server variant
-    let two_of_two_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "twoOfTwo" && f.server_variant)
-        .unwrap();
+    // ── twoOfTwo group ────────────────────────────────────────────────────────
+    // Covenant inputs: the two signer signatures
+    let tof_inputs = arkade_inputs(&output, "twoOfTwo");
+    assert_eq!(tof_inputs.len(), 2);
+    assert_eq!(tof_inputs[0], "signerSig");
+    assert_eq!(tof_inputs[1], "signer1Sig");
 
-    // Check function inputs
-    assert_eq!(two_of_two_function.function_inputs.len(), 2);
+    // Covenant ASM: 2-of-2 CHECKSIGADD form.
+    let tof_tokens = arkade_asm_tokens(&output, "twoOfTwo");
+    assert_eq!(tof_tokens.len(), 6);
+    assert_eq!(tof_tokens[0], "<signer>");
+    assert_eq!(tof_tokens[1], OP_CHECKSIG);
+    assert_eq!(tof_tokens[2], "<signer1>");
+    assert_eq!(tof_tokens[3], OP_CHECKSIGADD);
+    assert_eq!(tof_tokens[4], OP_2);
+    assert_eq!(tof_tokens[5], OP_NUMEQUAL);
 
-    // Check require types
-    assert_eq!(two_of_two_function.require[0].req_type, "multisig");
+    // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
+    let tof_leaf = leaf_asm(&output, "twoOfTwo", "twoOfTwo");
+    assert!(
+        tof_leaf.contains("<SERVER_KEY>"),
+        "twoOfTwo leaf: missing <SERVER_KEY>"
+    );
+    assert!(
+        tof_leaf.contains(OP_CHECKSIGVERIFY),
+        "twoOfTwo leaf: missing OP_CHECKSIGVERIFY"
+    );
+    assert!(
+        tof_leaf.contains(OP_CHECKSIG),
+        "twoOfTwo leaf: missing OP_CHECKSIG"
+    );
 
-    // Check assembly instructions
-    assert_eq!(two_of_two_function.asm.len(), 9);
-    assert_eq!(two_of_two_function.asm[0], "<signer>");
-    assert_eq!(two_of_two_function.asm[1], OP_CHECKSIG);
-    assert_eq!(two_of_two_function.asm[2], "<signer1>");
-    assert_eq!(two_of_two_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(two_of_two_function.asm[4], OP_2);
-    assert_eq!(two_of_two_function.asm[5], OP_NUMEQUAL);
-    assert_eq!(two_of_two_function.asm[6], "<SERVER_KEY>");
-    assert_eq!(two_of_two_function.asm[7], "<serverSig>");
-    assert_eq!(two_of_two_function.asm[8], OP_CHECKSIG);
+    // ── fiveOfFive group ──────────────────────────────────────────────────────
+    // Covenant inputs: all 5 signer signatures
+    let fof_inputs = arkade_inputs(&output, "fiveOfFive");
+    assert_eq!(fof_inputs.len(), 5);
+    assert_eq!(fof_inputs[0], "signerSig");
+    assert_eq!(fof_inputs[1], "signer1Sig");
+    assert_eq!(fof_inputs[2], "signer2Sig");
+    assert_eq!(fof_inputs[3], "signer3Sig");
+    assert_eq!(fof_inputs[4], "signer4Sig");
 
-    // Verify fiveOfFive function with server variant
-    let five_of_five_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "fiveOfFive" && f.server_variant)
-        .unwrap();
+    // Covenant ASM: 5-of-5 CHECKSIGADD form.
+    let fof_tokens = arkade_asm_tokens(&output, "fiveOfFive");
+    assert_eq!(fof_tokens.len(), 12);
+    assert_eq!(fof_tokens[0], "<signer>");
+    assert_eq!(fof_tokens[1], OP_CHECKSIG);
+    assert_eq!(fof_tokens[2], "<signer1>");
+    assert_eq!(fof_tokens[3], OP_CHECKSIGADD);
+    assert_eq!(fof_tokens[4], "<signer2>");
+    assert_eq!(fof_tokens[5], OP_CHECKSIGADD);
+    assert_eq!(fof_tokens[6], "<signer3>");
+    assert_eq!(fof_tokens[7], OP_CHECKSIGADD);
+    assert_eq!(fof_tokens[8], "<signer4>");
+    assert_eq!(fof_tokens[9], OP_CHECKSIGADD);
+    assert_eq!(fof_tokens[10], OP_5);
+    assert_eq!(fof_tokens[11], OP_NUMEQUAL);
 
-    // Check function inputs
-    assert_eq!(five_of_five_function.function_inputs.len(), 5);
+    // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
+    let fof_leaf = leaf_asm(&output, "fiveOfFive", "fiveOfFive");
+    assert!(
+        fof_leaf.contains("<SERVER_KEY>"),
+        "fiveOfFive leaf: missing <SERVER_KEY>"
+    );
+    assert!(
+        fof_leaf.contains(OP_CHECKSIGVERIFY),
+        "fiveOfFive leaf: missing OP_CHECKSIGVERIFY"
+    );
+    assert!(
+        fof_leaf.contains(OP_CHECKSIG),
+        "fiveOfFive leaf: missing OP_CHECKSIG"
+    );
 
-    // Check require types
-    assert_eq!(five_of_five_function.require[0].req_type, "multisig");
+    // ── threeOfFive group ─────────────────────────────────────────────────────
+    // Covenant inputs: all 5 signer signatures
+    let three_inputs = arkade_inputs(&output, "threeOfFive");
+    assert_eq!(three_inputs.len(), 5);
+    assert_eq!(three_inputs[0], "signerSig");
+    assert_eq!(three_inputs[1], "signer1Sig");
+    assert_eq!(three_inputs[2], "signer2Sig");
+    assert_eq!(three_inputs[3], "signer3Sig");
+    assert_eq!(three_inputs[4], "signer4Sig");
 
-    // Check assembly instructions
-    assert_eq!(five_of_five_function.asm.len(), 15);
-    assert_eq!(five_of_five_function.asm[0], "<signer>");
-    assert_eq!(five_of_five_function.asm[1], OP_CHECKSIG);
-    assert_eq!(five_of_five_function.asm[2], "<signer1>");
-    assert_eq!(five_of_five_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[4], "<signer2>");
-    assert_eq!(five_of_five_function.asm[5], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[6], "<signer3>");
-    assert_eq!(five_of_five_function.asm[7], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[8], "<signer4>");
-    assert_eq!(five_of_five_function.asm[9], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[10], OP_5);
-    assert_eq!(five_of_five_function.asm[11], OP_NUMEQUAL);
-    assert_eq!(five_of_five_function.asm[12], "<SERVER_KEY>");
-    assert_eq!(five_of_five_function.asm[13], "<serverSig>");
-    assert_eq!(five_of_five_function.asm[14], OP_CHECKSIG);
+    // Covenant ASM: 3-of-5 CHECKSIGADD form (12 tokens, threshold=OP_3).
+    // m-of-n (k < n) is valid in a covenant body; the covenant emitter uses
+    // CHECKSIGADD + OP_NUMEQUAL form regardless of threshold value.
+    let three_tokens = arkade_asm_tokens(&output, "threeOfFive");
+    assert_eq!(three_tokens.len(), 12);
+    assert_eq!(three_tokens[0], "<signer>");
+    assert_eq!(three_tokens[1], OP_CHECKSIG);
+    assert_eq!(three_tokens[2], "<signer1>");
+    assert_eq!(three_tokens[3], OP_CHECKSIGADD);
+    assert_eq!(three_tokens[4], "<signer2>");
+    assert_eq!(three_tokens[5], OP_CHECKSIGADD);
+    assert_eq!(three_tokens[6], "<signer3>");
+    assert_eq!(three_tokens[7], OP_CHECKSIGADD);
+    assert_eq!(three_tokens[8], "<signer4>");
+    assert_eq!(three_tokens[9], OP_CHECKSIGADD);
+    assert_eq!(three_tokens[10], OP_3);
+    assert_eq!(three_tokens[11], OP_NUMEQUAL);
 
-    // Verify threeOfFive function with server variant
-    let three_of_five_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "threeOfFive" && f.server_variant)
-        .unwrap();
+    // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
+    let three_leaf = leaf_asm(&output, "threeOfFive", "threeOfFive");
+    assert!(
+        three_leaf.contains("<SERVER_KEY>"),
+        "threeOfFive leaf: missing <SERVER_KEY>"
+    );
+    assert!(
+        three_leaf.contains(OP_CHECKSIGVERIFY),
+        "threeOfFive leaf: missing OP_CHECKSIGVERIFY"
+    );
+    assert!(
+        three_leaf.contains(OP_CHECKSIG),
+        "threeOfFive leaf: missing OP_CHECKSIG"
+    );
 
-    // Check function inputs
-    assert_eq!(three_of_five_function.function_inputs.len(), 5);
-
-    // Check require types
-    assert_eq!(three_of_five_function.require[0].req_type, "multisig");
-
-    // Check assembly instructions
-    assert_eq!(three_of_five_function.asm.len(), 15);
-    assert_eq!(three_of_five_function.asm[0], "<signer>");
-    assert_eq!(three_of_five_function.asm[1], OP_CHECKSIG);
-    assert_eq!(three_of_five_function.asm[2], "<signer1>");
-    assert_eq!(three_of_five_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[4], "<signer2>");
-    assert_eq!(three_of_five_function.asm[5], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[6], "<signer3>");
-    assert_eq!(three_of_five_function.asm[7], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[8], "<signer4>");
-    assert_eq!(three_of_five_function.asm[9], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[10], OP_3);
-    assert_eq!(three_of_five_function.asm[11], OP_NUMEQUAL);
-    assert_eq!(three_of_five_function.asm[12], "<SERVER_KEY>");
-    assert_eq!(three_of_five_function.asm[13], "<serverSig>");
-    assert_eq!(three_of_five_function.asm[14], OP_CHECKSIG);
-
-    // Verify twoOfTwo function with exit path
-    let two_of_two_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "twoOfTwo" && !f.server_variant)
-        .unwrap();
-
-    // Check function inputs
-    assert_eq!(two_of_two_function.function_inputs.len(), 2);
-
-    // Check require types
-    assert_eq!(two_of_two_function.require[0].req_type, "multisig");
-
-    // Check assembly instructions
-    assert_eq!(two_of_two_function.asm.len(), 9);
-    assert_eq!(two_of_two_function.asm[0], "<signer>");
-    assert_eq!(two_of_two_function.asm[1], OP_CHECKSIG);
-    assert_eq!(two_of_two_function.asm[2], "<signer1>");
-    assert_eq!(two_of_two_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(two_of_two_function.asm[4], OP_2);
-    assert_eq!(two_of_two_function.asm[5], OP_NUMEQUAL);
-    assert_eq!(two_of_two_function.asm[6], "144");
-    assert_eq!(two_of_two_function.asm[7], OP_CHECKSEQUENCEVERIFY);
-    assert_eq!(two_of_two_function.asm[8], OP_DROP);
-
-    // Verify fiveOfFive function with exit path
-    let five_of_five_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "fiveOfFive" && !f.server_variant)
-        .unwrap();
-
-    // Check function inputs
-    assert_eq!(five_of_five_function.function_inputs.len(), 5);
-
-    // Check require types
-    assert_eq!(five_of_five_function.require[0].req_type, "multisig");
-
-    // Check assembly instructions
-    assert_eq!(five_of_five_function.asm.len(), 15);
-    assert_eq!(five_of_five_function.asm[0], "<signer>");
-    assert_eq!(five_of_five_function.asm[1], OP_CHECKSIG);
-    assert_eq!(five_of_five_function.asm[2], "<signer1>");
-    assert_eq!(five_of_five_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[4], "<signer2>");
-    assert_eq!(five_of_five_function.asm[5], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[6], "<signer3>");
-    assert_eq!(five_of_five_function.asm[7], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[8], "<signer4>");
-    assert_eq!(five_of_five_function.asm[9], OP_CHECKSIGADD);
-    assert_eq!(five_of_five_function.asm[10], OP_5);
-    assert_eq!(five_of_five_function.asm[11], OP_NUMEQUAL);
-    assert_eq!(five_of_five_function.asm[12], "144");
-    assert_eq!(five_of_five_function.asm[13], OP_CHECKSEQUENCEVERIFY);
-    assert_eq!(five_of_five_function.asm[14], OP_DROP);
-
-    // Verify threeOfFive function with exit path
-    let three_of_five_function = output
-        .functions
-        .iter()
-        .find(|f| f.name == "threeOfFive" && !f.server_variant)
-        .unwrap();
-
-    // Check function inputs
-    assert_eq!(three_of_five_function.function_inputs.len(), 5);
-
-    // Check require types
-    assert_eq!(three_of_five_function.require[0].req_type, "multisig");
-
-    // Check assembly instructions
-    assert_eq!(three_of_five_function.asm.len(), 15);
-    assert_eq!(three_of_five_function.asm[0], "<signer>");
-    assert_eq!(three_of_five_function.asm[1], OP_CHECKSIG);
-    assert_eq!(three_of_five_function.asm[2], "<signer1>");
-    assert_eq!(three_of_five_function.asm[3], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[4], "<signer2>");
-    assert_eq!(three_of_five_function.asm[5], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[6], "<signer3>");
-    assert_eq!(three_of_five_function.asm[7], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[8], "<signer4>");
-    assert_eq!(three_of_five_function.asm[9], OP_CHECKSIGADD);
-    assert_eq!(three_of_five_function.asm[10], OP_3);
-    assert_eq!(three_of_five_function.asm[11], OP_NUMEQUAL);
-    assert_eq!(three_of_five_function.asm[12], "144");
-    assert_eq!(three_of_five_function.asm[13], OP_CHECKSEQUENCEVERIFY);
-    assert_eq!(three_of_five_function.asm[14], OP_DROP);
+    // ThresholdMultisig has no explicit exit leaf; each function gets the default cosig leaf.
 }
 
 #[test]
 fn test_threshold_multisig_should_fail_on_m_greater_than_n() {
-    // Threshold multisig example source code
-    let threshold_multisig_code = r#"// Contract configuration options
-options {
-  // Server key parameter from contract parameters
-  server = server;
-
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
-contract ThresholdMultisig(
+    let threshold_multisig_code = r#"contract ThresholdMultisig(
   pubkey signer,
   pubkey signer1,
-  pubkey signer2,
-  pubkey server
+  pubkey signer2
 ) {
   // m-of-n using literal threshold greater than number of pubkeys
   // Should fail to compile
@@ -278,23 +198,12 @@ contract ThresholdMultisig(
 
 #[test]
 fn test_threshold_multisig_should_fail_on_m_equal_to_zero() {
-    // Threshold multisig example source code
-    let threshold_multisig_code = r#"// Contract configuration options
-options {
-  // Server key parameter from contract parameters
-  server = server;
-
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
-contract ThresholdMultisig(
+    let threshold_multisig_code = r#"contract ThresholdMultisig(
   pubkey signer,
   pubkey signer1,
-  pubkey signer2,
-  pubkey server
+  pubkey signer2
 ) {
-  // m-of-n using literal threshold greater equal to zero
+  // m-of-n using literal threshold equal to zero
   // Should fail to compile
   function zeroOfThree(signature signerSig, signature signer1Sig, signature signer2Sig) {
     require(checkMultisig([signer, signer1, signer2], 0));
@@ -310,21 +219,10 @@ contract ThresholdMultisig(
 
 #[test]
 fn test_threshold_multisig_should_fail_on_n_greater_than_max() {
-    // Threshold multisig example source code
-    let threshold_multisig_code = r#"// Contract configuration options
-options {
-  // Server key parameter from contract parameters
-  server = server;
-
-  // Exit timelock: 24 hours (144 blocks)
-  exit = 144;
-}
-
-contract ThresholdMultisig(
+    let threshold_multisig_code = r#"contract ThresholdMultisig(
   pubkey signer,
   pubkey signer1,
-  pubkey signer2,
-  pubkey server
+  pubkey signer2
 ) {
   // m-of-n using literal threshold greater than the maximum threshold allowed (999)
   // Should fail to compile

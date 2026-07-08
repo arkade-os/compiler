@@ -61,7 +61,7 @@
 //
 // POOL-AUTHENTICATION CAVEAT
 //   The "genuine pool not co-spent" check verifies only that an input holds
-//   the debit-control asset (`tx.inputs[poolIdx].assets.lookup(debitCtrlId)
+//   the debit-control asset (`tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx)
 //   >= 1`), not that the input's scriptPubKey is the canonical RepaymentPool
 //   covenant. Safety therefore rests on the asset-registry invariant that
 //   no pool function ever lets debitCtrlId leak from its output[0]. EVERY
@@ -76,15 +76,12 @@
 
 import "single_sig.ark";
 
-options {
-  server = server;
-  exit = exit;
-}
-
 contract BondMint(
   pubkey  borrowerPk,
-  bytes32 debitAssetId,
-  bytes32 debitCtrlId,
+  bytes32 debitAssetIdTxid,
+  int     debitAssetIdGidx,
+  bytes32 debitCtrlIdTxid,
+  int     debitCtrlIdGidx,
   int     mintedAmount,
   int     collateral,
   int     maturity,
@@ -99,13 +96,13 @@ contract BondMint(
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(tx.time < maturity, "loan matured");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.find(debitAssetId);
+    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value >= collateral, "collateral not returned");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk, exit), "output 1 not borrower");
   }
 
   // LIQUIDATE — pre-maturity MARGIN CALL, permissionless. The pool's liquidate
@@ -124,13 +121,13 @@ contract BondMint(
   function liquidate(int poolIdx, pubkey auctioneerPk) {
     require(tx.time < maturity, "matured; use auction");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.find(debitAssetId);
+    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk, exit), "output 1 not auctioneer");
   }
 
   // AUCTION — during the auction window, atomic with RepaymentPool.acceptAuction.
@@ -143,13 +140,13 @@ contract BondMint(
     int windowEnd = maturity + auctionWindow;
     require(tx.time < windowEnd, "auction window closed");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.find(debitAssetId);
+    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk, exit), "output 1 not auctioneer");
   }
 
   // ROLL — borrower-signed authorisation to migrate this vault to a next-
@@ -168,9 +165,16 @@ contract BondMint(
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(tx.time < maturity, "vault matured");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.find(debitAssetId);
+    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
+  }
+
+  // UNILATERAL EXIT (CSV)
+  // Borrower recovers collateral after exit delay (Arkade operator offline).
+  function unilateral(signature borrowerSig) tapscript {
+    require(older(exit));
+    require(checkSig(borrowerSig, borrowerPk));
   }
 }

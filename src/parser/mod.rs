@@ -27,10 +27,8 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
         parameters: Vec::new(),
-        renewal_timelock: None,
-        exit_timelock: None,
-        has_server_key: false,
         functions: Vec::new(),
+        tapscripts: Vec::new(),
         imports: Vec::new(),
     };
 
@@ -65,19 +63,9 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     Ok(contract)
 }
 
-/// Parse a contract definition including options block, name, parameters, and functions
+/// Parse a contract definition: name, parameters, and functions
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
     let mut inner_pairs = pair.into_inner().peekable();
-
-    // Optional options block
-    if inner_pairs
-        .peek()
-        .map_or(false, |p| p.as_rule() == Rule::options_block)
-    {
-        if let Some(options_block) = inner_pairs.next() {
-            parse_options_block(contract, options_block)?;
-        }
-    }
 
     // Contract name (required)
     contract.name = match inner_pairs.next() {
@@ -90,46 +78,18 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
         contract.parameters = parse_parameters(param_list)?;
     }
 
-    // Functions
+    // Functions (covenant) and tapscript declarations share the `function` rule;
+    // a tapscript carries a `tapscript_block` body.
     for func_pair in inner_pairs {
-        if func_pair.as_rule() == Rule::function {
+        if func_pair.as_rule() != Rule::function {
+            continue;
+        }
+        if function_pair_is_tapscript(&func_pair) {
+            let ts = parse_named_tapscript(func_pair)?;
+            contract.tapscripts.push(ts);
+        } else {
             let func = parse_function(func_pair)?;
             contract.functions.push(func);
-        }
-    }
-    Ok(())
-}
-
-/// Parse the options block (server key, exit timelock, renewal timelock)
-fn parse_options_block(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
-    for option_pair in pair.into_inner() {
-        if option_pair.as_rule() == Rule::option_setting {
-            let mut inner = option_pair.into_inner();
-            let option_name = match inner.next() {
-                Some(name) => name.as_str(),
-                None => continue,
-            };
-            let option_value = match inner.next() {
-                Some(value) => value.as_str(),
-                None => return Err(format!("Missing {} option value", option_name)),
-            };
-
-            match option_name {
-                "server" => {
-                    // The Arkade operator key is always injected externally as <SERVER_KEY>.
-                    // The RHS value is a naming convention only and is never emitted to ASM.
-                    contract.has_server_key = true;
-                }
-                "renew" => {
-                    // Accept integer literal ("1008") or constructor param name ("renew")
-                    contract.renewal_timelock = Some(option_value.to_string());
-                }
-                "exit" => {
-                    // Accept integer literal ("144") or constructor param name ("exit")
-                    contract.exit_timelock = Some(option_value.to_string());
-                }
-                _ => {} // Ignore unknown options
-            }
         }
     }
     Ok(())
@@ -158,24 +118,216 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
     }
 
     // Check for function modifier (internal) and body
-    match inner_pairs.next() {
-        Some(next_pair) => {
-            if next_pair.as_rule() == Rule::function_modifier {
-                func.is_internal = true;
-                for req_pair in inner_pairs {
-                    parse_function_body(&mut func, req_pair)?;
-                }
-            } else {
-                parse_function_body(&mut func, next_pair)?;
-                for req_pair in inner_pairs {
-                    parse_function_body(&mut func, req_pair)?;
-                }
+    if let Some(next_pair) = inner_pairs.next() {
+        if next_pair.as_rule() == Rule::function_modifier {
+            func.is_internal = true;
+            for req_pair in inner_pairs {
+                parse_function_body(&mut func, req_pair)?;
+            }
+        } else {
+            parse_function_body(&mut func, next_pair)?;
+            for req_pair in inner_pairs {
+                parse_function_body(&mut func, req_pair)?;
             }
         }
-        None => {} // Empty function body
-    };
+    }
 
     Ok(func)
+}
+
+/// True if a `function` pair carries a `tapscript_block` body.
+fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
+    pair.clone()
+        .into_inner()
+        .any(|p| p.as_rule() == Rule::tapscript_block)
+}
+
+/// Parse a `function <name>(<params>) tapscript { … }` declaration.
+fn parse_named_tapscript(pair: Pair<Rule>) -> Result<crate::models::NamedTapscript, String> {
+    let mut inner = pair.into_inner();
+    let name = inner
+        .next()
+        .ok_or("Missing tapscript name")?
+        .as_str()
+        .to_string();
+    let params = inner.next().ok_or("Missing tapscript parameter list")?;
+    let inputs = parse_parameters(params)?;
+    let block = inner.next().ok_or("Missing tapscript body")?;
+    let mut items = Vec::new();
+    for stmt in block.into_inner() {
+        if stmt.as_rule() == Rule::require_stmt {
+            let expr = stmt
+                .into_inner()
+                .next()
+                .ok_or("Empty require() in tapscript")?;
+            items.push(parse_tap_item(expr)?);
+        }
+    }
+    Ok(crate::models::NamedTapscript {
+        name,
+        inputs,
+        items,
+    })
+}
+
+/// Interpret one `require(...)` inner expression as a tapscript item.
+fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
+    use crate::models::{HashFn, TapItem};
+    match pair.as_rule() {
+        Rule::hash_comparison => {
+            let mut inner = pair.into_inner();
+            let func = inner.next().ok_or("Missing hash function")?; // hash_func
+            let mut f_inner = func.into_inner();
+            let fn_name = f_inner.next().ok_or("Missing hash fn name")?.as_str();
+            let hash_fn =
+                HashFn::parse(fn_name).ok_or_else(|| format!("unknown hash function {fn_name}"))?;
+            let preimage = f_inner
+                .next()
+                .ok_or("Missing hash preimage")?
+                .as_str()
+                .to_string();
+            let hash = inner
+                .next()
+                .ok_or("Missing hash value")?
+                .as_str()
+                .to_string();
+            Ok(TapItem::Hash {
+                hash_fn,
+                preimage,
+                hash,
+            })
+        }
+        Rule::time_comparison => {
+            // tx.time >= ident  → absolute (CLTV)
+            let mut inner = pair.into_inner();
+            let value = inner
+                .next()
+                .ok_or("Missing tx.time bound")?
+                .as_str()
+                .to_string();
+            Ok(TapItem::After { value })
+        }
+        Rule::check_sig => {
+            let mut inner = pair.into_inner();
+            let sig = inner
+                .next()
+                .ok_or("Missing signature")?
+                .as_str()
+                .to_string();
+            let key = parse_key_expr(inner.next().ok_or("Missing key")?)?;
+            Ok(TapItem::Sig {
+                keys: vec![key],
+                sigs: vec![sig],
+                threshold: Some(1),
+            })
+        }
+        Rule::check_multisig => {
+            // check_multisig wraps check_threshold_multisig.
+            let inner = pair
+                .into_inner()
+                .next()
+                .ok_or("Missing checkMultisig body")?;
+            parse_tap_multisig(inner)
+        }
+        Rule::function_call => {
+            // older(n) / after(n)
+            let mut inner = pair.into_inner();
+            let name = inner
+                .next()
+                .ok_or("Missing call name")?
+                .as_str()
+                .to_string();
+            let arg = inner
+                .next()
+                .ok_or_else(|| format!("{name}() requires one argument"))?
+                .as_str()
+                .to_string();
+            match name.as_str() {
+                "older" => {
+                    if inner.next().is_some() {
+                        return Err(format!("{name}() requires one argument"));
+                    }
+                    Ok(TapItem::Older { value: arg })
+                }
+                "after" => {
+                    if inner.next().is_some() {
+                        return Err(format!("{name}() requires one argument"));
+                    }
+                    Ok(TapItem::After { value: arg })
+                }
+                other => Err(format!("unsupported tapscript call `{other}(...)`")),
+            }
+        }
+        other => Err(format!(
+            "unsupported expression in tapscript require(): {other:?}"
+        )),
+    }
+}
+
+/// Parse `check_threshold_multisig` inner pairs into a Sig item.
+fn parse_tap_multisig(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
+    use crate::models::TapItem;
+    let mut keys = Vec::new();
+    let mut sigs = Vec::new();
+    let mut threshold = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::key_array => {
+                for k in child.into_inner() {
+                    keys.push(parse_key_expr(k)?);
+                }
+            }
+            Rule::array => {
+                for s in child.into_inner() {
+                    sigs.push(s.as_str().to_string());
+                }
+            }
+            Rule::number_literal => {
+                threshold = Some(
+                    child
+                        .as_str()
+                        .parse::<u16>()
+                        .map_err(|e| format!("invalid threshold: {e}"))?,
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(TapItem::Sig {
+        keys,
+        sigs,
+        threshold,
+    })
+}
+
+/// Parse a `key_expr` (bare identifier or `tweak(emulator, func)`).
+fn parse_key_expr(pair: Pair<Rule>) -> Result<crate::models::KeyExpr, String> {
+    use crate::models::KeyExpr;
+    match pair.as_rule() {
+        Rule::identifier => Ok(KeyExpr::Ident(pair.as_str().to_string())),
+        Rule::key_expr => {
+            let inner = pair.into_inner().next().ok_or("Empty key expression")?;
+            parse_key_expr(inner)
+        }
+        Rule::tweak_key => {
+            let mut inner = pair.into_inner();
+            let base = inner
+                .next()
+                .ok_or("Missing tweak base")?
+                .as_str()
+                .to_string();
+            if base != "emulator" {
+                return Err(format!("tweak() base must be `emulator`, got `{base}`"));
+            }
+            let func = inner
+                .next()
+                .ok_or("Missing tweak func name")?
+                .as_str()
+                .to_string();
+            Ok(KeyExpr::Tweak { func })
+        }
+        other => Err(format!("unexpected key expression: {other:?}")),
+    }
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
@@ -433,6 +585,52 @@ fn parse_multiplicative_expr(pair: Pair<Rule>) -> Result<Expression, String> {
 }
 
 // Parse primary expression (atoms)
+fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), String> {
+    if pair.as_rule() != Rule::function_call {
+        return Ok(());
+    }
+
+    let name = pair
+        .clone()
+        .into_inner()
+        .next()
+        .ok_or("Missing call name")?
+        .as_str()
+        .to_string();
+
+    if let Some(signature) = reserved_function_signature(&name) {
+        return Err(format!(
+            "malformed reserved function call `{name}(...)`; expected {signature}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn reserved_function_signature(name: &str) -> Option<&'static str> {
+    match name {
+        "checkSig" => Some("checkSig(signature, pubkey)"),
+        "checkSigFromStack" => Some("checkSigFromStack(signature, pubkey, message)"),
+        "checkSigFromStackVerify" => Some("checkSigFromStackVerify(signature, pubkey, message)"),
+        "checkMultisig" => Some("checkMultisig([pubkeys], [sigs]?, threshold?)"),
+        "sha256" => Some("sha256(data)"),
+        "hash160" => Some("hash160(data)"),
+        "hash256" => Some("hash256(data)"),
+        "ripemd160" => Some("ripemd160(data)"),
+        "sha256Initialize" => Some("sha256Initialize(data)"),
+        "sha256Update" => Some("sha256Update(ctx, chunk)"),
+        "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
+        "neg64" => Some("neg64(value)"),
+        "le64ToScriptNum" => Some("le64ToScriptNum(value)"),
+        "le32ToLe64" => Some("le32ToLe64(value)"),
+        "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
+        "tweakVerify" => Some("tweakVerify(P, k, Q)"),
+        "older" => Some("older(value)"),
+        "after" => Some("after(value)"),
+        _ => None,
+    }
+}
+
 fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         Rule::primary_expr | Rule::unary_expr => {
@@ -492,14 +690,28 @@ fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
+        // Byte-string manipulation
+        Rule::substr_func => parse_substr(pair),
+        Rule::cat_func => parse_cat(pair),
+        Rule::bin2num_func => parse_bin2num(pair),
+        Rule::num2bin_func => parse_num2bin(pair),
+        Rule::size_func => parse_size(pair),
+        // Packet introspection
+        Rule::packet_inspect => parse_packet_inspect(pair),
+        Rule::input_packet_inspect => parse_input_packet_inspect(pair),
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
+        Rule::asset_has => parse_asset_has_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
+        Rule::group_control_is => parse_group_control_is_to_expression(pair),
         Rule::input_introspection => parse_input_introspection_to_expression(pair),
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => parse_constructor_to_expression(pair),
-        Rule::function_call => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::function_call => {
+            reject_reserved_function_call(&pair)?;
+            Ok(Expression::Property(pair.as_str().to_string()))
+        }
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         _ => {
@@ -519,9 +731,12 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::identifier_comparison => parse_identifier_comparison(pair),
         Rule::property_comparison => parse_property_comparison(pair),
         Rule::hash_comparison => parse_hash_comparison(pair),
+        Rule::byte_expr_comparison => parse_byte_expr_comparison(pair),
         Rule::binary_operation => parse_binary_operation(pair),
         Rule::asset_lookup_comparison => parse_asset_lookup_comparison(pair),
         Rule::asset_count_comparison => parse_asset_count_comparison(pair),
+        Rule::asset_has_comparison => parse_asset_has_comparison(pair),
+        Rule::group_control_is_comparison => parse_group_control_is_comparison(pair),
         Rule::asset_at_comparison => parse_asset_at_comparison(pair),
         Rule::input_introspection_comparison => parse_input_introspection_comparison(pair),
         Rule::output_introspection_comparison => parse_output_introspection_comparison(pair),
@@ -530,9 +745,11 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
         Rule::output_introspection => parse_standalone_output_introspection(pair),
         Rule::tx_introspection => parse_standalone_tx_introspection(pair),
         Rule::asset_lookup => parse_standalone_asset_lookup(pair),
+        Rule::asset_has => parse_standalone_asset_has(pair),
         Rule::asset_count => parse_standalone_asset_count(pair),
         Rule::asset_at => parse_standalone_asset_at(pair),
         Rule::asset_group_access => parse_asset_group_access(pair),
+        Rule::group_control_is => parse_standalone_group_control_is(pair),
         Rule::group_property_comparison => parse_group_property_comparison(pair),
         // Streaming SHA256
         Rule::sha256_initialize => {
@@ -602,6 +819,63 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             })
         }
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
+        // Byte-string manipulation — wrap as truthy assertions in require contexts.
+        Rule::substr_func => {
+            let expr = parse_substr(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::cat_func => {
+            let expr = parse_cat(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::bin2num_func => {
+            let expr = parse_bin2num(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::num2bin_func => {
+            let expr = parse_num2bin(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::size_func => {
+            let expr = parse_size(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::packet_inspect => {
+            let expr = parse_packet_inspect(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
+        Rule::input_packet_inspect => {
+            let expr = parse_input_packet_inspect(pair)?;
+            Ok(Requirement::Comparison {
+                left: expr,
+                op: "==".to_string(),
+                right: Expression::Literal("true".to_string()),
+            })
+        }
         Rule::constructor => {
             let expr = parse_constructor_to_expression(pair)?;
             Ok(Requirement::Comparison {
@@ -614,6 +888,7 @@ fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
             parse_property_access_as_requirement(pair)
         }
         Rule::function_call => {
+            reject_reserved_function_call(&pair)?;
             let function_call = pair.as_str().to_string();
             Ok(Requirement::Comparison {
                 left: Expression::Property(function_call),
@@ -681,7 +956,7 @@ fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     })
 }
 
-/// Parse checkMultisig([pubkeys], threshold) → CheckMultisig requirement
+/// Parse checkMultisig([pubkeys], [sigs]?, threshold?) → CheckMultisig requirement
 fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair
         .into_inner()
@@ -690,28 +965,31 @@ fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
         .into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
 
-    // We support threshold multisig only, so signatures are not required
-    // The next item is a threshold number
-    let next = inner.next();
-
     let pubkeys: Vec<String> = pubkeys_array
         .into_inner()
         .map(|p| p.as_str().to_string())
         .collect();
-    match next {
+
+    // Next may be an optional sigs array (Rule::array) or a threshold number.
+    // Skip the sigs array if present; use number_literal as threshold.
+    let mut threshold_pair = inner.next();
+    if let Some(ref tp) = threshold_pair {
+        if tp.as_rule() == Rule::array {
+            threshold_pair = inner.next();
+        }
+    }
+
+    match threshold_pair {
         Some(next_pair) => {
             // m-of-n threshold multisig
             let threshold = match u16::from_str(next_pair.as_str()) {
                 Ok(threshold) => threshold,
-                Err(e) => {
-                    return Err(format!("{}", e));
-                }
+                Err(e) => return Err(format!("{}", e)),
             };
-
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
         None => {
-            // An n-of-n multisig should be created by optionally omitting the threshold from checkMultisig arguments
+            // n-of-n multisig when threshold is omitted
             let threshold = pubkeys.len() as u16;
             Ok(Requirement::CheckMultisig { pubkeys, threshold })
         }
@@ -773,6 +1051,9 @@ fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
         .to_string();
     let right_expr = inner.next().ok_or("Missing right side expression")?;
 
+    reject_malformed_asset_call(left_expr.as_str())?;
+    reject_malformed_asset_call(right_expr.as_str())?;
+
     let left = match left_expr.as_rule() {
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(left_expr)
@@ -797,16 +1078,143 @@ fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
 /// Parse sha256(preimage) == hash → HashEqual requirement
 fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let sha256_func = inner.next().ok_or("Missing hash function")?;
-    let mut sha256_inner = sha256_func.into_inner();
-    let preimage = sha256_inner
+    let hash_func = inner.next().ok_or("Missing hash function")?;
+    let mut hash_func_inner = hash_func.into_inner();
+    let fn_name = hash_func_inner
         .next()
-        .ok_or("Missing preimage")?
+        .ok_or("Missing hash function name")?
+        .as_str();
+    let hash_fn = crate::models::HashFn::parse(fn_name)
+        .ok_or_else(|| format!("unknown hash function {fn_name}"))?;
+    let preimage_pair = hash_func_inner.next().ok_or("Missing preimage")?;
+    let rhs_pair = inner.next().ok_or("Missing the hash")?;
+
+    // The grammar wraps the hash argument in `additive_expr`, so identifiers
+    // and literals surface as `Variable` / `Literal`, while byte-producing
+    // primitives (substr/cat/…) and arithmetic surface as their own variants.
+    let preimage_expr = parse_additive_expr(preimage_pair)?;
+    let rhs_is_identifier = matches!(rhs_pair.as_rule(), Rule::identifier);
+
+    // Fast path: a bare identifier/literal preimage AND identifier RHS keep the
+    // structured HashEqual emission (`<preimage> OP_<HASH> <hash> OP_EQUAL`).
+    if rhs_is_identifier {
+        if let Expression::Variable(name) | Expression::Literal(name) = &preimage_expr {
+            return Ok(Requirement::HashEqual {
+                hash_fn,
+                preimage: name.clone(),
+                hash: rhs_pair.as_str().to_string(),
+            });
+        }
+    }
+
+    // Complex preimage and/or complex RHS: emit via Comparison so byte-producing
+    // primitives expand inline. Only sha256 supports byte-expression operands.
+    if !matches!(hash_fn, crate::models::HashFn::Sha256) {
+        return Err(format!(
+            "{fn_name} with byte-expression operands is not supported; \
+             only sha256 allows substr/cat operands"
+        ));
+    }
+    let rhs_expr = match rhs_pair.as_rule() {
+        Rule::substr_func => parse_substr(rhs_pair)?,
+        Rule::cat_func => parse_cat(rhs_pair)?,
+        Rule::num2bin_func => parse_num2bin(rhs_pair)?,
+        Rule::identifier => Expression::Variable(rhs_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(rhs_pair.as_str().to_string()),
+        _ => Expression::Property(rhs_pair.as_str().to_string()),
+    };
+
+    Ok(Requirement::Comparison {
+        left: Expression::Sha256 {
+            data: Box::new(preimage_expr),
+        },
+        op: "==".to_string(),
+        right: rhs_expr,
+    })
+}
+
+/// Parse a `byte_expr_term` rule into an Expression
+/// (sha256/substr/cat/bin2num/num2bin/size).
+fn parse_byte_expr_term(pair: Pair<Rule>) -> Result<Expression, String> {
+    // byte_expr_term is a single-alternative wrapper — descend into the inner rule.
+    let inner = pair.into_inner().next().ok_or("Empty byte_expr_term")?;
+    match inner.as_rule() {
+        Rule::sha256_func => {
+            // sha256_func's child is always an additive_expr (see grammar), so
+            // route it through parse_additive_expr to recover the structured
+            // inner expression (substr/packet/cat/…) and wrap with
+            // Expression::Sha256 so the compiler emits inline OP_SHA256.
+            let arg_pair = inner.into_inner().next().ok_or("Missing sha256 argument")?;
+            let data = parse_additive_expr(arg_pair)?;
+            Ok(Expression::Sha256 {
+                data: Box::new(data),
+            })
+        }
+        Rule::substr_func => parse_substr(inner),
+        Rule::cat_func => parse_cat(inner),
+        Rule::bin2num_func => parse_bin2num(inner),
+        Rule::num2bin_func => parse_num2bin(inner),
+        Rule::size_func => parse_size(inner),
+        r => Err(format!("Unsupported byte_expr_term rule: {:?}", r)),
+    }
+}
+
+/// Parse a `byte_expr_atom` rule (one operand of byte_expr_arith).
+fn parse_byte_expr_atom(pair: Pair<Rule>) -> Result<Expression, String> {
+    let inner = pair.into_inner().next().ok_or("Empty byte_expr_atom")?;
+    match inner.as_rule() {
+        Rule::bin2num_func => parse_bin2num(inner),
+        Rule::size_func => parse_size(inner),
+        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
+        Rule::number_literal => Ok(Expression::Literal(inner.as_str().to_string())),
+        r => Err(format!("Unsupported byte_expr_atom rule: {:?}", r)),
+    }
+}
+
+/// Parse a `byte_expr_arith` rule into a BinaryOp.
+fn parse_byte_expr_arith(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let left = parse_byte_expr_atom(inner.next().ok_or("Missing left of byte_expr_arith")?)?;
+    let op = inner
+        .next()
+        .ok_or("Missing op in byte_expr_arith")?
         .as_str()
         .to_string();
-    let hash = inner.next().ok_or("Missing the hash")?.as_str().to_string();
+    let right = parse_byte_expr_atom(inner.next().ok_or("Missing right of byte_expr_arith")?)?;
+    Ok(Expression::BinaryOp {
+        left: Box::new(left),
+        op,
+        right: Box::new(right),
+    })
+}
 
-    Ok(Requirement::HashEqual { preimage, hash })
+/// Parse a `byte_expr_rhs` rule into an Expression.
+fn parse_byte_expr_rhs(pair: Pair<Rule>) -> Result<Expression, String> {
+    let inner = pair.into_inner().next().ok_or("Empty byte_expr_rhs")?;
+    match inner.as_rule() {
+        Rule::byte_expr_arith => parse_byte_expr_arith(inner),
+        Rule::byte_expr_term => parse_byte_expr_term(inner),
+        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
+        Rule::number_literal => Ok(Expression::Literal(inner.as_str().to_string())),
+        r => Err(format!("Unsupported byte_expr_rhs rule: {:?}", r)),
+    }
+}
+
+/// Parse `byte_expr_comparison` → Requirement::Comparison.
+fn parse_byte_expr_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+    let left = parse_byte_expr_term(inner.next().ok_or("Missing left of byte_expr_comparison")?)?;
+    let op = inner
+        .next()
+        .ok_or("Missing op in byte_expr_comparison")?
+        .as_str()
+        .to_string();
+    let right = parse_byte_expr_rhs(
+        inner
+            .next()
+            .ok_or("Missing right of byte_expr_comparison")?,
+    )?;
+    Ok(Requirement::Comparison { left, op, right })
 }
 
 /// Parse binary operation: expr op expr → Comparison requirement
@@ -854,6 +1262,7 @@ fn parse_asset_lookup_comparison(pair: Pair<Rule>) -> Result<Requirement, String
     let right = match right_pair.as_rule() {
         Rule::asset_lookup_arith_expr => parse_arith_expr_to_expression(right_pair)?,
         Rule::asset_lookup => parse_asset_lookup_to_expression(right_pair)?,
+        Rule::bin2num_func => parse_bin2num(right_pair)?,
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -878,8 +1287,62 @@ fn parse_standalone_asset_lookup(pair: Pair<Rule>) -> Result<Requirement, String
     })
 }
 
-/// Parse an asset_lookup pair into an Expression::AssetLookup
-fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+/// Parse an asset-id txid operand (a bytes32 identifier).
+fn parse_asset_id_txid(pair: Pair<Rule>) -> Expression {
+    Expression::Variable(pair.as_str().to_string())
+}
+
+/// Parse an asset-id gidx operand (an int identifier or a numeric literal).
+fn parse_asset_id_gidx(pair: Pair<Rule>) -> Expression {
+    match pair.as_rule() {
+        Rule::number_literal => Expression::Literal(pair.as_str().to_string()),
+        _ => Expression::Variable(pair.as_str().to_string()),
+    }
+}
+
+/// Parse the two Asset ID operands from an asset-group access pair.
+fn parse_asset_group_id_operands(pair: Pair<Rule>) -> Result<(Expression, Expression), String> {
+    let operand_parent = match pair.as_rule() {
+        Rule::tx_property_access => {
+            let mut inner = pair.into_inner();
+            let body = inner
+                .next()
+                .ok_or("asset id requires (txid, gidx) operands")?;
+            if body.as_rule() != Rule::tx_property_body || inner.next().is_some() {
+                return Err("asset id requires (txid, gidx) operands".to_string());
+            }
+            body
+        }
+        Rule::tx_property_body | Rule::asset_group_access => pair,
+        rule => return Err(format!("unexpected asset group operand parent: {rule:?}")),
+    };
+
+    let mut operands = operand_parent.into_inner();
+    let txid_pair = operands
+        .next()
+        .ok_or("asset id requires (txid, gidx) operands")?;
+    let gidx_pair = operands
+        .next()
+        .ok_or("asset id requires (txid, gidx) operands")?;
+
+    if txid_pair.as_rule() != Rule::identifier
+        || !matches!(gidx_pair.as_rule(), Rule::identifier | Rule::number_literal)
+        || operands.next().is_some()
+    {
+        return Err("asset id requires (txid, gidx) operands".to_string());
+    }
+
+    Ok((
+        parse_asset_id_txid(txid_pair),
+        parse_asset_id_gidx(gidx_pair),
+    ))
+}
+
+/// Shared parse for `tx.{inputs,outputs}[i].assets.{lookup,has}(txid, gidx)`:
+/// returns the source, the input/output index, and the two Asset ID operands.
+fn parse_asset_lookup_operands(
+    pair: Pair<Rule>,
+) -> Result<(AssetLookupSource, Expression, Expression, Expression), String> {
     let mut inner = pair.into_inner();
 
     // Parse source: "inputs" or "outputs"
@@ -907,13 +1370,32 @@ fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, Stri
         _ => Expression::Literal(index_pair.as_str().to_string()),
     };
 
-    // Parse asset ID
-    let asset_id = inner.next().ok_or("Missing asset ID")?.as_str().to_string();
+    // Parse the canonical Asset ID operands: txid (bytes32) then gidx (int).
+    let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing asset txid")?);
+    let asset_gidx = parse_asset_id_gidx(inner.next().ok_or("Missing asset gidx")?);
 
+    Ok((source, index, asset_txid, asset_gidx))
+}
+
+/// Parse an asset_lookup pair into an Expression::AssetLookup
+fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
     Ok(Expression::AssetLookup {
         source,
         index: Box::new(index),
-        asset_id,
+        asset_txid: Box::new(asset_txid),
+        asset_gidx: Box::new(asset_gidx),
+    })
+}
+
+/// Parse an asset_has pair into an Expression::AssetHas
+fn parse_asset_has_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
+    Ok(Expression::AssetHas {
+        source,
+        index: Box::new(index),
+        asset_txid: Box::new(asset_txid),
+        asset_gidx: Box::new(asset_gidx),
     })
 }
 
@@ -1045,6 +1527,99 @@ fn parse_asset_count_comparison(pair: Pair<Rule>) -> Result<Requirement, String>
         _ => {
             return Err(format!(
                 "Unexpected right side in asset count comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+/// Parse a standalone asset_has (require-bare): leaves the presence flag.
+fn parse_standalone_asset_has(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_asset_has_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse asset_has_comparison: asset_has op (identifier | number_literal)
+fn parse_asset_has_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left asset has")?;
+    let left = parse_asset_has_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in asset has comparison: {:?}",
+                right_pair.as_rule()
+            ))
+        }
+    };
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+/// Parse a group_control_is pair: `group.controlIs(txid, gidx)` → GroupControlIs.
+fn parse_group_control_is_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let group = inner
+        .next()
+        .ok_or("Missing group in controlIs")?
+        .as_str()
+        .to_string();
+    let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing controlIs txid")?);
+    let asset_gidx = parse_asset_id_gidx(inner.next().ok_or("Missing controlIs gidx")?);
+    Ok(Expression::GroupControlIs {
+        group,
+        asset_txid: Box::new(asset_txid),
+        asset_gidx: Box::new(asset_gidx),
+    })
+}
+
+/// Parse a standalone group_control_is (require-bare): leaves the boolean.
+fn parse_standalone_group_control_is(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let expr = parse_group_control_is_to_expression(pair)?;
+    Ok(Requirement::Comparison {
+        left: expr,
+        op: "==".to_string(),
+        right: Expression::Literal("true".to_string()),
+    })
+}
+
+/// Parse group_control_is_comparison: group.controlIs(...) op (identifier | number_literal)
+fn parse_group_control_is_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+
+    let left_pair = inner.next().ok_or("Missing left controlIs")?;
+    let left = parse_group_control_is_to_expression(left_pair)?;
+
+    let op = inner
+        .next()
+        .ok_or("Missing comparison operator")?
+        .as_str()
+        .to_string();
+
+    let right_pair = inner.next().ok_or("Missing right expression")?;
+    let right = match right_pair.as_rule() {
+        Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected right side in controlIs comparison: {:?}",
                 right_pair.as_rule()
             ))
         }
@@ -1233,6 +1808,7 @@ fn parse_input_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement,
 
     let right_pair = inner.next().ok_or("Missing right expression")?;
     let right = match right_pair.as_rule() {
+        Rule::substr_func => parse_substr(right_pair)?,
         Rule::input_introspection => parse_input_introspection_to_expression(right_pair)?,
         Rule::output_introspection => parse_output_introspection_to_expression(right_pair)?,
         Rule::tx_property_access | Rule::this_property_access => {
@@ -1267,6 +1843,7 @@ fn parse_output_introspection_comparison(pair: Pair<Rule>) -> Result<Requirement
 
     let right_pair = inner.next().ok_or("Missing right expression")?;
     let right = match right_pair.as_rule() {
+        Rule::substr_func => parse_substr(right_pair)?,
         Rule::input_introspection => parse_input_introspection_to_expression(right_pair)?,
         Rule::output_introspection => parse_output_introspection_to_expression(right_pair)?,
         Rule::tx_property_access | Rule::this_property_access => {
@@ -1335,18 +1912,27 @@ fn parse_arith_expr_to_expression(pair: Pair<Rule>) -> Result<Expression, String
 /// tx.assetGroups[k].property
 fn parse_asset_group_access(pair: Pair<Rule>) -> Result<Requirement, String> {
     let text = pair.as_str();
-    let mut inner = pair.into_inner();
 
     // Determine which variant of asset group access
     if text.contains(".find(") {
-        // tx.assetGroups.find(assetId)
-        let asset_id = inner
-            .next()
-            .ok_or("Missing asset ID in group find")?
-            .as_str()
-            .to_string();
+        // tx.assetGroups.find(txid, gidx)
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
         Ok(Requirement::Comparison {
-            left: Expression::GroupFind { asset_id },
+            left: Expression::GroupFind {
+                asset_txid: Box::new(asset_txid),
+                asset_gidx: Box::new(asset_gidx),
+            },
+            op: "==".to_string(),
+            right: Expression::Literal("true".to_string()),
+        })
+    } else if text.contains(".has(") {
+        // tx.assetGroups.has(txid, gidx)
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
+        Ok(Requirement::Comparison {
+            left: Expression::GroupHas {
+                asset_txid: Box::new(asset_txid),
+                asset_gidx: Box::new(asset_gidx),
+            },
             op: "==".to_string(),
             right: Expression::Literal("true".to_string()),
         })
@@ -1359,6 +1945,7 @@ fn parse_asset_group_access(pair: Pair<Rule>) -> Result<Requirement, String> {
         })
     } else {
         // tx.assetGroups[k].property
+        let mut inner = pair.into_inner();
         let array_access = inner.next().ok_or("Missing group index")?;
         let index_pair = array_access
             .into_inner()
@@ -1461,6 +2048,7 @@ fn parse_group_property_comparison(pair: Pair<Rule>) -> Result<Requirement, Stri
                 .next()
                 .ok_or("Missing right operand in arithmetic")?;
             let right_expr = match right_operand.as_rule() {
+                Rule::bin2num_func => parse_bin2num(right_operand)?,
                 Rule::identifier => Expression::Variable(right_operand.as_str().to_string()),
                 Rule::number_literal => Expression::Literal(right_operand.as_str().to_string()),
                 _ => Expression::Property(right_operand.as_str().to_string()),
@@ -1499,6 +2087,7 @@ fn parse_group_property_comparison(pair: Pair<Rule>) -> Result<Requirement, Stri
                 property: prop_name,
             }
         }
+        Rule::bin2num_func => parse_bin2num(right_pair)?,
         Rule::identifier => Expression::Variable(right_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(right_pair.as_str().to_string()),
         _ => {
@@ -1737,6 +2326,126 @@ fn parse_check_sig_from_stack_verify_expr(pair: Pair<Rule>) -> Result<Expression
     })
 }
 
+// ─── Byte-string Manipulation Parsing ──────────────────────────────────
+
+/// Helper: convert an inner pair to an Expression for the byte-string
+/// and packet primitives. Identifiers → Variable, numbers → Literal,
+/// everything else → Property.
+fn parse_atom_pair(pair: Pair<Rule>) -> Expression {
+    match pair.as_rule() {
+        Rule::identifier => Expression::Variable(pair.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(pair.as_str().to_string()),
+        _ => Expression::Property(pair.as_str().to_string()),
+    }
+}
+
+/// Parse a `byte_value` rule into an Expression. Used wherever the grammar
+/// accepts an arbitrary byte-producing operand (substr/cat/bin2num/size args).
+fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
+    // byte_value wraps exactly one inner rule.
+    let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
+    match inner.as_rule() {
+        Rule::substr_func => parse_substr(inner),
+        Rule::cat_func => parse_cat(inner),
+        Rule::num2bin_func => parse_num2bin(inner),
+        Rule::packet_inspect => parse_packet_inspect(inner),
+        Rule::input_packet_inspect => parse_input_packet_inspect(inner),
+        Rule::input_introspection => parse_input_introspection_to_expression(inner),
+        Rule::output_introspection => parse_output_introspection_to_expression(inner),
+        Rule::asset_at => parse_asset_at_to_expression(inner),
+        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
+        r => Err(format!("Unsupported byte_value rule: {:?}", r)),
+    }
+}
+
+/// Parse substr(data, offset, size) → Expression::Substr
+fn parse_substr(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_byte_value(inner.next().ok_or("Missing data in substr")?)?;
+    let offset = parse_atom_pair(inner.next().ok_or("Missing offset in substr")?);
+    let size = parse_atom_pair(inner.next().ok_or("Missing size in substr")?);
+    Ok(Expression::Substr {
+        data: Box::new(data),
+        offset: Box::new(offset),
+        size: Box::new(size),
+    })
+}
+
+/// Parse cat(a, b) → Expression::Cat
+fn parse_cat(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let left = parse_byte_value(inner.next().ok_or("Missing first argument in cat")?)?;
+    let right = parse_byte_value(inner.next().ok_or("Missing second argument in cat")?)?;
+    Ok(Expression::Cat {
+        left: Box::new(left),
+        right: Box::new(right),
+    })
+}
+
+/// Parse bin2num(data) → Expression::Bin2Num
+fn parse_bin2num(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_byte_value(inner.next().ok_or("Missing data in bin2num")?)?;
+    Ok(Expression::Bin2Num {
+        data: Box::new(data),
+    })
+}
+
+/// Parse num2bin(value, size) → Expression::Num2Bin
+fn parse_num2bin(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let value = parse_atom_pair(inner.next().ok_or("Missing value in num2bin")?);
+    let size = parse_atom_pair(inner.next().ok_or("Missing size in num2bin")?);
+    Ok(Expression::Num2Bin {
+        value: Box::new(value),
+        size: Box::new(size),
+    })
+}
+
+/// Parse size(data) → Expression::SizeOf
+fn parse_size(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let data = parse_byte_value(inner.next().ok_or("Missing data in size")?)?;
+    Ok(Expression::SizeOf {
+        data: Box::new(data),
+    })
+}
+
+/// Parse tx.packet(packetType) → Expression::PacketInspect
+fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let packet_type = parse_atom_pair(inner.next().ok_or("Missing packet type in tx.packet()")?);
+    Ok(Expression::PacketInspect {
+        packet_type: Box::new(packet_type),
+    })
+}
+
+/// Parse tx.inputs[i].packet(packetType) → Expression::InputPacketInspect
+fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+
+    // First child: array_access — extract the index expression
+    let array_access = inner
+        .next()
+        .ok_or("Missing input index in tx.inputs[i].packet()")?;
+    let index_pair = array_access
+        .into_inner()
+        .next()
+        .ok_or("Empty array access in tx.inputs[i].packet()")?;
+    let index = parse_atom_pair(index_pair);
+
+    let packet_type = parse_atom_pair(
+        inner
+            .next()
+            .ok_or("Missing packet type in tx.inputs[i].packet()")?,
+    );
+
+    Ok(Expression::InputPacketInspect {
+        index: Box::new(index),
+        packet_type: Box::new(packet_type),
+    })
+}
+
 // ─── Constructor Parsing ───────────────────────────────────────────────────────
 
 /// Parse a `constructor` rule pair into an `Expression::ContractInstance`.
@@ -1798,15 +2507,46 @@ fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
 
 /// Parse tx_property_access into the appropriate Expression type
 /// Handles special patterns like tx.assetGroups[idx].sumInputs/sumOutputs
+/// Reject malformed asset-API calls that fell through to the generic property
+/// path. A well-formed `.assets.lookup`/`.assets.has` matches the dedicated
+/// `asset_lookup`/`asset_has` rules (which require exactly two operands) before
+/// any property fallback, so seeing one of these method names in a property
+/// string means a legacy single-argument or otherwise malformed call.
+fn reject_malformed_asset_call(text: &str) -> Result<(), String> {
+    if text.contains(".assets.lookup(") {
+        return Err(format!(
+            "asset lookup requires two operands `lookup(txid, gidx)`: {text}"
+        ));
+    }
+    if text.contains(".assets.has(") {
+        return Err(format!(
+            "asset presence check requires two operands `has(txid, gidx)`: {text}"
+        ));
+    }
+    Ok(())
+}
+
 fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     let text = pair.as_str();
 
-    // Handle tx.assetGroups.find(assetId)
-    if text.starts_with("tx.assetGroups.find(") && text.ends_with(")") {
-        let start = "tx.assetGroups.find(".len();
-        let end = text.len() - 1;
-        let asset_id = text[start..end].to_string();
-        return Ok(Expression::GroupFind { asset_id });
+    reject_malformed_asset_call(text)?;
+
+    // Handle tx.assetGroups.find(txid, gidx)
+    if text.starts_with("tx.assetGroups.find(") && text.ends_with(')') {
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
+        return Ok(Expression::GroupFind {
+            asset_txid: Box::new(asset_txid),
+            asset_gidx: Box::new(asset_gidx),
+        });
+    }
+
+    // Handle tx.assetGroups.has(txid, gidx)
+    if text.starts_with("tx.assetGroups.has(") && text.ends_with(')') {
+        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
+        return Ok(Expression::GroupHas {
+            asset_txid: Box::new(asset_txid),
+            asset_gidx: Box::new(asset_gidx),
+        });
     }
 
     // Handle tx.assetGroups.length
@@ -1854,10 +2594,9 @@ fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     if text.starts_with("tx.input.current") {
         let property = if text == "tx.input.current" {
             None
-        } else if let Some(rest) = text.strip_prefix("tx.input.current.") {
-            Some(rest.to_string())
         } else {
-            None
+            text.strip_prefix("tx.input.current.")
+                .map(|rest| rest.to_string())
         };
         return Ok(Expression::CurrentInput(property));
     }
@@ -1915,8 +2654,7 @@ fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, String> {
             let mut param_inner = param_pair.into_inner();
             let param_type = match param_inner.next() {
                 Some(type_pair) => {
-                    // data_type is now a compound rule: base_type ~ ("[]")?
-                    // Extract the base type and check for array suffix
+                    // Extract the base type and check for an array suffix.
                     let type_text = type_pair.as_str().trim();
                     if type_text.ends_with("[]") {
                         type_text.to_string()
