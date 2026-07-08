@@ -701,68 +701,68 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
     match (left, op, right) {
         (Expression::Variable(var), ">=", Expression::Literal(value)) => {
             asm.push(format!("<{}>", var));
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(value.clone());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Variable(var), "==", Expression::Variable(var2)) => {
             asm.push(format!("<{}>", var));
-            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", var2));
+            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Variable(var), ">=", Expression::Variable(var2)) => {
             asm.push(format!("<{}>", var));
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", var2));
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Variable(var), "==", Expression::Property(prop)) => {
             asm.push(format!("<{}>", var));
-            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", prop));
+            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Variable(var), ">=", Expression::Property(prop)) => {
             asm.push(format!("<{}>", var));
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", prop));
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Literal(lit), "==", Expression::Variable(var)) => {
             asm.push(lit.clone());
-            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", var));
+            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Literal(lit), ">=", Expression::Variable(var)) => {
             asm.push(lit.clone());
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", var));
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Literal(lit), "==", Expression::Literal(value)) => {
             asm.push(lit.clone());
-            asm.push(OP_EQUAL.to_string());
             asm.push(value.clone());
+            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Literal(lit), ">=", Expression::Literal(value)) => {
             asm.push(lit.clone());
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(value.clone());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Literal(lit), "==", Expression::Property(prop)) => {
             asm.push(lit.clone());
-            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", prop));
+            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Literal(lit), ">=", Expression::Property(prop)) => {
             asm.push(lit.clone());
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", prop));
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Property(prop), "==", Expression::Variable(var)) => {
             asm.push(format!("<{}>", prop));
-            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", var));
+            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Property(prop), ">=", Expression::Variable(var)) => {
             asm.push(format!("<{}>", prop));
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", var));
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Property(prop), "==", Expression::Literal(value)) => {
             // Map "this" properties to their dedicated opcodes (mirrors
@@ -785,18 +785,18 @@ fn generate_comparison_asm(left: &Expression, op: &str, right: &Expression, asm:
         }
         (Expression::Property(prop), ">=", Expression::Literal(value)) => {
             asm.push(format!("<{}>", prop));
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(value.clone());
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::Property(prop), "==", Expression::Property(prop2)) => {
             asm.push(format!("<{}>", prop));
-            asm.push(OP_EQUAL.to_string());
             asm.push(format!("<{}>", prop2));
+            asm.push(OP_EQUAL.to_string());
         }
         (Expression::Property(prop), ">=", Expression::Property(prop2)) => {
             asm.push(format!("<{}>", prop));
-            asm.push(OP_GREATERTHANOREQUAL.to_string());
             asm.push(format!("<{}>", prop2));
+            asm.push(OP_GREATERTHANOREQUAL.to_string());
         }
         (Expression::CurrentInput(property), "==", Expression::Literal(value)) => {
             if value == "true" {
