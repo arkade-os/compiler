@@ -5,7 +5,7 @@ use arkade_compiler::opcodes::{
 
 use crate::common::{arkade_asm, arkade_inputs, group};
 
-const CALL_CODE: &str = include_str!("../../examples/covered_call/covered_call.ark");
+const CALL_CODE: &str = include_str!("../../examples/options/covered_call.ark");
 
 #[test]
 fn test_compiles_with_5_groups() {
