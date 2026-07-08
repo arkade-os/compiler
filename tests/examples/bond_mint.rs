@@ -4,10 +4,9 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
 };
 
-mod common;
-use common::{arkade_asm, arkade_inputs, user_signatures};
+use crate::common::{arkade_asm, arkade_inputs, user_signatures};
 
-const CODE: &str = include_str!("../examples/bonds/bond_mint.ark");
+const CODE: &str = include_str!("../../examples/bonds/bond_mint.ark");
 
 #[test]
 fn test_bond_mint_compiles() {
@@ -184,7 +183,7 @@ fn test_unilateral_exit_is_csv_timelocked() {
     // introspection, and require only the borrower's signature.
     use arkade_compiler::opcodes::OP_DROP;
     let output = compile(CODE).expect("compilation failed");
-    let asm = common::leaf_asm(&output, "unilateral", "unilateral");
+    let asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         asm.contains(OP_CHECKSEQUENCEVERIFY),
         "unilateral exit must be CSV-timelocked"
@@ -204,7 +203,7 @@ fn test_unilateral_exit_is_csv_timelocked() {
         "exit leaf must carry no asset-group-sum introspection"
     );
     // The leaf witness is borrowerSig only — no serverSig/emulatorSig on a tapscript.
-    let ws = common::witness_names(&output, "unilateral", "unilateral");
+    let ws = crate::common::witness_names(&output, "unilateral", "unilateral");
     assert_eq!(
         ws,
         vec!["borrowerSig"],

@@ -4,9 +4,7 @@ use arkade_compiler::opcodes::{
     OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB64, OP_TXHASH,
 };
 
-mod common;
-
-const ARKADE_KITTIES_CODE: &str = include_str!("../examples/arkade_kitties.ark");
+const ARKADE_KITTIES_CODE: &str = include_str!("../../examples/arkade_kitties.ark");
 
 #[test]
 fn test_arkade_kitties_compiles() {
@@ -28,14 +26,14 @@ fn test_arkade_kitties_structure() {
     assert_eq!(output.functions.len(), 2, "expected 2 function groups");
 
     // Verify breed group exists with arkade covenant
-    let breed = common::group(&output, "breed");
+    let breed = crate::common::group(&output, "breed");
     assert!(
         breed.arkade.is_some(),
         "breed group should have arkade covenant"
     );
 
     // Verify transfer group exists with arkade covenant
-    let transfer = common::group(&output, "transfer");
+    let transfer = crate::common::group(&output, "transfer");
     assert!(
         transfer.arkade.is_some(),
         "transfer group should have arkade covenant"
@@ -46,7 +44,7 @@ fn test_arkade_kitties_structure() {
 fn test_breed_function_has_is_fresh() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
 
-    let asm_str = common::arkade_asm(&output, "breed");
+    let asm_str = crate::common::arkade_asm(&output, "breed");
 
     // isFresh emits: <group> OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXHASH OP_EQUAL
     assert!(
@@ -65,7 +63,7 @@ fn test_breed_function_has_is_fresh() {
 fn test_breed_function_has_metadata_hash() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
 
-    let asm_str = common::arkade_asm(&output, "breed");
+    let asm_str = crate::common::arkade_asm(&output, "breed");
 
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPMETADATAHASH),
@@ -78,7 +76,7 @@ fn test_breed_function_has_metadata_hash() {
 fn test_breed_function_has_control_check() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
 
-    let asm_str = common::arkade_asm(&output, "breed");
+    let asm_str = crate::common::arkade_asm(&output, "breed");
 
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPCTRL),
@@ -91,7 +89,7 @@ fn test_breed_function_has_control_check() {
 fn test_breed_function_has_delta_checks() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
 
-    let asm_str = common::arkade_asm(&output, "breed");
+    let asm_str = crate::common::arkade_asm(&output, "breed");
 
     // delta uses OP_INSPECTASSETGROUPSUM twice (outputs - inputs) and OP_SUB64
     assert!(
@@ -110,7 +108,7 @@ fn test_breed_function_has_delta_checks() {
 fn test_transfer_verifies_not_fresh() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
 
-    let asm_str = common::arkade_asm(&output, "transfer");
+    let asm_str = crate::common::arkade_asm(&output, "transfer");
 
     // Transfer checks isFresh == 0, so it should have the isFresh opcode sequence
     assert!(
@@ -129,7 +127,7 @@ fn test_transfer_verifies_not_fresh() {
 fn test_transfer_has_control_check() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
 
-    let asm_str = common::arkade_asm(&output, "transfer");
+    let asm_str = crate::common::arkade_asm(&output, "transfer");
 
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPCTRL),
@@ -142,7 +140,7 @@ fn test_transfer_has_control_check() {
 fn test_breed_has_asset_lookups() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
 
-    let asm_str = common::arkade_asm(&output, "breed");
+    let asm_str = crate::common::arkade_asm(&output, "breed");
 
     // Breed verifies outputs contain all assets
     assert!(

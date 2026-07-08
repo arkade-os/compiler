@@ -3,11 +3,9 @@ use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY, OP_LESSTHAN,
 };
 
-mod common;
-
 #[test]
 fn test_fuji_safe_contract() {
-    let fuji_code = include_str!("../examples/fuji_safe.ark");
+    let fuji_code = include_str!("../../examples/fuji_safe.ark");
 
     let result = compile(fuji_code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -50,7 +48,7 @@ fn test_fuji_safe_contract() {
     );
 
     // Verify claim function: checks expiration timeout (CLTV) in arkade covenant
-    let claim_asm = common::arkade_asm(&output, "claim");
+    let claim_asm = crate::common::arkade_asm(&output, "claim");
     assert!(
         claim_asm.contains(OP_CHECKLOCKTIMEVERIFY),
         "claim covenant should enforce expiration timeout: {}",
@@ -63,7 +61,7 @@ fn test_fuji_safe_contract() {
     );
 
     // claim leaf carries server + emulator cosig
-    let claim_leaf = common::leaf_asm(&output, "claim", "claim");
+    let claim_leaf = crate::common::leaf_asm(&output, "claim", "claim");
     assert!(
         claim_leaf.contains("<SERVER_KEY>"),
         "claim leaf should have SERVER_KEY: {}",
@@ -76,7 +74,7 @@ fn test_fuji_safe_contract() {
     );
 
     // Verify liquidate function: price comparison + oracle sig + CLTV
-    let liquidate_asm = common::arkade_asm(&output, "liquidate");
+    let liquidate_asm = crate::common::arkade_asm(&output, "liquidate");
     assert!(
         liquidate_asm.contains(OP_LESSTHAN),
         "liquidate covenant should compare price: {}",
@@ -94,7 +92,7 @@ fn test_fuji_safe_contract() {
     );
 
     // liquidate leaf carries server + emulator cosig
-    let liquidate_leaf = common::leaf_asm(&output, "liquidate", "liquidate");
+    let liquidate_leaf = crate::common::leaf_asm(&output, "liquidate", "liquidate");
     assert!(
         liquidate_leaf.contains("<SERVER_KEY>"),
         "liquidate leaf should have SERVER_KEY: {}",
@@ -102,7 +100,7 @@ fn test_fuji_safe_contract() {
     );
 
     // Verify redeem function: borrower signature
-    let redeem_asm = common::arkade_asm(&output, "redeem");
+    let redeem_asm = crate::common::arkade_asm(&output, "redeem");
     assert!(
         redeem_asm.contains(OP_CHECKSIG),
         "redeem covenant should verify borrower sig: {}",
@@ -110,7 +108,7 @@ fn test_fuji_safe_contract() {
     );
 
     // redeem leaf carries server + emulator cosig
-    let redeem_leaf = common::leaf_asm(&output, "redeem", "redeem");
+    let redeem_leaf = crate::common::leaf_asm(&output, "redeem", "redeem");
     assert!(
         redeem_leaf.contains("<SERVER_KEY>"),
         "redeem leaf should have SERVER_KEY: {}",
@@ -118,7 +116,7 @@ fn test_fuji_safe_contract() {
     );
 
     // Verify renew function: treasury signature
-    let renew_asm = common::arkade_asm(&output, "renew");
+    let renew_asm = crate::common::arkade_asm(&output, "renew");
     assert!(
         renew_asm.contains(OP_CHECKSIG),
         "renew covenant should verify treasury sig: {}",
@@ -126,7 +124,7 @@ fn test_fuji_safe_contract() {
     );
 
     // renew leaf carries server + emulator cosig
-    let renew_leaf = common::leaf_asm(&output, "renew", "renew");
+    let renew_leaf = crate::common::leaf_asm(&output, "renew", "renew");
     assert!(
         renew_leaf.contains("<SERVER_KEY>"),
         "renew leaf should have SERVER_KEY: {}",
@@ -134,7 +132,7 @@ fn test_fuji_safe_contract() {
     );
 
     // Unilateral exit: CSV-based, borrower only (no server involvement)
-    let unilateral_leaf = common::leaf_asm(&output, "unilateral", "unilateral");
+    let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_leaf.contains("OP_CHECKSEQUENCEVERIFY"),
         "unilateral leaf should have CSV: {}",
@@ -157,7 +155,7 @@ fn test_fuji_safe_cli() {
     let input_path = temp_dir.path().join("fuji_safe.ark");
     let output_path = temp_dir.path().join("fuji_safe.json");
 
-    let fuji_code = include_str!("../examples/fuji_safe.ark");
+    let fuji_code = include_str!("../../examples/fuji_safe.ark");
     fs::write(&input_path, fuji_code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

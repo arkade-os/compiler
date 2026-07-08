@@ -7,12 +7,10 @@ use serde_json::Value;
 use std::fs;
 use tempfile::tempdir;
 
-mod common;
-
 // HTLC contract using the tapscript model.
 // Covenant functions enforce output-value preservation; tapscript leaves handle
 // the hash-preimage claim path, the timelock refund path, and a unilateral CSV exit.
-const HTLC_CODE: &str = include_str!("../examples/htlc.ark");
+const HTLC_CODE: &str = include_str!("../../examples/htlc.ark");
 
 #[test]
 fn test_htlc_contract() {
@@ -46,7 +44,7 @@ fn test_htlc_contract() {
 
     // --- claim group -------------------------------------------------------
     // Covenant: checks output value >= input value
-    let claim_cov = common::arkade_asm(&output, "claim");
+    let claim_cov = crate::common::arkade_asm(&output, "claim");
     assert!(
         claim_cov.contains(OP_GREATERTHANOREQUAL64),
         "claim covenant should enforce output >= input value: {}",
@@ -54,7 +52,7 @@ fn test_htlc_contract() {
     );
 
     // Leaf: hash-preimage check + server/emulator multisig
-    let claim_leaf = common::leaf_asm(&output, "claim", "claim");
+    let claim_leaf = crate::common::leaf_asm(&output, "claim", "claim");
     assert!(
         claim_leaf.contains(OP_HASH160),
         "claim leaf should hash the preimage: {}",
@@ -77,7 +75,7 @@ fn test_htlc_contract() {
     );
 
     // Witness: preimage + serverSig + emulatorSig
-    let claim_witnesses = common::witness_names(&output, "claim", "claim");
+    let claim_witnesses = crate::common::witness_names(&output, "claim", "claim");
     assert!(
         claim_witnesses.contains(&"preimage".to_string()),
         "claim leaf should require preimage: {:?}",
@@ -96,7 +94,7 @@ fn test_htlc_contract() {
 
     // --- refund group ------------------------------------------------------
     // Covenant: checks output value >= input value
-    let refund_cov = common::arkade_asm(&output, "refund");
+    let refund_cov = crate::common::arkade_asm(&output, "refund");
     assert!(
         refund_cov.contains(OP_GREATERTHANOREQUAL64),
         "refund covenant should enforce output >= input value: {}",
@@ -104,7 +102,7 @@ fn test_htlc_contract() {
     );
 
     // Leaf: absolute timelock (CLTV) + server/emulator multisig
-    let refund_leaf = common::leaf_asm(&output, "refund", "refund");
+    let refund_leaf = crate::common::leaf_asm(&output, "refund", "refund");
     assert!(
         refund_leaf.contains("<refundTime>"),
         "refund leaf should push refundTime: {}",
@@ -122,7 +120,7 @@ fn test_htlc_contract() {
     );
 
     // Witness: serverSig + emulatorSig
-    let refund_witnesses = common::witness_names(&output, "refund", "refund");
+    let refund_witnesses = crate::common::witness_names(&output, "refund", "refund");
     assert!(
         refund_witnesses.contains(&"serverSig".to_string()),
         "refund leaf should require serverSig: {:?}",
@@ -136,13 +134,13 @@ fn test_htlc_contract() {
 
     // --- unilateral group --------------------------------------------------
     // Standalone CSV exit leaf: no arkade covenant, pure Bitcoin.
-    let unilateral_group = common::group(&output, "unilateral");
+    let unilateral_group = crate::common::group(&output, "unilateral");
     assert!(
         unilateral_group.arkade.is_none(),
         "unilateral should have no arkade covenant"
     );
 
-    let unilateral_leaf = common::leaf_asm(&output, "unilateral", "unilateral");
+    let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_leaf.contains("<exit>"),
         "unilateral leaf should push exit timelock: {}",

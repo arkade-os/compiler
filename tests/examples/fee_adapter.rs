@@ -4,11 +4,9 @@ use arkade_compiler::opcodes::{
     OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
 
-mod common;
-
 #[test]
 fn test_fee_adapter_contract() {
-    let code = include_str!("../examples/fee_adapter.ark");
+    let code = include_str!("../../examples/fee_adapter.ark");
 
     let result = compile(code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -39,7 +37,7 @@ fn test_fee_adapter_contract() {
     assert_eq!(output.functions.len(), 3, "expected 3 groups");
 
     // Verify execute function arkade covenant
-    let execute_group = common::group(&output, "execute");
+    let execute_group = crate::common::group(&output, "execute");
     let execute_inputs = &execute_group.arkade.as_ref().unwrap().inputs;
     assert_eq!(execute_inputs.len(), 2);
     assert_eq!(execute_inputs[0].name, "senderSig");
@@ -47,7 +45,7 @@ fn test_fee_adapter_contract() {
     assert_eq!(execute_inputs[1].name, "fee");
     assert_eq!(execute_inputs[1].param_type, "int");
 
-    let execute_asm = common::arkade_asm(&output, "execute");
+    let execute_asm = crate::common::arkade_asm(&output, "execute");
 
     // fee >= minFee comparison
     assert!(
@@ -95,7 +93,7 @@ fn test_fee_adapter_contract() {
     );
 
     // execute leaf carries server + emulator cosig
-    let execute_leaf = common::leaf_asm(&output, "execute", "execute");
+    let execute_leaf = crate::common::leaf_asm(&output, "execute", "execute");
     assert!(
         execute_leaf.contains("<SERVER_KEY>"),
         "execute leaf should have SERVER_KEY: {}",
@@ -103,13 +101,13 @@ fn test_fee_adapter_contract() {
     );
 
     // Verify adjust function
-    let adjust_group = common::group(&output, "adjust");
+    let adjust_group = crate::common::group(&output, "adjust");
     let adjust_inputs = &adjust_group.arkade.as_ref().unwrap().inputs;
     assert_eq!(adjust_inputs.len(), 1);
     assert_eq!(adjust_inputs[0].name, "operatorSig");
 
     // Unilateral exit: standalone CSV leaf with no introspection.
-    let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
+    let unilateral_asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
 
     assert!(
         unilateral_asm.contains(OP_CHECKSIG),
@@ -143,7 +141,7 @@ fn test_fee_adapter_cli() {
     let input_path = temp_dir.path().join("fee_adapter.ark");
     let output_path = temp_dir.path().join("fee_adapter.json");
 
-    let code = include_str!("../examples/fee_adapter.ark");
+    let code = include_str!("../../examples/fee_adapter.ark");
     fs::write(&input_path, code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

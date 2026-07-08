@@ -1,5 +1,3 @@
-mod common;
-
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY,
@@ -27,7 +25,7 @@ fn test_input_value() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkInputValue");
+    let asm_str = crate::common::arkade_asm(&output, "checkInputValue");
     assert!(
         asm_str.contains(OP_INSPECTINPUTVALUE),
         "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
@@ -54,7 +52,7 @@ fn test_input_script_pubkey() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkInputScript");
+    let asm_str = crate::common::arkade_asm(&output, "checkInputScript");
     assert!(
         asm_str.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
         "Expected {OP_INSPECTINPUTSCRIPTPUBKEY} in ASM: {}",
@@ -81,7 +79,7 @@ fn test_input_sequence() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkSequence");
+    let asm_str = crate::common::arkade_asm(&output, "checkSequence");
     assert!(
         asm_str.contains(OP_INSPECTINPUTSEQUENCE),
         "Expected {OP_INSPECTINPUTSEQUENCE} in ASM: {}",
@@ -108,7 +106,7 @@ fn test_input_outpoint() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkOutpoint");
+    let asm_str = crate::common::arkade_asm(&output, "checkOutpoint");
     assert!(
         asm_str.contains(OP_INSPECTINPUTOUTPOINT),
         "Expected {OP_INSPECTINPUTOUTPOINT} in ASM: {}",
@@ -135,7 +133,7 @@ fn test_input_issuance() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkIssuance");
+    let asm_str = crate::common::arkade_asm(&output, "checkIssuance");
     assert!(
         asm_str.contains(OP_INSPECTINPUTISSUANCE),
         "Expected {OP_INSPECTINPUTISSUANCE} in ASM: {}",
@@ -163,7 +161,7 @@ fn test_output_value() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkOutputValue");
+    let asm_str = crate::common::arkade_asm(&output, "checkOutputValue");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),
         "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",
@@ -190,7 +188,7 @@ fn test_output_script_pubkey() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkOutputScript");
+    let asm_str = crate::common::arkade_asm(&output, "checkOutputScript");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
         "Expected {OP_INSPECTOUTPUTSCRIPTPUBKEY} in ASM: {}",
@@ -217,7 +215,7 @@ fn test_output_nonce() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkNonce");
+    let asm_str = crate::common::arkade_asm(&output, "checkNonce");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTNONCE),
         "Expected {OP_INSPECTOUTPUTNONCE} in ASM: {}",
@@ -245,7 +243,7 @@ fn test_variable_index_input() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkInput");
+    let asm_str = crate::common::arkade_asm(&output, "checkInput");
     assert!(
         asm_str.contains("<inputIdx>"),
         "Expected <inputIdx> placeholder in ASM: {}",
@@ -277,7 +275,7 @@ fn test_variable_index_output() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkOutput");
+    let asm_str = crate::common::arkade_asm(&output, "checkOutput");
     assert!(
         asm_str.contains("<outputIdx>"),
         "Expected <outputIdx> placeholder in ASM: {}",
@@ -310,7 +308,7 @@ fn test_input_output_value_comparison() {
     );
 
     let output = result.unwrap();
-    let asm_str = common::arkade_asm(&output, "checkValues");
+    let asm_str = crate::common::arkade_asm(&output, "checkValues");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),
         "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",

@@ -6,12 +6,11 @@ use arkade_compiler::opcodes::{
     OP_LESSTHANOREQUAL, OP_MUL64, OP_SHA256,
 };
 
-mod common;
-use common::{
+use crate::common::{
     arkade_asm, arkade_asm_tokens, arkade_inputs, opcode_count_in_arkade, user_signatures,
 };
 
-const CODE: &str = include_str!("../examples/bonds/repayment_pool.ark");
+const CODE: &str = include_str!("../../examples/bonds/repayment_pool.ark");
 
 #[test]
 fn test_repayment_pool_compiles() {
@@ -81,8 +80,8 @@ fn test_all_burn_checks_are_strict_equality() {
     // the variable being named `debitGroup`/`creditGroup`. A refactor that
     // renames the variable to e.g. `let g = tx.assetGroups.find(...)` is
     // still caught because the access `g.sumInputs` is the matched token.
-    let src_pool = include_str!("../examples/bonds/repayment_pool.ark");
-    let src_vault = include_str!("../examples/bonds/bond_mint.ark");
+    let src_pool = include_str!("../../examples/bonds/repayment_pool.ark");
+    let src_vault = include_str!("../../examples/bonds/bond_mint.ark");
     let mut burn_check_lines = 0usize;
     for (path, src) in [
         ("repayment_pool.ark", src_pool),
@@ -783,7 +782,7 @@ fn test_default_leaves_carry_no_introspection() {
         "acceptAuction",
         "redeem",
     ] {
-        let leaf_asm = common::leaf_asm(&output, fn_name, fn_name);
+        let leaf_asm = crate::common::leaf_asm(&output, fn_name, fn_name);
         assert!(
             !leaf_asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY)
                 && !leaf_asm.contains(OP_INSPECTASSETGROUPSUM),
@@ -805,7 +804,7 @@ fn test_repayment_pool_cli() {
     let dir = tempdir().unwrap();
     fs::write(
         dir.path().join("bond_mint.ark"),
-        include_str!("../examples/bonds/bond_mint.ark"),
+        include_str!("../../examples/bonds/bond_mint.ark"),
     )
     .unwrap();
     let input = dir.path().join("repayment_pool.ark");

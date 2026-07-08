@@ -3,11 +3,10 @@ use arkade_compiler::opcodes::{
     OP_CHECKSIGFROMSTACK, OP_GREATERTHANOREQUAL, OP_INSPECTINASSETLOOKUP,
 };
 
-mod common;
-use common::{arkade_asm, arkade_inputs};
+use crate::common::{arkade_asm, arkade_inputs};
 
 /// Exercises array flattening and threshold verification over unrolled oracle signatures.
-const THRESHOLD_ORACLE_CODE: &str = include_str!("../examples/threshold_oracle.ark");
+const THRESHOLD_ORACLE_CODE: &str = include_str!("../../examples/threshold_oracle.ark");
 
 #[test]
 fn test_threshold_oracle_parses() {
@@ -39,7 +38,7 @@ fn test_threshold_oracle_has_asset_lookup() {
 #[test]
 fn test_threshold_oracle_has_control_flow() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
-    let tokens = common::arkade_asm_tokens(&output, "attest");
+    let tokens = crate::common::arkade_asm_tokens(&output, "attest");
 
     // Should have assembly (for loop unrolled etc.)
     assert!(!tokens.is_empty(), "Assembly should not be empty");
@@ -120,7 +119,7 @@ fn test_threshold_oracle_witness_array_flattening() {
 fn test_threshold_oracle_checksig_from_stack_unrolled() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let tokens = common::arkade_asm_tokens(&output, "attest");
+    let tokens = crate::common::arkade_asm_tokens(&output, "attest");
 
     // The for loop should unroll to 3 OP_CHECKSIGFROMSTACK calls
     let checksig_count = tokens.iter().filter(|s| *s == OP_CHECKSIGFROMSTACK).count();

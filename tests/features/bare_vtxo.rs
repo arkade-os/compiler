@@ -1,8 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP};
 
-mod common;
-use common::{group, leaf_asm, witness_names};
+use crate::common::{group, leaf_asm, witness_names};
 
 // A bare VTXO has no arkade covenant — it is just L1 taproot leaves:
 //   • a collaborative forfeit closure (server + user), and

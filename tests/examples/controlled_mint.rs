@@ -4,11 +4,9 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTASSETLOOKUP, OP_SUB64,
 };
 
-mod common;
-
 #[test]
 fn test_controlled_mint_contract() {
-    let code = include_str!("../examples/controlled_mint.ark");
+    let code = include_str!("../../examples/controlled_mint.ark");
 
     let result = compile(code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -46,7 +44,7 @@ fn test_controlled_mint_contract() {
     assert_eq!(output.functions.len(), 4, "expected 4 groups");
 
     // Verify mint function
-    let mint_asm = common::arkade_asm(&output, "mint");
+    let mint_asm = crate::common::arkade_asm(&output, "mint");
 
     // Should have asset group find opcode
     assert!(
@@ -83,7 +81,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Verify burn function
-    let burn_asm = common::arkade_asm(&output, "burn");
+    let burn_asm = crate::common::arkade_asm(&output, "burn");
 
     // Burn uses group sumInputs >= sumOutputs + amount
     assert!(
@@ -103,7 +101,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Verify lockSupply function
-    let lock_asm = common::arkade_asm(&output, "lockSupply");
+    let lock_asm = crate::common::arkade_asm(&output, "lockSupply");
 
     // lockSupply checks sumOutputs == 0
     assert!(
@@ -118,7 +116,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Unilateral exit leaf (CSV-based, pure L1)
-    let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
+    let unilateral_asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_asm.contains("OP_CHECKSEQUENCEVERIFY"),
         "unilateral leaf should have CSV: {}",
@@ -136,7 +134,7 @@ fn test_controlled_mint_cli() {
     let input_path = temp_dir.path().join("controlled_mint.ark");
     let output_path = temp_dir.path().join("controlled_mint.json");
 
-    let code = include_str!("../examples/controlled_mint.ark");
+    let code = include_str!("../../examples/controlled_mint.ark");
     fs::write(&input_path, code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

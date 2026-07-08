@@ -3,8 +3,7 @@ use arkade_compiler::opcodes::{
     OP_ADD64, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
 };
 
-mod common;
-use common::{arkade_asm, arkade_asm_tokens, leaf_asm};
+use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm};
 
 /// Exercises let bindings, branch emission, reassignment, and branch stack normalization.
 const EPOCH_LIMITER_CODE: &str = r#"

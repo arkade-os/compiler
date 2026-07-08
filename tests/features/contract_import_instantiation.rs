@@ -1,7 +1,6 @@
 use arkade_compiler::compile;
 
-mod common;
-use common::{arkade_asm, arkade_asm_tokens, leaf_asm, leaf_asm_tokens};
+use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm, leaf_asm_tokens};
 
 // ─── Import statement parsing ──────────────────────────────────────────────────
 

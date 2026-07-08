@@ -4,11 +4,9 @@ use arkade_compiler::opcodes::{
     OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
 
-mod common;
-
 #[test]
 fn test_token_vault_contract() {
-    let code = include_str!("../examples/token_vault.ark");
+    let code = include_str!("../../examples/token_vault.ark");
 
     let result = compile(code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -46,7 +44,7 @@ fn test_token_vault_contract() {
     );
 
     // Verify deposit function: arkade covenant holds all introspection logic
-    let deposit_asm = common::arkade_asm(&output, "deposit");
+    let deposit_asm = crate::common::arkade_asm(&output, "deposit");
 
     assert!(
         deposit_asm.contains(OP_INSPECTINASSETLOOKUP),
@@ -86,7 +84,7 @@ fn test_token_vault_contract() {
     );
 
     // deposit leaf carries server + emulator cosig
-    let deposit_leaf = common::leaf_asm(&output, "deposit", "deposit");
+    let deposit_leaf = crate::common::leaf_asm(&output, "deposit", "deposit");
     assert!(
         deposit_leaf.contains("<SERVER_KEY>"),
         "deposit leaf should have SERVER_KEY: {}",
@@ -94,7 +92,7 @@ fn test_token_vault_contract() {
     );
 
     // Unilateral exit: standalone CSV leaf with no introspection.
-    let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
+    let unilateral_asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
 
     assert!(
         unilateral_asm.contains(OP_CHECKSIG),
@@ -123,7 +121,7 @@ fn test_token_vault_cli() {
     let input_path = temp_dir.path().join("token_vault.ark");
     let output_path = temp_dir.path().join("token_vault.json");
 
-    let code = include_str!("../examples/token_vault.ark");
+    let code = include_str!("../../examples/token_vault.ark");
     fs::write(&input_path, code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

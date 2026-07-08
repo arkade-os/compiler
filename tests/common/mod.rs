@@ -1,13 +1,13 @@
-//! Shared helpers for the bond-market integration tests
-//! (`bond_mint_test.rs`, `repayment_pool_test.rs`).
+//! Shared assertion helpers for the integration test binaries.
 //!
-//! Cargo compiles `tests/common/mod.rs` as an ordinary module included by each
-//! test binary via `mod common;`, NOT as its own test target — so these helpers
-//! live in one place and every test file pulls them in with `use common::*;`.
+//! The two grouped test binaries (`tests/examples.rs`, `tests/features.rs`)
+//! include this module via `#[path = "common/mod.rs"] mod common;`, so it is a
+//! plain module — never its own test target — and each grouped test file reaches
+//! the helpers through `crate::common::*`.
 //!
-//! `dead_code` is allowed module-wide: each test binary compiles its own copy
-//! of this module and uses only the subset of helpers it needs, so a helper
-//! unused by one binary (but used by another) would otherwise warn.
+//! `dead_code` is allowed module-wide: each binary compiles its own copy of this
+//! module and uses only the subset of helpers it needs, so a helper unused by
+//! one binary (but used by the other) would otherwise warn.
 #![allow(dead_code)]
 
 use arkade_compiler::models::{AbiFunctionGroup, AbiLeaf, ContractJson};

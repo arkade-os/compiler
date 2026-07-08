@@ -1,5 +1,3 @@
-mod common;
-
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{OP_ADD64, OP_CAT, OP_SCRIPTNUMTOLE64, OP_SHA256};
 
@@ -24,7 +22,7 @@ contract Mix(
 #[test]
 fn test_plus_on_bytes32_emits_op_cat() {
     let out = compile(CONCAT_CODE).expect("compile");
-    let asm = common::arkade_asm(&out, "check");
+    let asm = crate::common::arkade_asm(&out, "check");
 
     assert!(
         asm.contains(OP_CAT),
@@ -59,7 +57,7 @@ contract IntMath(int a, int b) {
 }
 "#;
     let out = compile(code).expect("compile");
-    let asm = common::arkade_asm(&out, "check");
+    let asm = crate::common::arkade_asm(&out, "check");
     assert!(
         asm.contains(OP_ADD64),
         "int + int should still use OP_ADD64; asm:\n{}",

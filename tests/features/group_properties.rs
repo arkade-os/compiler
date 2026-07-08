@@ -5,8 +5,7 @@ use arkade_compiler::opcodes::{
     OP_INSPECTASSETGROUPSUM, OP_SUB64, OP_TXHASH,
 };
 
-mod common;
-use common::arkade_asm;
+use crate::common::arkade_asm;
 
 /// Test that group.assetId emits OP_INSPECTASSETGROUPASSETID
 #[test]

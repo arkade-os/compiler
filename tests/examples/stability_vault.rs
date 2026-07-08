@@ -1,11 +1,10 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_SHA256};
 
-mod common;
-use common::arkade_asm;
+use crate::common::arkade_asm;
 
-const VAULT_CODE: &str = include_str!("../examples/stability/stability_vault.ark");
-const OFFER_CODE: &str = include_str!("../examples/stability/stability_offer.ark");
+const VAULT_CODE: &str = include_str!("../../examples/stability/stability_vault.ark");
+const OFFER_CODE: &str = include_str!("../../examples/stability/stability_offer.ark");
 
 #[test]
 fn test_vault_compiles_with_9_groups() {
@@ -37,7 +36,7 @@ fn test_vault_settlement_verifies_full_oracle_message() {
     // Oracle logic lives in the covenant (arkade) ASM.
     let out = compile(VAULT_CODE).unwrap();
     for name in &["seekerExit", "providerExit"] {
-        let asm_tokens: Vec<String> = common::arkade_asm_tokens(&out, name);
+        let asm_tokens: Vec<String> = crate::common::arkade_asm_tokens(&out, name);
         let asm = asm_tokens.join(" ");
         let cat_count = asm_tokens.iter().filter(|s| s.as_str() == OP_CAT).count();
         assert!(
@@ -129,7 +128,7 @@ fn test_offer_compiles_with_3_groups() {
 #[test]
 fn test_offer_take_verifies_full_oracle_message() {
     let out = compile(OFFER_CODE).unwrap();
-    let asm_tokens = common::arkade_asm_tokens(&out, "take");
+    let asm_tokens = crate::common::arkade_asm_tokens(&out, "take");
     let asm = asm_tokens.join(" ");
     let cat_count = asm_tokens.iter().filter(|s| s.as_str() == OP_CAT).count();
     assert!(

@@ -6,8 +6,7 @@ use serde_json::Value;
 use std::fs;
 use tempfile::tempdir;
 
-mod common;
-use common::{arkade_asm_tokens, arkade_inputs, leaf_asm};
+use crate::common::{arkade_asm_tokens, arkade_inputs, leaf_asm};
 
 const THRESHOLD_MULTISIG_CODE: &str = r#"contract ThresholdMultisig(
   pubkey signer,

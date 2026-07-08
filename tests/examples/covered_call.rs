@@ -3,22 +3,22 @@ use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTOUTASSETLOOKUP,
 };
 
-mod common;
-use common::{arkade_asm, arkade_inputs, group};
+use crate::common::{arkade_asm, arkade_inputs, group};
 
-const PUT_CODE: &str = include_str!("../examples/options/cash_secured_put.ark");
+const CALL_CODE: &str = include_str!("../../examples/options/covered_call.ark");
 
 #[test]
 fn test_compiles_with_5_groups() {
     // 4 covenant functions + 1 standalone unilateral tapscript = 5 groups
-    let out = compile(PUT_CODE).expect("compile");
-    assert_eq!(out.name, "CashSecuredPut");
+    let out = compile(CALL_CODE).expect("compile");
+    assert_eq!(out.name, "CoveredCall");
     assert_eq!(out.functions.len(), 5);
 }
 
 #[test]
 fn test_exercise_takes_only_buyer_signature() {
-    let out = compile(PUT_CODE).unwrap();
+    // Single-locked design: exercise is buyer-gated. No oracle, no seller.
+    let out = compile(CALL_CODE).unwrap();
     let names = arkade_inputs(&out, "exercise");
     assert!(
         names.contains(&"buyerSig".to_string()),
@@ -39,8 +39,9 @@ fn test_exercise_takes_only_buyer_signature() {
 }
 
 #[test]
-fn test_no_oracle_anywhere() {
-    let out = compile(PUT_CODE).unwrap();
+fn test_exercise_has_no_oracle() {
+    // No checkSigFromStack — there is no oracle dependency in this design.
+    let out = compile(CALL_CODE).unwrap();
     for fn_name in ["exercise", "reclaim", "transferSeller", "transferBuyer"] {
         let asm = arkade_asm(&out, fn_name);
         assert!(
@@ -51,17 +52,18 @@ fn test_no_oracle_anywhere() {
 }
 
 #[test]
-fn test_exercise_verifies_btc_delivery_and_stable_payout() {
-    let out = compile(PUT_CODE).unwrap();
+fn test_exercise_verifies_strike_payment() {
+    let out = compile(CALL_CODE).unwrap();
     let asm = arkade_asm(&out, "exercise");
     assert!(
         asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "exercise must look up stablecoin balance on output 1"
+        "exercise must look up stablecoin balance on output 0"
     );
     assert!(
         asm.contains("OP_INSPECTOUTPUTVALUE"),
-        "exercise must verify output 0's BTC value"
+        "exercise must verify output 1's BTC value"
     );
+    // CLTV on expiryHeight = exercise window opens
     assert!(
         asm.contains(OP_CHECKLOCKTIMEVERIFY),
         "exercise must enforce tx.time >= expiryHeight"
@@ -70,7 +72,7 @@ fn test_exercise_verifies_btc_delivery_and_stable_payout() {
 
 #[test]
 fn test_reclaim_is_seller_only_with_cltv() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile(CALL_CODE).unwrap();
     let names = arkade_inputs(&out, "reclaim");
     assert!(
         names.contains(&"sellerSig".to_string()),
@@ -93,7 +95,7 @@ fn test_reclaim_is_seller_only_with_cltv() {
 
 #[test]
 fn test_asset_id_is_two_explicit_params() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile(CALL_CODE).unwrap();
     let txid = out
         .parameters
         .iter()
@@ -110,7 +112,8 @@ fn test_asset_id_is_two_explicit_params() {
 
 #[test]
 fn test_transfers_guarded_by_expiry() {
-    let out = compile(PUT_CODE).unwrap();
+    // Cooperative covenant carries the `tx.time < expiryHeight` guard.
+    let out = compile(CALL_CODE).unwrap();
     for name in ["transferSeller", "transferBuyer"] {
         let asm = arkade_asm(&out, name);
         assert!(
@@ -121,13 +124,19 @@ fn test_transfers_guarded_by_expiry() {
 }
 
 #[test]
-fn test_transfers_preserve_stablecoin_collateral() {
-    let out = compile(PUT_CODE).unwrap();
+fn test_transfers_preserve_btc_collateral() {
+    // CoveredCall vault holds BTC only — transfers must check the
+    // continuation's BTC value, not asset balance.
+    let out = compile(CALL_CODE).unwrap();
     for name in ["transferSeller", "transferBuyer"] {
         let asm = arkade_asm(&out, name);
         assert!(
-            asm.contains(OP_INSPECTOUTASSETLOOKUP),
-            "{name}: must verify stablecoin balance on continuation"
+            !asm.contains(OP_INSPECTOUTASSETLOOKUP),
+            "{name}: CoveredCall transfers should not need asset lookup (vault is BTC-only)"
+        );
+        assert!(
+            asm.contains("OP_INSPECTOUTPUTVALUE"),
+            "{name}: must verify BTC value preserved on continuation"
         );
         assert!(
             asm.contains(OP_CHECKSIG),
@@ -138,9 +147,8 @@ fn test_transfers_preserve_stablecoin_collateral() {
 
 #[test]
 fn test_unilateral_leaf_has_no_introspection() {
-    // The unilateral tapscript (CSV exit) is a standalone leaf: older(exit) +
-    // checkSig. It must carry no introspection opcodes.
-    let out = compile(PUT_CODE).unwrap();
+    // The unilateral tapscript (CSV exit) must carry no introspection opcodes.
+    let out = compile(CALL_CODE).unwrap();
     let g = group(&out, "unilateral");
     assert_eq!(g.leaves.len(), 1);
     let leaf_asm = g.leaves[0].asm.join(" ");

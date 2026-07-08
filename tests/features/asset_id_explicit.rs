@@ -3,14 +3,12 @@
 //! `(result, success_flag)` opcode ABI handling, fatal operand validation, and
 //! parser rejection of the legacy single-argument forms.
 
-mod common;
-
 use arkade_compiler::compile;
 
 /// Return the covenant ASM for `func` in the compiled output of `src`.
 fn arkade_asm(src: &str, func: &str) -> String {
     let out = compile(src).unwrap_or_else(|e| panic!("compile failed: {e:?}"));
-    common::arkade_asm(&out, func)
+    crate::common::arkade_asm(&out, func)
 }
 
 // ─── Result + success flag ABI ──────────────────────────────────────────────

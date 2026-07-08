@@ -1,5 +1,3 @@
-mod common;
-
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_DROP, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTOUTASSETAT,
@@ -29,7 +27,7 @@ fn test_asset_count_parsing() {
     assert_eq!(output.name, "AssetCounter");
 
     // Check that the covenant ASM contains the asset count opcode
-    let asm_str = common::arkade_asm(&output, "checkAssetCount");
+    let asm_str = crate::common::arkade_asm(&output, "checkAssetCount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETCOUNT),
         "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {}",
@@ -58,7 +56,7 @@ fn test_asset_at_amount_parsing() {
     let output = result.unwrap();
 
     // Check that the covenant ASM contains the asset at opcode
-    let asm_str = common::arkade_asm(&output, "checkAssetAmount");
+    let asm_str = crate::common::arkade_asm(&output, "checkAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETAT),
         "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
@@ -93,7 +91,7 @@ fn test_asset_at_assetid_parsing() {
     let output = result.unwrap();
 
     // Check that the covenant ASM contains the asset at opcode
-    let asm_str = common::arkade_asm(&output, "checkAssetId");
+    let asm_str = crate::common::arkade_asm(&output, "checkAssetId");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETAT),
         "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
@@ -128,7 +126,7 @@ fn test_input_asset_count() {
     let output = result.unwrap();
 
     // Check that the covenant ASM contains the input asset count opcode
-    let asm_str = common::arkade_asm(&output, "checkInputAssets");
+    let asm_str = crate::common::arkade_asm(&output, "checkInputAssets");
     assert!(
         asm_str.contains(OP_INSPECTINASSETCOUNT),
         "Expected {OP_INSPECTINASSETCOUNT} in ASM: {}",
@@ -157,7 +155,7 @@ fn test_input_asset_at() {
     let output = result.unwrap();
 
     // Check that the covenant ASM contains the input asset at opcode
-    let asm_str = common::arkade_asm(&output, "checkInputAssetAmount");
+    let asm_str = crate::common::arkade_asm(&output, "checkInputAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTINASSETAT),
         "Expected {OP_INSPECTINASSETAT} in ASM: {}",
@@ -185,7 +183,7 @@ fn test_asset_count_with_variable_index() {
 
     let output = result.unwrap();
 
-    let asm_str = common::arkade_asm(&output, "checkAssets");
+    let asm_str = crate::common::arkade_asm(&output, "checkAssets");
     // Should have the variable index placeholder
     assert!(
         asm_str.contains("<outputIdx>"),
