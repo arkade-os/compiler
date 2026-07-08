@@ -35,3 +35,7 @@ Cargo.lock
 
 # Canonical skills are stored in `.codex/skills`.
 # Track compatibility symlinks separately (`.claude/skills`, `.agents/skills`).
+
+# Generated compiler artifacts — never commit ABI/bytecode outputs
+examples/**/*.json
+examples/**/*.hack

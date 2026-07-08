@@ -6,7 +6,7 @@ use arkade_compiler::opcodes::{
 
 #[test]
 fn test_token_vault_contract() {
-    let code = include_str!("../../examples/token_vault.ark");
+    let code = include_str!("../../examples/tokens/token_vault.ark");
 
     let result = compile(code);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
@@ -121,7 +121,7 @@ fn test_token_vault_cli() {
     let input_path = temp_dir.path().join("token_vault.ark");
     let output_path = temp_dir.path().join("token_vault.json");
 
-    let code = include_str!("../../examples/token_vault.ark");
+    let code = include_str!("../../examples/tokens/token_vault.ark");
     fs::write(&input_path, code).unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

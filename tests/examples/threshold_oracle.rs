@@ -6,7 +6,7 @@ use arkade_compiler::opcodes::{
 use crate::common::{arkade_asm, arkade_inputs};
 
 /// Exercises array flattening and threshold verification over unrolled oracle signatures.
-const THRESHOLD_ORACLE_CODE: &str = include_str!("../../examples/threshold_oracle.ark");
+const THRESHOLD_ORACLE_CODE: &str = include_str!("../../examples/oracles/threshold_oracle.ark");
 
 #[test]
 fn test_threshold_oracle_parses() {

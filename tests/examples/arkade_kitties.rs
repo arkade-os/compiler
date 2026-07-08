@@ -4,7 +4,7 @@ use arkade_compiler::opcodes::{
     OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB64, OP_TXHASH,
 };
 
-const ARKADE_KITTIES_CODE: &str = include_str!("../../examples/arkade_kitties.ark");
+const ARKADE_KITTIES_CODE: &str = include_str!("../../examples/tokens/arkade_kitties.ark");
 
 #[test]
 fn test_arkade_kitties_compiles() {

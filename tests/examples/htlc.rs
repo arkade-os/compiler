@@ -10,7 +10,7 @@ use tempfile::tempdir;
 // HTLC contract using the tapscript model.
 // Covenant functions enforce output-value preservation; tapscript leaves handle
 // the hash-preimage claim path, the timelock refund path, and a unilateral CSV exit.
-const HTLC_CODE: &str = include_str!("../../examples/htlc.ark");
+const HTLC_CODE: &str = include_str!("../../examples/swaps/htlc.ark");
 
 #[test]
 fn test_htlc_contract() {

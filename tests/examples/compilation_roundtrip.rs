@@ -95,14 +95,14 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
 
 #[test]
 fn roundtrip_single_sig() {
-    let output = compile_example("single_sig.ark");
-    assert_output_invariants(&output, "single_sig.ark");
+    let output = compile_example("payments/single_sig.ark");
+    assert_output_invariants(&output, "payments/single_sig.ark");
 }
 
 #[test]
 fn roundtrip_htlc() {
-    let output = compile_example("htlc.ark");
-    assert_output_invariants(&output, "htlc.ark");
+    let output = compile_example("swaps/htlc.ark");
+    assert_output_invariants(&output, "swaps/htlc.ark");
     assert_eq!(output.name, "HTLC");
     // 3 spend groups: claim, refund (function-backed) + unilateral (standalone)
     assert_eq!(output.functions.len(), 3);
@@ -110,26 +110,26 @@ fn roundtrip_htlc() {
 
 #[test]
 fn roundtrip_token_vault() {
-    let output = compile_example("token_vault.ark");
-    assert_output_invariants(&output, "token_vault.ark");
+    let output = compile_example("tokens/token_vault.ark");
+    assert_output_invariants(&output, "tokens/token_vault.ark");
 }
 
 #[test]
 fn roundtrip_controlled_mint() {
-    let output = compile_example("controlled_mint.ark");
-    assert_output_invariants(&output, "controlled_mint.ark");
+    let output = compile_example("tokens/controlled_mint.ark");
+    assert_output_invariants(&output, "tokens/controlled_mint.ark");
 }
 
 #[test]
 fn roundtrip_nft_mint() {
-    let output = compile_example("nft_mint.ark");
-    assert_output_invariants(&output, "nft_mint.ark");
+    let output = compile_example("tokens/nft_mint.ark");
+    assert_output_invariants(&output, "tokens/nft_mint.ark");
 }
 
 #[test]
 fn roundtrip_fuji_safe() {
-    let output = compile_example("fuji_safe.ark");
-    assert_output_invariants(&output, "fuji_safe.ark");
+    let output = compile_example("stability/fuji_safe.ark");
+    assert_output_invariants(&output, "stability/fuji_safe.ark");
 }
 
 #[test]
@@ -140,26 +140,26 @@ fn roundtrip_stability_vault() {
 
 #[test]
 fn roundtrip_threshold_oracle() {
-    let output = compile_example("threshold_oracle.ark");
-    assert_output_invariants(&output, "threshold_oracle.ark");
+    let output = compile_example("oracles/threshold_oracle.ark");
+    assert_output_invariants(&output, "oracles/threshold_oracle.ark");
 }
 
 #[test]
 fn roundtrip_threshold_multisig_htlc() {
-    let output = compile_example("threshold_multisig_htlc.ark");
-    assert_output_invariants(&output, "threshold_multisig_htlc.ark");
+    let output = compile_example("swaps/threshold_multisig_htlc.ark");
+    assert_output_invariants(&output, "swaps/threshold_multisig_htlc.ark");
 }
 
 #[test]
 fn roundtrip_non_interactive_swap() {
-    let output = compile_example("non_interactive_swap.ark");
-    assert_output_invariants(&output, "non_interactive_swap.ark");
+    let output = compile_example("swaps/non_interactive_swap.ark");
+    assert_output_invariants(&output, "swaps/non_interactive_swap.ark");
 }
 
 #[test]
 fn roundtrip_fee_adapter() {
-    let output = compile_example("fee_adapter.ark");
-    assert_output_invariants(&output, "fee_adapter.ark");
+    let output = compile_example("fees/fee_adapter.ark");
+    assert_output_invariants(&output, "fees/fee_adapter.ark");
 }
 
 #[test]
@@ -170,14 +170,14 @@ fn roundtrip_stability_offer() {
 
 #[test]
 fn roundtrip_arkade_kitties() {
-    let output = compile_example("arkade_kitties.ark");
-    assert_output_invariants(&output, "arkade_kitties.ark");
+    let output = compile_example("tokens/arkade_kitties.ark");
+    assert_output_invariants(&output, "tokens/arkade_kitties.ark");
 }
 
 #[test]
 fn roundtrip_payment_auth() {
-    let output = compile_example("payment_auth.ark");
-    assert_output_invariants(&output, "payment_auth.ark");
+    let output = compile_example("payments/payment_auth.ark");
+    assert_output_invariants(&output, "payments/payment_auth.ark");
 }
 
 #[test]
