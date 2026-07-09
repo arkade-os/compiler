@@ -1,7 +1,7 @@
 ---
 name: writing-arkade-contracts
 description: Activate when authoring or editing `.ark` contract files (not the compiler itself). Use for any task involving constructor design, state transitions, tapleaf shape, witness layout, output assertions, oracle patterns, or working around grammar gotchas. Distinct from `language-feature-development` which is for compiler maintainers.
-prerequisites: Read `docs/arkade-primitives-spec.md` and at least two reference contracts in `examples/` before starting.
+prerequisites: Read `docs/tapscript-leaves-spec.md` and at least two reference contracts in `examples/` before starting.
 ---
 
 # Writing Arkade Contracts
@@ -168,7 +168,7 @@ These will burn you if you don't know them. All confirmed against `src/parser/gr
 | No `\|\|` or `&&` operators | Nested `if (cond) { require(...) }` or split into multiple `require`s |
 | No ternary expression | if-else with separate require chains; or compute value as witness and `require(value == expected)` |
 | Comparison RHS can't be arithmetic — `require(value >= a + b)` parse-fails | Bind to a `let`/`int` first: `int min = a + b; require(value >= min, ...)` |
-| Variables can't be reassigned | Design state as a single `let` declaration; use new names (`newTargetUSD` not `targetUSD = ...`) |
+| Reassignment exists but is statement-only | Use `name = expr;` for accumulators; otherwise prefer new names (`newTargetUSD`) for state transitions |
 | `array_access` index must be number_literal or identifier | If you need a computed index, bind it as an `int` first |
 | PEG alternative order matters | If a new construct doesn't parse, check the grammar's alternative ordering — `tx_property_access` must precede `identifier`, etc. |
 | `this.activeInputIndex` parses but emits opcode | Now compiles to `OP_PUSHCURRENTINPUTINDEX` (post-PR #32); older revisions emit a placeholder |
@@ -199,10 +199,10 @@ When in doubt, mine these for the pattern you need:
 | Capital ops (add/remove) | `examples/stability/stability_vault.ark` (`addCapital`, `removeCapital`) |
 | Sibling-input merge via `this.activeInputIndex` | `examples/stability/stability_vault.ark` (`merge`) |
 | Non-interactive offer take with conditional dust-routed fee | `examples/stability/stability_offer.ark` (`take`) |
-| Threshold (k-of-n) verification | `examples/threshold_multisig_htlc.ark`, `examples/threshold_oracle.ark` |
-| Asset-group introspection | `examples/arkade_kitties.ark`, `examples/token_vault.ark` |
-| Hash-locked contracts | `examples/htlc.ark` |
-| Non-interactive atomic swaps | `examples/non_interactive_swap.ark` |
+| Threshold (k-of-n) verification | `examples/threshold_multisig_htlc/threshold_multisig_htlc.ark`, `examples/threshold_oracle/threshold_oracle.ark` |
+| Asset-group introspection | `examples/arkade_kitties/arkade_kitties.ark`, `examples/token_vault/token_vault.ark` |
+| Hash-locked contracts | `examples/htlc/htlc.ark` |
+| Non-interactive atomic swaps | `examples/non_interactive_swap/non_interactive_swap.ark` |
 
 </reference_examples>
 
@@ -214,9 +214,9 @@ When writing a new contract:
 2. **List the functions** and which actor (signer) authorizes each. Note which require oracle witnesses.
 3. **For each function, write the output layout** before the body. Diagram which outputs exist conditionally.
 4. **Start from a reference example** (table above). Copy the closest pattern and adapt; don't write from scratch.
-5. **Compile early and often.** `cargo run -- examples/foo.ark -o /tmp/foo.json` surfaces parse errors fast.
+5. **Compile early and often.** `cargo run -- examples/<dir>/<file>.ark -o /tmp/foo.json` surfaces parse errors fast.
 6. **Read compiler warnings** in compile output. Type, validation, and output-invariant warnings flag malformed contracts or compiler self-check failures.
-7. **Add a roundtrip test** in `tests/compilation_roundtrip_test.rs` (it auto-validates structural invariants — non-empty spend groups, covenants, leaves, and witness entries).
+7. **Add a roundtrip test** in `tests/examples/compilation_roundtrip.rs` (it auto-validates structural invariants — non-empty spend groups, covenants, leaves, and witness entries).
 8. **Add behavioral tests** for any non-trivial logic — what opcodes must be emitted, what placeholders, what dust thresholds.
 9. **`cargo fmt && cargo test`** before committing.
 10. **Regenerate playground**: `./playground/generate_contracts.sh` if you touched `examples/**/*.ark`.

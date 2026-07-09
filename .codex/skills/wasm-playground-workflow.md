@@ -13,7 +13,7 @@ Safely modify and validate the browser playground pipeline that wraps the Rust c
 <context>
 Playground stack is static HTML/CSS/JS in `playground/` plus Rust WASM exports in `src/wasm.rs`.
 Build flow:
-1. `playground/generate_contracts.sh` creates `playground/contracts.js` from `examples/*.ark`.
+1. `playground/generate_contracts.sh` creates `playground/contracts.js` from `examples/**/*.ark`.
 2. `wasm-pack build --features wasm` outputs package to `playground/pkg`.
 3. Deploy workflow publishes `playground/` to GitHub Pages.
 </context>

@@ -7,14 +7,14 @@ prerequisites: cargo test, rustfmt
 # Testing and Regressions
 
 <purpose>
-Create durable regression tests for compiler behavior, with clear expectations for ABI fields, dual variants, and emitted ASM.
+Create durable regression tests for compiler behavior, with clear expectations for ABI spend groups, tapleaves, witnesses, and emitted ASM.
 </purpose>
 
 <context>
 Testing is integration-heavy under `tests/*.rs`. Typical pattern:
 - Build in-memory Arkade contract string
 - Call `arkade_compiler::compile`
-- Assert contract metadata + function variants + opcode sequence
+- Assert contract metadata + spend groups + arkade covenant or tapleaf opcode sequence
 Some tests also execute CLI binary via `env!("CARGO_BIN_EXE_arkadec")`.
 </context>
 
@@ -25,7 +25,7 @@ Some tests also execute CLI binary via `env!("CARGO_BIN_EXE_arkadec")`.
 2. Write minimal contract fixture inline in test.
 3. Assert key behavior:
 - Function count and names
-- `server_variant` true/false behavior
+- `arkade` covenant presence/inputs and `leaves[]` witness shape
 - Opcode sequence or required opcodes
 4. For CLI JSON comparisons, normalize timestamp fields by removing `updatedAt`.
 5. Run targeted tests: `cargo test --test <file>`.
@@ -35,7 +35,7 @@ Some tests also execute CLI binary via `env!("CARGO_BIN_EXE_arkadec")`.
 
 <patterns>
 <do>
-- Use `.find(|f| f.name == "..." && f.server_variant)` for precise variant selection.
+- Use helper lookups by group name, then inspect `group.arkade` or `group.leaves[]`.
 - Assert opcodes with constants from `arkade_compiler::opcodes` when available.
 - Cover at least one negative/edge branch for new parser features.
 </do>
@@ -67,7 +67,7 @@ assert!(status.success());
 </troubleshooting>
 
 <references>
-- `tests/htlc_test.rs`: compile assertions + CLI parity comparison
-- `tests/new_opcodes_test.rs`: opcode-focused feature regression style
-- `tests/group_properties_test.rs`: broader semantic assertion patterns
+- `tests/examples/htlc.rs`: compile assertions + CLI parity comparison
+- `tests/features/new_opcodes.rs`: opcode-focused feature regression style
+- `tests/features/group_properties.rs`: broader semantic assertion patterns
 </references>
