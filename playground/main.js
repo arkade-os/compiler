@@ -26,10 +26,11 @@ const projects = {
     },
     options: {
         name: 'Options',
-        description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
+        description: 'European covered call + cash-secured put (single bilateral options), plus a pooled cash-settled covered-call writing vault with LP shares',
         files: {
             'covered_call.ark': contracts.covered_call,
             'cash_secured_put.ark': contracts.cash_secured_put,
+            'options_vault.ark': contracts.options_vault,
         }
     },
     bonds: {
