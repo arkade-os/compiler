@@ -1,84 +1,78 @@
 // OptionsVault Contract
 //
-// A pooled, cash-settled covered-call WRITING vault — the Bitcoin-native
-// analog of a Rysk Premium / Ribbon-style Thetavault. Where `covered_call.ark`
-// is a single bilateral option (one seller ↔ one buyer), this is the pooled
-// product: many LPs deposit collateral into a shared covenant, a curator writes
-// one covered call per epoch against the pool, the premium accrues to every LP
-// pro-rata, and settlement is cash (oracle-priced) so no one has to deliver the
-// full notional.
+// A pooled, cash-settled covered-call writing vault. Many liquidity providers
+// deposit collateral into one shared Bitcoin contract; a curator writes one
+// covered call per epoch against the pool; the premium accrues to every provider
+// pro-rata; and settlement is cash (oracle-priced), so no one has to deliver the
+// full notional. Compare `covered_call.ark`, which is a single bilateral option
+// between one seller and one buyer.
 //
-// ── Pattern: LP shares as a fungible Arkade Asset (ERC-4626 shape) ──────────
-//   Mirrors `examples/vault_lending/vault_covenant.ark`. LP shares are issued
-//   as an Arkade Asset (the (lpAssetIdTxid, lpAssetIdGidx) pair):
-//     - deposit → shares MINTED to the depositor (output[1])
-//     - withdraw → shares BURNED from the LP (input[1]); the burn IS the auth
-//   Because shares are a plain fungible asset, an LP can also just SELL them on
-//   a secondary market without touching this covenant — exit liquidity even
+// ── Pattern: LP shares as a CONTROL-GATED fungible Arkade Asset ──────────────
+//   LP shares are an Arkade Asset — the (lpAssetIdTxid, lpAssetIdGidx) pair —
+//   and minting is CONTROL-GATED (the `bonds/repayment_pool.ark` pattern): the
+//   share asset group is controlled by lpCtrl, and lpCtrl lives only in this
+//   contract (retained on output[0] by every function). So the share supply
+//   rises only inside a `deposit` spend of the vault — LP shares cannot be
+//   forged out of band.
+//     - deposit → shares MINTED to the depositor (output[1]); supply rises by
+//       exactly sharesIssued and the group is controlIs(lpCtrl)
+//     - withdraw → shares BURNED (supply falls by exactly sharesBurned); the
+//       burn IS the authentication (the holder must spend their share output)
+//     - writeOption / settle → share supply and control are pinned unchanged
+//   Shares are a plain fungible asset, so a provider can also sell them to
+//   another party on-chain without touching this contract — exit liquidity even
 //   while collateral is locked in a live option.
 //
-//   NAV / price-per-share is carried as `totalCollateral / totalShares`, both
-//   in sats. Premium collected upfront lifts `totalCollateral` with `totalShares`
-//   unchanged → PPS rises monotonically = the LP yield. (Share-issuance and
-//   redemption ratios are computed off-chain; the covenant enforces only that
-//   no one mints/redeems better than the current PPS — the fairness inequality
-//   in `deposit`/`withdraw`.)
+//   Net asset value per share is carried as `totalCollateral / totalShares`,
+//   both in sats. Premium collected upfront lifts `totalCollateral` with
+//   `totalShares` unchanged, so the value per share rises monotonically = the
+//   provider yield. Share-issuance and redemption ratios are computed off-chain;
+//   the contract enforces only that no one mints or redeems better than the
+//   current value per share (the fairness inequality in `deposit` / `withdraw`).
 //
-//   HARDENING FOLLOW-UP: like `bonds/repayment_pool.ark`, the LP mint should be
-//   gated by a control asset (an lpCtrlId + assetGroups control check) so only
-//   this vault can mint the share asset. This example follows the simpler
-//   `vault_covenant.ark` lookup form for readability.
+//   CONTROL-RETENTION INVARIANT: every function re-creates the vault holding
+//   >= 1 lpCtrl and pins the control group's supply delta to 0. Safety rests on
+//   this — every future function keeps lpCtrl in output[0], so minting always
+//   stays bound to the genuine vault. (Same shape as the bonds control asset.)
 //
 // ── Instrument: BTC-margined, cash-settled covered call ─────────────────────
-//   Single-asset NAV: collateral, premium, and settlement are all in sats, so
+//   Single-asset value: collateral, premium, and settlement are all in sats, so
 //   share accounting stays one-dimensional. The oracle only converts the USD
 //   strike into a sats payout at expiry.
 //
 //   One live option per epoch (write → expiry → settle → write again), the
-//   classic weekly-roll Thetavault cadence. A multi-leg book (many concurrent
-//   options) would split each written call into its own child covenant, the way
-//   `bonds/repayment_pool.ark` spins out a `BondMint` per issuance — noted as a
-//   follow-up, out of scope here.
+//   classic weekly-roll cadence. A multi-leg book (many concurrent options)
+//   would split each written call into its own child contract, the way
+//   `bonds/repayment_pool.ark` spins out a `BondMint` per issuance — a follow-up,
+//   out of scope here.
 //
 //   Cash-settled call payoff, BTC-margined, on `coveredSats` of notional:
 //     ITM (spot > strike): buyer paid  coveredSats × (spot − strike) / spot
 //     OTM:                 buyer paid  0; all collateral unlocks to the pool
-//   Premium is paid upfront by the buyer (an RFQ market maker) into the pool.
+//   Premium is paid upfront by the buyer into the pool.
 //
 // ── Roles ───────────────────────────────────────────────────────────────────
-//   curatorPk : picks strike/expiry and writes the option. Non-custodial on the
-//               cooperative path — it can only move state within the covenant
-//               rules; it can never withdraw pool collateral. (Rysk's curator.)
-//   oraclePk  : Fuji-style signed BTC/USD price feed for settlement.
-//   LPs       : identified only by holding the share asset; never named on-chain.
+//   curatorPk : picks strike/expiry and writes the option. On the cooperative
+//               path it only moves state within the contract's rules; it never
+//               withdraws pool collateral.
+//   oraclePk  : oracle-signed BTC/USD price feed for settlement.
+//   lpAssetId : the LP share token; lpCtrl gates its mint (both vault-held).
+//   providers : identified only by holding the share asset; never named on-chain.
 //   buyerPk   : the counterparty of the CURRENT live option (function-supplied
 //               on write, carried in state until settle; = curatorPk when idle).
 //
-// ── EXIT MODEL — tapscript unilateral placeholder; PULSE is the real fix ─────
-//   The Arkade model is: cooperative functions (server-emulated introspection)
-//   plus an explicit `unilateral` tapscript leaf — pure Bitcoin script, a CSV
-//   (`older(exit)`) gating a single `checkSig` — for the operator-offline case.
+// ── EXIT MODEL ──────────────────────────────────────────────────────────────
+//   Each cooperative function is co-signed by the Arkade operator. In addition,
+//   the `unilateral` function is a pure-Bitcoin-script exit: after `exit` blocks,
+//   the curator recovers the pool collateral directly on-chain with a single
+//   signature behind an `older(exit)` timelock, even if the operator is offline.
 //
-//   For a POOL there is no SOUND single-key unilateral exit: an LP's claim is a
-//   burn of the share asset, which requires introspection — and tapscript
-//   leaves carry NO introspection. So the placeholder `unilateral` below is
-//   gated by `curatorPk` alone. That is deliberately CUSTODIAL on the unilateral
-//   path: after `exit` blocks with the Operator offline, the curator could
-//   sweep the pooled collateral. It exists only so the VTXO has a valid exit
-//   leaf; it contradicts the otherwise non-custodial curator role, and passive
-//   LPs still get no standing unilateral exit of their own. An N-of-N over "the
-//   members" is impossible here — the member set is dynamic and unnamed. That
-//   collapse is exactly the gap PULSE closes.
+//   NEXT WORK — PULSE: give every provider their own recurrent on-chain exit.
+//   See `docs/recurrent-exit-pulse.md`: a per-epoch pre-signed exit tree with
+//   one slot per provider, refreshed on each deposit / withdraw / write / settle,
+//   plus a `renew` heartbeat.
 //
-//   TODO(PULSE) — NEXT WORK: replace the curator-gated `unilateral` leaf with a
-//   recurrent, per-LP exit for the operator-disappears case. See
-//   `docs/recurrent-exit-pulse.md` (PULSE — Pooled Unilateral-exit via Lattice
-//   State Epochs): a per-epoch pre-signed exit lattice with one slot per LP,
-//   refreshed by the transacting parties + Operator on every deposit / withdraw
-//   / write / settle pulse, plus a `renew` heartbeat. Until that lands, this
-//   contract intentionally ships the custodial-curator placeholder.
-//
-// ── SIMPLIFICATIONS (documented, deliberate) ────────────────────────────────
+// ── SIMPLIFICATIONS (deliberate) ────────────────────────────────────────────
 //   - One live option per epoch (see above).
 //   - `settle` uses the first fresh oracle price at/after expiry, not a fixed
 //     expiry-time price. A production vault pins the exact expiry fixing.
@@ -89,13 +83,15 @@ import "single_sig.ark";
 
 contract OptionsVault(
   pubkey  curatorPk,        // writes options (strike/expiry); non-custodial (coop)
-  pubkey  oraclePk,         // Fuji-style signed BTC/USD feed
+  pubkey  oraclePk,         // oracle-signed BTC/USD feed
   bytes32 ticker,           // feed id, e.g. sha256("BTC/USD")
   bytes32 lpAssetIdTxid,    // LP share asset id — issuance txid
   int     lpAssetIdGidx,    // LP share asset id — issuance group index
+  bytes32 lpCtrlIdTxid,     // LP share CONTROL asset id — issuance txid (gates mint)
+  int     lpCtrlIdGidx,     // LP share CONTROL asset id — issuance group index
   pubkey  buyerPk,          // live option's buyer (= curatorPk when idle)
-  int     totalCollateral,  // pool sats = NAV numerator (LP principal + premium)
-  int     totalShares,      // LP shares outstanding = NAV denominator
+  int     totalCollateral,  // pool sats = value numerator (LP principal + premium)
+  int     totalShares,      // LP shares outstanding = value denominator
   int     coveredSats,      // sats locked behind the live option (0 = idle)
   int     strikePrice,      // live strike, USD with 8 decimals (0 = idle)
   int     expiryHeight,     // live option expiry, block height (0 = idle)
@@ -106,7 +102,7 @@ contract OptionsVault(
   // DEPOSIT — permissionless. LP adds `depositSats`, mints `sharesIssued`.
   // Authentication is implicit: the depositor funds `depositSats` from their
   // own input, whose signature commits to output[1] (their shares).
-  //   input[0]:  this OptionsVault UTXO
+  //   input[0]:  this vault's Bitcoin output (holds >= 1 lpCtrl)
   //   input[1+]: depositor's sats (>= depositSats + fee)
   //   output[0]: vault re-created (totalCollateral + depositSats, +sharesIssued)
   //   output[1]: sharesIssued of the share asset → depositor
@@ -118,7 +114,7 @@ contract OptionsVault(
     int newCollateral = totalCollateral + depositSats;
     int newShares      = totalShares + sharesIssued;
 
-    // Fair issuance: no minting better than the current PPS.
+    // Fair issuance: no minting better than the current value per share.
     //   sharesIssued / totalShares <= depositSats / totalCollateral
     // Bootstrap an empty pool at 1 share per sat.
     // FOLLOW-UP: the cross-product overflows int64 for very large pools; chunk.
@@ -130,7 +126,16 @@ contract OptionsVault(
       require(sharesIssued == depositSats, "genesis must be 1:1");
     }
 
-    // Mint LP shares to the depositor.
+    // Control-gated mint: the LP share supply rises by exactly sharesIssued, and
+    // the share group is controlled by lpCtrl — which lives only in this vault,
+    // so only a vault spend can mint. The control supply itself must not move.
+    let shareGroup = tx.assetGroups.find(lpAssetIdTxid, lpAssetIdGidx);
+    require(shareGroup.delta == sharesIssued, "share supply != sharesIssued");
+    require(shareGroup.controlIs(lpCtrlIdTxid, lpCtrlIdGidx), "wrong share control");
+    let ctrlGroup = tx.assetGroups.find(lpCtrlIdTxid, lpCtrlIdGidx);
+    require(ctrlGroup.delta == 0, "control supply changed");
+
+    // Minted shares go to the depositor.
     require(
       tx.outputs[1].assets.lookup(lpAssetIdTxid, lpAssetIdGidx) == sharesIssued,
       "shares not minted to depositor"
@@ -138,22 +143,24 @@ contract OptionsVault(
 
     require(
       tx.outputs[0].scriptPubKey == new OptionsVault(
-        curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx, buyerPk,
+        curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx,
+        lpCtrlIdTxid, lpCtrlIdGidx, buyerPk,
         newCollateral, newShares, coveredSats, strikePrice, expiryHeight, exit
       ),
       "invalid pool recreation"
     );
     require(tx.outputs[0].value >= newCollateral, "capital not deposited");
+    require(tx.outputs[0].assets.lookup(lpCtrlIdTxid, lpCtrlIdGidx) >= 1, "control not retained");
   }
 
   // -------------------------------------------------------------------------
-  // WITHDRAW — LP burns `sharesBurned`, redeems `payoutSats` at NAV. The share
-  // burn is the authentication (spending input[1] requires the holder's own
-  // signature, which binds the payout output). Bounded by the pool's IDLE
-  // collateral — locked option collateral can never be withdrawn from under a
-  // live option.
-  //   input[0]:  this OptionsVault UTXO
-  //   input[1]:  sharesBurned of the share asset (burned)
+  // WITHDRAW — LP burns `sharesBurned`, redeems `payoutSats` at value per share.
+  // The share burn is the authentication (spending the share output as an input
+  // requires the holder's own signature, which binds the payout output). Bounded
+  // by the pool's IDLE collateral — locked option collateral can never be
+  // withdrawn from under a live option.
+  //   input[0]:  this vault's Bitcoin output
+  //   input[1+]: sharesBurned of the share asset (burned)
   //   output[0]: vault re-created (totalCollateral - payoutSats, -sharesBurned)
   //   output[1]: payoutSats → LP
   // -------------------------------------------------------------------------
@@ -162,7 +169,7 @@ contract OptionsVault(
     require(payoutSats > 0, "zero payout");
     require(totalShares > 0, "no shares outstanding");
 
-    // Fair redemption: no redeeming better than the current PPS.
+    // Fair redemption: no redeeming better than the current value per share.
     //   payoutSats / totalCollateral <= sharesBurned / totalShares
     // FOLLOW-UP: the cross-product overflows int64 for very large pools; chunk.
     int redeemLhs = payoutSats * totalShares;
@@ -175,31 +182,34 @@ contract OptionsVault(
     // The remaining pool must still fully back the live option.
     require(newCollateral >= coveredSats, "would strand written option");
 
-    // Burn the LP shares.
-    require(
-      tx.inputs[1].assets.lookup(lpAssetIdTxid, lpAssetIdGidx) == sharesBurned,
-      "shares not burned"
-    );
+    // Burn exactly sharesBurned of the LP share asset; control supply unchanged.
+    let shareGroup = tx.assetGroups.find(lpAssetIdTxid, lpAssetIdGidx);
+    require(shareGroup.sumInputs == shareGroup.sumOutputs + sharesBurned, "shares not burned exactly");
+    let ctrlGroup = tx.assetGroups.find(lpCtrlIdTxid, lpCtrlIdGidx);
+    require(ctrlGroup.delta == 0, "control supply changed");
 
     require(
       tx.outputs[0].scriptPubKey == new OptionsVault(
-        curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx, buyerPk,
+        curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx,
+        lpCtrlIdTxid, lpCtrlIdGidx, buyerPk,
         newCollateral, newShares, coveredSats, strikePrice, expiryHeight, exit
       ),
       "invalid pool recreation"
     );
     require(tx.outputs[0].value >= newCollateral, "pool not preserved");
+    require(tx.outputs[0].assets.lookup(lpCtrlIdTxid, lpCtrlIdGidx) >= 1, "control not retained");
 
     require(tx.outputs[1].value >= payoutSats, "LP underpaid");
   }
 
   // -------------------------------------------------------------------------
-  // WRITE OPTION — curator sells one covered call to a market maker. The buyer
-  // pays `premiumSats` upfront into the pool (lifting PPS), and `newCoveredSats`
-  // of collateral is locked behind the call until `newExpiryHeight`.
+  // WRITE OPTION — curator sells one covered call to a buyer. The buyer pays
+  // `premiumSats` upfront into the pool (lifting the value per share), and
+  // `newCoveredSats` of collateral is locked behind the call until
+  // `newExpiryHeight`.
   //   Only valid when idle (no live option). curatorSig authorizes the terms;
-  //   the buyer's premium input signs the tx, consenting to the state.
-  //   input[0]:  this OptionsVault UTXO (idle)
+  //   the buyer's premium input signs the transaction, consenting to the state.
+  //   input[0]:  this vault's Bitcoin output (idle)
   //   input[1+]: buyer's premium sats (>= premiumSats + fee)
   //   output[0]: vault re-created (option live, totalCollateral + premiumSats)
   // -------------------------------------------------------------------------
@@ -218,20 +228,28 @@ contract OptionsVault(
     require(premiumSats > 0, "zero premium");
     require(tx.time < newExpiryHeight, "expiry in the past");
 
-    // Premium accrues to LPs; shares unchanged → PPS rises.
+    // Premium accrues to LPs; shares unchanged → value per share rises.
     int newCollateral = totalCollateral + premiumSats;
 
     // The pool must fully cover the written call (covered, not naked).
     require(newCoveredSats <= newCollateral, "insufficient collateral to cover");
 
+    // No LP shares are minted or burned when writing; control is untouched.
+    let shareGroup = tx.assetGroups.find(lpAssetIdTxid, lpAssetIdGidx);
+    require(shareGroup.delta == 0, "shares must not move");
+    let ctrlGroup = tx.assetGroups.find(lpCtrlIdTxid, lpCtrlIdGidx);
+    require(ctrlGroup.delta == 0, "control supply changed");
+
     require(
       tx.outputs[0].scriptPubKey == new OptionsVault(
-        curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx, newBuyerPk,
+        curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx,
+        lpCtrlIdTxid, lpCtrlIdGidx, newBuyerPk,
         newCollateral, totalShares, newCoveredSats, newStrikePrice, newExpiryHeight, exit
       ),
       "invalid pool recreation"
     );
     require(tx.outputs[0].value >= newCollateral, "premium not collected");
+    require(tx.outputs[0].assets.lookup(lpCtrlIdTxid, lpCtrlIdGidx) >= 1, "control not retained");
   }
 
   // -------------------------------------------------------------------------
@@ -239,7 +257,7 @@ contract OptionsVault(
   // Permissionless: anyone can settle with a fresh signed price. The buyer is
   // paid the intrinsic value in sats iff ITM; the remainder unlocks to the pool
   // and the vault returns to idle.
-  //   input[0]:  this OptionsVault UTXO (option live, matured)
+  //   input[0]:  this vault's Bitcoin output (option live, matured)
   //   output[0]: vault re-created (idle; totalCollateral - payoutSats)
   //   output[1]: payoutSats → buyer (ITM, above dust only)
   // -------------------------------------------------------------------------
@@ -254,6 +272,12 @@ contract OptionsVault(
     let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
+    // No LP shares are minted or burned at settlement; control is untouched.
+    let shareGroup = tx.assetGroups.find(lpAssetIdTxid, lpAssetIdGidx);
+    require(shareGroup.delta == 0, "shares must not move");
+    let ctrlGroup = tx.assetGroups.find(lpCtrlIdTxid, lpCtrlIdGidx);
+    require(ctrlGroup.delta == 0, "control supply changed");
+
     if (oraclePrice > strikePrice) {
       // ITM: buyer owed coveredSats × (spot − strike) / spot, capped by covered.
       // FOLLOW-UP: coveredSats × (oraclePrice − strikePrice) overflows int64 for
@@ -263,12 +287,14 @@ contract OptionsVault(
 
       require(
         tx.outputs[0].scriptPubKey == new OptionsVault(
-          curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx, curatorPk,
+          curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx,
+          lpCtrlIdTxid, lpCtrlIdGidx, curatorPk,
           newCollateral, totalShares, 0, 0, 0, exit
         ),
         "invalid pool recreation"
       );
       require(tx.outputs[0].value >= newCollateral, "pool not preserved");
+      require(tx.outputs[0].assets.lookup(lpCtrlIdTxid, lpCtrlIdGidx) >= 1, "control not retained");
 
       if (payoutSats > 330) {
         require(tx.outputs[1].value >= payoutSats, "buyer underpaid");
@@ -278,20 +304,22 @@ contract OptionsVault(
       // OTM: no payout; all collateral unlocks back to the pool.
       require(
         tx.outputs[0].scriptPubKey == new OptionsVault(
-          curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx, curatorPk,
+          curatorPk, oraclePk, ticker, lpAssetIdTxid, lpAssetIdGidx,
+          lpCtrlIdTxid, lpCtrlIdGidx, curatorPk,
           totalCollateral, totalShares, 0, 0, 0, exit
         ),
         "invalid pool recreation"
       );
       require(tx.outputs[0].value >= totalCollateral, "pool not preserved");
+      require(tx.outputs[0].assets.lookup(lpCtrlIdTxid, lpCtrlIdGidx) >= 1, "control not retained");
     }
   }
 
   // -------------------------------------------------------------------------
-  // UNILATERAL EXIT (CSV) — PLACEHOLDER, custodial. See the EXIT MODEL note in
-  // the header. Pure tapscript (no introspection possible), so it cannot check
-  // per-LP share burns; it is gated by the curator alone as a stand-in until
-  // PULSE gives passive LPs their own lattice slots. TODO(PULSE).
+  // UNILATERAL EXIT — pure Bitcoin script (no introspection). After the exit
+  // timelock, the curator recovers the pool collateral on-chain if the operator
+  // is offline. PULSE (next work) extends this to a per-provider exit; see the
+  // EXIT MODEL note in the header.
   // -------------------------------------------------------------------------
   function unilateral(signature curatorSig) tapscript {
     require(older(exit));
