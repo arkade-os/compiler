@@ -1,8 +1,9 @@
 //! OptionsVault — pooled, cash-settled covered-call writing vault.
 //!
-//! Pattern-A pooling: LP shares are a fungible Arkade Asset whose MINT is
-//! control-gated (the share group is `controlIs(lpCtrl)`, and lpCtrl lives only
-//! in the vault). Minted on deposit, burned on withdraw (the burn is the auth).
+//! Pattern-A pooling: LP shares are a fungible Arkade Asset whose MINT is gated
+//! by the vault's contract-identity singleton (the share group is
+//! `controlIs(contractId)`, and the identity singleton lives only in the vault).
+//! Minted on deposit, burned on withdraw (the burn is the auth).
 //! Premium accrues to the pool (value per share up). One covered call per epoch,
 //! cash-settled against an oracle-signed price. The unilateral exit lets the
 //! curator recover pool collateral after the timelock; a per-provider recurrent
@@ -31,10 +32,10 @@ fn test_compiles_with_5_groups() {
 
 #[test]
 fn test_asset_ids_are_two_explicit_params() {
-    // Both the LP share asset and its control asset are Arkade Assets; each id
-    // is two explicit params (bytes32 txid, int gidx), never a raw bytes32.
+    // The LP share asset and the vault's identity singleton are Arkade Assets;
+    // each id is two explicit params (bytes32 txid, int gidx), never a raw bytes32.
     let out = compile(CODE).unwrap();
-    for base in ["lpAssetId", "lpCtrlId"] {
+    for base in ["lpAssetId", "contractId"] {
         let txid = out
             .parameters
             .iter()
@@ -79,9 +80,9 @@ fn test_deposit_mints_shares_and_is_permissionless() {
 
 #[test]
 fn test_mint_is_control_gated() {
-    // The mint is gated by the LP control asset: deposit finds the share group
-    // and asserts controlIs(lpCtrl) plus the exact supply delta. Only a spend
-    // holding lpCtrl (i.e. the vault) can mint.
+    // The mint is gated by the vault's identity singleton: deposit finds the
+    // share group and asserts controlIs(contractId) plus the exact supply delta.
+    // Only a spend holding the identity singleton (i.e. the vault) can mint.
     let out = compile(CODE).unwrap();
     let asm = arkade_asm(&out, "deposit");
     assert!(
@@ -90,7 +91,7 @@ fn test_mint_is_control_gated() {
     );
     assert!(
         asm.contains(OP_INSPECTASSETGROUPCTRL),
-        "deposit must assert the share group is controlIs(lpCtrl)"
+        "deposit must assert the share group is controlIs(contractId)"
     );
     assert!(
         asm.contains(OP_INSPECTASSETGROUPSUM),
@@ -122,14 +123,14 @@ fn test_withdraw_burns_via_group_no_control_gate() {
 
 #[test]
 fn test_control_retained_in_every_covenant_function() {
-    // The control-retention invariant: every covenant function re-creates the
-    // vault holding >= 1 lpCtrl (an output asset lookup). writeOption and settle
-    // touch no shares, so their only output asset lookup IS the control check.
+    // The identity-retention invariant: every covenant function re-creates the
+    // vault holding >= 1 identity singleton (an output asset lookup). writeOption
+    // and settle touch no shares, so their only output asset lookup IS this check.
     let out = compile(CODE).unwrap();
     for name in ["deposit", "withdraw", "writeOption", "settle"] {
         assert!(
             arkade_asm(&out, name).contains(OP_INSPECTOUTASSETLOOKUP),
-            "{name} must re-assert the vault retains the LP control asset"
+            "{name} must re-assert the vault retains its identity singleton"
         );
     }
 }
