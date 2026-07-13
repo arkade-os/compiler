@@ -26,11 +26,12 @@ const projects = {
     },
     options: {
         name: 'Options',
-        description: 'European covered call + cash-secured put (single bilateral options), plus a pooled cash-settled covered-call writing vault with LP shares',
+        description: 'European covered call + cash-secured put (single bilateral options), plus pooled covered-call vaults: a single-token LP-share vault and a fully-collateralized two-token (long/short share) vault',
         files: {
             'covered_call.ark': contracts.covered_call,
             'cash_secured_put.ark': contracts.cash_secured_put,
             'options_vault.ark': contracts.options_vault,
+            'covered_call_vault.ark': contracts.covered_call_vault,
         }
     },
     bonds: {
