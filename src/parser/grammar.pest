@@ -427,6 +427,10 @@ property_comparison = {
     (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)
 }
 
+reversed_property_comparison = {
+    (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)  ~ binary_operator ~ (tx_property_access | this_property_access)
+}
+
 // Generalized hash condition function name.
 hash_fn_name = { "sha256" | "hash256" | "hash160" | "ripemd160" }
 
