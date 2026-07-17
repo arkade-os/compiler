@@ -187,6 +187,7 @@ complex_expression = _{
     group_control_is_comparison |
     group_property_comparison |
     property_comparison |
+    reversed_property_comparison |
     identifier_comparison |
     binary_operation |
     sha256_initialize |
