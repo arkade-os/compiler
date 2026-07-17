@@ -12,98 +12,80 @@ fn load_fixture(name: &str) -> String {
 }
 
 #[test]
-fn test_ir_htlc_pairing() {
-    let json = load_fixture("htlc");
-    let artifact = load_artifact_str(&json).unwrap();
-    let ir = build_ir(&artifact).unwrap();
+fn test_ir_htlc_groups_and_order() {
+    let ir = build_ir(&load_artifact_str(&load_fixture("htlc")).unwrap()).unwrap();
 
     assert_eq!(ir.name, "HTLC");
-    assert_eq!(ir.constructor_fields.len(), 4);
-    assert_eq!(ir.functions.len(), 3); // together, refund, claim
+    assert_eq!(ir.constructor_fields.len(), 5);
 
-    // Verify function names and ordering
-    assert_eq!(ir.functions[0].name, "together");
-    assert_eq!(ir.functions[1].name, "refund");
-    assert_eq!(ir.functions[2].name, "claim");
+    // Groups preserve artifact order.
+    let names: Vec<&str> = ir.groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, ["claim", "refund", "unilateral"]);
 }
 
 #[test]
 fn test_ir_constructor_field_encoding() {
-    let json = load_fixture("htlc");
-    let artifact = load_artifact_str(&json).unwrap();
-    let ir = build_ir(&artifact).unwrap();
+    let ir = build_ir(&load_artifact_str(&load_fixture("htlc")).unwrap()).unwrap();
 
     let fields = &ir.constructor_fields;
     assert_eq!(fields[0].name, "sender");
     assert_eq!(fields[0].encoding, Encoding::Compressed33);
     assert_eq!(fields[1].name, "receiver");
     assert_eq!(fields[1].encoding, Encoding::Compressed33);
-    assert_eq!(fields[2].name, "hash");
-    assert_eq!(fields[2].encoding, Encoding::Raw);
+    assert_eq!(fields[2].name, "preimageHash");
+    assert_eq!(fields[2].encoding, Encoding::Raw20);
     assert_eq!(fields[3].name, "refundTime");
     assert_eq!(fields[3].encoding, Encoding::ScriptNum);
 }
 
 #[test]
-fn test_ir_server_sig_excluded_from_user_fields() {
-    let json = load_fixture("htlc");
-    let artifact = load_artifact_str(&json).unwrap();
-    let ir = build_ir(&artifact).unwrap();
+fn test_ir_covenant_group_leaf_and_injected_witness() {
+    let ir = build_ir(&load_artifact_str(&load_fixture("htlc")).unwrap()).unwrap();
 
-    let claim = &ir.functions[2];
-    assert_eq!(claim.name, "claim");
-
-    // Cooperative: user gets receiverSig + preimage, serverSig is excluded
-    assert_eq!(claim.cooperative.user_fields.len(), 2);
-    assert_eq!(claim.cooperative.user_fields[0].name, "receiverSig");
-    assert_eq!(claim.cooperative.user_fields[1].name, "preimage");
-
-    // But all_fields includes serverSig
-    assert_eq!(claim.cooperative.all_fields.len(), 3);
-    assert!(claim.cooperative.all_fields[2].is_server_injected);
-    assert_eq!(claim.cooperative.all_fields[2].name, "serverSig");
-
-    // Exit: no serverSig at all
-    assert_eq!(claim.exit.user_fields.len(), 2);
-    assert_eq!(claim.exit.all_fields.len(), 2);
-}
-
-#[test]
-fn test_ir_legacy_artifact_infers_encoding() {
-    let json = load_fixture("htlc_legacy");
-    let artifact = load_artifact_str(&json).unwrap();
-    let ir = build_ir(&artifact).unwrap();
-
-    let claim = &ir.functions[0];
-    assert_eq!(claim.name, "claim");
-
-    // Cooperative: inferred from functionInputs + added serverSig
-    assert_eq!(claim.cooperative.user_fields.len(), 2);
-    assert_eq!(
-        claim.cooperative.user_fields[0].encoding,
-        Encoding::Schnorr64
+    let claim = ir.groups.iter().find(|g| g.name == "claim").unwrap();
+    // Covenant-backed group carries an emulator covenant.
+    assert!(
+        claim.covenant.is_some(),
+        "claim group should have a covenant"
     );
-    assert_eq!(claim.cooperative.user_fields[1].encoding, Encoding::Raw);
+    assert_eq!(claim.leaves.len(), 1);
 
-    // serverSig should be added for cooperative variant
-    assert_eq!(claim.cooperative.all_fields.len(), 3);
-    assert!(claim.cooperative.all_fields[2].is_server_injected);
-
-    // Exit: no serverSig
-    assert_eq!(claim.exit.user_fields.len(), 2);
-    assert_eq!(claim.exit.all_fields.len(), 2);
+    let leaf = &claim.leaves[0];
+    assert_eq!(leaf.name, "claim");
+    // Full witness is preimage + two injected co-signer sigs.
+    assert_eq!(leaf.witness_fields.len(), 3);
+    // User supplies only the non-injected fields.
+    let user: Vec<&str> = leaf.user_fields().iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(user, ["preimage"]);
+    // serverSig / emulatorSig are marked injected.
+    let injected: Vec<&str> = leaf
+        .witness_fields
+        .iter()
+        .filter(|f| f.is_injected)
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(injected, ["serverSig", "emulatorSig"]);
 }
 
 #[test]
-fn test_ir_single_function_contract() {
-    let json = load_fixture("single_sig");
-    let artifact = load_artifact_str(&json).unwrap();
-    let ir = build_ir(&artifact).unwrap();
+fn test_ir_standalone_leaf_group_has_no_covenant() {
+    let ir = build_ir(&load_artifact_str(&load_fixture("htlc")).unwrap()).unwrap();
+
+    let uni = ir.groups.iter().find(|g| g.name == "unilateral").unwrap();
+    assert!(uni.covenant.is_none(), "standalone exit has no covenant");
+    let leaf = &uni.leaves[0];
+    let user: Vec<&str> = leaf.user_fields().iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(user, ["senderSig"]);
+}
+
+#[test]
+fn test_ir_single_sig_contract() {
+    let ir = build_ir(&load_artifact_str(&load_fixture("single_sig")).unwrap()).unwrap();
 
     assert_eq!(ir.name, "SingleSig");
-    assert_eq!(ir.constructor_fields.len(), 1);
-    assert_eq!(ir.functions.len(), 1);
-    assert_eq!(ir.functions[0].name, "spend");
+    assert_eq!(ir.constructor_fields.len(), 2);
+    let names: Vec<&str> = ir.groups.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, ["spend", "unilateral"]);
 }
 
 #[test]

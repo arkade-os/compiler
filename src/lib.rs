@@ -1,9 +1,11 @@
-pub mod compiler;
+// Public API surface: `compile` plus the data model (`models`) and opcode
+// constants consumers need. The pipeline stages are crate-internal.
+mod compiler;
 pub mod models;
 pub mod opcodes;
-pub mod parser;
-pub mod typechecker;
-pub mod validator;
+mod parser;
+mod typechecker;
+mod validator;
 
 #[cfg(feature = "wasm")]
 pub mod wasm;

@@ -1,4 +1,4 @@
-use crate::ir::{ContractIR, Encoding, Field, FunctionIR};
+use crate::ir::{ContractIR, Encoding, Field, GroupIR, LeafIR};
 use crate::naming::{to_camel_case, to_pascal_case, to_snake_case};
 use crate::targets::{CodegenOptions, CodegenTarget, GeneratedFile};
 
@@ -74,19 +74,29 @@ fn value_expr(field: &Field, prefix: &str) -> String {
                 format!("ark.EncodeScriptNum({}.{})", prefix, go_name)
             }
         }
-        Encoding::Le64 => {
-            format!("ark.EncodeLe64({}.{})", prefix, go_name)
-        }
-        Encoding::Le32 => {
-            format!("ark.EncodeLe32({}.{})", prefix, go_name)
-        }
-        _ if is_fixed_array(&field.encoding) => {
-            format!("{}.{}[:]", prefix, go_name)
-        }
-        _ => {
-            format!("{}.{}", prefix, go_name)
-        }
+        Encoding::Le64 => format!("ark.EncodeLe64({}.{})", prefix, go_name),
+        Encoding::Le32 => format!("ark.EncodeLe32({}.{})", prefix, go_name),
+        _ if is_fixed_array(&field.encoding) => format!("{}.{}[:]", prefix, go_name),
+        _ => format!("{}.{}", prefix, go_name),
     }
+}
+
+/// PascalCase name suffix identifying a leaf. Collapses the redundant part when a
+/// group has a single leaf sharing its name (e.g. `Claim`, not `ClaimClaim`).
+fn leaf_suffix(group: &GroupIR, leaf: &LeafIR) -> String {
+    if leaf.name == group.name {
+        to_pascal_case(&group.name)
+    } else {
+        format!(
+            "{}{}",
+            to_pascal_case(&group.name),
+            to_pascal_case(&leaf.name)
+        )
+    }
+}
+
+fn witness_struct_name(ir: &ContractIR, group: &GroupIR, leaf: &LeafIR) -> String {
+    format!("{}{}Witness", ir.name, leaf_suffix(group, leaf))
 }
 
 fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
@@ -120,10 +130,9 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     ));
     out.push_str(&format!("type {}Params struct {{\n", ir.name));
     for field in &ir.constructor_fields {
-        let go_name = to_pascal_case(&field.name);
         out.push_str(&format!(
             "\t{} {} // {} ({})\n",
-            go_name,
+            to_pascal_case(&field.name),
             go_type_for_field(field),
             field.ark_type,
             field.encoding.as_str(),
@@ -131,10 +140,11 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     }
     out.push_str("}\n\n");
 
-    // Per-function witness structs
-    for func in &ir.functions {
-        emit_witness_struct(&mut out, ir, func, &func.cooperative, "Cooperative");
-        emit_witness_struct(&mut out, ir, func, &func.exit, "Exit");
+    // Per-leaf witness structs
+    for group in &ir.groups {
+        for leaf in &group.leaves {
+            emit_witness_struct(&mut out, ir, group, leaf);
+        }
     }
 
     // Contract struct
@@ -176,25 +186,17 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
         ir.name
     ));
 
-    // Function methods — pick a receiver name that doesn't collide with 'w' (witness param)
+    // Per-leaf spend methods
     let receiver = pick_receiver(&ir.name);
-    for func in &ir.functions {
-        emit_go_method(
-            &mut out,
-            ir,
-            func,
-            &func.cooperative,
-            "Cooperative",
-            &receiver,
-        );
-        emit_go_method(&mut out, ir, func, &func.exit, "Exit", &receiver);
+    for group in &ir.groups {
+        for leaf in &group.leaves {
+            emit_go_method(&mut out, ir, group, leaf, &receiver);
+        }
     }
 
     // Artifact constant
     if options.embed_artifact {
         if let Some(ref json) = options.artifact_json {
-            // Use a Go interpreted string literal to safely handle backticks
-            // and other special characters in the JSON.
             let escaped = escape_go_string(json.trim());
             out.push_str(&format!(
                 "var {}Artifact = []byte(\"{}\")\n",
@@ -212,44 +214,28 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     out
 }
 
-fn emit_witness_struct(
-    out: &mut String,
-    ir: &ContractIR,
-    func: &FunctionIR,
-    variant: &crate::ir::VariantIR,
-    variant_label: &str,
-) {
-    let pascal_func = to_pascal_case(&func.name);
-    let struct_name = format!("{}{}{}Witness", ir.name, pascal_func, variant_label);
+fn emit_witness_struct(out: &mut String, ir: &ContractIR, group: &GroupIR, leaf: &LeafIR) {
+    let struct_name = witness_struct_name(ir, group, leaf);
 
-    let path_label = if variant_label == "Cooperative" {
-        "cooperative path"
-    } else {
-        "exit path"
-    };
     out.push_str(&format!(
-        "// {} holds witness data for {}.{} ({}).\n",
-        struct_name, ir.name, func.name, path_label,
+        "// {} holds witness data for {}.{} (leaf: {}).\n",
+        struct_name, ir.name, group.name, leaf.name,
     ));
-
     out.push_str(&format!("type {} struct {{\n", struct_name));
-    for field in &variant.user_fields {
-        let go_name = to_pascal_case(&field.name);
+    for field in leaf.user_fields() {
         out.push_str(&format!(
             "\t{} {} // {} ({})\n",
-            go_name,
+            to_pascal_case(&field.name),
             go_type_for_field(field),
             field.ark_type,
             field.encoding.as_str(),
         ));
     }
-
-    if variant_label == "Cooperative" {
-        out.push_str("\t// ServerSig injected by Arkade server\n");
-    } else if variant.is_nofn_fallback {
-        out.push_str("\t// N-of-N multisig exit fallback\n");
-    } else {
-        out.push_str("\t// Exit timelock enforced by script\n");
+    for field in leaf.witness_fields.iter().filter(|f| f.is_injected) {
+        out.push_str(&format!(
+            "\t// {} injected by Arkade\n",
+            to_pascal_case(&field.name)
+        ));
     }
     out.push_str("}\n\n");
 }
@@ -262,7 +248,6 @@ fn pick_receiver(contract_name: &str) -> String {
         .unwrap_or('c')
         .to_ascii_lowercase();
     if first == 'w' {
-        // Use 'ct' to avoid collision with witness param 'w'
         "ct".to_string()
     } else {
         first.to_string()
@@ -272,32 +257,26 @@ fn pick_receiver(contract_name: &str) -> String {
 fn emit_go_method(
     out: &mut String,
     ir: &ContractIR,
-    func: &FunctionIR,
-    variant: &crate::ir::VariantIR,
-    variant_label: &str,
+    group: &GroupIR,
+    leaf: &LeafIR,
     receiver: &str,
 ) {
-    let pascal_func = to_pascal_case(&func.name);
-    let method_name = format!("{}{}", pascal_func, variant_label);
-    let witness_type = format!("{}{}{}Witness", ir.name, pascal_func, variant_label);
-    let server_variant = variant_label == "Cooperative";
+    let method_name = leaf_suffix(group, leaf);
+    let witness_type = witness_struct_name(ir, group, leaf);
 
     out.push_str(&format!(
-        "// {} executes the {} path of {}.\n",
-        method_name,
-        variant_label.to_lowercase(),
-        func.name,
+        "// {} spends the {} leaf of the {} group.\n",
+        method_name, leaf.name, group.name,
     ));
     out.push_str(&format!(
         "func ({} *{}) {}(w {}) (*ark.WitnessStack, error) {{\n",
         receiver, ir.name, method_name, witness_type,
     ));
     out.push_str(&format!(
-        "\treturn {}.BuildWitness(\"{}\", {}, []ark.WitnessField{{\n",
-        receiver, func.name, server_variant,
+        "\treturn {}.BuildWitness(\"{}\", \"{}\", []ark.WitnessField{{\n",
+        receiver, group.name, leaf.name,
     ));
-
-    for field in &variant.user_fields {
+    for field in leaf.user_fields() {
         out.push_str(&format!(
             "\t\t{{Name: \"{}\", Value: {}, Encoding: {}}},\n",
             field.name,
@@ -305,7 +284,6 @@ fn emit_go_method(
             encoding_const(&field.encoding),
         ));
     }
-
     out.push_str("\t})\n}\n\n");
 }
 

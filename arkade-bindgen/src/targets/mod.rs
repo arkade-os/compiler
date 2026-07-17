@@ -4,7 +4,7 @@ pub mod typescript;
 use crate::ir::ContractIR;
 
 /// Options controlling code generation behavior.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CodegenOptions {
     /// Whether to embed the artifact JSON inline in generated code.
     pub embed_artifact: bool,
@@ -12,16 +12,6 @@ pub struct CodegenOptions {
     pub package_name: Option<String>,
     /// The raw artifact JSON string (needed when embed_artifact is true).
     pub artifact_json: Option<String>,
-}
-
-impl Default for CodegenOptions {
-    fn default() -> Self {
-        Self {
-            embed_artifact: false,
-            package_name: None,
-            artifact_json: None,
-        }
-    }
 }
 
 /// A generated source file.

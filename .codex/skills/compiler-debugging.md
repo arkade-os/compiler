@@ -17,7 +17,7 @@ The compiler path is deterministic:
 Most production defects are one of:
 1. Grammar/parser mismatch
 2. AST variant emitted incorrectly
-3. Dual-path generation mismatch (`serverVariant` behavior)
+3. Covenant/leaf grouping or tapscript emission mismatch
 </context>
 
 <procedure>
@@ -30,7 +30,7 @@ Most production defects are one of:
 4. Trace affected path:
 - Grammar rule -> parser `parse_*` function
 - AST variant -> `emit_expression_asm` / `generate_requirement_asm`
-- Variant behavior -> `generate_function`
+- ABI grouping -> `build_function_groups` / default leaf synthesis
 5. Implement minimal fix and run:
 - `cargo fmt --check`
 - `cargo test --test <focused_file>`
@@ -42,7 +42,7 @@ Most production defects are one of:
 <do>
 - Classify bug by stage before editing code.
 - Use opcode string joins in tests when full vector matching is brittle.
-- Validate both cooperative and exit variants when fixing semantic bugs.
+- Validate the affected `arkade` covenant and all relevant tapleaves when fixing semantic bugs.
 </do>
 <dont>
 - Do not patch compiler first when parser is failing to build AST.
@@ -64,14 +64,14 @@ If only CLI path fails, inspect file extension/output path logic in src/main.rs.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Parse error: ...` for valid-looking syntax | PEG rule order mismatch | Reorder grammar alternatives and parser mapping |
-| Exit variant unexpectedly uses introspection ops | Fallback branch bypassed | Inspect `generate_function` introspection conditional |
+| Tapleaf unexpectedly uses introspection ops | Covenant-only expression reached tapscript emission | Inspect tapscript validation and grouping |
 | Function inputs unexpectedly expanded | Array flattening behavior | Check `DEFAULT_ARRAY_LENGTH` handling in compiler |
 </troubleshooting>
 
 <references>
 - `src/parser/grammar.pest`: parse surface area
 - `src/parser/mod.rs`: parser implementation
-- `src/compiler/mod.rs`: variant and opcode emission logic
+- `src/compiler/mod.rs`: covenant and opcode emission logic
 - `src/main.rs`: CLI argument/file handling
 - `tests/*.rs`: behavior contracts and regression signals
 </references>

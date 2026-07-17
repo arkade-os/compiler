@@ -91,7 +91,7 @@ fn split_words(s: &str) -> Vec<String> {
             let prev_is_upper = current
                 .chars()
                 .last()
-                .map_or(false, |c| c.is_ascii_uppercase());
+                .is_some_and(|c| c.is_ascii_uppercase());
             if prev_is_upper {
                 // Continue the caps run
                 current.push(ch);

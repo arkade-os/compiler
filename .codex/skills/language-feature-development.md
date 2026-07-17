@@ -18,7 +18,7 @@ This project is a single Rust crate. Core feature pipeline:
 4. ASM emission (`src/compiler/mod.rs`)
 5. Integration coverage (`tests/*.rs`)
 
-Non-internal functions emit dual variants. Introspection paths have special exit behavior (N-of-N fallback), so feature edits can impact both variants.
+Functions emit spend groups with optional `arkade` covenant objects and one or more L1 `leaves[]`. Covenant introspection is legal in `arkade` ASM; L1 tapscript leaves must stay within the tapscript validator rules.
 </context>
 
 <procedure>
@@ -30,15 +30,16 @@ Non-internal functions emit dual variants. Introspection paths have special exit
 3. Update grammar in `src/parser/grammar.pest` with careful PEG ordering.
 4. Map new rules in `src/parser/mod.rs` via explicit `parse_*` function paths.
 5. Implement emission in `src/compiler/mod.rs`:
-- Requirement generation (`require` metadata)
+- Arkade covenant ASM when the source function has a covenant body
+- Tapscript leaf ASM and witness derivation when the feature is valid in `tapscript`
 - Expression/statement ASM emission
-- Dual-path behavior when relevant
+- Spend-group/default-leaf behavior when relevant
 6. Add integration tests in `tests/`:
 - Happy path
 - Edge condition
-- Variant expectations (`serverVariant` true/false)
+- Spend-group expectations (`arkade` presence, `leaves[]`, witness shape)
 7. Run validation: `cargo fmt --check && cargo test`.
-8. If examples should demonstrate the feature, update `examples/*.ark` and regenerate playground contracts.
+8. If examples should demonstrate the feature, update `examples/**/*.ark` and regenerate playground contracts.
 </procedure>
 
 <patterns>
@@ -62,7 +63,7 @@ Example: Add new transaction property check
 // 2) grammar: add token to tx_introspection rule
 // 3) parser: map rule -> Expression::TxIntrospection { property }
 // 4) compiler: map property -> OP_INSPECT* opcode in emit_tx_introspection_asm
-// 5) test: assert opcode exists in server variant ASM
+// 5) test: assert opcode exists in arkade covenant ASM or the expected leaf ASM
 ```
 </examples>
 
@@ -71,7 +72,7 @@ Example: Add new transaction property check
 |---|---|---|
 | `Parse error: Unexpected rule` | Grammar added but parser match missing | Add parser branch and conversion function |
 | Feature parses but ASM unchanged | Compiler emission path not wired | Update `generate_expression_asm`/`emit_expression_asm` or requirement mapping |
-| Only one variant behaves correctly | Dual-path logic not handled | Inspect `generate_function` and add variant-specific tests |
+| Covenant/leaf behavior diverges | Feature was wired in only one compiler context | Inspect covenant emission and tapscript validation/emission, then add group/leaf tests |
 </troubleshooting>
 
 <references>
@@ -79,5 +80,5 @@ Example: Add new transaction property check
 - `src/parser/mod.rs`: parse functions and AST construction
 - `src/models/mod.rs`: AST/ABI type definitions
 - `src/compiler/mod.rs`: requirement + ASM generation
-- `tests/new_opcodes_test.rs`: feature-style regression examples
+- `tests/features/new_opcodes.rs`: feature-style regression examples
 </references>

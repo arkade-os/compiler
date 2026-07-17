@@ -16,6 +16,7 @@ pub enum Target {
 }
 
 impl Target {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "typescript" | "ts" => Some(Target::TypeScript),
