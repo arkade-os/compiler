@@ -8,6 +8,8 @@ mod arkade_kitties;
 mod asm_structural;
 #[path = "examples/bond_mint.rs"]
 mod bond_mint;
+#[path = "examples/bridge.rs"]
+mod bridge;
 #[path = "examples/cash_secured_put.rs"]
 mod cash_secured_put;
 #[path = "examples/compilation_roundtrip.rs"]

@@ -1,0 +1,79 @@
+// Bridge Withdrawal Contract (withdrawal leg)
+//
+// Arkade rendering of the Near Intents PoA bridge withdrawal flow
+// (ft_withdraw with "WITHDRAW_TO:<address>" memo -> FtBurn -> operator
+// payout), strengthened with an on-chain timeout refund the Near design
+// lacks.
+//
+// Flow:
+//   1. User locks `amount` wrapped tokens in this escrow, committing to a
+//      destination via destHash (a domain-separated hash of the
+//      destination chain + address, e.g.
+//      sha256("arkade-bridge-withdrawal-v1" || chain || address)) and a
+//      unique withdrawalId chosen at escrow creation.
+//   2. The bridge operator reads the destination (revealed off-chain),
+//      pays out the native asset on the destination chain.
+//   3. k-of-n custodians sign msg = sha256(withdrawalId || destHash || amount)
+//      attesting the payout; release() burns the wrapped tokens, shrinking
+//      supply to match the released native funds.
+//   4. If the bridge never pays out, the user reclaims the wrapped tokens
+//      via refund() after refundTime (block height) — bounding custodial
+//      risk to the refund window. Operator policy must stop honoring
+//      payouts before refundTime (HTLC-style safety delta).
+//
+// Replay protection: withdrawalId is unique per escrow, so a release
+// attestation for one escrow cannot release a different one.
+
+contract BridgeWithdrawal(
+  // User who owns the escrowed wrapped tokens
+  pubkey ownerPk,
+  // Wrapped asset being withdrawn
+  bytes32 tokenAssetIdTxid,
+  int tokenAssetIdGidx,
+  // Bridge custodian set and quorum threshold (k-of-n)
+  pubkey[] custodians,
+  int threshold,
+  // Unique withdrawal identifier (salt) chosen at escrow creation
+  bytes32 withdrawalId,
+  // Commitment to the destination chain + address
+  bytes32 destHash,
+  // Amount of wrapped tokens to burn on release
+  int amount,
+  // Block height after which the owner can reclaim
+  int refundTime,
+  // Exit timelock in blocks
+  int exit
+) {
+  // Release: custodian quorum attests the destination-chain payout;
+  // the escrowed wrapped tokens are burned (supply shrinks to match the
+  // native funds released on the destination chain).
+  function release(signature[] custodianSigs) {
+    require(threshold > 0, "zero threshold");
+
+    // Reconstruct the custodian-signed payout attestation on stack.
+    let attestedMsg = sha256(withdrawalId + destHash + amount);
+    int valid = 0;
+    for (i, sig) in custodianSigs {
+      if (checkSigFromStack(sig, custodians[i], attestedMsg)) {
+        valid = valid + 1;
+      }
+    }
+    require(valid >= threshold, "quorum failed");
+
+    // Burn: at least `amount` wrapped tokens leave circulation.
+    let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+    require(tokenGroup.sumInputs >= tokenGroup.sumOutputs + amount, "burn short");
+  }
+
+  // Refund: owner reclaims the wrapped tokens if the bridge never pays out.
+  function refund(signature ownerSig) {
+    require(tx.time >= refundTime, "refund not reached");
+    require(checkSig(ownerSig, ownerPk), "invalid owner sig");
+  }
+
+  // Unilateral exit (CSV): owner recovers after exit delay.
+  function unilateral(signature ownerSig) tapscript {
+    require(older(exit));
+    require(checkSig(ownerSig, ownerPk));
+  }
+}
