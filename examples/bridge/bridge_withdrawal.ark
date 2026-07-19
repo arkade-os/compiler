@@ -1,28 +1,37 @@
-// Bridge Withdrawal Contract (withdrawal leg)
+// Advanced Bridge — Withdrawal Contract (withdrawal leg)
 //
-// Arkade rendering of the Near Intents PoA bridge withdrawal flow
-// (ft_withdraw with "WITHDRAW_TO:<address>" memo -> FtBurn -> operator
-// payout), strengthened with an on-chain timeout refund the Near design
-// lacks.
+// Sends a wrapped asset back to its native chain. The user escrows the
+// wrapped tokens against a destination commitment; the bridge pays out the
+// native asset on the destination chain; a k-of-n custodian quorum attests
+// the payout and burns the escrow. If the bridge never pays out, the user
+// reclaims unilaterally after a timeout — the withdrawal leg carries a
+// consensus-enforced refund, not just an operational promise.
 //
 // Flow:
-//   1. User locks `amount` wrapped tokens in this escrow, committing to a
-//      destination via destHash (a domain-separated hash of the
+//   1. The user locks `amount` wrapped tokens in this escrow, committing to
+//      a destination via destHash (a domain-separated hash of the
 //      destination chain + address, e.g.
-//      sha256("arkade-bridge-withdrawal-v1" || chain || address)) and a
-//      unique withdrawalId chosen at escrow creation.
-//   2. The bridge operator reads the destination (revealed off-chain),
+//        sha256("arkade-bridge-withdrawal-v1" || chain || address))
+//      and a unique withdrawalId chosen at escrow creation.
+//   2. The bridge operator reads the destination (revealed off-chain) and
 //      pays out the native asset on the destination chain.
-//   3. k-of-n custodians sign msg = sha256(withdrawalId || destHash || amount)
-//      attesting the payout; release() burns the wrapped tokens, shrinking
-//      supply to match the released native funds.
+//   3. Each custodian independently signs, off-line, the attestation
+//        msg = sha256(withdrawalId || destHash || amount)
+//      confirming the payout; release() collects `threshold` signatures and
+//      burns the wrapped tokens, shrinking supply to match the native funds
+//      released on the destination chain.
 //   4. If the bridge never pays out, the user reclaims the wrapped tokens
-//      via refund() after refundTime (block height) — bounding custodial
+//      via refund() after refundTime (block height), bounding custodial
 //      risk to the refund window. Operator policy must stop honoring
-//      payouts before refundTime (HTLC-style safety delta).
+//      payouts before refundTime (the standard HTLC-style safety delta).
+//
+// As on the deposit leg, custodians sign a small fixed attestation rather
+// than a live transaction, so signing keys stay off the transaction path
+// and can remain air-gapped.
 //
 // Replay protection: withdrawalId is unique per escrow, so a release
-// attestation for one escrow cannot release a different one.
+// attestation for one escrow cannot release a different one — even for an
+// identical destination and amount.
 
 contract BridgeWithdrawal(
   // User who owns the escrowed wrapped tokens

@@ -1,4 +1,4 @@
-//! Bridge contract tests (Near-Intents-style asset bridging).
+//! Advanced Bridge contract tests.
 //!
 //! `bridge_mint.ark` — custodian-quorum-attested mint of a wrapped foreign
 //! asset (deposit leg). `bridge_withdrawal.ark` — escrowed burn with
