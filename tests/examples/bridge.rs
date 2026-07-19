@@ -3,18 +3,21 @@
 //! `bridge_mint.ark` — custodian-quorum-attested mint of a wrapped foreign
 //! asset (deposit leg). `bridge_withdrawal.ark` — escrowed burn with
 //! attested release and timeout refund (withdrawal leg).
+//! `bridge_spv.ark` — trustless deposit leg: on-chain SPV proof (merkle
+//! inclusion + PoW + confirmation depth) replaces the custodian quorum.
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID,
-    OP_GREATERTHANOREQUAL, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_SCRIPTNUMTOLE64, OP_SHA256,
+    OP_BIN2NUM, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID,
+    OP_GREATERTHANOREQUAL, OP_HASH256, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SUBSTR,
 };
 
 use crate::common::{arkade_asm, arkade_inputs};
 
 const BRIDGE_MINT_CODE: &str = include_str!("../../examples/bridge/bridge_mint.ark");
 const BRIDGE_WITHDRAWAL_CODE: &str = include_str!("../../examples/bridge/bridge_withdrawal.ark");
+const BRIDGE_SPV_CODE: &str = include_str!("../../examples/bridge/bridge_spv.ark");
 
 // ─── BridgeMint ───────────────────────────────────────────────────────────────
 
@@ -171,4 +174,89 @@ fn test_bridge_withdrawal_refund_is_timelocked() {
         asm.contains("<refundTime>"),
         "Missing <refundTime>. ASM: {asm}"
     );
+}
+
+// ─── BridgeSpv (trustless SPV deposit leg) ─────────────────────────────────────
+
+#[test]
+fn test_bridge_spv_structure() {
+    let output = compile(BRIDGE_SPV_CODE).unwrap();
+    assert_eq!(output.name, "BridgeSpv");
+    // Single covenant spend group; no quorum, no signers on the proof path.
+    assert_eq!(output.functions.len(), 1);
+    assert_eq!(output.functions[0].name, "mintFromDeposit");
+}
+
+#[test]
+fn test_bridge_spv_no_signature_on_proof_path() {
+    // The whole point: a deposit is credited by proof, not by a signer.
+    // No checkSigFromStack (quorum attestation) appears in the covenant.
+    let output = compile(BRIDGE_SPV_CODE).unwrap();
+    let asm = arkade_asm(&output, "mintFromDeposit");
+    assert!(
+        !asm.contains(OP_CHECKSIGFROMSTACK),
+        "SPV proof path must not verify any attestation signature: {asm}"
+    );
+}
+
+#[test]
+fn test_bridge_spv_merkle_and_pow_primitives() {
+    let output = compile(BRIDGE_SPV_CODE).unwrap();
+    let asm = arkade_asm(&output, "mintFromDeposit");
+    let tokens = crate::common::arkade_asm_tokens(&output, "mintFromDeposit");
+
+    // Merkle fold + block hashing use Bitcoin double-SHA256 (OP_HASH256),
+    // never a tagged-hash merkle opcode.
+    let h256 = tokens.iter().filter(|s| *s == OP_HASH256).count();
+    assert!(
+        h256 >= 6,
+        "expected merkle+header double-SHA256s, got {h256}"
+    );
+    assert!(asm.contains(OP_CAT), "merkle concatenation missing");
+    // Header/tx field extraction by byte offset.
+    assert!(asm.contains(OP_SUBSTR), "header/tx slicing missing");
+    // PoW compare interprets the block hash as a BigNum.
+    assert!(asm.contains(OP_BIN2NUM), "PoW magnitude conversion missing");
+    // Never uses the tagged-hash merkle opcode (wrong tree for Bitcoin).
+    assert!(
+        !asm.contains("OP_MERKLEBRANCHVERIFY"),
+        "must hand-roll Bitcoin merkle, not use tagged OP_MERKLEBRANCHVERIFY"
+    );
+}
+
+#[test]
+fn test_bridge_spv_mint_under_control_asset() {
+    let output = compile(BRIDGE_SPV_CODE).unwrap();
+    let asm = arkade_asm(&output, "mintFromDeposit");
+    // Supply is gated by the control asset and pinned to a continuation state.
+    assert!(
+        asm.contains(OP_FINDASSETGROUPBYASSETID),
+        "mint must be gated by asset-group control"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "recipient + continuation outputs must be pinned"
+    );
+    assert!(
+        asm.contains(OP_INSPECTOUTASSETLOOKUP),
+        "minted token amount must be inspected"
+    );
+}
+
+#[test]
+fn test_bridge_spv_witness_arrays_flattened() {
+    let output = compile(BRIDGE_SPV_CODE).unwrap();
+    let inputs = arkade_inputs(&output, "mintFromDeposit");
+    for name in [
+        "merkleSiblings_0",
+        "dirs_0",
+        "confHeaders_0",
+        "depositHeader",
+        "txid",
+    ] {
+        assert!(
+            inputs.contains(&name.to_string()),
+            "missing witness {name} in covenant inputs: {inputs:?}"
+        );
+    }
 }

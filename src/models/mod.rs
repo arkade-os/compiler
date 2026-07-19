@@ -468,6 +468,14 @@ pub enum Expression {
     /// One-shot hashing of byte-string expressions like substr; used for
     /// small fixed messages where streaming would be overkill.
     Sha256 { data: Box<Expression> },
+    /// Double-SHA256: hash256(data) → emits `<data> OP_HASH256`.
+    /// Bitcoin's canonical `sha256(sha256(x))` — used for txids, block
+    /// hashes, and untagged merkle-tree steps in SPV proofs.
+    Hash256 { data: Box<Expression> },
+    /// Byte-string reversal: reverseBytes(data) → emits `<data> OP_REVERSEBYTES`.
+    /// Length-preserving; converts between Bitcoin's internal little-endian
+    /// hash order and display (big-endian) order.
+    ReverseBytes { data: Box<Expression> },
     /// Streaming SHA256 initialize: sha256Initialize(data)
     Sha256Initialize { data: Box<Expression> },
     /// Streaming SHA256 update: sha256Update(ctx, chunk)

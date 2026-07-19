@@ -482,9 +482,13 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // SHA256 — all produce a 32-byte digest or midstate
         Expression::Sha256 { .. }
+        | Expression::Hash256 { .. }
         | Expression::Sha256Initialize { .. }
         | Expression::Sha256Update { .. }
         | Expression::Sha256Finalize { .. } => ArkType::Bytes32,
+
+        // Byte reversal is length-preserving; typed as a generic byte string.
+        Expression::ReverseBytes { .. } => ArkType::Bytes,
 
         // Byte-string ops
         Expression::Concat { .. } => ArkType::Bytes,

@@ -112,6 +112,14 @@ pub(crate) fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) 
             generate_expression_asm(data, asm);
             asm.push(OP_SHA256.to_string());
         }
+        Expression::Hash256 { data } => {
+            generate_expression_asm(data, asm);
+            asm.push(OP_HASH256.to_string());
+        }
+        Expression::ReverseBytes { data } => {
+            generate_expression_asm(data, asm);
+            asm.push(OP_REVERSEBYTES.to_string());
+        }
         Expression::Sha256Initialize { data } => {
             generate_expression_asm(data, asm);
             asm.push(OP_SHA256INITIALIZE.to_string());
@@ -523,6 +531,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::Sha256 { data } => {
             emit_expression_asm(data, asm);
             asm.push(OP_SHA256.to_string());
+        }
+        Expression::Hash256 { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_HASH256.to_string());
+        }
+        Expression::ReverseBytes { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_REVERSEBYTES.to_string());
         }
         Expression::Sha256Initialize { data } => {
             emit_expression_asm(data, asm);

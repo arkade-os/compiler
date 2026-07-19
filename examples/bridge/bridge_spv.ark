@@ -1,0 +1,170 @@
+// SPV Bridge — Mint Contract (trustless deposit leg)
+//
+// Replaces the custodian quorum of bridge_mint.ark with an on-chain
+// Simplified Payment Verification (SPV) proof: a foreign-chain (Bitcoin /
+// PoW) deposit is credited by proving, in the covenant itself, that the
+// deposit transaction is buried under proof-of-work — no signer attests it.
+//
+// What the covenant proves on-chain, using the introspector's byte and
+// hashing opcodes (OP_HASH256 = Bitcoin double-SHA256, OP_CAT, OP_SUBSTR,
+// OP_BIN2NUM, OP_REVERSEBYTES):
+//   1. INCLUSION — the deposit txid is in the block's merkle tree:
+//      fold txid with the supplied merkle siblings (untagged double-SHA256,
+//      left/right by the per-level direction bit) up to the block header's
+//      merkleRoot field (bytes [36,68) of the 80-byte header).
+//   2. WORK — the block header meets its target:
+//      hash256(header) interpreted as an unsigned 256-bit integer <= powTarget.
+//   3. DEPTH — `confHeaders` following blocks each carry valid work and
+//      form a prev-hash chain on top of the deposit block, so reversing the
+//      deposit costs re-mining the whole suffix (economic finality).
+//   4. PAYMENT — the deposit tx pays `depositScript` at least `mintAmount`
+//      sats (parsed from the raw tx at a prover-supplied output offset), and
+//      the raw tx hashes to the proven txid.
+// Then it mints exactly `mintAmount` wrapped tokens to `recipientSpk` under
+// the control asset, and continues its own state with nonce + 1.
+//
+// TRUST MODEL (honest — see README):
+//   - Difficulty is GOVERNANCE-PINNED via `powTarget` (an Arkade covenant
+//     cannot perform Bitcoin's 2016-block retarget on-chain). `powTarget`
+//     must be maintained to the live network target by whoever can update
+//     contract state.
+//   - Someone must SUPPLY the headers/proof (a liveness/relayer role) — but
+//     they cannot forge one: a fake proof fails the PoW/merkle checks.
+//   - SPV is ECONOMIC, not absolute: a majority-hashrate fork can still
+//     fool any light verifier. `minConfirmations` sets the cost.
+// This is strictly less trust than a k-of-n signer set (no one can attest a
+// deposit that did not happen), at the cost of the pinned-difficulty and
+// relayer-liveness assumptions.
+//
+// Byte offsets in the 80-byte Bitcoin block header:
+//   version[0,4) prevBlockHash[4,36) merkleRoot[36,68) time[68,72)
+//   nBits[72,76) nonce[76,80). All hashes are internal little-endian.
+
+contract BridgeSpv(
+  // Wrapped asset minted on Arkade for the bridged deposit
+  bytes32 tokenAssetIdTxid,
+  int tokenAssetIdGidx,
+  // Control asset gating mint authority
+  bytes32 ctrlAssetIdTxid,
+  int ctrlAssetIdGidx,
+  // Source-chain scriptPubKey the bridge watches (the deposit "address")
+  bytes depositScript,
+  // Governance-pinned PoW target, 32-byte little-endian (network difficulty).
+  // A block hash must be <= this value. Kept in state; updated as difficulty
+  // retargets (retarget cannot be computed on-chain).
+  bytes32 powTarget,
+  // Pinned compact-target bytes (header nBits field) matching powTarget, so a
+  // proof cannot claim an easier target than the pinned difficulty.
+  bytes expectedBits,
+  // Mint sequence number; advances by 1 on every mint (state continuation)
+  int nonce,
+  int exit
+) {
+  // Credit a foreign-chain deposit proven by SPV.
+  //
+  // Transaction layout:
+  //   input[0]:  this BridgeSpv UTXO (carries the control asset)
+  //   output[0]: next BridgeSpv state (control asset, nonce + 1)
+  //   output[1]: `mintAmount` wrapped tokens → recipientSpk
+  function mintFromDeposit(
+    int       mintAmount,
+    bytes     recipientSpk,
+    bytes32   txid,            // deposit txid (internal LE) = hash256(depositTx)
+    bytes     depositTx,       // raw legacy tx serialization
+    int       voutValueOffset, // byte offset of the paid output's 8-byte value
+    int       voutScriptOffset,// byte offset of the paid output's scriptPubKey
+    int       voutScriptLen,   // length of that scriptPubKey
+    bytes     depositHeader,   // 80-byte block header containing the deposit
+    bytes32[] merkleSiblings,  // merkle branch, leaf→root
+    int[]     dirs,            // per-level: 0 = sibling on right, 1 = on left
+    bytes[]   confHeaders      // confirmation headers burying the deposit block
+  ) {
+    require(mintAmount > 0, "zero mint");
+    require(size(recipientSpk) == 34, "bad recipient spk");
+    require(size(depositHeader) == 80, "bad header size");
+
+    // ── 1. MERKLE INCLUSION ────────────────────────────────────────────
+    // Fold the txid up the branch with untagged double-SHA256 (Bitcoin's
+    // block-merkle construction; OP_MERKLEBRANCHVERIFY is tagged-hash and
+    // cannot be used here). Direction bit picks left/right ordering.
+    bytes32 node = txid;
+    for (i, sibling) in merkleSiblings {
+      if (dirs[i] == 0) {
+        node = hash256(node + sibling);
+      } else {
+        node = hash256(sibling + node);
+      }
+    }
+    let merkleRoot = substr(depositHeader, 36, 32);
+    require(node == merkleRoot, "merkle proof failed");
+
+    // ── 2. PROOF OF WORK on the deposit block ──────────────────────────
+    // Pin the header's claimed difficulty to the governance target, then
+    // check hash256(header) <= powTarget as unsigned 256-bit integers.
+    // A trailing 0x00 sign byte forces the BigNum reading positive (the VM's
+    // bin2num is signed sign-magnitude little-endian).
+    let headerBits = substr(depositHeader, 72, 4);
+    require(headerBits == expectedBits, "unexpected difficulty");
+
+    let zeroByte  = num2bin(0, 1);
+    let targetNum = bin2num(powTarget + zeroByte);
+
+    let depositBlockHash = hash256(depositHeader);
+    let depositWork      = bin2num(depositBlockHash + zeroByte);
+    require(depositWork <= targetNum, "insufficient pow");
+
+    // ── 3. CONFIRMATION DEPTH ──────────────────────────────────────────
+    // Each confirmation header must chain by prevBlockHash and meet the same
+    // work target. `tipHash` accumulates the running block hash.
+    bytes32 tipHash = hash256(depositHeader);
+    for (j, conf) in confHeaders {
+      require(size(conf) == 80, "bad conf header");
+      let confBits = substr(conf, 72, 4);
+      require(confBits == expectedBits, "conf difficulty");
+      let confPrev = substr(conf, 4, 32);
+      require(confPrev == tipHash, "broken header chain");
+      let confHash = hash256(conf);
+      let confWork = bin2num(confHash + zeroByte);
+      require(confWork <= targetNum, "conf insufficient pow");
+      tipHash = hash256(conf);
+    }
+
+    // ── 4. PAYMENT binding ─────────────────────────────────────────────
+    // The raw tx must hash to the proven txid, and the referenced output
+    // must pay the watched deposit script at least mintAmount sats.
+    require(hash256(depositTx) == txid, "txid mismatch");
+    let paidScript = substr(depositTx, voutScriptOffset, voutScriptLen);
+    require(paidScript == depositScript, "wrong deposit script");
+    let paidValue = bin2num(substr(depositTx, voutValueOffset, 8));
+    require(paidValue >= mintAmount, "deposit underpays mint");
+
+    // ── 5. MINT under the control asset ────────────────────────────────
+    let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+    require(tokenGroup.delta == mintAmount, "delta mismatch");
+    require(tokenGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
+
+    let ctrlGroup = tx.assetGroups.find(ctrlAssetIdTxid, ctrlAssetIdGidx);
+    require(ctrlGroup.delta == 0, "ctrl supply changed");
+
+    require(
+      tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= mintAmount,
+      "mint short"
+    );
+    require(tx.outputs[1].scriptPubKey == recipientSpk, "wrong recipient");
+
+    // ── 6. STATE CONTINUATION ──────────────────────────────────────────
+    int nextNonce = nonce + 1;
+    require(
+      tx.outputs[0].scriptPubKey == new BridgeSpv(
+        tokenAssetIdTxid, tokenAssetIdGidx,
+        ctrlAssetIdTxid, ctrlAssetIdGidx,
+        depositScript, powTarget, expectedBits, nextNonce, exit
+      ),
+      "state broken"
+    );
+    require(
+      tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0,
+      "ctrl not continued"
+    );
+  }
+}

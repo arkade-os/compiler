@@ -212,6 +212,15 @@ fn roundtrip_bridge_withdrawal() {
 }
 
 #[test]
+fn roundtrip_bridge_spv() {
+    let output = compile_example("bridge/bridge_spv.ark");
+    assert_output_invariants(&output, "bridge/bridge_spv.ark");
+    assert_eq!(output.name, "BridgeSpv");
+    // 1 function-backed spend group (mintFromDeposit); no standalone exit.
+    assert_eq!(output.functions.len(), 1);
+}
+
+#[test]
 fn roundtrip_bond_mint() {
     let output = compile_example("bonds/bond_mint.ark");
     assert_output_invariants(&output, "bonds/bond_mint.ark");

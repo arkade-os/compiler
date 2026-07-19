@@ -1,8 +1,91 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_NEG64,
-    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
+    OP_CAT, OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_HASH256, OP_LE32TOLE64,
+    OP_LE64TOSCRIPTNUM, OP_NEG64, OP_REVERSEBYTES, OP_SHA256, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
 };
+
+// ─── hash256 / reverseBytes as first-class expressions ─────────────────
+// These primitives previously only parsed inside `require(hash256(x) == y)`.
+// Exposing them in let/assignment/expression position is what makes an
+// on-chain SPV merkle fold and PoW check expressible (see examples/bridge).
+
+#[test]
+fn test_hash256_in_let_and_merkle_step() {
+    // hash256() must work in assignment position and accept a `+` concat
+    // argument (a merkle step), lowering the inner `+` to OP_CAT.
+    let code = r#"
+        contract MerkleStep(bytes32 root, int exit) {
+            function step(bytes32 leaf, bytes32 sibling) {
+                let parent = hash256(leaf + sibling);
+                require(parent == root, "mismatch");
+            }
+        }
+    "#;
+    let output = compile(code).expect("hash256 in let should compile");
+    let asm = crate::common::arkade_asm(&output, "step");
+    assert!(asm.contains(OP_HASH256), "expected {OP_HASH256}: {asm}");
+    assert!(
+        asm.contains(OP_CAT),
+        "hash256(a + b) must lower `+` to {OP_CAT}: {asm}"
+    );
+    // Double-SHA256, not single.
+    assert!(
+        !asm.contains(OP_SHA256) || asm.contains(OP_HASH256),
+        "hash256 must map to {OP_HASH256}, not {OP_SHA256}"
+    );
+}
+
+#[test]
+fn test_reverse_bytes_expression() {
+    let code = r#"
+        contract Rev(bytes32 target, int exit) {
+            function chk(bytes header) {
+                let be = reverseBytes(hash256(header));
+                require(be == target, "nope");
+            }
+        }
+    "#;
+    let output = compile(code).expect("reverseBytes should compile");
+    let asm = crate::common::arkade_asm(&output, "chk");
+    assert!(
+        asm.contains(OP_REVERSEBYTES),
+        "expected {OP_REVERSEBYTES}: {asm}"
+    );
+    assert!(asm.contains(OP_HASH256), "expected {OP_HASH256}: {asm}");
+}
+
+#[test]
+fn test_hash256_loop_accumulator_merkle_fold() {
+    // The merkle-fold idiom used by the SPV bridge: reassign an accumulator
+    // across an unrolled loop, choosing sibling order by a direction bit.
+    let code = r#"
+        contract MerkleFold(bytes32 root, int exit) {
+            function verify(bytes32 txid, bytes32[] branch, int[] dirs) {
+                bytes32 node = txid;
+                for (i, sibling) in branch {
+                    if (dirs[i] == 0) {
+                        node = hash256(node + sibling);
+                    } else {
+                        node = hash256(sibling + node);
+                    }
+                }
+                require(node == root, "bad merkle proof");
+            }
+        }
+    "#;
+    let output = compile(code).expect("merkle fold should compile");
+    let tokens = crate::common::arkade_asm_tokens(&output, "verify");
+    // 3-level default unroll: 2 hash256 per level (both branches emitted).
+    let h = tokens.iter().filter(|s| *s == OP_HASH256).count();
+    assert_eq!(
+        h, 6,
+        "expected 6 {OP_HASH256} for 3 unrolled levels, got {h}"
+    );
+    let c = tokens.iter().filter(|s| *s == OP_CAT).count();
+    assert_eq!(c, 6, "expected 6 {OP_CAT} for 3 unrolled levels, got {c}");
+}
+
 // ─── Streaming SHA256 Tests ────────────────────────────────────────────
 
 #[test]

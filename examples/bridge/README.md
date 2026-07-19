@@ -17,19 +17,30 @@ attestation, or block a stuck withdrawal from being refunded.
 
 ## Design
 
-Two contracts, one per direction, plus the existing swap contract for
-settlement.
+Contracts for both directions, in two trust flavors for the deposit leg,
+plus the existing swap contract for settlement.
 
-- **Deposit** = a k-of-n custodian quorum observes a confirmed deposit on
-  the source chain and attests it → the covenant **mints** exactly the
-  attested amount of the wrapped asset to the depositor.
+- **Deposit (attested)** = a k-of-n custodian quorum observes a confirmed
+  deposit on the source chain and attests it → the covenant **mints**
+  exactly the attested amount of the wrapped asset to the depositor
+  (`bridge_mint.ark`).
+- **Deposit (trustless SPV)** = the covenant itself verifies an on-chain
+  Simplified Payment Verification proof — merkle inclusion + proof-of-work +
+  confirmation depth — with **no signer at all** (`bridge_spv.ark`). This is
+  the "more trustless" deposit path: no one can attest a deposit that did
+  not happen.
 - **Withdrawal** = the user escrows wrapped tokens against a destination
   commitment → the bridge pays out the native asset → the quorum attests
   the payout and **burns** the escrow. A timeout **refund** protects the
-  user if the payout never happens.
+  user if the payout never happens (`bridge_withdrawal.ark`).
 - **Settlement** = once a foreign asset exists as a wrapped Arkade asset,
   `non_interactive_swap.ark` matches signed orders atomically. No new
   contract is needed.
+
+The attested and SPV deposit legs are interchangeable: both mint the same
+wrapped asset under the same control-asset accounting. Pick the quorum for
+chains without usable SPV (fast-finality / non-PoW chains, or where header
+relaying is impractical), and the SPV path for Bitcoin and other PoW chains.
 
 ### `bridge_mint.ark` — deposit leg
 
@@ -105,6 +116,75 @@ burn ≥ amount wrapped tokens             user reclaims wrapped tokens
 `withdrawalId` is unique per escrow, so a release attestation for one escrow
 can never release another — even for identical destination and amount.
 
+### `bridge_spv.ark` — trustless deposit leg (SPV)
+
+`BridgeSpv` credits a Bitcoin/PoW deposit by verifying an SPV proof **in the
+covenant itself** — the custodian quorum of `bridge_mint.ark` is gone. No
+one signs the deposit; the proof either verifies against proof-of-work or it
+does not. State = `(depositScript, powTarget, expectedBits, nonce)`.
+
+```
+source chain                                Arkade — mintFromDeposit()
+────────────                                ─────────────────────────
+user pays depositScript in tx T             1. INCLUSION  fold txid ↑ branch
+T mined into block B                           via hash256 == B.merkleRoot
+B buried under conf blocks                   2. WORK       hash256(B) ≤ powTarget
+        │  (anyone relays the                3. DEPTH      conf headers chain +
+        │   headers + proof)                    each meet powTarget
+        ▼                                    4. PAYMENT    T pays depositScript
+                                                ≥ mintAmount; hash256(T)==txid
+                                             5. MINT       mintAmount → recipient
+                                                under control asset, nonce+1
+```
+
+What the covenant does with the introspector's byte/hash opcodes:
+
+| Step | How | Opcodes |
+|---|---|---|
+| Merkle inclusion | fold `txid` with the branch, untagged double-SHA256, order by per-level direction bit, compare to `substr(header, 36, 32)` | `OP_HASH256`, `OP_CAT`, `OP_SUBSTR` |
+| Proof of work | `hash256(header)` as an unsigned 256-bit BigNum `≤ powTarget` (trailing `0x00` sign byte forces a positive reading) | `OP_HASH256`, `OP_CAT`, `OP_NUM2BIN`, `OP_BIN2NUM`, `≤` |
+| Confirmation depth | each `confHeaders[i]` chains by `prevBlockHash` and meets the target | `OP_SUBSTR`, `OP_HASH256`, `OP_BIN2NUM` |
+| Payment binding | `hash256(depositTx) == txid`; output at prover offset pays `depositScript` ≥ `mintAmount` | `OP_HASH256`, `OP_SUBSTR`, `OP_BIN2NUM` |
+| Mint | `delta == mintAmount` under control asset; recipient + continuation pinned | `OP_FINDASSETGROUPBYASSETID`, `OP_INSPECTOUTPUTSCRIPTPUBKEY` |
+
+Two facts about the emulator's opcode set shaped this contract (verified
+against `arkade-os/emulator`, `pkg/arkade/opcode.go`):
+
+- **`OP_HASH256` is Bitcoin's `sha256(sha256(x))`**, so txids, block hashes,
+  and merkle steps are exact. This required exposing `hash256()` (and
+  `reverseBytes()`) as first-class expressions in the compiler — previously
+  `hash256` only parsed inside `require(hash256(x) == y)`. See
+  `tests/features/new_opcodes.rs`.
+- **`OP_MERKLEBRANCHVERIFY` is unusable for Bitcoin.** Its handler uses
+  BIP-340 *tagged* hashing and *lexicographic sorted-pair* ordering (a
+  Taproot/OpenZeppelin-style tree), not Bitcoin's untagged
+  `sha256(sha256(left‖right))` ordered by index bit. So the merkle fold is
+  hand-rolled with `hash256` + `cat`, not that opcode.
+
+**Difficulty is governance-pinned.** An Arkade covenant cannot perform
+Bitcoin's 2016-block difficulty retarget on-chain (it needs the whole
+window and big-integer retarget math). So `powTarget`/`expectedBits` live in
+contract state and must be kept current as the network retargets. The proof
+pins the header's `nBits` to `expectedBits` so it cannot claim an easier
+target than the pinned difficulty.
+
+**Known limitations (v1, honest):**
+
+- *Replay protection* across multiple mints needs a spent-deposit registry
+  (accumulator or per-txid marker asset). This contract advances `nonce` for
+  state continuation but does not yet prove a given txid is unspent —
+  treat it as demonstrative until that registry is added.
+- *Loop-carried accumulators* (the merkle `node`, the confirmation
+  `tipHash`) use the same reassignment idiom as `threshold_oracle.ark`'s
+  `valid` counter; the compiler represents these with `<name>` placeholders
+  resolved by the emulator (stack-position tracking is a documented deferred
+  phase in `src/compiler/mod.rs`). The emitted opcodes are asserted in
+  tests; end-to-end execution should be confirmed on the emulator.
+- *BigNum comparisons* (the `≤` PoW check on 256-bit values) require the
+  emulator's arbitrary-precision arithmetic — i.e. the opcode-emission sync
+  in PR #51 (standard `OP_LESSTHANOREQUAL` on BigNums, not the removed
+  Elements `*64` family). Land/rebase on that for correct 256-bit compares.
+
 ### Settlement leg (already shipped)
 
 Once a foreign asset is a wrapped Arkade asset, `non_interactive_swap.ark`
@@ -143,6 +223,26 @@ stuck withdrawal from being refunded after the timeout.
 Choosing `threshold` and `n` is a policy dial: `n=1` is a single-operator
 bridge; larger `k-of-n` removes any single point of key compromise on the
 attestation path.
+
+### Attested quorum vs. trustless SPV (deposit leg)
+
+The SPV deposit path (`bridge_spv.ark`) removes the signing quorum entirely
+— its trust is Bitcoin's proof-of-work plus two operational assumptions:
+
+| Assumption | Attested (`bridge_mint`) | SPV (`bridge_spv`) |
+|---|---|---|
+| Who can authorize a mint | k-of-n custodians (can attest anything they collude on) | **No one** — only a valid PoW/merkle proof mints |
+| Forging a fake deposit | possible if ≥k keys collude | requires out-mining the network (economic, not a key) |
+| Difficulty source | n/a | governance-pinned `powTarget` (no on-chain retarget) |
+| Liveness | custodians attest | anyone relays headers + proof (permissionless) |
+| Finality | as soon as k attest | `minConfirmations` deep — economic, a majority-hashrate fork can still fool a light verifier |
+
+So SPV trades "trust k-of-n signers" for "trust PoW + a pinned-difficulty
+oracle + a header relayer's liveness." Strictly less authority in anyone's
+hands (no one can fabricate a deposit), at the cost of the pinned-difficulty
+and relayer-liveness assumptions and economic (not absolute) finality. Use
+SPV for PoW chains; keep the quorum for fast-finality/non-PoW chains where
+SPV doesn't apply.
 
 ## How this improves opsec
 
@@ -190,17 +290,20 @@ an attest-only oracle set with a bounded blast radius.
 
 ## Future work
 
-- **Light-client / MPC attesters**: replace the custodian quorum with an
-  MPC network's aggregate key (n=1 threshold over a chain-signatures-style
-  signer), or verify source-chain SPV proofs directly once the introspector
-  exposes the needed primitives — removing custodial trust on chains that
-  support it.
+- **SPV replay registry**: a spent-deposit accumulator (or per-txid marker
+  asset) so `bridge_spv.ark` provably credits each deposit at most once.
+- **On-chain difficulty tracking**: a header-relay covenant maintaining the
+  best chain and retarget so `powTarget` is no longer governance-pinned —
+  the remaining trust reduction for the SPV path.
+- **Deposit-tx output parsing**: replace the prover-supplied output offset
+  with real varint-aware output-vector parsing so the paid output cannot be
+  mis-pointed.
 - **Custodian rotation**: a quorum-attested `rotate()` transition to a new
   `custodians`/`threshold` state, with domain-tagged attestation messages
   so rotation signatures cannot be replayed as mints.
 - **Fee handling**: a `takeFee`-style basis-points parameter with 330-sat
   dust routing, as in `stability_offer.ark`.
-- **Batch mints**: several deposits per `mint()` spend, one output each,
+- **Batch mints**: several deposits per mint spend, one output each,
   amortizing the state transition.
 
 ## Local checks
@@ -208,7 +311,8 @@ an attest-only oracle set with a bounded blast radius.
 ```bash
 cargo run -- examples/bridge/bridge_mint.ark -o /tmp/bridge_mint.json
 cargo run -- examples/bridge/bridge_withdrawal.ark -o /tmp/bridge_withdrawal.json
-cargo test --test examples compilation_roundtrip
-cargo test --test examples bridge
-./playground/generate_contracts.sh   # refresh playground bundle
+cargo run -- examples/bridge/bridge_spv.ark -o /tmp/bridge_spv.json
+cargo test --test examples bridge          # incl. SPV opcode assertions
+cargo test --test features new_opcodes     # hash256/reverseBytes primitives
+./playground/generate_contracts.sh         # refresh playground bundle
 ```

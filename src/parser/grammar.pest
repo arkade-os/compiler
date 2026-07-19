@@ -125,6 +125,8 @@ primary_expr = {
     sha256_initialize |
     sha256_update |
     sha256_finalize |
+    hash256_func |
+    reverse_bytes_func |
     sha256_func |
     neg64_func |
     le64_to_script_num |
@@ -455,7 +457,7 @@ byte_expr_comparison = {
 // (the legacy hash_comparison shape, `sha256(x) == identifier`, keeps its
 // fast path because PEG ordering puts hash_comparison earlier).
 byte_expr_term = {
-    sha256_func | substr_func | cat_func | bin2num_func | num2bin_func | size_func
+    hash256_func | reverse_bytes_func | sha256_func | substr_func | cat_func | bin2num_func | num2bin_func | size_func
 }
 
 // RHS of a byte comparison: another term, a small arithmetic expression
@@ -621,6 +623,18 @@ sha256_func = {
     "sha256" ~ "(" ~ additive_expr ~ ")"
 }
 
+// Double-SHA256 (Bitcoin's sha256(sha256(x))): hash256(data) → OP_HASH256.
+// Accepts an additive expression so `hash256(node + sibling)` (a merkle step
+// concatenating two byte strings) parses.
+hash256_func = {
+    "hash256" ~ "(" ~ additive_expr ~ ")"
+}
+
+// Byte-string reversal: reverseBytes(data) → OP_REVERSEBYTES.
+reverse_bytes_func = {
+    "reverseBytes" ~ "(" ~ byte_value ~ ")"
+}
+
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
 // Streaming SHA256 initialize: sha256Initialize(data) → OP_SHA256INITIALIZE
@@ -681,6 +695,8 @@ check_sig_from_stack_verify = {
 //   substr(tx.packet(EndpointState), 1, 32)
 //   sha256(substr(tx.inputs[1].packet(LzReceive), 1, 140))
 byte_value = {
+    hash256_func |
+    reverse_bytes_func |
     substr_func |
     cat_func |
     num2bin_func |
