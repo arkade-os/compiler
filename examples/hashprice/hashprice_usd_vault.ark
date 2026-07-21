@@ -1,0 +1,341 @@
+// HashpriceUsdVault Contract
+//
+// A two-sided range vault on USD-denominated hashprice (mining revenue per
+// unit of hashrate-time, quoted in whole USD cents per contract), margined
+// and settled in BTC. One vault per (oracle feed, price band, maturity).
+// The companion `hashprice_btc_vault.ark` documents the shared two-token
+// design (UP/DOWN legs as Arkade Assets, premium via Arkade intents, pooled
+// exit model); this file documents only what the USD quote changes.
+//
+// ── What the USD quote changes ──────────────────────────────────────────────
+//   Payoffs are defined in USD but paid in sats, so settlement needs TWO
+//   oracle attestations inside the window: the hashprice fixing (ticker) and
+//   the BTC/USD fixing (btcUsdTicker), both signed by oraclePk over
+//   sha256(feed || price || time). The USD intrinsic converts at the attested
+//   BTC/USD price:
+//     upPerPairSats = clamp(S − lowPrice, 0, widthUsd) × 1e8 / btcUsdPrice
+//
+//   Unlike the BTC-quoted vault, a USD payoff backed by BTC can NEVER be
+//   fully collateralized: the sats value of the USD band is unknown until
+//   maturity. Each pair therefore escrows a fixed `pairCollateral` sats and
+//   the UP payout is capped there:
+//     upPot = min(upShares × upPerPairSats, upShares × pairCollateral)
+//   Writers size pairCollateral so the cap only binds in a joint tail
+//   (hashprice deep above the band AND BTC sharply lower) — e.g. the band
+//   width converted at a conservative BTC/USD floor. The residual tail risk
+//   is the market maker's problem and is priced as a small premium discount,
+//   symmetric for the DOWN side when BTC rallies (the USD put pays fewer
+//   sats). This cap is exactly the "max loss ≈ 2–3× hashprice" bound a
+//   miner-facing venue quotes for under-collateralizable short calls.
+//
+// ── Units & overflow ────────────────────────────────────────────────────────
+//   lowPrice/highPrice and the oracle hashprice are WHOLE USD CENTS per
+//   contract; btcUsdPrice is WHOLE USD CENTS per BTC. The conversion
+//   intrinsicUsd × 1e8 stays inside int64 for any realistic band
+//   (2e6 cents × 1e8 = 2e14), and upShares × pairCollateral for any
+//   realistic series (1e6 pairs × 1e7 sats = 1e13).
+
+contract HashpriceUsdVault(
+  pubkey  oraclePk,          // signs both feeds below
+  bytes32 ticker,            // hashprice feed id, e.g. sha256("HASHPRICE/USD")
+  bytes32 btcUsdTicker,      // conversion feed id, e.g. sha256("BTC/USD")
+  int     lowPrice,          // USD cents per contract — call strike / put floor
+  int     highPrice,         // USD cents per contract — put strike / call cap
+  int     maturity,          // maturity, unix seconds (oracle-timestamp domain)
+  int     settleWindow,      // seconds; fixings accepted within ±settleWindow of maturity
+  int     pairCollateral,    // sats escrowed per pair; caps the UP payout (see header)
+  bytes32 upIdTxid,          // UP (call-spread) asset id — issuance txid
+  int     upIdGidx,          // UP asset id — issuance group index
+  bytes32 downIdTxid,        // DOWN (put-spread) asset id — issuance txid
+  int     downIdGidx,        // DOWN asset id — issuance group index
+  bytes32 contractIdTxid,    // vault identity singleton — genesis txid (mint control)
+  int     contractIdGidx,    // vault identity singleton — genesis group index
+  int     settled,           // 0 = open (pre-maturity), 1 = settled
+  int     upShares,          // pre: UP supply (== downShares == pairs). post: remaining UP supply
+  int     downShares,        // pre: DOWN supply (== upShares). post: remaining DOWN supply
+  int     upPot,             // pre: 0. post: sats remaining for the UP side
+  int     downPot,           // pre: 0. post: sats remaining for the DOWN side
+  int     exit               // exit timelock in blocks (off-chain recurrent exit tree)
+) {
+
+  // -------------------------------------------------------------------------
+  // ISSUE — permissionless, before maturity. Deposit `amount × pairCollateral`
+  // sats; mint `amount` UP + `amount` DOWN to the depositor.
+  //   input[0]:  this vault's Bitcoin output (holds the identity singleton)
+  //   input[1+]: depositor's sats (>= amount × pairCollateral + fee)
+  //   output[0]: vault re-created (upShares+amount, downShares+amount)
+  //   output[1]: amount UP + amount DOWN → depositor
+  // -------------------------------------------------------------------------
+  function issue(int amount) {
+    require(settled == 0, "already settled");
+    require(amount > 0, "zero amount");
+    require(lowPrice >= 0, "negative low strike");
+    require(highPrice > lowPrice, "inverted price band");
+    require(pairCollateral > 330, "collateral below dust");
+    int untilMaturity = maturity - tx.offchainTime;
+    require(untilMaturity > 0, "matured");
+
+    int newUp      = upShares + amount;
+    int newDown    = downShares + amount;
+    int newBacking = newUp * pairCollateral;
+
+    // Identity-gated paired mint: UP and DOWN supply each rise by exactly
+    // `amount`, both controlled by the vault identity; identity unchanged.
+    let upGroup = tx.assetGroups.find(upIdTxid, upIdGidx);
+    require(upGroup.delta == amount, "up supply != amount");
+    require(upGroup.controlIs(contractIdTxid, contractIdGidx), "wrong up control");
+    let downGroup = tx.assetGroups.find(downIdTxid, downIdGidx);
+    require(downGroup.delta == amount, "down supply != amount");
+    require(downGroup.controlIs(contractIdTxid, contractIdGidx), "wrong down control");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    // Both freshly minted legs go to the depositor.
+    require(tx.outputs[1].assets.lookup(upIdTxid, upIdGidx) == amount, "up not delivered");
+    require(tx.outputs[1].assets.lookup(downIdTxid, downIdGidx) == amount, "down not delivered");
+
+    require(
+      tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+        oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+        upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+        settled, newUp, newDown, upPot, downPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= newBacking, "collateral not deposited");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+  }
+
+  // -------------------------------------------------------------------------
+  // BURN PAIR — permissionless, before maturity. Return `amount` UP + DOWN
+  // (a matched pair) and take `amount × pairCollateral` sats back. The share
+  // burn authenticates.
+  //   output[0]: vault re-created (upShares-amount, downShares-amount)
+  //   output[1]: amount × pairCollateral sats → burner
+  // -------------------------------------------------------------------------
+  function burnPair(int amount) {
+    require(settled == 0, "already settled");
+    require(amount > 0, "zero amount");
+    int untilMaturity = maturity - tx.offchainTime;
+    require(untilMaturity > 0, "matured");
+
+    int newUp      = upShares - amount;
+    int newDown    = downShares - amount;
+    int newBacking = newUp * pairCollateral;
+    int refund     = amount * pairCollateral;
+
+    // Burn exactly `amount` of BOTH legs; identity unchanged.
+    let upGroup = tx.assetGroups.find(upIdTxid, upIdGidx);
+    require(upGroup.sumInputs == upGroup.sumOutputs + amount, "up not burned exactly");
+    let downGroup = tx.assetGroups.find(downIdTxid, downIdGidx);
+    require(downGroup.sumInputs == downGroup.sumOutputs + amount, "down not burned exactly");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    require(
+      tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+        oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+        upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+        settled, newUp, newDown, upPot, downPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= newBacking, "collateral not preserved");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+
+    require(tx.outputs[1].value >= refund, "burner underpaid");
+  }
+
+  // -------------------------------------------------------------------------
+  // SETTLE — permissionless, once, at maturity. Requires BOTH fixings
+  // (hashprice and BTC/USD) attested inside the window; converts the USD
+  // intrinsic to sats at the attested BTC/USD price and splits the pot,
+  // capping the UP side at the escrowed collateral. No BTC leaves the vault.
+  //   output[0]: vault re-created (settled=1, upPot/downPot set)
+  // -------------------------------------------------------------------------
+  function settle(
+    int       spotPrice,
+    int       spotTime,
+    signature spotSig,
+    int       btcUsdPrice,
+    int       btcUsdTime,
+    signature btcUsdSig
+  ) {
+    require(settled == 0, "already settled");
+    require(upShares == downShares, "supply invariant broken");
+    require(spotPrice >= 0, "negative hashprice");
+    require(btcUsdPrice > 0, "invalid btcusd price");
+
+    // Both fixings must be attested inside the settlement window (binds both
+    // prices to the maturity moment).
+    int windowStart = maturity - settleWindow;
+    int windowEnd   = maturity + settleWindow;
+    require(spotTime >= windowStart, "hashprice before window");
+    require(spotTime <= windowEnd, "hashprice after window");
+    require(btcUsdTime >= windowStart, "btcusd before window");
+    require(btcUsdTime <= windowEnd, "btcusd after window");
+
+    let spotMsg = sha256(ticker + spotPrice + spotTime);
+    require(checkSigFromStack(spotSig, oraclePk, spotMsg), "invalid hashprice signature");
+    let btcUsdMsg = sha256(btcUsdTicker + btcUsdPrice + btcUsdTime);
+    require(checkSigFromStack(btcUsdSig, oraclePk, btcUsdMsg), "invalid btcusd signature");
+
+    int totalPot = upShares * pairCollateral;
+
+    if (spotPrice <= lowPrice) {
+      // At or below the band: calls worthless, puts fully in the money.
+      require(
+        tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+          oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+          upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+          1, upShares, downShares, 0, totalPot, exit
+        ),
+        "invalid settle output"
+      );
+      require(tx.outputs[0].value >= totalPot, "collateral not preserved");
+      require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+    } else {
+      if (spotPrice >= highPrice) {
+        // At or above the band: USD intrinsic capped at the band width, then
+        // converted to sats and capped at the escrowed collateral.
+        int widthUsd       = highPrice - lowPrice;
+        int capPerPairSats = widthUsd * 100000000 / btcUsdPrice;
+        if (capPerPairSats >= pairCollateral) {
+          // BTC fell far enough that the escrow binds: UP takes the whole pot.
+          require(
+            tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+              oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+              upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+              1, upShares, downShares, totalPot, 0, exit
+            ),
+            "invalid settle output"
+          );
+          require(tx.outputs[0].value >= totalPot, "collateral not preserved");
+          require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+        } else {
+          int upPotCapped   = upShares * capPerPairSats;
+          int downPotCapped = totalPot - upPotCapped;
+          require(
+            tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+              oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+              upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+              1, upShares, downShares, upPotCapped, downPotCapped, exit
+            ),
+            "invalid settle output"
+          );
+          require(tx.outputs[0].value >= totalPot, "collateral not preserved");
+          require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+        }
+      } else {
+        // Inside the band: convert the USD intrinsic to sats, cap at escrow.
+        int intrinsicUsd  = spotPrice - lowPrice;
+        int upPerPairSats = intrinsicUsd * 100000000 / btcUsdPrice;
+        if (upPerPairSats >= pairCollateral) {
+          require(
+            tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+              oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+              upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+              1, upShares, downShares, totalPot, 0, exit
+            ),
+            "invalid settle output"
+          );
+          require(tx.outputs[0].value >= totalPot, "collateral not preserved");
+          require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+        } else {
+          int newUpPot   = upShares * upPerPairSats;
+          int newDownPot = totalPot - newUpPot;
+          require(
+            tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+              oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+              upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+              1, upShares, downShares, newUpPot, newDownPot, exit
+            ),
+            "invalid settle output"
+          );
+          require(tx.outputs[0].value >= totalPot, "collateral not preserved");
+          require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // REDEEM UP — after settlement. Burn `amount` UP for a pro-rata slice of
+  // the UP pot; numerator and denominator drain together so the rate is
+  // order-invariant. DOWN supply must not move.
+  //   output[0]: vault re-created (upShares-amount, upPot-payout)
+  //   output[1]: payout sats → redeemer (when above dust)
+  // -------------------------------------------------------------------------
+  function redeemUp(int amount) {
+    require(settled == 1, "not settled");
+    require(amount > 0, "zero amount");
+    require(amount <= upShares, "exceeds up supply");
+    require(upShares > 0, "no up supply");
+
+    int payout    = amount * upPot / upShares;
+    int newUpPot  = upPot - payout;
+    int newUp     = upShares - amount;
+    int remaining = newUpPot + downPot;
+
+    let upGroup = tx.assetGroups.find(upIdTxid, upIdGidx);
+    require(upGroup.sumInputs == upGroup.sumOutputs + amount, "up not burned exactly");
+    let downGroup = tx.assetGroups.find(downIdTxid, downIdGidx);
+    require(downGroup.delta == 0, "down must not move");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    require(
+      tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+        oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+        upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+        1, newUp, downShares, newUpPot, downPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= remaining, "pot not preserved");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+
+    if (payout > 330) {
+      require(tx.outputs[1].value >= payout, "redeemer underpaid");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // REDEEM DOWN — after settlement. Mirror of redeemUp on the DOWN pot.
+  //   output[0]: vault re-created (downShares-amount, downPot-payout)
+  //   output[1]: payout sats → redeemer (when above dust)
+  // -------------------------------------------------------------------------
+  function redeemDown(int amount) {
+    require(settled == 1, "not settled");
+    require(amount > 0, "zero amount");
+    require(amount <= downShares, "exceeds down supply");
+    require(downShares > 0, "no down supply");
+
+    int payout     = amount * downPot / downShares;
+    int newDownPot = downPot - payout;
+    int newDown    = downShares - amount;
+    int remaining  = upPot + newDownPot;
+
+    let downGroup = tx.assetGroups.find(downIdTxid, downIdGidx);
+    require(downGroup.sumInputs == downGroup.sumOutputs + amount, "down not burned exactly");
+    let upGroup = tx.assetGroups.find(upIdTxid, upIdGidx);
+    require(upGroup.delta == 0, "up must not move");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    require(
+      tx.outputs[0].scriptPubKey == new HashpriceUsdVault(
+        oraclePk, ticker, btcUsdTicker, lowPrice, highPrice, maturity, settleWindow, pairCollateral,
+        upIdTxid, upIdGidx, downIdTxid, downIdGidx, contractIdTxid, contractIdGidx,
+        1, upShares, newDown, upPot, newDownPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= remaining, "pot not preserved");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+
+    if (payout > 330) {
+      require(tx.outputs[1].value >= payout, "redeemer underpaid");
+    }
+  }
+}

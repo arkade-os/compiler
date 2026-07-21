@@ -133,6 +133,18 @@ fn roundtrip_fuji_safe() {
 }
 
 #[test]
+fn roundtrip_hashprice_btc_vault() {
+    let output = compile_example("hashprice/hashprice_btc_vault.ark");
+    assert_output_invariants(&output, "hashprice/hashprice_btc_vault.ark");
+}
+
+#[test]
+fn roundtrip_hashprice_usd_vault() {
+    let output = compile_example("hashprice/hashprice_usd_vault.ark");
+    assert_output_invariants(&output, "hashprice/hashprice_usd_vault.ark");
+}
+
+#[test]
 fn roundtrip_stability_vault() {
     let output = compile_example("stability/stability_vault.ark");
     assert_output_invariants(&output, "stability/stability_vault.ark");

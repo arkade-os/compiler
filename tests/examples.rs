@@ -20,6 +20,8 @@ mod covered_call;
 mod fee_adapter;
 #[path = "examples/fuji_safe.rs"]
 mod fuji_safe;
+#[path = "examples/hashprice.rs"]
+mod hashprice;
 #[path = "examples/htlc.rs"]
 mod htlc;
 #[path = "examples/layerzero.rs"]
