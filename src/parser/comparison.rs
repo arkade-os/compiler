@@ -85,7 +85,7 @@ pub(crate) fn parse_reversed_property_comparison(pair: Pair<Rule>) -> Result<Req
 
     let left = parse_property_comparison_expression(left_expr)?;
 
-    let right = parse_property_comparison_expression(right_expr)?;
+    let right = parse_property_access_expression(right_expr)?;
 
     Ok(Requirement::Comparison { left, op, right })
 }
@@ -157,16 +157,27 @@ fn parse_property_comparison_expression(expr: Pair<Rule>) -> Result<Expression, 
         }
         Rule::constructor => parse_constructor_to_expression(expr)?,
         Rule::asset_lookup => parse_asset_lookup_to_expression(expr)?,
-        _ => return Err("Unexpected right expression in property comparison".to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected expression in property comparison: {}",
+                expr.as_str()
+            ))
+        }
     };
     Ok(expression)
 }
+
 fn parse_property_access_expression(expr: Pair<Rule>) -> Result<Expression, String> {
     let expression = match expr.as_rule() {
         Rule::tx_property_access | Rule::this_property_access => {
             parse_tx_property_to_expression(expr)
         }
-        _ => return Err("Unexpected left expression in property comparison".to_string()),
+        _ => {
+            return Err(format!(
+                "Unexpected expression in property comparison: {}",
+                expr.as_str()
+            ))
+        }
     };
     Ok(expression)
 }
