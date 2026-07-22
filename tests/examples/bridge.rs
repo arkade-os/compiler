@@ -8,16 +8,18 @@
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_BIN2NUM, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID,
-    OP_GREATERTHANOREQUAL, OP_HASH256, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SUBSTR,
+    OP_BIN2NUM, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG,
+    OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHANOREQUAL, OP_HASH256,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SCRIPTNUMTOLE64, OP_SHA256,
+    OP_SUBSTR,
 };
 
-use crate::common::{arkade_asm, arkade_inputs};
+use crate::common::{arkade_asm, arkade_inputs, leaf_asm};
 
 const BRIDGE_MINT_CODE: &str = include_str!("../../examples/bridge/bridge_mint.ark");
 const BRIDGE_WITHDRAWAL_CODE: &str = include_str!("../../examples/bridge/bridge_withdrawal.ark");
 const BRIDGE_SPV_CODE: &str = include_str!("../../examples/bridge/bridge_spv.ark");
+const SWAP_HTLC_CODE: &str = include_str!("../../examples/bridge/swap_htlc.ark");
 
 // ─── BridgeMint ───────────────────────────────────────────────────────────────
 
@@ -259,4 +261,96 @@ fn test_bridge_spv_witness_arrays_flattened() {
             "missing witness {name} in covenant inputs: {inputs:?}"
         );
     }
+}
+
+// ─── SwapHtlc (introspection-gated fast-transfer swap leg) ─────────────────────
+
+#[test]
+fn test_swap_htlc_structure() {
+    let output = compile(SWAP_HTLC_CODE).unwrap();
+    assert_eq!(output.name, "SwapHtlc");
+    // claim + refund (function-backed) + unilateral (standalone) = 3 groups.
+    assert_eq!(output.functions.len(), 3);
+    let names: Vec<&str> = output.functions.iter().map(|f| f.name.as_str()).collect();
+    assert!(names.contains(&"claim"), "Got: {names:?}");
+    assert!(names.contains(&"refund"), "Got: {names:?}");
+    assert!(names.contains(&"unilateral"), "Got: {names:?}");
+}
+
+#[test]
+fn test_swap_htlc_claim_is_hashlocked_and_solver_pinned() {
+    let output = compile(SWAP_HTLC_CODE).unwrap();
+    let asm = arkade_asm(&output, "claim");
+    // SHA256 hashlock (matches Lightning payment hash) — completing the claim
+    // forces `s` on-chain.
+    assert!(
+        asm.contains(OP_SHA256),
+        "claim must be SHA256-hashlocked: {asm}"
+    );
+    // Payout pinned to the solver via introspection.
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "claim must pin the payout output: {asm}"
+    );
+    assert!(
+        asm.contains("<VTXO:SingleSig(<solverPk>"),
+        "claim payout must be pinned to solverPk: {asm}"
+    );
+}
+
+#[test]
+fn test_swap_htlc_claim_needs_no_beneficiary_signature() {
+    // The whole point of introspection-gating: the cooperative claim path
+    // carries no beneficiary signature, so any relayer/watchtower/operator can
+    // complete it once `s` is public.
+    let output = compile(SWAP_HTLC_CODE).unwrap();
+    let covenant = arkade_asm(&output, "claim");
+    assert!(
+        !covenant.contains(OP_CHECKSIG),
+        "claim covenant must not require a beneficiary signature: {covenant}"
+    );
+}
+
+#[test]
+fn test_swap_htlc_refund_is_timelocked_and_user_pinned() {
+    let output = compile(SWAP_HTLC_CODE).unwrap();
+    let asm = arkade_asm(&output, "refund");
+    assert!(
+        asm.contains(OP_CHECKLOCKTIMEVERIFY),
+        "refund must be timelocked to refundTime: {asm}"
+    );
+    assert!(
+        asm.contains("<VTXO:SingleSig(<userPk>"),
+        "refund must be pinned to userPk: {asm}"
+    );
+}
+
+#[test]
+fn test_swap_htlc_claim_leaf_reenforces_hashlock() {
+    // The L1 claim leaf keeps the hashlock so the unilateral path also forces
+    // revealing `s`, co-signed by the infra keys.
+    let output = compile(SWAP_HTLC_CODE).unwrap();
+    let leaf = leaf_asm(&output, "claim", "claim");
+    assert!(
+        leaf.contains(OP_SHA256),
+        "claim leaf must keep the hashlock: {leaf}"
+    );
+    assert!(
+        leaf.contains("<SERVER_KEY>"),
+        "claim leaf must co-sign with the server key: {leaf}"
+    );
+}
+
+#[test]
+fn test_swap_htlc_unilateral_is_csv_to_user() {
+    let output = compile(SWAP_HTLC_CODE).unwrap();
+    let leaf = leaf_asm(&output, "unilateral", "unilateral");
+    assert!(
+        leaf.contains(OP_CHECKSEQUENCEVERIFY),
+        "unilateral exit must be CSV-timelocked: {leaf}"
+    );
+    assert!(
+        leaf.contains("<userPk>") && leaf.contains(OP_CHECKSIG),
+        "unilateral exit must be the user's signature: {leaf}"
+    );
 }

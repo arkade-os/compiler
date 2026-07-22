@@ -221,6 +221,15 @@ fn roundtrip_bridge_spv() {
 }
 
 #[test]
+fn roundtrip_swap_htlc() {
+    let output = compile_example("bridge/swap_htlc.ark");
+    assert_output_invariants(&output, "bridge/swap_htlc.ark");
+    assert_eq!(output.name, "SwapHtlc");
+    // claim + refund (function-backed) + unilateral (standalone) = 3 groups.
+    assert_eq!(output.functions.len(), 3);
+}
+
+#[test]
 fn roundtrip_bond_mint() {
     let output = compile_example("bonds/bond_mint.ark");
     assert_output_invariants(&output, "bonds/bond_mint.ark");

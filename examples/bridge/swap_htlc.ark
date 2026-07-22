@@ -1,0 +1,95 @@
+// Swap HTLC — introspection-gated cross-chain swap leg (Arkade side)
+//
+// The Arkade leg of a solver "fast-transfer" route, e.g.
+//     LN  →  BTC on Arkade  →  LVGA on SwissLedger (EVM)
+// where a solver holds the destination asset (LVGA) and fronts it, receiving
+// BTC on Arkade in return. No wrapped token and no bridge treasury: the whole
+// route is chained by ONE payment secret `s` (hash `H`) — the same secret the
+// Lightning invoice and the destination-chain (EVM) HTLC use — so revealing
+// `s` on any leg cascades to settle the others. Nothing has to verify another
+// chain's consensus; the preimage is self-proving.
+//
+// What makes this "introspection-gated": the claim and refund payouts are
+// PINNED by the covenant to fixed destinations, so neither path needs the
+// beneficiary's signature. Any relayer, watchtower, or the always-online
+// Arkade operator can complete a leg once it is unlocked, and the funds can
+// only reach the intended party. This removes *beneficiary* liveness — the
+// solver need not be online to be paid — though the base layer still needs
+// some party to broadcast a tx before the timeout (a delegatable, non-
+// adversarial role), so it is reduced, not eliminated.
+//
+// Roles:
+//   solverPk  — receives the BTC once `s` is public (destination asset fronted)
+//   userPk    — reclaims the BTC after refundTime if the swap never completes
+//
+// Timelock ordering (critical): the preimage is revealed at the destination
+// (EVM) leg and cascades back, so refundTime here (T_ark) MUST exceed the EVM
+// leg's timeout (T_evm), and the Lightning leg's timeout must exceed T_ark:
+//     T_evm  <  refundTime (T_ark)  <  T_ln
+// This guarantees the solver always has time to claim the BTC after the user
+// reveals `s` on the destination chain.
+//
+// The free option is inherent to any cross-ledger atomic swap and is NOT
+// removed by introspection: whoever reveals `s` chooses whether/when within
+// the timelock window, holding a short-dated option on the price. Introspection
+// changes who may *execute* a spend, not who *controls the secret*. Mitigate
+// with a short T_evm and a taker premium — not with covenants.
+
+import "single_sig.ark";
+
+contract SwapHtlc(
+  pubkey  solverPk,     // gets the BTC once the preimage is public
+  pubkey  userPk,       // reclaims the BTC after refundTime if the swap aborts
+  bytes32 preimageHash, // sha256(s); matches the Lightning payment hash so the
+                        // SAME secret `s` unlocks the LN, Arkade, and EVM legs
+  int     refundTime,   // block height T_ark; must exceed the EVM leg's T_evm
+  int     exit
+) {
+  // ── CLAIM (covenant / cooperative settlement math) ───────────────────────
+  // Gated by the hashlock so completing the claim forces `s` on-chain, and
+  // pinned to the solver so no solver signature is required — the emulator
+  // co-signs the collaborative leaf only when both hold, and the payout can
+  // only go to the solver. Permissionless to trigger.
+  function claim(bytes preimage) {
+    require(sha256(preimage) == preimageHash, "bad preimage");
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(solverPk, exit),
+      "payout not solver"
+    );
+    require(tx.outputs[0].value >= tx.inputs[0].value, "value leaked");
+  }
+
+  // ── REFUND (covenant) ────────────────────────────────────────────────────
+  // After T_ark the BTC returns to the user, pinned to userPk so it is
+  // likewise permissionless and cannot be redirected.
+  function refund() {
+    require(tx.time >= refundTime, "not expired");
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(userPk, exit),
+      "refund not user"
+    );
+    require(tx.outputs[0].value >= tx.inputs[0].value, "value leaked");
+  }
+
+  // ── L1 leaves (BIP-342), bound by name ───────────────────────────────────
+  // The claim leaf re-enforces the hashlock on-chain so the unilateral path
+  // also forces revealing `s`.
+  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+    require(sha256(preimage) == preimageHash);
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+  }
+  // The refund leaf is time-locked to T_ark.
+  function refund(signature serverSig, signature emulatorSig) tapscript {
+    require(tx.time >= refundTime);
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+  }
+
+  // ── Unilateral exit (CSV) ────────────────────────────────────────────────
+  // The user (funder of the BTC leg) recovers if the Arkade operator is
+  // offline. `exit` is a coarse operator-offline safety net; set it longer
+  // than the swap's refund window so it cannot undercut the swap.
+  function unilateral(signature userSig) tapscript {
+    require(older(exit));
+    require(checkSig(userSig, userPk));
+  }
+}

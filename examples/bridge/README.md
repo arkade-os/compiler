@@ -36,6 +36,10 @@ plus the existing swap contract for settlement.
 - **Settlement** = once a foreign asset exists as a wrapped Arkade asset,
   `non_interactive_swap.ark` matches signed orders atomically. No new
   contract is needed.
+- **Fast-transfer swap** = for a one-shot cross-chain swap with no wrapper
+  and no treasury, a solver fronts the destination asset and the whole route
+  is chained by one Lightning payment secret (`swap_htlc.ark`). Best for the
+  LN → Arkade → EVM flow.
 
 The attested and SPV deposit legs are interchangeable: both mint the same
 wrapped asset under the same control-asset accounting. Pick the quorum for
@@ -198,6 +202,87 @@ or reverts as a whole. A full user story:
 3. withdraw: lock the received asset in `BridgeWithdrawal`, operator pays
    out on the destination chain, quorum releases and burns.
 
+## Fast-transfer HTLC route (LN → Arkade → EVM)
+
+Everything above *wraps* a foreign asset into a persistent Arkade token. For
+a one-shot cross-chain swap there is a lighter model that matches Arkade's
+native Lightning/HTLC swaps: a **solver** holds the destination asset and
+fronts it, receiving BTC on Arkade in return. **No wrapped token and no
+bridge treasury** — and, crucially, **no chain has to verify another
+chain's consensus.**
+
+The trick is one **shared payment secret** `s` (hash `H = sha256(s)`). Every
+leg is an HTLC locked to the *same* `H`, and Lightning hands you `H` for
+free (an LN invoice's payment hash *is* `sha256(preimage)`). Revealing `s`
+on the destination leg cascades back and unlocks every upstream leg. The
+preimage is self-proving, so — unlike the SPV path — nothing needs a light
+client or an attestation.
+
+`swap_htlc.ark` is the **Arkade leg**. `htlc.ark` already gives a hashlock;
+`swap_htlc.ark` adds the introspection that makes completion permissionless:
+
+### Worked example
+
+**User** has sats on Lightning, wants **LVGA** on **SwissLedger** (an
+EVM-compatible chain). **Solver** holds LVGA inventory, wants BTC.
+
+```
+        payment hash H = sha256(s)  — identical across all three legs
+
+  User ──sats──▶ LN invoice(H) ─────────────────────▶ Solver paid over LN
+                                                        (its BTC leg)
+  User's value ──▶ BTC VTXO on Arkade = SwapHtlc(H) ◀── solver claims with s
+  Solver ──LVGA──▶ EVM HTLC(H) on SwissLedger ───────▶ User claims LVGA,
+                                                        revealing s
+```
+
+1. Solver locks LVGA in a standard **EVM HTLC** on SwissLedger: claimable by
+   the user with `s`, refundable to the solver after `T_evm`.
+2. The user's BTC sits in `SwapHtlc` on Arkade under the same `H`.
+3. User claims LVGA on SwissLedger, **revealing `s`**.
+4. Anyone (a watchtower, or the always-online Arkade operator) reads `s` and
+   completes `SwapHtlc.claim(s)` — the BTC can only go to the solver.
+5. Any leg that stalls refunds independently after its timeout.
+
+### `swap_htlc.ark` — the introspection-gated Arkade leg
+
+- `claim(preimage)` (covenant) — SHA256 hashlock **plus** the payout output
+  pinned to `solverPk`. Because the destination is fixed by the covenant, no
+  solver signature is needed: any relayer/watchtower/operator can complete
+  it once `s` is public, and it can only pay the solver.
+- `refund()` (covenant) — after `refundTime` the BTC returns, pinned to
+  `userPk`; likewise permissionless and non-redirectable.
+- L1 `claim`/`refund` tapscript leaves re-enforce the hashlock / timelock for
+  the unilateral path; `unilateral` is the user's CSV operator-offline exit.
+
+### Timelock ordering (must hold)
+
+`s` is revealed at the destination and cascades upstream, so timeouts
+increase upstream — each hop keeps time to claim after the one below reveals:
+
+| Leg | Locked by | Unlocks on | Refund timeout |
+|---|---|---|---|
+| LVGA on SwissLedger | solver | user shows `s` | `T_evm` (shortest) |
+| BTC on Arkade (`swap_htlc`) | user | solver shows `s` | `refundTime` = `T_ark` > `T_evm` |
+| Lightning | user | solver shows `s` | `T_ln` > `T_ark` (longest) |
+
+### What introspection does and does not fix
+
+- **Liveness — improved.** Pinning the payout removes *beneficiary*
+  liveness: the solver need not be online to be paid. Completion is
+  permissionless, so a watchtower or the Ark operator can finish it. It is
+  **not** zero-liveness — the base layer still needs *some* party to
+  broadcast before `T_ark` — but that role is delegatable and has nothing to
+  gain by cheating.
+- **Free option — unchanged.** Whoever reveals `s` holds a short-dated
+  option (complete, or let it refund on a price move) for the duration of
+  the timelock window. That window exists because the legs are on different
+  ledgers; introspection changes who may *execute* a spend, not who
+  *controls the secret*. Only a **same-ledger** single-tx swap
+  (`non_interactive_swap.ark`, both assets native Arkade) removes it. Across
+  ledgers it is inherent — priced away with a short `T_evm` and a taker
+  premium, not removed by covenants.
+
 ## Trust model (honest)
 
 The foreign-chain side is **custodial** and cannot be otherwise: Arkade
@@ -243,6 +328,22 @@ hands (no one can fabricate a deposit), at the cost of the pinned-difficulty
 and relayer-liveness assumptions and economic (not absolute) finality. Use
 SPV for PoW chains; keep the quorum for fast-finality/non-PoW chains where
 SPV doesn't apply.
+
+### Three shapes, three trust profiles
+
+| | Wrap bridge (`bridge_mint`/`withdrawal`) | SPV bridge (`bridge_spv`) | Fast-transfer swap (`swap_htlc`) |
+|---|---|---|---|
+| Persistent wrapped token | yes | yes | **no** |
+| Bridge treasury / pooled custody | yes | yes (inbound custody) | **no** — solver inventory |
+| Who is trusted | k-of-n quorum | PoW + pinned difficulty + relayer | **no custody** — HTLC preimage; solver takes only the free-option/liveness risk |
+| Cross-chain verification | attestation | on-chain SPV (PoW inbound) | **none** — shared secret is self-proving |
+| Best for | any chain, holdable balances | BTC/PoW inbound | one-shot LN → Arkade → EVM swaps |
+| Free option | n/a (custodial) | n/a (custodial) | inherent (cross-ledger); priced away |
+
+The fast-transfer route is the least-trust option *when it applies* (a live
+counterparty willing to front the destination asset for a single swap); the
+wrap and SPV bridges are what you use when a user needs to **hold** a
+bridged balance across many later transactions.
 
 ## How this improves opsec
 
@@ -312,7 +413,8 @@ an attest-only oracle set with a bounded blast radius.
 cargo run -- examples/bridge/bridge_mint.ark -o /tmp/bridge_mint.json
 cargo run -- examples/bridge/bridge_withdrawal.ark -o /tmp/bridge_withdrawal.json
 cargo run -- examples/bridge/bridge_spv.ark -o /tmp/bridge_spv.json
-cargo test --test examples bridge          # incl. SPV opcode assertions
+cargo run -- examples/bridge/swap_htlc.ark -o /tmp/swap_htlc.json
+cargo test --test examples bridge          # incl. SPV + swap-HTLC assertions
 cargo test --test features new_opcodes     # hash256/reverseBytes primitives
 ./playground/generate_contracts.sh         # refresh playground bundle
 ```
