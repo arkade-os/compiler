@@ -389,23 +389,38 @@ Implementation notes (honest):
 - **Replay** is bounded by `burnNonce` (a unique per-payment id bound into
   both the signed message and the commitment); the pool pays each payout once.
 
+### Automated release on SwissLedger
+
+The payout does not depend on a human releasing funds. The destination-chain
+pool is a contract (`swissledger_pool.md`) that a **reporter** calls with the
+Arkade payout; it re-binds the destination, amount, and uniqueness and
+transfers LVGA automatically — the pool operator cannot withhold or redirect
+an individual payment. This is **Flavor A**: a trusted reporter attests the
+Arkade burn/transfer happened, but the contract's `ecrecover` + whitelist +
+`paid[burnNonce]` checks keep the reporter contained to **liveness**, not
+correctness. With reporter = pool operator the trust is incentive-aligned (a
+false report drains the operator's own pool for no BTC). (Flavor B replaces
+the trusted reporter with an on-EVM Bitcoin SPV proof of the burn — no
+reporter trust, heavier verifier; see `swissledger_pool.md`.)
+
 ### Trust model
 
 | Property | Where the trust sits |
 |---|---|
 | Payout authorization | **On-chain** — a valid spend + merchant signature is the authorization; no quorum signs the release |
-| Who can trigger the payout | **Anyone** — commitment + signature are self-authenticating (monitoring node is just liveness) |
+| Who can trigger the payout | **Anyone** — commitment + signature are self-authenticating (the monitoring node/reporter is just liveness) |
 | LP solvency (two-party) | `payOut` **transfers** the BTC-backed claim to the LP, so the LP is paid **in BTC** for the LVGA it releases (LVGA is one-way, never redeemed); the BTC side and the LP may differ |
 | Pool liquidity | The **SwissLedger pool** must hold enough LVGA to service payouts; wLVGA issuance is BTC-backed and capped to the LVGA payout capacity the LP is willing to provide |
-| Release honesty/liveness | The pool/LP must actually release LVGA for a committed payout — bond or permission the LP, or use the trustless `swap_htlc.ark` route when a live counterparty is available |
+| Release automation | The SwissLedger pool contract releases automatically on a valid report (`swissledger_pool.md`); no per-payment discretion. Residual: a **trusted reporter** attests the burn (Flavor A) — liveness only, contained by `ecrecover`/whitelist/nonce |
 | Correct payee | `ecrecover` on EVM + the committed `evmAddr`; the merchant key binds both chains |
 
 This is the mirror image of the SPV deposit leg: SPV makes the *inbound*
 trustless by proving a foreign deposit on Arkade; the payout bridge-out makes
-the *outbound* authorization on-chain by committing it in the spend. What the
-two-party mode fixes is **solvency** (the LP is compensated); release honesty
-still rests on the pool/LP (bonded or permissioned), or on `swap_htlc.ark`'s
-preimage when full trustlessness is required.
+the *outbound* authorization on-chain by committing it in the spend, and the
+SwissLedger pool contract releases against it automatically. The two-party
+mode fixes **solvency** (the LP is compensated); Flavor A automation removes
+per-payment **discretion** (leaving only reporter liveness); full release
+trustlessness is Flavor B (SPV-on-EVM) or the `swap_htlc.ark` preimage route.
 
 ## Trust model (honest)
 
