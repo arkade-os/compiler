@@ -40,10 +40,11 @@ plus the existing swap contract for settlement.
   and no treasury, a solver fronts the destination asset and the whole route
   is chained by one Lightning payment secret (`swap_htlc.ark`). Best for the
   LN → Arkade → EVM flow.
-- **Burn-to-unlock bridge-out** = destroy a wrapped token on Arkade with a
-  merchant commitment; a liquidity-pool contract on the destination chain
-  reads the commitment and releases the real asset (`wlvga_burn.ark`). The
-  burn is the authorization — no quorum signs the release.
+- **Payout bridge-out** = spend a wrapped token on Arkade with a merchant
+  commitment; a liquidity-pool contract on the destination chain reads the
+  commitment and releases the real asset (`wlvga_payout.ark`). The spend is
+  the authorization — no quorum signs the release. Two modes: transfer the
+  claim to the liquidity provider (two parties) or burn it (integrated).
 
 The attested and SPV deposit legs are interchangeable: both mint the same
 wrapped asset under the same control-asset accounting. Pick the quorum for
@@ -287,31 +288,67 @@ increase upstream — each hop keeps time to claim after the one below reveals:
   ledgers it is inherent — priced away with a short `T_evm` and a taker
   premium, not removed by covenants.
 
-## Burn-to-unlock bridge-out (Arkade wLVGA → SwissLedger LVGA)
+## Payout bridge-out (Arkade wLVGA → SwissLedger LVGA)
 
 A merchant-payment bridge-out where the destination asset (real **LVGA**)
-sits in a **liquidity pool on SwissLedger** and wrapped **wLVGA** is issued
-on Arkade against that pool. Paying a merchant in real LVGA is a **burn**:
-destroy wLVGA on Arkade with a commitment naming the merchant, and the pool
-releases LVGA. The burn *is* the authorization — no Arkade-side quorum signs
-the release.
+sits in a **liquidity pool on SwissLedger** and wrapped **wLVGA** — a
+BTC-backed bearer claim — is issued on Arkade. Paying a merchant in real LVGA
+spends the wLVGA on Arkade with a commitment naming the merchant; the pool
+reads it and releases LVGA. The spend + commitment *is* the authorization —
+no Arkade-side quorum signs the release.
+
+**Hard requirement — LVGA is transfer-restricted.** Only whitelisted
+addresses hold LVGA, and it flows one way (pool → merchant): **wLVGA can never
+be redeemed for LVGA.** So wLVGA is *not* a wrapper you unwrap — it is a
+BTC-backed bearer instrument, liquidatable for BTC only. The BTC side and the
+LVGA side are connected solely through the liquidity provider's balance
+sheet, which is why the payout must compensate the LP in BTC (below), not in
+LVGA.
+
+### Closing the loop: who is paid for the released LVGA
+
+The wLVGA is a claim on the BTC a user locked at mint time. Two roles may be
+**separate parties**: the BTC side (issued the wLVGA, holds the BTC backing)
+and the **LVGA liquidity provider (LP)** who funds the SwissLedger pool. A
+naive burn destroys the wLVGA and compensates no one — so if those parties
+differ, the LP bleeds out. `wlvga_payout.ark` has two modes:
+
+- **`payOut()` — two parties (default).** The wLVGA claim is **transferred to
+  the LP**, not destroyed. The LP releases LVGA on SwissLedger and receives
+  the BTC-backed claim on Arkade (redeemable for BTC, never for LVGA), so the
+  BTC side and the LP can be different entities and the LP stays solvent.
+- **`burnOut()` — same party (option).** The wLVGA is **burned**. Only
+  solvent when the LP is *also* the party that received the BTC at mint time
+  (an integrated market maker). Kept for deployments where that is legally
+  and operationally one entity.
+
+**LP economics.** Because LVGA is one-way, the LP is a market maker, not a
+custodian round-tripping a wrapper. Per payout it: gives up **LVGA** (a
+CHF-pegged position), receives **BTC** via the wLVGA claim (hedgeable to
+USDT), and earns **fees** priced into its quote (the payer spends slightly
+more wLVGA/BTC than the LVGA released is worth). Net, the LP is taking
+**CHF/BTC exposure for fee income** — a normal FX/inventory book, with the
+covenant guaranteeing it is paid in BTC for every LVGA payout it services.
 
 ```
- BTC ──▶ wLVGA on Arkade            (mint, backed by SwissLedger pool liquidity)
+ BTC ──▶ wLVGA on Arkade            (BTC-backed claim; pool holds LVGA on SwissLedger)
               │
-              ▼  burnOut(): CSFS(merchant key) + burn wLVGA + OP_RETURN commit
+              ▼  payOut(): CSFS(merchant key) + transfer wLVGA → LP + OP_RETURN commit
    ┌─────────────────────────────────────────────────────────────┐
    │ Arkade tx                                                     │
    │  - checkSigFromStack(merchantSig, merchantPk, payoutMsg)      │
-   │  - wLVGA supply shrinks by `amount`                           │
+   │  - output[0]: wLVGA claim → LP        (LP compensation)       │
    │  - OP_RETURN: protocolTag ‖ merchantEvmAddr ‖ amount          │
    └─────────────────────────────────────────────────────────────┘
-              │  webhook: a monitoring node sees the burn
+              │  webhook: a monitoring node sees the payout
               ▼
    SwissLedger pool contract:
      recompute payoutMsg → ecrecover(payoutMsg, merchantSig) → merchant
      require recovered == committed evmAddr → transfer `amount` LVGA
 ```
+
+(`burnOut()` is identical except output[0] is replaced by a supply-shrinking
+burn, `sumInputs >= sumOutputs + amount`.)
 
 ### One key, two chains
 
@@ -321,19 +358,20 @@ verified two ways over the *same* message:
 - on Arkade — `checkSigFromStack(sig, merchantPk, payoutMsg)` (this contract),
 - on SwissLedger — `ecrecover(payoutMsg, sig) == merchantEvmAddr` (the pool).
 
-The Arkade side proves the burn is merchant-authorized; the EVM side
+The Arkade side proves the payout is merchant-authorized; the EVM side
 independently recovers who to pay. The 20-byte `merchantEvmAddr` is committed
 in the OP_RETURN so the payee is explicit and auditable on Arkade, and the
 signature rides the witness (and is relayed) for the EVM `ecrecover`.
 
-### `wlvga_burn.ark`
+### `wlvga_payout.ark`
 
-`burnOut(amount, merchantEvmAddr, merchantPk, merchantSig, burnNonce, commitIndex)`:
+Both modes share `(amount, merchantEvmAddr, merchantPk, merchantSig, burnNonce, commitIndex)`:
 
 - **Authorize** — `checkSigFromStack` over
   `payoutMsg = sha256(protocolTag ‖ merchantEvmAddr ‖ amount ‖ burnNonce)`.
-- **Burn** — `sumInputs >= sumOutputs + amount` (supply only shrinks; no
-  control asset — solvency is the pool's responsibility).
+- **Settle** — `payOut` pins `output[0]` to `SingleSig(lpPk)` carrying the
+  wLVGA (LP compensation); `burnOut` instead does
+  `sumInputs >= sumOutputs + amount` (supply shrinks).
 - **Commit** — pin an OP_RETURN output whose script equals
   `protocolTag ‖ merchantEvmAddr ‖ num2bin(amount, 8)`, so the pool can
   recompute the message, `ecrecover`, and match the committed payee.
@@ -349,23 +387,25 @@ Implementation notes (honest):
   signature are self-authenticating, so *anyone* can submit the SwissLedger
   tx — the monitoring node/webhook is a convenience, not a trusted party.
 - **Replay** is bounded by `burnNonce` (a unique per-payment id bound into
-  both the signed message and the commitment); the pool pays each burn once.
+  both the signed message and the commitment); the pool pays each payout once.
 
 ### Trust model
 
 | Property | Where the trust sits |
 |---|---|
-| Release authorization | **On-chain, trustless** — a valid burn + merchant signature is the authorization; no quorum signs the release |
+| Payout authorization | **On-chain** — a valid spend + merchant signature is the authorization; no quorum signs the release |
 | Who can trigger the payout | **Anyone** — commitment + signature are self-authenticating (monitoring node is just liveness) |
-| Solvency | The **SwissLedger pool** must hold LVGA ≥ outstanding wLVGA; wLVGA issuance (the mint leg) must be gated to the pool's locked liquidity |
+| LP solvency (two-party) | `payOut` **transfers** the BTC-backed claim to the LP, so the LP is paid **in BTC** for the LVGA it releases (LVGA is one-way, never redeemed); the BTC side and the LP may differ |
+| Pool liquidity | The **SwissLedger pool** must hold enough LVGA to service payouts; wLVGA issuance is BTC-backed and capped to the LVGA payout capacity the LP is willing to provide |
+| Release honesty/liveness | The pool/LP must actually release LVGA for a committed payout — bond or permission the LP, or use the trustless `swap_htlc.ark` route when a live counterparty is available |
 | Correct payee | `ecrecover` on EVM + the committed `evmAddr`; the merchant key binds both chains |
-| Liveness | Someone must relay the burn to SwissLedger (permissionless, delegatable) |
 
 This is the mirror image of the SPV deposit leg: SPV makes the *inbound*
-trustless by proving a foreign deposit on Arkade; burn-to-unlock makes the
-*outbound* trustless by proving an Arkade burn on the foreign chain. In both,
-the burn/proof is the authorization and the residual trust is solvency +
-relayer liveness, not a signing quorum.
+trustless by proving a foreign deposit on Arkade; the payout bridge-out makes
+the *outbound* authorization on-chain by committing it in the spend. What the
+two-party mode fixes is **solvency** (the LP is compensated); release honesty
+still rests on the pool/LP (bonded or permissioned), or on `swap_htlc.ark`'s
+preimage when full trustlessness is required.
 
 ## Trust model (honest)
 
@@ -415,14 +455,14 @@ SPV doesn't apply.
 
 ### Four shapes, four trust profiles
 
-| | Wrap bridge (`bridge_mint`/`withdrawal`) | SPV bridge (`bridge_spv`) | Fast-transfer swap (`swap_htlc`) | Burn-to-unlock (`wlvga_burn`) |
+| | Wrap bridge (`bridge_mint`/`withdrawal`) | SPV bridge (`bridge_spv`) | Fast-transfer swap (`swap_htlc`) | Payout bridge-out (`wlvga_payout`) |
 |---|---|---|---|---|
-| Persistent wrapped token | yes | yes | **no** | yes (until burned) |
+| Persistent wrapped token | yes | yes | **no** | yes (transferred to LP, or burned) |
 | Pooled custody | treasury | inbound custody | **no** — solver inventory | destination-chain liquidity pool |
-| Who authorizes release | k-of-n quorum | PoW proof | HTLC preimage | **the burn itself** (+ merchant sig) |
+| Who authorizes release | k-of-n quorum | PoW proof | HTLC preimage | **the spend itself** (+ merchant sig) |
 | Cross-chain verification | attestation | on-chain SPV (PoW inbound) | **none** — shared secret | commitment + `ecrecover` on EVM |
 | Who can trigger | quorum | anyone (relay proof) | watchtower/operator | **anyone** (self-authenticating) |
-| Residual trust | quorum honesty | pinned difficulty + relayer | free option + liveness | pool solvency + relayer liveness |
+| Residual trust | quorum honesty | pinned difficulty + relayer | free option + liveness | pool/LP release honesty + relayer liveness (LP solvency handled by the transfer) |
 | Best for | any chain, holdable balances | BTC/PoW inbound | one-shot LN → Arkade → EVM | merchant payouts to an EVM pool |
 
 The fast-transfer route is the least-trust option *when it applies* (a live
@@ -499,7 +539,7 @@ cargo run -- examples/bridge/bridge_mint.ark -o /tmp/bridge_mint.json
 cargo run -- examples/bridge/bridge_withdrawal.ark -o /tmp/bridge_withdrawal.json
 cargo run -- examples/bridge/bridge_spv.ark -o /tmp/bridge_spv.json
 cargo run -- examples/bridge/swap_htlc.ark -o /tmp/swap_htlc.json
-cargo run -- examples/bridge/wlvga_burn.ark -o /tmp/wlvga_burn.json
+cargo run -- examples/bridge/wlvga_payout.ark -o /tmp/wlvga_payout.json
 cargo test --test examples bridge          # incl. SPV + swap-HTLC + burn-out assertions
 cargo test --test features new_opcodes     # hash256/reverseBytes primitives
 ./playground/generate_contracts.sh         # refresh playground bundle
