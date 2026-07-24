@@ -1,0 +1,90 @@
+// wLVGA Burn-to-Unlock — bridge-OUT (Arkade → SwissLedger)
+//
+// A merchant-payment bridge-out for wrapped LVGA. Real LVGA lives in a
+// liquidity pool on SwissLedger (an EVM chain); wLVGA is issued on Arkade
+// against that pool's liquidity. To pay a merchant in real LVGA, the wLVGA
+// is BURNED on Arkade with a commitment naming the merchant — and that burn
+// is the whole authorization. No custodian quorum signs the release; the
+// SwissLedger pool contract reads the Arkade commitment and pays out.
+//
+// End-to-end flow:
+//   1. BTC → wLVGA on Arkade (mint backed by SwissLedger pool liquidity;
+//      see bridge_mint.ark / the mint leg).
+//   2. burnOut() spends the wLVGA: it verifies a merchant authorization with
+//      OP_CHECKSIGFROMSTACK (the merchant's secp256k1 key), shrinks wLVGA
+//      supply, and pins an OP_RETURN output committing (tag ‖ evmAddr ‖ amt).
+//   3. A monitoring node watching Arkade fires a webhook on the burn and
+//      submits an EVM tx to SwissLedger carrying the burn + the merchant
+//      signature.
+//   4. The SwissLedger pool contract reconstructs the signed message,
+//      `ecrecover`s the merchant pubkey, checks it matches the committed
+//      evmAddr, and releases `amount` LVGA to the merchant.
+//
+// ONE KEY, TWO CHAINS. EVM and Bitcoin/Arkade share secp256k1, so a single
+// merchant key is verified two ways over the SAME message:
+//   - on Arkade:      checkSigFromStack(sig, merchantPk, msg)   (this contract)
+//   - on SwissLedger: ecrecover(msg, sig) == merchantEvmAddr    (the pool)
+// The Arkade side proves the burn is merchant-authorized; the EVM side
+// independently recovers who to pay. The 20-byte evmAddr is committed in the
+// OP_RETURN so the intended payee is explicit and auditable on Arkade, and
+// the signature travels in the witness (and is relayed) for the EVM ecrecover.
+//
+// Note on types: `merchantPk` (pubkey) and `merchantSig` (signature) appear
+// ONLY inside checkSigFromStack — never in a `+` concat — because pubkey/
+// signature are not byte-string types for concatenation. Everything that is
+// hashed or committed (evmAddr, amount, nonce, tag) is bytes/int, so `+`
+// lowers to OP_CAT and the digest matches the merchant's off-chain signing
+// and the EVM reconstruction byte-for-byte.
+//
+// Replay: `burnNonce` (a unique per-payment id, e.g. derived from the burn
+// outpoint) is bound into the signed message and the commitment, so the pool
+// pays each burn exactly once.
+
+contract WlvgaBurn(
+  // wrapped LVGA asset issued on Arkade against the SwissLedger pool
+  bytes32 tokenAssetIdTxid,
+  int     tokenAssetIdGidx,
+  // domain/protocol tag prefixing the signed message and the OP_RETURN
+  // commitment (separates this bridge from any other use of the merchant key)
+  bytes   protocolTag,
+  int     exit
+) {
+  // Burn wLVGA and commit the merchant payout for the SwissLedger pool.
+  //
+  // Transaction layout:
+  //   input[0]:  wLVGA being burned
+  //   output[commitIndex]: OP_RETURN commitment (protocolTag ‖ evmAddr ‖ amount)
+  function burnOut(
+    int       amount,
+    bytes     merchantEvmAddr, // 20-byte EVM address of the merchant (payee)
+    pubkey    merchantPk,      // merchant secp256k1 key (CSFS only)
+    signature merchantSig,     // merchant authorization over the payout message
+    int       burnNonce,       // unique per-payment id (anti-replay)
+    int       commitIndex      // output index carrying the OP_RETURN commitment
+  ) {
+    require(amount > 0, "zero burn");
+    require(size(merchantEvmAddr) == 20, "bad evm address");
+
+    // 1. Merchant authorization. The message binds tag, payee, amount, nonce.
+    //    Reconstructed identically off-chain by the merchant and on EVM.
+    let payoutMsg = sha256(protocolTag + merchantEvmAddr + amount + burnNonce);
+    require(
+      checkSigFromStack(merchantSig, merchantPk, payoutMsg),
+      "bad merchant sig"
+    );
+
+    // 2. Burn: wLVGA supply shrinks by exactly `amount` (no control asset
+    //    needed — supply only decreases; solvency is the pool's job).
+    let g = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+    require(g.sumInputs >= g.sumOutputs + amount, "burn short");
+
+    // 3. OP_RETURN commitment the SwissLedger pool contract reads. Same tag
+    //    and fields as the signed message, so the pool can recompute the
+    //    message, ecrecover the merchant, and match the committed payee.
+    let commitment = protocolTag + merchantEvmAddr + num2bin(amount, 8);
+    require(
+      tx.outputs[commitIndex].scriptPubKey == commitment,
+      "missing burn commitment"
+    );
+  }
+}

@@ -10,16 +10,17 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_BIN2NUM, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG,
     OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHANOREQUAL, OP_HASH256,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SCRIPTNUMTOLE64, OP_SHA256,
-    OP_SUBSTR,
+    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_NUM2BIN,
+    OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SUBSTR,
 };
 
-use crate::common::{arkade_asm, arkade_inputs, leaf_asm};
+use crate::common::{arkade_asm, arkade_asm_tokens, arkade_inputs, leaf_asm};
 
 const BRIDGE_MINT_CODE: &str = include_str!("../../examples/bridge/bridge_mint.ark");
 const BRIDGE_WITHDRAWAL_CODE: &str = include_str!("../../examples/bridge/bridge_withdrawal.ark");
 const BRIDGE_SPV_CODE: &str = include_str!("../../examples/bridge/bridge_spv.ark");
 const SWAP_HTLC_CODE: &str = include_str!("../../examples/bridge/swap_htlc.ark");
+const WLVGA_BURN_CODE: &str = include_str!("../../examples/bridge/wlvga_burn.ark");
 
 // ─── BridgeMint ───────────────────────────────────────────────────────────────
 
@@ -352,5 +353,74 @@ fn test_swap_htlc_unilateral_is_csv_to_user() {
     assert!(
         leaf.contains("<userPk>") && leaf.contains(OP_CHECKSIG),
         "unilateral exit must be the user's signature: {leaf}"
+    );
+}
+
+// ─── WlvgaBurn (burn-to-unlock bridge-out) ─────────────────────────────────────
+
+#[test]
+fn test_wlvga_burn_structure() {
+    let output = compile(WLVGA_BURN_CODE).unwrap();
+    assert_eq!(output.name, "WlvgaBurn");
+    // Single covenant spend group; no quorum — the burn is the authorization.
+    assert_eq!(output.functions.len(), 1);
+    assert_eq!(output.functions[0].name, "burnOut");
+}
+
+#[test]
+fn test_wlvga_burn_merchant_csfs_authorization() {
+    // The merchant's secp256k1 key authorizes the payout via CSFS (mirrored by
+    // ecrecover on the EVM side over the same message).
+    let output = compile(WLVGA_BURN_CODE).unwrap();
+    let asm = arkade_asm(&output, "burnOut");
+    assert!(
+        asm.contains(OP_CHECKSIGFROMSTACK),
+        "merchant authorization must use checkSigFromStack: {asm}"
+    );
+    assert!(
+        asm.contains(OP_SHA256),
+        "signed message must be hashed: {asm}"
+    );
+}
+
+#[test]
+fn test_wlvga_burn_message_is_concatenated_not_added() {
+    // The payout message must be a byte CONCATENATION (OP_CAT), not arithmetic
+    // addition — otherwise the digest won't match the merchant's off-chain
+    // signature or the EVM reconstruction. The only OP_ADD is the burn check
+    // `sumOutputs + amount`.
+    let output = compile(WLVGA_BURN_CODE).unwrap();
+    let tokens = arkade_asm_tokens(&output, "burnOut");
+    let cats = tokens.iter().filter(|s| *s == OP_CAT).count();
+    // 3 for the signed message, 2 for the OP_RETURN commitment.
+    assert_eq!(
+        cats, 5,
+        "expected 5 {OP_CAT} across message + commitment, got {cats}"
+    );
+}
+
+#[test]
+fn test_wlvga_burn_shrinks_supply() {
+    let output = compile(WLVGA_BURN_CODE).unwrap();
+    let asm = arkade_asm(&output, "burnOut");
+    assert!(
+        asm.contains(OP_FINDASSETGROUPBYASSETID) && asm.contains(OP_INSPECTASSETGROUPSUM),
+        "burn must be accounted via asset-group sums: {asm}"
+    );
+}
+
+#[test]
+fn test_wlvga_burn_pins_opreturn_commitment() {
+    // The commitment the SwissLedger pool reads is pinned to a specific output,
+    // built as protocolTag || evmAddr || num2bin(amount, 8).
+    let output = compile(WLVGA_BURN_CODE).unwrap();
+    let asm = arkade_asm(&output, "burnOut");
+    assert!(
+        asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "commitment output must be pinned: {asm}"
+    );
+    assert!(
+        asm.contains(OP_NUM2BIN),
+        "amount must be fixed-width encoded into the commitment: {asm}"
     );
 }

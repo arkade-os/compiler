@@ -230,6 +230,15 @@ fn roundtrip_swap_htlc() {
 }
 
 #[test]
+fn roundtrip_wlvga_burn() {
+    let output = compile_example("bridge/wlvga_burn.ark");
+    assert_output_invariants(&output, "bridge/wlvga_burn.ark");
+    assert_eq!(output.name, "WlvgaBurn");
+    // Single covenant spend group (burnOut); no standalone exit tapscript.
+    assert_eq!(output.functions.len(), 1);
+}
+
+#[test]
 fn roundtrip_bond_mint() {
     let output = compile_example("bonds/bond_mint.ark");
     assert_output_invariants(&output, "bonds/bond_mint.ark");
