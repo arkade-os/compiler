@@ -16,6 +16,8 @@ mod compilation_roundtrip;
 mod controlled_mint;
 #[path = "examples/covered_call.rs"]
 mod covered_call;
+#[path = "examples/dividend_stream.rs"]
+mod dividend_stream;
 #[path = "examples/fee_adapter.rs"]
 mod fee_adapter;
 #[path = "examples/fuji_safe.rs"]
