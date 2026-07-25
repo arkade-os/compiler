@@ -136,6 +136,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "sha256" => Some("sha256(data)"),
         "hash160" => Some("hash160(data)"),
         "hash256" => Some("hash256(data)"),
+        "reverseBytes" => Some("reverseBytes(data)"),
         "ripemd160" => Some("ripemd160(data)"),
         "sha256Initialize" => Some("sha256Initialize(data)"),
         "sha256Update" => Some("sha256Update(ctx, chunk)"),
@@ -198,6 +199,8 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 data: Box::new(data),
             })
         }
+        Rule::hash256_func => parse_hash256(pair),
+        Rule::reverse_bytes_func => parse_reverse_bytes(pair),
         // Streaming SHA256
         Rule::sha256_initialize => parse_sha256_initialize(pair),
         Rule::sha256_update => parse_sha256_update(pair),
@@ -456,6 +459,8 @@ pub(crate) fn parse_byte_expr_term(pair: Pair<Rule>) -> Result<Expression, Strin
                 data: Box::new(data),
             })
         }
+        Rule::hash256_func => parse_hash256(inner),
+        Rule::reverse_bytes_func => parse_reverse_bytes(inner),
         Rule::substr_func => parse_substr(inner),
         Rule::cat_func => parse_cat(inner),
         Rule::bin2num_func => parse_bin2num(inner),
@@ -605,12 +610,38 @@ pub(crate) fn parse_atom_pair(pair: Pair<Rule>) -> Expression {
     }
 }
 
+/// Parse a `hash256_func` rule (`hash256(data)`) into `Expression::Hash256`.
+/// The argument is an `additive_expr` so merkle steps like
+/// `hash256(node + sibling)` recover the structured concat inside.
+pub(crate) fn parse_hash256(pair: Pair<Rule>) -> Result<Expression, String> {
+    let arg = pair.into_inner().next().ok_or("Missing hash256 argument")?;
+    let data = parse_additive_expr(arg)?;
+    Ok(Expression::Hash256 {
+        data: Box::new(data),
+    })
+}
+
+/// Parse a `reverse_bytes_func` rule (`reverseBytes(data)`) into
+/// `Expression::ReverseBytes`. The argument is a `byte_value`.
+pub(crate) fn parse_reverse_bytes(pair: Pair<Rule>) -> Result<Expression, String> {
+    let arg = pair
+        .into_inner()
+        .next()
+        .ok_or("Missing reverseBytes argument")?;
+    let data = parse_byte_value(arg)?;
+    Ok(Expression::ReverseBytes {
+        data: Box::new(data),
+    })
+}
+
 /// Parse a `byte_value` rule into an Expression. Used wherever the grammar
 /// accepts an arbitrary byte-producing operand (substr/cat/bin2num/size args).
 pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
     // byte_value wraps exactly one inner rule.
     let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
     match inner.as_rule() {
+        Rule::hash256_func => parse_hash256(inner),
+        Rule::reverse_bytes_func => parse_reverse_bytes(inner),
         Rule::substr_func => parse_substr(inner),
         Rule::cat_func => parse_cat(inner),
         Rule::num2bin_func => parse_num2bin(inner),

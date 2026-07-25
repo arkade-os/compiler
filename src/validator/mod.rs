@@ -383,7 +383,10 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             io_index,
             ..
         } => vec![group_index, io_index],
-        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
+        Expression::Sha256 { data }
+        | Expression::Hash256 { data }
+        | Expression::ReverseBytes { data }
+        | Expression::Sha256Initialize { data } => vec![data],
         Expression::Sha256Update { context, chunk } => vec![context, chunk],
         Expression::Sha256Finalize {
             context,

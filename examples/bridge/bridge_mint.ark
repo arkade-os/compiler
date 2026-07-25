@@ -1,0 +1,115 @@
+// Advanced Bridge — Mint Contract (deposit leg)
+//
+// Brings a foreign-chain asset (ETH, SOL, USDT, ...) onto Arkade as a
+// wrapped asset. A k-of-n custodian quorum observes a confirmed deposit on
+// the source chain and attests it; the covenant then mints exactly the
+// attested amount to the depositor.
+//
+// Flow:
+//   1. The user requests a per-user deposit address for the source chain
+//      from the bridge operator and sends the native asset to it.
+//   2. After the source-chain deposit confirms, each custodian
+//      independently signs, off-line, the attestation message
+//        msg = sha256(depositId || recipientSpk || amount || nonce)
+//      where:
+//        - depositId    domain-separated hash of the source-chain deposit,
+//                       e.g. sha256("arkade-bridge-deposit-v1" || chain
+//                                   || txid || vout);
+//        - recipientSpk the 34-byte Arkade script pubkey the wrapped tokens
+//                       must land on;
+//        - amount       the wrapped amount to mint;
+//        - nonce        this contract's current mint sequence number.
+//   3. Anyone (typically a relayer) collects `threshold` signatures and
+//      spends this UTXO: the covenant mints `amount` wrapped tokens to
+//      recipientSpk and re-creates the bridge state with nonce + 1.
+//
+// Because custodians sign a small fixed message rather than a live
+// transaction, their keys never touch transaction-construction machinery
+// and can stay air-gapped — the attestation is an oracle-style signature,
+// not a spending signature.
+//
+// Replay protection: the attestation binds this contract's `nonce`, and
+// every mint advances it in the continuation output, so a given
+// attestation is single-use.
+//
+// Supply integrity: minting requires the control asset (held by this
+// contract) to be present and preserved, so wrapped supply can only grow
+// through quorum-attested deposits, and only by the exact attested amount.
+//
+// The attestation commits to an arbitrary script pubkey, so a deposit can
+// be minted straight into another contract — e.g. a NonInteractiveSwap
+// offer — letting a cross-chain deposit and an on-chain trade compose in
+// one step.
+
+contract BridgeMint(
+  // Wrapped asset (e.g. wrapped USDT on Arkade)
+  bytes32 tokenAssetIdTxid,
+  int tokenAssetIdGidx,
+  // Control asset gating mint authority for the wrapped asset
+  bytes32 ctrlAssetIdTxid,
+  int ctrlAssetIdGidx,
+  // Bridge custodian set and quorum threshold (k-of-n)
+  pubkey[] custodians,
+  int threshold,
+  // Mint sequence number; advances by 1 on every mint
+  int nonce,
+  // Exit timelock in blocks (propagated for playground parity)
+  int exit
+) {
+  // Mint: quorum-attested deposit credit.
+  //
+  // Transaction layout:
+  //   input[0]:  this BridgeMint UTXO (carries the control asset)
+  //   output[0]: next BridgeMint state (control asset, nonce + 1)
+  //   output[1]: `amount` wrapped tokens to recipientSpk
+  function mint(
+    int amount,
+    bytes recipientSpk,
+    bytes32 depositId,
+    signature[] custodianSigs
+  ) {
+    require(amount > 0, "zero mint");
+    require(threshold > 0, "zero threshold");
+    require(size(recipientSpk) == 34, "bad recipient spk");
+
+    // Reconstruct the custodian-signed deposit attestation on stack.
+    let attestedMsg = sha256(depositId + recipientSpk + amount + nonce);
+    int valid = 0;
+    for (i, sig) in custodianSigs {
+      if (checkSigFromStack(sig, custodians[i], attestedMsg)) {
+        valid = valid + 1;
+      }
+    }
+    require(valid >= threshold, "quorum failed");
+
+    // Supply grows by exactly the attested amount, under the control asset.
+    let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+    require(tokenGroup.delta == amount, "delta mismatch");
+    require(tokenGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
+
+    let ctrlGroup = tx.assetGroups.find(ctrlAssetIdTxid, ctrlAssetIdGidx);
+    require(ctrlGroup.delta == 0, "ctrl supply changed");
+
+    // Recipient receives the minted tokens at the attested script.
+    require(
+      tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount,
+      "mint short"
+    );
+    require(tx.outputs[1].scriptPubKey == recipientSpk, "wrong recipient");
+
+    // State continuation: same bridge, nonce advanced, control retained.
+    int nextNonce = nonce + 1;
+    require(
+      tx.outputs[0].scriptPubKey == new BridgeMint(
+        tokenAssetIdTxid, tokenAssetIdGidx,
+        ctrlAssetIdTxid, ctrlAssetIdGidx,
+        custodians, threshold, nextNonce, exit
+      ),
+      "state broken"
+    );
+    require(
+      tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0,
+      "ctrl not continued"
+    );
+  }
+}

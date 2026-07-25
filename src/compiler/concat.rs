@@ -149,6 +149,26 @@ pub(crate) fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Exp
                 ArkType::Bytes32,
             )
         }
+        Expression::Hash256 { data } => {
+            // Recurse so a merkle step `hash256(node + sibling)` lowers its
+            // inner `+` to an OP_CAT concat rather than arithmetic.
+            let (new_data, _) = rewrite_expression_concat(*data, scope);
+            (
+                Expression::Hash256 {
+                    data: Box::new(new_data),
+                },
+                ArkType::Bytes32,
+            )
+        }
+        Expression::ReverseBytes { data } => {
+            let (new_data, _) = rewrite_expression_concat(*data, scope);
+            (
+                Expression::ReverseBytes {
+                    data: Box::new(new_data),
+                },
+                ArkType::Bytes,
+            )
+        }
         Expression::Sha256Initialize { data } => {
             let (new_data, _) = rewrite_expression_concat(*data, scope);
             (

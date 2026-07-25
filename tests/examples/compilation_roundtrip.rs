@@ -194,6 +194,42 @@ fn roundtrip_repayment_pool() {
 }
 
 #[test]
+fn roundtrip_bridge_mint() {
+    let output = compile_example("bridge/bridge_mint.ark");
+    assert_output_invariants(&output, "bridge/bridge_mint.ark");
+    assert_eq!(output.name, "BridgeMint");
+    // 1 function-backed spend group (mint); no standalone exit tapscript.
+    assert_eq!(output.functions.len(), 1);
+}
+
+#[test]
+fn roundtrip_bridge_withdrawal() {
+    let output = compile_example("bridge/bridge_withdrawal.ark");
+    assert_output_invariants(&output, "bridge/bridge_withdrawal.ark");
+    assert_eq!(output.name, "BridgeWithdrawal");
+    // release + refund (function-backed) + unilateral (standalone) = 3 groups.
+    assert_eq!(output.functions.len(), 3);
+}
+
+#[test]
+fn roundtrip_bridge_spv() {
+    let output = compile_example("bridge/bridge_spv.ark");
+    assert_output_invariants(&output, "bridge/bridge_spv.ark");
+    assert_eq!(output.name, "BridgeSpv");
+    // 1 function-backed spend group (mintFromDeposit); no standalone exit.
+    assert_eq!(output.functions.len(), 1);
+}
+
+#[test]
+fn roundtrip_swap_htlc() {
+    let output = compile_example("bridge/swap_htlc.ark");
+    assert_output_invariants(&output, "bridge/swap_htlc.ark");
+    assert_eq!(output.name, "SwapHtlc");
+    // claim + refund (function-backed) + unilateral (standalone) = 3 groups.
+    assert_eq!(output.functions.len(), 3);
+}
+
+#[test]
 fn roundtrip_bond_mint() {
     let output = compile_example("bonds/bond_mint.ark");
     assert_output_invariants(&output, "bonds/bond_mint.ark");
