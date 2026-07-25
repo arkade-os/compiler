@@ -1,8 +1,8 @@
 // Swap HTLC — introspection-gated cross-chain swap leg (Arkade side)
 //
 // The Arkade leg of a solver "fast-transfer" route, e.g.
-//     LN  →  BTC on Arkade  →  LVGA on SwissLedger (EVM)
-// where a solver holds the destination asset (LVGA) and fronts it, receiving
+//     LN  →  BTC on Arkade  →  a token on an EVM chain
+// where a solver holds the destination asset and fronts it, receiving
 // BTC on Arkade in return. No wrapped token and no bridge treasury: the whole
 // route is chained by ONE payment secret `s` (hash `H`) — the same secret the
 // Lightning invoice and the destination-chain (EVM) HTLC use — so revealing

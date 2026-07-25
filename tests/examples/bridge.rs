@@ -10,17 +10,16 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_BIN2NUM, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG,
     OP_CHECKSIGFROMSTACK, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHANOREQUAL, OP_HASH256,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_NUM2BIN,
-    OP_SCRIPTNUMTOLE64, OP_SHA256, OP_SUBSTR,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SCRIPTNUMTOLE64, OP_SHA256,
+    OP_SUBSTR,
 };
 
-use crate::common::{arkade_asm, arkade_asm_tokens, arkade_inputs, leaf_asm};
+use crate::common::{arkade_asm, arkade_inputs, leaf_asm};
 
 const BRIDGE_MINT_CODE: &str = include_str!("../../examples/bridge/bridge_mint.ark");
 const BRIDGE_WITHDRAWAL_CODE: &str = include_str!("../../examples/bridge/bridge_withdrawal.ark");
 const BRIDGE_SPV_CODE: &str = include_str!("../../examples/bridge/bridge_spv.ark");
 const SWAP_HTLC_CODE: &str = include_str!("../../examples/bridge/swap_htlc.ark");
-const WLVGA_PAYOUT_CODE: &str = include_str!("../../examples/bridge/wlvga_payout.ark");
 
 // ─── BridgeMint ───────────────────────────────────────────────────────────────
 
@@ -354,91 +353,4 @@ fn test_swap_htlc_unilateral_is_csv_to_user() {
         leaf.contains("<userPk>") && leaf.contains(OP_CHECKSIG),
         "unilateral exit must be the user's signature: {leaf}"
     );
-}
-
-// ─── WlvgaPayout (bridge-out: two-party transfer + same-party burn) ─────────────
-
-#[test]
-fn test_wlvga_payout_structure() {
-    let output = compile(WLVGA_PAYOUT_CODE).unwrap();
-    assert_eq!(output.name, "WlvgaPayout");
-    // Two covenant modes: payOut (two parties) + burnOut (integrated). No
-    // quorum — the spend + commitment is the authorization.
-    assert_eq!(output.functions.len(), 2);
-    let names: Vec<&str> = output.functions.iter().map(|f| f.name.as_str()).collect();
-    assert!(names.contains(&"payOut"), "Got: {names:?}");
-    assert!(names.contains(&"burnOut"), "Got: {names:?}");
-}
-
-#[test]
-fn test_wlvga_payout_transfers_claim_to_lp() {
-    // Two-party mode closes the loop: the wLVGA claim is transferred to the LP
-    // (compensation), NOT burned. So payOut pins output[0] to the LP and keeps
-    // the wLVGA there — no supply-shrinking burn accounting.
-    let output = compile(WLVGA_PAYOUT_CODE).unwrap();
-    let asm = arkade_asm(&output, "payOut");
-    assert!(
-        asm.contains("<VTXO:SingleSig(<lpPk>"),
-        "wLVGA claim must be transferred to the LP: {asm}"
-    );
-    assert!(
-        asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "LP output must carry the wLVGA amount: {asm}"
-    );
-    assert!(
-        !asm.contains(OP_INSPECTASSETGROUPSUM),
-        "payOut transfers (not burns), so no supply-shrink accounting: {asm}"
-    );
-}
-
-#[test]
-fn test_wlvga_burnout_shrinks_supply() {
-    // Same-party option: the wLVGA is burned (supply shrinks).
-    let output = compile(WLVGA_PAYOUT_CODE).unwrap();
-    let asm = arkade_asm(&output, "burnOut");
-    assert!(
-        asm.contains(OP_FINDASSETGROUPBYASSETID) && asm.contains(OP_INSPECTASSETGROUPSUM),
-        "burn must be accounted via asset-group sums: {asm}"
-    );
-    assert!(
-        !asm.contains("<VTXO:SingleSig(<lpPk>"),
-        "burnOut destroys the claim; it does not transfer to the LP: {asm}"
-    );
-}
-
-#[test]
-fn test_wlvga_payout_merchant_csfs_and_concat() {
-    // Both modes authorize the payee with CSFS over a byte-CONCATENATED
-    // message (OP_CAT, not arithmetic OP_ADD), so the digest matches the
-    // merchant's off-chain signature and the EVM ecrecover reconstruction.
-    let output = compile(WLVGA_PAYOUT_CODE).unwrap();
-    for mode in ["payOut", "burnOut"] {
-        let asm = arkade_asm(&output, mode);
-        assert!(
-            asm.contains(OP_CHECKSIGFROMSTACK) && asm.contains(OP_SHA256),
-            "{mode}: merchant authorization must be CSFS over a hash: {asm}"
-        );
-        let cats = arkade_asm_tokens(&output, mode)
-            .iter()
-            .filter(|s| *s == OP_CAT)
-            .count();
-        assert_eq!(
-            cats, 5,
-            "{mode}: expected 5 {OP_CAT} (message + commitment), got {cats}"
-        );
-    }
-}
-
-#[test]
-fn test_wlvga_payout_pins_opreturn_commitment() {
-    // Both modes pin the commitment the SwissLedger pool reads, built as
-    // protocolTag || evmAddr || num2bin(amount, 8).
-    let output = compile(WLVGA_PAYOUT_CODE).unwrap();
-    for mode in ["payOut", "burnOut"] {
-        let asm = arkade_asm(&output, mode);
-        assert!(
-            asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY) && asm.contains(OP_NUM2BIN),
-            "{mode}: commitment output must be pinned with a fixed-width amount: {asm}"
-        );
-    }
 }

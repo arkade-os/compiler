@@ -230,24 +230,6 @@ fn roundtrip_swap_htlc() {
 }
 
 #[test]
-fn roundtrip_stability_lvga_payout() {
-    let output = compile_example("stability/stability_lvga_payout.ark");
-    assert_output_invariants(&output, "stability/stability_lvga_payout.ark");
-    assert_eq!(output.name, "StabilityPayout");
-    // seekerPayout (function-backed) + unilateral (standalone) = 2 groups.
-    assert_eq!(output.functions.len(), 2);
-}
-
-#[test]
-fn roundtrip_wlvga_payout() {
-    let output = compile_example("bridge/wlvga_payout.ark");
-    assert_output_invariants(&output, "bridge/wlvga_payout.ark");
-    assert_eq!(output.name, "WlvgaPayout");
-    // Two covenant modes (payOut + burnOut); no standalone exit tapscript.
-    assert_eq!(output.functions.len(), 2);
-}
-
-#[test]
 fn roundtrip_bond_mint() {
     let output = compile_example("bonds/bond_mint.ark");
     assert_output_invariants(&output, "bonds/bond_mint.ark");
