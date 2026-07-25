@@ -172,6 +172,26 @@ fn roundtrip_stability_offer() {
 }
 
 #[test]
+fn roundtrip_dividend_treasury() {
+    let output = compile_example("dividend_stream/dividend_treasury.ark");
+    assert_output_invariants(&output, "dividend_stream/dividend_treasury.ark");
+    assert_eq!(output.name, "DividendTreasury");
+    // 3 covenant groups (topUp, service, recall) + 1 standalone unilateral
+    // exit tapscript = 4 spend groups.
+    assert_eq!(output.functions.len(), 4);
+}
+
+#[test]
+fn roundtrip_streaming_share() {
+    let output = compile_example("dividend_stream/streaming_share.ark");
+    assert_output_invariants(&output, "dividend_stream/streaming_share.ark");
+    assert_eq!(output.name, "StreamingShare");
+    // 3 covenant groups (claim, transfer, split) + 1 standalone unilateral
+    // exit tapscript = 4 spend groups.
+    assert_eq!(output.functions.len(), 4);
+}
+
+#[test]
 fn roundtrip_arkade_kitties() {
     let output = compile_example("arkade_kitties/arkade_kitties.ark");
     assert_output_invariants(&output, "arkade_kitties/arkade_kitties.ark");

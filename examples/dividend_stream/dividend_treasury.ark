@@ -1,0 +1,185 @@
+// DividendTreasury Contract
+//
+// The issuer-funded reserve of a streaming-dividend program: a corporate
+// treasury (e.g. a Bitcoin treasury company's income-generation desk) escrows
+// BTC that services dividend claims from StreamingShare positions. The
+// dividend is fixed in USD cents per unit per year, accrues continuously at
+// one-second granularity (tx.offchainTime), and is paid in sats at an
+// oracle-attested BTC/USD price at claim time.
+//
+// ── Why streaming ───────────────────────────────────────────────────────────
+//   Batch dividend rails need record dates, transfer agents and distribution
+//   runs; paying monthly is already exotic in most listed markets. Here the
+//   entitlement accrues per second and any holder can settle their accrued
+//   balance whenever it exceeds dust — the record date disappears because
+//   accrual follows the position continuously (see dividend_stream.md).
+//
+// ── Two contracts, one program ──────────────────────────────────────────────
+//   DividendTreasury (this file) — singleton reserve. Pays claims, accepts
+//     top-ups from the income desk, lets the issuer recall unallocated
+//     reserve (telegraphed on-chain; see trust model in dividend_stream.md).
+//   StreamingShare — per-holder position carrying (units, lastClaim). A claim
+//     co-spends both: the treasury verifies the position is genuine and that
+//     its accrual basis advances; the position verifies the holder is paid.
+//
+// ── Claim transaction layout (service ⊗ claim) ──────────────────────────────
+//   input[srvIdx]:  this treasury          (function: service)
+//   input[posIdx]:  a StreamingShare       (function: claim)
+//   output[0]: treasury re-created, reserveSats − payoutSats
+//   output[1]: position re-created, lastClaim = tx.offchainTime
+//   output[2]: payoutSats → holder (SingleSig)
+//
+// ── Accrual math (shared with StreamingShare) ───────────────────────────────
+//   elapsed      = tx.offchainTime − posLastClaim          [seconds]
+//   accruedCents = units × annualDividendCents × elapsed / 31536000
+//   payoutSats   = accruedCents × 1e8 / oraclePrice        [price in cents/BTC]
+//   int64 bound: units × annualDividendCents × elapsed < 9.2e18 — e.g. 1e6
+//   units at $6.00/yr (600 cents) unclaimed for 10 years is 1.9e17, safe.
+//   Truncation loses < 1 cent per claim; the accruedCents > 0 guard prevents
+//   a zero-payout claim from advancing lastClaim (no accrual griefing).
+//
+// ── Oracle model (Fuji-style signed price feed) ─────────────────────────────
+//   msg = sha256(ticker || price || timestamp), price/timestamp 8-byte LE.
+//   Freshness: tx.offchainTime − oracleTime within [0, 600] seconds.
+
+import "single_sig.ark";
+import "streaming_share.ark";
+
+contract DividendTreasury(
+  pubkey  issuerPk,            // issuer treasury key: recall + unilateral exit
+  pubkey  oraclePk,            // BTC/USD signed price feed
+  bytes32 ticker,              // feed id, e.g. sha256("BTC/USD")
+  int     annualDividendCents, // fixed dividend per unit per year, USD cents
+  int     totalUnits,          // units outstanding across all positions
+  int     reserveSats,         // sats escrowed for dividends; mutates on every spend
+  int     exit                 // exit timelock in blocks (shared with positions)
+) {
+
+  // -------------------------------------------------------------------------
+  // TOP UP — permissionless. The income desk (or anyone) streams revenue into
+  // the reserve. No sats can leave: the reserve only grows.
+  //   output[0]: treasury re-created with reserveSats + amount
+  // -------------------------------------------------------------------------
+  function topUp(int amount) {
+    require(amount > 0, "zero amount");
+
+    int newReserve = reserveSats + amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new DividendTreasury(
+        issuerPk, oraclePk, ticker, annualDividendCents, totalUnits,
+        newReserve, exit
+      ),
+      "invalid treasury recreation"
+    );
+    require(tx.outputs[0].value >= newReserve, "reserve not deposited");
+  }
+
+  // -------------------------------------------------------------------------
+  // SERVICE — permissionless servicing of one position's claim (the position
+  // input carries the holder's authorization). Verifies the co-spent input is
+  // a genuine StreamingShare with the witness-declared state, recomputes the
+  // accrual independently, pays the holder, and requires the position to be
+  // re-created with its accrual basis advanced to now — the reserve can only
+  // leave against dividend time that is simultaneously consumed.
+  // -------------------------------------------------------------------------
+  function service(
+    int       posIdx,
+    pubkey    posHolderPk,
+    int       posUnits,
+    int       posLastClaim,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(this.activeInputIndex != posIdx, "self-service disallowed");
+    require(posUnits > 0, "empty position");
+    require(posUnits <= totalUnits, "position exceeds issue");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    require(
+      tx.inputs[posIdx].scriptPubKey == new StreamingShare(
+        posHolderPk, issuerPk, oraclePk, ticker,
+        annualDividendCents, posUnits, posLastClaim, exit
+      ),
+      "input not matching position"
+    );
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int elapsed = tx.offchainTime - posLastClaim;
+    require(elapsed >= 0, "clock regression");
+    int annualCents  = posUnits * annualDividendCents;
+    int accruedCents = annualCents * elapsed / 31536000;
+    require(accruedCents > 0, "nothing accrued");
+    int payoutSats = accruedCents * 100000000 / oraclePrice;
+    require(payoutSats > 330, "dust claim; accrue longer");
+    require(payoutSats <= reserveSats, "reserve exhausted");
+
+    int newReserve = reserveSats - payoutSats;
+
+    require(
+      tx.outputs[0].scriptPubKey == new DividendTreasury(
+        issuerPk, oraclePk, ticker, annualDividendCents, totalUnits,
+        newReserve, exit
+      ),
+      "invalid treasury recreation"
+    );
+    require(tx.outputs[0].value >= newReserve, "reserve not preserved");
+
+    require(
+      tx.outputs[1].scriptPubKey == new StreamingShare(
+        posHolderPk, issuerPk, oraclePk, ticker,
+        annualDividendCents, posUnits, tx.offchainTime, exit
+      ),
+      "position basis not advanced"
+    );
+    require(tx.outputs[1].value >= 330, "position output dust");
+
+    require(tx.outputs[2].scriptPubKey == new SingleSig(posHolderPk, exit), "output 2 not holder");
+    require(tx.outputs[2].value >= payoutSats, "holder underpaid");
+  }
+
+  // -------------------------------------------------------------------------
+  // RECALL — issuer-gated reserve withdrawal (program wind-down or resizing).
+  // Recalls are visible on-chain the moment they happen, so holders can see
+  // reserve coverage shrink and act; the pilot trust model and its hardening
+  // path (timelocked recall notice, arrears penalties) are documented in
+  // dividend_stream.md.
+  //   output[0]: treasury re-created with reserveSats − amount
+  //   output[1]: amount → issuer
+  // -------------------------------------------------------------------------
+  function recall(signature issuerSig, int amount) {
+    require(checkSig(issuerSig, issuerPk), "invalid issuer sig");
+    require(amount > 0, "zero amount");
+    require(amount <= reserveSats, "exceeds reserve");
+
+    int newReserve = reserveSats - amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new DividendTreasury(
+        issuerPk, oraclePk, ticker, annualDividendCents, totalUnits,
+        newReserve, exit
+      ),
+      "invalid treasury recreation"
+    );
+    require(tx.outputs[0].value >= newReserve, "reserve not preserved");
+
+    require(tx.outputs[1].scriptPubKey == new SingleSig(issuerPk, exit), "output 1 not issuer");
+    require(tx.outputs[1].value >= amount, "issuer underpaid");
+  }
+
+  // -------------------------------------------------------------------------
+  // UNILATERAL EXIT (CSV) — issuer recovers the reserve if the Arkade
+  // operator goes offline. The issuer is the residual claimant of the
+  // reserve; holder positions carry their own exit leaf.
+  // -------------------------------------------------------------------------
+  function unilateral(signature issuerSig) tapscript {
+    require(older(exit));
+    require(checkSig(issuerSig, issuerPk));
+  }
+}
