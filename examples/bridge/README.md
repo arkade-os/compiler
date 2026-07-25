@@ -45,6 +45,10 @@ plus the existing swap contract for settlement.
   commitment and releases the real asset (`wlvga_payout.ark`). The spend is
   the authorization — no quorum signs the release. Two modes: transfer the
   claim to the liquidity provider (two parties) or burn it (integrated).
+- **Stable payout** = the payout leg fused with a stability vault so the
+  spending balance is a Bitcoin-collateralized, oracle-marked **CHF** claim,
+  not raw BTC (`../stability/stability_lvga_payout.ark`). The merchant
+  receives a stable amount; BTC price risk sits with the vault provider.
 
 The attested and SPV deposit legs are interchangeable: both mint the same
 wrapped asset under the same control-asset accounting. Pick the quorum for
@@ -421,6 +425,39 @@ SwissLedger pool contract releases against it automatically. The two-party
 mode fixes **solvency** (the LP is compensated); Flavor A automation removes
 per-payment **discretion** (leaving only reporter liveness); full release
 trustlessness is Flavor B (SPV-on-EVM) or the `swap_htlc.ark` preimage route.
+
+### Stable-value payouts (combining with a stability vault)
+
+`wlvga_payout` spends a **BTC-backed** claim — its value floats with BTC
+between mint and spend. For a payment balance that stays pegged, fuse the
+payout with a stability vault:
+[`../stability/stability_lvga_payout.ark`](../stability/stability_lvga_payout.ark).
+
+`stability_vault.ark` already manufactures a **BTC-collateralized, oracle-
+marked fiat claim**: the seeker holds a fixed `targetUSD`, the provider posts
+collateral and carries the price risk, and funding compensates them. Point
+the `ticker` at a **CHF/BTC** feed and the claim is a synthetic CHF position.
+`StabilityPayout.seekerPayout()` settles that claim *not* to BTC for the
+seeker but as a **CHF-denominated LVGA payment**:
+
+- funding accrues, the exit fee applies → `payoutCHF`;
+- the merchant invoice is verified (`checkSigFromStack`, mirrored by EVM
+  `ecrecover`) and committed in the OP_RETURN as `payoutCHF`;
+- the seeker's BTC entitlement at the oracle price (`seekerRaw`) goes to the
+  **LP**; the collateral remainder returns to the **provider**.
+
+The same oracle prices both sides, so the merchant receives exactly the
+claim's CHF value regardless of BTC moves during the holding period. Crucially
+this is **where the CHF/BTC exposure lives**: the vault provider carries it as
+a funded, over-collateralized, oracle-marked position — not the bridge LP and
+not the user. Set `lpPk = providerPk` to run both roles as one **delta-neutral
+market maker** (long BTC collateral hedged by short CHF/LVGA released; funding
++ fees as income); keep them distinct for two independent parties.
+
+Net, the full launch flow becomes a single stable-value rail: **BTC → CHF
+stability-vault claim → LVGA merchant payment**, one oracle, one settlement,
+with price risk isolated in the vault and the destination release automated
+by the SwissLedger pool.
 
 ## Trust model (honest)
 
