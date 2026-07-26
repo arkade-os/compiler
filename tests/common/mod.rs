@@ -85,8 +85,8 @@ pub fn witness_names(out: &ContractJson, group_name: &str, leaf_name: &str) -> V
 }
 
 /// Count exact-token occurrences of an opcode in a group's arkade covenant ASM.
-/// Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL"
-/// or "OP_GREATERTHANOREQUAL64". Returns 0 if the group has no arkade.
+/// Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL".
+/// Returns 0 if the group has no arkade.
 pub fn opcode_count_in_arkade(out: &ContractJson, group_name: &str, op: &str) -> usize {
     group(out, group_name)
         .arkade

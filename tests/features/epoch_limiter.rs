@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD64, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
+    OP_ADD, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_IF, OP_INSPECTASSETGROUPSUM,
 };
 
 use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm};
@@ -107,13 +107,11 @@ fn test_epoch_limiter_asset_group_introspection() {
 }
 
 #[test]
-fn test_epoch_limiter_64bit_arithmetic() {
+fn test_epoch_limiter_arithmetic() {
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
     let asm_str = arkade_asm(&output, "check");
 
-    // Should use 64-bit arithmetic for asset amounts
-    let has_add64 = asm_str.contains(OP_ADD64);
-    assert!(has_add64, "Missing 64-bit arithmetic opcodes");
+    assert!(asm_str.contains(OP_ADD), "Missing arithmetic opcode");
 }
 
 #[test]

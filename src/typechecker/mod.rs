@@ -41,7 +41,6 @@ pub enum ArkType {
     // ── Internal / introspection types ─────────────────────────────────────
     /// 8-byte little-endian unsigned 64-bit integer.
     /// Produced by: asset amounts, UTXO values, group sums.
-    /// Requires OP_ADD64/OP_SUB64/etc. for arithmetic; cannot mix with Int.
     Uint64Le,
     /// 4-byte little-endian unsigned 32-bit integer.
     /// Produced by: tx.version, tx.locktime.
@@ -206,6 +205,7 @@ fn check_statement(
             check_requirement(req, scope, errors, fn_name);
         }
         Statement::LetBinding { name, value } => {
+            check_expression(value, scope, errors, fn_name);
             let t = infer_type(value, scope);
             // Seed the scope so downstream uses of `name` get the inferred type.
             scope.insert(name.clone(), t);
@@ -217,6 +217,7 @@ fn check_statement(
                     fn_name, name
                 )));
             }
+            check_expression(value, scope, errors, fn_name);
             let t = infer_type(value, scope);
             // Update scope with the new type in case it changed.
             scope.insert(name.clone(), t);
@@ -226,6 +227,7 @@ fn check_statement(
             then_body,
             else_body,
         } => {
+            check_expression(condition, scope, errors, fn_name);
             let cond_type = infer_type(condition, scope);
             if cond_type != ArkType::Bool && cond_type != ArkType::Unknown {
                 errors.push(TypeError::new(format!(
@@ -247,7 +249,7 @@ fn check_statement(
             iterable,
             body,
         } => {
-            let _ = infer_type(iterable, scope);
+            check_expression(iterable, scope, errors, fn_name);
             // Use a cloned child scope so loop variables don't leak out.
             let mut loop_scope = scope.clone();
             loop_scope.insert(index_var.clone(), ArkType::Int);
@@ -259,6 +261,17 @@ fn check_statement(
 
 fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
     match req {
+        Requirement::Expression(expr) => {
+            check_expression(expr, scope, errors, fn_name);
+            let condition_type = infer_type(expr, scope);
+            if condition_type != ArkType::Bool && condition_type != ArkType::Unknown {
+                errors.push(TypeError::new(format!(
+                    "fn {}: require condition has type '{}', expected bool",
+                    fn_name,
+                    condition_type.as_str()
+                )));
+            }
+        }
         Requirement::CheckSig { signature, pubkey } => {
             // Detect swapped arguments first (more actionable message).
             let sig_t = scope.get(signature.as_str());
@@ -344,29 +357,122 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
             }
         }
         Requirement::Comparison { left, op, right } => {
-            let lt = infer_type(left, scope);
-            let rt = infer_type(right, scope);
-            // Warn when one side is Uint64Le and the other is a plain Int —
-            // these require explicit conversion opcodes (OP_SCRIPTNUMTOLE64 /
-            // OP_LE64TOSCRIPTNUM) and the compiler inserts them automatically,
-            // but it's good to flag the mismatch for contract authors.
-            if lt != ArkType::Unknown && rt != ArkType::Unknown {
-                let left_64 = lt == ArkType::Uint64Le;
-                let right_64 = rt == ArkType::Uint64Le;
-                if left_64 != right_64 {
-                    errors.push(TypeError::new(format!(
-                        "fn {}: comparison '{}' mixes uint64le ('{}') with scriptnum ('{}') — \
-                         implicit conversion applied; use le64ToScriptNum() for explicit control",
-                        fn_name,
-                        op,
-                        lt.as_str(),
-                        rt.as_str()
-                    )));
-                }
-            }
+            check_expression(left, scope, errors, fn_name);
+            check_expression(right, scope, errors, fn_name);
+            check_comparison(left, op, right, scope, errors, fn_name);
         }
         Requirement::After { .. } => {} // No type checking needed
     }
+}
+
+fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
+    match expr {
+        Expression::BinaryOp { left, op, right } => {
+            check_expression(left, scope, errors, fn_name);
+            check_expression(right, scope, errors, fn_name);
+            if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=") {
+                check_comparison(left, op, right, scope, errors, fn_name);
+            }
+        }
+        Expression::CheckSigExpr { signature, pubkey } => {
+            check_signature_expression(signature, pubkey, "checkSig", scope, errors, fn_name);
+        }
+        Expression::CheckSigFromStackExpr {
+            signature, pubkey, ..
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature, pubkey, ..
+        } => {
+            check_signature_expression(
+                signature,
+                pubkey,
+                "checkSigFromStack",
+                scope,
+                errors,
+                fn_name,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn check_signature_expression(
+    signature: &str,
+    pubkey: &str,
+    call: &str,
+    scope: &Scope,
+    errors: &mut Vec<TypeError>,
+    fn_name: &str,
+) {
+    if scope.get(signature) == Some(&ArkType::Pubkey)
+        && scope.get(pubkey) == Some(&ArkType::Signature)
+    {
+        errors.push(TypeError::new(format!(
+            "fn {}: {}({}, {}) — arguments appear swapped: expected (signature, pubkey)",
+            fn_name, call, signature, pubkey
+        )));
+        return;
+    }
+    expect_type(
+        scope,
+        signature,
+        &ArkType::Signature,
+        errors,
+        fn_name,
+        &format!("{call}() arg 1 '{signature}'"),
+    );
+    expect_type(
+        scope,
+        pubkey,
+        &ArkType::Pubkey,
+        errors,
+        fn_name,
+        &format!("{call}() arg 2 '{pubkey}'"),
+    );
+}
+
+fn check_comparison(
+    left: &Expression,
+    op: &str,
+    right: &Expression,
+    scope: &Scope,
+    errors: &mut Vec<TypeError>,
+    fn_name: &str,
+) {
+    let left_type = infer_type(left, scope);
+    let right_type = infer_type(right, scope);
+    if left_type == ArkType::Unknown || right_type == ArkType::Unknown {
+        return;
+    }
+    if matches!(left_type, ArkType::Array(_)) || matches!(right_type, ArkType::Array(_)) {
+        errors.push(TypeError::new(format!(
+            "fn {}: array comparison '{}' is not supported",
+            fn_name, op
+        )));
+        return;
+    }
+
+    let compatible = match op {
+        "==" | "!=" => {
+            left_type == right_type || (is_bytes_like(&left_type) && is_bytes_like(&right_type))
+        }
+        ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
+        _ => true,
+    };
+
+    if !compatible {
+        errors.push(TypeError::new(format!(
+            "fn {}: comparison '{}' is not defined between '{}' and '{}'",
+            fn_name,
+            op,
+            left_type.as_str(),
+            right_type.as_str()
+        )));
+    }
+}
+
+fn is_numeric(t: &ArkType) -> bool {
+    matches!(t, ArkType::Int | ArkType::Uint32Le | ArkType::Uint64Le)
 }
 
 fn expect_type(
@@ -402,6 +508,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .get(name.as_str())
             .cloned()
             .unwrap_or(ArkType::Unknown),
+        Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         Expression::Literal(_) => ArkType::Int,
         Expression::Property(_) => ArkType::Unknown,
 

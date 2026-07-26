@@ -199,8 +199,7 @@ pub(crate) fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec
             asm.push(format!("<{}>", group));
             asm.push(OP_0.to_string());
             asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-            asm.push(OP_SUB64.to_string());
-            asm.push(OP_VERIFY.to_string());
+            asm.push(OP_SUB.to_string());
         }
         "hasControl" => {
             // group.hasControl: presence only.

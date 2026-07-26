@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHAN, OP_GREATERTHANOREQUAL,
     OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTASSETLOOKUP, OP_VERIFY,
 };
 
@@ -78,10 +78,19 @@ fn test_fee_adapter_contract() {
         execute_asm
     );
 
-    // 64-bit comparison for asset amounts
+    // Both lookup amounts must be positive.
     assert!(
-        execute_asm.contains(OP_GREATERTHAN64),
-        "missing {OP_GREATERTHAN64} in execute: {}",
+        execute_asm.contains(&format!(
+            "{OP_INSPECTINASSETLOOKUP} {OP_VERIFY} 0 {OP_GREATERTHAN}"
+        )),
+        "input amount must be compared with zero: {}",
+        execute_asm
+    );
+    assert!(
+        execute_asm.contains(&format!(
+            "{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY} 0 {OP_GREATERTHAN}"
+        )),
+        "output amount must be compared with zero: {}",
         execute_asm
     );
 

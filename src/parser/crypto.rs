@@ -187,15 +187,13 @@ pub(crate) fn parse_check_sig_from_stack_verify(pair: Pair<Rule>) -> Result<Requ
         .as_str()
         .to_string();
 
-    Ok(Requirement::Comparison {
-        left: Expression::CheckSigFromStackVerify {
+    Ok(Requirement::Expression(
+        Expression::CheckSigFromStackVerify {
             signature,
             pubkey,
             message,
         },
-        op: "==".to_string(),
-        right: Expression::Literal("true".to_string()),
-    })
+    ))
 }
 
 /// Parse checkSigFromStackVerify for primary expression context

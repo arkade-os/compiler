@@ -472,18 +472,6 @@ exact lines where each one would land.
 | **R3** | Final-redemption residue path. | `redeem`'s `require(payout > 0)` rejects dust redemptions; the last few USDT are stranded forever once they round below the per-unit rate. | Add a `redeemAll(holderPk, holderSig)` branch gated on `amount == totalCreditOutstanding` that pays the full residual `usdtBalance` regardless of payout rounding. |
 | **R4** | ASM-level assertion of the strict time gate on `redeem`. | `test_redeem_is_pro_rata_post_window` currently relies on the constructor-param surface, not the gate's actual ASM placement. A refactor removing the gate would not be caught by the test. | Pattern-match the comparison sequence in `redeem`'s ASM that proves `tx.time >= maturity + auctionWindow` is enforced. |
 
-### Capacity ceilings (int64 overflow, fail-closed)
-
-`OP_MUL64` aborts on overflow, so each ceiling fails CLOSED — scripts never
-produce wrong outputs, but legitimate transactions above the ceiling cannot
-execute. Inline `// FOLLOW-UP:` notes are at the affected sites.
-
-| # | Site | Ceiling | Workaround |
-|---|---|---|---|
-| **C1** | `collateral * oraclePrice` in `issue` + `acceptAuction` | ~92 BTC at a $1M BTC oracle price | Chunked issuance/auctions, or rescale `oraclePrice` to a smaller denominator (e.g. 1e4 vs 1e8). |
-| **C2** | `mintedAmount * 100000000` in `acceptAuction` over-cover branch | ~92 BTC of par | Chunk auctions, or rescale. |
-| **C3** | `amount * usdtBalance` in `redeem` | Product space ~1e18 (pool size × redemption size) | Chunked redemptions, or divide-before-multiply with controlled precision loss. |
-
 ### Capability extensions
 
 | # | Item | Why | Sketch |

@@ -6,7 +6,7 @@ use crate::typechecker::ArkType;
 // Walk every function's AST and convert `BinaryOp { op: "+" }` into
 // `Concat { ... }` when at least one operand resolves to a bytes-like type
 // (Bytes, Bytes20, Bytes32). Pure int+int additions stay as `BinaryOp` and
-// continue to emit OP_ADD64.
+// continue to emit OP_ADD.
 //
 // We need types to make the decision, so the walk threads a `Scope` and
 // uses `typechecker::infer_type` on rewritten subtrees. The rewrite is
@@ -87,17 +87,27 @@ pub(crate) fn rewrite_statement_concat(stmt: &mut Statement, scope: &mut Scope) 
 }
 
 pub(crate) fn rewrite_requirement_concat(req: &mut Requirement, scope: &Scope) {
-    if let Requirement::Comparison { left, right, .. } = req {
-        let (nl, _) = rewrite_expression_concat(
-            std::mem::replace(left, Expression::Literal(String::new())),
-            scope,
-        );
-        *left = nl;
-        let (nr, _) = rewrite_expression_concat(
-            std::mem::replace(right, Expression::Literal(String::new())),
-            scope,
-        );
-        *right = nr;
+    match req {
+        Requirement::Expression(expr) => {
+            let (rewritten, _) = rewrite_expression_concat(
+                std::mem::replace(expr, Expression::Literal(String::new())),
+                scope,
+            );
+            *expr = rewritten;
+        }
+        Requirement::Comparison { left, right, .. } => {
+            let (nl, _) = rewrite_expression_concat(
+                std::mem::replace(left, Expression::Literal(String::new())),
+                scope,
+            );
+            *left = nl;
+            let (nr, _) = rewrite_expression_concat(
+                std::mem::replace(right, Expression::Literal(String::new())),
+                scope,
+            );
+            *right = nr;
+        }
+        _ => {}
     }
 }
 

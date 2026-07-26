@@ -92,6 +92,9 @@ pub(crate) fn substitute_requirement(
     array_name: Option<&str>,
 ) -> Requirement {
     match req {
+        Requirement::Expression(expr) => Requirement::Expression(substitute_expression(
+            expr, index_var, value_var, k, array_name,
+        )),
         Requirement::Comparison { left, op, right } => Requirement::Comparison {
             left: substitute_expression(left, index_var, value_var, k, array_name),
             op: op.clone(),

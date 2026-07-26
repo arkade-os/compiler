@@ -16,6 +16,8 @@ mod concat_op;
 mod contract_import_instantiation;
 #[path = "features/epoch_limiter.rs"]
 mod epoch_limiter;
+#[path = "features/general_comparisons.rs"]
+mod general_comparisons;
 #[path = "features/group_properties.rs"]
 mod group_properties;
 #[path = "features/io_introspection.rs"]

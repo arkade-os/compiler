@@ -7,9 +7,11 @@ pub(crate) fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) 
         Expression::Variable(var) => {
             asm.push(format!("<{}>", var));
         }
-        Expression::Literal(lit) => {
-            asm.push(lit.clone());
-        }
+        Expression::Literal(lit) => match lit.as_str() {
+            "true" => asm.push(OP_1.to_string()),
+            "false" => asm.push(OP_0.to_string()),
+            _ => asm.push(lit.clone()),
+        },
         Expression::Property(prop) => {
             // Map the introspector "this" properties to their dedicated opcodes
             // (the parser stores them as Property strings; resolving them here
@@ -21,61 +23,19 @@ pub(crate) fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) 
             }
         }
         Expression::BinaryOp { left, op, right } => {
-            // Emit left operand
-            generate_expression_asm(left, asm);
-
-            // Convert to u64le if needed (witness inputs arrive as CScriptNum)
-            if needs_u64_conversion(left) {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+            if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
+                emit_comparison_asm(left, op, right, asm);
+                return;
             }
 
-            // Emit right operand
+            generate_expression_asm(left, asm);
             generate_expression_asm(right, asm);
 
-            // Convert to u64le if needed
-            if needs_u64_conversion(right) {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
-            }
-
-            // Emit opcode with OP_VERIFY for 64-bit ops (same as emit_binary_op_asm)
             match op.as_str() {
-                "+" => {
-                    asm.push(OP_ADD64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "-" => {
-                    asm.push(OP_SUB64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "*" => {
-                    asm.push(OP_MUL64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "/" => {
-                    asm.push(OP_DIV64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                ">=" => {
-                    asm.push(OP_GREATERTHANOREQUAL64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "<=" => {
-                    asm.push(OP_LESSTHANOREQUAL64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                ">" => {
-                    asm.push(OP_GREATERTHAN64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "<" => {
-                    asm.push(OP_LESSTHAN64.to_string());
-                    asm.push(OP_VERIFY.to_string());
-                }
-                "==" => asm.push(OP_EQUAL.to_string()),
-                "!=" => {
-                    asm.push(OP_EQUAL.to_string());
-                    asm.push(OP_NOT.to_string());
-                }
+                "+" => asm.push(OP_ADD.to_string()),
+                "-" => asm.push(OP_SUB.to_string()),
+                "*" => asm.push(OP_MUL.to_string()),
+                "/" => asm.push(OP_DIV.to_string()),
                 _ => asm.push(OP_FALSE.to_string()),
             }
         }
@@ -352,32 +312,17 @@ pub(crate) fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) 
     }
 }
 
-/// Check if an expression produces a 64-bit (u64le) value
-pub(crate) fn is_64bit_expression(expr: &Expression) -> bool {
-    match expr {
-        Expression::AssetLookup { .. } => true,
-        Expression::GroupSum { .. } => true,
-        // AssetAt with "amount" property returns u64
-        Expression::AssetAt { property, .. } => property == "amount",
-        // Input/Output "value" property returns u64
-        Expression::InputIntrospection { property, .. } => property == "value",
-        Expression::OutputIntrospection { property, .. } => property == "value",
-        Expression::BinaryOp { left, right, .. } => {
-            is_64bit_expression(left) || is_64bit_expression(right)
-        }
-        _ => false,
-    }
-}
-
 /// Emit assembly for an expression (push its value onto the stack)
 pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
     match expr {
         Expression::Variable(var) => {
             asm.push(format!("<{}>", var));
         }
-        Expression::Literal(lit) => {
-            asm.push(lit.clone());
-        }
+        Expression::Literal(lit) => match lit.as_str() {
+            "true" => asm.push(OP_1.to_string()),
+            "false" => asm.push(OP_0.to_string()),
+            _ => asm.push(lit.clone()),
+        },
         Expression::Property(prop) => {
             // Map the introspector "this" properties to their dedicated opcodes
             // (the parser stores them as Property strings; resolving them here
@@ -428,7 +373,11 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_output_introspection_asm(index, property, asm);
         }
         Expression::BinaryOp { left, op, right } => {
-            emit_binary_op_asm(left, op, right, asm);
+            if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
+                emit_comparison_asm(left, op, right, asm);
+            } else {
+                emit_binary_op_asm(left, op, right, asm);
+            }
         }
         Expression::GroupFind {
             asset_txid,
@@ -719,65 +668,14 @@ pub(crate) fn emit_binary_op_asm(
     right: &Expression,
     asm: &mut Vec<String>,
 ) {
-    // Emit left operand
     emit_expression_asm(left, asm);
-
-    // Convert to u64le if needed (witness inputs arrive as csn)
-    if needs_u64_conversion(left) {
-        asm.push(OP_SCRIPTNUMTOLE64.to_string());
-    }
-
-    // Emit right operand
     emit_expression_asm(right, asm);
 
-    // Convert to u64le if needed
-    if needs_u64_conversion(right) {
-        asm.push(OP_SCRIPTNUMTOLE64.to_string());
-    }
-
-    // Emit 64-bit arithmetic opcode + overflow verify
     match op {
-        "+" => {
-            asm.push(OP_ADD64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
-        "-" => {
-            asm.push(OP_SUB64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
-        "*" => {
-            asm.push(OP_MUL64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
-        "/" => {
-            asm.push(OP_DIV64.to_string());
-            asm.push(OP_VERIFY.to_string());
-        }
-        _ => {
-            asm.push(format!("OP_{}", op.to_uppercase()));
-        }
-    }
-}
-
-/// Check if an expression needs csn→u64le conversion for 64-bit arithmetic
-pub(crate) fn needs_u64_conversion(expr: &Expression) -> bool {
-    match expr {
-        // Variables (witness inputs) arrive as CScriptNum
-        Expression::Variable(_) => true,
-        // Literals are emitted as-is (caller should provide 8-byte LE)
-        Expression::Literal(_) => false,
-        // Asset lookups already produce u64le
-        Expression::AssetLookup { .. } => false,
-        // Asset count produces CScriptNum
-        Expression::AssetCount { .. } => false,
-        // AssetAt "amount" produces u64le, "assetId" produces (txid32, gidx_u16)
-        Expression::AssetAt { property, .. } => property != "amount",
-        // Group sums already produce u64le
-        Expression::GroupSum { .. } => false,
-        // Binary ops produce u64le
-        Expression::BinaryOp { .. } => false,
-        // Properties depend on context
-        Expression::Property(_) => false,
-        _ => false,
+        "+" => asm.push(OP_ADD.to_string()),
+        "-" => asm.push(OP_SUB.to_string()),
+        "*" => asm.push(OP_MUL.to_string()),
+        "/" => asm.push(OP_DIV.to_string()),
+        _ => asm.push(format!("OP_{}", op.to_uppercase())),
     }
 }

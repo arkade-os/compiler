@@ -32,8 +32,7 @@
           "OP_INSPECTOUTPUTVALUE",
           "0",
           "OP_INSPECTINPUTVALUE",
-          "OP_GREATERTHANOREQUAL64",
-          "OP_VERIFY"
+          "OP_GREATERTHANOREQUAL"
         ]
       },
       "leaves": [
@@ -80,8 +79,7 @@
           "OP_INSPECTOUTPUTVALUE",
           "0",
           "OP_INSPECTINPUTVALUE",
-          "OP_GREATERTHANOREQUAL64",
-          "OP_VERIFY"
+          "OP_GREATERTHANOREQUAL"
         ]
       },
       "leaves": [

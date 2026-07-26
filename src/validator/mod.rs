@@ -226,12 +226,16 @@ fn walk_asset_id_stmts(
 ) {
     for stmt in stmts {
         match stmt {
-            Statement::Require(req) => {
-                if let Requirement::Comparison { left, right, .. } = req {
+            Statement::Require(req) => match req {
+                Requirement::Expression(expr) => {
+                    check_asset_id_expr(expr, scope, fname, issues);
+                }
+                Requirement::Comparison { left, right, .. } => {
                     check_asset_id_expr(left, scope, fname, issues);
                     check_asset_id_expr(right, scope, fname, issues);
                 }
-            }
+                _ => {}
+            },
             Statement::LetBinding { name, value } => {
                 check_asset_id_expr(value, scope, fname, issues);
                 let t = infer_type(value, scope);
