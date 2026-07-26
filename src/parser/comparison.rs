@@ -62,23 +62,30 @@ pub(crate) fn parse_property_comparison(pair: Pair<Rule>) -> Result<Requirement,
     reject_malformed_asset_call(left_expr.as_str())?;
     reject_malformed_asset_call(right_expr.as_str())?;
 
-    let left = match left_expr.as_rule() {
-        Rule::tx_property_access | Rule::this_property_access => {
-            parse_tx_property_to_expression(left_expr)
-        }
-        _ => return Err("Unexpected left expression in property comparison".to_string()),
-    };
+    let left = parse_property_access_expression(left_expr)?;
 
-    let right = match right_expr.as_rule() {
-        Rule::identifier => Expression::Variable(right_expr.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(right_expr.as_str().to_string()),
-        Rule::tx_property_access | Rule::this_property_access => {
-            parse_tx_property_to_expression(right_expr)
-        }
-        Rule::constructor => parse_constructor_to_expression(right_expr)?,
-        Rule::asset_lookup => parse_asset_lookup_to_expression(right_expr)?,
-        _ => return Err("Unexpected right expression in property comparison".to_string()),
-    };
+    let right = parse_property_comparison_expression(right_expr)?;
+
+    Ok(Requirement::Comparison { left, op, right })
+}
+
+/// Parse reversed property comparison: expression op tx_property
+pub(crate) fn parse_reversed_property_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let mut inner = pair.into_inner();
+    let left_expr = inner.next().ok_or("Missing left side expression")?;
+    let op = inner
+        .next()
+        .ok_or("Missing comparison opcode")?
+        .as_str()
+        .to_string();
+    let right_expr = inner.next().ok_or("Missing right side expression")?;
+
+    reject_malformed_asset_call(left_expr.as_str())?;
+    reject_malformed_asset_call(right_expr.as_str())?;
+
+    let left = parse_property_comparison_expression(left_expr)?;
+
+    let right = parse_property_access_expression(right_expr)?;
 
     Ok(Requirement::Comparison { left, op, right })
 }
@@ -139,4 +146,38 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
         op: "==".to_string(),
         right: rhs_expr,
     })
+}
+
+fn parse_property_comparison_expression(expr: Pair<Rule>) -> Result<Expression, String> {
+    let expression = match expr.as_rule() {
+        Rule::identifier => Expression::Variable(expr.as_str().to_string()),
+        Rule::number_literal => Expression::Literal(expr.as_str().to_string()),
+        Rule::tx_property_access | Rule::this_property_access => {
+            parse_tx_property_to_expression(expr)
+        }
+        Rule::constructor => parse_constructor_to_expression(expr)?,
+        Rule::asset_lookup => parse_asset_lookup_to_expression(expr)?,
+        _ => {
+            return Err(format!(
+                "Unexpected expression in property comparison: {}",
+                expr.as_str()
+            ))
+        }
+    };
+    Ok(expression)
+}
+
+fn parse_property_access_expression(expr: Pair<Rule>) -> Result<Expression, String> {
+    let expression = match expr.as_rule() {
+        Rule::tx_property_access | Rule::this_property_access => {
+            parse_tx_property_to_expression(expr)
+        }
+        _ => {
+            return Err(format!(
+                "Unexpected expression in property comparison: {}",
+                expr.as_str()
+            ))
+        }
+    };
+    Ok(expression)
 }

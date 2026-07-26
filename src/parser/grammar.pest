@@ -187,6 +187,7 @@ complex_expression = _{
     group_control_is_comparison |
     group_property_comparison |
     property_comparison |
+    reversed_property_comparison |
     identifier_comparison |
     binary_operation |
     sha256_initialize |
@@ -425,6 +426,10 @@ identifier_comparison = {
 // Note: tx_property_access must come before identifier to avoid partial matching
 property_comparison = {
     (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)
+}
+
+reversed_property_comparison = {
+    (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)  ~ binary_operator ~ (tx_property_access | this_property_access)
 }
 
 // Generalized hash condition function name.
