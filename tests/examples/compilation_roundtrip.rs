@@ -184,6 +184,18 @@ fn roundtrip_payment_auth() {
 }
 
 #[test]
+fn roundtrip_payment_hold() {
+    let output = compile_example("payment_hold/payment_hold.ark");
+    assert_output_invariants(&output, "payment_hold/payment_hold.ark");
+}
+
+#[test]
+fn roundtrip_asset_payment_hold() {
+    let output = compile_example("payment_hold/asset_payment_hold.ark");
+    assert_output_invariants(&output, "payment_hold/asset_payment_hold.ark");
+}
+
+#[test]
 fn roundtrip_repayment_pool() {
     let output = compile_example("bonds/repayment_pool.ark");
     assert_output_invariants(&output, "bonds/repayment_pool.ark");
