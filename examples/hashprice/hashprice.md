@@ -41,7 +41,17 @@ price of a leg *is* its premium.
 
 ## Miner strategies
 
-Everything the desk needs reduces to holding or selling the two legs:
+Of the four option positions a miner could take, only two hedge mining
+revenue — and those are the two this design targets:
+
+- **buy put** — insure the downside when hashprice falls, and
+- **sell call** — monetise the upside the rig is already long.
+
+The other two — *buying a call* or *selling a put* — are directional bets on
+hashprice, not hedges of a mining book. They are ordinary speculation,
+already well served by existing derivatives venues (Deribit and the like), so
+this design does not try to serve them. Each hedge reduces to holding or
+selling one of the two legs:
 
 - **Long put on hashprice — insure the downside.** Buy DOWN tokens of a vault
   whose `highPrice` is the strike. If hashprice falls, DOWN pays out exactly
@@ -63,6 +73,36 @@ Everything the desk needs reduces to holding or selling the two legs:
   free: buy extra put coverage to profit from a hashrate increase, sell only
   part of the upside, or trade out of a leg mid-life by selling it — no vault
   interaction, no counterparty negotiation.
+
+## Standing the other side: a pool for puts, RFQ for calls
+
+The two hedges are not symmetric in how their counterparty is sourced, and
+that asymmetry is what shapes the market structure around each vault.
+
+- **Sell call — an easy RFQ for a desk.** When a miner sells the call it is
+  the *writer*: it mints the pair from its own BTC and posts the collateral
+  itself (the escrowed band width). The counterparty merely *buys* the UP
+  leg and pays a premium in cash. Because that counterparty gives out nothing
+  but the premium — no standing BTC, no collateral locked for the life of the
+  series — a desk can quote it on request (RFQ) and hedge elsewhere. This is
+  the side that bootstraps easily.
+
+- **Buy put — this one needs a standing pool.** When a miner buys the put it
+  is the *buyer*, so someone else has to *write* it, and a written put must
+  keep BTC posted as collateral for the whole life of the option. Miners are
+  structurally one-directional buyers of downside protection, so this is a
+  large, standing, one-way demand. It cannot be met by desk RFQ: no market
+  maker keeps a hot wallet full of BTC sitting idle, ready to lock on demand.
+  The capital has to be *deployed standing* — which is exactly what the
+  two-token vault is for. The vault **is** the pool: liquidity providers
+  deposit BTC up front, the pool mints the pairs and stands as the
+  collateralised put writer, and the DOWN legs it posts for sale (as standing
+  Arkade-intent orders) are the puts miners buy. Premium accrues to the pool
+  as legs are taken; the collateral is committed for the series and released
+  at settlement. The pool is left holding the residual UP legs — a long-call
+  position it can shed to desks through the very RFQ that makes the call side
+  easy — so providing standing put capital need not leave the pool
+  directionally exposed.
 
 ## Collateral: why BTC, and where the cap sits
 
