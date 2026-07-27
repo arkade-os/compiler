@@ -128,6 +128,29 @@ contract MixedTypes(pubkey owner, int minValue) {
 }
 
 #[test]
+fn integer_equality_across_widths_produces_no_type_warning() {
+    // Equality between int params/literals and uint64le/uint32le introspection
+    // values is numerically well-defined, exactly like ordered comparisons.
+    let source = r#"
+contract IntEquality(pubkey owner, int expectedValue, int expectedVersion) {
+    function spend(signature ownerSig) {
+        require(tx.inputs[0].value == expectedValue);
+        require(tx.version == expectedVersion);
+        require(tx.version == 2);
+        require(checkSig(ownerSig, owner));
+    }
+}"#;
+    let output = compile_ok(source);
+    let has_comparison_warning =
+        has_type_warning(&output, "comparison") || has_type_warning(&output, "compatible");
+    assert!(
+        !has_comparison_warning,
+        "numeric equality across int/uint widths must not warn; got: {:?}",
+        output.warnings
+    );
+}
+
+#[test]
 fn uint64le_vs_uint64le_comparison_produces_no_type_warning() {
     // Comparing two introspection values of the same uint64le type is fine.
     let source = r#"

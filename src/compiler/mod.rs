@@ -5,9 +5,8 @@ use crate::models::{
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
     OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_DIV, OP_DROP,
-    OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FALSE,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INPUTBYTECODE,
-    OP_INPUTOUTPOINT, OP_INPUTSEQUENCE, OP_INPUTVALUE, OP_INSPECTASSETGROUP,
+    OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID,
+    OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INPUTBYTECODE, OP_INSPECTASSETGROUP,
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
     OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
     OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
@@ -224,7 +223,7 @@ fn generate_asm_from_statements_recursive(
                 else_body,
             } => {
                 // Generate condition expression
-                generate_expression_asm(condition, asm);
+                emit_expression_asm(condition, asm);
                 asm.push(OP_IF.to_string());
 
                 // Generate then branch
@@ -260,7 +259,7 @@ fn generate_asm_from_statements_recursive(
             Statement::LetBinding { name: _, value } => {
                 // Emit the expression value onto the stack
                 // TODO: Implement proper variable binding with stack tracking
-                generate_expression_asm(value, asm);
+                emit_expression_asm(value, asm);
             }
             Statement::VarAssign { name: _, value } => {
                 // Push the new value onto the stack.
@@ -269,7 +268,7 @@ fn generate_asm_from_statements_recursive(
                 // For the common pattern of `typed_var = expr; require(typed_var == ...)`,
                 // emitting the expression is sufficient because the old value has already
                 // been consumed by the time the re-assignment is reached.
-                generate_expression_asm(value, asm);
+                emit_expression_asm(value, asm);
             }
         }
     }

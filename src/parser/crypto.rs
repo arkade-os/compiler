@@ -170,29 +170,8 @@ pub(crate) fn parse_tweak_verify(pair: Pair<Rule>) -> Result<Expression, String>
 
 /// Parse checkSigFromStackVerify(sig, pubkey, msg) → Requirement::CheckSig (verify variant)
 pub(crate) fn parse_check_sig_from_stack_verify(pair: Pair<Rule>) -> Result<Requirement, String> {
-    let mut inner = pair.into_inner();
-    let signature = inner
-        .next()
-        .ok_or("Missing signature in checkSigFromStackVerify")?
-        .as_str()
-        .to_string();
-    let pubkey = inner
-        .next()
-        .ok_or("Missing pubkey in checkSigFromStackVerify")?
-        .as_str()
-        .to_string();
-    let message = inner
-        .next()
-        .ok_or("Missing message in checkSigFromStackVerify")?
-        .as_str()
-        .to_string();
-
     Ok(Requirement::Expression(
-        Expression::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        },
+        parse_check_sig_from_stack_verify_expr(pair)?,
     ))
 }
 

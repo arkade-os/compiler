@@ -273,62 +273,18 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
             }
         }
         Requirement::CheckSig { signature, pubkey } => {
-            // Detect swapped arguments first (more actionable message).
-            let sig_t = scope.get(signature.as_str());
-            let pk_t = scope.get(pubkey.as_str());
-            if sig_t == Some(&ArkType::Pubkey) && pk_t == Some(&ArkType::Signature) {
-                errors.push(TypeError::new(format!(
-                    "fn {}: checkSig({}, {}) — arguments appear swapped: expected (signature, pubkey)",
-                    fn_name, signature, pubkey
-                )));
-                return;
-            }
-            expect_type(
-                scope,
-                signature,
-                &ArkType::Signature,
-                errors,
-                fn_name,
-                &format!("checkSig() arg 1 '{}'", signature),
-            );
-            expect_type(
-                scope,
-                pubkey,
-                &ArkType::Pubkey,
-                errors,
-                fn_name,
-                &format!("checkSig() arg 2 '{}'", pubkey),
-            );
+            check_signature_expression(signature, pubkey, "checkSig", scope, errors, fn_name);
         }
         Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
+            signature, pubkey, ..
         } => {
-            let sig_t = scope.get(signature.as_str());
-            let pk_t = scope.get(pubkey.as_str());
-            if sig_t == Some(&ArkType::Pubkey) && pk_t == Some(&ArkType::Signature) {
-                errors.push(TypeError::new(format!(
-                    "fn {}: checkSigFromStack({}, {}, {}) — first two arguments appear swapped",
-                    fn_name, signature, pubkey, message
-                )));
-                return;
-            }
-            expect_type(
-                scope,
+            check_signature_expression(
                 signature,
-                &ArkType::Signature,
-                errors,
-                fn_name,
-                &format!("checkSigFromStack() arg 1 '{}'", signature),
-            );
-            expect_type(
-                scope,
                 pubkey,
-                &ArkType::Pubkey,
+                "checkSigFromStack",
+                scope,
                 errors,
                 fn_name,
-                &format!("checkSigFromStack() arg 2 '{}'", pubkey),
             );
         }
         Requirement::CheckMultisig { pubkeys, .. } => {
@@ -454,7 +410,9 @@ fn check_comparison(
 
     let compatible = match op {
         "==" | "!=" => {
-            left_type == right_type || (is_bytes_like(&left_type) && is_bytes_like(&right_type))
+            left_type == right_type
+                || (is_bytes_like(&left_type) && is_bytes_like(&right_type))
+                || (is_numeric(&left_type) && is_numeric(&right_type))
         }
         ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
         _ => true,
