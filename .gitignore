@@ -33,8 +33,8 @@ Cargo.lock
 .env
 .env.local
 
-# Canonical skills are stored in `.codex/skills`.
-# Track compatibility symlinks separately (`.claude/skills`, `.agents/skills`).
+# Canonical skills are stored in `.agents/skills`.
+# Track compatibility symlinks separately (`.claude/skills`, `.codex/skills`).
 
 # Generated compiler artifacts — never commit ABI/bytecode outputs
 examples/**/*.json
