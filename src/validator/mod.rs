@@ -31,6 +31,9 @@ pub enum Severity {
     /// Compilation must halt; the contract cannot be safely emitted.
     Error,
     /// Non-fatal; compilation continues but the caller should surface this.
+    /// Retained for the output-invariant warning path (compiler::compile);
+    /// no validator check currently emits one.
+    #[allow(dead_code)]
     Warning,
 }
 
@@ -49,6 +52,7 @@ impl ValidationIssue {
         }
     }
 
+    #[allow(dead_code)]
     fn warning(message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Warning,
@@ -130,15 +134,16 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
-    // ── Require-guard check (CashScript-style) ────────────────────────────
-    // A non-internal function with no require() statements (directly or inside
-    // branches/loops) will always succeed — any spend attempt will pass.
-    // This is almost certainly a security bug, not intentional.
+    // ── Require-guard check ────────────────────────────
+    // Every execution path through a covenant function must hit at least one
+    // require(). Each require() fails fast via OP_VERIFY and the covenant
+    // terminates with OP_1, so a path that reaches the end with no require()
+    // would pass any spend on that path — almost certainly a security bug.
     for func in contract.functions.iter().filter(|f| !f.is_internal) {
-        if !statements_have_require(&func.statements) {
-            issues.push(ValidationIssue::warning(format!(
-                "function '{}' has no require() statements; \
-                 it will always succeed regardless of witness — is this intentional?",
+        if !block_guarantees_require(&func.statements) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}' has a spend path with no require(); \
+                 every branch must enforce at least one condition",
                 func.name
             )));
         }
@@ -226,12 +231,16 @@ fn walk_asset_id_stmts(
 ) {
     for stmt in stmts {
         match stmt {
-            Statement::Require(req) => {
-                if let Requirement::Comparison { left, right, .. } = req {
+            Statement::Require(req) => match req {
+                Requirement::Expression(expr) => {
+                    check_asset_id_expr(expr, scope, fname, issues);
+                }
+                Requirement::Comparison { left, right, .. } => {
                     check_asset_id_expr(left, scope, fname, issues);
                     check_asset_id_expr(right, scope, fname, issues);
                 }
-            }
+                _ => {}
+            },
             Statement::LetBinding { name, value } => {
                 check_asset_id_expr(value, scope, fname, issues);
                 let t = infer_type(value, scope);
@@ -467,13 +476,16 @@ fn describe_operand(expr: &Expression) -> String {
 
 // ─── AST helpers ─────────────────────────────────────────────────────────────
 
-/// Returns `true` if any statement in the slice contains a `Require` (recursing
-/// into if/else branches and for-loop bodies).
-fn statements_have_require(stmts: &[Statement]) -> bool {
-    stmts.iter().any(statement_has_require)
+/// Returns `true` if every execution path through the block hits at least one
+/// `require()`. A block guarantees a require when any of its (sequential)
+/// statements does; an if/else guarantees one only when both branches do (so a
+/// missing `else` is a bare path); a loop body's guarantee counts because the
+/// unroller always emits at least one iteration.
+fn block_guarantees_require(stmts: &[Statement]) -> bool {
+    stmts.iter().any(statement_guarantees_require)
 }
 
-fn statement_has_require(stmt: &Statement) -> bool {
+fn statement_guarantees_require(stmt: &Statement) -> bool {
     match stmt {
         Statement::Require(_) => true,
         Statement::LetBinding { .. } | Statement::VarAssign { .. } => false,
@@ -482,12 +494,12 @@ fn statement_has_require(stmt: &Statement) -> bool {
             else_body,
             ..
         } => {
-            statements_have_require(then_body)
-                || else_body
+            block_guarantees_require(then_body)
+                && else_body
                     .as_ref()
-                    .is_some_and(|b| statements_have_require(b))
+                    .is_some_and(|b| block_guarantees_require(b))
         }
-        Statement::ForIn { body, .. } => statements_have_require(body),
+        Statement::ForIn { body, .. } => block_guarantees_require(body),
     }
 }
 
@@ -743,7 +755,10 @@ mod tests {
             functions: vec![Function {
                 name: "spend".to_string(),
                 parameters: vec![],
-                statements: vec![],
+                statements: vec![Statement::Require(Requirement::CheckSig {
+                    signature: "ownerSig".to_string(),
+                    pubkey: "owner".to_string(),
+                })],
                 is_internal: false,
             }],
             tapscripts: Vec::new(),
@@ -756,6 +771,43 @@ mod tests {
         let contract = make_contract("Simple");
         let issues = validate_ast(&contract);
         assert!(!has_errors(&issues));
+    }
+
+    #[test]
+    fn require_only_in_one_branch_is_error() {
+        // An if with a require in the then-branch but no else leaves the
+        // "condition false" path with no require() → a trivially-passing spend.
+        let mut contract = make_contract("BarePath");
+        contract.functions[0].statements = vec![Statement::IfElse {
+            condition: Expression::Variable("flag".to_string()),
+            then_body: vec![Statement::Require(Requirement::CheckSig {
+                signature: "ownerSig".to_string(),
+                pubkey: "owner".to_string(),
+            })],
+            else_body: None,
+        }];
+        let issues = validate_ast(&contract);
+        assert!(has_errors(&issues));
+        assert!(issues
+            .iter()
+            .any(|i| i.message.contains("spend path with no require()")));
+    }
+
+    #[test]
+    fn require_in_both_branches_is_ok() {
+        let mut contract = make_contract("BothPaths");
+        let req = || {
+            Statement::Require(Requirement::CheckSig {
+                signature: "ownerSig".to_string(),
+                pubkey: "owner".to_string(),
+            })
+        };
+        contract.functions[0].statements = vec![Statement::IfElse {
+            condition: Expression::Variable("flag".to_string()),
+            then_body: vec![req()],
+            else_body: Some(vec![req()]),
+        }];
+        assert!(!has_errors(&validate_ast(&contract)));
     }
 
     #[test]

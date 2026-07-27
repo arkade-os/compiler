@@ -106,12 +106,10 @@ contract DeclaredAssign(pubkey owner) {
     );
 }
 
-// ─── Mixed uint64le / int comparison ─────────────────────────────────────────
+// ─── Introspection / int comparison ──────────────────────────────────────────
 
 #[test]
-fn uint64le_vs_int_comparison_produces_warning() {
-    // tx.inputs[0].value is uint64le; comparing directly with an int literal
-    // triggers the implicit-conversion warning.
+fn introspected_value_vs_int_comparison_produces_no_type_warning() {
     let source = r#"
 contract MixedTypes(pubkey owner, int minValue) {
     function spend(signature ownerSig) {
@@ -120,9 +118,34 @@ contract MixedTypes(pubkey owner, int minValue) {
     }
 }"#;
     let output = compile_ok(source);
+    let has_comparison_warning =
+        has_type_warning(&output, "comparison") || has_type_warning(&output, "compatible");
     assert!(
-        has_type_warning(&output, "uint64le") || has_type_warning(&output, "implicit"),
-        "uint64le vs int comparison must warn about implicit conversion; got: {:?}",
+        !has_comparison_warning,
+        "BigNum comparison must not warn about operand widths; got: {:?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn integer_equality_across_widths_produces_no_type_warning() {
+    // Equality between int params/literals and uint64le/uint32le introspection
+    // values is numerically well-defined, exactly like ordered comparisons.
+    let source = r#"
+contract IntEquality(pubkey owner, int expectedValue, int expectedVersion) {
+    function spend(signature ownerSig) {
+        require(tx.inputs[0].value == expectedValue);
+        require(tx.version == expectedVersion);
+        require(tx.version == 2);
+        require(checkSig(ownerSig, owner));
+    }
+}"#;
+    let output = compile_ok(source);
+    let has_comparison_warning =
+        has_type_warning(&output, "comparison") || has_type_warning(&output, "compatible");
+    assert!(
+        !has_comparison_warning,
+        "numeric equality across int/uint widths must not warn; got: {:?}",
         output.warnings
     );
 }
@@ -193,6 +216,8 @@ fn non_boolean_if_condition_produces_warning() {
 contract NonBoolCond(pubkey owner) {
     function spend(signature ownerSig) {
         if (tx.inputs[0].value) {
+            require(checkSig(ownerSig, owner));
+        } else {
             require(checkSig(ownerSig, owner));
         }
     }
@@ -284,7 +309,7 @@ fn type_warnings_appear_in_contract_json_warnings_field() {
     let source = r#"
 contract HasWarnings(pubkey owner, int minVal) {
     function spend(signature ownerSig) {
-        require(tx.inputs[0].value >= minVal);
+        require(minVal);
         require(checkSig(ownerSig, owner));
     }
 }"#;

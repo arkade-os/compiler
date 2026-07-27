@@ -188,6 +188,8 @@ pub enum Statement {
 /// Requirement AST
 #[derive(Debug, Clone)]
 pub enum Requirement {
+    /// Expression that must evaluate to true
+    Expression(Expression),
     /// Check signature requirement
     CheckSig { signature: String, pubkey: String },
     /// Check signature from stack requirement (signature verified against a message)

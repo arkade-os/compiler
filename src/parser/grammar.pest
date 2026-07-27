@@ -81,7 +81,17 @@ var_assign = {
 
 // Require statement
 require_stmt = {
-    "require" ~ "(" ~ complex_expression ~ ("," ~ string_literal)? ~ ")" ~ ";"
+    "require" ~ "(" ~ require_expression ~ ("," ~ string_literal)? ~ ")" ~ ";"
+}
+
+require_expression = _{
+    check_sig_from_stack_verify |
+    (check_sig_from_stack ~ !comparison_operator) |
+    (check_sig ~ !comparison_operator) |
+    check_multisig |
+    time_comparison |
+    hash_comparison |
+    general_expression
 }
 
 // Function call statement
@@ -146,11 +156,13 @@ primary_expr = {
     output_introspection |
     tx_introspection |
     group_control_is |
+    identifier_property_access |
     tx_property_access |
     this_property_access |
     constructor |
     function_call |
     array_index_access |
+    bool_literal |
     number_literal |
     identifier
 }
@@ -162,6 +174,7 @@ array_index_access = {
 
 // Operators
 comparison_operator = { ">=" | "<=" | "==" | "!=" | ">" | "<" }
+bool_literal = { ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
 add_op = { "+" }
 sub_op = { "-" }
 mul_op = { "*" }
@@ -176,20 +189,6 @@ complex_expression = _{
     check_multisig |
     time_comparison |
     hash_comparison |
-    byte_expr_comparison |
-    asset_lookup_comparison |
-    asset_count_comparison |
-    asset_has_comparison |
-    asset_at_comparison |
-    input_introspection_comparison |
-    output_introspection_comparison |
-    tx_introspection_comparison |
-    group_control_is_comparison |
-    group_property_comparison |
-    property_comparison |
-    reversed_property_comparison |
-    identifier_comparison |
-    binary_operation |
     sha256_initialize |
     sha256_update |
     sha256_finalize |
@@ -255,39 +254,6 @@ asset_at_property = { "assetId" | "amount" }
 // Source of asset lookup (inputs or outputs)
 asset_lookup_source = { "inputs" | "outputs" }
 
-// Asset lookup comparison: asset_lookup op expression
-// Handles: tx.inputs[0].assets.lookup(id) >= 0
-//          tx.outputs[0].assets.lookup(id) >= tx.inputs[0].assets.lookup(id)
-//          tx.outputs[0].assets.lookup(id) >= tx.inputs[0].assets.lookup(id) + amount
-//          tx.outputs[1].assets.lookup(id) == bin2num(substr(packet, off, 8))
-//            (used by LayerZero OApp.receive to credit USDT0 from the packet)
-asset_lookup_comparison = {
-    asset_lookup ~ binary_operator ~ (asset_lookup_arith_expr | asset_lookup | bin2num_func | identifier | number_literal)
-}
-
-// Asset count comparison: asset_count op expression
-// Handles: tx.outputs[0].assets.length >= 1
-asset_count_comparison = {
-    asset_count ~ binary_operator ~ (identifier | number_literal)
-}
-
-// Asset has comparison: asset_has op expression
-// Handles: tx.outputs[0].assets.has(txid, gidx) == 0 (assert absent)
-asset_has_comparison = {
-    asset_has ~ comparison_operator ~ (identifier | number_literal)
-}
-
-// Asset at comparison: asset_at op expression
-// Handles: tx.outputs[0].assets[0].amount >= minAmount
-asset_at_comparison = {
-    asset_at ~ binary_operator ~ (asset_at | identifier | number_literal)
-}
-
-// Arithmetic expression in asset lookup context (e.g., lookup + amount)
-asset_lookup_arith_expr = {
-    (asset_lookup | identifier | number_literal) ~ ("+" | "-" | "*" | "/") ~ (asset_lookup | identifier | number_literal)
-}
-
 // ─── Transaction Introspection ─────────────────────────────────────────────────
 
 // Transaction-level introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
@@ -299,11 +265,6 @@ tx_introspection = {
 // Note: "id" is the introspector OP_TXID; do not rename to "txid" (matches
 // the SDK convention used in docs/arkade-script-with-assets.md).
 tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" | "id" }
-
-// Transaction introspection comparison: tx_introspection op expression
-tx_introspection_comparison = {
-    tx_introspection ~ binary_operator ~ (identifier | number_literal)
-}
 
 // ─── Indexed Input/Output Introspection ─────────────────────────────────────────
 
@@ -328,22 +289,6 @@ output_introspection = {
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
 output_introspection_property = { "value" | "scriptPubKey" | "nonce" }
-
-// Input introspection comparison: input_introspection op expression.
-// substr_func is permitted on the RHS so contracts can match packet-derived
-// byte fields against introspection results (e.g. arkadeScriptHash equality
-// or scriptPubKey == substr(packet, ...)).
-input_introspection_comparison = {
-    input_introspection ~ binary_operator ~ (substr_func | input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
-}
-
-// Output introspection comparison: output_introspection op expression.
-// See input_introspection_comparison for the substr_func extension rationale —
-// LayerZero's OApp.receive() pins the recipient output's x-only key to the
-// CreditMessage byte slice.
-output_introspection_comparison = {
-    output_introspection ~ binary_operator ~ (substr_func | input_introspection | output_introspection | tx_property_access | this_property_access | constructor | identifier | number_literal)
-}
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
@@ -372,39 +317,6 @@ group_control_is = {
     identifier ~ "." ~ "controlIs" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// controlIs comparison: group.controlIs(txid, gidx) == 0 (assert absent/unequal)
-group_control_is_comparison = {
-    group_control_is ~ comparison_operator ~ (identifier | number_literal)
-}
-
-// Group property comparison: variable.property op expression
-// Matches patterns like: tokenGroup.delta == amount, tokenGroup.sumOutputs >= 0
-// Also supports: group.sumOutputs >= group.sumInputs (both sides can have group property)
-// Also supports: group.sumInputs >= group.sumOutputs + amount (arithmetic on right side)
-// Also supports: usdt0Group.delta == bin2num(substr(packet, off, 8))
-//   (used by LayerZero OApp.receive to credit USDT0 from a packet field)
-group_property_comparison = {
-    identifier ~ "." ~ group_property ~ binary_operator ~ (
-        group_property_arith_expr |
-        identifier_property_access |
-        asset_lookup |
-        asset_group_access |
-        bin2num_func |
-        identifier |
-        number_literal
-    )
-}
-
-// Arithmetic expression with group properties: group.property +/- value
-// RHS may include bin2num(...) so packet-derived amounts can balance against
-// group sums (used by LayerZero OApp.send burn-amount check).
-group_property_arith_expr = {
-    identifier_property_access ~ arith_op ~ (bin2num_func | identifier | number_literal)
-}
-
-// Arithmetic operator for group property expressions
-arith_op = { "+" | "-" }
-
 // Identifier property access: variable.property (e.g., group.sumInputs, tokenGroup.delta)
 identifier_property_access = {
     identifier ~ "." ~ group_property
@@ -415,21 +327,6 @@ identifier_property_access = {
 // Time comparison (tx.time >= timelock)
 time_comparison = {
     "tx.time" ~ ">=" ~ identifier
-}
-
-// Identifier comparison (identifier operator identifier)
-identifier_comparison = {
-    identifier ~ binary_operator ~ identifier
-}
-
-// Property comparison (property_access operator expression)
-// Note: tx_property_access must come before identifier to avoid partial matching
-property_comparison = {
-    (tx_property_access | this_property_access) ~ binary_operator ~ (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)
-}
-
-reversed_property_comparison = {
-    (asset_lookup | tx_property_access | this_property_access | constructor | number_literal | identifier)  ~ binary_operator ~ (tx_property_access | this_property_access)
 }
 
 // Generalized hash condition function name.
@@ -445,45 +342,6 @@ hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
 hash_comparison = {
     hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | identifier)
 }
-
-// Byte-string / packet-field comparison.
-// Lets contracts compare results of substr/cat/bin2num/size against
-// constructor parameters, witnesses, integer literals, or each other —
-// e.g. `require(substr(state, 1, 32) == endpointID)` or
-// `require(bin2num(substr(state, 167, 8)) + 1 == bin2num(substr(recv, 69, 8)))`.
-byte_expr_comparison = {
-    byte_expr_term ~ binary_operator ~ byte_expr_rhs
-}
-
-// A single byte-string-producing or numeric-from-bytes term.
-// sha256_func is included so `sha256(substr(...)) == substr(...)` works
-// (the legacy hash_comparison shape, `sha256(x) == identifier`, keeps its
-// fast path because PEG ordering puts hash_comparison earlier).
-byte_expr_term = {
-    sha256_func | substr_func | cat_func | bin2num_func | num2bin_func | size_func
-}
-
-// RHS of a byte comparison: another term, a small arithmetic expression
-// over numeric byte-derived values, or a plain identifier / literal.
-byte_expr_rhs = {
-    byte_expr_arith | byte_expr_term | identifier | number_literal
-}
-
-// A two-operand arithmetic expression where either side may be a
-// bin2num/size term, an identifier, or a number literal.
-byte_expr_arith = {
-    byte_expr_atom ~ ("+" | "-") ~ byte_expr_atom
-}
-
-byte_expr_atom = { bin2num_func | size_func | identifier | number_literal }
-
-// Binary operations between literals or identifiers
-binary_operation = {
-    (number_literal ~ binary_operator ~ (identifier | number_literal)) |
-    (identifier ~ binary_operator ~ (identifier | number_literal))
-}
-
-binary_operator = { ">=" | "<=" | "==" | "!=" | ">" | "<" | "+" | "-" | "*" | "/" }
 
 // Constructor expression: new ContractName(args)
 constructor = {

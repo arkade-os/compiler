@@ -141,7 +141,7 @@ Two minor codegen quirks surface in the compiled ASM:
 
 1. **`tx.time < expiryHeight` on transfers compiles to non-functional placeholders** in the exit variant. The cooperative path Operator validates this off-chain, but the script doesn't enforce the upper bound on the exit path. Mitigation: the exit-path transfer requires N-of-N (seller + buyer + new party); a post-expiry transfer would need both parties' active consent, which removes the unilateral griefing vector.
 
-2. **`reclaimHeight = expiryHeight + graceBlocks` is computed but pushed as a separate `<reclaimHeight>` placeholder for `OP_CHECKLOCKTIMEVERIFY`.** The SDK has to substitute `reclaimHeight = expiryHeight + graceBlocks` when building the witness. Documented for SDK authors; the OP_ADD64 + OP_VERIFY chain validates the arithmetic, the placeholder carries the value to CLTV.
+2. **`reclaimHeight = expiryHeight + graceBlocks` is computed but pushed as a separate `<reclaimHeight>` placeholder for `OP_CHECKLOCKTIMEVERIFY`.** The SDK has to substitute `reclaimHeight = expiryHeight + graceBlocks` when building the witness. Documented for SDK authors; OP_ADD computes the arithmetic with arbitrary precision, while the placeholder carries the value to CLTV.
 
 Both are upstream compiler issues, not contract bugs. They don't affect security; the cooperative path remains fully validated and the exit path remains broadcastable.
 

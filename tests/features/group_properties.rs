@@ -2,7 +2,7 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPASSETID,
     OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_SUB64, OP_TXHASH,
+    OP_INSPECTASSETGROUPSUM, OP_SUB, OP_TXHASH,
 };
 
 use crate::common::arkade_asm;
@@ -108,10 +108,10 @@ fn test_is_fresh_with_delta_combo() {
         "Expected {OP_TXHASH} for isFresh: {}",
         asm_str
     );
-    // delta uses OP_SUB64 for sumOutputs - sumInputs
+    // delta uses OP_SUB for sumOutputs - sumInputs
     assert!(
-        asm_str.contains(OP_SUB64),
-        "Expected {OP_SUB64} for delta: {}",
+        asm_str.contains(OP_SUB),
+        "Expected {OP_SUB} for delta: {}",
         asm_str
     );
     assert!(
@@ -226,8 +226,8 @@ fn test_all_group_properties() {
         asm_str
     );
     assert!(
-        asm_str.contains(OP_SUB64),
-        "Expected {OP_SUB64} for delta: {}",
+        asm_str.contains(OP_SUB),
+        "Expected {OP_SUB} for delta: {}",
         asm_str
     );
     assert!(

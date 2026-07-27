@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_2, OP_3, OP_5, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGVERIFY, OP_NUMEQUAL,
+    OP_1, OP_2, OP_3, OP_5, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGVERIFY, OP_NUMEQUAL, OP_VERIFY,
 };
 use serde_json::Value;
 use std::fs;
@@ -64,13 +64,15 @@ fn test_threshold_multisig() {
 
     // Covenant ASM: 2-of-2 CHECKSIGADD form.
     let tof_tokens = arkade_asm_tokens(&output, "twoOfTwo");
-    assert_eq!(tof_tokens.len(), 6);
+    assert_eq!(tof_tokens.len(), 8);
     assert_eq!(tof_tokens[0], "<signer>");
     assert_eq!(tof_tokens[1], OP_CHECKSIG);
     assert_eq!(tof_tokens[2], "<signer1>");
     assert_eq!(tof_tokens[3], OP_CHECKSIGADD);
     assert_eq!(tof_tokens[4], OP_2);
     assert_eq!(tof_tokens[5], OP_NUMEQUAL);
+    assert_eq!(tof_tokens[6], OP_VERIFY);
+    assert_eq!(tof_tokens[7], OP_1);
 
     // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
     let tof_leaf = leaf_asm(&output, "twoOfTwo", "twoOfTwo");
@@ -99,7 +101,7 @@ fn test_threshold_multisig() {
 
     // Covenant ASM: 5-of-5 CHECKSIGADD form.
     let fof_tokens = arkade_asm_tokens(&output, "fiveOfFive");
-    assert_eq!(fof_tokens.len(), 12);
+    assert_eq!(fof_tokens.len(), 14);
     assert_eq!(fof_tokens[0], "<signer>");
     assert_eq!(fof_tokens[1], OP_CHECKSIG);
     assert_eq!(fof_tokens[2], "<signer1>");
@@ -112,6 +114,8 @@ fn test_threshold_multisig() {
     assert_eq!(fof_tokens[9], OP_CHECKSIGADD);
     assert_eq!(fof_tokens[10], OP_5);
     assert_eq!(fof_tokens[11], OP_NUMEQUAL);
+    assert_eq!(fof_tokens[12], OP_VERIFY);
+    assert_eq!(fof_tokens[13], OP_1);
 
     // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
     let fof_leaf = leaf_asm(&output, "fiveOfFive", "fiveOfFive");
@@ -142,7 +146,7 @@ fn test_threshold_multisig() {
     // m-of-n (k < n) is valid in a covenant body; the covenant emitter uses
     // CHECKSIGADD + OP_NUMEQUAL form regardless of threshold value.
     let three_tokens = arkade_asm_tokens(&output, "threeOfFive");
-    assert_eq!(three_tokens.len(), 12);
+    assert_eq!(three_tokens.len(), 14);
     assert_eq!(three_tokens[0], "<signer>");
     assert_eq!(three_tokens[1], OP_CHECKSIG);
     assert_eq!(three_tokens[2], "<signer1>");
@@ -155,6 +159,8 @@ fn test_threshold_multisig() {
     assert_eq!(three_tokens[9], OP_CHECKSIGADD);
     assert_eq!(three_tokens[10], OP_3);
     assert_eq!(three_tokens[11], OP_NUMEQUAL);
+    assert_eq!(three_tokens[12], OP_VERIFY);
+    assert_eq!(three_tokens[13], OP_1);
 
     // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
     let three_leaf = leaf_asm(&output, "threeOfFive", "threeOfFive");

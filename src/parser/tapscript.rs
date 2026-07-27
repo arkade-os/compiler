@@ -44,6 +44,21 @@ pub(crate) fn parse_named_tapscript(
 pub(crate) fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
     use crate::models::{HashFn, TapItem};
     match pair.as_rule() {
+        Rule::general_expression
+        | Rule::comparison_expr
+        | Rule::additive_expr
+        | Rule::multiplicative_expr
+        | Rule::unary_expr
+        | Rule::primary_expr => {
+            let mut inner = pair.into_inner();
+            let item = inner
+                .next()
+                .ok_or("Empty expression in tapscript require()")?;
+            if inner.next().is_some() {
+                return Err("unsupported compound expression in tapscript require()".to_string());
+            }
+            parse_tap_item(item)
+        }
         Rule::hash_comparison => {
             let mut inner = pair.into_inner();
             let func = inner.next().ok_or("Missing hash function")?; // hash_func

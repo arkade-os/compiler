@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB64, OP_TXHASH,
+    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB, OP_TXHASH,
 };
 
 const ARKADE_KITTIES_CODE: &str = include_str!("../../examples/arkade_kitties/arkade_kitties.ark");
@@ -91,15 +91,15 @@ fn test_breed_function_has_delta_checks() {
 
     let asm_str = crate::common::arkade_asm(&output, "breed");
 
-    // delta uses OP_INSPECTASSETGROUPSUM twice (outputs - inputs) and OP_SUB64
+    // delta uses OP_INSPECTASSETGROUPSUM twice (outputs - inputs) and OP_SUB
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPSUM),
         "Expected {OP_INSPECTASSETGROUPSUM} for delta in breed: {}",
         asm_str
     );
     assert!(
-        asm_str.contains(OP_SUB64),
-        "Expected {OP_SUB64} for delta calculation in breed: {}",
+        asm_str.contains(OP_SUB),
+        "Expected {OP_SUB} for delta calculation in breed: {}",
         asm_str
     );
 }

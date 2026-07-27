@@ -3,24 +3,22 @@ use crate::models::{
     Requirement, Statement, DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_ADD64, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
-    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_DIV64, OP_DROP,
-    OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FALSE,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHAN64, OP_GREATERTHANOREQUAL,
-    OP_GREATERTHANOREQUAL64, OP_IF, OP_INPUTBYTECODE, OP_INPUTOUTPOINT, OP_INPUTSEQUENCE,
-    OP_INPUTVALUE, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
-    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
-    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTISSUANCE,
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
-    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM,
-    OP_LESSTHAN, OP_LESSTHAN64, OP_LESSTHANOREQUAL, OP_LESSTHANOREQUAL64, OP_MUL64, OP_NEG64,
-    OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64,
-    OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIZE, OP_SUB64,
-    OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXHASH, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+    OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKSIGFROMSTACKVERIFY, OP_DIV, OP_DROP,
+    OP_ECMULSCALARVERIFY, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID,
+    OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INPUTBYTECODE, OP_INSPECTASSETGROUP,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
+    OP_INSPECTINPUTISSUANCE, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET,
+    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME,
+    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
+    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTNONCE,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION,
+    OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL, OP_NEG64, OP_NIP,
+    OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_SCRIPTNUMTOLE64, OP_SHA256,
+    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP,
+    OP_TWEAKVERIFY, OP_TXHASH, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::parser;
 use crate::typechecker::{self};
@@ -172,7 +170,13 @@ pub(crate) fn expand_abi_params(params: &[Parameter]) -> Vec<Parameter> {
 /// emit ASM from statements (no server cosig, no exit timelock).
 fn covenant_for(function: &Function) -> Result<ArkadeCovenant, String> {
     let inputs = expand_function_inputs(&function.parameters);
-    let asm = generate_asm_from_statements(&function.statements)?;
+    let mut asm = generate_asm_from_statements(&function.statements)?;
+    // Every require() above fails fast via OP_VERIFY, so terminate the covenant
+    // with an explicit truthy value as its top-of-stack result. Intermediate
+    // stack items left by let/assignments sit harmlessly below it.
+    // FOLLOW-UP: once symbolic stack management lands, drop the last require's
+    // OP_VERIFY and leave its boolean instead.
+    asm.push(OP_1.to_string());
     Ok(ArkadeCovenant { inputs, asm })
 }
 
@@ -219,7 +223,7 @@ fn generate_asm_from_statements_recursive(
                 else_body,
             } => {
                 // Generate condition expression
-                generate_expression_asm(condition, asm);
+                emit_expression_asm(condition, asm);
                 asm.push(OP_IF.to_string());
 
                 // Generate then branch
@@ -255,7 +259,7 @@ fn generate_asm_from_statements_recursive(
             Statement::LetBinding { name: _, value } => {
                 // Emit the expression value onto the stack
                 // TODO: Implement proper variable binding with stack tracking
-                generate_expression_asm(value, asm);
+                emit_expression_asm(value, asm);
             }
             Statement::VarAssign { name: _, value } => {
                 // Push the new value onto the stack.
@@ -264,7 +268,7 @@ fn generate_asm_from_statements_recursive(
                 // For the common pattern of `typed_var = expr; require(typed_var == ...)`,
                 // emitting the expression is sufficient because the old value has already
                 // been consumed by the time the re-assignment is reached.
-                generate_expression_asm(value, asm);
+                emit_expression_asm(value, asm);
             }
         }
     }
@@ -274,10 +278,28 @@ fn generate_asm_from_statements_recursive(
 /// Generate assembly for a single requirement
 fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<(), String> {
     match req {
+        Requirement::Expression(expr) => {
+            if let Expression::GroupFind {
+                asset_txid,
+                asset_gidx,
+            } = expr
+            {
+                emit_group_find_asm(asset_txid, asset_gidx, asm);
+                asm.push(OP_DROP.to_string());
+                asm.push(OP_1.to_string());
+            } else {
+                emit_expression_asm(expr, asm);
+            }
+            // require() fails fast: abort the script immediately if the
+            // condition is false, matching CashScript's per-require OP_VERIFY.
+            asm.push(OP_VERIFY.to_string());
+            Ok(())
+        }
         Requirement::CheckSig { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIG.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::CheckSigFromStack {
@@ -289,6 +311,7 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::CheckMultisig { pubkeys, threshold } => {
@@ -327,6 +350,7 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
                 asm.push(format!("{}", threshold));
             }
             asm.push(OP_NUMEQUAL.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::After {
@@ -351,10 +375,12 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             asm.push(hash_fn.opcode().to_string());
             asm.push(format!("<{}>", hash));
             asm.push(OP_EQUAL.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::Comparison { left, op, right } => {
-            generate_comparison_asm(left, op, right, asm);
+            emit_comparison_asm(left, op, right, asm);
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
     }

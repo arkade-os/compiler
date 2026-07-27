@@ -109,6 +109,8 @@ fn general_expression_parses_group_has_in_if_condition() {
             function f(signature sig) {
                 if (tx.assetGroups.has(fooTxid, fooGidx)) {
                     require(checkSig(sig, pk));
+                } else {
+                    require(checkSig(sig, pk));
                 }
             }
         }";

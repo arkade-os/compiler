@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTOUTASSETLOOKUP, OP_SUB64,
+    OP_INSPECTOUTASSETLOOKUP, OP_SUB,
 };
 
 #[test]
@@ -55,8 +55,8 @@ fn test_controlled_mint_contract() {
 
     // Should have group property opcodes for delta and control
     assert!(
-        mint_asm.contains(OP_INSPECTASSETGROUPSUM) || mint_asm.contains(OP_SUB64),
-        "missing group sum or delta in mint: {}",
+        mint_asm.contains(OP_INSPECTASSETGROUPSUM) && mint_asm.contains(OP_SUB),
+        "missing group-sum subtraction for delta in mint: {}",
         mint_asm
     );
 
