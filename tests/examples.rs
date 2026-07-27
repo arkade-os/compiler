@@ -24,6 +24,8 @@ mod fuji_safe;
 mod htlc;
 #[path = "examples/layerzero.rs"]
 mod layerzero;
+#[path = "examples/payment_hold.rs"]
+mod payment_hold;
 #[path = "examples/repayment_pool.rs"]
 mod repayment_pool;
 #[path = "examples/stability_vault.rs"]
