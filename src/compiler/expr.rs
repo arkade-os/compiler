@@ -220,7 +220,52 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(modulus, asm);
             asm.push(OP_MODEXP.to_string());
         }
-        // Crypto Opcodes
+        // Elliptic curve operations
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => {
+            emit_expression_asm(x1, asm);
+            emit_expression_asm(y1, asm);
+            emit_expression_asm(x2, asm);
+            emit_expression_asm(y2, asm);
+            emit_expression_asm(curve_id, asm);
+            asm.push(OP_ECADD.to_string());
+        }
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => {
+            emit_expression_asm(x, asm);
+            emit_expression_asm(y, asm);
+            emit_expression_asm(scalar, asm);
+            emit_expression_asm(curve_id, asm);
+            asm.push(OP_ECMUL.to_string());
+        }
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => {
+            emit_expression_asm(g1_x, asm);
+            emit_expression_asm(g1_y, asm);
+            emit_expression_asm(g2_x_c1, asm);
+            emit_expression_asm(g2_x_c0, asm);
+            emit_expression_asm(g2_y_c1, asm);
+            emit_expression_asm(g2_y_c0, asm);
+            asm.push(OP_1.to_string());
+            emit_expression_asm(curve_id, asm);
+            asm.push(OP_ECPAIRING.to_string());
+        }
         Expression::EcMulScalarVerify {
             scalar,
             point_p,

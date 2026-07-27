@@ -53,7 +53,10 @@ pub const OP_DROP: &str = "OP_DROP";
 pub const OP_NIP: &str = "OP_NIP";
 pub const OP_SWAP: &str = "OP_SWAP";
 
-// Elliptic curve (secp256k1)
+// Elliptic curve
+pub const OP_ECADD: &str = "OP_ECADD";
+pub const OP_ECMUL: &str = "OP_ECMUL";
+pub const OP_ECPAIRING: &str = "OP_ECPAIRING";
 pub const OP_ECMULSCALARVERIFY: &str = "OP_ECMULSCALARVERIFY";
 pub const OP_TWEAKVERIFY: &str = "OP_TWEAKVERIFY";
 

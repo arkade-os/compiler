@@ -293,6 +293,79 @@ pub(crate) fn substitute_expression(
                 modulus, index_var, value_var, k, array_name,
             )),
         },
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => Expression::EcAdd {
+            x1: Box::new(substitute_expression(
+                x1, index_var, value_var, k, array_name,
+            )),
+            y1: Box::new(substitute_expression(
+                y1, index_var, value_var, k, array_name,
+            )),
+            x2: Box::new(substitute_expression(
+                x2, index_var, value_var, k, array_name,
+            )),
+            y2: Box::new(substitute_expression(
+                y2, index_var, value_var, k, array_name,
+            )),
+            curve_id: Box::new(substitute_expression(
+                curve_id, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => Expression::EcMul {
+            x: Box::new(substitute_expression(
+                x, index_var, value_var, k, array_name,
+            )),
+            y: Box::new(substitute_expression(
+                y, index_var, value_var, k, array_name,
+            )),
+            scalar: Box::new(substitute_expression(
+                scalar, index_var, value_var, k, array_name,
+            )),
+            curve_id: Box::new(substitute_expression(
+                curve_id, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => Expression::EcPairing {
+            g1_x: Box::new(substitute_expression(
+                g1_x, index_var, value_var, k, array_name,
+            )),
+            g1_y: Box::new(substitute_expression(
+                g1_y, index_var, value_var, k, array_name,
+            )),
+            g2_x_c1: Box::new(substitute_expression(
+                g2_x_c1, index_var, value_var, k, array_name,
+            )),
+            g2_x_c0: Box::new(substitute_expression(
+                g2_x_c0, index_var, value_var, k, array_name,
+            )),
+            g2_y_c1: Box::new(substitute_expression(
+                g2_y_c1, index_var, value_var, k, array_name,
+            )),
+            g2_y_c0: Box::new(substitute_expression(
+                g2_y_c0, index_var, value_var, k, array_name,
+            )),
+            curve_id: Box::new(substitute_expression(
+                curve_id, index_var, value_var, k, array_name,
+            )),
+        },
         // Recurse into contract instance arguments
         Expression::ContractInstance {
             contract_name,

@@ -1,9 +1,9 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIGFROMSTACK, OP_ECMULSCALARVERIFY, OP_MODEXP, OP_NEGATE, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY, OP_VERIFY,
+    OP_1, OP_CHECKSIGFROMSTACK, OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP,
+    OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY, OP_VERIFY,
 };
-// ─── Streaming SHA256 Tests ────────────────────────────────────────────
+// ─── Streaming SHA256 ──────────────────────────────────────────────────
 
 #[test]
 fn test_sha256_initialize() {
@@ -86,7 +86,7 @@ fn test_sha256_finalize() {
     );
 }
 
-// ─── Arithmetic Tests ──────────────────────────────────────────────────
+// ─── Arithmetic ────────────────────────────────────────────────────────
 
 #[test]
 fn test_negate() {
@@ -130,7 +130,72 @@ fn test_mod_exp() {
     );
 }
 
-// ─── Crypto Opcodes Tests ──────────────────────────────────────────────
+// ─── Elliptic Curve ────────────────────────────────────────────────────
+
+#[test]
+fn test_ec_add() {
+    let code = r#"
+        contract EllipticCurve(int curveId) {
+            function add(int x1, int y1, int x2, int y2) {
+                let result = ecAdd(x1, y1, x2, y2, curveId);
+                require(true);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile ecAdd");
+    let asm = crate::common::arkade_asm(&output, "add");
+    assert!(
+        asm.contains(&format!("<x1> <y1> <x2> <y2> <curveId> {OP_ECADD}")),
+        "Expected ordered {OP_ECADD} operands in ASM: {asm}"
+    );
+}
+
+#[test]
+fn test_ec_mul() {
+    let code = r#"
+        contract EllipticCurve(int curveId) {
+            function multiply(int x, int y, int scalar) {
+                let result = ecMul(x, y, scalar, curveId);
+                require(true);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile ecMul");
+    let asm = crate::common::arkade_asm(&output, "multiply");
+    assert!(
+        asm.contains(&format!("<x> <y> <scalar> <curveId> {OP_ECMUL}")),
+        "Expected ordered {OP_ECMUL} operands in ASM: {asm}"
+    );
+}
+
+#[test]
+fn test_ec_pairing() {
+    let code = r#"
+        contract EllipticCurve(int curveId) {
+            function pair(
+                int g1X,
+                int g1Y,
+                int g2Xc1,
+                int g2Xc0,
+                int g2Yc1,
+                int g2Yc0
+            ) {
+                require(ecPairing(g1X, g1Y, g2Xc1, g2Xc0, g2Yc1, g2Yc0, curveId));
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile ecPairing");
+    let asm = crate::common::arkade_asm(&output, "pair");
+    assert!(
+        asm.contains(&format!(
+            "<g1X> <g1Y> <g2Xc1> <g2Xc0> <g2Yc1> <g2Yc0> {OP_1} <curveId> {OP_ECPAIRING}"
+        )),
+        "Expected ordered {OP_ECPAIRING} operands in ASM: {asm}"
+    );
+}
 
 #[test]
 fn test_ec_mul_scalar_verify() {
@@ -213,7 +278,7 @@ fn test_check_sig_from_stack_verify() {
     );
 }
 
-// ─── Combined Usage Tests ───────────────────────────────────────────────────────
+// ─── Workflows ─────────────────────────────────────────────────────────
 
 #[test]
 fn test_streaming_hash_full_workflow() {

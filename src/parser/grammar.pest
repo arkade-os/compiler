@@ -138,6 +138,9 @@ primary_expr = {
     sha256_func |
     negate_func |
     mod_exp_func |
+    ec_add |
+    ec_mul |
+    ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
@@ -194,6 +197,9 @@ complex_expression = _{
     sha256_finalize |
     negate_func |
     mod_exp_func |
+    ec_add |
+    ec_mul |
+    ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
@@ -513,6 +519,18 @@ mod_exp_func = {
 }
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
+
+ec_add = {
+    "ecAdd" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+ec_mul = {
+    "ecMul" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+ec_pairing = {
+    "ecPairing" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
 
 // EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY
 ec_mul_scalar_verify = {

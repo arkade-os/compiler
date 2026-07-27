@@ -404,6 +404,28 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             exponent,
             modulus,
         } => vec![base, exponent, modulus],
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => vec![x1, y1, x2, y2, curve_id],
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => vec![x, y, scalar, curve_id],
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
         Expression::EcMulScalarVerify {
             scalar,
             point_p,

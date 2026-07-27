@@ -491,6 +491,31 @@ pub enum Expression {
         modulus: Box<Expression>,
     },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
+    /// EC point addition. Produces x and y as two stack items.
+    EcAdd {
+        x1: Box<Expression>,
+        y1: Box<Expression>,
+        x2: Box<Expression>,
+        y2: Box<Expression>,
+        curve_id: Box<Expression>,
+    },
+    /// EC scalar multiplication. Produces x and y as two stack items.
+    EcMul {
+        x: Box<Expression>,
+        y: Box<Expression>,
+        scalar: Box<Expression>,
+        curve_id: Box<Expression>,
+    },
+    /// One-pair pairing check. Tuple support can generalize this to multiple pairs.
+    EcPairing {
+        g1_x: Box<Expression>,
+        g1_y: Box<Expression>,
+        g2_x_c1: Box<Expression>,
+        g2_x_c0: Box<Expression>,
+        g2_y_c1: Box<Expression>,
+        g2_y_c0: Box<Expression>,
+        curve_id: Box<Expression>,
+    },
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
     EcMulScalarVerify {
         scalar: Box<Expression>,

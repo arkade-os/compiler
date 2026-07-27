@@ -554,8 +554,10 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::CheckSigExpr { .. }
         | Expression::CheckSigFromStackExpr { .. }
         | Expression::CheckSigFromStackVerify { .. }
+        | Expression::EcPairing { .. }
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => ArkType::Bool,
+        Expression::EcAdd { .. } | Expression::EcMul { .. } => ArkType::Unknown,
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,
