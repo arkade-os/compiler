@@ -194,6 +194,8 @@ contract NonBoolCond(pubkey owner) {
     function spend(signature ownerSig) {
         if (tx.inputs[0].value) {
             require(checkSig(ownerSig, owner));
+        } else {
+            require(checkSig(ownerSig, owner));
         }
     }
 }"#;

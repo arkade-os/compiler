@@ -219,6 +219,8 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
         "<VTXO:SingleSig(<ownerPk>,<exit>)>",
         "OP_EQUAL",
+        "OP_VERIFY",
+        "OP_1",
     ];
     assert_eq!(
         arkade_asm_tokens(&result, "send"),

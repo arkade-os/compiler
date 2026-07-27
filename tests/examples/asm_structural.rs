@@ -561,36 +561,26 @@ fn vtxo_placeholder_is_always_resolved() {
 // ─── Require-guard warning via full pipeline ─────────────────────────────────
 
 #[test]
-fn function_with_no_require_produces_warning() {
-    // A function that has only variable assignments but no require() is a security hole.
-    // The compiler should surface a warning[validation] for it.
+fn function_with_no_require_is_error() {
+    // A function with only assignments and no require() has a bare spend path
+    // that trivially passes — the compiler must reject it.
     let source = r#"
 contract AlwaysPass(pubkey owner) {
     function spend(signature sig) {
         let x = 1;
     }
 }"#;
-    let result = compile(source);
+    let err = compile(source).expect_err("bare-path function must be rejected");
     assert!(
-        result.is_ok(),
-        "should compile (warning, not error): {:?}",
-        result.err()
-    );
-    let output = result.unwrap();
-    let has_require_warning = output
-        .warnings
-        .iter()
-        .any(|w| w.contains("always succeed") || w.contains("no require"));
-    assert!(
-        has_require_warning,
-        "missing-require warning must appear in warnings; got: {:?}",
-        output.warnings
+        err.to_string().contains("spend path with no require()"),
+        "unexpected error: {err}"
     );
 }
 
 #[test]
-fn function_with_require_in_if_branch_suppresses_warning() {
-    // require() inside an if branch counts as having a guard.
+fn function_with_require_only_in_if_branch_is_error() {
+    // A require() inside a lone if-branch leaves the "condition false" path with
+    // no require() — a trivially-passing spend, which must be rejected.
     let source = r#"
 contract Guarded(pubkey owner) {
     function spend(signature sig) {
@@ -599,12 +589,9 @@ contract Guarded(pubkey owner) {
         }
     }
 }"#;
-    let result = compile(source);
-    assert!(result.is_ok(), "compile failed: {:?}", result.err());
-    let output = result.unwrap();
-    let has_no_require_warning = output.warnings.iter().any(|w| w.contains("always succeed"));
+    let err = compile(source).expect_err("single-branch require must be rejected");
     assert!(
-        !has_no_require_warning,
-        "should NOT warn about missing requires when require is inside a branch"
+        err.to_string().contains("spend path with no require()"),
+        "unexpected error: {err}"
     );
 }

@@ -1,17 +1,21 @@
 use super::*;
 use crate::models::*;
 
+fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
+    match lit {
+        "true" => asm.push(OP_1.to_string()),
+        "false" => asm.push(OP_0.to_string()),
+        _ => asm.push(lit.to_string()),
+    }
+}
+
 /// Generate assembly for expression (for use in if conditions)
 pub(crate) fn generate_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
     match expr {
         Expression::Variable(var) => {
             asm.push(format!("<{}>", var));
         }
-        Expression::Literal(lit) => match lit.as_str() {
-            "true" => asm.push(OP_1.to_string()),
-            "false" => asm.push(OP_0.to_string()),
-            _ => asm.push(lit.clone()),
-        },
+        Expression::Literal(lit) => push_literal_asm(lit, asm),
         Expression::Property(prop) => {
             // Map the introspector "this" properties to their dedicated opcodes
             // (the parser stores them as Property strings; resolving them here
@@ -318,11 +322,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::Variable(var) => {
             asm.push(format!("<{}>", var));
         }
-        Expression::Literal(lit) => match lit.as_str() {
-            "true" => asm.push(OP_1.to_string()),
-            "false" => asm.push(OP_0.to_string()),
-            _ => asm.push(lit.clone()),
-        },
+        Expression::Literal(lit) => push_literal_asm(lit, asm),
         Expression::Property(prop) => {
             // Map the introspector "this" properties to their dedicated opcodes
             // (the parser stores them as Property strings; resolving them here

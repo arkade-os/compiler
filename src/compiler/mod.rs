@@ -171,7 +171,13 @@ pub(crate) fn expand_abi_params(params: &[Parameter]) -> Vec<Parameter> {
 /// emit ASM from statements (no server cosig, no exit timelock).
 fn covenant_for(function: &Function) -> Result<ArkadeCovenant, String> {
     let inputs = expand_function_inputs(&function.parameters);
-    let asm = generate_asm_from_statements(&function.statements)?;
+    let mut asm = generate_asm_from_statements(&function.statements)?;
+    // Every require() above fails fast via OP_VERIFY, so terminate the covenant
+    // with an explicit truthy value as its top-of-stack result. Intermediate
+    // stack items left by let/assignments sit harmlessly below it.
+    // FOLLOW-UP: once symbolic stack management lands, drop the last require's
+    // OP_VERIFY and leave its boolean instead.
+    asm.push(OP_1.to_string());
     Ok(ArkadeCovenant { inputs, asm })
 }
 
@@ -285,12 +291,16 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             } else {
                 emit_expression_asm(expr, asm);
             }
+            // require() fails fast: abort the script immediately if the
+            // condition is false, matching CashScript's per-require OP_VERIFY.
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::CheckSig { signature, pubkey } => {
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIG.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::CheckSigFromStack {
@@ -302,6 +312,7 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::CheckMultisig { pubkeys, threshold } => {
@@ -340,6 +351,7 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
                 asm.push(format!("{}", threshold));
             }
             asm.push(OP_NUMEQUAL.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::After {
@@ -364,10 +376,12 @@ fn generate_requirement_asm(req: &Requirement, asm: &mut Vec<String>) -> Result<
             asm.push(hash_fn.opcode().to_string());
             asm.push(format!("<{}>", hash));
             asm.push(OP_EQUAL.to_string());
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
         Requirement::Comparison { left, op, right } => {
             emit_comparison_asm(left, op, right, asm);
+            asm.push(OP_VERIFY.to_string());
             Ok(())
         }
     }

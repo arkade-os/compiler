@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_GREATERTHAN, OP_GREATERTHANOREQUAL,
-    OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PUSHCURRENTINPUTINDEX,
+    OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PUSHCURRENTINPUTINDEX, OP_VERIFY,
 };
 
 fn compile_asm(source: &str) -> Vec<String> {
@@ -149,9 +149,10 @@ fn boolean_literals_emit_canonical_script_values() {
         }",
     );
 
+    // Each require() fails fast via OP_VERIFY; the covenant terminates with OP_1.
     assert_eq!(
         asm,
-        [OP_1, OP_0],
+        [OP_1, OP_VERIFY, OP_0, OP_VERIFY, OP_1],
         "boolean literals must be canonical: {asm:?}"
     );
     assert!(
