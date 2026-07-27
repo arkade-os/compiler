@@ -484,6 +484,12 @@ pub enum Expression {
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Negate a BigNum value: negate(value)
     Negate { value: Box<Expression> },
+    /// Modular exponentiation: modExp(base, exponent, modulus)
+    ModExp {
+        base: Box<Expression>,
+        exponent: Box<Expression>,
+        modulus: Box<Expression>,
+    },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
     EcMulScalarVerify {

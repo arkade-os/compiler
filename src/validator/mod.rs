@@ -399,6 +399,11 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             last_chunk,
         } => vec![context, last_chunk],
         Expression::Negate { value } => vec![value],
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => vec![base, exponent, modulus],
         Expression::EcMulScalarVerify {
             scalar,
             point_p,

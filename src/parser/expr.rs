@@ -148,6 +148,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "sha256Update" => Some("sha256Update(ctx, chunk)"),
         "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
         "negate" => Some("negate(value)"),
+        "modExp" => Some("modExp(base, exponent, modulus)"),
         "reverseBytes" => Some("reverseBytes(data)"),
         "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),
@@ -211,6 +212,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::sha256_finalize => parse_sha256_finalize(pair),
         // Arithmetic
         Rule::negate_func => parse_negate(pair),
+        Rule::mod_exp_func => parse_mod_exp(pair),
         // Crypto Opcodes
         Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
         Rule::tweak_verify => parse_tweak_verify(pair),

@@ -548,7 +548,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::Concat { .. } => ArkType::Bytes,
 
         // Arithmetic
-        Expression::Negate { .. } => ArkType::Int,
+        Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,
 
         // Crypto expressions
         Expression::CheckSigExpr { .. }

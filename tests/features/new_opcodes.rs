@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIGFROMSTACK, OP_ECMULSCALARVERIFY, OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE,
-    OP_SHA256UPDATE, OP_TWEAKVERIFY, OP_VERIFY,
+    OP_CHECKSIGFROMSTACK, OP_ECMULSCALARVERIFY, OP_MODEXP, OP_NEGATE, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY, OP_VERIFY,
 };
 // ─── Streaming SHA256 Tests ────────────────────────────────────────────
 
@@ -108,6 +108,25 @@ fn test_negate() {
         asm_str.contains(OP_NEGATE),
         "Expected {OP_NEGATE} in ASM: {}",
         asm_str
+    );
+}
+
+#[test]
+fn test_mod_exp() {
+    let code = r#"
+        contract ArithmeticOps(int modulus) {
+            function calculate(int base, int exponent) {
+                let result = modExp(base, exponent, modulus);
+                require(result >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile modExp");
+    let asm = crate::common::arkade_asm(&output, "calculate");
+    assert!(
+        asm.contains(&format!("<base> <exponent> <modulus> {OP_MODEXP}")),
+        "Expected ordered {OP_MODEXP} operands in ASM: {asm}"
     );
 }
 

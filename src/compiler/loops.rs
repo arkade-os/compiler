@@ -278,6 +278,21 @@ pub(crate) fn substitute_expression(
                 data, index_var, value_var, k, array_name,
             )),
         },
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => Expression::ModExp {
+            base: Box::new(substitute_expression(
+                base, index_var, value_var, k, array_name,
+            )),
+            exponent: Box::new(substitute_expression(
+                exponent, index_var, value_var, k, array_name,
+            )),
+            modulus: Box::new(substitute_expression(
+                modulus, index_var, value_var, k, array_name,
+            )),
+        },
         // Recurse into contract instance arguments
         Expression::ContractInstance {
             contract_name,

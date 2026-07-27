@@ -210,6 +210,16 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(value, asm);
             asm.push(OP_NEGATE.to_string());
         }
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => {
+            emit_expression_asm(base, asm);
+            emit_expression_asm(exponent, asm);
+            emit_expression_asm(modulus, asm);
+            asm.push(OP_MODEXP.to_string());
+        }
         // Crypto Opcodes
         Expression::EcMulScalarVerify {
             scalar,

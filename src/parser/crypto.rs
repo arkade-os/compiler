@@ -72,6 +72,22 @@ pub(crate) fn parse_negate(pair: Pair<Rule>) -> Result<Expression, String> {
     })
 }
 
+/// Parse modExp(base, exponent, modulus) → Expression::ModExp
+pub(crate) fn parse_mod_exp(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    Ok(Expression::ModExp {
+        base: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing base in modExp")?,
+        )),
+        exponent: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing exponent in modExp")?,
+        )),
+        modulus: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing modulus in modExp")?,
+        )),
+    })
+}
+
 // ─── Crypto Opcodes Parsing ────────────────────────────────────────────
 
 /// Parse ecMulScalarVerify(k, P, Q) → Expression::EcMulScalarVerify

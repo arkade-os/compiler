@@ -85,6 +85,7 @@ pub const OP_2MUL: &str = "OP_2MUL";
 pub const OP_2DIV: &str = "OP_2DIV";
 pub const OP_MIN: &str = "OP_MIN";
 pub const OP_MAX: &str = "OP_MAX";
+pub const OP_MODEXP: &str = "OP_MODEXP";
 
 // Verify variants
 pub const OP_EQUALVERIFY: &str = "OP_EQUALVERIFY";

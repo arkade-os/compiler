@@ -137,6 +137,7 @@ primary_expr = {
     sha256_finalize |
     sha256_func |
     negate_func |
+    mod_exp_func |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
@@ -192,6 +193,7 @@ complex_expression = _{
     sha256_update |
     sha256_finalize |
     negate_func |
+    mod_exp_func |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
@@ -503,6 +505,11 @@ sha256_finalize = {
 // Negate a BigNum value: negate(value) → OP_NEGATE
 negate_func = {
     "negate" ~ "(" ~ (identifier | number_literal) ~ ")"
+}
+
+// Modular exponentiation: modExp(base, exponent, modulus) → OP_MODEXP
+mod_exp_func = {
+    "modExp" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
