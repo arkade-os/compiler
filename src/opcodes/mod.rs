@@ -33,13 +33,9 @@ pub const OP_CHECKSIGADD: &str = "OP_CHECKSIGADD";
 pub const OP_EQUAL: &str = "OP_EQUAL";
 pub const OP_NUMEQUAL: &str = "OP_NUMEQUAL";
 pub const OP_GREATERTHANOREQUAL: &str = "OP_GREATERTHANOREQUAL";
-pub const OP_GREATERTHANOREQUAL64: &str = "OP_GREATERTHANOREQUAL64";
 pub const OP_LESSTHANOREQUAL: &str = "OP_LESSTHANOREQUAL";
-pub const OP_LESSTHANOREQUAL64: &str = "OP_LESSTHANOREQUAL64";
 pub const OP_GREATERTHAN: &str = "OP_GREATERTHAN";
-pub const OP_GREATERTHAN64: &str = "OP_GREATERTHAN64";
 pub const OP_LESSTHAN: &str = "OP_LESSTHAN";
-pub const OP_LESSTHAN64: &str = "OP_LESSTHAN64";
 
 // Cryptography
 pub const OP_SHA256: &str = "OP_SHA256";
@@ -58,11 +54,6 @@ pub const OP_DROP: &str = "OP_DROP";
 pub const OP_NIP: &str = "OP_NIP";
 pub const OP_SWAP: &str = "OP_SWAP";
 
-// Type conversions
-pub const OP_LE64TOSCRIPTNUM: &str = "OP_LE64TOSCRIPTNUM";
-pub const OP_SCRIPTNUMTOLE64: &str = "OP_SCRIPTNUMTOLE64";
-pub const OP_LE32TOLE64: &str = "OP_LE32TOLE64";
-
 // Elliptic curve (secp256k1)
 pub const OP_ECMULSCALARVERIFY: &str = "OP_ECMULSCALARVERIFY";
 pub const OP_TWEAKVERIFY: &str = "OP_TWEAKVERIFY";
@@ -78,14 +69,7 @@ pub const OP_ELSE: &str = "OP_ELSE";
 // Condition verification
 pub const OP_VERIFY: &str = "OP_VERIFY";
 
-// Arithmetic (64-bit BigNum)
-pub const OP_ADD64: &str = "OP_ADD64";
-pub const OP_SUB64: &str = "OP_SUB64";
-pub const OP_MUL64: &str = "OP_MUL64";
-pub const OP_DIV64: &str = "OP_DIV64";
-pub const OP_NEG64: &str = "OP_NEG64";
-
-// Standard Bitcoin arithmetic (scriptNum)
+// Arithmetic (BigNum)
 pub const OP_1ADD: &str = "OP_1ADD";
 pub const OP_1SUB: &str = "OP_1SUB";
 pub const OP_NEGATE: &str = "OP_NEGATE";

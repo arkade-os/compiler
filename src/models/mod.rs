@@ -57,7 +57,6 @@ pub struct FunctionInput {
 /// | `raw-20`        | 20-byte array (e.g., HASH160)                 |
 /// | `raw-32`        | 32-byte array (e.g., SHA256, txid)            |
 /// | `scriptnum`     | Bitcoin CScriptNum (variable-length LE)       |
-/// | `le64`          | 8-byte unsigned little-endian int64           |
 /// | `le32`          | 4-byte unsigned little-endian int32           |
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WitnessElement {
@@ -456,8 +455,8 @@ pub enum Expression {
     // ─── Byte-string operations ────────────────────────────────────────
     /// Byte-string concatenation: produced by the rewrite pass when `+`
     /// has at least one bytes-like operand. `coerce_left` / `coerce_right`
-    /// tell the emitter to insert `OP_SCRIPTNUMTOLE64` on a side that is
-    /// an integer (mixed `bytes + int` writes the int as fixed 8-byte LE
+    /// tell the emitter to insert `OP_8 OP_NUM2BIN` on a side that is an
+    /// integer (mixed `bytes + int` writes the int as fixed 8-byte LE
     /// before OP_CAT, so off-chain hashing matches deterministically).
     Concat {
         left: Box<Expression>,
@@ -482,13 +481,9 @@ pub enum Expression {
         context: Box<Expression>,
         last_chunk: Box<Expression>,
     },
-    // ─── Conversion & Arithmetic ───────────────────────────────────────
-    /// Negate 64-bit value: neg64(value)
-    Neg64 { value: Box<Expression> },
-    /// Convert LE64 to script number: le64ToScriptNum(value)
-    Le64ToScriptNum { value: Box<Expression> },
-    /// Convert LE32 to LE64: le32ToLe64(value)
-    Le32ToLe64 { value: Box<Expression> },
+    // ─── Arithmetic ────────────────────────────────────────────────────
+    /// Negate a BigNum value: negate(value)
+    Negate { value: Box<Expression> },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
     EcMulScalarVerify {

@@ -136,9 +136,7 @@ primary_expr = {
     sha256_update |
     sha256_finalize |
     sha256_func |
-    neg64_func |
-    le64_to_script_num |
-    le32_to_le64 |
+    negate_func |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
@@ -192,9 +190,7 @@ complex_expression = _{
     sha256_initialize |
     sha256_update |
     sha256_finalize |
-    neg64_func |
-    le64_to_script_num |
-    le32_to_le64 |
+    negate_func |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
@@ -501,21 +497,11 @@ sha256_finalize = {
     "sha256Finalize" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// ─── Conversion & Arithmetic ───────────────────────────────────────────
+// ─── Arithmetic ────────────────────────────────────────────────────────
 
-// Negate 64-bit value: neg64(value) → OP_NEG64
-neg64_func = {
-    "neg64" ~ "(" ~ (identifier | number_literal) ~ ")"
-}
-
-// Convert LE64 to script number: le64ToScriptNum(value) → OP_LE64TOSCRIPTNUM
-le64_to_script_num = {
-    "le64ToScriptNum" ~ "(" ~ (identifier | number_literal) ~ ")"
-}
-
-// Convert LE32 to LE64: le32ToLe64(value) → OP_LE32TOLE64
-le32_to_le64 = {
-    "le32ToLe64" ~ "(" ~ (identifier | number_literal) ~ ")"
+// Negate a BigNum value: negate(value) → OP_NEGATE
+negate_func = {
+    "negate" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────

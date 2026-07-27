@@ -6,8 +6,7 @@
 //!
 //! - **Swapped arguments** — `checkSig(pubkey, sig)` instead of `checkSig(sig, pubkey)`.
 //! - **Undeclared variable** — assigning to a name never declared.
-//! - **Mixed numeric types** — comparing a `uint64le` (from introspection) against a
-//!   plain `int` without an explicit conversion.
+//! - **Numeric types** — comparing BigNum introspection values with plain `int` values.
 //! - **Wrong hash type** — passing an `int` where `bytes32` is expected.
 //! - **Non-boolean if condition** — using an integer expression as a branch condition.
 //!
@@ -129,8 +128,8 @@ contract MixedTypes(pubkey owner, int minValue) {
 
 #[test]
 fn integer_equality_across_widths_produces_no_type_warning() {
-    // Equality between int params/literals and uint64le/uint32le introspection
-    // values is numerically well-defined, exactly like ordered comparisons.
+    // Equality between int params/literals and numeric introspection values is
+    // well-defined, exactly like ordered comparisons.
     let source = r#"
 contract IntEquality(pubkey owner, int expectedValue, int expectedVersion) {
     function spend(signature ownerSig) {
@@ -151,8 +150,8 @@ contract IntEquality(pubkey owner, int expectedValue, int expectedVersion) {
 }
 
 #[test]
-fn uint64le_vs_uint64le_comparison_produces_no_type_warning() {
-    // Comparing two introspection values of the same uint64le type is fine.
+fn introspected_value_comparison_produces_no_type_warning() {
+    // Introspected values are emitted as BigNums.
     let source = r#"
 contract SameTypes(pubkey owner) {
     function spend(signature ownerSig) {
@@ -161,11 +160,10 @@ contract SameTypes(pubkey owner) {
     }
 }"#;
     let output = compile_ok(source);
-    // Both sides are uint64le — no implicit conversion warning expected
     let has_implicit_warn = has_type_warning(&output, "implicit");
     assert!(
         !has_implicit_warn,
-        "uint64le vs uint64le must not warn about implicit conversion; got: {:?}",
+        "BigNum values must not warn about implicit conversion; got: {:?}",
         output.warnings
     );
 }
@@ -211,7 +209,7 @@ contract CorrectHashType(pubkey owner, bytes32 hashVal) {
 
 #[test]
 fn non_boolean_if_condition_produces_warning() {
-    // `tx.inputs[0].value` is uint64le, not bool — using it as an if condition.
+    // `tx.inputs[0].value` is an int, not bool — using it as an if condition.
     let source = r#"
 contract NonBoolCond(pubkey owner) {
     function spend(signature ownerSig) {

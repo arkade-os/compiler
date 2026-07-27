@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_ADD, OP_CAT, OP_SCRIPTNUMTOLE64, OP_SHA256};
+use arkade_compiler::opcodes::{OP_8, OP_ADD, OP_CAT, OP_NUM2BIN, OP_SHA256};
 
 // `+` between bytes-like values should compile to OP_CAT, not OP_ADD.
-// Ints concatenated with bytes get an OP_SCRIPTNUMTOLE64 coercion first
+// Ints concatenated with bytes get an OP_8 OP_NUM2BIN coercion first
 // so off-chain hashing can use a fixed 8-byte LE encoding.
 const CONCAT_CODE: &str = r#"
 contract Mix(
@@ -35,8 +35,8 @@ fn test_plus_on_bytes32_emits_op_cat() {
         asm
     );
     assert!(
-        asm.contains(OP_SCRIPTNUMTOLE64),
-        "Expected OP_SCRIPTNUMTOLE64 to coerce int sides; asm:\n{}",
+        asm.contains(&format!("{OP_8} {OP_NUM2BIN}")),
+        "Expected OP_8 OP_NUM2BIN to coerce int sides; asm:\n{}",
         asm
     );
     assert!(

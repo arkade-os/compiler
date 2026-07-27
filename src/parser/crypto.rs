@@ -56,46 +56,18 @@ pub(crate) fn parse_sha256_finalize(pair: Pair<Rule>) -> Result<Expression, Stri
     })
 }
 
-// ─── Conversion & Arithmetic Parsing ───────────────────────────────────
+// ─── Arithmetic Parsing ────────────────────────────────────────────────
 
-/// Parse neg64(value) → Expression::Neg64
-pub(crate) fn parse_neg64(pair: Pair<Rule>) -> Result<Expression, String> {
+/// Parse negate(value) → Expression::Negate
+pub(crate) fn parse_negate(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let value_pair = inner.next().ok_or("Missing value in neg64")?;
+    let value_pair = inner.next().ok_or("Missing value in negate")?;
     let value = match value_pair.as_rule() {
         Rule::identifier => Expression::Variable(value_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(value_pair.as_str().to_string()),
         _ => Expression::Property(value_pair.as_str().to_string()),
     };
-    Ok(Expression::Neg64 {
-        value: Box::new(value),
-    })
-}
-
-/// Parse le64ToScriptNum(value) → Expression::Le64ToScriptNum
-pub(crate) fn parse_le64_to_script_num(pair: Pair<Rule>) -> Result<Expression, String> {
-    let mut inner = pair.into_inner();
-    let value_pair = inner.next().ok_or("Missing value in le64ToScriptNum")?;
-    let value = match value_pair.as_rule() {
-        Rule::identifier => Expression::Variable(value_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(value_pair.as_str().to_string()),
-        _ => Expression::Property(value_pair.as_str().to_string()),
-    };
-    Ok(Expression::Le64ToScriptNum {
-        value: Box::new(value),
-    })
-}
-
-/// Parse le32ToLe64(value) → Expression::Le32ToLe64
-pub(crate) fn parse_le32_to_le64(pair: Pair<Rule>) -> Result<Expression, String> {
-    let mut inner = pair.into_inner();
-    let value_pair = inner.next().ok_or("Missing value in le32ToLe64")?;
-    let value = match value_pair.as_rule() {
-        Rule::identifier => Expression::Variable(value_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(value_pair.as_str().to_string()),
-        _ => Expression::Property(value_pair.as_str().to_string()),
-    };
-    Ok(Expression::Le32ToLe64 {
+    Ok(Expression::Negate {
         value: Box::new(value),
     })
 }

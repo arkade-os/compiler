@@ -119,6 +119,12 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         .as_str()
         .to_string();
 
+    if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
+        return Err(format!(
+            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bin2num/num2bin"
+        ));
+    }
+
     if let Some(signature) = reserved_function_signature(&name) {
         return Err(format!(
             "malformed reserved function call `{name}(...)`; expected {signature}"
@@ -141,9 +147,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "sha256Initialize" => Some("sha256Initialize(data)"),
         "sha256Update" => Some("sha256Update(ctx, chunk)"),
         "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
-        "neg64" => Some("neg64(value)"),
-        "le64ToScriptNum" => Some("le64ToScriptNum(value)"),
-        "le32ToLe64" => Some("le32ToLe64(value)"),
+        "negate" => Some("negate(value)"),
         "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
@@ -204,10 +208,8 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::sha256_initialize => parse_sha256_initialize(pair),
         Rule::sha256_update => parse_sha256_update(pair),
         Rule::sha256_finalize => parse_sha256_finalize(pair),
-        // Conversion & Arithmetic
-        Rule::neg64_func => parse_neg64(pair),
-        Rule::le64_to_script_num => parse_le64_to_script_num(pair),
-        Rule::le32_to_le64 => parse_le32_to_le64(pair),
+        // Arithmetic
+        Rule::negate_func => parse_negate(pair),
         // Crypto Opcodes
         Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
         Rule::tweak_verify => parse_tweak_verify(pair),

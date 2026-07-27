@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_LE32TOLE64, OP_LE64TOSCRIPTNUM, OP_NEG64,
-    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
+    OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_NEGATE, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
 };
 // ─── Streaming SHA256 Tests ────────────────────────────────────────────
 
@@ -86,81 +86,27 @@ fn test_sha256_finalize() {
     );
 }
 
-// ─── Conversion & Arithmetic Tests ─────────────────────────────────────
+// ─── Arithmetic Tests ──────────────────────────────────────────────────
 
 #[test]
-fn test_neg64() {
+fn test_negate() {
     let code = r#"
         contract ArithmeticOps(pubkey owner) {
             function negateValue(signature ownerSig, int value) {
                 require(checkSig(ownerSig, owner));
-                let negated = neg64(value);
+                let negated = negate(value);
             }
         }
     "#;
 
     let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse neg64: {:?}", result.err());
+    assert!(result.is_ok(), "Failed to parse negate: {:?}", result.err());
 
     let output = result.unwrap();
     let asm_str = crate::common::arkade_asm(&output, "negateValue");
     assert!(
-        asm_str.contains(OP_NEG64),
-        "Expected {OP_NEG64} in ASM: {}",
-        asm_str
-    );
-}
-
-#[test]
-fn test_le64_to_script_num() {
-    let code = r#"
-        contract ConversionOps(pubkey owner) {
-            function convertToScriptNum(signature ownerSig, int value) {
-                require(checkSig(ownerSig, owner));
-                let converted = le64ToScriptNum(value);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result.is_ok(),
-        "Failed to parse le64ToScriptNum: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "convertToScriptNum");
-    assert!(
-        asm_str.contains(OP_LE64TOSCRIPTNUM),
-        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}",
-        asm_str
-    );
-}
-
-#[test]
-fn test_le32_to_le64() {
-    let code = r#"
-        contract ConversionOps(pubkey owner) {
-            function extendTo64Bit(signature ownerSig, int value) {
-                require(checkSig(ownerSig, owner));
-                let extended = le32ToLe64(value);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result.is_ok(),
-        "Failed to parse le32ToLe64: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "extendTo64Bit");
-    assert!(
-        asm_str.contains(OP_LE32TOLE64),
-        "Expected {OP_LE32TOLE64} in ASM: {}",
+        asm_str.contains(OP_NEGATE),
+        "Expected {OP_NEGATE} in ASM: {}",
         asm_str
     );
 }
@@ -285,45 +231,6 @@ fn test_streaming_hash_full_workflow() {
     assert!(
         asm_str.contains(OP_SHA256FINALIZE),
         "Expected {OP_SHA256FINALIZE} in ASM: {}",
-        asm_str
-    );
-}
-
-#[test]
-fn test_conversion_chain() {
-    let code = r#"
-        contract ConversionChain(pubkey owner) {
-            function convertAndNegate(signature ownerSig, int value) {
-                require(checkSig(ownerSig, owner));
-                let extended = le32ToLe64(value);
-                let negated = neg64(extended);
-                let scriptNum = le64ToScriptNum(negated);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result.is_ok(),
-        "Failed to parse conversion chain: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "convertAndNegate");
-    assert!(
-        asm_str.contains(OP_LE32TOLE64),
-        "Expected {OP_LE32TOLE64} in ASM: {}",
-        asm_str
-    );
-    assert!(
-        asm_str.contains(OP_NEG64),
-        "Expected {OP_NEG64} in ASM: {}",
-        asm_str
-    );
-    assert!(
-        asm_str.contains(OP_LE64TOSCRIPTNUM),
-        "Expected {OP_LE64TOSCRIPTNUM} in ASM: {}",
         asm_str
     );
 }

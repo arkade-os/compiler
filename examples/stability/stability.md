@@ -147,7 +147,7 @@ The oracle signs BTC/USD prices off-chain as `sha256(ticker || price || timestam
    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
    ```
-   `+` dispatches on type: when at least one operand is bytes-like the compiler emits OP_CAT, auto-coercing int sides via OP_SCRIPTNUMTOLE64 to keep on-chain and off-chain hashing byte-identical.
+   `+` dispatches on type: when at least one operand is bytes-like the compiler emits OP_CAT, encoding int sides via `OP_8 OP_NUM2BIN` to keep on-chain and off-chain hashing byte-identical.
 
 Three layers of replay protection are baked into the signed message:
 

@@ -14,7 +14,7 @@ use crate::typechecker::ArkType;
 // rewrite type (e.g. `bytes32 + int` rewrites to `Concat` of type Bytes,
 // which then makes the outer `+ int` also a Concat).
 
-use crate::typechecker::{is_bytes_like, needs_scriptnum_to_le64, Scope};
+use crate::typechecker::{is_bytes_like, needs_num2bin_coercion, Scope};
 
 pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) {
     let constructor_scope = crate::typechecker::build_scope(&contract.parameters);
@@ -117,8 +117,8 @@ pub(crate) fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Exp
             let (new_l, lt) = rewrite_expression_concat(*left, scope);
             let (new_r, rt) = rewrite_expression_concat(*right, scope);
             if op == "+" && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
-                let coerce_left = needs_scriptnum_to_le64(&lt);
-                let coerce_right = needs_scriptnum_to_le64(&rt);
+                let coerce_left = needs_num2bin_coercion(&lt);
+                let coerce_right = needs_num2bin_coercion(&rt);
                 (
                     Expression::Concat {
                         left: Box::new(new_l),
@@ -130,13 +130,7 @@ pub(crate) fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Exp
                 )
             } else {
                 let result_type = match op.as_str() {
-                    "+" | "-" | "*" | "/" => {
-                        if lt == ArkType::Uint64Le || rt == ArkType::Uint64Le {
-                            ArkType::Uint64Le
-                        } else {
-                            ArkType::Int
-                        }
-                    }
+                    "+" | "-" | "*" | "/" => ArkType::Int,
                     "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
                     _ => ArkType::Unknown,
                 };
@@ -211,31 +205,13 @@ pub(crate) fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Exp
                 ArkType::Bytes,
             )
         }
-        Expression::Neg64 { value } => {
+        Expression::Negate { value } => {
             let (nv, _) = rewrite_expression_concat(*value, scope);
             (
-                Expression::Neg64 {
-                    value: Box::new(nv),
-                },
-                ArkType::Uint64Le,
-            )
-        }
-        Expression::Le64ToScriptNum { value } => {
-            let (nv, _) = rewrite_expression_concat(*value, scope);
-            (
-                Expression::Le64ToScriptNum {
+                Expression::Negate {
                     value: Box::new(nv),
                 },
                 ArkType::Int,
-            )
-        }
-        Expression::Le32ToLe64 { value } => {
-            let (nv, _) = rewrite_expression_concat(*value, scope);
-            (
-                Expression::Le32ToLe64 {
-                    value: Box::new(nv),
-                },
-                ArkType::Uint64Le,
             )
         }
         Expression::ContractInstance {

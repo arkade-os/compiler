@@ -192,26 +192,20 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_expression_asm(left, asm);
             if *coerce_left {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+                asm.push(OP_8.to_string());
+                asm.push(OP_NUM2BIN.to_string());
             }
             emit_expression_asm(right, asm);
             if *coerce_right {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
+                asm.push(OP_8.to_string());
+                asm.push(OP_NUM2BIN.to_string());
             }
             asm.push(OP_CAT.to_string());
         }
-        // Conversion & Arithmetic
-        Expression::Neg64 { value } => {
+        // Arithmetic
+        Expression::Negate { value } => {
             emit_expression_asm(value, asm);
-            asm.push(OP_NEG64.to_string());
-        }
-        Expression::Le64ToScriptNum { value } => {
-            emit_expression_asm(value, asm);
-            asm.push(OP_LE64TOSCRIPTNUM.to_string());
-        }
-        Expression::Le32ToLe64 { value } => {
-            emit_expression_asm(value, asm);
-            asm.push(OP_LE32TOLE64.to_string());
+            asm.push(OP_NEGATE.to_string());
         }
         // Crypto Opcodes
         Expression::EcMulScalarVerify {
@@ -354,7 +348,7 @@ pub(crate) fn emit_contract_instance_asm(
     asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
 }
 
-/// Emit assembly for a binary arithmetic operation (64-bit)
+/// Emit assembly for a binary BigNum operation.
 pub(crate) fn emit_binary_op_asm(
     left: &Expression,
     op: &str,

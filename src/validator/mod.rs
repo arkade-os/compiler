@@ -398,9 +398,7 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             context,
             last_chunk,
         } => vec![context, last_chunk],
-        Expression::Neg64 { value }
-        | Expression::Le64ToScriptNum { value }
-        | Expression::Le32ToLe64 { value } => vec![value],
+        Expression::Negate { value } => vec![value],
         Expression::EcMulScalarVerify {
             scalar,
             point_p,
