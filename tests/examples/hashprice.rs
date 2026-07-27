@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIV64, OP_FINDASSETGROUPBYASSETID, OP_INSPECTOUTASSETLOOKUP,
-    OP_MUL64, OP_SHA256,
+    OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIV, OP_FINDASSETGROUPBYASSETID, OP_INSPECTOUTASSETLOOKUP,
+    OP_MUL, OP_SHA256,
 };
 
 use crate::common::{arkade_asm, arkade_asm_tokens, arkade_inputs, group};
@@ -80,7 +80,7 @@ fn test_usd_settle_verifies_both_fixings_and_converts() {
     assert_eq!(shas, 2, "usd settle: two message digests");
     let asm = tokens.join(" ");
     assert!(
-        asm.contains(OP_DIV64),
+        asm.contains(OP_DIV),
         "usd settle: must divide by btcUsdPrice"
     );
     assert_eq!(
@@ -103,7 +103,7 @@ fn test_btc_settle_splits_without_division() {
     // truncation dust in settlement (division only appears in redemption).
     let out = compile(BTC_CODE).unwrap();
     let asm = arkade_asm(&out, "settle");
-    assert!(!asm.contains(OP_DIV64), "btc settle must not divide: {asm}");
+    assert!(!asm.contains(OP_DIV), "btc settle must not divide: {asm}");
 }
 
 #[test]
@@ -154,8 +154,8 @@ fn test_redeem_is_pro_rata() {
         let out = compile(code).unwrap();
         for name in ["redeemUp", "redeemDown"] {
             let asm = arkade_asm(&out, name);
-            assert!(asm.contains(OP_MUL64), "{name}: pro-rata multiply missing");
-            assert!(asm.contains(OP_DIV64), "{name}: pro-rata divide missing");
+            assert!(asm.contains(OP_MUL), "{name}: pro-rata multiply missing");
+            assert!(asm.contains(OP_DIV), "{name}: pro-rata divide missing");
         }
     }
 }
