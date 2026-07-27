@@ -534,6 +534,8 @@ pub enum Expression {
         value: Box<Expression>,
         size: Box<Expression>,
     },
+    /// Reverse a byte string: reverseBytes(data) → OP_REVERSEBYTES
+    ReverseBytes { data: Box<Expression> },
     /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
     SizeOf { data: Box<Expression> },
     // ─── Packet Introspection ──────────────────────────────────────────

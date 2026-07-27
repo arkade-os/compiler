@@ -148,6 +148,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "sha256Update" => Some("sha256Update(ctx, chunk)"),
         "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
         "negate" => Some("negate(value)"),
+        "reverseBytes" => Some("reverseBytes(data)"),
         "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
@@ -219,6 +220,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::cat_func => parse_cat(pair),
         Rule::bin2num_func => parse_bin2num(pair),
         Rule::num2bin_func => parse_num2bin(pair),
+        Rule::reverse_bytes_func => parse_reverse_bytes(pair),
         Rule::size_func => parse_size(pair),
         // Packet introspection
         Rule::packet_inspect => parse_packet_inspect(pair),
@@ -316,6 +318,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::substr_func => parse_substr(inner),
         Rule::cat_func => parse_cat(inner),
         Rule::num2bin_func => parse_num2bin(inner),
+        Rule::reverse_bytes_func => parse_reverse_bytes(inner),
         Rule::packet_inspect => parse_packet_inspect(inner),
         Rule::input_packet_inspect => parse_input_packet_inspect(inner),
         Rule::input_introspection => parse_input_introspection_to_expression(inner),

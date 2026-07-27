@@ -15,8 +15,8 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_BIN2NUM, OP_CAT, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
     OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN, OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SIZE, OP_SUBSTR,
-    OP_TXID,
+    OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN, OP_PUSHCURRENTINPUTINDEX, OP_REVERSEBYTES, OP_SHA256,
+    OP_SIZE, OP_SUBSTR, OP_TXID,
 };
 
 fn compile_first_function_asm(src: &str) -> Vec<String> {
@@ -182,6 +182,22 @@ contract Num2BinDemo(int exit) {{
         asm.iter().any(|s| s == OP_NUM2BIN),
         "expected OP_NUM2BIN; got {:?}",
         asm
+    );
+}
+
+#[test]
+fn test_reverse_bytes_emits_op_reversebytes() {
+    let src = r#"
+contract ReverseBytesDemo(bytes data) {
+  function probe() {
+    require(reverseBytes(data));
+  }
+}"#;
+
+    let asm = compile_first_function_asm(src);
+    assert!(
+        asm.iter().any(|op| op == OP_REVERSEBYTES),
+        "expected OP_REVERSEBYTES; got {asm:?}"
     );
 }
 

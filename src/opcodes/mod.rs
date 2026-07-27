@@ -124,6 +124,7 @@ pub const OP_XOR: &str = "OP_XOR";
 // Numeric conversion (introspector extensions)
 pub const OP_BIN2NUM: &str = "OP_BIN2NUM";
 pub const OP_NUM2BIN: &str = "OP_NUM2BIN";
+pub const OP_REVERSEBYTES: &str = "OP_REVERSEBYTES";
 
 // Hashing (additional)
 pub const OP_SHA1: &str = "OP_SHA1";

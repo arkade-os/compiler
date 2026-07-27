@@ -273,6 +273,11 @@ pub(crate) fn substitute_expression(
             )),
             property: property.clone(),
         },
+        Expression::ReverseBytes { data } => Expression::ReverseBytes {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+        },
         // Recurse into contract instance arguments
         Expression::ContractInstance {
             contract_name,

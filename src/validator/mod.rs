@@ -412,7 +412,9 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::ContractInstance { args, .. } => args.iter().collect(),
         Expression::Substr { data, offset, size } => vec![data, offset, size],
         Expression::Cat { left, right } => vec![left, right],
-        Expression::Bin2Num { data } | Expression::SizeOf { data } => vec![data],
+        Expression::Bin2Num { data }
+        | Expression::ReverseBytes { data }
+        | Expression::SizeOf { data } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],

@@ -219,6 +219,18 @@ pub(crate) fn parse_num2bin(pair: Pair<Rule>) -> Result<Expression, String> {
     })
 }
 
+/// Parse reverseBytes(data) → Expression::ReverseBytes
+pub(crate) fn parse_reverse_bytes(pair: Pair<Rule>) -> Result<Expression, String> {
+    let data = parse_byte_value(
+        pair.into_inner()
+            .next()
+            .ok_or("Missing data in reverseBytes")?,
+    )?;
+    Ok(Expression::ReverseBytes {
+        data: Box::new(data),
+    })
+}
+
 /// Parse size(data) → Expression::SizeOf
 pub(crate) fn parse_size(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();

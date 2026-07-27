@@ -263,6 +263,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(size, asm);
             asm.push(OP_NUM2BIN.to_string());
         }
+        Expression::ReverseBytes { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_REVERSEBYTES.to_string());
+        }
         Expression::SizeOf { data } => {
             emit_expression_asm(data, asm);
             asm.push(OP_SIZE.to_string());

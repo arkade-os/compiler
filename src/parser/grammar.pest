@@ -143,6 +143,7 @@ primary_expr = {
     cat_func |
     bin2num_func |
     num2bin_func |
+    reverse_bytes_func |
     size_func |
     input_packet_inspect |
     packet_inspect |
@@ -533,6 +534,7 @@ byte_value = {
     substr_func |
     cat_func |
     num2bin_func |
+    reverse_bytes_func |
     packet_inspect |
     input_packet_inspect |
     input_introspection |
@@ -559,6 +561,11 @@ bin2num_func = {
 // BigNum → fixed-width bytes: num2bin(num, size) → OP_NUM2BIN
 num2bin_func = {
     "num2bin" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Reverse a byte array: reverseBytes(bytes) → OP_REVERSEBYTES
+reverse_bytes_func = {
+    "reverseBytes" ~ "(" ~ byte_value ~ ")"
 }
 
 // Byte-array length: size(bytes) → OP_SIZE OP_NIP (returns size only)
