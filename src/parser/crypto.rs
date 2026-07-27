@@ -56,6 +56,16 @@ pub(crate) fn parse_sha256_finalize(pair: Pair<Rule>) -> Result<Expression, Stri
     })
 }
 
+pub(crate) fn parse_sighash(pair: Pair<Rule>) -> Result<Expression, String> {
+    let hash_type = pair
+        .into_inner()
+        .next()
+        .ok_or("Missing hash type in sighash")?;
+    Ok(Expression::Sighash {
+        hash_type: Box::new(parse_atom_pair(hash_type)),
+    })
+}
+
 // ─── Arithmetic Parsing ────────────────────────────────────────────────
 
 /// Parse negate(value) → Expression::Negate

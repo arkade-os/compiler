@@ -147,6 +147,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "sha256Initialize" => Some("sha256Initialize(data)"),
         "sha256Update" => Some("sha256Update(ctx, chunk)"),
         "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
+        "sighash" => Some("sighash(hashType)"),
         "negate" => Some("negate(value)"),
         "modExp" => Some("modExp(base, exponent, modulus)"),
         "ecAdd" => Some("ecAdd(x1, y1, x2, y2, curveId)"),
@@ -213,6 +214,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::sha256_initialize => parse_sha256_initialize(pair),
         Rule::sha256_update => parse_sha256_update(pair),
         Rule::sha256_finalize => parse_sha256_finalize(pair),
+        Rule::sighash_func => parse_sighash(pair),
         // Arithmetic
         Rule::negate_func => parse_negate(pair),
         Rule::mod_exp_func => parse_mod_exp(pair),

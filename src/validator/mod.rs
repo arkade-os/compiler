@@ -398,6 +398,7 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             context,
             last_chunk,
         } => vec![context, last_chunk],
+        Expression::Sighash { hash_type } => vec![hash_type],
         Expression::Negate { value } => vec![value],
         Expression::ModExp {
             base,

@@ -27,6 +27,7 @@ pub const OP_CHECKSIG: &str = "OP_CHECKSIG";
 pub const OP_CHECKSIGVERIFY: &str = "OP_CHECKSIGVERIFY";
 pub const OP_CHECKSIGFROMSTACK: &str = "OP_CHECKSIGFROMSTACK";
 pub const OP_CHECKSIGADD: &str = "OP_CHECKSIGADD";
+pub const OP_SIGHASH: &str = "OP_SIGHASH";
 
 // Comparisons
 pub const OP_EQUAL: &str = "OP_EQUAL";

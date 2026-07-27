@@ -136,6 +136,7 @@ primary_expr = {
     sha256_update |
     sha256_finalize |
     sha256_func |
+    sighash_func |
     negate_func |
     mod_exp_func |
     ec_add |
@@ -195,6 +196,7 @@ complex_expression = _{
     sha256_initialize |
     sha256_update |
     sha256_finalize |
+    sighash_func |
     negate_func |
     mod_exp_func |
     ec_add |
@@ -504,6 +506,10 @@ sha256_update = {
 // Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk) → OP_SHA256FINALIZE
 sha256_finalize = {
     "sha256Finalize" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+sighash_func = {
+    "sighash" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
 
 // ─── Arithmetic ────────────────────────────────────────────────────────

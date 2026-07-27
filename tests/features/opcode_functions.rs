@@ -1,7 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_1, OP_CHECKSIGFROMSTACK, OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP,
-    OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY, OP_VERIFY,
+    OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_TWEAKVERIFY,
+    OP_VERIFY,
 };
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
@@ -248,6 +249,27 @@ fn test_tweak_verify() {
         asm_str.contains(OP_TWEAKVERIFY),
         "Expected {OP_TWEAKVERIFY} in ASM: {}",
         asm_str
+    );
+}
+
+// ─── Signatures ────────────────────────────────────────────────────────
+
+#[test]
+fn test_sighash() {
+    let code = r#"
+        contract SignatureHash(int hashType) {
+            function hashCurrentInput() {
+                let hash = sighash(hashType);
+                require(true);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile sighash");
+    let asm = crate::common::arkade_asm(&output, "hashCurrentInput");
+    assert!(
+        asm.contains(&format!("<hashType> {OP_SIGHASH}")),
+        "Expected ordered {OP_SIGHASH} operand in ASM: {asm}"
     );
 }
 

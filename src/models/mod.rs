@@ -481,6 +481,8 @@ pub enum Expression {
         context: Box<Expression>,
         last_chunk: Box<Expression>,
     },
+    /// Signature hash for the current input under the selected hash type.
+    Sighash { hash_type: Box<Expression> },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Negate a BigNum value: negate(value)
     Negate { value: Box<Expression> },

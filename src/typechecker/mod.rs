@@ -542,7 +542,8 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::Sha256 { .. }
         | Expression::Sha256Initialize { .. }
         | Expression::Sha256Update { .. }
-        | Expression::Sha256Finalize { .. } => ArkType::Bytes32,
+        | Expression::Sha256Finalize { .. }
+        | Expression::Sighash { .. } => ArkType::Bytes32,
 
         // Byte-string ops
         Expression::Concat { .. } => ArkType::Bytes,

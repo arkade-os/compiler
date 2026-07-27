@@ -278,6 +278,11 @@ pub(crate) fn substitute_expression(
                 data, index_var, value_var, k, array_name,
             )),
         },
+        Expression::Sighash { hash_type } => Expression::Sighash {
+            hash_type: Box::new(substitute_expression(
+                hash_type, index_var, value_var, k, array_name,
+            )),
+        },
         Expression::ModExp {
             base,
             exponent,
