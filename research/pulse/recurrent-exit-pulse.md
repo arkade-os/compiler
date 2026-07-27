@@ -1,11 +1,11 @@
 # PULSE — Recurrent Unilateral Exit for Emulator-Enforced Pools
 
-**Pooled Unilateral-exit via Lattice State Epochs. Revision 2 (amended).**
+**Pooled Unilateral-exit via Lattice State Epochs. Revision 2.1 (amended).**
 
 A protocol for giving open-membership pool contracts on Arkade a *standing* unilateral
 exit, enforced by recurrent state updates between the transacting parties. This document
 is a design specification: it defines the protocol lifecycle, the trust model, the
-attack analysis — seventeen adversarial findings (A1–A17), detailed in §10 — that shaped
+attack analysis — twenty-three adversarial findings (A1–A23), detailed in §10 — that shaped
 it, and the compiler surface that would standardize it. It proposes no code changes; the
 compiler-facing sections are future work.
 
@@ -15,7 +15,7 @@ covenants and today's exit asymmetry).
 
 ## Table of contents
 
-- [0. Amendment log (revision 2)](#0-amendment-log-revision-2)
+- [0. Amendment log](#0-amendment-log)
 - [1. Plain-language explainers](#1-plain-language-explainers)
   - [1.1 The 30-second version](#11-the-30-second-version)
   - [1.2 The plain-language walkthrough (no math, no cryptography)](#12-the-plain-language-walkthrough-no-math-no-cryptography)
@@ -42,6 +42,9 @@ covenants and today's exit asymmetry).
   - [The seal set](#the-seal-set)
   - [Optional economic backstop: the bonded federation](#optional-economic-backstop-the-bonded-federation)
   - [9.1 Hardening the referees (TEE-constrained, bonded, conflict-free)](#91-hardening-the-referees-tee-constrained-bonded-conflict-free)
+  - [9.2 Self-enforcing equivocation bonds (EOTS with pre-committed nonces)](#92-self-enforcing-equivocation-bonds-eots-with-pre-committed-nonces)
+  - [9.3 Distributed-systems hardening (token-free)](#93-distributed-systems-hardening-token-free)
+  - [9.4 Capital requirements, quantified](#94-capital-requirements-quantified)
 - [10. Attack analysis appendix](#10-attack-analysis-appendix)
 - [11. Compiler surface (future work — gated zones)](#11-compiler-surface-future-work--gated-zones)
 - [12. The no-fork endgame, and the GSR annex](#12-the-no-fork-endgame-and-the-gsr-annex)
@@ -58,9 +61,10 @@ covenants and today's exit asymmetry).
 
 ---
 
-## 0. Amendment log (revision 2)
+## 0. Amendment log
 
-Changes relative to the revision-1 draft (PR #45, `docs/recurrent-exit-pulse.md`):
+**Revision 2** — changes relative to the revision-1 draft (PR #45,
+`docs/recurrent-exit-pulse.md`):
 
 1. **Relocated to `research/pulse/`.** The repository restructure removed the `docs/`
    tree; research-grade protocol documents now live under `research/`. Cross-references
@@ -95,6 +99,33 @@ Changes relative to the revision-1 draft (PR #45, `docs/recurrent-exit-pulse.md`
 9. **Timelock margins tightened (§7.4).** `margin` now explicitly includes virtual-chain
    depth and a stampede fee buffer; clients cap pulses-between-heartbeats. The
    slot-level CSV's rationale is stated (§7.1 step 3).
+
+**Revision 2.1** — follow-up on the same branch:
+
+10. **§9.2 — self-enforcing equivocation bonds.** Extractable one-time signatures
+    (EOTS, the Babylon finality-provider primitive) with pre-committed per-epoch
+    nonces make any double-signed attestation, seal, or commitment leak the signer's
+    key, letting anyone execute a pre-signed burn of a plain-BTC bond — judge-free,
+    token-free, no fork. This **corrects the §9 "rejected alternative"**: the
+    nonce-reuse rejection is valid for *transaction* signatures only, not for
+    protocol artifacts whose validity conforming software judges.
+11. **§9.3 — distributed-systems hardening**, all token-free: the SUNDR
+    fork-linearizability ceiling as the design's theoretical frame, a
+    witness-cosigned transparency log for the commitment chain (1-of-N split-view
+    detection), proactive FROST share refresh on the heartbeat cadence, and
+    erasure-coded data availability with sampling.
+12. **§9.4 — capital requirements quantified**, including an honest correction of
+    revision 2's `requiredCoverage` claim: heartbeat cadence does **not** bound the
+    lie-once drain (only the signing threshold does — consensus checks nothing but
+    signatures). Sizing is now per adversary class, with a worked example,
+    per-identity amortization rules, a fee-floor formula, and a renewal-ladder
+    liquidity schedule.
+13. **Six new findings (A18–A23)** red-teaming the new machinery: accidental
+    self-slash, nonce-chain withholding, burn-tx pinning, DA sampling eclipse,
+    reshare capture, and correlated per-identity bonds.
+14. Evidence lists (§8, §13.4), the GSR annex (§12.2), §13.1, and the trust
+    statement updated for the self-enforcing layer; new vocabulary (`EOTS`, nonce
+    chain, `B_eq`, `w_max`).
 
 ---
 
@@ -271,7 +302,11 @@ PULSE closes this gap.
 | **Δ (`exit`)** | The exit leaf's relative timelock — the contest window |
 | **`renew`** | The pool's absolute expiry, after which the Operator's sweep path eventually matures |
 | **Bond** | The Operator's optional on-chain security deposit, held by a `k`-of-`n` federation of referees independent of the Operator; pays victims on objective evidence or returns to the Operator at expiry (§9) |
-| **`requiredCoverage`** | The minimum bond size — an at-risk-*per-epoch* floor (the passive value a single collusion could short before the next heartbeat), not total TVL (§9) |
+| **`requiredCoverage`** | The minimum bond size for a given adversary class — quantified per class in §9.4 (revision 2.1 corrects revision 2's at-risk-per-epoch claim) |
+| **EOTS** | Extractable one-time signature: a Schnorr signature that is protocol-valid only under a pre-committed per-epoch nonce; signing two messages for one epoch leaks the secret key (§9.2) |
+| **Nonce chain** | The Merkle-committed sequence of per-epoch signing nonces published at genesis and each heartbeat; attestations, seals, and commitments are valid only under their committed nonce (§9.2) |
+| **Equivocation bond `B_eq`** | Plain-BTC bond whose only pre-timelock spend is a pre-signed burn completable by anyone holding the EOTS-extracted key — self-executing slashing of the double-sign class (§9.2, §9.4) |
+| **Outflow cap `w_max`** | Client/enclave-enforced bound on one pulse's net on-chain outflow; bounds every *detectable* theft class (§9.4) |
 
 > **A note on "checkpoint."** Arkade already uses **checkpoint transactions** for
 > something specific: the intermediate pre-signed transactions a user co-signs when
@@ -377,8 +412,8 @@ lattice is already valid.
    - (b) **every passive slot equals the `S_k` carry-forward**, Merkle-checked against
      `A_{k+1}`;
    - (c) any outstanding exit notice is honored with a full payout (§7.5);
-   - (d) if the deployment is bonded, the bond still covers the pool's at-risk value
-     (§9);
+   - (d) the pulse's net on-chain outflow respects the pool's `w_max` cap, and — if
+     the deployment is bonded — coverage per §9.4 still holds;
    - (e) **its own lattice branch is in its hands** — *"no lattice in my hands, no
      pulse."* Publication to the relay mesh alone is never trusted.
 5. **Transition signing.** Only now do the Operator + transacting parties sign
@@ -603,7 +638,8 @@ data-availability receipt (§7.1 step 6) makes it the custodian of last resort.
 **The contest window Δ is also a dispute window.** No published evidence can freeze
 `U_k` on-chain — there is no covenant to freeze it. But a standardized,
 machine-checkable evidence bundle (`A_j` plus the contradicting `L_k`, a forked `h_k`,
-or a sealed exit notice plus a payout-less displacement) does two things during Δ: it
+a sealed exit notice plus a payout-less displacement, or an EOTS extraction pair —
+§9.2, the one class whose punishment executes itself) does two things during Δ: it
 makes the referees *earmark* the bond where one exists (blocking its expiry-return
 while a live contradiction stands), and it flips every conforming client's
 accept-policy to *refuse new pulses* on that pool. Since the next pulse is invalid
@@ -721,14 +757,17 @@ FROST share** to any pulse that violates it:
 - incorrect passive carry-forward or conservation (the §7.1 gate and §7.1a predicate);
 - a pulse proposed before the previous epoch's seal `σ_k` exists (§7.1 step 6);
 - **a displacement of a sealed exit notice that omits the member's full payout**
-  (§7.5).
+  (§7.5);
+- a pulse whose net on-chain outflow exceeds the pool's `w_max` cap (§9.4).
 
 So a lattice that shorts a passive member — or an unlawful eviction — **cannot be
 signed at all**: strictly stronger than "it can be signed but you are compensated," and
 it needs **no TVL-sized capital and no separate referee quorum**. In this model the
 continuity attestation `A_k` is **threshold-signed** by the federation (promoted from
-the revision-1 optional hardening): lying about a passive balance requires colluding
-`t` independently-operated enclaves, twice over (attestation *and* lattice). The
+the revision-1 optional hardening) and **EOTS-bound** (§9.2): lying about a passive
+balance requires colluding `t` independently-operated enclaves, twice over
+(attestation *and* lattice), and attesting two states for one epoch leaks the
+aggregate key and burns the equivocation bond. The
 protocol then reduces to what it should be: a **framework that generates the recurrent
 exit lattices in the background**, as part of the federation's normal per-pulse
 signing — members and watchtowers receive their branch automatically, with no bond
@@ -754,7 +793,10 @@ The epoch seal (§7.1 step 6) needs issuers. Requirements and honest costs:
 - **Duties:** recompute the §7.1a predicate; verify possession of the full artifact
   bundle (the seal *is* a data-availability receipt); countersign `h_k`; seal exit
   notices (§7.5); refuse to seal a disputed tip (§8). Nothing else — sealers are never
-  in the exit path and hold no funds.
+  in the exit path and hold no funds. Seals are **EOTS-bound per epoch** (§9.2), so
+  sealing two conflicting tips leaks the sealer's key and burns its fidelity bond; and
+  sealers double as **witnesses of the commitment transparency log** (§9.3), signing
+  tree heads whose consistency anyone can gossip-check.
 - **Default composition: the referee federation of the bonded backstop below,
   Operator excluded** — the same conflict rule as the slashing quorum (§9.1). The jobs
   compose naturally: referees need the artifacts to adjudicate anyway, and holding the
@@ -811,20 +853,28 @@ Operator's infrastructure:
   (`OP_CHECKSIGFROMSTACK`, or `OP_CAT`-verifiable hash-based one-time signatures whose
   reuse leaks a preimage that sweeps the bond); until then, the multisig-plus-referees
   construction is the honest mechanism.
-- **Rejected alternative, documented honestly:** forced-nonce-reuse key-leak punishment
-  (make any second `P_k` signature leak the aggregate secret) does **not** work with
-  plain CHECKSIG: a cheater simply signs with a fresh nonce, and Script cannot pin
-  the nonce.
+- **Scope of the nonce-reuse rejection — corrected in revision 2.1.** Forced-nonce-reuse
+  key-leak punishment (make any second `P_k` signature leak the aggregate secret) does
+  **not** work for **transaction signatures**: Bitcoin consensus accepts any valid
+  nonce, so a cheater spending `U_k` simply signs with a fresh nonce, and Script cannot
+  pin it. Revision 2 over-generalized this into rejecting key-leak punishment
+  wholesale. For **protocol artifacts whose validity is judged by conforming
+  software** — `A_k`, `σ_k`, `h_k` — the *protocol* can pin the nonce, and §9.2 does
+  exactly that.
 - **Sizing and client enforcement.** The bond is per-pool and TVL-tracking. Wallets
   refuse to participate in pulses of an under-bonded pool (`bond <
   requiredCoverage(...)`) — client-side policy informed by a bond-reference field in the
-  ABI (§11). **`requiredCoverage` is an at-risk-*per-epoch* floor, not total TVL:** the
-  most that can be stolen before the next heartbeat is the passive value a single
-  collusion can short, so full deterrence needs `bond ≥` (passive value at risk between
-  heartbeats). Heartbeat cadence is the lever that keeps this affordable — frequent
-  heartbeats shrink the at-risk window, so the bond covers per-epoch exposure rather than
-  the whole pool. Below full coverage, the residual is exactly the +EV-above-bond risk of
-  §12.1 item 3: a capital-efficiency-vs-coverage policy choice, not a free parameter.
+  ABI (§11). **Revision 2.1 correction:** revision 2 claimed heartbeat cadence bounds
+  at-risk-per-epoch. It does not bound the worst class — a fully colluding signer set
+  can drain the pool in a *single* transition, because L1 consensus checks nothing but
+  the signature set (§2), and no cadence or client cap stops a transaction that
+  confirms. What cadence and the outflow cap `w_max` bound is every **detectable**
+  class. Honest sizing is therefore per adversary class and quantified in §9.4: full
+  lie-once deterrence for a single-Operator deployment needs `bond ≥ p·T` (all passive
+  value) — usually uneconomic, which is precisely why the threshold model is primary
+  and this bond is an optional, *fractional* backstop there. Below full coverage, the
+  residual is exactly the +EV-above-bond risk of §12.1 item 3: a
+  capital-efficiency-vs-coverage policy choice, not a free parameter.
 - **Permanence.** Under the working assumption that no covenant soft fork ever
   activates on Bitcoin, the federation is a permanent fixture of the deterrent layer —
   and is engineered to be acceptable as one: evidence-only powers, k-of-n diversity,
@@ -896,12 +946,175 @@ the bond apparatus: members still sweep their last-good amount. Referee compromi
 the *amount-deterrent*, never the *exit*. As everywhere else, this hardens the trusted
 layer; only a covenant (§12.2) converts amount-safety into cryptographic self-custody.
 
+### 9.2 Self-enforcing equivocation bonds (EOTS with pre-committed nonces)
+
+The §9 nonce-reuse rejection, correctly scoped, leaves a door open — and Babylon's
+finality providers walked through it first. Bitcoin consensus accepts any valid nonce
+on a **transaction** signature, so Script cannot pin nonces there. But `A_k`, `σ_k`,
+and `h_k` are **protocol artifacts**: their validity is judged by conforming clients,
+sealers, and enclaves, and the protocol can therefore demand a specific nonce. That is
+an **extractable one-time signature (EOTS)**, and it makes the double-sign class of
+misbehavior *self-punishing on plain Bitcoin, today, with no judges, no token, and no
+fork*:
+
+- **Nonce commitment.** At genesis and at each heartbeat, every artifact signer (the
+  operator threshold for `A_k`/`h_k`; each sealer for `σ_k`) publishes a Merkle
+  commitment to its per-epoch nonces `R_1 … R_H` covering the horizon to the next
+  heartbeat plus margin (A19). For a FROST signer this is the aggregate nonce per
+  epoch, fixed by the standard preprocessing round.
+- **Validity rule.** An attestation, seal, or commitment for epoch `k` is valid
+  **only if signed under the committed `R_k`.** A fresh-nonce signature is not
+  "cheating detected" — it is *not an artifact at all*: every conforming verifier
+  rejects it, so signing with a fresh nonce buys the cheater nothing. This is the move
+  Script cannot make and conforming software can.
+- **Extraction.** Two artifacts for the same epoch under the same `R_k` on different
+  messages leak the secret key by plain Schnorr algebra:
+  `s₁ − s₂ = (e₁ − e₂)·x ⇒ x = (s₁ − s₂)/(e₁ − e₂)`. Anyone holding both artifacts —
+  one honest gossip partner suffices — computes `x`.
+- **The bond that spends itself.** The equivocation bond `B_eq` is a taproot UTXO with
+  exactly two paths: (i) a **pre-signed burn transaction** (output provably
+  unspendable, plus a P2A anchor for fees — A20) whose signature is
+  adaptor-encrypted under the artifact key `X`, completable by *anyone* who learns the
+  extracted `x`; and (ii) owner reclaim behind a CLTV that clears the dispute window.
+  Equivocate → any observer completes the adaptor and burns the bond. No referee
+  co-signs anything. (The owner can always burn its own bond early; that is harmless.
+  Babylon's production stack adds a covenant-emulation committee because its staking
+  script needs richer paths; this construction imports only the EOTS + timelocked-bond
+  primitive and needs none.)
+
+**What this upgrades.** A13-class forks (`h_k` equivocation, double-allocating across
+two off-chain histories), double-attestation of a passive balance, and double-sealing
+all collapse from *"objective evidence a k-of-n referee quorum adjudicates"* to
+**automatic bond loss triggered by any single observer**. The deterrent's honesty
+assumption for the equivocation class drops from "≥1 honest referee in k-of-n" to
+"≥1 honest gossiper + Bitcoin." The judicial federation survives for exactly two jobs:
+routing *compensation* (a burn deters but does not repay — deployments wanting
+restitution keep the §9 bond tranche), and the lie-once class below. A deployment that
+wants slashing to *pay victims* instead of burning can re-sign the slashing
+transaction each pulse toward the current `S_k` distribution, enforced as part of the
+ceremony by the enclaves — more machinery, actual restitution; the burn variant is the
+floor that works with zero ceremony weight.
+
+**Honest limits, stated plainly.** (i) **Lie-once is immune**: a smash-and-grab that
+attests once and steals on-chain never produces a second signature — the
+contradiction is signature-vs-chain-fact, and no key leaks. That class stays with the
+judicial/compensation layer and the threshold model. (ii) **Self-slash is a real
+operational hazard** (A18): a crash-restart that re-signs an epoch, or an attacker
+feeding a signer two versions of one epoch, burns an *honest* signer's bond — the
+same state-loss discipline Lightning demands, and Babylon operators have paid this
+tax in practice. (iii) **Burn ≠ compensation** — victims are made whole only by the
+judicial tranche or the re-signed-slash variant. (iv) For a FROST signer the leak is
+the *aggregate* key, so the burn hits the **collective** bond; attributing which
+members colluded needs the accountability tooling of §9.3, after which individual
+fidelity bonds are actionable via §9.1's paths.
+
+### 9.3 Distributed-systems hardening (token-free)
+
+Four results from the distributed-systems literature slot into PULSE without a token,
+and together they reshape what the federations are trusted *for*:
+
+- **The ceiling: fork-linearizability (SUNDR).** An untrusted coordinator serving
+  state to clients who do not talk to each other can always *fork* their views — and
+  can never *merge* a fork back undetected once they do talk. This is the
+  twenty-year-old result that frames the whole design: fork **prevention** by the
+  Operator is impossible without the victim's signature or a covenant (the §13.2
+  trilemma, in DS terms), so **detection is the optimum** — and the right
+  architecture is exactly what PULSE now has: make detection 1-of-N (this section),
+  make punishment self-executing on detection (§9.2), and keep a judicial layer only
+  for the classes detection cannot reach.
+- **Witness-cosigned transparency log.** The `h_k` chain becomes an append-only
+  Merkle log, certificate-transparency style: sealers sign successive *tree heads*
+  (EOTS-bound, §9.2), and any two signed heads either verify a consistency proof or
+  yield an extractable equivocation. Watchtowers and counterparties track O(1) heads
+  and gossip them; a split-view (A13) now requires showing every gossip partner a
+  consistent forgery *forever*, and any single crossing of the two views triggers the
+  §9.2 burn. The seal set's trust profile sharpens to: **k-of-n for liveness, 1-of-N
+  for safety-detection** — one honest (or merely leaky) witness breaks equivocation
+  secrecy.
+- **Proactive share refresh + duty rotation.** The FROST shares are proactively
+  reshared on the heartbeat cadence (Herzberg-style PSS): a mobile adversary must
+  compromise `t` members **within one refresh window**, not accumulate breaches over
+  the pool's lifetime. Membership churn per window is rate-limited (A22), and
+  per-epoch sealer duty subsets are drawn by public randomness (Bitcoin block hashes
+  suffice) so an adaptive attacker cannot know far in advance which seats to target.
+- **Erasure-coded data availability with sampling.** The artifact bundle is
+  Reed-Solomon coded so that any `k` of `n` sealers reconstruct it in full; the epoch
+  seal attests chunk possession, and members/watchtowers randomly sample chunks
+  against the committed root over independent transports. The §8 invariant "the data
+  only needs to exist *somewhere*" upgrades from replication-trust to coded
+  redundancy with cheap probabilistic verification — the data-availability math
+  without a data-availability token (its residual is A21).
+
+### 9.4 Capital requirements, quantified
+
+Parameters: pool TVL `T`; passive fraction `p` (passive value `P = p·T`); operator
+threshold `t`-of-`n` with per-member fidelity bond `b_m`; seal set `k_s`-of-`n_s`
+with per-seat bond `b_s`; referee quorum `k_r`-of-`n_r` with per-seat bond `b_r`
+(bonded mode only); operator backstop `B_op = c·P` with coverage ratio `c ∈ [0,1]`;
+equivocation bond `B_eq`; per-pulse net outflow cap `w_max`; detection-to-halt lag
+`d` epochs (honest sealers: `d = 1`); settlement-gating gossip lag `g` epochs; cost
+of capital `r`; annual pool volume `V`.
+
+**Per adversary class** — what can be taken, what bounds it, and what capital answers
+it:
+
+| Class | Max extractable | Bounded by | Capital answer |
+|---|---|---|---|
+| Lie-once drain, threshold **intact** | 0 | enclave refusal (§9) — the theft cannot be signed | none |
+| Lie-once drain, threshold **broken** | `P` (one transition; consensus checks only signatures) | nothing on-chain | `B_op = c·P` — optional, fractional backstop; `c = 1` is full coverage |
+| Shorting inside a conserving lattice | ≤ `w_max · d` | §7.1a + carry-forward, checked at seal time | absorbed by `B_op`; ≈ 0 with honest sealers (unsealable, `d = 1`) |
+| Equivocation / fork (double-sign class) | ≈ value released against fake finality during `g`: ≤ `w_max · g` through the pool, plus whatever external credit integrators extend off-seal | universal seal-gating + transparency log (§9.3) | `B_eq ≥ s · w_max · g` (safety factor `s` ≈ 2–3) — **self-executing** (§9.2) |
+| Operator-set Sybil (fake threshold) | `P` | fidelity-bonded admission | `t · b_m ≥ P` |
+| Seal-set Sybil (detection blackout inside the set) | enables the above to go unsealed-yet-unnoticed *inside* the set; public log gossip still detects outside it | bonded admission + log gossip | `k_s · b_s` ≥ an operational floor; secondary, because safety-detection is 1-of-N beyond the set (§9.3) |
+
+**Worked example.** `T = 10` BTC, `p = 0.8` (`P = 8`), hourly pulses, daily heartbeat
+(`D ≤ 24`), `w_max = 0.2` (2% of TVL per pulse), `g = 2`, `s = 2.5` ⇒ `B_eq = 1`;
+threshold 5-of-9; sealers 3-of-7; referees 3-of-5 in bonded mode.
+
+| Deployment | Locked capital | Against 10 BTC TVL |
+|---|---|---|
+| Single-Operator, fully bonded (`c = 1`): `B_op = 8`, referees `3 × 2.7` (quorum-corruption ≥ `B_op`), `B_eq = 1` | ≈ **17 BTC** | ≈ 170% — uneconomic beyond small pools; honest use is an explicit `c < 1` |
+| FROST-in-TEE + fractional backstop (`c = 0.25`): `B_op = 2`, `B_eq = 1`, member fidelity `9 × 1.6 = 14.4` (from `5·b_m ≥ 8`), sealers `7 × 0.15 ≈ 1` | ≈ 18.4 nominal, **but the 14.4 is per-identity, not per-pool** | ≈ 30% pool-dedicated; **≈ 5–8% per pool across a 10-pool book** under the aggregation rule below |
+| FROST-in-TEE, no capital backstop (`c = 0`): `B_eq = 1` + sealers ≈ 1 + amortized identity fidelity | ≈ 2 BTC pool-dedicated | ≈ 10–20% effective; the amount-risk left is an *uncompensated* threshold break (§9) |
+
+The quantified conclusion: **EOTS deterrence is cheap** (`B_eq` scales with
+`w_max · g`, not TVL — a ~1-BTC bond covers a 10-BTC pool's fork class), **and the
+only expensive item is lie-once coverage**, which the threshold model makes optional.
+The revision-2 intuition "cadence keeps bonds affordable" survives only in this
+corrected form: cadence and `w_max` shrink the *detectable* classes that `B_eq` and
+the backstop residual price; they do nothing against a fully broken signer set.
+
+**Aggregation rule (A23).** Fidelity bonds are per-*identity*. Strict soundness
+requires `b_identity ≥ Σ_pools (that identity's marginal share of stealable value)`
+across every pool where it sits in a threshold or quorum. Anything less is
+fractional-reserve deterrence — permissible only as an explicit, client-visible ratio;
+clients exclude under-aggregated identities when counting `t`/`k`, exactly as they
+refuse under-bonded pools.
+
+**Liquidity, not loss.** For honest actors every satoshi above is opportunity cost,
+not risk capital — bonds return at expiry. The floor on operator economics: annual
+capital cost `≈ r · L` (with `L` the dedicated lock) must clear from fees, so the
+minimum viable fee is `f ≥ r · L / V`. At `L = 3` BTC (backstop + `B_eq`),
+`r = 5%/yr`, `V = 500` BTC/yr: `f ≥ 3` bps — the deterrence stack prices in at *basis
+points* once the TVL-sized bond is optional.
+
+**Renewal ladder.** Every bond is CLTV-timelocked, so coverage must be a *schedule*,
+not a lump: split each bond into tranches with staggered expiries (spacing a multiple
+of the heartbeat period), each tranche's reclaim path opening ≥ one full dispute
+window after its nominal retirement, and replacement tranches posted **before** the
+outgoing one enters that overlap. The client-side invariant is
+`Σ(live tranches) ≥ required coverage at every height` — a lapsing ladder is treated
+exactly like an under-bonded pool: wallets refuse pulses. This is what lets referees
+and threshold members rotate out without coverage ever dipping.
+
 ## 10. Attack analysis appendix
 
-Seventeen adversarial findings shaped this spec — A1–A13 from the protocol red-team,
-A14–A15 from the recourse analysis (§8a), A16–A17 from the revision-2 current-state
-exit analysis (§7.5). Severity: **CRITICAL** (breaks the safety claim), **HIGH** (loses
-funds or bricks exit under a realistic adversary), **MED** (griefing/liveness/cost).
+Twenty-three adversarial findings shaped this spec — A1–A13 from the protocol
+red-team, A14–A15 from the recourse analysis (§8a), A16–A17 from the revision-2
+current-state exit analysis (§7.5), A18–A23 from the revision-2.1 red-team of the
+self-enforcing bond and federation-hardening layers (§9.2–§9.4). Severity:
+**CRITICAL** (breaks the safety claim), **HIGH** (loses funds or bricks exit under a
+realistic adversary), **MED** (griefing/liveness/cost).
 
 | # | Attack | Severity | Resolution in this spec |
 |---|---|---|---|
@@ -917,11 +1130,17 @@ funds or bricks exit under a realistic adversary), **MED** (griefing/liveness/co
 | A10 | **Bond circularity & sizing** — emulated slashing dies with the emulator; fixed bonds get out-run by TVL | HIGH | Judicial federation bond, evidence-based, emulator-independent (§9); TVL-tracking sizing with client-side refusal; heartbeat cadence caps at-risk-per-epoch ≤ bond |
 | A11 | **O(N) lattice re-sign cascade** — SIGHASH_ALL invalidates all descendants on any root change; "incremental subtree reuse" does not survive the txid cascade | MED→HIGH | Costed honestly (§7.1 step 3): O(N) compute for 2–3 parties, O(1) interactivity; two-tier hot-band sharding as the scaling valve; GSR floating-claim constructions named as the real fix (§12.2) |
 | A12 | **Depositor verification is not enough** — verifying your slot at deposit does not protect later epochs you never sign | MED | Deposit completes only with branch + attestation + coverage checks in hand; continued protection explicitly requires a watchtower (§5, §8) |
-| A13 | **Off-chain `h_k` equivocation** — Operator shows different chains to different parties while committing one hash on-chain | MED | `h_k` must be co-signed by Operator + threshold of `M_k`, then sealed by the k-of-n seal set (§7.1 step 6): a fork necessarily carries contradictory signatures |
+| A13 | **Off-chain `h_k` equivocation** — Operator shows different chains to different parties while committing one hash on-chain | MED | `h_k` must be co-signed by Operator + threshold of `M_k`, then sealed by the k-of-n seal set (§7.1 step 6): a fork necessarily carries contradictory signatures. EOTS-binding (§9.2) makes those signatures leak the signer's key — a fork is now **self-slashing** — and the transparency log (§9.3) makes it 1-of-N-detectable |
 | A14 | **Buggy-honest conservation failure** — a ceremony bug makes `Σ(slots) ≠ value(U_k)` while `A_k` matches the buggy lattice, so there is no lie and no slashable evidence → silent unbacked loss | HIGH | Public finality predicate (§7.1a): conservation + consistency are recomputable from committed data and are a precondition of the seal; failure makes pulse `k` non-final and forces auto-exit on `k−1` |
 | A15 | **Sub-dust no-exit** — balances below the 330-sat floor sit in a cooperative-only dust slot with no unilateral exit | MED | Named as a permanent, bounded recourse gap (§8a, §12.1 item 6); mitigated by client below-floor warnings and attesting the dust aggregate so over-debit is compensation-provable |
 | A16 | **Live-Operator exit denial** — chain-extension displaces a *legitimate current-state* exit; each displacement carries balances forward correctly, so under revision 1 denial produced **no slashable evidence** (no equivocation, clean attestation); composes with expiry into theft-at-`renew` | HIGH (CRITICAL near `renew` absent §7.5) | Exit notices + **eviction-with-payout** (§7.5): displacing a noticed exit without the full on-chain payout is non-final, unsealable, enclave-unsignable, and bond-slashable; stalling instead is a visible fault → pool-wide auto-exit. Guarantee becomes **exit-or-payout** |
 | A17 | **Current-root broadcast griefing** — the fully pre-signed, mesh-published root is broadcastable by anyone; a fee-bumped root forces mass exit (≈N× fee leverage) or a defensive displacement costing an on-chain tx + O(N) re-sign; retries ≈ free (supersedes the full-root case of A7, which revision 1 graded "harmless") | HIGH | §7.5 repricing: unbumped roots are inert (TRUC zero-fee parent); a bumped root is answered by a conforming eviction pulse — the broadcaster is **paid out in full and removed at their own request**; defense folds into heartbeat cadence (§7.2); third-party bumps gift the member a fast exit |
+| A18 | **Accidental self-slash / induced double-sign** — a crash-restart re-signs an epoch under the committed nonce on a different message (the Lightning state-loss classic; Babylon operators have paid this tax), or an attacker feeds a signer two candidate versions of one epoch; an *honest* signer's key leaks and its bond burns | HIGH (operational) | Durable, attested sign-once state per epoch inside the enclave; restart resumes from the sealed chain head and never re-signs a sealed epoch; burn-not-transfer slashing removes the attacker's direct profit from inducing it (§9.2) |
+| A19 | **Nonce-chain exhaustion / withholding** — the signer stops committing nonce chains (or "loses" them), so no valid attestation can exist and pulses stall | MED | Commitment horizon must cover ≥ next heartbeat + margin; a missing nonce commitment is a visible liveness fault — same class as a withheld seal: stall ⇒ auto-exit (§9.2, §7.3) |
+| A20 | **Burn-tx pinning** — the pre-signed burn is fixed-fee; a cheater pins it or rides a fee spike through the reclaim CLTV, then reclaims the bond intact | MED | P2A anchor on the burn (any executor CPFPs); TRUC topology; reclaim CLTV sized ≥ dispute window + fee-spike margin (§9.2, §7.4) |
+| A21 | **DA sampling eclipse** — a Sybilled mesh answers samples for data that is globally missing, faking availability to light verifiers | MED | Sampling over independent transports against the committed root; the seal remains a k-of-n *possession* receipt — sampling supplements it, never replaces it; sealers are bonded identities (§9.3) |
+| A22 | **Reshare capture** — permissionless proactive resharing lets one entity accumulate `t` shares across refresh windows behind distinct facades | HIGH | Fidelity-bond-gated admission (§9.1, §9.4); rate-limited membership churn per refresh window (§9.3); Nakamoto-coefficient floor gating the "threshold-secured" label (§13.5) |
+| A23 | **Correlated per-identity bonds** — one identity's fidelity bond, amortized across many pools, under-collateralizes a correlated theft across its whole book | MED→HIGH | The §9.4 aggregation rule: `b_identity ≥ Σ(marginal exposure)` across the identity's book, else the fractional-reserve ratio is computed, displayed, and the identity is excluded from `t`/`k` counts by conforming clients |
 
 ## 11. Compiler surface (future work — gated zones)
 
@@ -1064,7 +1283,10 @@ Under GSR, each baseline characteristic upgrades:
    residue). Epoch authorizations double as hash-based one-time signatures; producing
    two conflicting one-time signatures under one epoch authorization is verifiable in
    the bond's punishment leaf with nothing but hashing. The equivocation proof stops
-   needing judges.
+   needing judges. (Revision 2.1 note: §9.2's EOTS bonds already deliver judge-free
+   slashing for the *double-sign* class pre-GSR; what GSR adds is Script-verifiable
+   slashing for general fraud predicates — "this payout was unbacked," "this
+   displacement skipped the §7.5 payout" — which EOTS cannot express.)
 
 All four verifications are hash-dominated (Merkle paths, one-time-signature chains)
 and sized for a budgeted Script model.
@@ -1083,7 +1305,7 @@ conflating them is the central error to avoid:
 | Property | Model | Honest assumption |
 |---|---|---|
 | **Exit mechanism** (can I get *out*?) | **1-of-N, plus exit-or-payout** | The lattice is fully pre-signed and non-custodial; *any one* honest data-holder in `{you, your watchtowers, the seal set, mesh archivers}` can broadcast it. You yourself suffice (1-of-1). Against a **dark** Operator, exit always completes on pure mechanics. Against a **live racing** Operator, §7.5 makes the only conforming displacement a full payout — exit-or-payout — with the honest caveat that the *payout leg* is enforced by the trusted layer (next row), not by consensus. |
-| **Exit amount** (is the *number* in my slot right?) | **Enforced — not a clean 1-of-N** | The set whose honesty protects a passive member's balance in a pulse is `{Operator ∪ M_k}` — the Operator plus whoever is transacting. One honest member of that set refuses the bad pulse at the gate (§7.1 step 4b). But that set **excludes the victim** and can be **as small as two** (Operator + one transacting party — and if both collude, the honest count in it is zero). Below "1 honest in that set," safety degrades to the enforcement stack: enclave-threshold refusal in the primary model, *bonded compensation* in the backstop (§9) — an enforced layer, not a cryptographic one. |
+| **Exit amount** (is the *number* in my slot right?) | **Enforced — not a clean 1-of-N** | The set whose honesty protects a passive member's balance in a pulse is `{Operator ∪ M_k}` — the Operator plus whoever is transacting. One honest member of that set refuses the bad pulse at the gate (§7.1 step 4b). But that set **excludes the victim** and can be **as small as two** (Operator + one transacting party — and if both collude, the honest count in it is zero). Below "1 honest in that set," safety degrades to the enforcement stack: enclave-threshold refusal in the primary model, *bonded compensation* in the backstop (§9) — an enforced layer, not a cryptographic one. For the *equivocation* subclass specifically, deterrence needs only **one honest observer**: EOTS-bound artifacts make any double-sign self-slashing (§9.2). |
 
 **Why the amount model is weaker than the systems PULSE resembles.** In a statechain or
 a coinpool, every signer is checking *their own* balance and updates are N-of-N, so any
@@ -1150,9 +1372,11 @@ Four vectors — three bounded, one intentional:
    artifact** (§8a) — this is intentional (the social freeze). Critical caveat: conforming
    clients must halt only on **machine-checkable** evidence; halting on unverified
    disputes turns "cry wolf" into a free pool-wide DoS. The admissible evidence is the
-   three types defined in §9 (two conflicting `P_k` signatures; an `A_j` contradicted by
-   a later lattice; a sealed exit notice displaced without payout) packaged as the §8a
-   bundle; their exact wire serialization is fixed in the ABI (§11) — two
+   four types defined in §9 (two conflicting `P_k` signatures; an `A_j` contradicted by
+   a later lattice; a sealed exit notice displaced without payout; an EOTS extraction
+   pair, §9.2 — the one class whose punishment also *executes itself* with no
+   federation action) packaged as the §8a bundle; their exact wire serialization is
+   fixed in the ABI (§11) — two
    implementations that disagree on the format would split the social layer, so the
    format must be fixed there, not left to convention.
 
@@ -1261,7 +1485,12 @@ lattice *cryptography*.)
 > the bad lattice cannot be produced — hardware-attestation trust, no capital; an
 > **optional bond** adds an economic *compensation* backstop for those who prefer it to
 > hardware trust; a k-of-n **seal set** receipts data availability per pulse and keeps
-> finality off the block clock. Either way the amount — and the payout leg of
+> finality off the block clock. **Equivocation anywhere in the artifact chain is
+> self-slashing**: attestations, seals, and commitments are EOTS-bound, so a
+> double-sign leaks the signer's key and lets anyone burn its plain-BTC bond — no
+> judges, no token (§9.2) — leaving the judicial layer only lie-once compensation, and
+> pricing the deterrence stack in basis points rather than TVL (§9.4). Either way the
+> amount — and the payout leg of
 > exit-or-payout — rests on enclave-threshold or committee trust, not cryptographic
 > self-custody — the **trilemma** (§13.2): with non-interactive passive members and no
 > covenant, amount-safety *must* be enforced by a trusted layer rather than by
