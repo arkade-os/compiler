@@ -190,6 +190,11 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(hash_type, asm);
             asm.push(OP_SIGHASH.to_string());
         }
+        Expression::Digest { data, hash_type } => {
+            emit_expression_asm(data, asm);
+            emit_expression_asm(hash_type, asm);
+            asm.push(OP_DIGEST.to_string());
+        }
         // Byte-string concatenation: bytes-like + value → OP_CAT
         Expression::Concat {
             left,

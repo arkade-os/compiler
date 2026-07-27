@@ -483,6 +483,11 @@ pub enum Expression {
     },
     /// Signature hash for the current input under the selected hash type.
     Sighash { hash_type: Box<Expression> },
+    /// Digest selected at runtime. The result is 20 or 32 bytes depending on the hash type.
+    Digest {
+        data: Box<Expression>,
+        hash_type: Box<Expression>,
+    },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Negate a BigNum value: negate(value)
     Negate { value: Box<Expression> },

@@ -283,6 +283,14 @@ pub(crate) fn substitute_expression(
                 hash_type, index_var, value_var, k, array_name,
             )),
         },
+        Expression::Digest { data, hash_type } => Expression::Digest {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+            hash_type: Box::new(substitute_expression(
+                hash_type, index_var, value_var, k, array_name,
+            )),
+        },
         Expression::ModExp {
             base,
             exponent,

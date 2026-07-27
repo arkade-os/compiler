@@ -546,7 +546,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         | Expression::Sighash { .. } => ArkType::Bytes32,
 
         // Byte-string ops
-        Expression::Concat { .. } => ArkType::Bytes,
+        Expression::Concat { .. } | Expression::Digest { .. } => ArkType::Bytes,
 
         // Arithmetic
         Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,

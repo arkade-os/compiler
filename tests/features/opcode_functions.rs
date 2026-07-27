@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_1, OP_CHECKSIGFROMSTACK, OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP,
-    OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_TWEAKVERIFY,
-    OP_VERIFY,
+    OP_1, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING,
+    OP_MODEXP, OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH,
+    OP_TWEAKVERIFY, OP_VERIFY,
 };
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
@@ -84,6 +84,25 @@ fn test_sha256_finalize() {
         asm_str.contains(OP_SHA256FINALIZE),
         "Expected {OP_SHA256FINALIZE} in ASM: {}",
         asm_str
+    );
+}
+
+#[test]
+fn test_digest() {
+    let code = r#"
+        contract RuntimeDigest(int hashType) {
+            function hash(bytes data) {
+                let hash = digest(data, hashType);
+                require(true);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile digest");
+    let asm = crate::common::arkade_asm(&output, "hash");
+    assert!(
+        asm.contains(&format!("<data> <hashType> {OP_DIGEST}")),
+        "Expected ordered {OP_DIGEST} operands in ASM: {asm}"
     );
 }
 
