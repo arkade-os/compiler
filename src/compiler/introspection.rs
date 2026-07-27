@@ -32,7 +32,6 @@ pub(crate) fn emit_input_introspection_asm(
         "scriptPubKey" => asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string()),
         "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
         "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
-        "issuance" => asm.push(OP_INSPECTINPUTISSUANCE.to_string()),
         "arkadeScriptHash" => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
         "arkadeWitnessHash" => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
         _ => {
@@ -55,7 +54,6 @@ pub(crate) fn emit_output_introspection_asm(
     match property {
         "value" => asm.push(OP_INSPECTOUTPUTVALUE.to_string()),
         "scriptPubKey" => asm.push(OP_INSPECTOUTPUTSCRIPTPUBKEY.to_string()),
-        "nonce" => asm.push(OP_INSPECTOUTPUTNONCE.to_string()),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.outputs[?].{}>", property));

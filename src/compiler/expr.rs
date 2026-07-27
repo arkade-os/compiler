@@ -22,7 +22,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // keeps the placeholder pipeline untouched for everything else).
             match prop.as_str() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
-                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                "this.activeBytecode" => {
+                    asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+                    asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+                }
                 _ => asm.push(format!("<{}>", prop)),
             }
         }
@@ -236,7 +239,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
+            asm.push(OP_CHECKSIGFROMSTACK.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         // Byte-string manipulation (introspector extensions)
         Expression::Substr { data, offset, size } => {

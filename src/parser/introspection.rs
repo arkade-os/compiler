@@ -55,7 +55,7 @@ pub(crate) fn parse_input_introspection_to_expression(
 }
 
 /// Parse output_introspection pair into an Expression::OutputIntrospection
-/// tx.outputs[o].value, tx.outputs[o].scriptPubKey, tx.outputs[o].nonce
+/// tx.outputs[o].value, tx.outputs[o].scriptPubKey
 pub(crate) fn parse_output_introspection_to_expression(
     pair: Pair<Rule>,
 ) -> Result<Expression, String> {

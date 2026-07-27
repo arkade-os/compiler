@@ -264,7 +264,7 @@ tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs
 
 // ─── Indexed Input/Output Introspection ─────────────────────────────────────────
 
-// Input introspection: tx.inputs[i].property (value, scriptPubKey, sequence, outpoint, issuance)
+// Input introspection: tx.inputs[i].property
 input_introspection = {
     "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ input_introspection_property
 }
@@ -274,17 +274,17 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "sequence" | "outpoint" | "issuance" |
+    "value" | "scriptPubKey" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash"
 }
 
-// Output introspection: tx.outputs[o].property (value, scriptPubKey, nonce)
+// Output introspection: tx.outputs[o].property
 output_introspection = {
     "tx" ~ "." ~ "outputs" ~ array_access ~ "." ~ output_introspection_property
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" | "nonce" }
+output_introspection_property = { "value" | "scriptPubKey" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
@@ -516,7 +516,7 @@ tweak_verify = {
     "tweakVerify" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACKVERIFY
+// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }

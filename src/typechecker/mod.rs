@@ -488,7 +488,6 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             "scriptPubKey" => ArkType::Bytes,
             "sequence" => ArkType::Uint32Le,
             "outpoint" => ArkType::Bytes32,
-            "issuance" => ArkType::Bytes,
             "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
@@ -497,7 +496,6 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::OutputIntrospection { property, .. } => match property.as_str() {
             "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
-            "nonce" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 

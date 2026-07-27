@@ -385,12 +385,12 @@ pub enum Expression {
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
     TxIntrospection { property: String },
-    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint, issuance
+    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint
     InputIntrospection {
         index: Box<Expression>,
         property: String,
     },
-    /// Output introspection: tx.outputs[o].value, scriptPubKey, nonce
+    /// Output introspection: tx.outputs[o].value, scriptPubKey
     OutputIntrospection {
         index: Box<Expression>,
         property: String,

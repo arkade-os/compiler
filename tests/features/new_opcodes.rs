@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIGFROMSTACKVERIFY, OP_ECMULSCALARVERIFY, OP_NEGATE, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_TWEAKVERIFY,
+    OP_CHECKSIGFROMSTACK, OP_ECMULSCALARVERIFY, OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE,
+    OP_SHA256UPDATE, OP_TWEAKVERIFY, OP_VERIFY,
 };
 // ─── Streaming SHA256 Tests ────────────────────────────────────────────
 
@@ -188,8 +188,8 @@ fn test_check_sig_from_stack_verify() {
     let output = result.unwrap();
     let asm_str = crate::common::arkade_asm(&output, "verifyMessageSig");
     assert!(
-        asm_str.contains(OP_CHECKSIGFROMSTACKVERIFY),
-        "Expected {OP_CHECKSIGFROMSTACKVERIFY} in ASM: {}",
+        asm_str.contains(&format!("{OP_CHECKSIGFROMSTACK} {OP_VERIFY}")),
+        "Expected {OP_CHECKSIGFROMSTACK} {OP_VERIFY} in ASM: {}",
         asm_str
     );
 }
