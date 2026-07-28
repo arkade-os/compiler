@@ -2,7 +2,7 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_1, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING,
     OP_MODEXP, OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH,
-    OP_TWEAKVERIFY, OP_VERIFY,
+    OP_SUB, OP_TWEAKVERIFY, OP_VERIFY,
 };
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
@@ -109,25 +109,71 @@ fn test_digest() {
 // ─── Arithmetic ────────────────────────────────────────────────────────
 
 #[test]
-fn test_negate() {
+fn test_unary_minus_negates() {
     let code = r#"
         contract ArithmeticOps(pubkey owner) {
             function negateValue(signature ownerSig, int value) {
                 require(checkSig(ownerSig, owner));
-                let negated = negate(value);
+                let negated = -value;
             }
         }
     "#;
 
-    let result = compile(code);
-    assert!(result.is_ok(), "Failed to parse negate: {:?}", result.err());
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "negateValue");
+    let output = compile(code).expect("compile unary minus");
+    let asm = crate::common::arkade_asm(&output, "negateValue");
     assert!(
-        asm_str.contains(OP_NEGATE),
-        "Expected {OP_NEGATE} in ASM: {}",
-        asm_str
+        asm.contains(&format!("<value> {OP_NEGATE}")),
+        "Expected unary `-` to emit {OP_NEGATE} over its operand; asm: {asm}"
+    );
+}
+
+// A loop body is unrolled by substituting the index into every operand, so the
+// negation has to carry the substitution through rather than keep `<i>`.
+#[test]
+fn test_unary_minus_substitutes_loop_index() {
+    let code = r#"
+        contract LoopNeg(pubkey owner) {
+            function f(int[] amounts) {
+                for (i, amt) in amounts {
+                    let d = -i;
+                    require(d <= 0);
+                }
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile negated loop index");
+    let asm = crate::common::arkade_asm(&output, "f");
+    for k in 0..3 {
+        assert!(
+            asm.contains(&format!("{k} {OP_NEGATE}")),
+            "Expected iteration {k} to negate the literal index; asm: {asm}"
+        );
+    }
+}
+
+// `a - b` must stay a subtraction: the leading-minus rule is optional, so the
+// binary operator has to win when an operand precedes it.
+#[test]
+fn test_binary_minus_still_subtracts() {
+    let code = r#"
+        contract ArithmeticOps(int a, int b) {
+            function diff() {
+                let d = a - b;
+                require(d >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile subtraction");
+    let asm = crate::common::arkade_asm(&output, "diff");
+    assert!(
+        asm.contains(&format!("<a> <b> {OP_SUB}")),
+        "Expected a binary subtraction; asm: {asm}"
+    );
+    assert!(
+        !asm.contains(OP_NEGATE),
+        "Binary `-` must not emit {OP_NEGATE}; asm: {asm}"
     );
 }
 

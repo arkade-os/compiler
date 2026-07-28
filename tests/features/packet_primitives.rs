@@ -13,7 +13,7 @@
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_BIN2NUM, OP_CAT, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
+    OP_BIN2NUM, OP_CAT, OP_DROP, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
     OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
     OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN, OP_PUSHCURRENTINPUTINDEX, OP_REVERSEBYTES, OP_SHA256,
     OP_SIZE, OP_SUBSTR, OP_TXID,
@@ -44,12 +44,15 @@ contract ActiveBytecode(bytes expected) {
   }
 }"#;
 
+    // The trailing OP_DROP discards the witness version the opcode pushes above
+    // the program, so the comparison below sees a single value.
     let asm = compile_first_function_asm(src);
     assert!(
-        asm.windows(2).any(|ops| {
+        asm.windows(3).any(|ops| {
             ops == [
                 OP_PUSHCURRENTINPUTINDEX.to_string(),
                 OP_INSPECTINPUTSCRIPTPUBKEY.to_string(),
+                OP_DROP.to_string(),
             ]
         }),
         "expected current-input scriptPubKey inspection; got {asm:?}"

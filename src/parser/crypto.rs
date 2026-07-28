@@ -78,20 +78,6 @@ pub(crate) fn parse_digest(pair: Pair<Rule>) -> Result<Expression, String> {
 
 // ─── Arithmetic Parsing ────────────────────────────────────────────────
 
-/// Parse negate(value) → Expression::Negate
-pub(crate) fn parse_negate(pair: Pair<Rule>) -> Result<Expression, String> {
-    let mut inner = pair.into_inner();
-    let value_pair = inner.next().ok_or("Missing value in negate")?;
-    let value = match value_pair.as_rule() {
-        Rule::identifier => Expression::Variable(value_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(value_pair.as_str().to_string()),
-        _ => Expression::Property(value_pair.as_str().to_string()),
-    };
-    Ok(Expression::Negate {
-        value: Box::new(value),
-    })
-}
-
 /// Parse modExp(base, exponent, modulus) → Expression::ModExp
 pub(crate) fn parse_mod_exp(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();

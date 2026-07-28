@@ -90,7 +90,7 @@ contract RepaymentPool(
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
-    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int collateralValue = collateral * oraclePrice / 100000000;
@@ -240,7 +240,7 @@ contract RepaymentPool(
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
-    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int collateralValue = newCollateral * oraclePrice / 100000000;
@@ -298,7 +298,7 @@ contract RepaymentPool(
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
-    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     require(
@@ -380,7 +380,7 @@ contract RepaymentPool(
     int oracleAge = tx.offchainTime - oracleTime;
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= oracleMaxAgeSeconds, "stale oracle");
-    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     require(

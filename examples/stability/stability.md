@@ -144,10 +144,10 @@ The oracle signs BTC/USD prices off-chain as `sha256(ticker || price || timestam
 1. Enforces freshness: `tx.offchainTime - oracleTime <= 600` seconds (10 minutes).
 2. Reconstructs the message hash on-stack with `+` (OP_CAT) and one-shot `sha256` (OP_SHA256):
    ```ark
-   let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+   let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
    ```
-   `+` dispatches on type: when at least one operand is bytes-like the compiler emits OP_CAT, encoding int sides via `OP_8 OP_NUM2BIN` to keep on-chain and off-chain hashing byte-identical.
+   `+` dispatches on type: when at least one operand is bytes-like the compiler emits OP_CAT. Int operands must be converted with an explicit `num2bin(value, width)` — the compiler never picks a width, because the width is what an off-chain signer has to reproduce byte for byte. `num2bin` writes little-endian sign-magnitude (sign in the top bit of the last byte), which matches an unsigned LE64 only for non-negative values, so an off-chain signer must encode negatives the same way; a value that does not fit the requested width fails the script rather than truncating.
 
 Three layers of replay protection are baked into the signed message:
 

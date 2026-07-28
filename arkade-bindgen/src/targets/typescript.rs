@@ -27,8 +27,7 @@ fn ts_type(encoding: &Encoding) -> &'static str {
         | Encoding::Raw
         | Encoding::Raw20
         | Encoding::Raw32 => "Uint8Array",
-        Encoding::ScriptNum | Encoding::Le64 => "bigint",
-        Encoding::Le32 => "number",
+        Encoding::ScriptNum => "bigint",
         Encoding::Unknown(_) => "Uint8Array",
     }
 }

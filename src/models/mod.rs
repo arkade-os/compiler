@@ -57,7 +57,6 @@ pub struct FunctionInput {
 /// | `raw-20`        | 20-byte array (e.g., HASH160)                 |
 /// | `raw-32`        | 32-byte array (e.g., SHA256, txid)            |
 /// | `scriptnum`     | Bitcoin CScriptNum (variable-length LE)       |
-/// | `le32`          | 4-byte unsigned little-endian int32           |
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WitnessElement {
     /// Parameter name (matches an `<name>` placeholder in `asm`)
@@ -453,16 +452,15 @@ pub enum Expression {
         message: String,
     },
     // ─── Byte-string operations ────────────────────────────────────────
-    /// Byte-string concatenation: produced by the rewrite pass when `+`
-    /// has at least one bytes-like operand. `coerce_left` / `coerce_right`
-    /// tell the emitter to insert `OP_8 OP_NUM2BIN` on a side that is an
-    /// integer (mixed `bytes + int` writes the int as fixed 8-byte LE
-    /// before OP_CAT, so off-chain hashing matches deterministically).
+    /// Byte-string concatenation: produced by the rewrite pass when `+` has at
+    /// least one bytes-like operand. Both operands must already be bytes; a
+    /// numeric operand is a compile error telling the author to convert it with
+    /// `num2bin(value, width)`. The compiler never picks a width on its own,
+    /// because the width and byte order are consensus-visible: they decide what
+    /// an off-chain signer must hash to match.
     Concat {
         left: Box<Expression>,
         right: Box<Expression>,
-        coerce_left: bool,
-        coerce_right: bool,
     },
     // ─── Streaming SHA256 ──────────────────────────────────────────────
     /// Plain SHA256: sha256(data) → emits `<data> OP_SHA256`.
@@ -499,6 +497,11 @@ pub enum Expression {
     },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// EC point addition. Produces x and y as two stack items.
+    ///
+    /// TODO(asset-id-struct): like `group.assetId`, a two-item result has no
+    /// representation — `let` binds one name and `==` would only see y. The
+    /// result is unusable until the composite return type lands; the emission
+    /// is correct and ready for it.
     EcAdd {
         x1: Box<Expression>,
         y1: Box<Expression>,
@@ -507,6 +510,8 @@ pub enum Expression {
         curve_id: Box<Expression>,
     },
     /// EC scalar multiplication. Produces x and y as two stack items.
+    ///
+    /// TODO(asset-id-struct): same two-item limitation as `EcAdd`.
     EcMul {
         x: Box<Expression>,
         y: Box<Expression>,

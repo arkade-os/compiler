@@ -15,10 +15,6 @@ pub enum Encoding {
     Raw32,
     /// Bitcoin CScriptNum (variable-length LE integer)
     ScriptNum,
-    /// 8-byte unsigned little-endian int64
-    Le64,
-    /// 4-byte unsigned little-endian int32
-    Le32,
     /// Unrecognized encoding string
     Unknown(String),
 }
@@ -33,8 +29,6 @@ impl Encoding {
             "raw-20" => Encoding::Raw20,
             "raw-32" => Encoding::Raw32,
             "scriptnum" => Encoding::ScriptNum,
-            "le64" => Encoding::Le64,
-            "le32" => Encoding::Le32,
             other => Encoding::Unknown(other.to_string()),
         }
     }
@@ -63,8 +57,6 @@ impl Encoding {
             Encoding::Raw20 => "raw-20",
             Encoding::Raw32 => "raw-32",
             Encoding::ScriptNum => "scriptnum",
-            Encoding::Le64 => "le64",
-            Encoding::Le32 => "le32",
             Encoding::Unknown(s) => s.as_str(),
         }
     }

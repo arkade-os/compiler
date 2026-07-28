@@ -273,6 +273,11 @@ pub(crate) fn substitute_expression(
             )),
             property: property.clone(),
         },
+        Expression::Negate { value } => Expression::Negate {
+            value: Box::new(substitute_expression(
+                value, index_var, value_var, k, array_name,
+            )),
+        },
         Expression::ReverseBytes { data } => Expression::ReverseBytes {
             data: Box::new(substitute_expression(
                 data, index_var, value_var, k, array_name,

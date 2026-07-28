@@ -123,8 +123,8 @@ multiplicative_expr = {
     unary_expr ~ ((mul_op | div_op) ~ unary_expr)*
 }
 
-// Unary and primary expressions
-unary_expr = { primary_expr }
+// Unary expressions: an optional leading `-` negates its operand.
+unary_expr = { sub_op? ~ primary_expr }
 
 // Primary expressions (atoms)
 primary_expr = {
@@ -138,7 +138,6 @@ primary_expr = {
     sha256_func |
     digest_func |
     sighash_func |
-    negate_func |
     mod_exp_func |
     ec_add |
     ec_mul |
@@ -199,7 +198,6 @@ complex_expression = _{
     sha256_finalize |
     digest_func |
     sighash_func |
-    negate_func |
     mod_exp_func |
     ec_add |
     ec_mul |
@@ -210,6 +208,7 @@ complex_expression = _{
     cat_func |
     bin2num_func |
     num2bin_func |
+    reverse_bytes_func |
     size_func |
     input_packet_inspect |
     packet_inspect |
@@ -519,11 +518,6 @@ digest_func = {
 }
 
 // ─── Arithmetic ────────────────────────────────────────────────────────
-
-// Negate a BigNum value: negate(value) → OP_NEGATE
-negate_func = {
-    "negate" ~ "(" ~ (identifier | number_literal) ~ ")"
-}
 
 // Modular exponentiation: modExp(base, exponent, modulus) → OP_MODEXP
 mod_exp_func = {

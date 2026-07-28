@@ -34,8 +34,6 @@ fn go_type_for_field(field: &Field) -> &'static str {
                 "int64"
             }
         }
-        Encoding::Le64 => "uint64",
-        Encoding::Le32 => "uint32",
         Encoding::Unknown(_) => "[]byte",
     }
 }
@@ -57,8 +55,6 @@ fn encoding_const(encoding: &Encoding) -> &'static str {
         Encoding::Raw20 => "ark.Raw20",
         Encoding::Raw32 => "ark.Raw32",
         Encoding::ScriptNum => "ark.ScriptNum",
-        Encoding::Le64 => "ark.Le64",
-        Encoding::Le32 => "ark.Le32",
         Encoding::Unknown(_) => "ark.Raw",
     }
 }
@@ -74,8 +70,6 @@ fn value_expr(field: &Field, prefix: &str) -> String {
                 format!("ark.EncodeScriptNum({}.{})", prefix, go_name)
             }
         }
-        Encoding::Le64 => format!("ark.EncodeLe64({}.{})", prefix, go_name),
-        Encoding::Le32 => format!("ark.EncodeLe32({}.{})", prefix, go_name),
         _ if is_fixed_array(&field.encoding) => format!("{}.{}[:]", prefix, go_name),
         _ => format!("{}.{}", prefix, go_name),
     }

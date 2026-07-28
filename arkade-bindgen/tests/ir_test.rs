@@ -97,8 +97,6 @@ fn test_encoding_roundtrip() {
         ("raw-20", Encoding::Raw20),
         ("raw-32", Encoding::Raw32),
         ("scriptnum", Encoding::ScriptNum),
-        ("le64", Encoding::Le64),
-        ("le32", Encoding::Le32),
     ];
 
     for (s, expected) in encodings {

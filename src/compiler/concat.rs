@@ -14,226 +14,249 @@ use crate::typechecker::ArkType;
 // rewrite type (e.g. `bytes32 + int` rewrites to `Concat` of type Bytes,
 // which then makes the outer `+ int` also a Concat).
 
-use crate::typechecker::{is_bytes_like, needs_num2bin_coercion, Scope};
+use crate::typechecker::{is_bytes_like, Scope};
 
-pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) {
+/// Numeric types that have no byte representation of their own, so mixing one
+/// into a concatenation needs an explicit `num2bin(value, width)`.
+fn is_numeric(t: &ArkType) -> bool {
+    matches!(t, ArkType::Int | ArkType::Bool)
+}
+
+#[derive(Default)]
+struct ConcatPass {
+    errors: Vec<String>,
+}
+
+pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) -> Result<(), String> {
+    let mut pass = ConcatPass::default();
     let constructor_scope = crate::typechecker::build_scope(&contract.parameters);
     for function in &mut contract.functions {
         let mut scope = constructor_scope.clone();
         scope.extend(crate::typechecker::build_scope(&function.parameters));
-        rewrite_statements_concat(&mut function.statements, &mut scope);
+        pass.rewrite_statements_concat(&mut function.statements, &mut scope);
+    }
+    if pass.errors.is_empty() {
+        Ok(())
+    } else {
+        Err(pass.errors.join("; "))
     }
 }
 
-pub(crate) fn rewrite_statements_concat(stmts: &mut [Statement], scope: &mut Scope) {
-    for stmt in stmts {
-        rewrite_statement_concat(stmt, scope);
+impl ConcatPass {
+    fn rewrite_statements_concat(&mut self, stmts: &mut [Statement], scope: &mut Scope) {
+        for stmt in stmts {
+            self.rewrite_statement_concat(stmt, scope);
+        }
     }
-}
 
-pub(crate) fn rewrite_statement_concat(stmt: &mut Statement, scope: &mut Scope) {
-    match stmt {
-        Statement::Require(req) => rewrite_requirement_concat(req, scope),
-        Statement::LetBinding { name, value } => {
-            let (new_expr, t) = rewrite_expression_concat(
-                std::mem::replace(value, Expression::Literal(String::new())),
-                scope,
-            );
-            *value = new_expr;
-            scope.insert(name.clone(), t);
-        }
-        Statement::VarAssign { name, value } => {
-            let (new_expr, t) = rewrite_expression_concat(
-                std::mem::replace(value, Expression::Literal(String::new())),
-                scope,
-            );
-            *value = new_expr;
-            scope.insert(name.clone(), t);
-        }
-        Statement::IfElse {
-            condition,
-            then_body,
-            else_body,
-        } => {
-            let (new_cond, _) = rewrite_expression_concat(
-                std::mem::replace(condition, Expression::Literal(String::new())),
-                scope,
-            );
-            *condition = new_cond;
-            let mut then_scope = scope.clone();
-            rewrite_statements_concat(then_body, &mut then_scope);
-            if let Some(eb) = else_body {
-                let mut else_scope = scope.clone();
-                rewrite_statements_concat(eb, &mut else_scope);
+    fn rewrite_statement_concat(&mut self, stmt: &mut Statement, scope: &mut Scope) {
+        match stmt {
+            Statement::Require(req) => self.rewrite_requirement_concat(req, scope),
+            Statement::LetBinding { name, value } => {
+                let (new_expr, t) = self.rewrite_expression_concat(
+                    std::mem::replace(value, Expression::Literal(String::new())),
+                    scope,
+                );
+                *value = new_expr;
+                scope.insert(name.clone(), t);
+            }
+            Statement::VarAssign { name, value } => {
+                let (new_expr, t) = self.rewrite_expression_concat(
+                    std::mem::replace(value, Expression::Literal(String::new())),
+                    scope,
+                );
+                *value = new_expr;
+                scope.insert(name.clone(), t);
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                let (new_cond, _) = self.rewrite_expression_concat(
+                    std::mem::replace(condition, Expression::Literal(String::new())),
+                    scope,
+                );
+                *condition = new_cond;
+                let mut then_scope = scope.clone();
+                self.rewrite_statements_concat(then_body, &mut then_scope);
+                if let Some(eb) = else_body {
+                    let mut else_scope = scope.clone();
+                    self.rewrite_statements_concat(eb, &mut else_scope);
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                iterable,
+                body,
+            } => {
+                let (new_iter, _) = self.rewrite_expression_concat(
+                    std::mem::replace(iterable, Expression::Literal(String::new())),
+                    scope,
+                );
+                *iterable = new_iter;
+                let mut loop_scope = scope.clone();
+                loop_scope.insert(index_var.clone(), ArkType::Int);
+                loop_scope.insert(value_var.clone(), ArkType::Unknown);
+                self.rewrite_statements_concat(body, &mut loop_scope);
             }
         }
-        Statement::ForIn {
-            index_var,
-            value_var,
-            iterable,
-            body,
-        } => {
-            let (new_iter, _) = rewrite_expression_concat(
-                std::mem::replace(iterable, Expression::Literal(String::new())),
-                scope,
-            );
-            *iterable = new_iter;
-            let mut loop_scope = scope.clone();
-            loop_scope.insert(index_var.clone(), ArkType::Int);
-            loop_scope.insert(value_var.clone(), ArkType::Unknown);
-            rewrite_statements_concat(body, &mut loop_scope);
+    }
+
+    fn rewrite_requirement_concat(&mut self, req: &mut Requirement, scope: &Scope) {
+        match req {
+            Requirement::Expression(expr) => {
+                let (rewritten, _) = self.rewrite_expression_concat(
+                    std::mem::replace(expr, Expression::Literal(String::new())),
+                    scope,
+                );
+                *expr = rewritten;
+            }
+            Requirement::Comparison { left, right, .. } => {
+                let (nl, _) = self.rewrite_expression_concat(
+                    std::mem::replace(left, Expression::Literal(String::new())),
+                    scope,
+                );
+                *left = nl;
+                let (nr, _) = self.rewrite_expression_concat(
+                    std::mem::replace(right, Expression::Literal(String::new())),
+                    scope,
+                );
+                *right = nr;
+            }
+            _ => {}
         }
     }
-}
 
-pub(crate) fn rewrite_requirement_concat(req: &mut Requirement, scope: &Scope) {
-    match req {
-        Requirement::Expression(expr) => {
-            let (rewritten, _) = rewrite_expression_concat(
-                std::mem::replace(expr, Expression::Literal(String::new())),
-                scope,
-            );
-            *expr = rewritten;
-        }
-        Requirement::Comparison { left, right, .. } => {
-            let (nl, _) = rewrite_expression_concat(
-                std::mem::replace(left, Expression::Literal(String::new())),
-                scope,
-            );
-            *left = nl;
-            let (nr, _) = rewrite_expression_concat(
-                std::mem::replace(right, Expression::Literal(String::new())),
-                scope,
-            );
-            *right = nr;
-        }
-        _ => {}
-    }
-}
-
-pub(crate) fn rewrite_expression_concat(expr: Expression, scope: &Scope) -> (Expression, ArkType) {
-    match expr {
-        Expression::BinaryOp { left, op, right } => {
-            let (new_l, lt) = rewrite_expression_concat(*left, scope);
-            let (new_r, rt) = rewrite_expression_concat(*right, scope);
-            if op == "+" && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
-                let coerce_left = needs_num2bin_coercion(&lt);
-                let coerce_right = needs_num2bin_coercion(&rt);
+    fn rewrite_expression_concat(
+        &mut self,
+        expr: Expression,
+        scope: &Scope,
+    ) -> (Expression, ArkType) {
+        match expr {
+            Expression::BinaryOp { left, op, right } => {
+                let (new_l, lt) = self.rewrite_expression_concat(*left, scope);
+                let (new_r, rt) = self.rewrite_expression_concat(*right, scope);
+                if op == "+" && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
+                    for (side, t) in [("left", &lt), ("right", &rt)] {
+                        if is_numeric(t) {
+                            self.errors.push(format!(
+                                "cannot concatenate bytes with the {} `{}` operand of `+`; \
+                                 convert it explicitly with num2bin(value, width) — \
+                                 the compiler will not choose a width for you",
+                                side,
+                                t.as_str()
+                            ));
+                        }
+                    }
+                    (
+                        Expression::Concat {
+                            left: Box::new(new_l),
+                            right: Box::new(new_r),
+                        },
+                        ArkType::Bytes,
+                    )
+                } else {
+                    let result_type = match op.as_str() {
+                        "+" | "-" | "*" | "/" => ArkType::Int,
+                        "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
+                        _ => ArkType::Unknown,
+                    };
+                    (
+                        Expression::BinaryOp {
+                            left: Box::new(new_l),
+                            op,
+                            right: Box::new(new_r),
+                        },
+                        result_type,
+                    )
+                }
+            }
+            Expression::Sha256 { data } => {
+                let (new_data, _) = self.rewrite_expression_concat(*data, scope);
+                (
+                    Expression::Sha256 {
+                        data: Box::new(new_data),
+                    },
+                    ArkType::Bytes32,
+                )
+            }
+            Expression::Sha256Initialize { data } => {
+                let (new_data, _) = self.rewrite_expression_concat(*data, scope);
+                (
+                    Expression::Sha256Initialize {
+                        data: Box::new(new_data),
+                    },
+                    ArkType::Bytes32,
+                )
+            }
+            Expression::Sha256Update { context, chunk } => {
+                let (new_ctx, _) = self.rewrite_expression_concat(*context, scope);
+                let (new_chunk, _) = self.rewrite_expression_concat(*chunk, scope);
+                (
+                    Expression::Sha256Update {
+                        context: Box::new(new_ctx),
+                        chunk: Box::new(new_chunk),
+                    },
+                    ArkType::Bytes32,
+                )
+            }
+            Expression::Sha256Finalize {
+                context,
+                last_chunk,
+            } => {
+                let (new_ctx, _) = self.rewrite_expression_concat(*context, scope);
+                let (new_chunk, _) = self.rewrite_expression_concat(*last_chunk, scope);
+                (
+                    Expression::Sha256Finalize {
+                        context: Box::new(new_ctx),
+                        last_chunk: Box::new(new_chunk),
+                    },
+                    ArkType::Bytes32,
+                )
+            }
+            Expression::Concat { left, right } => {
+                let (new_l, _) = self.rewrite_expression_concat(*left, scope);
+                let (new_r, _) = self.rewrite_expression_concat(*right, scope);
                 (
                     Expression::Concat {
                         left: Box::new(new_l),
                         right: Box::new(new_r),
-                        coerce_left,
-                        coerce_right,
                     },
                     ArkType::Bytes,
                 )
-            } else {
-                let result_type = match op.as_str() {
-                    "+" | "-" | "*" | "/" => ArkType::Int,
-                    "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
-                    _ => ArkType::Unknown,
-                };
+            }
+            Expression::Negate { value } => {
+                let (nv, _) = self.rewrite_expression_concat(*value, scope);
                 (
-                    Expression::BinaryOp {
-                        left: Box::new(new_l),
-                        op,
-                        right: Box::new(new_r),
+                    Expression::Negate {
+                        value: Box::new(nv),
                     },
-                    result_type,
+                    ArkType::Int,
                 )
             }
-        }
-        Expression::Sha256 { data } => {
-            let (new_data, _) = rewrite_expression_concat(*data, scope);
-            (
-                Expression::Sha256 {
-                    data: Box::new(new_data),
-                },
-                ArkType::Bytes32,
-            )
-        }
-        Expression::Sha256Initialize { data } => {
-            let (new_data, _) = rewrite_expression_concat(*data, scope);
-            (
-                Expression::Sha256Initialize {
-                    data: Box::new(new_data),
-                },
-                ArkType::Bytes32,
-            )
-        }
-        Expression::Sha256Update { context, chunk } => {
-            let (new_ctx, _) = rewrite_expression_concat(*context, scope);
-            let (new_chunk, _) = rewrite_expression_concat(*chunk, scope);
-            (
-                Expression::Sha256Update {
-                    context: Box::new(new_ctx),
-                    chunk: Box::new(new_chunk),
-                },
-                ArkType::Bytes32,
-            )
-        }
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => {
-            let (new_ctx, _) = rewrite_expression_concat(*context, scope);
-            let (new_chunk, _) = rewrite_expression_concat(*last_chunk, scope);
-            (
-                Expression::Sha256Finalize {
-                    context: Box::new(new_ctx),
-                    last_chunk: Box::new(new_chunk),
-                },
-                ArkType::Bytes32,
-            )
-        }
-        Expression::Concat {
-            left,
-            right,
-            coerce_left,
-            coerce_right,
-        } => {
-            let (new_l, _) = rewrite_expression_concat(*left, scope);
-            let (new_r, _) = rewrite_expression_concat(*right, scope);
-            (
-                Expression::Concat {
-                    left: Box::new(new_l),
-                    right: Box::new(new_r),
-                    coerce_left,
-                    coerce_right,
-                },
-                ArkType::Bytes,
-            )
-        }
-        Expression::Negate { value } => {
-            let (nv, _) = rewrite_expression_concat(*value, scope);
-            (
-                Expression::Negate {
-                    value: Box::new(nv),
-                },
-                ArkType::Int,
-            )
-        }
-        Expression::ContractInstance {
-            contract_name,
-            args,
-        } => {
-            let new_args = args
-                .into_iter()
-                .map(|a| rewrite_expression_concat(a, scope).0)
-                .collect();
-            (
-                Expression::ContractInstance {
-                    contract_name,
-                    args: new_args,
-                },
-                ArkType::Bytes,
-            )
-        }
-        // Leaves and other compound expressions: no `+` to rewrite below the surface.
-        other => {
-            let t = crate::typechecker::infer_type(&other, scope);
-            (other, t)
+            Expression::ContractInstance {
+                contract_name,
+                args,
+            } => {
+                let new_args = args
+                    .into_iter()
+                    .map(|a| self.rewrite_expression_concat(a, scope).0)
+                    .collect();
+                (
+                    Expression::ContractInstance {
+                        contract_name,
+                        args: new_args,
+                    },
+                    ArkType::Bytes,
+                )
+            }
+            // Leaves and other compound expressions: no `+` to rewrite below the surface.
+            other => {
+                let t = crate::typechecker::infer_type(&other, scope);
+                (other, t)
+            }
         }
     }
 }

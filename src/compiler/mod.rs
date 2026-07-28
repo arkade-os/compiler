@@ -3,7 +3,7 @@ use crate::models::{
     Requirement, Statement, DEFAULT_ARRAY_LENGTH,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_8, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
+    OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
     OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_DIV, OP_DROP, OP_ECADD, OP_ECMUL,
     OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
     OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
@@ -94,7 +94,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(&mut contract);
+    rewrite_concat_ops(&mut contract)?;
 
     // ── Type checking ──────────────────────────────────────────────────────
     // Run the type checker. Errors are non-fatal and returned as warnings on

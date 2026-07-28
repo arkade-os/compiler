@@ -119,6 +119,12 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         .as_str()
         .to_string();
 
+    if name == "negate" {
+        return Err(
+            "`negate(value)` was replaced by the unary minus operator; write `-value`".to_string(),
+        );
+    }
+
     if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
         return Err(format!(
             "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bin2num/num2bin"
@@ -149,7 +155,6 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
         "digest" => Some("digest(data, hashType)"),
         "sighash" => Some("sighash(hashType)"),
-        "negate" => Some("negate(value)"),
         "modExp" => Some("modExp(base, exponent, modulus)"),
         "ecAdd" => Some("ecAdd(x1, y1, x2, y2, curveId)"),
         "ecMul" => Some("ecMul(x, y, scalar, curveId)"),
@@ -165,9 +170,21 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
 
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
-        Rule::primary_expr | Rule::unary_expr => {
+        Rule::primary_expr => {
             let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
             parse_primary_expr(inner)
+        }
+        // `-operand` negates; without the leading `-` this is a pass-through.
+        Rule::unary_expr => {
+            let mut inner = pair.into_inner();
+            let first = inner.next().ok_or("Empty unary expression")?;
+            if first.as_rule() != Rule::sub_op {
+                return parse_primary_expr(first);
+            }
+            let operand = inner.next().ok_or("Missing operand after unary `-`")?;
+            Ok(Expression::Negate {
+                value: Box::new(parse_primary_expr(operand)?),
+            })
         }
         Rule::general_expression | Rule::comparison_expr => {
             // Parenthesized expression
@@ -218,7 +235,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::digest_func => parse_digest(pair),
         Rule::sighash_func => parse_sighash(pair),
         // Arithmetic
-        Rule::negate_func => parse_negate(pair),
         Rule::mod_exp_func => parse_mod_exp(pair),
         // Crypto Opcodes
         Rule::ec_add => parse_ec_add(pair),

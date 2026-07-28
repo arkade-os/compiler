@@ -39,9 +39,6 @@ pub enum ArkType {
     Asset,
 
     // ── Internal / introspection types ─────────────────────────────────────
-    /// 4-byte little-endian unsigned 32-bit integer.
-    /// Produced by: tx.version, tx.locktime.
-    Uint32Le,
 
     // ── Composite ──────────────────────────────────────────────────────────
     /// Homogeneous array (e.g., `pubkey[]`)
@@ -84,7 +81,6 @@ impl ArkType {
             ArkType::Int => "scriptnum",
             ArkType::Bool => "scriptnum",
             ArkType::Asset => "raw-32",
-            ArkType::Uint32Le => "le32",
             ArkType::Array(_) => "array",
             ArkType::Unknown => "unknown",
         }
@@ -101,7 +97,6 @@ impl ArkType {
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
             ArkType::Asset => "asset".to_string(),
-            ArkType::Uint32Le => "uint32le".to_string(),
             ArkType::Array(inner) => format!("{}[]", inner.as_str()),
             ArkType::Unknown => "unknown".to_string(),
         }
@@ -425,7 +420,7 @@ fn check_comparison(
 }
 
 fn is_numeric(t: &ArkType) -> bool {
-    matches!(t, ArkType::Int | ArkType::Uint32Le)
+    matches!(t, ArkType::Int)
 }
 
 fn expect_type(
@@ -469,14 +464,14 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::CurrentInput(prop) => match prop.as_deref() {
             Some("value") => ArkType::Int,
             Some("scriptPubKey") => ArkType::Bytes,
-            Some("sequence") => ArkType::Uint32Le,
+            Some("sequence") => ArkType::Int,
             Some("outpoint") => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // tx-level introspection
         Expression::TxIntrospection { property } => match property.as_str() {
-            "version" | "locktime" => ArkType::Uint32Le,
+            "version" | "locktime" => ArkType::Int,
             "numInputs" | "numOutputs" | "weight" => ArkType::Int,
             "id" => ArkType::Bytes32,
             _ => ArkType::Unknown,
@@ -486,7 +481,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::InputIntrospection { property, .. } => match property.as_str() {
             "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
-            "sequence" => ArkType::Uint32Le,
+            "sequence" => ArkType::Int,
             "outpoint" => ArkType::Bytes32,
             "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
@@ -600,10 +595,4 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 /// operand for concatenation via OP_CAT).
 pub fn is_bytes_like(t: &ArkType) -> bool {
     matches!(t, ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32)
-}
-
-/// Returns true when a numeric value needs fixed-width encoding before byte
-/// concatenation.
-pub fn needs_num2bin_coercion(t: &ArkType) -> bool {
-    matches!(t, ArkType::Int | ArkType::Bool | ArkType::Uint32Le)
 }

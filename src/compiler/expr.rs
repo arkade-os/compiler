@@ -22,10 +22,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // keeps the placeholder pipeline untouched for everything else).
             match prop.as_str() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
-                "this.activeBytecode" => {
-                    asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-                    asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
-                }
+                "this.activeBytecode" => emit_current_input_asm(Some("scriptPubKey"), asm),
                 _ => asm.push(format!("<{}>", prop)),
             }
         }
@@ -195,23 +192,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(hash_type, asm);
             asm.push(OP_DIGEST.to_string());
         }
-        // Byte-string concatenation: bytes-like + value → OP_CAT
-        Expression::Concat {
-            left,
-            right,
-            coerce_left,
-            coerce_right,
-        } => {
+        // Byte-string concatenation: bytes + bytes → OP_CAT
+        Expression::Concat { left, right } => {
             emit_expression_asm(left, asm);
-            if *coerce_left {
-                asm.push(OP_8.to_string());
-                asm.push(OP_NUM2BIN.to_string());
-            }
             emit_expression_asm(right, asm);
-            if *coerce_right {
-                asm.push(OP_8.to_string());
-                asm.push(OP_NUM2BIN.to_string());
-            }
             asm.push(OP_CAT.to_string());
         }
         // Arithmetic
@@ -358,7 +342,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
     match property {
         Some("scriptPubKey") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+            emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
         }
         Some("value") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
@@ -374,7 +358,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
         }
         _ => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+            emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
         }
     }
 }
@@ -382,8 +366,10 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
 /// Emit assembly for a contract instantiation: `new ContractName(arg1, arg2, ...)`
 ///
 /// Produces a single placeholder token `<VTXO:ContractName(<arg1>,<arg2>)>` that
-/// the runtime resolves to the Taproot scriptPubKey (34-byte P2TR output script)
+/// the runtime resolves to the 32-byte Taproot witness program (the output key)
 /// of the named contract instantiated with the given constructor arguments.
+/// It is compared against a witness program, not a serialized 34-byte P2TR
+/// script, because that is what a scriptPubKey inspection leaves on the stack.
 ///
 /// Options (server key, exit timelock) are inherited from the enclosing contract
 /// and must be applied by the runtime when computing the child contract's taproot
@@ -395,7 +381,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
 /// ```
 /// compiles to:
 /// ```text
-/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
 /// ```
 pub(crate) fn emit_contract_instance_asm(
     contract_name: &str,

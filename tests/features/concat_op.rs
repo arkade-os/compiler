@@ -1,9 +1,9 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_8, OP_ADD, OP_CAT, OP_NUM2BIN, OP_SHA256};
+use arkade_compiler::opcodes::{OP_ADD, OP_CAT, OP_NUM2BIN, OP_SHA256};
 
 // `+` between bytes-like values should compile to OP_CAT, not OP_ADD.
-// Ints concatenated with bytes get an OP_8 OP_NUM2BIN coercion first
-// so off-chain hashing can use a fixed 8-byte LE encoding.
+// An int operand carries no width of its own, so the contract states one with
+// num2bin; the compiler never inserts a conversion on its own.
 const CONCAT_CODE: &str = r#"
 contract Mix(
   pubkey  signer,
@@ -13,7 +13,7 @@ contract Mix(
 ) {
   function check(signature sig) {
     require(checkSig(sig, signer), "bad sig");
-    let msg = sha256(ticker + price + time);
+    let msg = sha256(ticker + num2bin(price, 8) + num2bin(time, 8));
     require(checkSigFromStack(sig, signer, msg), "bad msg sig");
   }
 }
@@ -34,9 +34,10 @@ fn test_plus_on_bytes32_emits_op_cat() {
         "Expected OP_SHA256 for sha256(...) call; asm:\n{}",
         asm
     );
-    assert!(
-        asm.contains(&format!("{OP_8} {OP_NUM2BIN}")),
-        "Expected OP_8 OP_NUM2BIN to coerce int sides; asm:\n{}",
+    assert_eq!(
+        asm.matches(OP_NUM2BIN).count(),
+        2,
+        "Expected exactly the two num2bin conversions the contract asks for; asm:\n{}",
         asm
     );
     assert!(
