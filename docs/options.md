@@ -10,15 +10,24 @@ Two paired contracts for selling and buying volatility on Bitcoin, faithful to R
 
 - **European** — settleable only at `expiryHeight`.
 - **Physically settled** — at exercise the actual underlying changes hands (BTC ↔ stablecoin), not a cash-equivalent.
-- **Single-collateralized** — *only the seller* escrows their full obligation. The buyer brings the strike payment at exercise time if and only if they choose to exercise. This is the capital-efficient MM model — Rysk's RFQ counterparties don't tie up the strike value of every option they write.
+- **Single-collateralized** — *only the seller* (option writer) escrows their full obligation. The buyer commits only premium at trade time and pays strike only if they exercise. This matches Rysk's actual model, where the **MM is the option buyer**, not the writer — see the Roles section below.
 - **No oracle** — the buyer's voluntary exercise decision *is* the settlement signal. A rational buyer exercises iff in-the-money; if they don't show up, the seller reclaims after a grace window.
 
-| Contract | Seller locks | Buyer brings at exercise | ITM condition |
+| Contract | Seller (writer) locks | Buyer brings at exercise | ITM condition |
 |---|---|---|---|
 | `CoveredCall` | `btcSats` BTC | `strikeAmount` stablecoin | spot > strike (buyer wants to buy BTC at the cheaper strike) |
 | `CashSecuredPut` | `stableAmount` stablecoin | `btcSats` BTC | spot < strike (buyer wants to sell BTC at the higher strike) |
 
-The premium is paid MM→seller upfront, off-contract, in the same atomic funding transaction. Same model as Rysk pays premium in USD upfront.
+The premium is paid buyer→seller upfront, off-contract, in the same atomic funding transaction. Same model as Rysk pays premium in USD upfront.
+
+### Roles (who is who)
+
+In DeFi options vernacular this is the one thing that consistently gets flipped, so it's worth pinning down:
+
+- **Seller / writer** = the depositor. Locks underlying (BTC for a call, stablecoin for a put), collects premium as yield. On Rysk's UI these are the retail "Earn" users. In our contracts, this is `sellerPk`.
+- **Buyer / holder / MM** = the professional counterparty. Pays premium upfront in exchange for the right (not obligation) to exercise. On Rysk this is the RFQ-matched market maker who bid on the option. In our contracts, this is `buyerPk`.
+
+The MM does *not* write options in Rysk's model. They *buy* options that users have written. This is opposite to how "market maker" is sometimes used in AMM contexts (where MMs are LPs providing liquidity). Rysk's marketplace is: retail-writes → MM-buys, matched via RFQ.
 
 ### Terminology
 
@@ -35,9 +44,9 @@ The premium is paid MM→seller upfront, off-contract, in the same atomic fundin
 
 The earlier `CoveredCall` / `CashSecuredPut` (PR #33, master commit `501193a`) had both parties pre-lock their full exposure: seller's BTC *and* buyer's strike payment, settled deterministically by an oracle. That was a misread of Rysk's mechanics — confirmed by the quant after merge.
 
-Rysk's actual model has only the seller locked. The MM commits no capital until exercise (they only ever pay strike if the option is ITM and they choose to exercise). This is what makes the RFQ market work: MMs can write many options against the same float because most expire OTM and never need a payout.
+Rysk's actual model has only the writer (seller) locked. The MM, as **buyer**, commits only the premium at trade time and pays strike only if they exercise. This is what makes the RFQ market work: an MM can buy many options against the same working balance because most expire OTM and never trigger a strike payment.
 
-The dual-locked variant has its own merits (zero counterparty risk, fully autonomous settlement, no buyer liveness required), but it's not Rysk and it's not capital-efficient enough for production MM use. This PR replaces it with the faithful design.
+The dual-locked variant has its own merits (zero counterparty risk, fully autonomous settlement, no buyer liveness required), but it's not Rysk. Rysk on-chain is a perp-DEX-style margin engine — see the Rysk architecture note below.
 
 ---
 
@@ -60,9 +69,9 @@ Mirror story for the put. If buyer holds 1 BTC put at $90k strike and spot drops
 
 ## CoveredCall
 
-Constructor: `sellerPk, buyerPk, stableAssetId, btcSats, strikeAmount, expiryHeight, graceBlocks, exit`
+Constructor: `sellerPk, buyerPk, stableAssetIdTxid, stableAssetIdGidx, btcSats, strikeAmount, expiryHeight, graceBlocks, exit`
 
-Vault holds **only** `btcSats` BTC. `strikeAmount` is the total stablecoin payment due at exercise (strike × notional, in base units of the chosen stablecoin).
+Vault holds **only** `btcSats` BTC. `strikeAmount` is the total stablecoin payment due at exercise (strike × notional, in base units of the chosen stablecoin). `stableAssetIdTxid` + `stableAssetIdGidx` is the Arkade Asset ID pair — issuance transaction id + group index. The pair is what `OP_INSPECTOUTASSETLOOKUP` consumes at runtime; the compiler used to decompose a single `bytes32 stableAssetId` for you but the two-field form is now the source-level representation.
 
 ### Functions
 
@@ -86,9 +95,9 @@ output[2+]: buyer's change           (unconstrained)
 
 ## CashSecuredPut
 
-Constructor: `sellerPk, buyerPk, stableAssetId, stableAmount, btcSats, expiryHeight, graceBlocks, exit`
+Constructor: `sellerPk, buyerPk, stableAssetIdTxid, stableAssetIdGidx, stableAmount, btcSats, expiryHeight, graceBlocks, exit`
 
-Vault holds **only** `stableAmount` of `stableAssetId` (and a dust BTC carrier for L1). Same shape as the call, sides reversed.
+Vault holds **only** `stableAmount` of the stablecoin (identified by the `(txid, gidx)` pair) plus a dust BTC carrier for L1. Same shape as the call, sides reversed.
 
 ### Functions
 
@@ -184,6 +193,51 @@ The original dual-locked design avoided this by making settlement oracle-trigger
    - Race between seller's reclaim and any belated buyer exercise; seller
      wins by default (rational broadcast is at the first valid block).
 ```
+
+---
+
+## How this compares to Rysk v12 on-chain
+
+Rysk v12 does **not** use Opyn Gamma — that was Rysk V1/V2's Dynamic Hedging Vault. V12 is a full rewrite on top of the Ciao Protocol (github.com/rysk-finance/ciao-protocol), which is architecturally a perp-DEX-style margin engine: off-chain orderbook + on-chain balance ledger. Core Solidity: `Ciao.sol`, `Furnace.sol` (collateral custody), `Crucible.sol` / `SpotCrucible.sol` / `PerpCrucible.sol` (settlement + margining), `OrderDispatch.sol`, `Liquidation.sol`.
+
+The MM-side flow in Rysk v12 (from the `ryskV12-cli` code):
+
+```
+approve  # ERC20 allowance to Rysk contract
+transfer --is_deposit  # move USDC into internal Rysk balance
+connect  # WebSocket to wss://…/maker
+quote    # signed message: rfq_id, expiry, strike, quantity, price, ...
+         # → on fill, premium debited atomically from MM's Ciao balance
+```
+
+MM funds sit inside the protocol's escrow *before* any quote is sent. On fill, premium is debited from the MM's internal Ciao balance and credited to the user (writer). The user's underlying stays in their own vault until expiry.
+
+Where our design diverges:
+
+| Aspect | Rysk v12 (Ciao) | This PR |
+|---|---|---|
+| MM capital pre-commit | Yes — USDC pre-deposited into Ciao escrow | No — MM pays premium directly at funding, keeps rest in wallet |
+| Cooperative close (buyer) | `Controller`-like function on Crucible | `exercise(buyerSig)` on the UTXO |
+| Cooperative close (seller) | Vault settlement on Crucible | `reclaim(sellerSig)` after grace |
+| Off-chain matching | RFQ WebSocket to `wss://…/maker` | Not built here — assumed at layer above |
+| Custody | Protocol-owned escrow (`Furnace.sol`) | User's own UTXO |
+| Settlement asset | Cash-settled per docs claim of "physical" — actual code path is fungible USDC/USDT balance movement | True physical BTC ↔ stablecoin UTXO swap |
+
+The cooperative-close *shape* matches (buyer manually exercises, seller manually settles/reclaims, both post-expiry, no auto-exercise) — that's the pattern Rysk inherits transitively from Opyn Gamma's `Controller.sol` (buyer calls `Redeem`, seller calls `SettleVault`, both permissioned via `onlyAuthorized`). Where we differ is custody model (UTXO vs protocol escrow) and how "physical" the settlement really is (we do a real BTC-for-stablecoin swap in one tx; Rysk v12 debits/credits internal balances that users later withdraw).
+
+---
+
+## Standing-order factories: a Bitcoin-native primitive
+
+The natural way to wrap these contracts into a **savings account** (deposit BTC, earn yield from selling covered calls repeatedly; deposit USDT, earn yield from selling puts) is a *standing-order factory* — a contract the user pre-authorizes to write options on their behalf against a specific UTXO, up to specified bounds.
+
+This is genuinely novel in DeFi options. Field research across Rysk v12, Ribbon/Aevo, Opyn Gamma, Premia Blue, Lyra/Derive, Panoptic, and CeFi (Paradigm/Deribit) confirms: **no protocol uses pre-authorized standing orders for option writing.** Every existing protocol either requires the writer to pre-deposit into protocol-owned escrow (Rysk, Panoptic, Lyra, Derive, Premia) or escrows funds at bid time via auction (Ribbon via Gnosis EasyAuction's `_placeSellOrders → safeTransferFrom`).
+
+The reason nobody does it on EVM: ERC20 allowances are revocable. Between quote acceptance and `transferFrom`, the writer can drain their balance, cancel the allowance, or the contract can be paused. So every EVM protocol just puts funds inside the protocol first.
+
+**Bitcoin/Arkade breaks the pattern.** A UTXO + covenant + pre-signed spending path gives a form of pre-authorization ERC20 allowances can't provide: a specific factory-authorized spend of a specific UTXO up to a specific cap, unforgeable, non-revocable except via a co-signed spend. A `StandingCallWriter(userPk, factoryPk, stableAssetIdTxid, stableAssetIdGidx, minStrikePrice, maxWriteFreqBlocks, ...)` contract could authorize `factoryPk` to spend the user's BTC into a fresh `CoveredCall` UTXO whenever the RFQ matches a bidder, with premium routed directly to `userPk`. When each call expires OTM, its `reclaim` output feeds back into a new `StandingCallWriter` UTXO automatically — continuous yield, no pool, no share tokens.
+
+This is the "blend.money savings account" shape at the primitive layer. It's not built in this PR (out of scope), but the contracts here are the correct atoms to compose it from.
 
 ---
 
