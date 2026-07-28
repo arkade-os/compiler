@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_1, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING,
-    OP_MODEXP, OP_NEGATE, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH,
-    OP_SUB, OP_TWEAKVERIFY, OP_VERIFY,
+    OP_1, OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL,
+    OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP, OP_NEGATE, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SUB, OP_TWEAKVERIFY, OP_VERIFY,
 };
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
@@ -103,6 +103,31 @@ fn test_digest() {
     assert!(
         asm.contains(&format!("<data> <hashType> {OP_DIGEST}")),
         "Expected ordered {OP_DIGEST} operands in ASM: {asm}"
+    );
+}
+
+// digest's data operand is parsed as an additive expression, so a `+` under it
+// is byte concatenation and must not fall through to arithmetic.
+#[test]
+fn test_digest_concatenates_bytes_operands() {
+    let code = r#"
+        contract DigestConcat(bytes32 a, bytes32 b, int hashType) {
+            function hash() {
+                let h = digest(a + b, hashType);
+                require(h == a);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("compile digest over a concatenation");
+    let asm = crate::common::arkade_asm(&output, "hash");
+    assert!(
+        asm.contains(&format!("<a> <b> {OP_CAT} <hashType> {OP_DIGEST}")),
+        "Expected digest operands to be concatenated; asm: {asm}"
+    );
+    assert!(
+        !asm.contains(OP_ADD),
+        "bytes32 + bytes32 must not compile to arithmetic; asm: {asm}"
     );
 }
 

@@ -91,14 +91,20 @@ impl ConcatPass {
                 iterable,
                 body,
             } => {
-                let (new_iter, _) = self.rewrite_expression_concat(
+                let (new_iter, iter_type) = self.rewrite_expression_concat(
                     std::mem::replace(iterable, Expression::Literal(String::new())),
                     scope,
                 );
                 *iterable = new_iter;
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
-                loop_scope.insert(value_var.clone(), ArkType::Unknown);
+                // The element type decides whether concatenating the loop value
+                // needs an explicit num2bin, so carry it rather than Unknown.
+                let element_type = match iter_type {
+                    ArkType::Array(inner) => *inner,
+                    _ => ArkType::Unknown,
+                };
+                loop_scope.insert(value_var.clone(), element_type);
                 self.rewrite_statements_concat(body, &mut loop_scope);
             }
         }
@@ -223,6 +229,18 @@ impl ConcatPass {
                     Expression::Concat {
                         left: Box::new(new_l),
                         right: Box::new(new_r),
+                    },
+                    ArkType::Bytes,
+                )
+            }
+            // `data` is parsed as an additive expression, same as Sha256, so a
+            // `+` underneath it still has to be rewritten into a Concat.
+            Expression::Digest { data, hash_type } => {
+                let (new_data, _) = self.rewrite_expression_concat(*data, scope);
+                (
+                    Expression::Digest {
+                        data: Box::new(new_data),
+                        hash_type,
                     },
                     ArkType::Bytes,
                 )

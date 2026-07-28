@@ -70,3 +70,31 @@ contract IntMath(int a, int b) {
         asm
     );
 }
+
+// Unrolling a loop must carry the index substitution through every operand,
+// including the byte operations a hashed message is built from.
+#[test]
+fn test_loop_body_substitutes_index_through_byte_ops() {
+    let code = r#"
+contract LoopHash(bytes32 tag) {
+  function check(int[] prices) {
+    for (i, p) in prices {
+      let m = sha256(tag + num2bin(p, 8));
+      require(m == tag);
+    }
+  }
+}
+"#;
+    let out = compile(code).expect("compile");
+    let asm = crate::common::arkade_asm(&out, "check");
+    for k in 0..3 {
+        assert!(
+            asm.contains(&format!("<prices_{k}>")),
+            "Expected iteration {k} to bind the array element; asm:\n{asm}"
+        );
+    }
+    assert!(
+        !asm.contains("<p>"),
+        "Loop value variable must not survive unrolling; asm:\n{asm}"
+    );
+}
