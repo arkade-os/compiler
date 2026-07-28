@@ -230,7 +230,7 @@ pub(crate) fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec
             // 2. Drop gidx_u16, keep txid32
             asm.push(OP_DROP.to_string());
             // 3. Get current transaction hash
-            asm.push(OP_TXHASH.to_string());
+            asm.push(OP_TXID.to_string());
             // 4. Compare txids - result is bool
             asm.push(OP_EQUAL.to_string());
         }

@@ -56,51 +56,99 @@ pub(crate) fn parse_sha256_finalize(pair: Pair<Rule>) -> Result<Expression, Stri
     })
 }
 
-// ─── Conversion & Arithmetic Parsing ───────────────────────────────────
-
-/// Parse neg64(value) → Expression::Neg64
-pub(crate) fn parse_neg64(pair: Pair<Rule>) -> Result<Expression, String> {
-    let mut inner = pair.into_inner();
-    let value_pair = inner.next().ok_or("Missing value in neg64")?;
-    let value = match value_pair.as_rule() {
-        Rule::identifier => Expression::Variable(value_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(value_pair.as_str().to_string()),
-        _ => Expression::Property(value_pair.as_str().to_string()),
-    };
-    Ok(Expression::Neg64 {
-        value: Box::new(value),
+pub(crate) fn parse_sighash(pair: Pair<Rule>) -> Result<Expression, String> {
+    let hash_type = pair
+        .into_inner()
+        .next()
+        .ok_or("Missing hash type in sighash")?;
+    Ok(Expression::Sighash {
+        hash_type: Box::new(parse_atom_pair(hash_type)),
     })
 }
 
-/// Parse le64ToScriptNum(value) → Expression::Le64ToScriptNum
-pub(crate) fn parse_le64_to_script_num(pair: Pair<Rule>) -> Result<Expression, String> {
+pub(crate) fn parse_digest(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let value_pair = inner.next().ok_or("Missing value in le64ToScriptNum")?;
-    let value = match value_pair.as_rule() {
-        Rule::identifier => Expression::Variable(value_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(value_pair.as_str().to_string()),
-        _ => Expression::Property(value_pair.as_str().to_string()),
-    };
-    Ok(Expression::Le64ToScriptNum {
-        value: Box::new(value),
+    let data = parse_additive_expr(inner.next().ok_or("Missing data in digest")?)?;
+    let hash_type = parse_atom_pair(inner.next().ok_or("Missing hash type in digest")?);
+    Ok(Expression::Digest {
+        data: Box::new(data),
+        hash_type: Box::new(hash_type),
     })
 }
 
-/// Parse le32ToLe64(value) → Expression::Le32ToLe64
-pub(crate) fn parse_le32_to_le64(pair: Pair<Rule>) -> Result<Expression, String> {
+// ─── Arithmetic Parsing ────────────────────────────────────────────────
+
+/// Parse modExp(base, exponent, modulus) → Expression::ModExp
+pub(crate) fn parse_mod_exp(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let value_pair = inner.next().ok_or("Missing value in le32ToLe64")?;
-    let value = match value_pair.as_rule() {
-        Rule::identifier => Expression::Variable(value_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(value_pair.as_str().to_string()),
-        _ => Expression::Property(value_pair.as_str().to_string()),
-    };
-    Ok(Expression::Le32ToLe64 {
-        value: Box::new(value),
+    Ok(Expression::ModExp {
+        base: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing base in modExp")?,
+        )),
+        exponent: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing exponent in modExp")?,
+        )),
+        modulus: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing modulus in modExp")?,
+        )),
     })
 }
 
 // ─── Crypto Opcodes Parsing ────────────────────────────────────────────
+
+pub(crate) fn parse_ec_add(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    Ok(Expression::EcAdd {
+        x1: Box::new(parse_atom_pair(inner.next().ok_or("Missing x1 in ecAdd")?)),
+        y1: Box::new(parse_atom_pair(inner.next().ok_or("Missing y1 in ecAdd")?)),
+        x2: Box::new(parse_atom_pair(inner.next().ok_or("Missing x2 in ecAdd")?)),
+        y2: Box::new(parse_atom_pair(inner.next().ok_or("Missing y2 in ecAdd")?)),
+        curve_id: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing curve ID in ecAdd")?,
+        )),
+    })
+}
+
+pub(crate) fn parse_ec_mul(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    Ok(Expression::EcMul {
+        x: Box::new(parse_atom_pair(inner.next().ok_or("Missing x in ecMul")?)),
+        y: Box::new(parse_atom_pair(inner.next().ok_or("Missing y in ecMul")?)),
+        scalar: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing scalar in ecMul")?,
+        )),
+        curve_id: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing curve ID in ecMul")?,
+        )),
+    })
+}
+
+pub(crate) fn parse_ec_pairing(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    Ok(Expression::EcPairing {
+        g1_x: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing G1 x in ecPairing")?,
+        )),
+        g1_y: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing G1 y in ecPairing")?,
+        )),
+        g2_x_c1: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing G2 x c1 in ecPairing")?,
+        )),
+        g2_x_c0: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing G2 x c0 in ecPairing")?,
+        )),
+        g2_y_c1: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing G2 y c1 in ecPairing")?,
+        )),
+        g2_y_c0: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing G2 y c0 in ecPairing")?,
+        )),
+        curve_id: Box::new(parse_atom_pair(
+            inner.next().ok_or("Missing curve ID in ecPairing")?,
+        )),
+    })
+}
 
 /// Parse ecMulScalarVerify(k, P, Q) → Expression::EcMulScalarVerify
 pub(crate) fn parse_ec_mul_scalar_verify(pair: Pair<Rule>) -> Result<Expression, String> {
@@ -244,6 +292,18 @@ pub(crate) fn parse_num2bin(pair: Pair<Rule>) -> Result<Expression, String> {
     Ok(Expression::Num2Bin {
         value: Box::new(value),
         size: Box::new(size),
+    })
+}
+
+/// Parse reverseBytes(data) → Expression::ReverseBytes
+pub(crate) fn parse_reverse_bytes(pair: Pair<Rule>) -> Result<Expression, String> {
+    let data = parse_byte_value(
+        pair.into_inner()
+            .next()
+            .ok_or("Missing data in reverseBytes")?,
+    )?;
+    Ok(Expression::ReverseBytes {
+        data: Box::new(data),
     })
 }
 

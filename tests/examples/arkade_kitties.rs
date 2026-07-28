@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB, OP_TXHASH,
+    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB, OP_TXID,
 };
 
 const ARKADE_KITTIES_CODE: &str = include_str!("../../examples/arkade_kitties/arkade_kitties.ark");
@@ -46,15 +46,15 @@ fn test_breed_function_has_is_fresh() {
 
     let asm_str = crate::common::arkade_asm(&output, "breed");
 
-    // isFresh emits: <group> OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXHASH OP_EQUAL
+    // isFresh emits: <group> OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPASSETID),
         "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check in breed: {}",
         asm_str
     );
     assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH} for isFresh check in breed: {}",
+        asm_str.contains(OP_TXID),
+        "Expected {OP_TXID} for isFresh check in breed: {}",
         asm_str
     );
 }
@@ -117,8 +117,8 @@ fn test_transfer_verifies_not_fresh() {
         asm_str
     );
     assert!(
-        asm_str.contains(OP_TXHASH),
-        "Expected {OP_TXHASH} for isFresh check in transfer: {}",
+        asm_str.contains(OP_TXID),
+        "Expected {OP_TXID} for isFresh check in transfer: {}",
         asm_str
     );
 }

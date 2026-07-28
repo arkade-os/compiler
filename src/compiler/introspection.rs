@@ -17,6 +17,17 @@ pub(crate) fn emit_tx_introspection_asm(property: &str, asm: &mut Vec<String>) {
     }
 }
 
+/// Emit a scriptPubKey inspection opcode and reduce its result to one item.
+///
+/// `OP_INSPECT{IN,OUT}PUTSCRIPTPUBKEY` pushes two items: the witness program,
+/// then the witness version as a scriptnum on top. Everything downstream
+/// (`==`, `let`, hashing) consumes a single value, so the version is dropped
+/// and the witness program is what a scriptPubKey compares against.
+pub(crate) fn emit_script_pubkey_asm(opcode: &str, asm: &mut Vec<String>) {
+    asm.push(opcode.to_string());
+    asm.push(OP_DROP.to_string());
+}
+
 /// Emit assembly for input introspection: tx.inputs[i].property
 pub(crate) fn emit_input_introspection_asm(
     index: &Expression,
@@ -29,10 +40,9 @@ pub(crate) fn emit_input_introspection_asm(
     // Emit the appropriate opcode
     match property {
         "value" => asm.push(OP_INSPECTINPUTVALUE.to_string()),
-        "scriptPubKey" => asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string()),
+        "scriptPubKey" => emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm),
         "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
         "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
-        "issuance" => asm.push(OP_INSPECTINPUTISSUANCE.to_string()),
         "arkadeScriptHash" => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
         "arkadeWitnessHash" => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
         _ => {
@@ -54,8 +64,7 @@ pub(crate) fn emit_output_introspection_asm(
     // Emit the appropriate opcode
     match property {
         "value" => asm.push(OP_INSPECTOUTPUTVALUE.to_string()),
-        "scriptPubKey" => asm.push(OP_INSPECTOUTPUTSCRIPTPUBKEY.to_string()),
-        "nonce" => asm.push(OP_INSPECTOUTPUTNONCE.to_string()),
+        "scriptPubKey" => emit_script_pubkey_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.outputs[?].{}>", property));

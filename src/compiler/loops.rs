@@ -273,6 +273,292 @@ pub(crate) fn substitute_expression(
             )),
             property: property.clone(),
         },
+        Expression::Negate { value } => Expression::Negate {
+            value: Box::new(substitute_expression(
+                value, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::ReverseBytes { data } => Expression::ReverseBytes {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Sighash { hash_type } => Expression::Sighash {
+            hash_type: Box::new(substitute_expression(
+                hash_type, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Digest { data, hash_type } => Expression::Digest {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+            hash_type: Box::new(substitute_expression(
+                hash_type, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => Expression::ModExp {
+            base: Box::new(substitute_expression(
+                base, index_var, value_var, k, array_name,
+            )),
+            exponent: Box::new(substitute_expression(
+                exponent, index_var, value_var, k, array_name,
+            )),
+            modulus: Box::new(substitute_expression(
+                modulus, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => Expression::EcAdd {
+            x1: Box::new(substitute_expression(
+                x1, index_var, value_var, k, array_name,
+            )),
+            y1: Box::new(substitute_expression(
+                y1, index_var, value_var, k, array_name,
+            )),
+            x2: Box::new(substitute_expression(
+                x2, index_var, value_var, k, array_name,
+            )),
+            y2: Box::new(substitute_expression(
+                y2, index_var, value_var, k, array_name,
+            )),
+            curve_id: Box::new(substitute_expression(
+                curve_id, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => Expression::EcMul {
+            x: Box::new(substitute_expression(
+                x, index_var, value_var, k, array_name,
+            )),
+            y: Box::new(substitute_expression(
+                y, index_var, value_var, k, array_name,
+            )),
+            scalar: Box::new(substitute_expression(
+                scalar, index_var, value_var, k, array_name,
+            )),
+            curve_id: Box::new(substitute_expression(
+                curve_id, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => Expression::EcPairing {
+            g1_x: Box::new(substitute_expression(
+                g1_x, index_var, value_var, k, array_name,
+            )),
+            g1_y: Box::new(substitute_expression(
+                g1_y, index_var, value_var, k, array_name,
+            )),
+            g2_x_c1: Box::new(substitute_expression(
+                g2_x_c1, index_var, value_var, k, array_name,
+            )),
+            g2_x_c0: Box::new(substitute_expression(
+                g2_x_c0, index_var, value_var, k, array_name,
+            )),
+            g2_y_c1: Box::new(substitute_expression(
+                g2_y_c1, index_var, value_var, k, array_name,
+            )),
+            g2_y_c0: Box::new(substitute_expression(
+                g2_y_c0, index_var, value_var, k, array_name,
+            )),
+            curve_id: Box::new(substitute_expression(
+                curve_id, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::AssetCount { source, index } => Expression::AssetCount {
+            source: source.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::AssetAt {
+            source,
+            property,
+            io_index,
+            asset_index,
+        } => Expression::AssetAt {
+            source: source.clone(),
+            property: property.clone(),
+            io_index: Box::new(substitute_expression(
+                io_index, index_var, value_var, k, array_name,
+            )),
+            asset_index: Box::new(substitute_expression(
+                asset_index,
+                index_var,
+                value_var,
+                k,
+                array_name,
+            )),
+        },
+        Expression::GroupNumIO { source, index } => Expression::GroupNumIO {
+            source: source.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupIOAccess {
+            source,
+            property,
+            group_index,
+            io_index,
+        } => Expression::GroupIOAccess {
+            source: source.clone(),
+            property: property.clone(),
+            group_index: Box::new(substitute_expression(
+                group_index,
+                index_var,
+                value_var,
+                k,
+                array_name,
+            )),
+            io_index: Box::new(substitute_expression(
+                io_index, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Concat { left, right } => Expression::Concat {
+            left: Box::new(substitute_expression(
+                left, index_var, value_var, k, array_name,
+            )),
+            right: Box::new(substitute_expression(
+                right, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Sha256 { data } => Expression::Sha256 {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Sha256Initialize { data } => Expression::Sha256Initialize {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Sha256Update { context, chunk } => Expression::Sha256Update {
+            context: Box::new(substitute_expression(
+                context, index_var, value_var, k, array_name,
+            )),
+            chunk: Box::new(substitute_expression(
+                chunk, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => Expression::Sha256Finalize {
+            context: Box::new(substitute_expression(
+                context, index_var, value_var, k, array_name,
+            )),
+            last_chunk: Box::new(substitute_expression(
+                last_chunk, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => Expression::EcMulScalarVerify {
+            scalar: Box::new(substitute_expression(
+                scalar, index_var, value_var, k, array_name,
+            )),
+            point_p: Box::new(substitute_expression(
+                point_p, index_var, value_var, k, array_name,
+            )),
+            point_q: Box::new(substitute_expression(
+                point_q, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => Expression::TweakVerify {
+            point_p: Box::new(substitute_expression(
+                point_p, index_var, value_var, k, array_name,
+            )),
+            tweak: Box::new(substitute_expression(
+                tweak, index_var, value_var, k, array_name,
+            )),
+            point_q: Box::new(substitute_expression(
+                point_q, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Substr { data, offset, size } => Expression::Substr {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+            offset: Box::new(substitute_expression(
+                offset, index_var, value_var, k, array_name,
+            )),
+            size: Box::new(substitute_expression(
+                size, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Cat { left, right } => Expression::Cat {
+            left: Box::new(substitute_expression(
+                left, index_var, value_var, k, array_name,
+            )),
+            right: Box::new(substitute_expression(
+                right, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Bin2Num { data } => Expression::Bin2Num {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::Num2Bin { value, size } => Expression::Num2Bin {
+            value: Box::new(substitute_expression(
+                value, index_var, value_var, k, array_name,
+            )),
+            size: Box::new(substitute_expression(
+                size, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::SizeOf { data } => Expression::SizeOf {
+            data: Box::new(substitute_expression(
+                data, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::PacketInspect { packet_type } => Expression::PacketInspect {
+            packet_type: Box::new(substitute_expression(
+                packet_type,
+                index_var,
+                value_var,
+                k,
+                array_name,
+            )),
+        },
+        Expression::InputPacketInspect { index, packet_type } => Expression::InputPacketInspect {
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+            packet_type: Box::new(substitute_expression(
+                packet_type,
+                index_var,
+                value_var,
+                k,
+                array_name,
+            )),
+        },
         // Recurse into contract instance arguments
         Expression::ContractInstance {
             contract_name,

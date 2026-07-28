@@ -17,7 +17,8 @@ const arkadeMonarch = {
     builtinFunctions: [
         'checkSig', 'checkMultisig', 'checkSigFromStack', 'checkSigFromStackVerify',
         'sha256', 'sha256Initialize', 'sha256Update', 'sha256Finalize',
-        'neg64', 'le64ToScriptNum', 'le32ToLe64', 'ecMulScalarVerify', 'tweakVerify',
+        'digest', 'sighash', 'modExp', 'reverseBytes',
+        'ecAdd', 'ecMul', 'ecPairing', 'ecMulScalarVerify', 'tweakVerify',
         'older', 'after', 'tweak'
     ],
 
@@ -41,7 +42,7 @@ const arkadeMonarch = {
             [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
 
             // Built-in functions
-            [/\b(checkSig|checkMultisig|checkSigFromStack|checkSigFromStackVerify|sha256|sha256Initialize|sha256Update|sha256Finalize|neg64|le64ToScriptNum|le32ToLe64|ecMulScalarVerify|tweakVerify|older|after|tweak)\b/, 'predefined'],
+            [/\b(checkSig|checkMultisig|checkSigFromStack|checkSigFromStackVerify|sha256|sha256Initialize|sha256Update|sha256Finalize|digest|sighash|modExp|reverseBytes|ecAdd|ecMul|ecPairing|ecMulScalarVerify|tweakVerify|older|after|tweak)\b/, 'predefined'],
 
             // Transaction/this keywords
             [/\b(tx|this)\b/, 'variable.predefined'],

@@ -197,8 +197,9 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_cooperative_path_asm_order() {
-    // Verify exact covenant ASM (arkade) for 'send':
-    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>,<exit>)> OP_EQUAL
+    // Verify exact covenant ASM (arkade) for 'send'. The OP_DROP discards the
+    // witness version that OP_INSPECTOUTPUTSCRIPTPUBKEY pushes above the program:
+    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <VTXO:SingleSig(<ownerPk>,<exit>)> OP_EQUAL
     // And verify exact default-leaf ASM:
     //   <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:send> OP_CHECKSIG
     let code = r#"
@@ -217,6 +218,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
     let expected_arkade: Vec<&str> = vec![
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "OP_DROP",
         "<VTXO:SingleSig(<ownerPk>,<exit>)>",
         "OP_EQUAL",
         "OP_VERIFY",

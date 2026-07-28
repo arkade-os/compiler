@@ -100,7 +100,7 @@ function leafSuffix(groupName, leafName) {
 const TS_TYPE_MAP = {
     'compressed-33': 'Pubkey', 'schnorr-64': 'Signature',
     'raw': 'Bytes', 'raw-20': 'Bytes20', 'raw-32': 'Bytes32',
-    'scriptnum': 'bigint', 'le64': 'bigint', 'le32': 'number',
+    'scriptnum': 'bigint',
 };
 
 function tsTypeForField(field) {
@@ -186,7 +186,7 @@ function generateTypeScript(ir) {
 const GO_TYPE_MAP = {
     'compressed-33': '[33]byte', 'schnorr-64': '[64]byte',
     'raw': '[]byte', 'raw-20': '[20]byte', 'raw-32': '[32]byte',
-    'scriptnum': 'int64', 'le64': 'uint64', 'le32': 'uint32',
+    'scriptnum': 'int64',
 };
 
 function goTypeForField(field) {
@@ -201,7 +201,7 @@ function isFixedArray(encoding) {
 const ENCODING_CONST = {
     'compressed-33': 'ark.Compressed33', 'schnorr-64': 'ark.Schnorr64',
     'raw': 'ark.Raw', 'raw-20': 'ark.Raw20', 'raw-32': 'ark.Raw32',
-    'scriptnum': 'ark.ScriptNum', 'le64': 'ark.Le64', 'le32': 'ark.Le32',
+    'scriptnum': 'ark.ScriptNum',
 };
 
 function goValueExpr(field, prefix) {
@@ -211,8 +211,6 @@ function goValueExpr(field, prefix) {
             ? `ark.EncodeBool(${prefix}.${goName})`
             : `ark.EncodeScriptNum(${prefix}.${goName})`;
     }
-    if (field.encoding === 'le64') return `ark.EncodeLe64(${prefix}.${goName})`;
-    if (field.encoding === 'le32') return `ark.EncodeLe32(${prefix}.${goName})`;
     if (isFixedArray(field.encoding)) return `${prefix}.${goName}[:]`;
     return `${prefix}.${goName}`;
 }

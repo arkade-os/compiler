@@ -123,8 +123,8 @@ multiplicative_expr = {
     unary_expr ~ ((mul_op | div_op) ~ unary_expr)*
 }
 
-// Unary and primary expressions
-unary_expr = { primary_expr }
+// Unary expressions: an optional leading `-` negates its operand.
+unary_expr = { sub_op? ~ primary_expr }
 
 // Primary expressions (atoms)
 primary_expr = {
@@ -136,15 +136,19 @@ primary_expr = {
     sha256_update |
     sha256_finalize |
     sha256_func |
-    neg64_func |
-    le64_to_script_num |
-    le32_to_le64 |
+    digest_func |
+    sighash_func |
+    mod_exp_func |
+    ec_add |
+    ec_mul |
+    ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
     cat_func |
     bin2num_func |
     num2bin_func |
+    reverse_bytes_func |
     size_func |
     input_packet_inspect |
     packet_inspect |
@@ -192,15 +196,19 @@ complex_expression = _{
     sha256_initialize |
     sha256_update |
     sha256_finalize |
-    neg64_func |
-    le64_to_script_num |
-    le32_to_le64 |
+    digest_func |
+    sighash_func |
+    mod_exp_func |
+    ec_add |
+    ec_mul |
+    ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
     substr_func |
     cat_func |
     bin2num_func |
     num2bin_func |
+    reverse_bytes_func |
     size_func |
     input_packet_inspect |
     packet_inspect |
@@ -268,7 +276,7 @@ tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs
 
 // ─── Indexed Input/Output Introspection ─────────────────────────────────────────
 
-// Input introspection: tx.inputs[i].property (value, scriptPubKey, sequence, outpoint, issuance)
+// Input introspection: tx.inputs[i].property
 input_introspection = {
     "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ input_introspection_property
 }
@@ -278,17 +286,17 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "sequence" | "outpoint" | "issuance" |
+    "value" | "scriptPubKey" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash"
 }
 
-// Output introspection: tx.outputs[o].property (value, scriptPubKey, nonce)
+// Output introspection: tx.outputs[o].property
 output_introspection = {
     "tx" ~ "." ~ "outputs" ~ array_access ~ "." ~ output_introspection_property
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" | "nonce" }
+output_introspection_property = { "value" | "scriptPubKey" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
@@ -501,24 +509,34 @@ sha256_finalize = {
     "sha256Finalize" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// ─── Conversion & Arithmetic ───────────────────────────────────────────
-
-// Negate 64-bit value: neg64(value) → OP_NEG64
-neg64_func = {
-    "neg64" ~ "(" ~ (identifier | number_literal) ~ ")"
+sighash_func = {
+    "sighash" ~ "(" ~ (identifier | number_literal) ~ ")"
 }
 
-// Convert LE64 to script number: le64ToScriptNum(value) → OP_LE64TOSCRIPTNUM
-le64_to_script_num = {
-    "le64ToScriptNum" ~ "(" ~ (identifier | number_literal) ~ ")"
+digest_func = {
+    "digest" ~ "(" ~ additive_expr ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// Convert LE32 to LE64: le32ToLe64(value) → OP_LE32TOLE64
-le32_to_le64 = {
-    "le32ToLe64" ~ "(" ~ (identifier | number_literal) ~ ")"
+// ─── Arithmetic ────────────────────────────────────────────────────────
+
+// Modular exponentiation: modExp(base, exponent, modulus) → OP_MODEXP
+mod_exp_func = {
+    "modExp" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
+
+ec_add = {
+    "ecAdd" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+ec_mul = {
+    "ecMul" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+ec_pairing = {
+    "ecPairing" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
 
 // EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY
 ec_mul_scalar_verify = {
@@ -530,7 +548,7 @@ tweak_verify = {
     "tweakVerify" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACKVERIFY
+// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }
@@ -547,6 +565,7 @@ byte_value = {
     substr_func |
     cat_func |
     num2bin_func |
+    reverse_bytes_func |
     packet_inspect |
     input_packet_inspect |
     input_introspection |
@@ -573,6 +592,11 @@ bin2num_func = {
 // BigNum → fixed-width bytes: num2bin(num, size) → OP_NUM2BIN
 num2bin_func = {
     "num2bin" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+}
+
+// Reverse a byte array: reverseBytes(bytes) → OP_REVERSEBYTES
+reverse_bytes_func = {
+    "reverseBytes" ~ "(" ~ byte_value ~ ")"
 }
 
 // Byte-array length: size(bytes) → OP_SIZE OP_NIP (returns size only)

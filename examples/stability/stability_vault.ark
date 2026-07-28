@@ -227,7 +227,7 @@ contract StabilityVault(
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 600, "stale oracle");
 
-    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int elapsed           = tx.offchainTime - lastUpdate;
@@ -269,7 +269,7 @@ contract StabilityVault(
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 600, "stale oracle");
 
-    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int elapsed           = tx.offchainTime - lastUpdate;
@@ -315,7 +315,7 @@ contract StabilityVault(
     require(oracleAge >= 0, "future-dated oracle");
     require(oracleAge <= 600, "stale oracle");
 
-    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
     int elapsed           = tx.offchainTime - lastUpdate;

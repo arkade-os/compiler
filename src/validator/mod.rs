@@ -398,9 +398,36 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             context,
             last_chunk,
         } => vec![context, last_chunk],
-        Expression::Neg64 { value }
-        | Expression::Le64ToScriptNum { value }
-        | Expression::Le32ToLe64 { value } => vec![value],
+        Expression::Sighash { hash_type } => vec![hash_type],
+        Expression::Digest { data, hash_type } => vec![data, hash_type],
+        Expression::Negate { value } => vec![value],
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => vec![base, exponent, modulus],
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => vec![x1, y1, x2, y2, curve_id],
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => vec![x, y, scalar, curve_id],
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
         Expression::EcMulScalarVerify {
             scalar,
             point_p,
@@ -414,7 +441,9 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::ContractInstance { args, .. } => args.iter().collect(),
         Expression::Substr { data, offset, size } => vec![data, offset, size],
         Expression::Cat { left, right } => vec![left, right],
-        Expression::Bin2Num { data } | Expression::SizeOf { data } => vec![data],
+        Expression::Bin2Num { data }
+        | Expression::ReverseBytes { data }
+        | Expression::SizeOf { data } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],

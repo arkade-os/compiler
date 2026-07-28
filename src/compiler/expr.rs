@@ -22,7 +22,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // keeps the placeholder pipeline untouched for everything else).
             match prop.as_str() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
-                "this.activeBytecode" => asm.push(OP_INPUTBYTECODE.to_string()),
+                "this.activeBytecode" => emit_current_input_asm(Some("scriptPubKey"), asm),
                 _ => asm.push(format!("<{}>", prop)),
             }
         }
@@ -183,37 +183,82 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(last_chunk, asm);
             asm.push(OP_SHA256FINALIZE.to_string());
         }
-        // Byte-string concatenation: bytes-like + value → OP_CAT
-        Expression::Concat {
-            left,
-            right,
-            coerce_left,
-            coerce_right,
-        } => {
+        Expression::Sighash { hash_type } => {
+            emit_expression_asm(hash_type, asm);
+            asm.push(OP_SIGHASH.to_string());
+        }
+        Expression::Digest { data, hash_type } => {
+            emit_expression_asm(data, asm);
+            emit_expression_asm(hash_type, asm);
+            asm.push(OP_DIGEST.to_string());
+        }
+        // Byte-string concatenation: bytes + bytes → OP_CAT
+        Expression::Concat { left, right } => {
             emit_expression_asm(left, asm);
-            if *coerce_left {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
-            }
             emit_expression_asm(right, asm);
-            if *coerce_right {
-                asm.push(OP_SCRIPTNUMTOLE64.to_string());
-            }
             asm.push(OP_CAT.to_string());
         }
-        // Conversion & Arithmetic
-        Expression::Neg64 { value } => {
+        // Arithmetic
+        Expression::Negate { value } => {
             emit_expression_asm(value, asm);
-            asm.push(OP_NEG64.to_string());
+            asm.push(OP_NEGATE.to_string());
         }
-        Expression::Le64ToScriptNum { value } => {
-            emit_expression_asm(value, asm);
-            asm.push(OP_LE64TOSCRIPTNUM.to_string());
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => {
+            emit_expression_asm(base, asm);
+            emit_expression_asm(exponent, asm);
+            emit_expression_asm(modulus, asm);
+            asm.push(OP_MODEXP.to_string());
         }
-        Expression::Le32ToLe64 { value } => {
-            emit_expression_asm(value, asm);
-            asm.push(OP_LE32TOLE64.to_string());
+        // Elliptic curve operations
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => {
+            emit_expression_asm(x1, asm);
+            emit_expression_asm(y1, asm);
+            emit_expression_asm(x2, asm);
+            emit_expression_asm(y2, asm);
+            emit_expression_asm(curve_id, asm);
+            asm.push(OP_ECADD.to_string());
         }
-        // Crypto Opcodes
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => {
+            emit_expression_asm(x, asm);
+            emit_expression_asm(y, asm);
+            emit_expression_asm(scalar, asm);
+            emit_expression_asm(curve_id, asm);
+            asm.push(OP_ECMUL.to_string());
+        }
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => {
+            emit_expression_asm(g1_x, asm);
+            emit_expression_asm(g1_y, asm);
+            emit_expression_asm(g2_x_c1, asm);
+            emit_expression_asm(g2_x_c0, asm);
+            emit_expression_asm(g2_y_c1, asm);
+            emit_expression_asm(g2_y_c0, asm);
+            asm.push(OP_1.to_string());
+            emit_expression_asm(curve_id, asm);
+            asm.push(OP_ECPAIRING.to_string());
+        }
         Expression::EcMulScalarVerify {
             scalar,
             point_p,
@@ -242,7 +287,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
-            asm.push(OP_CHECKSIGFROMSTACKVERIFY.to_string());
+            asm.push(OP_CHECKSIGFROMSTACK.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
         // Byte-string manipulation (introspector extensions)
         Expression::Substr { data, offset, size } => {
@@ -264,6 +310,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(value, asm);
             emit_expression_asm(size, asm);
             asm.push(OP_NUM2BIN.to_string());
+        }
+        Expression::ReverseBytes { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_REVERSEBYTES.to_string());
         }
         Expression::SizeOf { data } => {
             emit_expression_asm(data, asm);
@@ -292,7 +342,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
     match property {
         Some("scriptPubKey") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+            emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
         }
         Some("value") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
@@ -308,7 +358,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
         }
         _ => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string());
+            emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
         }
     }
 }
@@ -316,8 +366,10 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
 /// Emit assembly for a contract instantiation: `new ContractName(arg1, arg2, ...)`
 ///
 /// Produces a single placeholder token `<VTXO:ContractName(<arg1>,<arg2>)>` that
-/// the runtime resolves to the Taproot scriptPubKey (34-byte P2TR output script)
+/// the runtime resolves to the 32-byte Taproot witness program (the output key)
 /// of the named contract instantiated with the given constructor arguments.
+/// It is compared against a witness program, not a serialized 34-byte P2TR
+/// script, because that is what a scriptPubKey inspection leaves on the stack.
 ///
 /// Options (server key, exit timelock) are inherited from the enclosing contract
 /// and must be applied by the runtime when computing the child contract's taproot
@@ -329,7 +381,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
 /// ```
 /// compiles to:
 /// ```text
-/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
 /// ```
 pub(crate) fn emit_contract_instance_asm(
     contract_name: &str,
@@ -354,7 +406,7 @@ pub(crate) fn emit_contract_instance_asm(
     asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
 }
 
-/// Emit assembly for a binary arithmetic operation (64-bit)
+/// Emit assembly for a binary BigNum operation.
 pub(crate) fn emit_binary_op_asm(
     left: &Expression,
     op: &str,

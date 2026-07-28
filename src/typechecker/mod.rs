@@ -16,8 +16,8 @@ use crate::models::{Contract, Expression, Function, Requirement, Statement, DEFA
 /// All possible types in Arkade Script.
 ///
 /// Declared types map directly to the grammar's `data_type` rule.
-/// Internal types are produced by introspection expressions and 64-bit
-/// arithmetic; they never appear in user-written type annotations.
+/// Internal types are produced by introspection expressions; they never appear
+/// in user-written type annotations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArkType {
     // ── Declared types (match grammar data_type rule) ──────────────────────
@@ -39,12 +39,6 @@ pub enum ArkType {
     Asset,
 
     // ── Internal / introspection types ─────────────────────────────────────
-    /// 8-byte little-endian unsigned 64-bit integer.
-    /// Produced by: asset amounts, UTXO values, group sums.
-    Uint64Le,
-    /// 4-byte little-endian unsigned 32-bit integer.
-    /// Produced by: tx.version, tx.locktime.
-    Uint32Le,
 
     // ── Composite ──────────────────────────────────────────────────────────
     /// Homogeneous array (e.g., `pubkey[]`)
@@ -87,8 +81,6 @@ impl ArkType {
             ArkType::Int => "scriptnum",
             ArkType::Bool => "scriptnum",
             ArkType::Asset => "raw-32",
-            ArkType::Uint64Le => "le64",
-            ArkType::Uint32Le => "le32",
             ArkType::Array(_) => "array",
             ArkType::Unknown => "unknown",
         }
@@ -105,8 +97,6 @@ impl ArkType {
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
             ArkType::Asset => "asset".to_string(),
-            ArkType::Uint64Le => "uint64le".to_string(),
-            ArkType::Uint32Le => "uint32le".to_string(),
             ArkType::Array(inner) => format!("{}[]", inner.as_str()),
             ArkType::Unknown => "unknown".to_string(),
         }
@@ -430,7 +420,7 @@ fn check_comparison(
 }
 
 fn is_numeric(t: &ArkType) -> bool {
-    matches!(t, ArkType::Int | ArkType::Uint32Le | ArkType::Uint64Le)
+    matches!(t, ArkType::Int)
 }
 
 fn expect_type(
@@ -472,16 +462,16 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // tx.input.current.*
         Expression::CurrentInput(prop) => match prop.as_deref() {
-            Some("value") => ArkType::Uint64Le,
+            Some("value") => ArkType::Int,
             Some("scriptPubKey") => ArkType::Bytes,
-            Some("sequence") => ArkType::Uint32Le,
+            Some("sequence") => ArkType::Int,
             Some("outpoint") => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // tx-level introspection
         Expression::TxIntrospection { property } => match property.as_str() {
-            "version" | "locktime" => ArkType::Uint32Le,
+            "version" | "locktime" => ArkType::Int,
             "numInputs" | "numOutputs" | "weight" => ArkType::Int,
             "id" => ArkType::Bytes32,
             _ => ArkType::Unknown,
@@ -489,29 +479,27 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // tx.inputs[i].*
         Expression::InputIntrospection { property, .. } => match property.as_str() {
-            "value" => ArkType::Uint64Le,
+            "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
-            "sequence" => ArkType::Uint32Le,
+            "sequence" => ArkType::Int,
             "outpoint" => ArkType::Bytes32,
-            "issuance" => ArkType::Bytes,
             "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // tx.outputs[o].*
         Expression::OutputIntrospection { property, .. } => match property.as_str() {
-            "value" => ArkType::Uint64Le,
+            "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
-            "nonce" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // Asset introspection
-        Expression::AssetLookup { .. } => ArkType::Uint64Le,
+        Expression::AssetLookup { .. } => ArkType::Int,
         Expression::AssetHas { .. } => ArkType::Bool,
         Expression::AssetCount { .. } => ArkType::Int,
         Expression::AssetAt { property, .. } => match property.as_str() {
-            "amount" => ArkType::Uint64Le,
+            "amount" => ArkType::Int,
             // TODO(asset-id-struct): `.assetId` is really a two-item canonical
             // Asset ID (asset_txid, asset_gidx), NOT a single bytes32. Typed as
             // Bytes32 only as a stopgap until the composite `AssetId` struct
@@ -524,11 +512,11 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::GroupFind { .. } => ArkType::Int,
         Expression::GroupHas { .. } => ArkType::Bool,
         Expression::GroupControlIs { .. } => ArkType::Bool,
-        Expression::GroupSum { .. } => ArkType::Uint64Le,
+        Expression::GroupSum { .. } => ArkType::Int,
         Expression::GroupNumIO { .. } => ArkType::Int,
         Expression::AssetGroupsLength => ArkType::Int,
         Expression::GroupProperty { property, .. } => match property.as_str() {
-            "sumInputs" | "sumOutputs" | "delta" => ArkType::Uint64Le,
+            "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,
             "numInputs" | "numOutputs" => ArkType::Int,
             // TODO(asset-id-struct): `assetId` is really a two-item canonical
             // Asset ID (asset_txid, asset_gidx), not a single bytes32; typed
@@ -540,7 +528,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             _ => ArkType::Unknown,
         },
         Expression::GroupIOAccess { property, .. } => match property.as_deref() {
-            Some("amount") => ArkType::Uint64Le,
+            Some("amount") => ArkType::Int,
             Some("type") => ArkType::Int,
             _ => ArkType::Unknown,
         },
@@ -549,22 +537,23 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::Sha256 { .. }
         | Expression::Sha256Initialize { .. }
         | Expression::Sha256Update { .. }
-        | Expression::Sha256Finalize { .. } => ArkType::Bytes32,
+        | Expression::Sha256Finalize { .. }
+        | Expression::Sighash { .. } => ArkType::Bytes32,
 
         // Byte-string ops
-        Expression::Concat { .. } => ArkType::Bytes,
+        Expression::Concat { .. } | Expression::Digest { .. } => ArkType::Bytes,
 
-        // Conversion and arithmetic
-        Expression::Neg64 { .. } => ArkType::Uint64Le,
-        Expression::Le64ToScriptNum { .. } => ArkType::Int,
-        Expression::Le32ToLe64 { .. } => ArkType::Uint64Le,
+        // Arithmetic
+        Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,
 
         // Crypto expressions
         Expression::CheckSigExpr { .. }
         | Expression::CheckSigFromStackExpr { .. }
         | Expression::CheckSigFromStackVerify { .. }
+        | Expression::EcPairing { .. }
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => ArkType::Bool,
+        Expression::EcAdd { .. } | Expression::EcMul { .. } => ArkType::Unknown,
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,
@@ -572,8 +561,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         // Byte-string manipulation (introspector extensions)
         Expression::Substr { .. } => ArkType::Bytes,
         Expression::Cat { .. } => ArkType::Bytes,
-        Expression::Bin2Num { .. } => ArkType::Uint64Le,
+        Expression::Bin2Num { .. } => ArkType::Int,
         Expression::Num2Bin { .. } => ArkType::Bytes,
+        Expression::ReverseBytes { .. } => ArkType::Bytes,
         Expression::SizeOf { .. } => ArkType::Int,
 
         // Packet introspection — returns raw packet bytes.
@@ -589,19 +579,11 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                     // bytes-like on either side → concatenation (result Bytes).
                     if is_bytes_like(&lt) || is_bytes_like(&rt) {
                         ArkType::Bytes
-                    } else if lt == ArkType::Uint64Le || rt == ArkType::Uint64Le {
-                        ArkType::Uint64Le
                     } else {
                         ArkType::Int
                     }
                 }
-                "-" | "*" | "/" => {
-                    if lt == ArkType::Uint64Le || rt == ArkType::Uint64Le {
-                        ArkType::Uint64Le
-                    } else {
-                        ArkType::Int
-                    }
-                }
+                "-" | "*" | "/" => ArkType::Int,
                 "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
                 _ => ArkType::Unknown,
             }
@@ -613,10 +595,4 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 /// operand for concatenation via OP_CAT).
 pub fn is_bytes_like(t: &ArkType) -> bool {
     matches!(t, ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32)
-}
-
-/// Returns true when the type is an integer/scriptnum that needs
-/// `OP_SCRIPTNUMTOLE64` before being concatenated with a bytes value.
-pub fn needs_scriptnum_to_le64(t: &ArkType) -> bool {
-    matches!(t, ArkType::Int | ArkType::Bool | ArkType::Uint32Le)
 }

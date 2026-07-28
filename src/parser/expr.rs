@@ -119,6 +119,18 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         .as_str()
         .to_string();
 
+    if name == "negate" {
+        return Err(
+            "`negate(value)` was replaced by the unary minus operator; write `-value`".to_string(),
+        );
+    }
+
+    if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
+        return Err(format!(
+            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bin2num/num2bin"
+        ));
+    }
+
     if let Some(signature) = reserved_function_signature(&name) {
         return Err(format!(
             "malformed reserved function call `{name}(...)`; expected {signature}"
@@ -141,9 +153,13 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "sha256Initialize" => Some("sha256Initialize(data)"),
         "sha256Update" => Some("sha256Update(ctx, chunk)"),
         "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
-        "neg64" => Some("neg64(value)"),
-        "le64ToScriptNum" => Some("le64ToScriptNum(value)"),
-        "le32ToLe64" => Some("le32ToLe64(value)"),
+        "digest" => Some("digest(data, hashType)"),
+        "sighash" => Some("sighash(hashType)"),
+        "modExp" => Some("modExp(base, exponent, modulus)"),
+        "ecAdd" => Some("ecAdd(x1, y1, x2, y2, curveId)"),
+        "ecMul" => Some("ecMul(x, y, scalar, curveId)"),
+        "ecPairing" => Some("ecPairing(g1X, g1Y, g2Xc1, g2Xc0, g2Yc1, g2Yc0, curveId)"),
+        "reverseBytes" => Some("reverseBytes(data)"),
         "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
@@ -154,9 +170,21 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
 
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
-        Rule::primary_expr | Rule::unary_expr => {
+        Rule::primary_expr => {
             let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
             parse_primary_expr(inner)
+        }
+        // `-operand` negates; without the leading `-` this is a pass-through.
+        Rule::unary_expr => {
+            let mut inner = pair.into_inner();
+            let first = inner.next().ok_or("Empty unary expression")?;
+            if first.as_rule() != Rule::sub_op {
+                return parse_primary_expr(first);
+            }
+            let operand = inner.next().ok_or("Missing operand after unary `-`")?;
+            Ok(Expression::Negate {
+                value: Box::new(parse_primary_expr(operand)?),
+            })
         }
         Rule::general_expression | Rule::comparison_expr => {
             // Parenthesized expression
@@ -204,11 +232,14 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::sha256_initialize => parse_sha256_initialize(pair),
         Rule::sha256_update => parse_sha256_update(pair),
         Rule::sha256_finalize => parse_sha256_finalize(pair),
-        // Conversion & Arithmetic
-        Rule::neg64_func => parse_neg64(pair),
-        Rule::le64_to_script_num => parse_le64_to_script_num(pair),
-        Rule::le32_to_le64 => parse_le32_to_le64(pair),
+        Rule::digest_func => parse_digest(pair),
+        Rule::sighash_func => parse_sighash(pair),
+        // Arithmetic
+        Rule::mod_exp_func => parse_mod_exp(pair),
         // Crypto Opcodes
+        Rule::ec_add => parse_ec_add(pair),
+        Rule::ec_mul => parse_ec_mul(pair),
+        Rule::ec_pairing => parse_ec_pairing(pair),
         Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
@@ -217,6 +248,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::cat_func => parse_cat(pair),
         Rule::bin2num_func => parse_bin2num(pair),
         Rule::num2bin_func => parse_num2bin(pair),
+        Rule::reverse_bytes_func => parse_reverse_bytes(pair),
         Rule::size_func => parse_size(pair),
         // Packet introspection
         Rule::packet_inspect => parse_packet_inspect(pair),
@@ -314,6 +346,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::substr_func => parse_substr(inner),
         Rule::cat_func => parse_cat(inner),
         Rule::num2bin_func => parse_num2bin(inner),
+        Rule::reverse_bytes_func => parse_reverse_bytes(inner),
         Rule::packet_inspect => parse_packet_inspect(inner),
         Rule::input_packet_inspect => parse_input_packet_inspect(inner),
         Rule::input_introspection => parse_input_introspection_to_expression(inner),

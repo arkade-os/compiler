@@ -57,8 +57,6 @@ pub struct FunctionInput {
 /// | `raw-20`        | 20-byte array (e.g., HASH160)                 |
 /// | `raw-32`        | 32-byte array (e.g., SHA256, txid)            |
 /// | `scriptnum`     | Bitcoin CScriptNum (variable-length LE)       |
-/// | `le64`          | 8-byte unsigned little-endian int64           |
-/// | `le32`          | 4-byte unsigned little-endian int32           |
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WitnessElement {
     /// Parameter name (matches an `<name>` placeholder in `asm`)
@@ -386,12 +384,12 @@ pub enum Expression {
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
     TxIntrospection { property: String },
-    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint, issuance
+    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint
     InputIntrospection {
         index: Box<Expression>,
         property: String,
     },
-    /// Output introspection: tx.outputs[o].value, scriptPubKey, nonce
+    /// Output introspection: tx.outputs[o].value, scriptPubKey
     OutputIntrospection {
         index: Box<Expression>,
         property: String,
@@ -454,16 +452,15 @@ pub enum Expression {
         message: String,
     },
     // ─── Byte-string operations ────────────────────────────────────────
-    /// Byte-string concatenation: produced by the rewrite pass when `+`
-    /// has at least one bytes-like operand. `coerce_left` / `coerce_right`
-    /// tell the emitter to insert `OP_SCRIPTNUMTOLE64` on a side that is
-    /// an integer (mixed `bytes + int` writes the int as fixed 8-byte LE
-    /// before OP_CAT, so off-chain hashing matches deterministically).
+    /// Byte-string concatenation: produced by the rewrite pass when `+` has at
+    /// least one bytes-like operand. Both operands must already be bytes; a
+    /// numeric operand is a compile error telling the author to convert it with
+    /// `num2bin(value, width)`. The compiler never picks a width on its own,
+    /// because the width and byte order are consensus-visible: they decide what
+    /// an off-chain signer must hash to match.
     Concat {
         left: Box<Expression>,
         right: Box<Expression>,
-        coerce_left: bool,
-        coerce_right: bool,
     },
     // ─── Streaming SHA256 ──────────────────────────────────────────────
     /// Plain SHA256: sha256(data) → emits `<data> OP_SHA256`.
@@ -482,14 +479,55 @@ pub enum Expression {
         context: Box<Expression>,
         last_chunk: Box<Expression>,
     },
-    // ─── Conversion & Arithmetic ───────────────────────────────────────
-    /// Negate 64-bit value: neg64(value)
-    Neg64 { value: Box<Expression> },
-    /// Convert LE64 to script number: le64ToScriptNum(value)
-    Le64ToScriptNum { value: Box<Expression> },
-    /// Convert LE32 to LE64: le32ToLe64(value)
-    Le32ToLe64 { value: Box<Expression> },
+    /// Signature hash for the current input under the selected hash type.
+    Sighash { hash_type: Box<Expression> },
+    /// Digest selected at runtime. The result is 20 or 32 bytes depending on the hash type.
+    Digest {
+        data: Box<Expression>,
+        hash_type: Box<Expression>,
+    },
+    // ─── Arithmetic ────────────────────────────────────────────────────
+    /// Negate a BigNum value: negate(value)
+    Negate { value: Box<Expression> },
+    /// Modular exponentiation: modExp(base, exponent, modulus)
+    ModExp {
+        base: Box<Expression>,
+        exponent: Box<Expression>,
+        modulus: Box<Expression>,
+    },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
+    /// EC point addition. Produces x and y as two stack items.
+    ///
+    /// TODO(asset-id-struct): like `group.assetId`, a two-item result has no
+    /// representation — `let` binds one name and `==` would only see y. The
+    /// result is unusable until the composite return type lands; the emission
+    /// is correct and ready for it.
+    EcAdd {
+        x1: Box<Expression>,
+        y1: Box<Expression>,
+        x2: Box<Expression>,
+        y2: Box<Expression>,
+        curve_id: Box<Expression>,
+    },
+    /// EC scalar multiplication. Produces x and y as two stack items.
+    ///
+    /// TODO(asset-id-struct): same two-item limitation as `EcAdd`.
+    EcMul {
+        x: Box<Expression>,
+        y: Box<Expression>,
+        scalar: Box<Expression>,
+        curve_id: Box<Expression>,
+    },
+    /// One-pair pairing check. Tuple support can generalize this to multiple pairs.
+    EcPairing {
+        g1_x: Box<Expression>,
+        g1_y: Box<Expression>,
+        g2_x_c1: Box<Expression>,
+        g2_x_c0: Box<Expression>,
+        g2_y_c1: Box<Expression>,
+        g2_y_c0: Box<Expression>,
+        curve_id: Box<Expression>,
+    },
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
     EcMulScalarVerify {
         scalar: Box<Expression>,
@@ -539,6 +577,8 @@ pub enum Expression {
         value: Box<Expression>,
         size: Box<Expression>,
     },
+    /// Reverse a byte string: reverseBytes(data) → OP_REVERSEBYTES
+    ReverseBytes { data: Box<Expression> },
     /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
     SizeOf { data: Box<Expression> },
     // ─── Packet Introspection ──────────────────────────────────────────
