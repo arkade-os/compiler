@@ -5,6 +5,7 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 )
@@ -13,33 +14,51 @@ const counterPacketType = 2
 
 func TestCompiledCounterRecursion(t *testing.T) {
 	contract := compileArtifact(t, "contracts/counter.ark")
-	serverKey := fixedPublicKey(1)
-	emulatorKey := fixedPublicKey(2)
-	counter := instantiateGroup(t, contract, "increment", nil, serverKey, emulatorKey)
-
-	deployment := fundingTx(counter.pkScript, 20_000)
-	addCounterPacket(t, deployment, 0)
-
-	first := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 1))
-	requireVMResult(t, first, emulatorKey, true)
-
-	skippedState := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 2))
-	requireVMResult(t, skippedState, emulatorKey, false)
-
-	second := spendingPSBT(
-		t, first.UnsignedTx, counter, 20_000, counter.pkScript, counterPacket(t, 2),
+	serverKey := fixedPrivateKey(1)
+	emulatorKey := fixedPrivateKey(2)
+	counter := instantiateGroup(
+		t, contract, "increment", nil, serverKey.PubKey(), emulatorKey.PubKey(),
 	)
-	requireVMResult(t, second, emulatorKey, true)
 
-	wrongScript := spendingPSBT(
-		t, first.UnsignedTx, counter, 20_000, p2trScript(t, []byte{txscript.OP_TRUE}), counterPacket(t, 2),
-	)
-	requireVMResult(t, wrongScript, emulatorKey, false)
+	t.Run("covenant recursion", func(t *testing.T) {
+		deployment := fundingTx(counter.pkScript, 20_000)
+		addCounterPacket(t, deployment, 0)
 
-	underfunded := spendingPSBT(
-		t, first.UnsignedTx, counter, 19_999, counter.pkScript, counterPacket(t, 2),
-	)
-	requireVMResult(t, underfunded, emulatorKey, false)
+		first := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 1))
+		requireVMResult(t, first, emulatorKey.PubKey(), true)
+
+		skippedState := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 2))
+		requireVMResult(t, skippedState, emulatorKey.PubKey(), false)
+
+		second := spendingPSBT(
+			t, first.UnsignedTx, counter, 20_000, counter.pkScript, counterPacket(t, 2),
+		)
+		requireVMResult(t, second, emulatorKey.PubKey(), true)
+
+		wrongScript := spendingPSBT(
+			t, first.UnsignedTx, counter, 20_000, p2trScript(t, []byte{txscript.OP_TRUE}), counterPacket(t, 2),
+		)
+		requireVMResult(t, wrongScript, emulatorKey.PubKey(), false)
+
+		underfunded := spendingPSBT(
+			t, first.UnsignedTx, counter, 19_999, counter.pkScript, counterPacket(t, 2),
+		)
+		requireVMResult(t, underfunded, emulatorKey.PubKey(), false)
+	})
+
+	t.Run("tapscript", func(t *testing.T) {
+		prevTx := fundingTx(counter.pkScript, 20_000)
+		keys := []*btcec.PrivateKey{
+			serverKey,
+			arkade.ComputeArkadeScriptPrivateKey(
+				emulatorKey,
+				arkade.ArkadeScriptHash(counter.covenant),
+			),
+		}
+
+		requireTapscriptResult(t, prevTx, counter, 0, keys, nil, true)
+		requireTapscriptResult(t, prevTx, counter, 0, keys[:1], nil, false)
+	})
 }
 
 func addCounterPacket(t *testing.T, tx *wire.MsgTx, value uint64) {

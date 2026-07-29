@@ -272,6 +272,93 @@ func requireVMResult(
 	}
 }
 
+func requireTapscriptResult(
+	t *testing.T,
+	prevTx *wire.MsgTx,
+	group instantiatedGroup,
+	lockTime uint32,
+	keys []*btcec.PrivateKey,
+	arguments wire.TxWitness,
+	wantSuccess bool,
+) {
+	t.Helper()
+
+	err := executeTapscript(prevTx, group, lockTime, keys, arguments)
+	if wantSuccess && err != nil {
+		t.Fatalf("tapscript rejected compiled leaf: %v", err)
+	}
+	if !wantSuccess && err == nil {
+		t.Fatal("tapscript accepted invalid witness")
+	}
+}
+
+func executeTapscript(
+	prevTx *wire.MsgTx,
+	group instantiatedGroup,
+	lockTime uint32,
+	keys []*btcec.PrivateKey,
+	arguments wire.TxWitness,
+) error {
+	prevOut := prevTx.TxOut[0]
+	tx := wire.NewMsgTx(2)
+	tx.LockTime = lockTime
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{Hash: prevTx.TxHash(), Index: 0},
+		Sequence:         wire.MaxTxInSequenceNum - 1,
+	})
+	tx.AddTxOut(&wire.TxOut{Value: prevOut.Value, PkScript: group.pkScript})
+
+	prevOutFetcher := txscript.NewCannedPrevOutputFetcher(prevOut.PkScript, prevOut.Value)
+	sigHashes := txscript.NewTxSigHashes(tx, prevOutFetcher)
+	tapLeaf := txscript.NewTapLeaf(
+		group.tapLeafScript.LeafVersion,
+		group.tapLeafScript.Script,
+	)
+
+	witness := make(wire.TxWitness, 0, len(keys)+len(arguments)+2)
+	for index := len(keys) - 1; index >= 0; index-- {
+		signature, err := txscript.RawTxInTapscriptSignature(
+			tx,
+			sigHashes,
+			0,
+			prevOut.Value,
+			prevOut.PkScript,
+			tapLeaf,
+			txscript.SigHashDefault,
+			keys[index],
+		)
+		if err != nil {
+			return fmt.Errorf("sign tapscript: %w", err)
+		}
+		witness = append(witness, signature)
+	}
+	witness = append(witness, arguments...)
+	witness = append(
+		witness,
+		group.tapLeafScript.Script,
+		group.tapLeafScript.ControlBlock,
+	)
+	tx.TxIn[0].Witness = witness
+
+	engine, err := txscript.NewEngine(
+		prevOut.PkScript,
+		tx,
+		0,
+		txscript.StandardVerifyFlags,
+		nil,
+		sigHashes,
+		prevOut.Value,
+		prevOutFetcher,
+	)
+	if err != nil {
+		return fmt.Errorf("create tapscript engine: %w", err)
+	}
+	if err := engine.Execute(); err != nil {
+		return fmt.Errorf("execute tapscript: %w", err)
+	}
+	return nil
+}
+
 func executeArkadeScripts(ptx *psbt.Packet, emulatorKey *btcec.PublicKey) error {
 	prevouts := make(map[wire.OutPoint]*wire.TxOut, len(ptx.Inputs))
 	arkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(ptx.Inputs))
@@ -314,7 +401,11 @@ func executeArkadeScripts(ptx *psbt.Packet, emulatorKey *btcec.PublicKey) error 
 	return nil
 }
 
+func fixedPrivateKey(value byte) *btcec.PrivateKey {
+	privateKey, _ := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{value}, 32))
+	return privateKey
+}
+
 func fixedPublicKey(value byte) *btcec.PublicKey {
-	_, publicKey := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{value}, 32))
-	return publicKey
+	return fixedPrivateKey(value).PubKey()
 }
