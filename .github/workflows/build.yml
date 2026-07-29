@@ -21,12 +21,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
       - name: Build
         run: cargo build --workspace --verbose
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run tests
         run: cargo test --workspace --verbose
+      - name: Run emulator E2E tests
+        run: ./scripts/e2e.sh -v
 
   check-format:
 
