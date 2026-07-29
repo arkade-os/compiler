@@ -1,6 +1,7 @@
 use super::Rule;
 #[allow(unused_imports)]
 use super::*;
+use crate::binops::EQUAL;
 use crate::models::*;
 use pest::iterators::Pair;
 
@@ -67,7 +68,7 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
         left: Expression::Sha256 {
             data: Box::new(preimage_expr),
         },
-        op: "==".to_string(),
+        op: EQUAL.to_string(),
         right: rhs_expr,
     })
 }

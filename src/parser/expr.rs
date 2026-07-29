@@ -1,6 +1,7 @@
 use super::Rule;
 #[allow(unused_imports)]
 use super::*;
+use crate::binops::{EQUAL, GREATER_OR_EQUAL, GREATER_THAN, LESS_OR_EQUAL, LESS_THAN, NOT_EQUAL};
 use crate::models::*;
 use pest::iterators::Pair;
 
@@ -296,7 +297,10 @@ pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, 
         Rule::general_expression => {
             let expression = parse_general_expression(pair)?;
             if let Expression::BinaryOp { left, op, right } = expression {
-                if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
+                if matches!(
+                    op.as_str(),
+                    EQUAL | NOT_EQUAL | GREATER_OR_EQUAL | LESS_OR_EQUAL | GREATER_THAN | LESS_THAN
+                ) {
                     return Ok(Requirement::Comparison {
                         left: *left,
                         op,

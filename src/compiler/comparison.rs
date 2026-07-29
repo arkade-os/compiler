@@ -1,4 +1,5 @@
 use super::*;
+use crate::binops::{EQUAL, GREATER_OR_EQUAL, GREATER_THAN, LESS_OR_EQUAL, LESS_THAN, NOT_EQUAL};
 use crate::models::*;
 
 /// Emit assembly for a comparison requirement.
@@ -23,15 +24,15 @@ pub(crate) fn emit_comparison_asm(
 /// Emit standard comparison operator (CScriptNum / non-64-bit)
 pub(crate) fn emit_comparison_op(op: &str, asm: &mut Vec<String>) {
     match op {
-        "==" => asm.push(OP_EQUAL.to_string()),
-        "!=" => {
+        EQUAL => asm.push(OP_EQUAL.to_string()),
+        NOT_EQUAL => {
             asm.push(OP_EQUAL.to_string());
             asm.push(OP_NOT.to_string());
         }
-        ">=" => asm.push(OP_GREATERTHANOREQUAL.to_string()),
-        ">" => asm.push(OP_GREATERTHAN.to_string()),
-        "<=" => asm.push(OP_LESSTHANOREQUAL.to_string()),
-        "<" => asm.push(OP_LESSTHAN.to_string()),
+        GREATER_OR_EQUAL => asm.push(OP_GREATERTHANOREQUAL.to_string()),
+        GREATER_THAN => asm.push(OP_GREATERTHAN.to_string()),
+        LESS_OR_EQUAL => asm.push(OP_LESSTHANOREQUAL.to_string()),
+        LESS_THAN => asm.push(OP_LESSTHAN.to_string()),
         _ => asm.push(format!("OP_{}", op)),
     }
 }

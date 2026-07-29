@@ -7,6 +7,7 @@ mod parser;
 mod typechecker;
 mod validator;
 
+mod binops;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 

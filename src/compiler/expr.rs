@@ -1,4 +1,5 @@
 use super::*;
+use crate::binops::{EQUAL, GREATER_OR_EQUAL, GREATER_THAN, LESS_OR_EQUAL, LESS_THAN, NOT_EQUAL};
 use crate::models::*;
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
@@ -66,7 +67,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_output_introspection_asm(index, property, asm);
         }
         Expression::BinaryOp { left, op, right } => {
-            if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
+            if matches!(
+                op.as_str(),
+                EQUAL | NOT_EQUAL | GREATER_OR_EQUAL | LESS_OR_EQUAL | GREATER_THAN | LESS_THAN
+            ) {
                 emit_comparison_asm(left, op, right, asm);
             } else {
                 emit_binary_op_asm(left, op, right, asm);

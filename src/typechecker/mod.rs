@@ -1,3 +1,5 @@
+use crate::binops::{EQUAL, GREATER_OR_EQUAL, GREATER_THAN, LESS_OR_EQUAL, LESS_THAN, NOT_EQUAL};
+use crate::models::{Contract, Expression, Function, Requirement, Statement, DEFAULT_ARRAY_LENGTH};
 /// Type system for Arkade Script.
 ///
 /// Provides:
@@ -8,8 +10,6 @@
 ///   that returns a list of `TypeError`s (currently non-fatal — the caller
 ///   decides how to surface them)
 use std::collections::HashMap;
-
-use crate::models::{Contract, Expression, Function, Requirement, Statement, DEFAULT_ARRAY_LENGTH};
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
@@ -316,7 +316,10 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         Expression::BinaryOp { left, op, right } => {
             check_expression(left, scope, errors, fn_name);
             check_expression(right, scope, errors, fn_name);
-            if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=") {
+            if matches!(
+                op.as_str(),
+                EQUAL | NOT_EQUAL | GREATER_OR_EQUAL | LESS_OR_EQUAL | GREATER_THAN | LESS_THAN
+            ) {
                 check_comparison(left, op, right, scope, errors, fn_name);
             }
         }
@@ -399,12 +402,14 @@ fn check_comparison(
     }
 
     let compatible = match op {
-        "==" | "!=" => {
+        EQUAL | NOT_EQUAL => {
             left_type == right_type
                 || (is_bytes_like(&left_type) && is_bytes_like(&right_type))
                 || (is_numeric(&left_type) && is_numeric(&right_type))
         }
-        ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
+        GREATER_OR_EQUAL | LESS_OR_EQUAL | GREATER_THAN | LESS_THAN => {
+            is_numeric(&left_type) && is_numeric(&right_type)
+        }
         _ => true,
     };
 
@@ -584,7 +589,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                     }
                 }
                 "-" | "*" | "/" => ArkType::Int,
-                "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
+                EQUAL | NOT_EQUAL | GREATER_OR_EQUAL | LESS_OR_EQUAL | GREATER_THAN | LESS_THAN => {
+                    ArkType::Bool
+                }
                 _ => ArkType::Unknown,
             }
         }

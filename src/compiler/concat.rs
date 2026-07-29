@@ -1,3 +1,4 @@
+use crate::binops::{EQUAL, GREATER_OR_EQUAL, GREATER_THAN, LESS_OR_EQUAL, LESS_THAN, NOT_EQUAL};
 use crate::models::*;
 use crate::typechecker::ArkType;
 
@@ -166,7 +167,8 @@ impl ConcatPass {
                 } else {
                     let result_type = match op.as_str() {
                         "+" | "-" | "*" | "/" => ArkType::Int,
-                        "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
+                        EQUAL | NOT_EQUAL | GREATER_OR_EQUAL | LESS_OR_EQUAL | GREATER_THAN
+                        | LESS_THAN => ArkType::Bool,
                         _ => ArkType::Unknown,
                     };
                     (
