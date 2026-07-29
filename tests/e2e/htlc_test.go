@@ -7,6 +7,7 @@ import (
 
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 )
 
@@ -15,17 +16,13 @@ func TestCompiledHTLC(t *testing.T) {
 	serverKey := fixedPrivateKey(1)
 	emulatorKey := fixedPrivateKey(2)
 	preimage := bytes.Repeat([]byte{0x42}, 32)
-	preimageHash := []byte{
-		0x87, 0x39, 0xf4, 0x0e, 0xc4, 0xdb, 0xf5, 0x69, 0xdc, 0xb3,
-		0x81, 0x34, 0xc6, 0xe7, 0x31, 0x09, 0x08, 0x56, 0x69, 0x81,
-	}
 	const refundTime = uint32(500_000_000)
 	refundTimeBytes, err := arkade.BigNumFromUint64(uint64(refundTime)).Bytes()
 	if err != nil {
 		t.Fatal(err)
 	}
 	values := map[string][]byte{
-		"preimageHash": preimageHash,
+		"preimageHash": btcutil.Hash160(preimage),
 		"refundTime":   refundTimeBytes,
 	}
 	claim := instantiateGroup(
