@@ -12,6 +12,16 @@ This language significantly lowers the barrier for Bitcoin-native app developmen
   cp ./scripts/pre-commit .git/hooks 
   ```
 
+## Emulator E2E Tests
+
+The self-contained E2E suite builds the compiler and runs the counter and HTLC artifacts through the Arkade VM and btcd tapscript interpreter.
+
+```bash
+./scripts/e2e.sh -v
+```
+
+Dependencies are pinned in `tests/e2e/go.mod`; no Docker stack or local emulator checkout is required.
+
 ## Playground
 
 Try Arkade Script in your browser — no installation required:
