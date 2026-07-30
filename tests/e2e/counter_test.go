@@ -22,28 +22,28 @@ func TestCompiledCounterRecursion(t *testing.T) {
 
 	t.Run("covenant recursion", func(t *testing.T) {
 		deployment := fundingTx(counter.pkScript, 20_000)
-		addCounterPacket(t, deployment, 0)
+		addCounterPacket(t, deployment)
 
-		first := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 1))
-		requireVMResult(t, first, emulatorKey.PubKey(), true)
+		first := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 2))
+		requireVMResult(t, first, emulatorKey.PubKey(), "")
 
-		skippedState := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 2))
-		requireVMResult(t, skippedState, emulatorKey.PubKey(), false)
+		skippedState := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 3))
+		requireVMResult(t, skippedState, emulatorKey.PubKey(), "OP_VERIFY failed")
 
 		second := spendingPSBT(
-			t, first.UnsignedTx, counter, 20_000, counter.pkScript, counterPacket(t, 2),
+			t, first.UnsignedTx, counter, 20_000, counter.pkScript, counterPacket(t, 3),
 		)
-		requireVMResult(t, second, emulatorKey.PubKey(), true)
+		requireVMResult(t, second, emulatorKey.PubKey(), "")
 
 		wrongScript := spendingPSBT(
-			t, first.UnsignedTx, counter, 20_000, p2trScript(t, []byte{txscript.OP_TRUE}), counterPacket(t, 2),
+			t, first.UnsignedTx, counter, 20_000, p2trScript(t, []byte{txscript.OP_TRUE}), counterPacket(t, 3),
 		)
-		requireVMResult(t, wrongScript, emulatorKey.PubKey(), false)
+		requireVMResult(t, wrongScript, emulatorKey.PubKey(), "OP_VERIFY failed")
 
 		underfunded := spendingPSBT(
-			t, first.UnsignedTx, counter, 19_999, counter.pkScript, counterPacket(t, 2),
+			t, first.UnsignedTx, counter, 19_999, counter.pkScript, counterPacket(t, 3),
 		)
-		requireVMResult(t, underfunded, emulatorKey.PubKey(), false)
+		requireVMResult(t, underfunded, emulatorKey.PubKey(), "OP_VERIFY failed")
 	})
 
 	t.Run("tapscript", func(t *testing.T) {
@@ -56,14 +56,29 @@ func TestCompiledCounterRecursion(t *testing.T) {
 			),
 		}
 
-		requireTapscriptResult(t, prevTx, counter, 0, keys, nil, true)
-		requireTapscriptResult(t, prevTx, counter, 0, keys[:1], nil, false)
+		requireTapscriptResult(
+			t, prevTx, counter, 0, wire.MaxTxInSequenceNum-1, keys, nil, "",
+		)
+		requireTapscriptResult(
+			t, prevTx, counter, 0, wire.MaxTxInSequenceNum-1, keys[:1], nil,
+			"index 0 is invalid for stack size 0",
+		)
+		requireTapscriptResult(
+			t,
+			prevTx,
+			counter,
+			0,
+			wire.MaxTxInSequenceNum-1,
+			[]*btcec.PrivateKey{serverKey, fixedPrivateKey(4)},
+			nil,
+			"signature not empty on failed checksig",
+		)
 	})
 }
 
-func addCounterPacket(t *testing.T, tx *wire.MsgTx, value uint64) {
+func addCounterPacket(t *testing.T, tx *wire.MsgTx) {
 	t.Helper()
-	ext := extension.Extension{counterPacket(t, value)}
+	ext := extension.Extension{counterPacket(t, 1)}
 	output, err := ext.TxOut()
 	if err != nil {
 		t.Fatalf("counter packet: %v", err)
@@ -73,7 +88,7 @@ func addCounterPacket(t *testing.T, tx *wire.MsgTx, value uint64) {
 
 func counterPacket(t *testing.T, value uint64) extension.Packet {
 	t.Helper()
-	payload, err := arkade.BigNumFromUint64(value + 1).Bytes()
+	payload, err := arkade.BigNumFromUint64(value).Bytes()
 	if err != nil {
 		t.Fatalf("counter payload: %v", err)
 	}

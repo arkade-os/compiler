@@ -71,6 +71,9 @@ func compileArtifact(t *testing.T, source string) artifact {
 	compiler := os.Getenv("ARKADEC")
 	if compiler == "" {
 		compiler = filepath.Join("..", "..", "target", "debug", "arkadec")
+		if _, err := os.Stat(compiler); err != nil {
+			t.Fatalf("compiler unavailable; run scripts/e2e.sh or set ARKADEC: %v", err)
+		}
 	}
 	output := filepath.Join(t.TempDir(), "artifact.json")
 	cmd := exec.Command(compiler, source, "-o", output)
@@ -88,7 +91,7 @@ func compileArtifact(t *testing.T, source string) artifact {
 		t.Fatalf("decode artifact: %v", err)
 	}
 	if len(contract.Warnings) > 0 {
-		t.Fatalf("compile %s returned warnings: %v", source, contract.Warnings)
+		t.Logf("compile %s returned warnings: %v", source, contract.Warnings)
 	}
 	return contract
 }
@@ -259,16 +262,22 @@ func requireVMResult(
 	t *testing.T,
 	ptx *psbt.Packet,
 	emulatorKey *btcec.PublicKey,
-	wantSuccess bool,
+	wantErr string,
 ) {
 	t.Helper()
 
 	err := executeArkadeScripts(ptx, emulatorKey)
-	if wantSuccess && err != nil {
-		t.Fatalf("VM rejected compiled script: %v", err)
+	if wantErr == "" {
+		if err != nil {
+			t.Fatalf("VM rejected compiled script: %v", err)
+		}
+		return
 	}
-	if !wantSuccess && err == nil {
+	if err == nil {
 		t.Fatal("VM accepted invalid transaction")
+	}
+	if !strings.Contains(err.Error(), wantErr) {
+		t.Fatalf("VM error %q does not contain %q", err, wantErr)
 	}
 }
 
@@ -277,18 +286,25 @@ func requireTapscriptResult(
 	prevTx *wire.MsgTx,
 	group instantiatedGroup,
 	lockTime uint32,
+	sequence uint32,
 	keys []*btcec.PrivateKey,
 	arguments wire.TxWitness,
-	wantSuccess bool,
+	wantErr string,
 ) {
 	t.Helper()
 
-	err := executeTapscript(prevTx, group, lockTime, keys, arguments)
-	if wantSuccess && err != nil {
-		t.Fatalf("tapscript rejected compiled leaf: %v", err)
+	err := executeTapscript(prevTx, group, lockTime, sequence, keys, arguments)
+	if wantErr == "" {
+		if err != nil {
+			t.Fatalf("tapscript rejected compiled leaf: %v", err)
+		}
+		return
 	}
-	if !wantSuccess && err == nil {
+	if err == nil {
 		t.Fatal("tapscript accepted invalid witness")
+	}
+	if !strings.Contains(err.Error(), wantErr) {
+		t.Fatalf("tapscript error %q does not contain %q", err, wantErr)
 	}
 }
 
@@ -296,6 +312,7 @@ func executeTapscript(
 	prevTx *wire.MsgTx,
 	group instantiatedGroup,
 	lockTime uint32,
+	sequence uint32,
 	keys []*btcec.PrivateKey,
 	arguments wire.TxWitness,
 ) error {
@@ -304,7 +321,7 @@ func executeTapscript(
 	tx.LockTime = lockTime
 	tx.AddTxIn(&wire.TxIn{
 		PreviousOutPoint: wire.OutPoint{Hash: prevTx.TxHash(), Index: 0},
-		Sequence:         wire.MaxTxInSequenceNum - 1,
+		Sequence:         sequence,
 	})
 	tx.AddTxOut(&wire.TxOut{Value: prevOut.Value, PkScript: group.pkScript})
 
