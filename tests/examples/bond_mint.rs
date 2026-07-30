@@ -58,7 +58,7 @@ fn test_repay_is_atomic_with_pool() {
 fn test_liquidate_is_permissionless_prematurity() {
     // Margin-call settlement path: permissionless (no user signature),
     // pre-maturity gated (tx.time < maturity), pool co-spent, debit-burned,
-    // auctioneer-pinned collateral output. The oracle + threshold + payout
+    // caller-selected collateral output. The oracle + threshold + payout
     // math lives on the pool side.
     let output = compile(CODE).expect("compilation failed");
     let asm = arkade_asm(&output, "liquidate");
@@ -86,9 +86,18 @@ fn test_liquidate_is_permissionless_prematurity() {
         "liquidate must not require any user signature (was: {user_sigs:?})"
     );
     assert!(
-        ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a covenant input parameter (got: {ws:?})"
+        ws.iter().any(|w| w == "auctioneerScriptPubKey"),
+        "auctioneerScriptPubKey must be a covenant input parameter (got: {ws:?})"
     );
+    let destination = crate::common::group(&output, "liquidate")
+        .arkade
+        .as_ref()
+        .expect("liquidate covenant")
+        .inputs
+        .iter()
+        .find(|input| input.name == "auctioneerScriptPubKey")
+        .expect("auctioneer destination input");
+    assert_eq!(destination.param_type, "bytes");
 }
 
 #[test]
@@ -97,8 +106,8 @@ fn test_auction_is_permissionless_and_phased() {
     //   - phased time gate (tx.time >= maturity AND tx.time < maturity + auctionWindow)
     //   - pool co-spent (debit control asset lookup)
     //   - debit burn
-    //   - auctioneer-pinned collateral output
-    // Auctioneer identity is a pure witness pubkey; no user signature.
+    //   - caller-selected collateral output
+    // The destination is a witness scriptPubKey; no user signature.
     let output = compile(CODE).expect("compilation failed");
     let asm = arkade_asm(&output, "auction");
     assert!(
@@ -122,9 +131,18 @@ fn test_auction_is_permissionless_and_phased() {
         "auction must not require any user signature (was: {user_sigs:?})"
     );
     assert!(
-        ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a covenant input parameter (got: {ws:?})"
+        ws.iter().any(|w| w == "auctioneerScriptPubKey"),
+        "auctioneerScriptPubKey must be a covenant input parameter (got: {ws:?})"
     );
+    let destination = crate::common::group(&output, "auction")
+        .arkade
+        .as_ref()
+        .expect("auction covenant")
+        .inputs
+        .iter()
+        .find(|input| input.name == "auctioneerScriptPubKey")
+        .expect("auctioneer destination input");
+    assert_eq!(destination.param_type, "bytes");
 }
 
 #[test]

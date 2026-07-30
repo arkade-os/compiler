@@ -56,8 +56,7 @@
 //                           a healthy vault at par. rollOut's sig blocks
 //                           that pairing.
 //
-//   Auctioneer identity is a witness pubkey; they pin their own collateral
-//   destination by signing the tx they construct.
+//   The permissionless caller supplies the auctioneer collateral destination.
 //
 // POOL-AUTHENTICATION CAVEAT
 //   The "genuine pool not co-spent" check verifies only that an input holds
@@ -118,7 +117,7 @@ contract BondMint(
   // co-spent pool.liquidate. If that pool-side check ever regresses, this
   // vault-side floor still prevents the "1 sat to auctioneer, rest as miner
   // fee" siphon shape.
-  function liquidate(int poolIdx, pubkey auctioneerPk) {
+  function liquidate(int poolIdx, bytes auctioneerScriptPubKey) {
     require(tx.time < maturity, "matured; use auction");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
@@ -127,15 +126,15 @@ contract BondMint(
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk, exit), "output 1 not auctioneer");
+    require(tx.outputs[1].scriptPubKey == auctioneerScriptPubKey, "output 1 not auctioneer");
   }
 
   // AUCTION — during the auction window, atomic with RepaymentPool.acceptAuction.
   // Permissionless: any auctioneer constructs the tx and specifies their own
-  // collateral destination via `auctioneerPk`.
+  // collateral destination via `auctioneerScriptPubKey`.
   //   output[0]: pool re-created (enforced by acceptAuction)
   //   output[1]: collateral (or sold portion) → auctioneer
-  function auction(int poolIdx, pubkey auctioneerPk) {
+  function auction(int poolIdx, bytes auctioneerScriptPubKey) {
     require(tx.time >= maturity, "not yet matured");
     int windowEnd = maturity + auctionWindow;
     require(tx.time < windowEnd, "auction window closed");
@@ -146,7 +145,7 @@ contract BondMint(
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk, exit), "output 1 not auctioneer");
+    require(tx.outputs[1].scriptPubKey == auctioneerScriptPubKey, "output 1 not auctioneer");
   }
 
   // ROLL — borrower-signed authorisation to migrate this vault to a next-

@@ -96,7 +96,8 @@ contract Endpoint(
   int     remoteEID,
   bytes32 remoteOApp,
   pubkey  dvn0Pk,
-  pubkey  dvn1Pk
+  pubkey  dvn1Pk,
+  bytes32 receiveMarkerScriptHash
 ) {
 
   // -------------------------------------------------------------------------
@@ -123,7 +124,6 @@ contract Endpoint(
   //   - Output[1] uses the canonical ReceiveMarker pkScript.
   // -------------------------------------------------------------------------
   function receive(
-    bytes32 receiveMarkerScriptHash,
     bytes32 attestedHash,
     signature dvn0Sig,
     signature dvn1Sig
@@ -195,9 +195,8 @@ contract Endpoint(
 
     // Receive-invocation marker is minted at output[1] with the canonical
     // ReceiveMarker pkScript. The marker pins itself to the OApp.receive()
-    // closure via its constructor parameter `oappReceiveScriptHash` (passed
-    // here as a function input — the deployment runtime computes it from
-    // the OApp contract definition).
+    // closure via its constructor parameter `oappReceiveScriptHash`, which is
+    // fixed when the Endpoint is deployed.
     require(
       tx.outputs[1].assets.lookup(endpointIDAssetIdTxid, endpointIDAssetIdGidx) == 1,
       "marker asset missing"

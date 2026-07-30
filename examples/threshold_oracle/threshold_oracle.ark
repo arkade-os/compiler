@@ -10,8 +10,6 @@
 //
 // N oracles, require M valid signatures over a message.
 
-import "single_sig.ark";
-
 contract ThresholdOracle(
   bytes32 tokenAssetIdTxid,
   int tokenAssetIdGidx,
@@ -24,7 +22,7 @@ contract ThresholdOracle(
   function attest(
     int amount,
     bytes32 messageHash,
-    pubkey recipientPk,
+    bytes recipientScriptPubKey,
     signature[] oracleSigs
   ) {
     require(amount > 0, "zero");
@@ -39,7 +37,7 @@ contract ThresholdOracle(
 
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
     require(tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "short");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(recipientPk, exit), "wrong dest");
+    require(tx.outputs[1].scriptPubKey == recipientScriptPubKey, "wrong dest");
     require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetIdTxid, tokenAssetIdGidx, ctrlAssetIdTxid, ctrlAssetIdGidx, oracles, threshold, exit), "broken");
   }
 }

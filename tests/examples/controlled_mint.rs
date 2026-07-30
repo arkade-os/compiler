@@ -45,6 +45,15 @@ fn test_controlled_mint_contract() {
 
     // Verify mint function
     let mint_asm = crate::common::arkade_asm(&output, "mint");
+    let mint_inputs = &crate::common::group(&output, "mint")
+        .arkade
+        .as_ref()
+        .unwrap()
+        .inputs;
+    assert!(mint_inputs
+        .iter()
+        .any(|input| input.name == "recipientScriptPubKey" && input.param_type == "bytes"));
+    assert!(!mint_asm.contains("VTXO:SingleSig"));
 
     // Should have asset group find opcode
     assert!(

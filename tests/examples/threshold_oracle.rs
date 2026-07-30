@@ -93,6 +93,12 @@ fn test_threshold_oracle_witness_array_flattening() {
     let input_names = arkade_inputs(&output, "attest");
 
     assert!(
+        input_names.contains(&"recipientScriptPubKey".to_string()),
+        "Missing recipientScriptPubKey in covenant inputs. Got: {:?}",
+        input_names
+    );
+
+    assert!(
         input_names.contains(&"oracleSigs_0".to_string()),
         "Missing oracleSigs_0 in covenant inputs. Got: {:?}",
         input_names

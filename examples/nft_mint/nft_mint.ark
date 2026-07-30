@@ -7,8 +7,6 @@
 // - group.delta: net change across inputs/outputs
 // - group.controlIs(txid, gidx): collection control membership
 
-import "single_sig.ark";
-
 contract NFTMint(
     bytes32 collectionCtrlIdTxid,
     int collectionCtrlIdGidx,
@@ -16,7 +14,7 @@ contract NFTMint(
     int exit
 ) {
     // Mint a new NFT: must be fresh with delta=1
-    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey recipientPk, signature issuerSig) {
+    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes recipientScriptPubKey, signature issuerSig) {
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must be a brand new asset (genesis in this tx)
@@ -34,13 +32,13 @@ contract NFTMint(
 
         // NFT goes to recipient
         require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk, exit), "wrong recipient");
+        require(tx.outputs[0].scriptPubKey == recipientScriptPubKey, "wrong recipient");
 
         require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
 
     // Transfer existing NFT (not fresh)
-    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {
+    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes newOwnerScriptPubKey, signature ownerSig, pubkey ownerPk) {
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must NOT be fresh (existing asset)
@@ -54,7 +52,7 @@ contract NFTMint(
 
         // NFT goes to new owner
         require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk, exit), "wrong dest");
+        require(tx.outputs[0].scriptPubKey == newOwnerScriptPubKey, "wrong dest");
 
         require(checkSig(ownerSig, ownerPk), "bad owner sig");
     }
