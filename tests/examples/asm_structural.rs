@@ -312,14 +312,8 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
     }
 }
 
-/// Contracts that use `let` bindings for intermediate values (e.g.
-/// `let sireGroup = tx.assetGroups.find(sireId)`) currently emit those
-/// names as `<sireGroup>` placeholders that are not in the covenant inputs or
-/// constructorInputs.  The local consistency check correctly surfaces these as
-/// warnings — this test verifies that the warning mechanism works and the
-/// placeholder is named in the message.
 #[test]
-fn local_variable_placeholders_are_surfaced_as_warnings() {
+fn local_variable_placeholders_are_resolved() {
     let path = examples_dir().join("arkade_kitties/arkade_kitties.ark");
     if !path.exists() {
         return;
@@ -336,24 +330,15 @@ fn local_variable_placeholders_are_surfaced_as_warnings() {
             let input_names: Vec<&str> = arkade.inputs.iter().map(|i| i.name.as_str()).collect();
             let warnings =
                 local_check_placeholder_consistency(&arkade.asm, &input_names, &ctor_names);
-            // There should be warnings about unresolved local variables
             let unresolved: Vec<_> = warnings
                 .iter()
                 .filter(|w| w.contains("cannot be constructed"))
                 .collect();
             assert!(
-                !unresolved.is_empty(),
-                "arkade_kitties breed should have unresolvable placeholder warnings \
-                 (known compiler limitation: let-binding variables not tracked)"
+                unresolved.is_empty(),
+                "arkade_kitties breed has unresolved local placeholders: {:?}",
+                unresolved
             );
-            // Each warning must name the problematic placeholder
-            for w in &unresolved {
-                assert!(
-                    w.contains('<') && w.contains('>'),
-                    "warning must name the unresolvable placeholder: {}",
-                    w
-                );
-            }
         }
     }
 }

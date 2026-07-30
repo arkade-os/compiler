@@ -194,23 +194,44 @@ fn check_statement(
         Statement::Require(req) => {
             check_requirement(req, scope, errors, fn_name);
         }
-        Statement::LetBinding { name, value } => {
+        Statement::LetBinding {
+            name,
+            declared_type,
+            value,
+        } => {
             check_expression(value, scope, errors, fn_name);
-            let t = infer_type(value, scope);
+            let inferred = infer_type(value, scope);
+            let t = declared_type
+                .as_deref()
+                .map(ArkType::parse)
+                .unwrap_or(inferred);
             // Seed the scope so downstream uses of `name` get the inferred type.
             scope.insert(name.clone(), t);
         }
         Statement::VarAssign { name, value } => {
-            if !scope.contains_key(name.as_str()) {
+            let original_type = scope.get(name.as_str()).cloned();
+            if original_type.is_none() {
                 errors.push(TypeError::new(format!(
                     "fn {}: assignment to undeclared variable '{}'",
                     fn_name, name
                 )));
             }
             check_expression(value, scope, errors, fn_name);
-            let t = infer_type(value, scope);
-            // Update scope with the new type in case it changed.
-            scope.insert(name.clone(), t);
+            let assigned_type = infer_type(value, scope);
+            if let Some(original_type) = original_type {
+                if original_type != ArkType::Unknown
+                    && assigned_type != ArkType::Unknown
+                    && original_type != assigned_type
+                {
+                    errors.push(TypeError::new(format!(
+                        "fn {}: assignment to '{}' changes its type from '{}' to '{}'",
+                        fn_name,
+                        name,
+                        original_type.as_str(),
+                        assigned_type.as_str()
+                    )));
+                }
+            }
         }
         Statement::IfElse {
             condition,
@@ -277,7 +298,11 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 fn_name,
             );
         }
-        Requirement::CheckMultisig { pubkeys, .. } => {
+        Requirement::CheckMultisig {
+            pubkeys,
+            signatures,
+            ..
+        } => {
             for pk in pubkeys {
                 expect_type(
                     scope,
@@ -286,6 +311,16 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                     errors,
                     fn_name,
                     &format!("checkMultisig() pubkey '{}'", pk),
+                );
+            }
+            for signature in signatures {
+                expect_type(
+                    scope,
+                    signature,
+                    &ArkType::Signature,
+                    errors,
+                    fn_name,
+                    &format!("checkMultisig() signature '{}'", signature),
                 );
             }
         }
@@ -458,7 +493,11 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .unwrap_or(ArkType::Unknown),
         Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         Expression::Literal(_) => ArkType::Int,
-        Expression::Property(_) => ArkType::Unknown,
+        Expression::Property(property) => match property.trim() {
+            "tx.time" | "this.activeInputIndex" => ArkType::Int,
+            "this.activeBytecode" => ArkType::Bytes,
+            _ => ArkType::Unknown,
+        },
 
         // tx.input.current.*
         Expression::CurrentInput(prop) => match prop.as_deref() {

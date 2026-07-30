@@ -1,9 +1,18 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_1, OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL,
-    OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP, OP_NEGATE, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SUB, OP_TWEAKVERIFY, OP_VERIFY,
+    OP_0, OP_1, OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECMULSCALARVERIFY,
+    OP_ECPAIRING, OP_MODEXP, OP_NEGATE, OP_PICK, OP_SHA256FINALIZE, OP_SHA256INITIALIZE,
+    OP_SHA256UPDATE, OP_SIGHASH, OP_SUB, OP_TWEAKVERIFY,
 };
+
+fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
+    asm.windows(expected.len()).any(|window| {
+        window
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
+    })
+}
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
 #[test]
@@ -99,10 +108,10 @@ fn test_digest() {
     "#;
 
     let output = compile(code).expect("compile digest");
-    let asm = crate::common::arkade_asm(&output, "hash");
+    let asm = crate::common::arkade_asm_tokens(&output, "hash");
     assert!(
-        asm.contains(&format!("<data> <hashType> {OP_DIGEST}")),
-        "Expected ordered {OP_DIGEST} operands in ASM: {asm}"
+        contains_tokens(&asm, &[OP_1, OP_PICK, OP_1, OP_PICK, OP_DIGEST]),
+        "Expected ordered {OP_DIGEST} operand reads in ASM: {asm:?}"
     );
 }
 
@@ -120,14 +129,17 @@ fn test_digest_concatenates_bytes_operands() {
     "#;
 
     let output = compile(code).expect("compile digest over a concatenation");
-    let asm = crate::common::arkade_asm(&output, "hash");
+    let asm = crate::common::arkade_asm_tokens(&output, "hash");
     assert!(
-        asm.contains(&format!("<a> <b> {OP_CAT} <hashType> {OP_DIGEST}")),
-        "Expected digest operands to be concatenated; asm: {asm}"
+        contains_tokens(
+            &asm,
+            &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_CAT, "OP_3", OP_PICK, OP_DIGEST]
+        ),
+        "Expected digest operands to be concatenated; asm: {asm:?}"
     );
     assert!(
-        !asm.contains(OP_ADD),
-        "bytes32 + bytes32 must not compile to arithmetic; asm: {asm}"
+        !asm.iter().any(|token| token == OP_ADD),
+        "bytes32 + bytes32 must not compile to arithmetic; asm: {asm:?}"
     );
 }
 
@@ -145,10 +157,10 @@ fn test_unary_minus_negates() {
     "#;
 
     let output = compile(code).expect("compile unary minus");
-    let asm = crate::common::arkade_asm(&output, "negateValue");
+    let asm = crate::common::arkade_asm_tokens(&output, "negateValue");
     assert!(
-        asm.contains(&format!("<value> {OP_NEGATE}")),
-        "Expected unary `-` to emit {OP_NEGATE} over its operand; asm: {asm}"
+        contains_tokens(&asm, &["OP_2", OP_PICK, OP_NEGATE]),
+        "Expected unary `-` to read its operand and emit {OP_NEGATE}; asm: {asm:?}"
     );
 }
 
@@ -191,14 +203,14 @@ fn test_binary_minus_still_subtracts() {
     "#;
 
     let output = compile(code).expect("compile subtraction");
-    let asm = crate::common::arkade_asm(&output, "diff");
+    let asm = crate::common::arkade_asm_tokens(&output, "diff");
     assert!(
-        asm.contains(&format!("<a> <b> {OP_SUB}")),
-        "Expected a binary subtraction; asm: {asm}"
+        contains_tokens(&asm, &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_SUB]),
+        "Expected a binary subtraction; asm: {asm:?}"
     );
     assert!(
-        !asm.contains(OP_NEGATE),
-        "Binary `-` must not emit {OP_NEGATE}; asm: {asm}"
+        !asm.iter().any(|token| token == OP_NEGATE),
+        "Binary `-` must not emit {OP_NEGATE}; asm: {asm:?}"
     );
 }
 
@@ -214,17 +226,20 @@ fn test_mod_exp() {
     "#;
 
     let output = compile(code).expect("compile modExp");
-    let asm = crate::common::arkade_asm(&output, "calculate");
+    let asm = crate::common::arkade_asm_tokens(&output, "calculate");
     assert!(
-        asm.contains(&format!("<base> <exponent> <modulus> {OP_MODEXP}")),
-        "Expected ordered {OP_MODEXP} operands in ASM: {asm}"
+        contains_tokens(
+            &asm,
+            &[OP_1, OP_PICK, "OP_3", OP_PICK, "OP_2", OP_PICK, OP_MODEXP]
+        ),
+        "Expected ordered {OP_MODEXP} operand reads in ASM: {asm:?}"
     );
 }
 
 // ─── Elliptic Curve ────────────────────────────────────────────────────
 
 #[test]
-fn test_ec_add() {
+fn test_ec_add_cannot_be_bound_as_one_value() {
     let code = r#"
         contract EllipticCurve(int curveId) {
             function add(int x1, int y1, int x2, int y2) {
@@ -234,16 +249,17 @@ fn test_ec_add() {
         }
     "#;
 
-    let output = compile(code).expect("compile ecAdd");
-    let asm = crate::common::arkade_asm(&output, "add");
+    let error = compile(code)
+        .expect_err("ecAdd produces a composite value")
+        .to_string();
     assert!(
-        asm.contains(&format!("<x1> <y1> <x2> <y2> <curveId> {OP_ECADD}")),
-        "Expected ordered {OP_ECADD} operands in ASM: {asm}"
+        error.contains("expression produces 2 stack items"),
+        "ecAdd binding must be rejected: {error}"
     );
 }
 
 #[test]
-fn test_ec_mul() {
+fn test_ec_mul_cannot_be_bound_as_one_value() {
     let code = r#"
         contract EllipticCurve(int curveId) {
             function multiply(int x, int y, int scalar) {
@@ -253,11 +269,12 @@ fn test_ec_mul() {
         }
     "#;
 
-    let output = compile(code).expect("compile ecMul");
-    let asm = crate::common::arkade_asm(&output, "multiply");
+    let error = compile(code)
+        .expect_err("ecMul produces a composite value")
+        .to_string();
     assert!(
-        asm.contains(&format!("<x> <y> <scalar> <curveId> {OP_ECMUL}")),
-        "Expected ordered {OP_ECMUL} operands in ASM: {asm}"
+        error.contains("expression produces 2 stack items"),
+        "ecMul binding must be rejected: {error}"
     );
 }
 
@@ -279,17 +296,35 @@ fn test_ec_pairing() {
     "#;
 
     let output = compile(code).expect("compile ecPairing");
-    let asm = crate::common::arkade_asm(&output, "pair");
+    let asm = crate::common::arkade_asm_tokens(&output, "pair");
     assert!(
-        asm.contains(&format!(
-            "<g1X> <g1Y> <g2Xc1> <g2Xc0> <g2Yc1> <g2Yc0> {OP_1} <curveId> {OP_ECPAIRING}"
-        )),
-        "Expected ordered {OP_ECPAIRING} operands in ASM: {asm}"
+        contains_tokens(
+            &asm,
+            &[
+                OP_1,
+                OP_PICK,
+                "OP_3",
+                OP_PICK,
+                "OP_5",
+                OP_PICK,
+                "OP_7",
+                OP_PICK,
+                "OP_9",
+                OP_PICK,
+                "OP_11",
+                OP_PICK,
+                OP_1,
+                "OP_7",
+                OP_PICK,
+                OP_ECPAIRING
+            ]
+        ),
+        "Expected ordered {OP_ECPAIRING} operand reads in ASM: {asm:?}"
     );
 }
 
 #[test]
-fn test_ec_mul_scalar_verify() {
+fn test_ec_mul_scalar_verify_cannot_be_value_bound() {
     let code = r#"
         contract CryptoOps(pubkey owner) {
             function verifyScalarMul(signature ownerSig, bytes32 scalar, pubkey P, pubkey Q) {
@@ -301,22 +336,16 @@ fn test_ec_mul_scalar_verify() {
 
     let result = compile(code);
     assert!(
-        result.is_ok(),
-        "Failed to parse ecMulScalarVerify: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "verifyScalarMul");
-    assert!(
-        asm_str.contains(OP_ECMULSCALARVERIFY),
-        "Expected {OP_ECMULSCALARVERIFY} in ASM: {}",
-        asm_str
+        result
+            .expect_err("verify opcode produces no bindable value")
+            .to_string()
+            .contains("expression does not produce one stack item"),
+        "{OP_ECMULSCALARVERIFY} must not be accepted as a value"
     );
 }
 
 #[test]
-fn test_tweak_verify() {
+fn test_tweak_verify_cannot_be_value_bound() {
     let code = r#"
         contract CryptoOps(pubkey owner) {
             function verifyTweak(signature ownerSig, pubkey P, bytes32 tweak, pubkey Q) {
@@ -328,17 +357,11 @@ fn test_tweak_verify() {
 
     let result = compile(code);
     assert!(
-        result.is_ok(),
-        "Failed to parse tweakVerify: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "verifyTweak");
-    assert!(
-        asm_str.contains(OP_TWEAKVERIFY),
-        "Expected {OP_TWEAKVERIFY} in ASM: {}",
-        asm_str
+        result
+            .expect_err("verify opcode produces no bindable value")
+            .to_string()
+            .contains("expression does not produce one stack item"),
+        "{OP_TWEAKVERIFY} must not be accepted as a value"
     );
 }
 
@@ -356,10 +379,10 @@ fn test_sighash() {
     "#;
 
     let output = compile(code).expect("compile sighash");
-    let asm = crate::common::arkade_asm(&output, "hashCurrentInput");
+    let asm = crate::common::arkade_asm_tokens(&output, "hashCurrentInput");
     assert!(
-        asm.contains(&format!("<hashType> {OP_SIGHASH}")),
-        "Expected ordered {OP_SIGHASH} operand in ASM: {asm}"
+        contains_tokens(&asm, &[OP_0, OP_PICK, OP_SIGHASH]),
+        "Expected ordered {OP_SIGHASH} operand read in ASM: {asm:?}"
     );
 }
 
@@ -374,19 +397,12 @@ fn test_check_sig_from_stack_verify() {
         }
     "#;
 
-    let result = compile(code);
+    let output =
+        compile(code).expect("checkSigFromStackVerify is a valid self-verifying requirement");
+    let asm = crate::common::arkade_asm(&output, "verifyMessageSig");
     assert!(
-        result.is_ok(),
-        "Failed to parse checkSigFromStackVerify: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "verifyMessageSig");
-    assert!(
-        asm_str.contains(&format!("{OP_CHECKSIGFROMSTACK} {OP_VERIFY}")),
-        "Expected {OP_CHECKSIGFROMSTACK} {OP_VERIFY} in ASM: {}",
-        asm_str
+        asm.contains(OP_CHECKSIGFROMSTACK),
+        "expected {OP_CHECKSIGFROMSTACK} in covenant ASM: {asm}"
     );
 }
 

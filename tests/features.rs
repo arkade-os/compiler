@@ -28,6 +28,8 @@ mod no_shadowing;
 mod opcode_functions;
 #[path = "features/packet_primitives.rs"]
 mod packet_primitives;
+#[path = "features/symbolic_stack.rs"]
+mod symbolic_stack;
 #[path = "features/tapscript_abi.rs"]
 mod tapscript_abi;
 #[path = "features/tapscript_golden.rs"]

@@ -21,7 +21,7 @@
 
 use crate::models::{Contract, ContractJson, Expression, Requirement, Statement};
 use crate::typechecker::{build_scope, infer_type, ArkType, Scope};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
 
@@ -196,6 +196,7 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
 
     check_shadowing(contract, &mut issues);
     check_expanded_namespace(contract, &mut issues);
+    check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
 
     issues
@@ -241,7 +242,7 @@ fn walk_asset_id_stmts(
                 }
                 _ => {}
             },
-            Statement::LetBinding { name, value } => {
+            Statement::LetBinding { name, value, .. } => {
                 check_asset_id_expr(value, scope, fname, issues);
                 let t = infer_type(value, scope);
                 scope.insert(name.clone(), t);
@@ -447,6 +448,626 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BindingSource {
+    Constructor,
+    FunctionInput,
+    Local,
+    Loop,
+}
+
+#[derive(Clone, Debug)]
+struct BindingInfo {
+    binding_type: ArkType,
+    source: BindingSource,
+}
+
+type BindingScopes = Vec<HashMap<String, BindingInfo>>;
+
+fn insert_parameters(
+    frame: &mut HashMap<String, BindingInfo>,
+    parameters: &[crate::models::Parameter],
+    source: BindingSource,
+) {
+    for parameter in parameters {
+        if let Some(element_type) = parameter.param_type.strip_suffix("[]") {
+            let element_type = ArkType::parse(element_type);
+            frame.insert(
+                parameter.name.clone(),
+                BindingInfo {
+                    binding_type: ArkType::Array(Box::new(element_type.clone())),
+                    source,
+                },
+            );
+            for index in 0..crate::models::DEFAULT_ARRAY_LENGTH {
+                frame.insert(
+                    format!("{}_{}", parameter.name, index),
+                    BindingInfo {
+                        binding_type: element_type.clone(),
+                        source,
+                    },
+                );
+            }
+        } else {
+            frame.insert(
+                parameter.name.clone(),
+                BindingInfo {
+                    binding_type: ArkType::parse(&parameter.param_type),
+                    source,
+                },
+            );
+        }
+    }
+}
+
+fn normalized_name(name: &str) -> String {
+    if let Some(open) = name.find('[') {
+        if name.ends_with(']') {
+            let index = &name[open + 1..name.len() - 1];
+            return format!(
+                "{}_{}",
+                &name[..open],
+                if index.parse::<usize>().is_ok() {
+                    index
+                } else {
+                    "0"
+                }
+            );
+        }
+    }
+    name.to_string()
+}
+
+fn find_binding<'a>(scopes: &'a BindingScopes, name: &str) -> Option<&'a BindingInfo> {
+    let name = normalized_name(name);
+    scopes.iter().rev().find_map(|frame| frame.get(&name))
+}
+
+fn flattened_types(scopes: &BindingScopes) -> Scope {
+    let mut result = Scope::new();
+    for frame in scopes {
+        result.extend(
+            frame
+                .iter()
+                .map(|(name, info)| (name.clone(), info.binding_type.clone())),
+        );
+    }
+    result
+}
+
+fn resolved_expression_type(expression: &Expression, scopes: &BindingScopes) -> ArkType {
+    match expression {
+        Expression::Variable(name) | Expression::Property(name) => find_binding(scopes, name)
+            .map(|binding| binding.binding_type.clone())
+            .unwrap_or_else(|| infer_type(expression, &flattened_types(scopes))),
+        _ => infer_type(expression, &flattened_types(scopes)),
+    }
+}
+
+fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
+    expected == actual
+        || matches!(
+            (expected, actual),
+            (ArkType::Bytes, ArkType::Bytes20 | ArkType::Bytes32)
+        )
+}
+
+fn check_binding_semantics(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    for function in &contract.functions {
+        let mut root = HashMap::new();
+        insert_parameters(&mut root, &contract.parameters, BindingSource::Constructor);
+        insert_parameters(
+            &mut root,
+            &function.parameters,
+            BindingSource::FunctionInput,
+        );
+        let mut scopes = vec![root];
+        validate_binding_statements(&function.statements, &function.name, &mut scopes, issues);
+    }
+}
+
+fn validate_binding_statements(
+    statements: &[Statement],
+    function_name: &str,
+    scopes: &mut BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::Require(requirement) => {
+                validate_binding_requirement(requirement, function_name, scopes, issues);
+            }
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => {
+                validate_binding_expression(value, function_name, scopes, issues, true);
+                let inferred = resolved_expression_type(value, scopes);
+                let binding_type = declared_type
+                    .as_deref()
+                    .map(ArkType::parse)
+                    .unwrap_or_else(|| inferred.clone());
+                if declared_type.is_some()
+                    && inferred != ArkType::Unknown
+                    && !binding_types_compatible(&binding_type, &inferred)
+                {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': binding '{}' declares type '{}' but initializer has type '{}'",
+                        function_name,
+                        name,
+                        binding_type.as_str(),
+                        inferred.as_str()
+                    )));
+                }
+                if find_binding(scopes, name).is_some() {
+                    issues.push(ValidationIssue::error(format!(
+                        "binding '{}' in function '{}' shadows an in-scope binding",
+                        name, function_name
+                    )));
+                } else {
+                    scopes
+                        .last_mut()
+                        .expect("binding validation always has a scope")
+                        .insert(
+                            name.clone(),
+                            BindingInfo {
+                                binding_type,
+                                source: BindingSource::Local,
+                            },
+                        );
+                }
+            }
+            Statement::VarAssign { name, value } => {
+                validate_binding_expression(value, function_name, scopes, issues, true);
+                let inferred = resolved_expression_type(value, scopes);
+                match find_binding(scopes, name) {
+                    None => issues.push(ValidationIssue::error(format!(
+                        "function '{}': assignment to undeclared variable '{}'",
+                        function_name, name
+                    ))),
+                    Some(binding) if binding.source == BindingSource::Constructor => {
+                        // The existing shadowing walk owns the constructor-mutation diagnostic.
+                    }
+                    Some(binding) if binding.source == BindingSource::Loop => {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{}': cannot assign to compile-time loop variable '{}'",
+                            function_name, name
+                        )));
+                    }
+                    Some(binding)
+                        if inferred != ArkType::Unknown
+                            && binding.binding_type != ArkType::Unknown
+                            && !binding_types_compatible(&binding.binding_type, &inferred) =>
+                    {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{}': assignment to '{}' changes its type from '{}' to '{}'",
+                            function_name,
+                            name,
+                            binding.binding_type.as_str(),
+                            inferred.as_str()
+                        )));
+                    }
+                    Some(_) => {}
+                }
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                validate_binding_expression(condition, function_name, scopes, issues, true);
+                let condition_type = resolved_expression_type(condition, scopes);
+                if condition_type != ArkType::Bool {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': if condition has type '{}', expected bool; use an explicit comparison",
+                        function_name,
+                        condition_type.as_str()
+                    )));
+                }
+                scopes.push(HashMap::new());
+                validate_binding_statements(then_body, function_name, scopes, issues);
+                scopes.pop();
+                if let Some(else_body) = else_body {
+                    scopes.push(HashMap::new());
+                    validate_binding_statements(else_body, function_name, scopes, issues);
+                    scopes.pop();
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                iterable,
+                body,
+            } => {
+                let element_type = match iterable {
+                    Expression::Variable(name) => match find_binding(scopes, name) {
+                        Some(BindingInfo {
+                            binding_type: ArkType::Array(element),
+                            ..
+                        }) => (**element).clone(),
+                        Some(binding) => {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{}': loop iterable '{}' has type '{}', expected array",
+                                function_name,
+                                name,
+                                binding.binding_type.as_str()
+                            )));
+                            ArkType::Unknown
+                        }
+                        None => {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{}': loop iterable '{}' is undefined",
+                                function_name, name
+                            )));
+                            ArkType::Unknown
+                        }
+                    },
+                    Expression::Property(property) if property.trim() == "tx.assetGroups" => {
+                        ArkType::Int
+                    }
+                    _ => {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{}': unsupported loop iterable",
+                            function_name
+                        )));
+                        ArkType::Unknown
+                    }
+                };
+                let mut frame = HashMap::new();
+                for (name, binding_type) in [(index_var, ArkType::Int), (value_var, element_type)] {
+                    if find_binding(scopes, name).is_some() {
+                        issues.push(ValidationIssue::error(format!(
+                            "loop variable '{}' in function '{}' shadows an in-scope binding",
+                            name, function_name
+                        )));
+                    } else {
+                        frame.insert(
+                            name.clone(),
+                            BindingInfo {
+                                binding_type,
+                                source: BindingSource::Loop,
+                            },
+                        );
+                    }
+                }
+                scopes.push(frame);
+                validate_binding_statements(body, function_name, scopes, issues);
+                scopes.pop();
+            }
+        }
+    }
+}
+
+fn validate_named_binding(
+    name: &str,
+    expected: Option<ArkType>,
+    label: &str,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    match find_binding(scopes, name) {
+        None => issues.push(ValidationIssue::error(format!(
+            "function '{}': {} '{}' is undefined",
+            function_name, label, name
+        ))),
+        Some(binding)
+            if expected.as_ref().is_some_and(|expected| {
+                binding.binding_type != *expected && binding.binding_type != ArkType::Unknown
+            }) =>
+        {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': {} '{}' has type '{}', expected '{}'",
+                function_name,
+                label,
+                name,
+                binding.binding_type.as_str(),
+                expected.expect("checked above").as_str()
+            )));
+        }
+        Some(_) => {}
+    }
+}
+
+fn validate_binding_requirement(
+    requirement: &Requirement,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    match requirement {
+        Requirement::Expression(expression) => {
+            let produces_value = !matches!(
+                expression,
+                Expression::CheckSigFromStackVerify { .. }
+                    | Expression::EcMulScalarVerify { .. }
+                    | Expression::TweakVerify { .. }
+            );
+            validate_binding_expression(expression, function_name, scopes, issues, produces_value);
+        }
+        Requirement::CheckSig { signature, pubkey } => {
+            validate_named_binding(
+                signature,
+                Some(ArkType::Signature),
+                "signature",
+                function_name,
+                scopes,
+                issues,
+            );
+            validate_named_binding(
+                pubkey,
+                Some(ArkType::Pubkey),
+                "public key",
+                function_name,
+                scopes,
+                issues,
+            );
+        }
+        Requirement::CheckSigFromStack {
+            signature,
+            pubkey,
+            message,
+        } => {
+            validate_named_binding(
+                signature,
+                Some(ArkType::Signature),
+                "signature",
+                function_name,
+                scopes,
+                issues,
+            );
+            validate_named_binding(
+                pubkey,
+                Some(ArkType::Pubkey),
+                "public key",
+                function_name,
+                scopes,
+                issues,
+            );
+            validate_named_binding(message, None, "message", function_name, scopes, issues);
+        }
+        Requirement::CheckMultisig {
+            pubkeys,
+            signatures,
+            ..
+        } => {
+            if pubkeys.len() != signatures.len() {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': checkMultisig key and signature counts must match",
+                    function_name
+                )));
+            }
+            for pubkey in pubkeys {
+                validate_named_binding(
+                    pubkey,
+                    Some(ArkType::Pubkey),
+                    "multisig public key",
+                    function_name,
+                    scopes,
+                    issues,
+                );
+            }
+            for signature in signatures {
+                validate_named_binding(
+                    signature,
+                    Some(ArkType::Signature),
+                    "multisig signature",
+                    function_name,
+                    scopes,
+                    issues,
+                );
+            }
+        }
+        Requirement::After {
+            timelock_var: Some(name),
+            ..
+        } => validate_named_binding(
+            name,
+            Some(ArkType::Int),
+            "timelock",
+            function_name,
+            scopes,
+            issues,
+        ),
+        Requirement::After { .. } => {}
+        Requirement::HashEqual { preimage, hash, .. } => {
+            validate_named_binding(preimage, None, "preimage", function_name, scopes, issues);
+            validate_named_binding(hash, None, "hash", function_name, scopes, issues);
+        }
+        Requirement::Comparison { left, right, .. } => {
+            validate_binding_expression(left, function_name, scopes, issues, true);
+            validate_binding_expression(right, function_name, scopes, issues, true);
+        }
+    }
+}
+
+fn validate_binding_expression(
+    expression: &Expression,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+    value_position: bool,
+) {
+    if value_position
+        && matches!(
+            resolved_expression_type(expression, scopes),
+            ArkType::Array(_)
+        )
+    {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': array expressions are composite values and cannot be used here",
+            function_name
+        )));
+    }
+    if value_position
+        && (matches!(
+            expression,
+            Expression::EcAdd { .. } | Expression::EcMul { .. }
+        ) || matches!(
+            expression,
+            Expression::AssetAt { property, .. } if property == "assetId"
+        ))
+    {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': expression produces 2 stack items; composite values are not supported",
+            function_name
+        )));
+    }
+    if value_position
+        && matches!(
+            expression,
+            Expression::GroupProperty { property, .. } if property == "assetId"
+        )
+    {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': expression produces 2 stack items; composite values are not supported",
+            function_name
+        )));
+    }
+    if value_position
+        && matches!(
+            expression,
+            Expression::GroupIOAccess { property: None, .. }
+                | Expression::EcMulScalarVerify { .. }
+                | Expression::TweakVerify { .. }
+                | Expression::CheckSigFromStackVerify { .. }
+        )
+    {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': expression does not produce one stack item",
+            function_name
+        )));
+    }
+    if value_position
+        && (matches!(
+            expression,
+            Expression::CurrentInput(Some(property)) if property == "outpoint"
+        ) || matches!(
+            expression,
+            Expression::InputIntrospection { property, .. } if property == "outpoint"
+        ))
+    {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': outpoint inspection produces 2 stack items; composite values are not supported",
+            function_name
+        )));
+    }
+    if value_position
+        && matches!(
+            expression,
+            Expression::GroupIOAccess {
+                source: crate::models::GroupIOSource::Inputs,
+                ..
+            }
+        )
+    {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': asset-group input inspection has a variable-width result and cannot be used as a value",
+            function_name
+        )));
+    }
+
+    match expression {
+        Expression::Variable(name) => {
+            validate_named_binding(name, None, "binding", function_name, scopes, issues);
+        }
+        Expression::Property(name) if name.contains('[') => {
+            validate_named_binding(name, None, "binding", function_name, scopes, issues);
+        }
+        Expression::GroupProperty { group, .. } | Expression::GroupControlIs { group, .. }
+            if group.parse::<usize>().is_err() =>
+        {
+            validate_named_binding(
+                group,
+                Some(ArkType::Int),
+                "asset group",
+                function_name,
+                scopes,
+                issues,
+            );
+        }
+        Expression::CheckSigExpr { signature, pubkey } => {
+            validate_named_binding(
+                signature,
+                Some(ArkType::Signature),
+                "signature",
+                function_name,
+                scopes,
+                issues,
+            );
+            validate_named_binding(
+                pubkey,
+                Some(ArkType::Pubkey),
+                "public key",
+                function_name,
+                scopes,
+                issues,
+            );
+        }
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => {
+            validate_named_binding(
+                signature,
+                Some(ArkType::Signature),
+                "signature",
+                function_name,
+                scopes,
+                issues,
+            );
+            validate_named_binding(
+                pubkey,
+                Some(ArkType::Pubkey),
+                "public key",
+                function_name,
+                scopes,
+                issues,
+            );
+            validate_named_binding(message, None, "message", function_name, scopes, issues);
+        }
+        Expression::ContractInstance { args, .. } => {
+            for argument in args {
+                match argument {
+                    Expression::Variable(name) => {
+                        if let Some(binding) = find_binding(scopes, name) {
+                            if !matches!(binding.source, BindingSource::Constructor) {
+                                issues.push(ValidationIssue::error(format!(
+                                    "function '{}': contract instance argument '{}' is a runtime value; only constructor parameters and literals are supported",
+                                function_name, name
+                            )));
+                            }
+                        }
+                    }
+                    Expression::Literal(_) => {}
+                    _ => issues.push(ValidationIssue::error(format!(
+                        "function '{}': computed contract arguments are not supported",
+                        function_name
+                    ))),
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for child in child_exprs(expression) {
+        validate_binding_expression(
+            child,
+            function_name,
+            scopes,
+            issues,
+            !matches!(expression, Expression::ContractInstance { .. }),
+        );
     }
 }
 
@@ -739,6 +1360,41 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
+            let expected_witness_order = arkade
+                .inputs
+                .iter()
+                .rev()
+                .map(|input| input.name.clone())
+                .collect::<Vec<_>>();
+            if arkade.witness_order != expected_witness_order {
+                issues.push(ValidationIssue::error(format!(
+                    "group '{}' arkade witnessOrder does not reverse its inputs",
+                    group.name
+                )));
+            }
+            let expected_prologue = output
+                .parameters
+                .iter()
+                .rev()
+                .map(|parameter| format!("<{}>", parameter.name))
+                .collect::<Vec<_>>();
+            if !arkade.asm.starts_with(&expected_prologue) {
+                issues.push(ValidationIssue::error(format!(
+                    "group '{}' arkade covenant has an invalid constructor prologue",
+                    group.name
+                )));
+            }
+            if arkade.asm[expected_prologue.len().min(arkade.asm.len())..]
+                .iter()
+                .any(|token| {
+                    token.starts_with('<') && token.ends_with('>') && !token.starts_with("<VTXO:")
+                })
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "group '{}' arkade covenant has a placeholder outside its constructor prologue",
+                    group.name
+                )));
+            }
         }
         for leaf in &group.leaves {
             if leaf.asm.is_empty() {
@@ -754,7 +1410,12 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
             if leaf
                 .asm
                 .iter()
-                .any(|t| t.to_ascii_lowercase().contains("sig>"))
+                .filter_map(|token| token.strip_prefix('<')?.strip_suffix('>'))
+                .any(|name| {
+                    name.chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                        && name.to_ascii_lowercase().ends_with("sig")
+                })
             {
                 issues.push(ValidationIssue::error(format!(
                     "leaf '{}' in group '{}' has a signature in asm (must be witness-only)",
@@ -783,7 +1444,16 @@ mod tests {
             }],
             functions: vec![Function {
                 name: "spend".to_string(),
-                parameters: vec![],
+                parameters: vec![
+                    Parameter {
+                        name: "ownerSig".to_string(),
+                        param_type: "signature".to_string(),
+                    },
+                    Parameter {
+                        name: "flag".to_string(),
+                        param_type: "bool".to_string(),
+                    },
+                ],
                 statements: vec![Statement::Require(Requirement::CheckSig {
                     signature: "ownerSig".to_string(),
                     pubkey: "owner".to_string(),

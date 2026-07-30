@@ -472,12 +472,10 @@ sig_arg = { array_index_access | identifier }
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }
 
-// checkMultisig([keys], [sigs]?, threshold?) — keys may be tweak()s; the
-// optional second array carries the aligned signature inputs; optional final
-// number is the threshold. Existing single-array and [keys],[sigs] forms still
-// match (key_array accepts identifier-only arrays).
+// checkMultisig([keys], [sigs], threshold?) — keys may be tweak()s; the second
+// array carries the aligned signature inputs and the final threshold is optional.
 check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ key_array ~ ("," ~ array)? ~ ("," ~ number_literal)? ~ ")"
+    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ number_literal)? ~ ")"
 }
 
 // Array of identifiers

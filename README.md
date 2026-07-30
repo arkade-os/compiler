@@ -99,7 +99,21 @@ Example — `SingleSig` compiled output:
       "name": "spend",
       "arkade": {
         "inputs": [{ "name": "userSig", "type": "signature" }],
-        "asm": ["<user>", "<userSig>", "OP_CHECKSIG"]
+        "witnessOrder": ["userSig"],
+        "asm": [
+          "<exit>",
+          "<user>",
+          "OP_2",
+          "OP_PICK",
+          "OP_1",
+          "OP_PICK",
+          "OP_CHECKSIG",
+          "OP_VERIFY",
+          "OP_1",
+          "OP_NIP",
+          "OP_NIP",
+          "OP_NIP"
+        ]
       },
       "leaves": [
         {
@@ -361,6 +375,8 @@ require(checkMultisig([user, admin], [userSig, adminSig]));
 require(checkSigFromStack(oracleSig, oraclePk, message));
 ```
 
+The signature array in `checkMultisig` is required. It must contain one explicitly named `signature` binding for each key, in the same order as the key array. The threshold remains optional.
+
 #### Hash Verification
 
 ```solidity
@@ -410,15 +426,31 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 
 ### Key Fields
 
-| Field               | Description                                                              |
-|---------------------|--------------------------------------------------------------------------|
-| `contractName`      | Contract identifier                                                      |
-| `constructorInputs` | Constructor parameters baked into instantiated scripts                   |
-| `functions`         | Spend groups: `{ name, arkade?, leaves[] }`                              |
-| `arkade`            | Optional emulator-run covenant `{ inputs, asm }`                         |
-| `leaves`            | L1 tapleaf objects `{ name, witness, asm }`                              |
-| `witness`           | Spend-time witness fields, with `injected: true` for infrastructure sigs |
-| `asm`               | Assembly tokens; `<name>` = placeholder resolved at runtime              |
+| Field                 | Description                                                                               |
+|-----------------------|-------------------------------------------------------------------------------------------|
+| `contractName`        | Contract identifier                                                                       |
+| `constructorInputs`   | Constructor parameters in source declaration order after array expansion                  |
+| `functions`           | Spend groups: `{ name, arkade?, leaves[] }`                                               |
+| `arkade`              | Optional emulator-run covenant `{ inputs, witnessOrder, asm }`                            |
+| `arkade.inputs`       | Function parameters in source declaration order after array expansion                     |
+| `arkade.witnessOrder` | Function input names in the physical bottom-to-top order used to serialize the VM witness |
+| `leaves`              | L1 tapleaf objects `{ name, witness, asm }`                                               |
+| `witness`             | Spend-time tapleaf witness fields, with `injected: true` for infrastructure signatures    |
+| `asm`                 | Assembly tokens, including the explicit constructor prologue and covenant body            |
+
+### Arkade Covenant Stack ABI
+
+`constructorInputs` and `arkade.inputs` describe the source ABI and remain in source declaration order after fixed-size arrays are expanded. They do not describe the physical VM stack order.
+
+Clients must serialize covenant function inputs in the exact order listed by `arkade.witnessOrder`. This field contains the expanded `arkade.inputs` names in reverse order and describes the physical witness from bottom to top. For example, source inputs `[amount, sig]` produce `"witnessOrder": ["sig", "amount"]`.
+
+Every covenant `asm` begins with one constructor placeholder per expanded constructor input, also in reverse order. Contract instantiation resolves these placeholders to concrete data pushes before the covenant hash is computed. For source constructor inputs `[limit, owner]`, the prologue is `["<owner>", "<limit>"]`, leaving `limit` nearest the top within the constructor frame.
+
+The VM installs the function witness before executing the covenant, so the reversed constructor prologue leaves constructor values above function inputs. Covenant body expressions access constructor parameters, function inputs, and local variables through stack operations such as `OP_PICK`; function inputs are not emitted as `<name>` body placeholders.
+
+After instantiation, ordinary `<name>` placeholders occur only in the constructor prologue. `<VTXO:...>` tokens remain opaque contract-instantiation placeholders as described below.
+
+Contract-instantiation arguments are limited to literals and constructor parameters. Function inputs and computed locals exist only at spend time and cannot be resolved inside an opaque `<VTXO:...>` placeholder.
 
 ### VTXO Placeholder Format
 

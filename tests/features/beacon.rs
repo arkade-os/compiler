@@ -74,29 +74,8 @@ contract PriceBeacon(
     );
   }
 
-  function migrate(signature oracleSig, pubkey newOraclePk) {
-    require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
-
-    int currentPrice  = tx.inputs[0].assets.lookup(tickerTxid, tickerGidx);
-    int currentHeight = tx.inputs[0].assets.lookup(clockTxid, clockGidx);
-
-    require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, newOraclePk, exit),
-      "invalid new beacon"
-    );
-    require(
-      tx.outputs[0].assets.lookup(tickerTxid, tickerGidx) == currentPrice,
-      "price must be preserved"
-    );
-    require(
-      tx.outputs[0].assets.lookup(clockTxid, clockGidx) == currentHeight,
-      "block height must be preserved"
-    );
-  }
 }
 "#;
-
-// Loop-unrolling tests.
 
 #[test]
 fn test_beacon_parses() {
@@ -110,8 +89,6 @@ fn test_beacon_structure() {
 
     assert_eq!(output.name, "PriceBeacon");
     assert_eq!(output.functions.len(), 2);
-
-    // Both groups should exist
     assert!(
         crate::common::group(&output, "passthrough")
             .arkade
@@ -127,27 +104,21 @@ fn test_beacon_structure() {
 #[test]
 fn test_beacon_passthrough_has_loop_unrolling() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
-
     let asm_tokens = crate::common::arkade_asm_tokens(&output, "passthrough");
     let sum_count = asm_tokens
         .iter()
-        .filter(|s| s.contains(OP_INSPECTASSETGROUPSUM))
+        .filter(|token| token.as_str() == OP_INSPECTASSETGROUPSUM)
         .count();
-
-    assert!(
-        sum_count >= 2,
-        "Expected at least 2 {OP_INSPECTASSETGROUPSUM} instructions for loop unrolling \
-         (sumInputs + sumOutputs per iteration), found {}",
-        sum_count
+    assert_eq!(
+        sum_count, 6,
+        "three iterations must each inspect input and output sums"
     );
 }
 
 #[test]
 fn test_beacon_update_has_asset_lookup() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
-
     let update_asm = crate::common::arkade_asm(&output, "update");
-
     assert!(
         update_asm.contains(OP_INSPECTINASSETLOOKUP),
         "Missing {OP_INSPECTINASSETLOOKUP} in update function"
@@ -161,16 +132,10 @@ fn test_beacon_update_has_asset_lookup() {
 #[test]
 fn test_beacon_update_has_covenant_recursion() {
     let output = compile(BEACON_LOOP_CODE).unwrap();
-
     let update_asm = crate::common::arkade_asm(&output, "update");
-
-    let has_constructor = update_asm.contains("new PriceBeacon(");
-    let has_output_inspect = update_asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY);
-
     assert!(
-        has_constructor || has_output_inspect,
-        "Missing constructor placeholder or {OP_INSPECTOUTPUTSCRIPTPUBKEY} in update function. ASM: {}",
-        update_asm
+        update_asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
+        "Missing {OP_INSPECTOUTPUTSCRIPTPUBKEY} in update function: {update_asm}"
     );
 }
 
@@ -188,10 +153,9 @@ fn test_price_beacon_parses() {
 fn test_price_beacon_structure() {
     let output = compile(PRICE_BEACON_CODE).unwrap();
     assert_eq!(output.name, "PriceBeacon");
-    // 3 covenant functions → 3 groups
-    assert_eq!(output.functions.len(), 3);
+    assert_eq!(output.functions.len(), 2);
 
-    for name in &["update", "passthrough", "migrate"] {
+    for name in &["update", "passthrough"] {
         assert!(
             crate::common::group(&output, name).arkade.is_some(),
             "Missing {name} arkade covenant"

@@ -76,6 +76,9 @@ pub struct WitnessElement {
 pub struct ArkadeCovenant {
     /// Covenant inputs (function parameters, array-expanded). No server/emulator sigs.
     pub inputs: Vec<FunctionInput>,
+    /// Physical bottom-to-top order in which covenant inputs are serialized.
+    #[serde(rename = "witnessOrder")]
+    pub witness_order: Vec<String>,
     /// Covenant assembly.
     pub asm: Vec<String>,
 }
@@ -164,8 +167,12 @@ pub struct Function {
 pub enum Statement {
     /// require(expr, "message");
     Require(Requirement),
-    /// let name = expr;
-    LetBinding { name: String, value: Expression },
+    /// let name = expr; or type name = expr;
+    LetBinding {
+        name: String,
+        declared_type: Option<String>,
+        value: Expression,
+    },
     /// name = expr; (variable reassignment)
     VarAssign { name: String, value: Expression },
     /// if (condition) { then_body } else { else_body }
@@ -199,6 +206,7 @@ pub enum Requirement {
     /// Check multisig requirement
     CheckMultisig {
         pubkeys: Vec<String>,
+        signatures: Vec<String>,
         threshold: u16,
     },
     /// After requirement

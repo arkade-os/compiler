@@ -145,7 +145,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "checkSig" => Some("checkSig(signature, pubkey)"),
         "checkSigFromStack" => Some("checkSigFromStack(signature, pubkey, message)"),
         "checkSigFromStackVerify" => Some("checkSigFromStackVerify(signature, pubkey, message)"),
-        "checkMultisig" => Some("checkMultisig([pubkeys], [sigs]?, threshold?)"),
+        "checkMultisig" => Some("checkMultisig([pubkeys], [sigs], threshold?)"),
         "sha256" => Some("sha256(data)"),
         "hash160" => Some("hash160(data)"),
         "hash256" => Some("hash256(data)"),

@@ -1,0 +1,93 @@
+contract SymbolicStackStress(
+  int multiplier,
+  int bias,
+  int boundary,
+  pubkey owner
+) {
+  function spend(
+    int left,
+    int right,
+    int carry,
+    int selector,
+    int expected,
+    int[] values,
+    signature ownerSig,
+    pubkey attestor,
+    signature attestSig,
+    bytes32 attestation
+  ) {
+    let seed = ((left + right) * multiplier) + (carry - bias);
+    let encoded = num2bin(seed, 8);
+    let decoded = bin2num(encoded);
+    let total = (decoded + (left * right)) - carry;
+    let checkpoint = total;
+
+    left = (left + ((right * multiplier) + carry)) - bias;
+    total = total + left;
+
+    if (selector > boundary) {
+      let branch = (total + values[0]) * multiplier;
+      let delta = (branch - checkpoint) + (left * 2);
+      total = total + delta;
+      right = right + (delta - values[1]);
+
+      if (right > boundary) {
+        let nested = ((right + carry) * 2) - bias;
+        total = (total + nested) - left;
+        carry = carry + 1;
+      } else {
+        let nested = ((carry + bias) * 3) - right;
+        total = total + nested;
+        carry = carry + 2;
+      }
+    } else {
+      let branch = (total - values[0]) + multiplier;
+      let delta = (checkpoint + branch) - right;
+      total = total + delta;
+      right = right + (values[1] - delta);
+
+      if (right > bias) {
+        let nested = ((right + carry) * 2) - bias;
+        total = total - nested;
+        carry = carry + 1;
+      } else {
+        let nested = ((carry + bias) * 3) - right;
+        total = total + nested;
+        carry = carry + 2;
+      }
+    }
+
+    for (i, value) in values {
+      let weighted = ((value + i) * multiplier) + carry;
+      total = total + weighted;
+
+      if (weighted > boundary) {
+        let adjustment = (weighted - boundary) + left;
+        total = total - adjustment;
+        left = left + i;
+      } else {
+        let adjustment = (boundary - weighted) + right;
+        total = total + adjustment;
+        left = left + (i + 1);
+      }
+    }
+
+    if (total > checkpoint) {
+      let tail = ((total - checkpoint) + left) * (carry + bias);
+      right = (right + tail) - selector;
+      total = total + right;
+    } else {
+      let tail = ((checkpoint - total) + right) * (carry + bias);
+      right = (right - tail) + selector;
+      total = total - right;
+    }
+
+    checkpoint = (checkpoint + total) - (left + right);
+    let result = ((checkpoint + left) * (right + carry)) - total;
+
+    require(decoded == seed, "conversion changed value");
+    require(result == expected, "unexpected result");
+    require(checkSig(ownerSig, owner));
+    require(checkSigFromStack(attestSig, attestor, attestation));
+  }
+}

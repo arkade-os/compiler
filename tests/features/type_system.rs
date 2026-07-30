@@ -10,9 +10,8 @@
 //! - **Wrong hash type** — passing an `int` where `bytes32` is expected.
 //! - **Non-boolean if condition** — using an integer expression as a branch condition.
 //!
-//! In Arkade, type errors are non-fatal: compilation succeeds but warnings appear
-//! in `ContractJson.warnings`.  These tests assert both that compilation succeeds
-//! and that the expected warning is present.
+//! Type errors that make stack behavior ambiguous are fatal. Other compatibility
+//! issues remain warnings in `ContractJson.warnings`.
 
 use arkade_compiler::compile;
 
@@ -29,10 +28,16 @@ fn has_type_warning(output: &arkade_compiler::models::ContractJson, pattern: &st
         .any(|w| w.contains("warning[type]") && w.to_lowercase().contains(&pattern.to_lowercase()))
 }
 
+fn compile_error(source: &str) -> String {
+    compile(source)
+        .expect_err("contract must fail validation")
+        .to_string()
+}
+
 // ─── Swapped sig / pubkey ─────────────────────────────────────────────────────
 
 #[test]
-fn swapped_checksig_args_produces_warning() {
+fn swapped_checksig_args_are_rejected() {
     // The contract declares `pubkey sig, signature owner` — the *names* clearly
     // describe the types but are passed in the wrong order to checkSig.
     let source = r#"
@@ -42,11 +47,10 @@ contract Swapped(pubkey owner) {
     }
 }"#;
     // sig is pubkey, ownerSig is signature → arguments are swapped
-    let output = compile_ok(source);
+    let error = compile_error(source);
     assert!(
-        has_type_warning(&output, "swapped"),
-        "swapped checkSig arguments must produce a warning; got: {:?}",
-        output.warnings
+        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        "swapped checkSig arguments must be rejected: {error}"
     );
 }
 
@@ -70,7 +74,7 @@ contract Correct(pubkey owner) {
 // ─── Undeclared variable assignment ──────────────────────────────────────────
 
 #[test]
-fn assignment_to_undeclared_variable_produces_warning() {
+fn assignment_to_undeclared_variable_is_rejected() {
     let source = r#"
 contract UndeclaredAssign(pubkey owner) {
     function spend(signature ownerSig) {
@@ -78,11 +82,10 @@ contract UndeclaredAssign(pubkey owner) {
         require(checkSig(ownerSig, owner));
     }
 }"#;
-    let output = compile_ok(source);
+    let error = compile_error(source);
     assert!(
-        has_type_warning(&output, "undeclared"),
-        "assignment to undeclared variable must produce a warning; got: {:?}",
-        output.warnings
+        error.contains("assignment to undeclared variable 'undeclaredVar'"),
+        "assignment to an undeclared variable must be rejected: {error}"
     );
 }
 
@@ -208,7 +211,7 @@ contract CorrectHashType(pubkey owner, bytes32 hashVal) {
 // ─── Non-boolean if condition ─────────────────────────────────────────────────
 
 #[test]
-fn non_boolean_if_condition_produces_warning() {
+fn non_boolean_if_condition_is_rejected() {
     // `tx.inputs[0].value` is an int, not bool — using it as an if condition.
     let source = r#"
 contract NonBoolCond(pubkey owner) {
@@ -220,11 +223,10 @@ contract NonBoolCond(pubkey owner) {
         }
     }
 }"#;
-    let output = compile_ok(source);
+    let error = compile_error(source);
     assert!(
-        has_type_warning(&output, "bool") || has_type_warning(&output, "condition"),
-        "non-boolean if condition must produce a type warning; got: {:?}",
-        output.warnings
+        error.contains("if condition has type 'int', expected bool"),
+        "non-boolean if condition must be rejected: {error}"
     );
 }
 
@@ -250,11 +252,10 @@ contract BoolCond(pubkey owner) {
     );
 }
 
-// ─── Compilation succeeds despite type errors (non-fatal) ────────────────────
+// ─── Stack-unsafe type errors are fatal ───────────────────────────────────────
 
 #[test]
-fn type_errors_are_non_fatal_compilation_succeeds() {
-    // Multiple type errors in one contract — compilation must still succeed.
+fn stack_unsafe_type_errors_are_fatal() {
     let source = r#"
 contract MultiTypeError(pubkey owner, int badHash) {
     function spend(pubkey sigSwapped, signature ownerSwapped) {
@@ -262,29 +263,17 @@ contract MultiTypeError(pubkey owner, int badHash) {
         require(sha256(sigSwapped) == badHash);
     }
 }"#;
-    let result = compile(source);
+    let error = compile_error(source);
     assert!(
-        result.is_ok(),
-        "type errors must be non-fatal; compilation should succeed with warnings"
-    );
-    let output = result.unwrap();
-    assert!(
-        !output.warnings.is_empty(),
-        "multiple type errors must produce at least one warning"
-    );
-    // Should have both a swapped-args warning and a hash-type warning
-    let warning_text = output.warnings.join(" ");
-    assert!(
-        warning_text.to_lowercase().contains("swapped") || warning_text.contains("warning[type]"),
-        "expected type warnings; got: {:?}",
-        output.warnings
+        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        "signature argument errors must stop compilation: {error}"
     );
 }
 
 // ─── checkSigFromStack argument order ────────────────────────────────────────
 
 #[test]
-fn swapped_checksigfromstack_args_produces_warning() {
+fn swapped_checksigfromstack_args_are_rejected() {
     // checkSigFromStack(pubkey, sig, msg) — first two are swapped
     let source = r#"
 contract SwappedCsfs(pubkey owner) {
@@ -292,11 +281,10 @@ contract SwappedCsfs(pubkey owner) {
         require(checkSigFromStack(sigSwapped, pkSwapped, msg));
     }
 }"#;
-    let output = compile_ok(source);
+    let error = compile_error(source);
     assert!(
-        has_type_warning(&output, "swapped"),
-        "swapped checkSigFromStack arguments must produce a warning; got: {:?}",
-        output.warnings
+        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        "swapped checkSigFromStack arguments must be rejected: {error}"
     );
 }
 

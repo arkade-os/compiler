@@ -184,7 +184,11 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
                 .ok_or_else(|| "Parse error: Missing value in let binding".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::LetBinding { name, value });
+            func.statements.push(Statement::LetBinding {
+                name,
+                declared_type: None,
+                value,
+            });
             Ok(())
         }
         Rule::var_assign => {
@@ -261,9 +265,13 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::variable_declaration => {
-            // Typed variable declaration - treat like let binding
             let mut inner = pair.into_inner();
-            let _data_type = inner.next(); // Skip data type
+            let declared_type = inner
+                .next()
+                .ok_or_else(|| "Parse error: Missing variable type".to_string())?
+                .as_str()
+                .trim()
+                .to_string();
             let name = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing variable name".to_string())?
@@ -274,7 +282,11 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
                 .ok_or_else(|| "Parse error: Missing value".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::LetBinding { name, value });
+            func.statements.push(Statement::LetBinding {
+                name,
+                declared_type: Some(declared_type),
+                value,
+            });
             Ok(())
         }
         _ => Ok(()),
@@ -339,4 +351,76 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
         }
     }
     Ok(parameters)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+    use crate::models::{Requirement, Statement};
+
+    #[test]
+    fn retains_declared_local_types_and_multisig_signatures() {
+        let contract = parse(
+            r#"
+contract Demo(pubkey first, pubkey second) {
+    function spend(signature firstSig, signature secondSig) {
+        let inferred = 1;
+        int explicit = inferred + 1;
+        require(checkMultisig([first, second], [firstSig, secondSig]));
+    }
+}
+"#,
+        )
+        .expect("contract should parse");
+
+        let statements = &contract.functions[0].statements;
+        assert!(matches!(
+            &statements[0],
+            Statement::LetBinding {
+                name,
+                declared_type: None,
+                ..
+            } if name == "inferred"
+        ));
+        assert!(matches!(
+            &statements[1],
+            Statement::LetBinding {
+                name,
+                declared_type: Some(declared_type),
+                ..
+            } if name == "explicit" && declared_type == "int"
+        ));
+        assert!(matches!(
+            &statements[2],
+            Statement::Require(Requirement::CheckMultisig {
+                pubkeys,
+                signatures,
+                threshold: 2,
+            }) if pubkeys == &["first", "second"] && signatures == &["firstSig", "secondSig"]
+        ));
+    }
+
+    #[test]
+    fn rejects_multisig_without_explicit_signatures() {
+        for call in [
+            "checkMultisig([first, second])",
+            "checkMultisig([first, second], 2)",
+        ] {
+            for modifier in ["", " tapscript"] {
+                let source = format!(
+                    r#"
+contract Demo(pubkey first, pubkey second) {{
+    function spend(signature firstSig, signature secondSig){modifier} {{
+        require({call});
+    }}
+}}
+"#
+                );
+                assert!(
+                    parse(&source).is_err(),
+                    "checkMultisig without signatures must fail for `{modifier}` functions"
+                );
+            }
+        }
+    }
 }

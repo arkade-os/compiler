@@ -226,14 +226,31 @@ func spendingPSBT(
 ) *psbt.Packet {
 	t.Helper()
 
+	return spendingPSBTWithWitness(
+		t, prevTx, group, amount, outputScript, nil, packets...,
+	)
+}
+
+func spendingPSBTWithWitness(
+	t *testing.T,
+	prevTx *wire.MsgTx,
+	group instantiatedGroup,
+	amount int64,
+	outputScript []byte,
+	witness wire.TxWitness,
+	packets ...extension.Packet,
+) *psbt.Packet {
+	t.Helper()
+
 	outpoint := wire.OutPoint{Hash: prevTx.TxHash(), Index: 0}
 	tx := wire.NewMsgTx(2)
 	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
 	tx.AddTxOut(&wire.TxOut{Value: amount, PkScript: outputScript})
 
 	emulatorPacket, err := arkade.NewPacket(arkade.EmulatorEntry{
-		Vin:    0,
-		Script: group.covenant,
+		Vin:     0,
+		Script:  group.covenant,
+		Witness: witness,
 	})
 	if err != nil {
 		t.Fatalf("emulator packet: %v", err)
@@ -377,26 +394,9 @@ func executeTapscript(
 }
 
 func executeArkadeScripts(ptx *psbt.Packet, emulatorKey *btcec.PublicKey) error {
-	prevouts := make(map[wire.OutPoint]*wire.TxOut, len(ptx.Inputs))
-	arkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(ptx.Inputs))
-	for index, input := range ptx.Inputs {
-		outpoint := ptx.UnsignedTx.TxIn[index].PreviousOutPoint
-		prevouts[outpoint] = input.WitnessUtxo
-
-		fields, err := txutils.GetArkPsbtFields(ptx, index, arkade.PrevArkTxField)
-		if err != nil {
-			return fmt.Errorf("read previous Ark transaction: %w", err)
-		}
-		if len(fields) != 1 {
-			return fmt.Errorf("input %d has %d previous Ark transactions", index, len(fields))
-		}
-		prevTx := fields[0]
-		arkTxs[outpoint] = &prevTx
-	}
-
-	fetcher := &testPrevOutFetcher{
-		PrevOutputFetcher: txscript.NewMultiPrevOutFetcher(prevouts),
-		arkTxs:            arkTxs,
+	fetcher, err := arkPrevOutFetcher(ptx)
+	if err != nil {
+		return err
 	}
 	packet, err := arkade.FindEmulatorPacket(ptx.UnsignedTx)
 	if err != nil {
@@ -416,6 +416,87 @@ func executeArkadeScripts(ptx *psbt.Packet, emulatorKey *btcec.PublicKey) error 
 		}
 	}
 	return nil
+}
+
+func arkPrevOutFetcher(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+	prevouts := make(map[wire.OutPoint]*wire.TxOut, len(ptx.Inputs))
+	arkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(ptx.Inputs))
+	for index, input := range ptx.Inputs {
+		outpoint := ptx.UnsignedTx.TxIn[index].PreviousOutPoint
+		prevouts[outpoint] = input.WitnessUtxo
+
+		fields, err := txutils.GetArkPsbtFields(ptx, index, arkade.PrevArkTxField)
+		if err != nil {
+			return nil, fmt.Errorf("read previous Ark transaction: %w", err)
+		}
+		if len(fields) != 1 {
+			return nil, fmt.Errorf(
+				"input %d has %d previous Ark transactions", index, len(fields),
+			)
+		}
+		prevTx := fields[0]
+		arkTxs[outpoint] = &prevTx
+	}
+
+	return &testPrevOutFetcher{
+		PrevOutputFetcher: txscript.NewMultiPrevOutFetcher(prevouts),
+		arkTxs:            arkTxs,
+	}, nil
+}
+
+func signArkadeSighash(
+	t *testing.T,
+	ptx *psbt.Packet,
+	inputIndex int,
+	privateKey *btcec.PrivateKey,
+) []byte {
+	t.Helper()
+
+	if inputIndex < 0 || inputIndex >= len(ptx.Inputs) {
+		t.Fatalf("input index %d out of range", inputIndex)
+	}
+	input := ptx.Inputs[inputIndex]
+	if len(input.TaprootLeafScript) != 1 {
+		t.Fatalf("input %d has %d taproot leaves", inputIndex, len(input.TaprootLeafScript))
+	}
+	fetcher, err := arkPrevOutFetcher(ptx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafScript := input.TaprootLeafScript[0]
+	tapLeaf := txscript.NewTapLeaf(leafScript.LeafVersion, leafScript.Script)
+	digest, err := arkade.CalcArkadeScriptSignatureHash(
+		txscript.NewTxSigHashes(ptx.UnsignedTx, fetcher),
+		txscript.SigHashDefault,
+		ptx.UnsignedTx,
+		inputIndex,
+		fetcher,
+		tapLeaf,
+	)
+	if err != nil {
+		t.Fatalf("Arkade sighash: %v", err)
+	}
+	return signBIP340(t, privateKey, digest)
+}
+
+func signBIP340(t *testing.T, privateKey *btcec.PrivateKey, digest []byte) []byte {
+	t.Helper()
+
+	signature, err := schnorr.Sign(privateKey, digest)
+	if err != nil {
+		t.Fatalf("sign BIP340 digest: %v", err)
+	}
+	return signature.Serialize()
+}
+
+func scriptInt(t *testing.T, value int64) []byte {
+	t.Helper()
+
+	encoded, err := arkade.BigNumFromInt64(value).Bytes()
+	if err != nil {
+		t.Fatalf("encode script integer %d: %v", value, err)
+	}
+	return encoded
 }
 
 func fixedPrivateKey(value byte) *btcec.PrivateKey {

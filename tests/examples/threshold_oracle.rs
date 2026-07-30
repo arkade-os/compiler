@@ -155,22 +155,9 @@ fn test_threshold_oracle_array_indexing_in_loop() {
         asm_str
     );
 
-    // Similarly, sig (the value var) should become oracleSigs_0, etc.
-    assert!(
-        asm_str.contains("<oracleSigs_0>"),
-        "Missing <oracleSigs_0> in assembly. ASM: {}",
-        asm_str
-    );
-    assert!(
-        asm_str.contains("<oracleSigs_1>"),
-        "Missing <oracleSigs_1> in assembly. ASM: {}",
-        asm_str
-    );
-    assert!(
-        asm_str.contains("<oracleSigs_2>"),
-        "Missing <oracleSigs_2> in assembly. ASM: {}",
-        asm_str
-    );
+    // Function inputs are read from their witness stack positions.
+    assert!(!asm_str.contains("<oracleSigs_"), "ASM: {}", asm_str);
+    assert!(asm_str.contains("OP_PICK"), "ASM: {}", asm_str);
 }
 
 #[test]

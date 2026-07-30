@@ -52,13 +52,20 @@ impl ConcatPass {
     fn rewrite_statement_concat(&mut self, stmt: &mut Statement, scope: &mut Scope) {
         match stmt {
             Statement::Require(req) => self.rewrite_requirement_concat(req, scope),
-            Statement::LetBinding { name, value } => {
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => {
                 let (new_expr, t) = self.rewrite_expression_concat(
                     std::mem::replace(value, Expression::Literal(String::new())),
                     scope,
                 );
                 *value = new_expr;
-                scope.insert(name.clone(), t);
+                scope.insert(
+                    name.clone(),
+                    declared_type.as_deref().map(ArkType::parse).unwrap_or(t),
+                );
             }
             Statement::VarAssign { name, value } => {
                 let (new_expr, t) = self.rewrite_expression_concat(
