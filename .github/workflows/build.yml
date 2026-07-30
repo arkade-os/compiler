@@ -21,6 +21,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build
         run: cargo build --workspace --verbose
       - name: Clippy
@@ -28,11 +30,28 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --verbose
 
+  e2e:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+      - name: Run emulator E2E tests
+        run: ./scripts/e2e.sh -v
+
   check-format:
 
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Check Rust code format
         run: cargo fmt --check

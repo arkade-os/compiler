@@ -1,0 +1,16 @@
+contract Counter() {
+  function increment() {
+    require(
+      bin2num(tx.inputs[0].packet(2)) + 1 == bin2num(tx.packet(2)),
+      "counter must increment"
+    );
+    require(
+      tx.outputs[0].scriptPubKey == tx.inputs[0].scriptPubKey,
+      "counter script must persist"
+    );
+    require(
+      tx.outputs[0].value >= tx.inputs[0].value,
+      "counter value must persist"
+    );
+  }
+}
