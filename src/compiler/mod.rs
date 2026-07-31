@@ -581,20 +581,11 @@ fn covenant_for(
     constructor_parameters: &[Parameter],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = expand_function_inputs(&function.parameters);
-    let witness_order = inputs
-        .iter()
-        .rev()
-        .map(|input| input.name.clone())
-        .collect();
     let constructor_inputs = expand_abi_params(constructor_parameters);
     let mut generator = Generator::new(&inputs, &constructor_inputs);
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
-    Ok(ArkadeCovenant {
-        inputs,
-        witness_order,
-        asm,
-    })
+    Ok(ArkadeCovenant { inputs, asm })
 }
 
 fn expand_function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {

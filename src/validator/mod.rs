@@ -1360,18 +1360,6 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
-            let expected_witness_order = arkade
-                .inputs
-                .iter()
-                .rev()
-                .map(|input| input.name.clone())
-                .collect::<Vec<_>>();
-            if arkade.witness_order != expected_witness_order {
-                issues.push(ValidationIssue::error(format!(
-                    "group '{}' arkade witnessOrder does not reverse its inputs",
-                    group.name
-                )));
-            }
             let expected_prologue = output
                 .parameters
                 .iter()

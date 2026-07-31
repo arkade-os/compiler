@@ -99,7 +99,6 @@ Example — `SingleSig` compiled output:
       "name": "spend",
       "arkade": {
         "inputs": [{ "name": "userSig", "type": "signature" }],
-        "witnessOrder": ["userSig"],
         "asm": [
           "<exit>",
           "<user>",
@@ -431,9 +430,8 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 | `contractName`        | Contract identifier                                                                       |
 | `constructorInputs`   | Constructor parameters in source declaration order after array expansion                  |
 | `functions`           | Spend groups: `{ name, arkade?, leaves[] }`                                               |
-| `arkade`              | Optional emulator-run covenant `{ inputs, witnessOrder, asm }`                            |
+| `arkade`              | Optional emulator-run covenant `{ inputs, asm }`                                          |
 | `arkade.inputs`       | Function parameters in source declaration order after array expansion                     |
-| `arkade.witnessOrder` | Function input names in the physical bottom-to-top order used to serialize the VM witness |
 | `leaves`              | L1 tapleaf objects `{ name, witness, asm }`                                               |
 | `witness`             | Spend-time tapleaf witness fields, with `injected: true` for infrastructure signatures    |
 | `asm`                 | Assembly tokens, including the explicit constructor prologue and covenant body            |
@@ -442,7 +440,7 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 
 `constructorInputs` and `arkade.inputs` describe the source ABI and remain in source declaration order after fixed-size arrays are expanded. They do not describe the physical VM stack order.
 
-Clients must serialize covenant function inputs in the exact order listed by `arkade.witnessOrder`. This field contains the expanded `arkade.inputs` names in reverse order and describes the physical witness from bottom to top. For example, source inputs `[amount, sig]` produce `"witnessOrder": ["sig", "amount"]`.
+Clients serialize covenant function inputs in reverse `arkade.inputs` order. For example, source inputs `[amount, sig]` produce the physical bottom-to-top witness `[sig, amount]`.
 
 Every covenant `asm` begins with one constructor placeholder per expanded constructor input, also in reverse order. Contract instantiation resolves these placeholders to concrete data pushes before the covenant hash is computed. For source constructor inputs `[limit, owner]`, the prologue is `["<owner>", "<limit>"]`, leaving `limit` nearest the top within the constructor frame.
 

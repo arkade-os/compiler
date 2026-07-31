@@ -76,9 +76,6 @@ pub struct WitnessElement {
 pub struct ArkadeCovenant {
     /// Covenant inputs (function parameters, array-expanded). No server/emulator sigs.
     pub inputs: Vec<FunctionInput>,
-    /// Physical bottom-to-top order in which covenant inputs are serialized.
-    #[serde(rename = "witnessOrder")]
-    pub witness_order: Vec<String>,
     /// Covenant assembly.
     pub asm: Vec<String>,
 }

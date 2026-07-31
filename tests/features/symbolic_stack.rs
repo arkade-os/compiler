@@ -21,7 +21,7 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
 }
 
 #[test]
-fn constructor_prologue_and_function_witness_have_explicit_positions() {
+fn constructor_prologue_and_function_inputs_have_explicit_positions() {
     let covenant = covenant(
         r#"
 contract Frame(int left, int right) {
@@ -33,7 +33,14 @@ contract Frame(int left, int right) {
         "spend",
     );
 
-    assert_eq!(covenant.witness_order, ["y", "x"]);
+    assert_eq!(
+        covenant
+            .inputs
+            .iter()
+            .map(|input| input.name.as_str())
+            .collect::<Vec<_>>(),
+        ["x", "y"]
+    );
     assert_eq!(&covenant.asm[..2], ["<right>", "<left>"]);
     assert!(
         contains_tokens(&covenant.asm, &["OP_0", OP_PICK, "OP_3", OP_PICK, OP_ADD]),
