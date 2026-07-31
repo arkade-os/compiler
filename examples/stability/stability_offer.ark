@@ -1,9 +1,9 @@
 // StabilityOffer Contract
-//
+
 // Provider pre-commits BTC liquidity into a standing offer.
 // Any swap service (or direct Seeker) can claim it non-interactively by
 // supplying a fresh oracle-signed price.
-//
+
 // Flow:
 //   1. Provider deploys StabilityOffer with their BTC collateral.
 //   2. Taker calls take(userBTC, seekerPk, oraclePrice, oracleTime, oracleSig).
@@ -11,7 +11,7 @@
 //      enforces freshness, charges takeFee to the provider, and opens a
 //      StabilityVault bound to this ticker.
 //   4. Provider calls withdraw() to reclaim unused collateral at any time.
-//
+
 // Fees committed at offer creation (immutable across takes), expressed in
 // basis points (1e4 scale: 100 = 1%):
 //   - takeFee:        takeFee × userBTC / 1e4 sats; rolled into the vault
@@ -35,6 +35,10 @@ contract StabilityOffer(
   int     exit
 ) {
 
+  // Taking an offer needs dynamic taproot reconstruction. Restore this
+  // function once private functions plus EC return decomposition can implement
+  // it, or once a generic builtin provides the same verification.
+
   // -------------------------------------------------------------------------
   // TAKE
   // Non-interactive: no provider signature.
@@ -48,84 +52,84 @@ contract StabilityOffer(
   //   output[1]: takeFee → provider           (only if takeFee > 330)
   //   output[2]: remaining StabilityOffer     (only if partial fill)
   // -------------------------------------------------------------------------
-  function take(
-    int       userBTC,
-    pubkey    seekerPk,
-    int       oraclePrice,
-    int       oracleTime,
-    signature oracleSig
-  ) {
-    require(userBTC > 0, "zero deposit");
-    require(userBTC <= maxExposureBTC, "exceeds offer capacity");
-    require(collateralRatioPct >= 100, "collateral ratio below minimum");
-    require(oraclePrice > 0, "invalid oracle price");
-    require(seekerExitFee >= 0, "negative exit fee");
-    require(seekerExitFee <= 10000, "exit fee > 100%");
-    require(takeFee >= 0, "negative take fee");
-    require(takeFee <= 10000, "take fee > 100%");
+//   function take(
+//     int       userBTC,
+//     pubkey    seekerPk,
+//     int       oraclePrice,
+//     int       oracleTime,
+//     signature oracleSig
+//   ) {
+//     require(userBTC > 0, "zero deposit");
+//     require(userBTC <= maxExposureBTC, "exceeds offer capacity");
+//     require(collateralRatioPct >= 100, "collateral ratio below minimum");
+//     require(oraclePrice > 0, "invalid oracle price");
+//     require(seekerExitFee >= 0, "negative exit fee");
+//     require(seekerExitFee <= 10000, "exit fee > 100%");
+//     require(takeFee >= 0, "negative take fee");
+//     require(takeFee <= 10000, "take fee > 100%");
 
-    int oracleAge = tx.offchainTime - oracleTime;
-    require(oracleAge >= 0, "future-dated oracle");
-    require(oracleAge <= 600, "stale oracle");
+//     int oracleAge = tx.offchainTime - oracleTime;
+//     require(oracleAge >= 0, "future-dated oracle");
+//     require(oracleAge <= 600, "stale oracle");
 
-    let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
-    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+//     let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
+//     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
-    int targetUSD = userBTC * oraclePrice / 100000000;
-    require(targetUSD > 0, "position too small");
+//     int targetUSD = userBTC * oraclePrice / 100000000;
+//     require(targetUSD > 0, "position too small");
 
-    int totalCollateral       = userBTC * (100 + collateralRatioPct) / 100;
-    int takeFeeSats           = userBTC * takeFee / 10000;
-    int remainingCapacity     = maxExposureBTC - userBTC;
-    int remainingCollateral   = remainingCapacity * collateralRatioPct / 100;
+//     int totalCollateral       = userBTC * (100 + collateralRatioPct) / 100;
+//     int takeFeeSats           = userBTC * takeFee / 10000;
+//     int remainingCapacity     = maxExposureBTC - userBTC;
+//     int remainingCollateral   = remainingCapacity * collateralRatioPct / 100;
 
-    if (takeFeeSats > 330) {
-      require(
-        tx.outputs[0].scriptPubKey == new StabilityVault(
-          seekerPk, providerPk, oraclePk, ticker,
-          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
-          collateralRatioPct, seekerExitFee, exit
-        ),
-        "invalid vault output"
-      );
-      require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
-      require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk, exit), "output 1 not provider");
-      require(tx.outputs[1].value >= takeFeeSats, "provider underpaid take fee");
-      if (remainingCapacity > 0) {
-        require(
-          tx.outputs[2].scriptPubKey == new StabilityOffer(
-            providerPk, oraclePk, ticker,
-            fundingRatePerSec, remainingCapacity, collateralRatioPct,
-            seekerExitFee, takeFee, exit
-          ),
-          "invalid remaining offer"
-        );
-        require(tx.outputs[2].value >= remainingCollateral, "insufficient offer collateral");
-      }
-    } else {
-      require(
-        tx.outputs[0].scriptPubKey == new StabilityVault(
-          seekerPk, providerPk, oraclePk, ticker,
-          targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
-          collateralRatioPct, seekerExitFee, exit
-        ),
-        "invalid vault output"
-      );
-      int dustVaultValue = totalCollateral + takeFeeSats;
-      require(tx.outputs[0].value >= dustVaultValue, "insufficient vault collateral");
-      if (remainingCapacity > 0) {
-        require(
-          tx.outputs[1].scriptPubKey == new StabilityOffer(
-            providerPk, oraclePk, ticker,
-            fundingRatePerSec, remainingCapacity, collateralRatioPct,
-            seekerExitFee, takeFee, exit
-          ),
-          "invalid remaining offer"
-        );
-        require(tx.outputs[1].value >= remainingCollateral, "insufficient offer collateral");
-      }
-    }
-  }
+//     if (takeFeeSats > 330) {
+//       require(
+//         tx.outputs[0].scriptPubKey == new StabilityVault(
+//           seekerPk, providerPk, oraclePk, ticker,
+//           targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
+//           collateralRatioPct, seekerExitFee, exit
+//         ),
+//         "invalid vault output"
+//       );
+//       require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
+//       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk, exit), "output 1 not provider");
+//       require(tx.outputs[1].value >= takeFeeSats, "provider underpaid take fee");
+//       if (remainingCapacity > 0) {
+//         require(
+//           tx.outputs[2].scriptPubKey == new StabilityOffer(
+//             providerPk, oraclePk, ticker,
+//             fundingRatePerSec, remainingCapacity, collateralRatioPct,
+//             seekerExitFee, takeFee, exit
+//           ),
+//           "invalid remaining offer"
+//         );
+//         require(tx.outputs[2].value >= remainingCollateral, "insufficient offer collateral");
+//       }
+//     } else {
+//       require(
+//         tx.outputs[0].scriptPubKey == new StabilityVault(
+//           seekerPk, providerPk, oraclePk, ticker,
+//           targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
+//           collateralRatioPct, seekerExitFee, exit
+//         ),
+//         "invalid vault output"
+//       );
+//       int dustVaultValue = totalCollateral + takeFeeSats;
+//       require(tx.outputs[0].value >= dustVaultValue, "insufficient vault collateral");
+//       if (remainingCapacity > 0) {
+//         require(
+//           tx.outputs[1].scriptPubKey == new StabilityOffer(
+//             providerPk, oraclePk, ticker,
+//             fundingRatePerSec, remainingCapacity, collateralRatioPct,
+//             seekerExitFee, takeFee, exit
+//           ),
+//           "invalid remaining offer"
+//         );
+//         require(tx.outputs[1].value >= remainingCollateral, "insufficient offer collateral");
+//       }
+//     }
+//   }
 
   // -------------------------------------------------------------------------
   // WITHDRAW — Provider reclaims unclaimed collateral from the offer.

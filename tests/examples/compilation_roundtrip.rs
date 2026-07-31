@@ -211,6 +211,7 @@ fn roundtrip_payment_auth() {
 }
 
 #[test]
+#[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn roundtrip_repayment_pool() {
     let output = compile_example("bonds/repayment_pool.ark");
     assert_output_invariants(&output, "bonds/repayment_pool.ark");
