@@ -1,0 +1,91 @@
+// Subscription Contract
+// Pull-payment alternative to PaymentAuthorization's escrow (lock, then
+// capture-or-refund). This coin is the customer's own spendable balance with
+// a bounded allowance carved out of it:
+// 1. The merchant may pull exactly pullAmount once per interval; change
+//    recreates the contract with the schedule advanced one period.
+// 2. The customer can cancel (spend) at any time with their own signature;
+//    periods already due are settled to the merchant first.
+//
+// Billing is in advance: a period's fee is due at its start (nextPullTime),
+// not its end, so pull and cancel agree on exactly what is owed at any
+// instant and neither path can be front-run by the other.
+
+contract Subscription(
+  pubkey customerPk,     // owner; can cancel/spend anytime
+  pubkey merchantPk,     // authorizes each pull
+  bytes  merchantScript, // P2TR scriptPubKey receiving each pull
+  int    pullAmount,     // sats per billing period; agreed > 330 off-chain
+  int    interval,       // seconds between pulls; agreed > 0 off-chain
+  int    nextPullTime,   // unix seconds when the next pull unlocks; mutates
+  int    exit            // unilateral exit CSV delay in blocks
+) {
+
+  // PULL — merchant collects one period; missed periods accrue and can be
+  // caught up with consecutive pulls (anchor advances by interval, not to
+  // now), so billing dates never drift.
+  function pull(signature merchantSig) {
+    require(checkSig(merchantSig, merchantPk), "invalid merchant sig");
+    require(tx.offchainTime >= nextPullTime, "period not due");
+
+    let balance = tx.input.current.value;
+    require(balance >= pullAmount, "insufficient balance");
+
+    require(tx.outputs[0].value >= pullAmount, "merchant underpaid");
+    require(tx.outputs[0].scriptPubKey == merchantScript, "output 0 not merchant");
+
+    int remainder = balance - pullAmount;
+    int newNextPullTime = nextPullTime + interval;
+    if (remainder > 330) {
+      require(
+        tx.outputs[1].scriptPubKey == new Subscription(
+          customerPk, merchantPk, merchantScript,
+          pullAmount, interval, newNextPullTime, exit
+        ),
+        "invalid renewal output"
+      );
+      require(tx.outputs[1].value >= remainder, "renewal underfunded");
+    }
+  }
+
+  // CANCEL — customer exits anytime, but periods already unlocked (past
+  // nextPullTime) are settled to the merchant first; the rest of the outputs
+  // are unconstrained because the customer signs the transaction. The period
+  // in progress is owed in full (no proration).
+  function cancel(signature customerSig) {
+    require(checkSig(customerSig, customerPk), "invalid customer sig");
+
+    if (tx.offchainTime >= nextPullTime) {
+      let balance = tx.input.current.value;
+      int elapsed = tx.offchainTime - nextPullTime;
+      int periodsDue = elapsed / interval + 1;
+
+      // periodsDue >= maxPeriods implies the debt strictly exceeds the
+      // balance, so the whole balance settles to the merchant. Capping
+      // before multiplying keeps periodsDue * pullAmount within the balance
+      // bound (avoids overflow from a long-neglected subscription).
+      int maxPeriods = balance / pullAmount + 1;
+      if (periodsDue >= maxPeriods) {
+        require(tx.outputs[0].value >= balance, "merchant underpaid");
+        require(tx.outputs[0].scriptPubKey == merchantScript, "output 0 not merchant");
+      } else {
+        int owed = periodsDue * pullAmount;
+        // Sub-dust debt is forgiven rather than forcing an unviable output.
+        if (owed > 330) {
+          require(tx.outputs[0].value >= owed, "merchant underpaid");
+          require(tx.outputs[0].scriptPubKey == merchantScript, "output 0 not merchant");
+        }
+      }
+    }
+  }
+
+  // Unilateral exit (CSV): customer recovers on L1 if the operator
+  // disappears. This path has no output introspection (tapscript leaves
+  // can't), so it bypasses merchant settlement — the merchant's real
+  // exposure is limited to due-but-unpulled periods if the customer goes
+  // unilateral, mitigated by pulling promptly once a period unlocks.
+  function unilateral(signature customerSig) tapscript {
+    require(older(exit));
+    require(checkSig(customerSig, customerPk));
+  }
+}
