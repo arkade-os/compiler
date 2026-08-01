@@ -55,9 +55,9 @@ contract Subscription(
   function cancel(signature customerSig) {
     require(checkSig(customerSig, customerPk), "invalid customer sig");
 
-    if (tx.offchainTime >= nextPullTime) {
+    int elapsed = tx.offchainTime - nextPullTime;
+    if (elapsed >= 0) {
       let balance = tx.input.current.value;
-      int elapsed = tx.offchainTime - nextPullTime;
       int periodsDue = elapsed / interval + 1;
 
       // periodsDue >= maxPeriods implies the debt strictly exceeds the

@@ -5,7 +5,8 @@ use arkade_compiler::opcodes::{
 };
 
 use crate::common::{
-    arkade_asm, arkade_asm_tokens, arkade_inputs, group, opcode_count_in_arkade, user_signatures,
+    arkade_asm, arkade_asm_tokens, arkade_inputs, group, leaf_asm, opcode_count_in_arkade,
+    user_signatures, witness_names,
 };
 
 // Pull-payment alternative to PaymentAuthorization's escrow: the coin stays
@@ -75,6 +76,25 @@ fn test_pull_checks_balance_and_pins_merchant_payout() {
     assert!(
         asm.contains(OP_SUB),
         "pull must compute the remainder (balance - pullAmount)"
+    );
+
+    // pull's covenant pins TWO outputs (merchant payout at 0, renewal VTXO at
+    // 1) via structurally identical opcodes, so mere opcode presence can't
+    // tell them apart — a regression that dropped the output-0 merchant pin
+    // while keeping the output-1 renewal pin would still pass a
+    // presence-only check. Anchor on the exact contiguous token sequence for
+    // output index 0 instead.
+    assert!(
+        asm.contains(&format!(
+            "0 {OP_INSPECTOUTPUTVALUE} <pullAmount> {OP_GREATERTHANOREQUAL}"
+        )),
+        "pull must check tx.outputs[0].value >= pullAmount, got: {asm}"
+    );
+    assert!(
+        asm.contains(&format!(
+            "0 {OP_INSPECTOUTPUTSCRIPTPUBKEY} OP_DROP <merchantScript> OP_EQUAL"
+        )),
+        "pull must pin tx.outputs[0].scriptPubKey == merchantScript, got: {asm}"
     );
 }
 
@@ -188,22 +208,20 @@ fn test_unilateral_is_csv_and_customer_only() {
         "unilateral should have no arkade covenant (pure tapscript exit)"
     );
 
-    let leaf = &unilateral_group.leaves[0];
-    let leaf_asm = leaf.asm.join(" ");
+    let asm = leaf_asm(&output, "unilateral", "unilateral");
     assert!(
-        leaf_asm.contains(OP_CHECKSEQUENCEVERIFY),
+        asm.contains(OP_CHECKSEQUENCEVERIFY),
         "unilateral must enforce the exit CSV delay"
     );
     assert!(
-        leaf_asm.contains("<customerPk>"),
+        asm.contains("<customerPk>"),
         "unilateral must check the customer's key, not the merchant's"
     );
-    assert!(leaf_asm.contains(OP_CHECKSIG));
+    assert!(asm.contains(OP_CHECKSIG));
 
-    let witness_names: Vec<&str> = leaf.witness.iter().map(|w| w.name.as_str()).collect();
     assert_eq!(
-        witness_names,
-        vec!["customerSig"],
+        witness_names(&output, "unilateral", "unilateral"),
+        vec!["customerSig".to_string()],
         "unilateral witness must be exactly the customer's signature"
     );
 }
