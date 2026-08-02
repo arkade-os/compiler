@@ -184,6 +184,15 @@ fn roundtrip_payment_auth() {
 }
 
 #[test]
+fn roundtrip_subscription() {
+    let output = compile_example("subscription/subscription.ark");
+    assert_output_invariants(&output, "subscription/subscription.ark");
+    assert_eq!(output.name, "Subscription");
+    // 2 function-backed groups (pull, cancel) + 1 standalone unilateral = 3.
+    assert_eq!(output.functions.len(), 3);
+}
+
+#[test]
 fn roundtrip_repayment_pool() {
     let output = compile_example("bonds/repayment_pool.ark");
     assert_output_invariants(&output, "bonds/repayment_pool.ark");

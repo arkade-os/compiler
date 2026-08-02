@@ -28,6 +28,8 @@ mod layerzero;
 mod repayment_pool;
 #[path = "examples/stability_vault.rs"]
 mod stability_vault;
+#[path = "examples/subscription.rs"]
+mod subscription;
 #[path = "examples/threshold_oracle.rs"]
 mod threshold_oracle;
 #[path = "examples/token_vault.rs"]

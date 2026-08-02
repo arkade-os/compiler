@@ -89,6 +89,17 @@ If the playground, WASM bridge, or examples used by it changed, also run:
 ./playground/build.sh
 ```
 
+`build.sh` needs the `wasm32-unknown-unknown` target and the `wasm-pack` CLI; a fresh environment has neither:
+
+```bash
+rustup target add wasm32-unknown-unknown
+curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+```
+
+`wasm-pack`'s own `wasm-opt`/binaryen download can fail in a network-restricted sandbox even when the URL is reachable directly (`curl`). Build with `wasm-pack build --target web --out-dir playground/pkg --no-opt -- --features wasm` in that case (skips optimization only, no `Cargo.toml` change) and let CI verify the optimized artifact.
+
+Adding a file under `examples/` makes it compile through the WASM build automatically (`playground/contracts.js` is generated from every `.ark` file), but it does not add it to the playground's file-tree UI — `playground/main.js` lists a hand-curated subset in its `projects`/`examples` objects. Add an entry there only if the example should be browsable in the playground.
+
 For fast compiler inspection against a contract:
 
 ```bash
