@@ -56,6 +56,13 @@ enum StackItem {
     Temporary,
 }
 
+// `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
+const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
+
+fn internal_array_binding_name(array: &str, index: &str) -> String {
+    format!("{INTERNAL_ARRAY_BINDING_PREFIX}{array}:{index}")
+}
+
 struct Generator {
     asm: Vec<String>,
     stack: Vec<StackItem>,
@@ -64,20 +71,33 @@ struct Generator {
 }
 
 impl Generator {
-    fn new(function_inputs: &[FunctionInput], constructor_inputs: &[Parameter]) -> Self {
-        let mut stack = function_inputs
-            .iter()
+    fn new(function_parameters: &[Parameter], constructor_parameters: &[Parameter]) -> Self {
+        let mut function_bindings = Vec::new();
+        for parameter in function_parameters {
+            for_each_expanded_param(parameter, |_, binding_name, _| {
+                function_bindings.push(binding_name);
+            });
+        }
+        let mut stack = function_bindings
+            .into_iter()
             .rev()
-            .map(|input| StackItem::Binding {
-                name: input.name.clone(),
+            .map(|name| StackItem::Binding {
+                name,
                 kind: BindingKind::FunctionInput,
             })
             .collect::<Vec<_>>();
+
+        let mut constructor_bindings = Vec::new();
+        for parameter in constructor_parameters {
+            for_each_expanded_param(parameter, |placeholder, binding_name, _| {
+                constructor_bindings.push((placeholder, binding_name));
+            });
+        }
         let mut asm = Vec::new();
-        for parameter in constructor_inputs.iter().rev() {
-            asm.push(format!("<{}>", parameter.name));
+        for (placeholder, binding_name) in constructor_bindings.into_iter().rev() {
+            asm.push(format!("<{placeholder}>"));
             stack.push(StackItem::Binding {
-                name: parameter.name.clone(),
+                name: binding_name,
                 kind: BindingKind::Constructor,
             });
         }
@@ -108,18 +128,21 @@ impl Generator {
         )
     }
 
-    fn normalize_binding_name(name: &str) -> String {
+    fn internal_binding_name(name: &str) -> String {
         let name = name.trim();
+        if name.starts_with(INTERNAL_ARRAY_BINDING_PREFIX) {
+            return name.to_string();
+        }
         if let Some(open) = name.find('[') {
             if name.ends_with(']') {
-                return format!("{}_{}", &name[..open], &name[open + 1..name.len() - 1]);
+                return internal_array_binding_name(&name[..open], &name[open + 1..name.len() - 1]);
             }
         }
         name.to_string()
     }
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
-        let name = Self::normalize_binding_name(name);
+        let name = Self::internal_binding_name(name);
         let index = self
             .binding_index(&name)
             .ok_or_else(|| format!("undefined binding '{name}'"))?;
@@ -568,7 +591,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 pub(crate) fn expand_abi_params(params: &[Parameter]) -> Vec<Parameter> {
     let mut result = Vec::new();
     for param in params {
-        for_each_expanded_param(param, |name, param_type| {
+        for_each_expanded_param(param, |name, _, param_type| {
             result.push(Parameter { name, param_type });
         });
     }
@@ -581,8 +604,7 @@ fn covenant_for(
     constructor_parameters: &[Parameter],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = expand_function_inputs(&function.parameters);
-    let constructor_inputs = expand_abi_params(constructor_parameters);
-    let mut generator = Generator::new(&inputs, &constructor_inputs);
+    let mut generator = Generator::new(&function.parameters, constructor_parameters);
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })
@@ -591,20 +613,28 @@ fn covenant_for(
 fn expand_function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
     let mut inputs = Vec::new();
     for param in params {
-        for_each_expanded_param(param, |name, param_type| {
+        for_each_expanded_param(param, |name, _, param_type| {
             inputs.push(FunctionInput { name, param_type });
         });
     }
     inputs
 }
 
-fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String)) {
+fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String, String)) {
     if let Some(base_type) = param.param_type.strip_suffix("[]") {
         for i in 0..DEFAULT_ARRAY_LENGTH {
-            f(format!("{}_{}", param.name, i), base_type.to_string());
+            f(
+                format!("{}_{}", param.name, i),
+                internal_array_binding_name(&param.name, &i.to_string()),
+                base_type.to_string(),
+            );
         }
     } else {
-        f(param.name.clone(), param.param_type.clone());
+        f(
+            param.name.clone(),
+            param.name.clone(),
+            param.param_type.clone(),
+        );
     }
 }
 
@@ -848,7 +878,7 @@ mod symbolic_stack_tests {
     fn deep_assignment_replaces_the_original_slot_and_restores_the_alt_stack() {
         let inputs = ["a", "b", "c", "d"]
             .into_iter()
-            .map(|name| FunctionInput {
+            .map(|name| Parameter {
                 name: name.to_string(),
                 param_type: "int".to_string(),
             })

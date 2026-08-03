@@ -129,12 +129,12 @@ pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
     for p in params {
         if let Some(base) = p.param_type.strip_suffix("[]") {
             let elem_type = ArkType::parse(base);
-            // Register the bare name as the array type, plus each flattened
-            // index form (name_0 … name_{N-1}). The count must match
+            // Register the bare name as the array type, plus each indexed
+            // element. The count must match
             // DEFAULT_ARRAY_LENGTH so the type checker and compiler agree.
             scope.insert(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())));
             for i in 0..DEFAULT_ARRAY_LENGTH {
-                scope.insert(format!("{}_{}", p.name, i), elem_type.clone());
+                scope.insert(format!("{}[{}]", p.name, i), elem_type.clone());
             }
         } else {
             scope.insert(p.name.clone(), ArkType::parse(&p.param_type));
@@ -493,11 +493,24 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .unwrap_or(ArkType::Unknown),
         Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         Expression::Literal(_) => ArkType::Int,
-        Expression::Property(property) => match property.trim() {
-            "tx.time" | "this.activeInputIndex" => ArkType::Int,
-            "this.activeBytecode" => ArkType::Bytes,
-            _ => ArkType::Unknown,
-        },
+        Expression::Property(property) => scope
+            .get(property.trim())
+            .cloned()
+            .or_else(|| {
+                let (array, index) = property.strip_suffix(']')?.split_once('[')?;
+                if index.parse::<usize>().is_ok() {
+                    return None;
+                }
+                match scope.get(array)? {
+                    ArkType::Array(element) => Some((**element).clone()),
+                    _ => None,
+                }
+            })
+            .unwrap_or(match property.trim() {
+                "tx.time" | "this.activeInputIndex" => ArkType::Int,
+                "this.activeBytecode" => ArkType::Bytes,
+                _ => ArkType::Unknown,
+            }),
 
         // tx.input.current.*
         Expression::CurrentInput(prop) => match prop.as_deref() {

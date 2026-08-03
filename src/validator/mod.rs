@@ -112,6 +112,7 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &contract.parameters {
+            validate_source_identifier(&param.name, "constructor parameter", &mut issues);
             if !seen.insert(param.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
                     "duplicate constructor parameter '{}'",
@@ -125,6 +126,11 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     for func in &contract.functions {
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &func.parameters {
+            validate_source_identifier(
+                &param.name,
+                &format!("parameter in function '{}'", func.name),
+                &mut issues,
+            );
             if !seen.insert(param.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
                     "duplicate parameter '{}' in function '{}'",
@@ -175,6 +181,11 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
 
     for ts in &contract.tapscripts {
         for p in &ts.inputs {
+            validate_source_identifier(
+                &p.name,
+                &format!("input in tapscript '{}'", ts.name),
+                &mut issues,
+            );
             if p.name == "server" || p.name == "emulator" {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' collides with a reserved key role",
@@ -200,6 +211,14 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     check_asset_id_operands(contract, &mut issues);
 
     issues
+}
+
+fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
+    if name == "SERVER_KEY" {
+        issues.push(ValidationIssue::error(format!(
+            "{context} '{name}' uses a compiler-reserved placeholder name"
+        )));
+    }
 }
 
 // ─── Asset ID operand validation (fatal) ───────────────────────────────────────
@@ -484,7 +503,7 @@ fn insert_parameters(
             );
             for index in 0..crate::models::DEFAULT_ARRAY_LENGTH {
                 frame.insert(
-                    format!("{}_{}", parameter.name, index),
+                    format!("{}[{}]", parameter.name, index),
                     BindingInfo {
                         binding_type: element_type.clone(),
                         source,
@@ -503,27 +522,17 @@ fn insert_parameters(
     }
 }
 
-fn normalized_name(name: &str) -> String {
-    if let Some(open) = name.find('[') {
-        if name.ends_with(']') {
-            let index = &name[open + 1..name.len() - 1];
-            return format!(
-                "{}_{}",
-                &name[..open],
-                if index.parse::<usize>().is_ok() {
-                    index
-                } else {
-                    "0"
-                }
-            );
+fn find_binding<'a>(scopes: &'a BindingScopes, name: &str) -> Option<&'a BindingInfo> {
+    if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
+        if index.parse::<usize>().is_err() {
+            let first_element = format!("{array}[0]");
+            return scopes
+                .iter()
+                .rev()
+                .find_map(|frame| frame.get(&first_element));
         }
     }
-    name.to_string()
-}
-
-fn find_binding<'a>(scopes: &'a BindingScopes, name: &str) -> Option<&'a BindingInfo> {
-    let name = normalized_name(name);
-    scopes.iter().rev().find_map(|frame| frame.get(&name))
+    scopes.iter().rev().find_map(|frame| frame.get(name))
 }
 
 fn flattened_types(scopes: &BindingScopes) -> Scope {
@@ -1237,6 +1246,7 @@ fn walk_scope(
     for stmt in stmts {
         match stmt {
             Statement::LetBinding { name, .. } => {
+                validate_source_identifier(name, &format!("binding in function '{fname}'"), issues);
                 if in_scope(stack, name) {
                     issues.push(ValidationIssue::error(format!(
                         "binding '{}' in function '{}' shadows an in-scope binding",
@@ -1255,6 +1265,16 @@ fn walk_scope(
                 body,
                 ..
             } => {
+                validate_source_identifier(
+                    index_var,
+                    &format!("loop variable in function '{fname}'"),
+                    issues,
+                );
+                validate_source_identifier(
+                    value_var,
+                    &format!("loop variable in function '{fname}'"),
+                    issues,
+                );
                 if index_var == value_var {
                     issues.push(ValidationIssue::error(format!(
                         "loop variables in function '{}' must differ; both are named '{}'",
@@ -1297,8 +1317,8 @@ fn walk_scope(
 }
 
 /// Check 2: the names a function's parameters and the constructor's parameters
-/// contribute to the *emitted* placeholder namespace — after array flattening
-/// and reserved generated names — must be unique. Distinct source names can
+/// contribute to the *emitted* placeholder namespace after array flattening
+/// must be unique. Distinct source names can
 /// still collide here (e.g. `int[] xs` vs `int xs_0`).
 fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     // Constructor params expanded exactly as the emitter expands them (array flattening).
@@ -1308,11 +1328,41 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
         let mut seen: HashSet<String> = HashSet::new();
 
         for p in &ctor_expanded {
-            record_name(p.name.clone(), &func.name, &mut seen, issues);
+            record_name(
+                p.name.clone(),
+                &format!("function '{}'", func.name),
+                &mut seen,
+                issues,
+            );
         }
 
         for p in crate::compiler::expand_abi_params(&func.parameters) {
-            record_name(p.name, &func.name, &mut seen, issues);
+            record_name(
+                p.name,
+                &format!("function '{}'", func.name),
+                &mut seen,
+                issues,
+            );
+        }
+    }
+
+    for tapscript in &contract.tapscripts {
+        let mut seen: HashSet<String> = HashSet::new();
+        for p in &ctor_expanded {
+            record_name(
+                p.name.clone(),
+                &format!("tapscript '{}'", tapscript.name),
+                &mut seen,
+                issues,
+            );
+        }
+        for p in crate::compiler::expand_abi_params(&tapscript.inputs) {
+            record_name(
+                p.name,
+                &format!("tapscript '{}'", tapscript.name),
+                &mut seen,
+                issues,
+            );
         }
     }
 }
@@ -1320,14 +1370,13 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
 /// Insert an emitted name; on the first duplicate, record a collision error.
 fn record_name(
     name: String,
-    fname: &str,
+    context: &str,
     seen: &mut HashSet<String>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     if !seen.insert(name.clone()) {
         issues.push(ValidationIssue::error(format!(
-            "parameters in function '{}' collide in the emitted namespace as '{}'",
-            fname, name
+            "parameters in {context} collide in the emitted namespace as '{name}'"
         )));
     }
 }

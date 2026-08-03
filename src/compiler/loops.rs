@@ -1,5 +1,7 @@
 use crate::models::*;
 
+use super::internal_array_binding_name;
+
 // ─── Loop Unrolling ─────────────────────────────────────────────────────────────
 
 /// Substitute loop variables in the body for a specific iteration index k.
@@ -8,8 +10,8 @@ use crate::models::*;
 /// - `GroupProperty { group: value_var, property: "sumOutputs" }` → `GroupSum { index: k, source: Outputs }`
 /// - `GroupProperty { group: value_var, property: "sumInputs" }` → `GroupSum { index: k, source: Inputs }`
 /// - `Variable(index_var)` → `Literal(k)`
-/// - `Variable(value_var)` when array_name is Some → `Variable("array_name_{k}")`
-/// - Property-form indexing `arr[index_var]` → `Variable("arr_{k}")`
+/// - `Variable(value_var)` when array_name is Some → its internal array-element binding
+/// - Property-form indexing `arr[index_var]` → the same internal binding
 pub(crate) fn substitute_loop_body(
     body: &[Statement],
     index_var: &str,
@@ -148,12 +150,12 @@ fn substitute_loop_name(
     }
     if name == value_var {
         return array_name
-            .map(|array| format!("{array}_{k}"))
+            .map(|array| internal_array_binding_name(array, &k.to_string()))
             .unwrap_or_else(|| k.to_string());
     }
     if let Some(open) = name.find('[') {
         if name.ends_with(']') && &name[open + 1..name.len() - 1] == index_var {
-            return format!("{}_{}", &name[..open], k);
+            return internal_array_binding_name(&name[..open], &k.to_string());
         }
     }
     name.to_string()
@@ -169,10 +171,10 @@ pub(crate) fn substitute_expression(
     match expr {
         // Replace index variable with literal k
         Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
-        // Replace value_var with array_name_{k} when iterating over arrays
+        // Replace the value variable with its source-impossible stack binding.
         Expression::Variable(var) if var == value_var => {
             if let Some(name) = array_name {
-                Expression::Variable(format!("{}_{}", name, k))
+                Expression::Variable(internal_array_binding_name(name, &k.to_string()))
             } else {
                 Expression::Literal(k.to_string())
             }
@@ -189,7 +191,10 @@ pub(crate) fn substitute_expression(
                     let arr_name = &prop[..bracket_start];
                     let idx = &prop[bracket_start + 1..bracket_end];
                     if idx == index_var {
-                        return Expression::Variable(format!("{}_{}", arr_name, k));
+                        return Expression::Variable(internal_array_binding_name(
+                            arr_name,
+                            &k.to_string(),
+                        ));
                     }
                 }
             }

@@ -175,6 +175,23 @@ contract Reserved(pubkey {role}) {{
 }
 
 #[test]
+fn internal_server_key_placeholder_name_is_rejected() {
+    let source = r#"
+contract Reserved(pubkey SERVER_KEY) {
+    function spend() {
+        require(tx.outputs[0].value >= 1);
+    }
+}"#;
+    let error = compile(source)
+        .expect_err("SERVER_KEY must remain compiler-owned")
+        .to_string();
+    assert!(
+        error.contains("SERVER_KEY") && error.contains("compiler-reserved placeholder"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn duplicate_tapscript_names_are_rejected() {
     let source = r#"
 contract DupLeaves(pubkey owner) {

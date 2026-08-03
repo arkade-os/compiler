@@ -192,6 +192,93 @@ contract Demo(int[] xs) {
 }
 
 #[test]
+fn flattened_abi_names_do_not_alias_array_elements() {
+    let cases = [
+        r#"
+contract Demo(int[] xs) {
+  function f() {
+    require(xs_0 >= 1);
+  }
+}
+"#,
+        r#"
+contract Demo() {
+  function f(int[] xs) {
+    xs_0 = 5;
+    require(xs[0] >= 1);
+  }
+}
+"#,
+        r#"
+contract Demo(pubkey[] keys) {
+  function f(signature sig, bytes32 msg) {
+    require(checkSigFromStack(sig, keys_0, msg));
+  }
+}
+"#,
+    ];
+
+    for source in cases {
+        let error = compile(source)
+            .expect_err("flattened ABI name must not resolve as an array element")
+            .to_string();
+        assert!(
+            error.contains("undefined") || error.contains("undeclared"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
+fn source_bindings_can_reuse_flattened_abi_names() {
+    let source = r#"
+contract Demo(int[] xs) {
+  function f() {
+    let xs_0 = 1;
+    require(xs[0] >= xs_0);
+  }
+}
+"#;
+
+    let output = compile(source).expect("source and internal array bindings must remain distinct");
+    let covenant = crate::common::group(&output, "f")
+        .arkade
+        .as_ref()
+        .expect("covenant");
+    assert!(covenant.asm.iter().all(|token| !token.contains("$array:")));
+}
+
+#[test]
+fn rejects_tapscript_array_expansion_collisions() {
+    let cases = [
+        r#"
+contract Demo(pubkey[] owners) {
+  function leaf(signature sig, pubkey owners_0) tapscript {
+    require(checkSig(sig, owners_0));
+  }
+}
+"#,
+        r#"
+contract Demo(pubkey owner) {
+  function leaf(signature[] sigs, signature sigs_0) tapscript {
+    require(checkSig(sigs_0, owner));
+  }
+}
+"#,
+    ];
+
+    for source in cases {
+        let error = compile(source)
+            .expect_err("expanded tapscript names must not collide")
+            .to_string();
+        assert!(
+            error.contains("collide in the emitted namespace"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
 fn accepts_sibling_scope_reuse() {
     // let x in both branches; the same loop vars in two separate loops.
     let src = r#"

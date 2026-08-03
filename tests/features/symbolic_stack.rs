@@ -156,4 +156,5 @@ contract GroupIndices() {
         covenant.asm.iter().any(|token| token == OP_PICK),
         "each unrolled group value must read its flattened input binding"
     );
+    assert!(covenant.asm.iter().all(|token| !token.contains("$array:")));
 }
