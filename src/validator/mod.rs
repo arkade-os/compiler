@@ -614,23 +614,16 @@ fn validate_binding_statements(
                         inferred.as_str()
                     )));
                 }
-                if find_binding(scopes, name).is_some() {
-                    issues.push(ValidationIssue::error(format!(
-                        "binding '{}' in function '{}' shadows an in-scope binding",
-                        name, function_name
-                    )));
-                } else {
-                    scopes
-                        .last_mut()
-                        .expect("binding validation always has a scope")
-                        .insert(
-                            name.clone(),
-                            BindingInfo {
-                                binding_type,
-                                source: BindingSource::Local,
-                            },
-                        );
-                }
+                scopes
+                    .last_mut()
+                    .expect("binding validation always has a scope")
+                    .insert(
+                        name.clone(),
+                        BindingInfo {
+                            binding_type,
+                            source: BindingSource::Local,
+                        },
+                    );
             }
             Statement::VarAssign { name, value } => {
                 validate_binding_expression(value, function_name, scopes, issues, true);
@@ -730,20 +723,13 @@ fn validate_binding_statements(
                 };
                 let mut frame = HashMap::new();
                 for (name, binding_type) in [(index_var, ArkType::Int), (value_var, element_type)] {
-                    if find_binding(scopes, name).is_some() {
-                        issues.push(ValidationIssue::error(format!(
-                            "loop variable '{}' in function '{}' shadows an in-scope binding",
-                            name, function_name
-                        )));
-                    } else {
-                        frame.insert(
-                            name.clone(),
-                            BindingInfo {
-                                binding_type,
-                                source: BindingSource::Loop,
-                            },
-                        );
-                    }
+                    frame.insert(
+                        name.clone(),
+                        BindingInfo {
+                            binding_type,
+                            source: BindingSource::Loop,
+                        },
+                    );
                 }
                 scopes.push(frame);
                 validate_binding_statements(body, function_name, scopes, issues);

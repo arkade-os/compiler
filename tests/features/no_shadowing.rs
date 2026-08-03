@@ -84,9 +84,10 @@ contract Demo(int limit) {
     let err = compile(src)
         .expect_err("expected a shadowing error")
         .to_string();
-    assert!(
-        err.contains("shadows an in-scope binding"),
-        "unexpected error: {err}"
+    assert_eq!(
+        err.matches("shadows an in-scope binding").count(),
+        1,
+        "{err}"
     );
 }
 
@@ -129,9 +130,10 @@ contract Demo(pubkey[] ks) {
     let err = compile(src)
         .expect_err("expected a shadowing error")
         .to_string();
-    assert!(
-        err.contains("shadows an in-scope binding"),
-        "unexpected error: {err}"
+    assert_eq!(
+        err.matches("shadows an in-scope binding").count(),
+        1,
+        "{err}"
     );
 }
 
