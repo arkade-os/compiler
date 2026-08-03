@@ -161,6 +161,7 @@ primary_expr = {
     output_introspection |
     tx_introspection |
     group_control_is |
+    array_length_access |
     identifier_property_access |
     tx_property_access |
     this_property_access |
@@ -171,6 +172,9 @@ primary_expr = {
     number_literal |
     identifier
 }
+
+// Static array length: arr.length — folded to a literal at compile time
+array_length_access = { identifier ~ "." ~ "length" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Array indexing: identifier[integer expression]
 array_index_access = {

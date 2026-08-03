@@ -512,6 +512,10 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .get(property.trim())
             .cloned()
             .or_else(|| {
+                let array = property.trim().strip_suffix(".length")?;
+                matches!(scope.get(array)?, ArkType::Array(..)).then_some(ArkType::Int)
+            })
+            .or_else(|| {
                 let (array, index) = property.strip_suffix(']')?.split_once('[')?;
                 if index.parse::<usize>().is_ok() {
                     return None;

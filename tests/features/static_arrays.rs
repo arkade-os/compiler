@@ -1,5 +1,5 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_CHECKSIGFROMSTACK, OP_LESSTHAN};
+use arkade_compiler::opcodes::{OP_ADD, OP_CHECKSIGFROMSTACK, OP_LESSTHAN};
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
     asm.windows(expected.len()).any(|window| {
@@ -137,4 +137,41 @@ contract Unsized(pubkey[] owners) {
         error.to_lowercase().contains("parse"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn array_length_folds_to_a_literal() {
+    let output = compile(
+        r#"
+contract Quorum(pubkey[5] oracles) {
+    function spend(int[4] weights, int total) {
+        require(total >= oracles.length + weights.length);
+    }
+}
+"#,
+    )
+    .expect("arr.length must compile");
+
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        contains_tokens(&asm, &["OP_5", "OP_4", OP_ADD]),
+        "each .length folds to its declared size: {asm:?}"
+    );
+}
+
+#[test]
+fn length_on_a_non_array_is_rejected() {
+    let error = compile(
+        r#"
+contract Scalar(int limit) {
+    function spend(int amount) {
+        require(amount >= limit.length);
+    }
+}
+"#,
+    )
+    .expect_err("'.length' on a scalar must be rejected")
+    .to_string();
+
+    assert!(error.contains(".length"), "unexpected error: {error}");
 }

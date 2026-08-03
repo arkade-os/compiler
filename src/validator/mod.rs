@@ -1031,6 +1031,18 @@ fn validate_binding_expression(
         Expression::Property(name) if name.contains('[') => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
+        Expression::Property(name) if name.ends_with(".length") => {
+            let array = name.trim_end_matches(".length");
+            if !matches!(
+                find_binding(scopes, array).map(|binding| &binding.binding_type),
+                Some(ArkType::Array(..))
+            ) {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': '{}' is not an array; '.length' is undefined",
+                    function_name, array
+                )));
+            }
+        }
         Expression::GroupProperty { group, .. } | Expression::GroupControlIs { group, .. }
             if group.parse::<usize>().is_err() =>
         {

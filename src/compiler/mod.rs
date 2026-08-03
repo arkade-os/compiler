@@ -170,6 +170,14 @@ impl Generator {
     }
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
+        if let Some(array) = name.trim().strip_suffix(".length") {
+            let length = self.array_length(array);
+            if length == 0 {
+                return Err(format!("'{array}' is not an array; '.length' is undefined"));
+            }
+            self.push_integer_temporary(length);
+            return Ok(());
+        }
         if let Some((array, index)) = name
             .trim()
             .strip_suffix(']')
