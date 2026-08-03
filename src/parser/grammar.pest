@@ -631,9 +631,9 @@ identifier = @{
     ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*
 }
 
-// Number literals are sequences of digits
+// Number literals use canonical decimal notation
 number_literal = @{
-    ASCII_DIGIT+
+    "0" | ('1'..'9') ~ ASCII_DIGIT*
 }
 
 // String literals are sequences of characters enclosed in double quotes

@@ -244,6 +244,19 @@ contract StaticIndex() {
 }
 
 #[test]
+fn leading_zero_array_indices_are_rejected() {
+    let source = r#"
+contract StaticIndex() {
+    function spend(int[] values, int expected) {
+        require(values[01] == expected);
+    }
+}
+"#;
+
+    assert!(compile(source).is_err());
+}
+
+#[test]
 fn runtime_array_indices_work_in_named_crypto_operands_and_loop_values() {
     let cases = [
         r#"

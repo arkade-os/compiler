@@ -429,6 +429,29 @@ contract Forwarder(int exit) {
     );
 }
 
+#[test]
+fn test_array_constructor_arg_is_flattened() {
+    let code = r#"
+import "threshold_oracle.ark";
+
+contract Forwarder(pubkey[] owners) {
+  function forward() {
+    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(owners));
+  }
+}
+"#;
+
+    let output = compile(code).expect("array constructor argument");
+    let placeholder = arkade_asm_tokens(&output, "forward")
+        .into_iter()
+        .find(|token| token.starts_with("<VTXO:"))
+        .expect("VTXO placeholder");
+    assert_eq!(
+        placeholder,
+        "<VTXO:ThresholdOracle(<owners_0>,<owners_1>,<owners_2>)>"
+    );
+}
+
 // ─── Multiple ContractInstance in one function ────────────────────────────────
 
 #[test]

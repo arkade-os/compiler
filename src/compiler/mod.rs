@@ -69,6 +69,7 @@ struct Generator {
     stack: Vec<StackItem>,
     scopes: Vec<usize>,
     alt_depth: usize,
+    constructor_array_expansions: Vec<(String, String)>,
 }
 
 impl Generator {
@@ -89,10 +90,19 @@ impl Generator {
             .collect::<Vec<_>>();
 
         let mut constructor_bindings = Vec::new();
+        let mut constructor_array_expansions = Vec::new();
         for parameter in constructor_parameters {
+            let mut expanded_placeholders = Vec::new();
             for_each_expanded_param(parameter, |placeholder, binding_name, _| {
+                expanded_placeholders.push(format!("<{placeholder}>"));
                 constructor_bindings.push((placeholder, binding_name));
             });
+            if parameter.param_type.ends_with("[]") {
+                constructor_array_expansions.push((
+                    format!("<{}>", parameter.name),
+                    expanded_placeholders.join(","),
+                ));
+            }
         }
         let mut asm = Vec::new();
         for (placeholder, binding_name) in constructor_bindings.into_iter().rev() {
@@ -107,6 +117,7 @@ impl Generator {
             stack,
             scopes: Vec::new(),
             alt_depth: 0,
+            constructor_array_expansions,
         }
     }
 
@@ -347,6 +358,10 @@ impl Generator {
             return self.select_indexed_value(array);
         }
         if token.starts_with("<VTXO:") {
+            let mut token = token.to_string();
+            for (array, elements) in &self.constructor_array_expansions {
+                token = token.replace(array, elements);
+            }
             self.push_temporary(token);
             return Ok(());
         }
