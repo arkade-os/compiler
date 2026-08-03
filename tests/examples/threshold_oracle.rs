@@ -45,80 +45,50 @@ fn test_threshold_oracle_has_control_flow() {
     assert!(!tokens.is_empty(), "Assembly should not be empty");
 }
 
-// ─── Array ABI Flattening ──────────────────────────────────────────────────────
+// ─── Array ABI Grouping ────────────────────────────────────────────────────────
 
 #[test]
-fn test_threshold_oracle_constructor_array_flattening() {
+fn test_threshold_oracle_constructor_array_is_one_grouped_input() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    // pubkey[3] oracles should be flattened to oracles_0, oracles_1, oracles_2
-    // in the constructorInputs (default 3 elements)
+    let oracles = output
+        .parameters
+        .iter()
+        .find(|p| p.name == "oracles")
+        .expect("constructorInputs keeps one entry per source parameter");
+    assert_eq!(oracles.param_type, "pubkey[3]");
+
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
-
     assert!(
-        param_names.contains(&"oracles_0"),
-        "Missing oracles_0 in constructor params. Got: {:?}",
-        param_names
-    );
-    assert!(
-        param_names.contains(&"oracles_1"),
-        "Missing oracles_1 in constructor params. Got: {:?}",
-        param_names
-    );
-    assert!(
-        param_names.contains(&"oracles_2"),
-        "Missing oracles_2 in constructor params. Got: {:?}",
-        param_names
+        !param_names.iter().any(|name| name.starts_with("oracles_")),
+        "array elements must not appear as separate inputs. Got: {param_names:?}"
     );
 
-    // Should NOT contain the original array name
-    assert!(
-        !param_names.contains(&"oracles"),
-        "Should not contain unflatten array 'oracles' in params. Got: {:?}",
-        param_names
-    );
-
-    // Each flattened element should have type 'pubkey'
-    let oracles_0 = output.parameters.iter().find(|p| p.name == "oracles_0");
-    assert!(oracles_0.is_some(), "oracles_0 not found");
-    assert_eq!(oracles_0.unwrap().param_type, "pubkey");
+    // The asm prologue still pushes one placeholder per element.
+    let asm = crate::common::arkade_asm(&output, "attest");
+    for placeholder in ["<oracles_0>", "<oracles_1>", "<oracles_2>"] {
+        assert!(asm.contains(placeholder), "missing {placeholder} in: {asm}");
+    }
 }
 
 #[test]
-fn test_threshold_oracle_witness_array_flattening() {
+fn test_threshold_oracle_covenant_array_input_is_one_grouped_input() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    // signature[3] oracleSigs should be flattened to oracleSigs_0, oracleSigs_1, oracleSigs_2
-    // in the arkade covenant inputs (function parameters going into the covenant)
     let input_names = arkade_inputs(&output, "attest");
-
     assert!(
         input_names.contains(&"recipientScriptPubKey".to_string()),
-        "Missing recipientScriptPubKey in covenant inputs. Got: {:?}",
-        input_names
-    );
-
-    assert!(
-        input_names.contains(&"oracleSigs_0".to_string()),
-        "Missing oracleSigs_0 in covenant inputs. Got: {:?}",
-        input_names
+        "Missing recipientScriptPubKey in covenant inputs. Got: {input_names:?}"
     );
     assert!(
-        input_names.contains(&"oracleSigs_1".to_string()),
-        "Missing oracleSigs_1 in covenant inputs. Got: {:?}",
-        input_names
+        input_names.contains(&"oracleSigs".to_string()),
+        "covenant inputs keep one entry per source parameter. Got: {input_names:?}"
     );
     assert!(
-        input_names.contains(&"oracleSigs_2".to_string()),
-        "Missing oracleSigs_2 in covenant inputs. Got: {:?}",
-        input_names
-    );
-
-    // Should NOT contain the original array name
-    assert!(
-        !input_names.contains(&"oracleSigs".to_string()),
-        "Should not contain unflatten array 'oracleSigs' in inputs. Got: {:?}",
-        input_names
+        !input_names
+            .iter()
+            .any(|name| name.starts_with("oracleSigs_")),
+        "array elements must not appear as separate inputs. Got: {input_names:?}"
     );
 }
 

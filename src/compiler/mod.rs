@@ -647,8 +647,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         }
     }
 
-    // Build constructor inputs (array params expand to indexed scalars).
-    let parameters = expand_abi_params(&contract.parameters);
+    let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
         name: contract.name.clone(),
@@ -694,9 +693,11 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     Ok(json)
 }
 
-/// Expand ABI params for emission. Array types (e.g., `pubkey[]`) are flattened
-/// to `name_0`, `name_1`, `name_2`, …; every other param passes through unchanged.
-pub(crate) fn expand_abi_params(params: &[Parameter]) -> Vec<Parameter> {
+/// The placeholder namespace a parameter list emits: array types (e.g.
+/// `pubkey[3]`) flatten to `name_0`, `name_1`, `name_2`; every other param
+/// passes through unchanged. This is the `<name>` namespace in `asm`, not the
+/// artifact ABI, which keeps one entry per source parameter.
+pub(crate) fn expanded_placeholder_params(params: &[Parameter]) -> Vec<Parameter> {
     let mut result = Vec::new();
     for param in params {
         for_each_expanded_param(param, |name, _, param_type| {
@@ -711,21 +712,21 @@ fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
 ) -> Result<ArkadeCovenant, String> {
-    let inputs = expand_function_inputs(&function.parameters);
+    let inputs = function_inputs(&function.parameters);
     let mut generator = Generator::new(&function.parameters, constructor_parameters);
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })
 }
 
-fn expand_function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
-    let mut inputs = Vec::new();
-    for param in params {
-        for_each_expanded_param(param, |name, _, param_type| {
-            inputs.push(FunctionInput { name, param_type });
-        });
-    }
-    inputs
+fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
+    params
+        .iter()
+        .map(|param| FunctionInput {
+            name: param.name.clone(),
+            param_type: param.param_type.clone(),
+        })
+        .collect()
 }
 
 fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String, String)) {

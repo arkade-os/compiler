@@ -29,15 +29,15 @@ contract Sized(pubkey[2] owners) {
             .iter()
             .map(|p| (p.name.as_str(), p.param_type.as_str()))
             .collect::<Vec<_>>(),
-        vec![("owners_0", "pubkey"), ("owners_1", "pubkey")],
-        "constructor arrays flatten to one scalar input per declared element"
+        vec![("owners", "pubkey[2]")],
+        "constructor inputs keep one entry per source parameter, sized"
     );
 
     let inputs = crate::common::arkade_inputs(&output, "spend");
     assert_eq!(
         inputs,
-        vec!["sigs_0", "sigs_1", "sigs_2", "sigs_3", "msg"],
-        "function arrays expand to one input per declared element"
+        vec!["sigs", "msg"],
+        "covenant inputs keep one entry per source parameter"
     );
 
     let asm = crate::common::arkade_asm(&output, "spend");

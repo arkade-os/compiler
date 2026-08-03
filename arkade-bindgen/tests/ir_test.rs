@@ -105,3 +105,60 @@ fn test_encoding_roundtrip() {
         assert_eq!(parsed.as_str(), s);
     }
 }
+
+#[test]
+fn test_ir_expands_grouped_array_fields() {
+    // The artifact carries one entry per source parameter; generated bindings
+    // need the per-element fields the asm placeholders and witness stack use.
+    let artifact = r#"{
+        "contractName": "Quorum",
+        "constructorInputs": [{ "name": "oracles", "type": "pubkey[3]" }],
+        "functions": [{
+            "name": "attest",
+            "arkade": {
+                "inputs": [{ "name": "sigs", "type": "signature[2]" }],
+                "asm": ["<oracles_2>", "<oracles_1>", "<oracles_0>", "OP_1"]
+            },
+            "leaves": [{
+                "name": "attest",
+                "witness": [{ "name": "sigs", "type": "signature[2]", "encoding": "array" }],
+                "asm": ["OP_1"]
+            }]
+        }]
+    }"#;
+
+    let ir = build_ir(&load_artifact_str(artifact).unwrap()).unwrap();
+
+    let names: Vec<&str> = ir
+        .constructor_fields
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(names, ["oracles_0", "oracles_1", "oracles_2"]);
+    assert!(ir
+        .constructor_fields
+        .iter()
+        .all(|f| f.encoding == Encoding::Compressed33));
+
+    let group = &ir.groups[0];
+    let inputs: Vec<&str> = group
+        .covenant
+        .as_ref()
+        .unwrap()
+        .inputs
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(inputs, ["sigs_0", "sigs_1"]);
+
+    let witness: Vec<&str> = group.leaves[0]
+        .witness_fields
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert_eq!(witness, ["sigs_0", "sigs_1"]);
+    assert!(group.leaves[0]
+        .witness_fields
+        .iter()
+        .all(|f| f.encoding == Encoding::Schnorr64));
+}

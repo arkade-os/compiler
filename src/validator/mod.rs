@@ -1423,7 +1423,7 @@ fn walk_scope(
 /// still collide here (e.g. `int[] xs` vs `int xs_0`).
 fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     // Constructor params expanded exactly as the emitter expands them (array flattening).
-    let ctor_expanded = crate::compiler::expand_abi_params(&contract.parameters);
+    let ctor_expanded = crate::compiler::expanded_placeholder_params(&contract.parameters);
 
     for func in contract.functions.iter().filter(|f| !f.is_internal) {
         let mut seen: HashSet<String> = HashSet::new();
@@ -1437,7 +1437,7 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
             );
         }
 
-        for p in crate::compiler::expand_abi_params(&func.parameters) {
+        for p in crate::compiler::expanded_placeholder_params(&func.parameters) {
             record_name(
                 p.name,
                 &format!("function '{}'", func.name),
@@ -1457,7 +1457,7 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
                 issues,
             );
         }
-        for p in crate::compiler::expand_abi_params(&tapscript.inputs) {
+        for p in crate::compiler::expanded_placeholder_params(&tapscript.inputs) {
             record_name(
                 p.name,
                 &format!("tapscript '{}'", tapscript.name),
@@ -1510,12 +1510,15 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
-            let expected_prologue = output
-                .parameters
-                .iter()
-                .rev()
-                .map(|parameter| format!("<{}>", parameter.name))
-                .collect::<Vec<_>>();
+            // The ABI keeps one entry per source parameter; the prologue pushes
+            // one placeholder per array element, so compare against the
+            // flattened namespace.
+            let expected_prologue =
+                crate::compiler::expanded_placeholder_params(&output.parameters)
+                    .iter()
+                    .rev()
+                    .map(|parameter| format!("<{}>", parameter.name))
+                    .collect::<Vec<_>>();
             if !arkade.asm.starts_with(&expected_prologue) {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' arkade covenant has an invalid constructor prologue",
