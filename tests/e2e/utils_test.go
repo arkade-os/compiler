@@ -22,9 +22,15 @@ import (
 )
 
 type artifact struct {
-	Name      string          `json:"contractName"`
-	Functions []functionGroup `json:"functions"`
-	Warnings  []string        `json:"warnings"`
+	Name              string          `json:"contractName"`
+	ConstructorInputs []abiInput      `json:"constructorInputs"`
+	Functions         []functionGroup `json:"functions"`
+	Warnings          []string        `json:"warnings"`
+}
+
+type abiInput struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 type functionGroup struct {
@@ -34,7 +40,8 @@ type functionGroup struct {
 }
 
 type assembly struct {
-	ASM []string `json:"asm"`
+	Inputs []abiInput `json:"inputs"`
+	ASM    []string   `json:"asm"`
 }
 
 type leafArtifact struct {
@@ -105,16 +112,7 @@ func instantiateGroup(
 ) instantiatedGroup {
 	t.Helper()
 
-	var group *functionGroup
-	for i := range contract.Functions {
-		if contract.Functions[i].Name == name {
-			group = &contract.Functions[i]
-			break
-		}
-	}
-	if group == nil || group.Arkade == nil {
-		t.Fatalf("%s.%s covenant not found", contract.Name, name)
-	}
+	group := covenantGroup(t, contract, name)
 
 	var leaf *leafArtifact
 	for i := range group.Leaves {
@@ -144,6 +142,71 @@ func instantiateGroup(
 		pkScript:      pkScript,
 		tapLeafScript: tapLeafScript,
 	}
+}
+
+func covenantGroup(t *testing.T, contract artifact, name string) *functionGroup {
+	t.Helper()
+
+	for i := range contract.Functions {
+		if contract.Functions[i].Name == name && contract.Functions[i].Arkade != nil {
+			return &contract.Functions[i]
+		}
+	}
+	t.Fatalf("%s.%s covenant not found", contract.Name, name)
+	return nil
+}
+
+// arrayTypeParts splits an ABI array type ("int[5]") into its element type and
+// length; length 0 means the type is not an array.
+func arrayTypeParts(typeStr string) (string, int) {
+	open := strings.IndexByte(typeStr, '[')
+	if open < 0 || !strings.HasSuffix(typeStr, "]") {
+		return typeStr, 0
+	}
+	length, err := strconv.Atoi(typeStr[open+1 : len(typeStr)-1])
+	if err != nil || length <= 0 {
+		return typeStr, 0
+	}
+	return typeStr[:open], length
+}
+
+// expandInput maps one ABI entry to the stack items it contributes, deepest
+// first: an array entry becomes name_{N-1} … name_0, so element 0 ends up
+// closest to the top.
+func expandInput(input abiInput) []string {
+	_, length := arrayTypeParts(input.Type)
+	if length == 0 {
+		return []string{input.Name}
+	}
+	names := make([]string, 0, length)
+	for index := length - 1; index >= 0; index-- {
+		names = append(names, fmt.Sprintf("%s_%d", input.Name, index))
+	}
+	return names
+}
+
+// covenantWitness builds the covenant witness from the ABI alone: inputs in
+// reverse declaration order, array entries expanded per expandInput. This is
+// the client-side convention the artifact documents.
+func covenantWitness(
+	t *testing.T,
+	group *functionGroup,
+	values map[string][]byte,
+) wire.TxWitness {
+	t.Helper()
+
+	inputs := group.Arkade.Inputs
+	witness := make(wire.TxWitness, 0, len(inputs))
+	for i := len(inputs) - 1; i >= 0; i-- {
+		for _, name := range expandInput(inputs[i]) {
+			value, ok := values[name]
+			if !ok {
+				t.Fatalf("missing witness value for covenant input %q", name)
+			}
+			witness = append(witness, value)
+		}
+	}
+	return witness
 }
 
 func assemble(t *testing.T, tokens []string, values map[string][]byte) []byte {

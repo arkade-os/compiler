@@ -14,7 +14,7 @@ This language significantly lowers the barrier for Bitcoin-native app developmen
 
 ## Emulator E2E Tests
 
-The self-contained E2E suite builds the compiler and runs the counter and HTLC artifacts through the Arkade VM and btcd tapscript interpreter.
+The self-contained E2E suite builds the compiler and runs the counter, HTLC, symbolic-stack and static-array artifacts through the Arkade VM and btcd tapscript interpreter.
 
 ```bash
 ./scripts/e2e.sh -v
