@@ -17,17 +17,17 @@ const THRESHOLD_MULTISIG_CODE: &str = r#"contract ThresholdMultisig(
 ) {
   // n-of-n using no literal threshold
   function twoOfTwo(signature signerSig, signature signer1Sig) {
-    require(checkMultisig([signer, signer1]));
+    require(checkMultisig([signer, signer1], [signerSig, signer1Sig]));
   }
 
   // n-of-n using literal threshold
   function fiveOfFive(signature signerSig, signature signer1Sig, signature signer2Sig, signature signer3Sig, signature signer4Sig) {
-    require(checkMultisig([signer, signer1, signer2, signer3, signer4], 5));
+    require(checkMultisig([signer, signer1, signer2, signer3, signer4], [signerSig, signer1Sig, signer2Sig, signer3Sig, signer4Sig], 5));
   }
 
   // m-of-n using literal threshold
   function threeOfFive(signature signerSig, signature signer1Sig, signature signer2Sig, signature signer3Sig, signature signer4Sig) {
-    require(checkMultisig([signer, signer1, signer2, signer3, signer4], 3));
+    require(checkMultisig([signer, signer1, signer2, signer3, signer4], [signerSig, signer1Sig, signer2Sig, signer3Sig, signer4Sig], 3));
   }
 }"#;
 
@@ -62,17 +62,35 @@ fn test_threshold_multisig() {
     assert_eq!(tof_inputs[0], "signerSig");
     assert_eq!(tof_inputs[1], "signer1Sig");
 
-    // Covenant ASM: 2-of-2 CHECKSIGADD form.
+    // Covenant ASM: reversed constructor prologue plus symbolic signature/key reads.
     let tof_tokens = arkade_asm_tokens(&output, "twoOfTwo");
-    assert_eq!(tof_tokens.len(), 8);
-    assert_eq!(tof_tokens[0], "<signer>");
-    assert_eq!(tof_tokens[1], OP_CHECKSIG);
-    assert_eq!(tof_tokens[2], "<signer1>");
-    assert_eq!(tof_tokens[3], OP_CHECKSIGADD);
-    assert_eq!(tof_tokens[4], OP_2);
-    assert_eq!(tof_tokens[5], OP_NUMEQUAL);
-    assert_eq!(tof_tokens[6], OP_VERIFY);
-    assert_eq!(tof_tokens[7], OP_1);
+    assert_eq!(
+        &tof_tokens[..5],
+        [
+            "<signer4>",
+            "<signer3>",
+            "<signer2>",
+            "<signer1>",
+            "<signer>"
+        ]
+    );
+    assert_eq!(
+        tof_tokens
+            .iter()
+            .filter(|token| *token == OP_CHECKSIG)
+            .count(),
+        1
+    );
+    assert_eq!(
+        tof_tokens
+            .iter()
+            .filter(|token| *token == OP_CHECKSIGADD)
+            .count(),
+        1
+    );
+    assert!(tof_tokens
+        .windows(3)
+        .any(|tokens| { tokens[0] == OP_2 && tokens[1] == OP_NUMEQUAL && tokens[2] == OP_VERIFY }));
 
     // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
     let tof_leaf = leaf_asm(&output, "twoOfTwo", "twoOfTwo");
@@ -99,23 +117,25 @@ fn test_threshold_multisig() {
     assert_eq!(fof_inputs[3], "signer3Sig");
     assert_eq!(fof_inputs[4], "signer4Sig");
 
-    // Covenant ASM: 5-of-5 CHECKSIGADD form.
+    // Covenant ASM: 5-of-5 CHECKSIGADD form with stack reads.
     let fof_tokens = arkade_asm_tokens(&output, "fiveOfFive");
-    assert_eq!(fof_tokens.len(), 14);
-    assert_eq!(fof_tokens[0], "<signer>");
-    assert_eq!(fof_tokens[1], OP_CHECKSIG);
-    assert_eq!(fof_tokens[2], "<signer1>");
-    assert_eq!(fof_tokens[3], OP_CHECKSIGADD);
-    assert_eq!(fof_tokens[4], "<signer2>");
-    assert_eq!(fof_tokens[5], OP_CHECKSIGADD);
-    assert_eq!(fof_tokens[6], "<signer3>");
-    assert_eq!(fof_tokens[7], OP_CHECKSIGADD);
-    assert_eq!(fof_tokens[8], "<signer4>");
-    assert_eq!(fof_tokens[9], OP_CHECKSIGADD);
-    assert_eq!(fof_tokens[10], OP_5);
-    assert_eq!(fof_tokens[11], OP_NUMEQUAL);
-    assert_eq!(fof_tokens[12], OP_VERIFY);
-    assert_eq!(fof_tokens[13], OP_1);
+    assert_eq!(
+        fof_tokens
+            .iter()
+            .filter(|token| *token == OP_CHECKSIG)
+            .count(),
+        1
+    );
+    assert_eq!(
+        fof_tokens
+            .iter()
+            .filter(|token| *token == OP_CHECKSIGADD)
+            .count(),
+        4
+    );
+    assert!(fof_tokens
+        .windows(3)
+        .any(|tokens| { tokens[0] == OP_5 && tokens[1] == OP_NUMEQUAL && tokens[2] == OP_VERIFY }));
 
     // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
     let fof_leaf = leaf_asm(&output, "fiveOfFive", "fiveOfFive");
@@ -142,25 +162,28 @@ fn test_threshold_multisig() {
     assert_eq!(three_inputs[3], "signer3Sig");
     assert_eq!(three_inputs[4], "signer4Sig");
 
-    // Covenant ASM: 3-of-5 CHECKSIGADD form (12 tokens, threshold=OP_3).
-    // m-of-n (k < n) is valid in a covenant body; the covenant emitter uses
-    // CHECKSIGADD + OP_NUMEQUAL form regardless of threshold value.
+    // m-of-n uses CHECKSIGADD + OP_NUMEQUAL regardless of threshold value.
     let three_tokens = arkade_asm_tokens(&output, "threeOfFive");
-    assert_eq!(three_tokens.len(), 14);
-    assert_eq!(three_tokens[0], "<signer>");
-    assert_eq!(three_tokens[1], OP_CHECKSIG);
-    assert_eq!(three_tokens[2], "<signer1>");
-    assert_eq!(three_tokens[3], OP_CHECKSIGADD);
-    assert_eq!(three_tokens[4], "<signer2>");
-    assert_eq!(three_tokens[5], OP_CHECKSIGADD);
-    assert_eq!(three_tokens[6], "<signer3>");
-    assert_eq!(three_tokens[7], OP_CHECKSIGADD);
-    assert_eq!(three_tokens[8], "<signer4>");
-    assert_eq!(three_tokens[9], OP_CHECKSIGADD);
-    assert_eq!(three_tokens[10], OP_3);
-    assert_eq!(three_tokens[11], OP_NUMEQUAL);
-    assert_eq!(three_tokens[12], OP_VERIFY);
-    assert_eq!(three_tokens[13], OP_1);
+    assert_eq!(
+        three_tokens
+            .iter()
+            .filter(|token| *token == OP_CHECKSIGADD)
+            .count(),
+        4
+    );
+    assert!(three_tokens
+        .windows(3)
+        .any(|tokens| { tokens[0] == OP_3 && tokens[1] == OP_NUMEQUAL && tokens[2] == OP_VERIFY }));
+    let success = three_tokens
+        .iter()
+        .rposition(|token| token == OP_1)
+        .expect("explicit success result");
+    assert!(
+        three_tokens[success + 1..]
+            .iter()
+            .all(|token| token == "OP_NIP"),
+        "only frame cleanup may follow the success result: {three_tokens:?}"
+    );
 
     // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
     let three_leaf = leaf_asm(&output, "threeOfFive", "threeOfFive");
@@ -190,7 +213,7 @@ fn test_threshold_multisig_should_fail_on_m_greater_than_n() {
   // m-of-n using literal threshold greater than number of pubkeys
   // Should fail to compile
   function fourOfThree(signature signerSig, signature signer1Sig, signature signer2Sig) {
-    require(checkMultisig([signer, signer1, signer2], 4));
+    require(checkMultisig([signer, signer1, signer2], [signerSig, signer1Sig, signer2Sig], 4));
   }
 }"#;
 
@@ -211,7 +234,7 @@ fn test_threshold_multisig_should_fail_on_m_equal_to_zero() {
   // m-of-n using literal threshold equal to zero
   // Should fail to compile
   function zeroOfThree(signature signerSig, signature signer1Sig, signature signer2Sig) {
-    require(checkMultisig([signer, signer1, signer2], 0));
+    require(checkMultisig([signer, signer1, signer2], [signerSig, signer1Sig, signer2Sig], 0));
   }
 }"#;
 
@@ -333,7 +356,7 @@ fn test_threshold_multisig_should_fail_on_n_greater_than_max() {
     signer970, signer971, signer972, signer973, signer974, signer975, signer976, signer977, signer978, signer979,
     signer980, signer981, signer982, signer983, signer984, signer985, signer986, signer987, signer988, signer989,
     signer990, signer991, signer992, signer993, signer994, signer995, signer996, signer997, signer998, signer999,
-    signer1000, signer1001, signer1002, signer1003, signer1004]));
+    signer1000, signer1001, signer1002, signer1003, signer1004], [signerSig]));
   }
 }"#;
 

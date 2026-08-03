@@ -171,8 +171,13 @@ primary_expr = {
     identifier
 }
 
-// Array indexing: identifier[index]
+// Array indexing: identifier[integer expression]
 array_index_access = {
+    identifier ~ "[" ~ general_expression ~ "]"
+}
+
+// Named operands are string-backed; widen them to Expression before accepting computed indices.
+named_array_index_access = {
     identifier ~ "[" ~ (identifier | number_literal) ~ "]"
 }
 
@@ -467,17 +472,15 @@ check_sig_from_stack = {
 }
 
 // Signature function argument: identifier or array access
-sig_arg = { array_index_access | identifier }
+sig_arg = { named_array_index_access | identifier }
 
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }
 
-// checkMultisig([keys], [sigs]?, threshold?) — keys may be tweak()s; the
-// optional second array carries the aligned signature inputs; optional final
-// number is the threshold. Existing single-array and [keys],[sigs] forms still
-// match (key_array accepts identifier-only arrays).
+// checkMultisig([keys], [sigs], threshold?) — keys may be tweak()s; the second
+// array carries the aligned signature inputs and the final threshold is optional.
 check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ key_array ~ ("," ~ array)? ~ ("," ~ number_literal)? ~ ")"
+    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ number_literal)? ~ ")"
 }
 
 // Array of identifiers
@@ -628,9 +631,9 @@ identifier = @{
     ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*
 }
 
-// Number literals are sequences of digits
+// Number literals use canonical decimal notation
 number_literal = @{
-    ASCII_DIGIT+
+    "0" | ('1'..'9') ~ ASCII_DIGIT*
 }
 
 // String literals are sequences of characters enclosed in double quotes

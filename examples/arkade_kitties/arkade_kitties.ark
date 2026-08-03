@@ -72,7 +72,7 @@ contract ArkadeKitties(
     }
 
     // Transfer a kitty to a new owner
-    function transfer(bytes32 kittyIdTxid, int kittyIdGidx, pubkey newOwnerPk, signature ownerSig, pubkey ownerPk) {
+    function transfer(bytes32 kittyIdTxid, int kittyIdGidx, bytes newOwnerScriptPubKey, signature ownerSig, pubkey ownerPk) {
         let kittyGroup = tx.assetGroups.find(kittyIdTxid, kittyIdGidx);
 
         // Must be existing kitty (not fresh)
@@ -85,7 +85,7 @@ contract ArkadeKitties(
         require(kittyGroup.delta == 0, "must be transfer only");
 
         require(tx.outputs[0].assets.lookup(kittyIdTxid, kittyIdGidx) == 1, "kitty not in output");
-        require(tx.outputs[0].scriptPubKey == new SingleSig(newOwnerPk, exit), "wrong destination");
+        require(tx.outputs[0].scriptPubKey == newOwnerScriptPubKey, "wrong destination");
         require(checkSig(ownerSig, ownerPk), "invalid owner sig");
     }
 }

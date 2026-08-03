@@ -74,7 +74,7 @@ contract BadCheckMultisig(pubkey owner) {
         require(checkMultisig([owner], [sig], 1, extra));
     }
 }"#,
-            "checkMultisig([pubkeys], [sigs]?, threshold?)",
+            "checkMultisig([pubkeys], [sigs], threshold?)",
         ),
     ];
 
@@ -109,7 +109,7 @@ contract BadShaInit(pubkey owner) {
 }
 
 #[test]
-fn unsupported_generic_function_calls_remain_opaque_properties() {
+fn unsupported_generic_function_calls_are_rejected() {
     let source = r#"
 contract GenericCall(pubkey owner) {
     function spend(signature sig) {
@@ -118,11 +118,12 @@ contract GenericCall(pubkey owner) {
     }
 }"#;
 
-    let result = compile(source);
+    let error = compile(source)
+        .expect_err("unsupported calls cannot be represented as symbolic stack reads")
+        .to_string();
     assert!(
-        result.is_ok(),
-        "non-reserved generic calls should keep compiling as opaque properties: {:?}",
-        result.err()
+        error.contains("undefined binding 'foo(sig, owner, extra)'"),
+        "unexpected generic-call error: {error}"
     );
 }
 
@@ -171,6 +172,23 @@ contract Reserved(pubkey {role}) {{
             "error must flag reserved role '{role}'; got: {msg}"
         );
     }
+}
+
+#[test]
+fn internal_server_key_placeholder_name_is_rejected() {
+    let source = r#"
+contract Reserved(pubkey SERVER_KEY) {
+    function spend() {
+        require(tx.outputs[0].value >= 1);
+    }
+}"#;
+    let error = compile(source)
+        .expect_err("SERVER_KEY must remain compiler-owned")
+        .to_string();
+    assert!(
+        error.contains("SERVER_KEY") && error.contains("compiler-reserved placeholder"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]

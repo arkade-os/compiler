@@ -164,8 +164,12 @@ pub struct Function {
 pub enum Statement {
     /// require(expr, "message");
     Require(Requirement),
-    /// let name = expr;
-    LetBinding { name: String, value: Expression },
+    /// let name = expr; or type name = expr;
+    LetBinding {
+        name: String,
+        declared_type: Option<String>,
+        value: Expression,
+    },
     /// name = expr; (variable reassignment)
     VarAssign { name: String, value: Expression },
     /// if (condition) { then_body } else { else_body }
@@ -199,6 +203,7 @@ pub enum Requirement {
     /// Check multisig requirement
     CheckMultisig {
         pubkeys: Vec<String>,
+        signatures: Vec<String>,
         threshold: u16,
     },
     /// After requirement
@@ -350,6 +355,11 @@ pub enum Expression {
     Literal(String),
     /// Property access (e.g., tx.time)
     Property(String),
+    /// Array element selected by an integer expression.
+    ArrayIndex {
+        array: String,
+        index: Box<Expression>,
+    },
     /// Current input access (tx.input.current)
     CurrentInput(Option<String>),
     /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or

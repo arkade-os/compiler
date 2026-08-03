@@ -53,7 +53,7 @@ fn general_expression_parses_group_find_with_literal_gidx_in_let_binding() {
         }";
     let asm = arkade_asm(src, "f");
     assert!(
-        asm.contains("<fooTxid> 0 OP_FINDASSETGROUPBYASSETID OP_VERIFY"),
+        asm.contains("OP_0 OP_PICK 0 OP_FINDASSETGROUPBYASSETID OP_VERIFY"),
         "{asm}"
     );
 }
@@ -187,7 +187,7 @@ fn literal_zero_gidx_is_minimal() {
     let asm = arkade_asm(src, "f");
     // gidx pushes a single minimal "0" token, not a padded "00 00".
     assert!(
-        asm.contains("<fooTxid> 0 OP_INSPECTOUTASSETLOOKUP"),
+        asm.contains("OP_1 OP_PICK 0 OP_INSPECTOUTASSETLOOKUP"),
         "{asm}"
     );
     assert!(!asm.contains("00 00"), "{asm}");

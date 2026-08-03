@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_DROP, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTOUTASSETAT,
-    OP_INSPECTOUTASSETCOUNT, OP_NIP,
+    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
+    OP_NIP,
 };
 
 /// Test asset count and indexed asset access opcodes
@@ -71,7 +71,7 @@ fn test_asset_at_amount_parsing() {
 }
 
 #[test]
-fn test_asset_at_assetid_parsing() {
+fn test_asset_at_assetid_cannot_be_bound_as_one_value() {
     let code = r#"
         contract AssetIdInspector(pubkey owner, bytes32 expectedTxid) {
             function checkAssetId(signature ownerSig) {
@@ -81,27 +81,12 @@ fn test_asset_at_assetid_parsing() {
         }
     "#;
 
-    let result = compile(code);
+    let error = compile(code)
+        .expect_err("assetId is a two-item value")
+        .to_string();
     assert!(
-        result.is_ok(),
-        "Failed to parse asset at assetId: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-
-    // Check that the covenant ASM contains the asset at opcode
-    let asm_str = crate::common::arkade_asm(&output, "checkAssetId");
-    assert!(
-        asm_str.contains(OP_INSPECTOUTASSETAT),
-        "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
-        asm_str
-    );
-    // Should have OP_DROP to remove amount and keep assetId (txid, gidx)
-    assert!(
-        asm_str.contains(OP_DROP),
-        "Expected {OP_DROP} for assetId extraction in ASM: {}",
-        asm_str
+        error.contains("expression produces 2 stack items"),
+        "assetId binding must be rejected: {error}"
     );
 }
 
@@ -184,11 +169,13 @@ fn test_asset_count_with_variable_index() {
     let output = result.unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "checkAssets");
-    // Should have the variable index placeholder
     assert!(
-        asm_str.contains("<outputIdx>"),
-        "Expected <outputIdx> in ASM: {}",
-        asm_str
+        asm_str.contains("OP_PICK OP_INSPECTOUTASSETCOUNT"),
+        "Expected symbolic outputIdx read in ASM: {asm_str}"
+    );
+    assert!(
+        !asm_str.contains("<outputIdx>"),
+        "Function inputs must not remain placeholders: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETCOUNT),

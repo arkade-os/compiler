@@ -27,7 +27,7 @@ contract NonInteractiveSwap(
   int exit
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
-  function swap(pubkey takerPk, signature takerSig) {
+  function swap(pubkey takerPk, signature takerSig, bytes takerScriptPubKey) {
     // Taker must sign to authorize spending their wantAsset
     require(checkSig(takerSig, takerPk), "invalid taker signature");
 
@@ -48,7 +48,7 @@ contract NonInteractiveSwap(
       "insufficient offer asset for taker"
     );
     require(
-      tx.outputs[1].scriptPubKey == new SingleSig(takerPk, exit),
+      tx.outputs[1].scriptPubKey == takerScriptPubKey,
       "output 1 not spendable by taker"
     );
   }

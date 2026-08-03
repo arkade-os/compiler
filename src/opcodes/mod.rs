@@ -54,6 +54,8 @@ pub const OP_CAT: &str = "OP_CAT";
 pub const OP_DROP: &str = "OP_DROP";
 pub const OP_NIP: &str = "OP_NIP";
 pub const OP_SWAP: &str = "OP_SWAP";
+pub const OP_TOALTSTACK: &str = "OP_TOALTSTACK";
+pub const OP_FROMALTSTACK: &str = "OP_FROMALTSTACK";
 
 // Elliptic curve
 pub const OP_ECADD: &str = "OP_ECADD";

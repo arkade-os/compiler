@@ -21,12 +21,10 @@ contract FujiSafe(
   // Exit timelock in blocks
   int exit
 ) {
-  // Helper function to verify Fuji token burning via Taproot output
-  // Takes the pubkey to use as the internal key for the P2TR output
-  function verifyFujiBurning(pubkey internalKey) internal {
+  // Helper function to verify treasury Fuji token burning via Taproot output
+  function verifyTreasuryFujiBurning() internal {
     // In Taproot, we verify the output is a P2TR that commits to our asset
-    // Using the provided pubkey as the internal key
-    bytes p2trScript = new P2TR(internalKey, assetCommitmentHash);
+    bytes p2trScript = new P2TR(treasuryPk, assetCommitmentHash);
 
     // Verify output 0 has the correct P2TR scriptPubKey and value
     require(tx.outputs[0].scriptPubKey == p2trScript, "P2TR output mismatch");
@@ -39,7 +37,7 @@ contract FujiSafe(
     require(tx.time >= expirationTimeout, "Expiration timeout not reached");
 
     // Verify burning of Fuji token using treasury key
-    verifyFujiBurning(treasuryPk);
+    verifyTreasuryFujiBurning();
 
     // Require treasury signature
     require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
@@ -60,7 +58,7 @@ contract FujiSafe(
     require(checkSigFromStack(oracleSig, oraclePk, message), "Invalid oracle signature");
 
     // Verify burning of Fuji token using treasury key
-    verifyFujiBurning(treasuryPk);
+    verifyTreasuryFujiBurning();
 
     // Require treasury signature
     require(checkSig(treasurySig, treasuryPk), "Invalid treasury signature");
@@ -69,7 +67,9 @@ contract FujiSafe(
   // Private Redemption: Only owner can unlock all collateral with key when burning Fuji
   function redeem(signature borrowerSig) {
     // Verify burning of Fuji token using borrower key
-    verifyFujiBurning(borrowerPk);
+    bytes p2trScript = new P2TR(borrowerPk, assetCommitmentHash);
+    require(tx.outputs[0].scriptPubKey == p2trScript, "P2TR output mismatch");
+    require(tx.outputs[0].value == borrowAmount, "Value mismatch");
 
     // Require borrower signature
     require(checkSig(borrowerSig, borrowerPk), "Invalid borrower signature");

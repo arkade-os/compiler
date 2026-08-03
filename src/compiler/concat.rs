@@ -52,13 +52,20 @@ impl ConcatPass {
     fn rewrite_statement_concat(&mut self, stmt: &mut Statement, scope: &mut Scope) {
         match stmt {
             Statement::Require(req) => self.rewrite_requirement_concat(req, scope),
-            Statement::LetBinding { name, value } => {
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => {
                 let (new_expr, t) = self.rewrite_expression_concat(
                     std::mem::replace(value, Expression::Literal(String::new())),
                     scope,
                 );
                 *value = new_expr;
-                scope.insert(name.clone(), t);
+                scope.insert(
+                    name.clone(),
+                    declared_type.as_deref().map(ArkType::parse).unwrap_or(t),
+                );
             }
             Statement::VarAssign { name, value } => {
                 let (new_expr, t) = self.rewrite_expression_concat(
@@ -141,6 +148,20 @@ impl ConcatPass {
         scope: &Scope,
     ) -> (Expression, ArkType) {
         match expr {
+            Expression::ArrayIndex { array, index } => {
+                let (index, _) = self.rewrite_expression_concat(*index, scope);
+                let result_type = match scope.get(&array) {
+                    Some(ArkType::Array(element)) => (**element).clone(),
+                    _ => ArkType::Unknown,
+                };
+                (
+                    Expression::ArrayIndex {
+                        array,
+                        index: Box::new(index),
+                    },
+                    result_type,
+                )
+            }
             Expression::BinaryOp { left, op, right } => {
                 let (new_l, lt) = self.rewrite_expression_concat(*left, scope);
                 let (new_r, rt) = self.rewrite_expression_concat(*right, scope);

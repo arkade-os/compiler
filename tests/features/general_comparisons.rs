@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_GREATERTHAN, OP_GREATERTHANOREQUAL,
-    OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PUSHCURRENTINPUTINDEX, OP_VERIFY,
+    OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_VERIFY,
 };
 
 fn compile_asm(source: &str) -> Vec<String> {
@@ -21,12 +21,15 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
 #[test]
 fn integer_comparisons_emit_all_boolean_operators() {
     let cases: [(&str, &[&str]); 6] = [
-        ("==", &["<left>", "<right>", OP_EQUAL]),
-        ("!=", &["<left>", "<right>", OP_EQUAL, OP_NOT]),
-        (">=", &["<left>", "<right>", OP_GREATERTHANOREQUAL]),
-        (">", &["<left>", "<right>", OP_GREATERTHAN]),
-        ("<=", &["<left>", "<right>", OP_LESSTHANOREQUAL]),
-        ("<", &["<left>", "<right>", OP_LESSTHAN]),
+        ("==", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL]),
+        ("!=", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL, OP_NOT]),
+        (
+            ">=",
+            &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_GREATERTHANOREQUAL],
+        ),
+        (">", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_GREATERTHAN]),
+        ("<=", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_LESSTHANOREQUAL]),
+        ("<", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_LESSTHAN]),
     ];
 
     for (operator, expected) in cases {
@@ -69,11 +72,11 @@ fn declared_scalar_types_compare_directly() {
             .unwrap_or_else(|error| panic!("{scalar_type} compile failed: {error}"));
         let asm = crate::common::arkade_asm_tokens(&output, "compare");
         assert!(
-            contains_tokens(&asm, &["<left>", "<right>", OP_EQUAL]),
+            contains_tokens(&asm, &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL]),
             "{scalar_type} equality must emit OP_EQUAL: {asm:?}"
         );
         assert!(
-            contains_tokens(&asm, &["<left>", "<right>", OP_EQUAL, OP_NOT]),
+            contains_tokens(&asm, &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL, OP_NOT]),
             "{scalar_type} inequality must emit OP_EQUAL OP_NOT: {asm:?}"
         );
         assert!(
@@ -99,11 +102,11 @@ fn active_input_index_comparison_preserves_operand_order() {
     );
 
     assert!(
-        contains_tokens(&asm, &["<index>", OP_PUSHCURRENTINPUTINDEX, OP_EQUAL]),
+        contains_tokens(&asm, &[OP_0, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_EQUAL]),
         "reversed comparison must emit the variable first: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &[OP_PUSHCURRENTINPUTINDEX, "<index>", OP_EQUAL]),
+        contains_tokens(&asm, &[OP_PUSHCURRENTINPUTINDEX, OP_1, OP_PICK, OP_EQUAL]),
         "property-first comparison must emit the property first: {asm:?}"
     );
     assert!(
@@ -123,13 +126,15 @@ fn require_accepts_direct_boolean_expressions() {
         }",
     );
 
-    assert_eq!(
-        asm.first().map(String::as_str),
-        Some("<enabled>"),
-        "a bool variable must be emitted directly: {asm:?}"
+    assert!(
+        contains_tokens(&asm, &[OP_1, OP_PICK, OP_VERIFY]),
+        "a bool variable must be read from its symbolic stack slot: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &["<owner>", "<signature>", OP_CHECKSIG]),
+        contains_tokens(
+            &asm,
+            &["OP_2", OP_PICK, OP_1, OP_PICK, OP_CHECKSIG, OP_VERIFY]
+        ),
         "checkSig must be accepted as a direct boolean requirement: {asm:?}"
     );
     assert!(
@@ -192,30 +197,14 @@ fn boolean_calls_can_be_compared_or_required_directly() {
     );
 
     assert!(
-        contains_tokens(
-            &asm,
-            &[
-                "<owner>",
-                "<signature>",
-                OP_CHECKSIG,
-                "<expected>",
-                OP_EQUAL
-            ]
-        ),
+        asm.iter().filter(|token| *token == OP_CHECKSIG).count() == 2
+            && asm.iter().filter(|token| *token == OP_EQUAL).count() == 2,
         "checkSig result must be comparable: {asm:?}"
     );
     assert!(
         contains_tokens(
             &asm,
-            &[
-                "<message>",
-                "<owner>",
-                "<signature>",
-                OP_CHECKSIGFROMSTACK,
-                "<expected>",
-                OP_EQUAL,
-                OP_NOT
-            ]
+            &[OP_CHECKSIGFROMSTACK, "OP_3", OP_PICK, OP_EQUAL, OP_NOT]
         ),
         "checkSigFromStack result must support inequality: {asm:?}"
     );
@@ -234,22 +223,20 @@ fn boolean_calls_can_be_compared_or_required_directly() {
 }
 
 #[test]
-fn compared_boolean_calls_keep_argument_type_warnings() {
-    let output = compile(
+fn compared_boolean_calls_reject_invalid_signature_types() {
+    let error = compile(
         "contract Compare(bool expected) {
             function compare(pubkey wrongSignature, signature wrongPubkey) {
                 require(checkSig(wrongSignature, wrongPubkey) == expected);
             }
         }",
     )
-    .expect("type errors remain non-fatal");
+    .expect_err("signature type errors must be fatal")
+    .to_string();
 
     assert!(
-        output.warnings.iter().any(|warning| {
-            warning.contains("warning[type]") && warning.to_lowercase().contains("swapped")
-        }),
-        "comparison-context checkSig must retain argument validation: {:?}",
-        output.warnings
+        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        "comparison-context checkSig must retain argument validation: {error}"
     );
 }
 
@@ -266,7 +253,16 @@ fn comparison_results_can_be_compared_as_boolean_operands() {
     assert!(
         contains_tokens(
             &asm,
-            &["<left>", "<right>", OP_LESSTHAN, "<expected>", OP_EQUAL]
+            &[
+                OP_0,
+                OP_PICK,
+                "OP_2",
+                OP_PICK,
+                OP_LESSTHAN,
+                "OP_3",
+                OP_PICK,
+                OP_EQUAL
+            ]
         ),
         "nested comparison must leave a boolean for the outer comparison: {asm:?}"
     );
@@ -288,15 +284,16 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
     );
 
     assert!(
-        asm.windows(3).any(|window| {
-            window[0] == "<expectedScript>"
-                && window[1].contains("VTXO:SingleSig(")
-                && window[2] == OP_EQUAL
+        asm.windows(4).any(|window| {
+            window[0] == OP_1
+                && window[1] == OP_PICK
+                && window[2].contains("VTXO:SingleSig(")
+                && window[3] == OP_EQUAL
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &["<expectedTxid>", "OP_TXID", OP_EQUAL]),
+        contains_tokens(&asm, &["OP_2", OP_PICK, "OP_TXID", OP_EQUAL]),
         "introspection comparison must emit its native opcode: {asm:?}"
     );
 }
@@ -342,22 +339,18 @@ fn mismatched_comparisons_warn() {
 }
 
 #[test]
-fn direct_array_equality_warns_as_unsupported() {
-    let output = compile(
+fn direct_array_equality_is_rejected() {
+    let error = compile(
         "contract Invalid() {
             function compare(int[] left, int[] right) {
                 require(left == right);
             }
         }",
     )
-    .expect("unsupported comparisons remain non-fatal");
+    .expect_err("array bindings cannot be read as one stack item")
+    .to_string();
     assert!(
-        output.warnings.iter().any(|warning| {
-            warning.contains("warning[type]")
-                && warning.contains("array")
-                && warning.contains("comparison")
-        }),
-        "direct array equality must warn instead of claiming scalar support: {:?}",
-        output.warnings
+        error.contains("array expressions are composite values"),
+        "direct array equality must be rejected: {error}"
     );
 }

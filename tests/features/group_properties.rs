@@ -9,7 +9,7 @@ use crate::common::arkade_asm;
 
 /// Test that group.assetId emits OP_INSPECTASSETGROUPASSETID
 #[test]
-fn test_group_asset_id_basic() {
+fn test_group_asset_id_cannot_be_compared_as_one_value() {
     let code = r#"
         contract AssetIdTest(bytes32 tokenAssetIdTxid, int tokenAssetIdGidx, bytes32 expectedAssetId) {
             function checkAssetId(signature ownerSig, pubkey owner) {
@@ -20,19 +20,12 @@ fn test_group_asset_id_basic() {
         }
     "#;
 
-    let result = compile(code);
-    assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
-
-    let output = result.unwrap();
-    assert_eq!(output.name, "AssetIdTest");
-
-    let asm_str = arkade_asm(&output, "checkAssetId");
-
-    // assetId emits: OP_INSPECTASSETGROUPASSETID
+    let error = compile(code)
+        .expect_err("group assetId is a two-item value")
+        .to_string();
     assert!(
-        asm_str.contains(OP_INSPECTASSETGROUPASSETID),
-        "Expected {OP_INSPECTASSETGROUPASSETID} for assetId access: {}",
-        asm_str
+        error.contains("expression produces 2 stack items"),
+        "group assetId comparison must be rejected: {error}"
     );
 }
 

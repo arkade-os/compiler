@@ -214,8 +214,10 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // Covenant (arkade) ASM: introspection check + VTXO placeholder + comparison
+    // Covenant ASM includes the constructor prologue and final frame cleanup.
     let expected_arkade: Vec<&str> = vec![
+        "<exit>",
+        "<ownerPk>",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
         "OP_DROP",
@@ -223,6 +225,8 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "OP_EQUAL",
         "OP_VERIFY",
         "OP_1",
+        "OP_NIP",
+        "OP_NIP",
     ];
     assert_eq!(
         arkade_asm_tokens(&result, "send"),
@@ -402,6 +406,49 @@ contract TimedForwarder(pubkey ownerPk) {
         !vtxo_op.contains("<144>"),
         "Literal 144 must not be wrapped in angle brackets in {}",
         vtxo_op
+    );
+}
+
+#[test]
+fn test_function_input_constructor_arg_is_rejected() {
+    let code = r#"
+import "single_sig.ark";
+
+contract Forwarder(int exit) {
+  function forward(pubkey ownerPk) {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+  }
+}
+"#;
+
+    let error = compile(code).expect_err("function inputs are unavailable at instantiation time");
+    let error = error.to_string();
+    assert!(
+        error.contains("contract instance argument 'ownerPk' is a runtime value"),
+        "{error}"
+    );
+}
+
+#[test]
+fn test_array_constructor_arg_is_flattened() {
+    let code = r#"
+import "threshold_oracle.ark";
+
+contract Forwarder(pubkey[] owners) {
+  function forward() {
+    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(owners));
+  }
+}
+"#;
+
+    let output = compile(code).expect("array constructor argument");
+    let placeholder = arkade_asm_tokens(&output, "forward")
+        .into_iter()
+        .find(|token| token.starts_with("<VTXO:"))
+        .expect("VTXO placeholder");
+    assert_eq!(
+        placeholder,
+        "<VTXO:ThresholdOracle(<owners_0>,<owners_1>,<owners_2>)>"
     );
 }
 

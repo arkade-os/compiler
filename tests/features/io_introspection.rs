@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
-    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
 };
 
 /// Test input introspection opcodes
@@ -87,7 +87,7 @@ fn test_input_sequence() {
 }
 
 #[test]
-fn test_input_outpoint() {
+fn test_input_outpoint_cannot_be_compared_as_one_value() {
     let code = r#"
         contract OutpointChecker(pubkey owner, bytes32 expectedOutpoint) {
             function checkOutpoint(signature ownerSig) {
@@ -97,19 +97,12 @@ fn test_input_outpoint() {
         }
     "#;
 
-    let result = compile(code);
+    let error = compile(code)
+        .expect_err("outpoint is a two-item value")
+        .to_string();
     assert!(
-        result.is_ok(),
-        "Failed to parse tx.inputs[0].outpoint: {:?}",
-        result.err()
-    );
-
-    let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkOutpoint");
-    assert!(
-        asm_str.contains(OP_INSPECTINPUTOUTPOINT),
-        "Expected {OP_INSPECTINPUTOUTPOINT} in ASM: {}",
-        asm_str
+        error.contains("outpoint inspection produces 2 stack items"),
+        "outpoint comparison must be rejected: {error}"
     );
 }
 
@@ -190,9 +183,12 @@ fn test_variable_index_input() {
     let output = result.unwrap();
     let asm_str = crate::common::arkade_asm(&output, "checkInput");
     assert!(
-        asm_str.contains("<inputIdx>"),
-        "Expected <inputIdx> placeholder in ASM: {}",
-        asm_str
+        asm_str.contains("OP_PICK OP_INSPECTINPUTVALUE"),
+        "{asm_str}"
+    );
+    assert!(
+        !asm_str.contains("<inputIdx>"),
+        "Function inputs must be read from the symbolic stack: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_INSPECTINPUTVALUE),
@@ -222,9 +218,12 @@ fn test_variable_index_output() {
     let output = result.unwrap();
     let asm_str = crate::common::arkade_asm(&output, "checkOutput");
     assert!(
-        asm_str.contains("<outputIdx>"),
-        "Expected <outputIdx> placeholder in ASM: {}",
-        asm_str
+        asm_str.contains("OP_PICK OP_INSPECTOUTPUTVALUE"),
+        "{asm_str}"
+    );
+    assert!(
+        !asm_str.contains("<outputIdx>"),
+        "Function inputs must be read from the symbolic stack: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),

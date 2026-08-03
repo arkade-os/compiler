@@ -1,7 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP, OP_SUB, OP_TXID,
+    OP_CHECKSIG, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SUB, OP_TXID,
 };
 
 const ARKADE_KITTIES_CODE: &str = include_str!("../../examples/arkade_kitties/arkade_kitties.ark");
@@ -133,6 +134,31 @@ fn test_transfer_has_control_check() {
         asm_str.contains(OP_INSPECTASSETGROUPCTRL),
         "Expected {OP_INSPECTASSETGROUPCTRL} in transfer: {}",
         asm_str
+    );
+}
+
+#[test]
+fn test_transfer_uses_owner_authorized_destination_script() {
+    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let transfer = crate::common::group(&output, "transfer")
+        .arkade
+        .as_ref()
+        .expect("transfer covenant");
+    let destination = transfer
+        .inputs
+        .iter()
+        .find(|input| input.name == "newOwnerScriptPubKey")
+        .expect("new owner destination input");
+
+    assert_eq!(destination.param_type, "bytes");
+    assert!(transfer
+        .asm
+        .iter()
+        .any(|token| token == OP_INSPECTOUTPUTSCRIPTPUBKEY));
+    assert!(transfer.asm.iter().any(|token| token == OP_CHECKSIG));
+    assert!(
+        !transfer.asm.iter().any(|token| token.starts_with("<VTXO:")),
+        "transfer destination must be read from the owner-authorized function input"
     );
 }
 

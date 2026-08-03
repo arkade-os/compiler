@@ -30,9 +30,8 @@
 //   output[1]:  buyer receives stable      (stableAmount of stableAssetId, locked to buyerPk)
 //   output[2+]: buyer's BTC change         (unconstrained)
 //
-// Transfer functions allow either party to reassign their leg before
-// expiry. The vault holds only the stablecoin, so the continuation
-// output preserves the stablecoin asset balance (not BTC value).
+// Transfer functions are retained below but disabled until dynamic taproot
+// reconstruction is supported.
 
 import "single_sig.ark";
 
@@ -85,47 +84,41 @@ contract CashSecuredPut(
     require(checkSig(sellerSig, sellerPk), "invalid seller sig");
   }
 
-  // -------------------------------------------------------------------------
-  // TRANSFER_SELLER
-  // Pre-expiry only. Writer re-assigns the short leg to a new seller.
-  // Stablecoin collateral preserved on the continuation output.
-  // -------------------------------------------------------------------------
-  function transferSeller(signature sellerSig, pubkey newSellerPk) {
-    require(tx.time < expiryHeight, "no transfers after expiry");
-    require(checkSig(sellerSig, sellerPk), "invalid seller sig");
-    require(
-      tx.outputs[0].scriptPubKey == new CashSecuredPut(
-        newSellerPk, buyerPk, stableAssetIdTxid, stableAssetIdGidx,
-        stableAmount, btcSats, expiryHeight, graceBlocks, exit
-      ),
-      "invalid transfer output"
-    );
-    require(
-      tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
-      "collateral not preserved"
-    );
-  }
-
-  // -------------------------------------------------------------------------
-  // TRANSFER_BUYER
-  // Pre-expiry only. Holder re-assigns the long leg to a new buyer.
-  // Stablecoin collateral preserved on the continuation output.
-  // -------------------------------------------------------------------------
-  function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
-    require(tx.time < expiryHeight, "no transfers after expiry");
-    require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
-    require(
-      tx.outputs[0].scriptPubKey == new CashSecuredPut(
-        sellerPk, newBuyerPk, stableAssetIdTxid, stableAssetIdGidx,
-        stableAmount, btcSats, expiryHeight, graceBlocks, exit
-      ),
-      "invalid transfer output"
-    );
-    require(
-      tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
-      "collateral not preserved"
-    );
-  }
+  // Transfers need dynamic taproot reconstruction. Restore these functions
+  // once private functions plus EC return decomposition can implement it, or
+  // once a generic builtin provides the same verification.
+  //
+  // function transferSeller(signature sellerSig, pubkey newSellerPk) {
+  //   require(tx.time < expiryHeight, "no transfers after expiry");
+  //   require(checkSig(sellerSig, sellerPk), "invalid seller sig");
+  //   require(
+  //     tx.outputs[0].scriptPubKey == new CashSecuredPut(
+  //       newSellerPk, buyerPk, stableAssetIdTxid, stableAssetIdGidx,
+  //       stableAmount, btcSats, expiryHeight, graceBlocks, exit
+  //     ),
+  //     "invalid transfer output"
+  //   );
+  //   require(
+  //     tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
+  //     "collateral not preserved"
+  //   );
+  // }
+  //
+  // function transferBuyer(signature buyerSig, pubkey newBuyerPk) {
+  //   require(tx.time < expiryHeight, "no transfers after expiry");
+  //   require(checkSig(buyerSig, buyerPk), "invalid buyer sig");
+  //   require(
+  //     tx.outputs[0].scriptPubKey == new CashSecuredPut(
+  //       sellerPk, newBuyerPk, stableAssetIdTxid, stableAssetIdGidx,
+  //       stableAmount, btcSats, expiryHeight, graceBlocks, exit
+  //     ),
+  //     "invalid transfer output"
+  //   );
+  //   require(
+  //     tx.outputs[0].assets.lookup(stableAssetIdTxid, stableAssetIdGidx) >= stableAmount,
+  //     "collateral not preserved"
+  //   );
+  // }
 
   // -------------------------------------------------------------------------
   // UNILATERAL EXIT (CSV)

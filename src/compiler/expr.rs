@@ -16,14 +16,23 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", var));
         }
         Expression::Literal(lit) => push_literal_asm(lit, asm),
+        Expression::ArrayIndex { array, index } => {
+            if let Expression::Literal(index) = index.as_ref() {
+                asm.push(format!("<{array}[{index}]>"));
+            } else {
+                emit_expression_asm(index, asm);
+                asm.push(format!("{INTERNAL_ARRAY_INDEX_PREFIX}{array}"));
+            }
+        }
         Expression::Property(prop) => {
             // Map the introspector "this" properties to their dedicated opcodes
             // (the parser stores them as Property strings; resolving them here
             // keeps the placeholder pipeline untouched for everything else).
-            match prop.as_str() {
+            match prop.trim() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
                 "this.activeBytecode" => emit_current_input_asm(Some("scriptPubKey"), asm),
-                _ => asm.push(format!("<{}>", prop)),
+                "tx.time" => asm.push(OP_INSPECTLOCKTIME.to_string()),
+                property => asm.push(format!("<{}>", property)),
             }
         }
         Expression::CurrentInput(property) => {
@@ -130,7 +139,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             if let Some(prop) = property {
                 match prop.as_str() {
                     "amount" => {
-                        // Amount is on top, no extraction needed for amount
+                        asm.push(OP_NIP.to_string());
+                        asm.push(OP_NIP.to_string());
                     }
                     "type" => {
                         asm.push(OP_DROP.to_string()); // amount
@@ -147,8 +157,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_contract_instance_asm(contract_name, args, asm);
         }
         Expression::CheckSigExpr { signature, pubkey } => {
-            asm.push(format!("<{}>", pubkey));
             asm.push(format!("<{}>", signature));
+            asm.push(format!("<{}>", pubkey));
             asm.push(OP_CHECKSIG.to_string());
         }
         Expression::CheckSigFromStackExpr {
@@ -156,9 +166,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             pubkey,
             message,
         } => {
+            asm.push(format!("<{}>", signature));
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
-            asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         // Streaming SHA256
@@ -264,9 +274,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             point_p,
             point_q,
         } => {
-            emit_expression_asm(point_q, asm);
-            emit_expression_asm(point_p, asm);
             emit_expression_asm(scalar, asm);
+            emit_expression_asm(point_p, asm);
+            emit_expression_asm(point_q, asm);
             asm.push(OP_ECMULSCALARVERIFY.to_string());
         }
         Expression::TweakVerify {
@@ -274,9 +284,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             tweak,
             point_q,
         } => {
-            emit_expression_asm(point_q, asm);
-            emit_expression_asm(tweak, asm);
             emit_expression_asm(point_p, asm);
+            emit_expression_asm(tweak, asm);
+            emit_expression_asm(point_q, asm);
             asm.push(OP_TWEAKVERIFY.to_string());
         }
         Expression::CheckSigFromStackVerify {
@@ -284,9 +294,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             pubkey,
             message,
         } => {
+            asm.push(format!("<{}>", signature));
             asm.push(format!("<{}>", message));
             asm.push(format!("<{}>", pubkey));
-            asm.push(format!("<{}>", signature));
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
             asm.push(OP_VERIFY.to_string());
         }

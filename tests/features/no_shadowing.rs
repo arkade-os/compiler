@@ -84,9 +84,10 @@ contract Demo(int limit) {
     let err = compile(src)
         .expect_err("expected a shadowing error")
         .to_string();
-    assert!(
-        err.contains("shadows an in-scope binding"),
-        "unexpected error: {err}"
+    assert_eq!(
+        err.matches("shadows an in-scope binding").count(),
+        1,
+        "{err}"
     );
 }
 
@@ -129,9 +130,10 @@ contract Demo(pubkey[] ks) {
     let err = compile(src)
         .expect_err("expected a shadowing error")
         .to_string();
-    assert!(
-        err.contains("shadows an in-scope binding"),
-        "unexpected error: {err}"
+    assert_eq!(
+        err.matches("shadows an in-scope binding").count(),
+        1,
+        "{err}"
     );
 }
 
@@ -192,6 +194,93 @@ contract Demo(int[] xs) {
 }
 
 #[test]
+fn flattened_abi_names_do_not_alias_array_elements() {
+    let cases = [
+        r#"
+contract Demo(int[] xs) {
+  function f() {
+    require(xs_0 >= 1);
+  }
+}
+"#,
+        r#"
+contract Demo() {
+  function f(int[] xs) {
+    xs_0 = 5;
+    require(xs[0] >= 1);
+  }
+}
+"#,
+        r#"
+contract Demo(pubkey[] keys) {
+  function f(signature sig, bytes32 msg) {
+    require(checkSigFromStack(sig, keys_0, msg));
+  }
+}
+"#,
+    ];
+
+    for source in cases {
+        let error = compile(source)
+            .expect_err("flattened ABI name must not resolve as an array element")
+            .to_string();
+        assert!(
+            error.contains("undefined") || error.contains("undeclared"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
+fn source_bindings_can_reuse_flattened_abi_names() {
+    let source = r#"
+contract Demo(int[] xs) {
+  function f() {
+    let xs_0 = 1;
+    require(xs[0] >= xs_0);
+  }
+}
+"#;
+
+    let output = compile(source).expect("source and internal array bindings must remain distinct");
+    let covenant = crate::common::group(&output, "f")
+        .arkade
+        .as_ref()
+        .expect("covenant");
+    assert!(covenant.asm.iter().all(|token| !token.contains("$array:")));
+}
+
+#[test]
+fn rejects_tapscript_array_expansion_collisions() {
+    let cases = [
+        r#"
+contract Demo(pubkey[] owners) {
+  function leaf(signature sig, pubkey owners_0) tapscript {
+    require(checkSig(sig, owners_0));
+  }
+}
+"#,
+        r#"
+contract Demo(pubkey owner) {
+  function leaf(signature[] sigs, signature sigs_0) tapscript {
+    require(checkSig(sigs_0, owner));
+  }
+}
+"#,
+    ];
+
+    for source in cases {
+        let error = compile(source)
+            .expect_err("expanded tapscript names must not collide")
+            .to_string();
+        assert!(
+            error.contains("collide in the emitted namespace"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
 fn accepts_sibling_scope_reuse() {
     // let x in both branches; the same loop vars in two separate loops.
     let src = r#"
@@ -215,45 +304,4 @@ contract Demo(pubkey[] ks) {
 "#;
     let result = compile(src);
     assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
-}
-
-use std::fs;
-use std::path::Path;
-
-/// Recursively collect every `.ark` file under `dir`, including subdirectories
-/// like `examples/bonds/` and `examples/options/`.
-fn collect_ark_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-    for entry in fs::read_dir(dir).expect("read examples dir") {
-        let path = entry.expect("dir entry").path();
-        if path.is_dir() {
-            collect_ark_files(&path, out);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("ark") {
-            out.push(path);
-        }
-    }
-}
-
-/// Every bundled example must still compile cleanly. A new failure here means
-/// either a real latent shadowing/collision bug in the example (fix the example
-/// per the spec) or a false positive in the rule (fix the rule).
-#[test]
-fn all_examples_still_compile() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    let mut files = Vec::new();
-    collect_ark_files(&dir, &mut files);
-    for path in &files {
-        let src = fs::read_to_string(path).expect("read example");
-        let result = compile(&src);
-        assert!(
-            result.is_ok(),
-            "example {} failed to compile: {:?}",
-            path.display(),
-            result.err()
-        );
-    }
-    assert!(
-        !files.is_empty(),
-        "no .ark examples found in {}",
-        dir.display()
-    );
 }

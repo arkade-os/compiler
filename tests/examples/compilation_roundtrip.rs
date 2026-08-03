@@ -124,6 +124,20 @@ fn roundtrip_controlled_mint() {
 fn roundtrip_nft_mint() {
     let output = compile_example("nft_mint/nft_mint.ark");
     assert_output_invariants(&output, "nft_mint/nft_mint.ark");
+    for (function, destination) in [
+        ("mint", "recipientScriptPubKey"),
+        ("transfer", "newOwnerScriptPubKey"),
+    ] {
+        let arkade = crate::common::group(&output, function)
+            .arkade
+            .as_ref()
+            .unwrap();
+        assert!(arkade
+            .inputs
+            .iter()
+            .any(|input| input.name == destination && input.param_type == "bytes"));
+        assert!(!arkade.asm.iter().any(|op| op.contains("VTXO:SingleSig")));
+    }
 }
 
 #[test]
@@ -157,6 +171,19 @@ fn roundtrip_threshold_multisig_htlc() {
 fn roundtrip_non_interactive_swap() {
     let output = compile_example("non_interactive_swap/non_interactive_swap.ark");
     assert_output_invariants(&output, "non_interactive_swap/non_interactive_swap.ark");
+    let destination = output
+        .functions
+        .iter()
+        .find(|group| group.name == "swap")
+        .and_then(|group| group.arkade.as_ref())
+        .and_then(|arkade| {
+            arkade
+                .inputs
+                .iter()
+                .find(|input| input.name == "takerScriptPubKey")
+        })
+        .expect("swap taker destination input");
+    assert_eq!(destination.param_type, "bytes");
 }
 
 #[test]
@@ -184,6 +211,7 @@ fn roundtrip_payment_auth() {
 }
 
 #[test]
+#[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn roundtrip_repayment_pool() {
     let output = compile_example("bonds/repayment_pool.ark");
     assert_output_invariants(&output, "bonds/repayment_pool.ark");

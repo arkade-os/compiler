@@ -45,7 +45,8 @@ contract OApp(
   bytes32 endpointID,
   bytes32 oappID,
   int     remoteEID,
-  bytes32 remoteOApp
+  bytes32 remoteOApp,
+  bytes32 sendMarkerScriptHash
 ) {
 
   // -------------------------------------------------------------------------
@@ -161,7 +162,7 @@ contract OApp(
   //       collaborative tapleaf. No contract-level owner signature exists or
   //       is needed.
   // -------------------------------------------------------------------------
-  function send(bytes32 sendMarkerScriptHash) {
+  function send() {
     // Current-tx OAppSendInvocation packet: v1, fixed size.
     require(size(tx.packet(20)) == 175, "send invocation packet size");
     require(substr(tx.packet(20), 0, 1) == 1, "send invocation version");

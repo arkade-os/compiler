@@ -9,8 +9,6 @@
 // Asset groups provide aggregate views of asset flows across all inputs/outputs,
 // enabling balance verification without iterating individual UTXOs.
 
-import "single_sig.ark";
-
 contract ControlledMint(
   bytes32 tokenAssetIdTxid,
   int tokenAssetIdGidx,
@@ -20,7 +18,7 @@ contract ControlledMint(
   int exit
 ) {
   // Mint: delta > 0, control asset present and retained
-  function mint(int amount, pubkey recipientPk, signature issuerSig) {
+  function mint(int amount, bytes recipientScriptPubKey, signature issuerSig) {
     let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
     require(tokenGroup.delta == amount, "delta mismatch");
     require(tokenGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
@@ -29,7 +27,7 @@ contract ControlledMint(
     require(ctrlGroup.delta == 0, "ctrl supply changed");
 
     require(tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "mint short");
-    require(tx.outputs[0].scriptPubKey == new SingleSig(recipientPk, exit), "wrong dest");
+    require(tx.outputs[0].scriptPubKey == recipientScriptPubKey, "wrong dest");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 

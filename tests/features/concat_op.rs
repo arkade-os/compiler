@@ -87,10 +87,10 @@ contract LoopHash(bytes32 tag) {
 "#;
     let out = compile(code).expect("compile");
     let asm = crate::common::arkade_asm(&out, "check");
-    for k in 0..3 {
+    for (k, depth) in [2, 3, 4].into_iter().enumerate() {
         assert!(
-            asm.contains(&format!("<prices_{k}>")),
-            "Expected iteration {k} to bind the array element; asm:\n{asm}"
+            asm.contains(&format!("OP_{depth} OP_PICK 8 OP_NUM2BIN")),
+            "Expected iteration {k} to read its array element slot; asm:\n{asm}"
         );
     }
     assert!(

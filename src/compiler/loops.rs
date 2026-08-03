@@ -1,21 +1,8 @@
-use super::*;
 use crate::models::*;
 
-// ─── Loop Unrolling ─────────────────────────────────────────────────────────────
+use super::internal_array_binding_name;
 
-pub(crate) fn unroll_loop_body(
-    body: &[Statement],
-    index_var: &str,
-    value_var: &str,
-    array_name: Option<&str>,
-    asm: &mut Vec<String>,
-) -> Result<(), String> {
-    for k in 0..DEFAULT_ARRAY_LENGTH {
-        let substituted_body = substitute_loop_body(body, index_var, value_var, k, array_name);
-        generate_asm_from_statements_recursive(&substituted_body, asm)?;
-    }
-    Ok(())
-}
+// ─── Loop Unrolling ─────────────────────────────────────────────────────────────
 
 /// Substitute loop variables in the body for a specific iteration index k.
 ///
@@ -23,8 +10,8 @@ pub(crate) fn unroll_loop_body(
 /// - `GroupProperty { group: value_var, property: "sumOutputs" }` → `GroupSum { index: k, source: Outputs }`
 /// - `GroupProperty { group: value_var, property: "sumInputs" }` → `GroupSum { index: k, source: Inputs }`
 /// - `Variable(index_var)` → `Literal(k)`
-/// - `Variable(value_var)` when array_name is Some → `Variable("array_name_{k}")`
-/// - Property-form indexing `arr[index_var]` → `Variable("arr_{k}")`
+/// - `Variable(value_var)` when array_name is Some → its internal array-element binding
+/// - Property-form indexing `arr[index_var]` → the same internal binding
 pub(crate) fn substitute_loop_body(
     body: &[Statement],
     index_var: &str,
@@ -48,8 +35,13 @@ pub(crate) fn substitute_statement(
         Statement::Require(req) => Statement::Require(substitute_requirement(
             req, index_var, value_var, k, array_name,
         )),
-        Statement::LetBinding { name, value } => Statement::LetBinding {
+        Statement::LetBinding {
+            name,
+            declared_type,
+            value,
+        } => Statement::LetBinding {
             name: name.clone(),
+            declared_type: declared_type.clone(),
             value: substitute_expression(value, index_var, value_var, k, array_name),
         },
         Statement::VarAssign { name, value } => Statement::VarAssign {
@@ -72,15 +64,12 @@ pub(crate) fn substitute_statement(
             value_var: inner_val,
             iterable,
             body,
-        } => {
-            // Nested loops: substitute in iterable, leave inner variables alone
-            Statement::ForIn {
-                index_var: inner_idx.clone(),
-                value_var: inner_val.clone(),
-                iterable: substitute_expression(iterable, index_var, value_var, k, array_name),
-                body: body.clone(), // Inner loop body keeps its own variables
-            }
-        }
+        } => Statement::ForIn {
+            index_var: inner_idx.clone(),
+            value_var: inner_val.clone(),
+            iterable: substitute_expression(iterable, index_var, value_var, k, array_name),
+            body: substitute_loop_body(body, index_var, value_var, k, array_name),
+        },
     }
 }
 
@@ -100,46 +89,88 @@ pub(crate) fn substitute_requirement(
             op: op.clone(),
             right: substitute_expression(right, index_var, value_var, k, array_name),
         },
-        Requirement::CheckSig { signature, pubkey } => {
-            // Substitute signature and pubkey if they match loop variables
-            let new_sig = if signature == value_var {
-                if let Some(arr) = array_name {
-                    format!("{}_{}", arr, k)
-                } else {
-                    signature.clone()
-                }
-            } else {
-                signature.clone()
-            };
-            Requirement::CheckSig {
-                signature: new_sig,
-                pubkey: pubkey.clone(),
-            }
-        }
+        Requirement::CheckSig { signature, pubkey } => Requirement::CheckSig {
+            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
+            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
+        },
         Requirement::CheckSigFromStack {
             signature,
             pubkey,
             message,
-        } => {
-            // Substitute signature, pubkey, and message if they match loop variables
-            let new_sig = if signature == value_var {
-                if let Some(arr) = array_name {
-                    format!("{}_{}", arr, k)
-                } else {
-                    signature.clone()
+        } => Requirement::CheckSigFromStack {
+            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
+            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
+            message: substitute_loop_name(message, index_var, value_var, k, array_name),
+        },
+        Requirement::CheckMultisig {
+            pubkeys,
+            signatures,
+            threshold,
+        } => Requirement::CheckMultisig {
+            pubkeys: pubkeys
+                .iter()
+                .map(|name| substitute_loop_name(name, index_var, value_var, k, array_name))
+                .collect(),
+            signatures: signatures
+                .iter()
+                .map(|name| substitute_loop_name(name, index_var, value_var, k, array_name))
+                .collect(),
+            threshold: *threshold,
+        },
+        Requirement::After {
+            blocks,
+            timelock_var,
+        } => Requirement::After {
+            blocks: *blocks,
+            timelock_var: timelock_var
+                .as_ref()
+                .map(|name| substitute_loop_name(name, index_var, value_var, k, array_name)),
+        },
+        Requirement::HashEqual {
+            hash_fn,
+            preimage,
+            hash,
+        } => Requirement::HashEqual {
+            hash_fn: hash_fn.clone(),
+            preimage: substitute_loop_name(preimage, index_var, value_var, k, array_name),
+            hash: substitute_loop_name(hash, index_var, value_var, k, array_name),
+        },
+    }
+}
+
+fn substitute_loop_name(
+    name: &str,
+    index_var: &str,
+    value_var: &str,
+    k: usize,
+    array_name: Option<&str>,
+) -> String {
+    if name == index_var {
+        return k.to_string();
+    }
+    if name == value_var {
+        return array_name
+            .map(|array| internal_array_binding_name(array, &k.to_string()))
+            .unwrap_or_else(|| k.to_string());
+    }
+    if let Some(open) = name.find('[') {
+        if name.ends_with(']') {
+            let index = &name[open + 1..name.len() - 1];
+            if index == index_var {
+                return internal_array_binding_name(&name[..open], &k.to_string());
+            }
+            if index == value_var {
+                if let Some(array) = array_name {
+                    return format!(
+                        "{}[{}]",
+                        &name[..open],
+                        internal_array_binding_name(array, &k.to_string())
+                    );
                 }
-            } else {
-                signature.clone()
-            };
-            Requirement::CheckSigFromStack {
-                signature: new_sig,
-                pubkey: pubkey.clone(),
-                message: message.clone(),
             }
         }
-        // Other requirement types don't need substitution
-        _ => req.clone(),
     }
+    name.to_string()
 }
 
 pub(crate) fn substitute_expression(
@@ -152,32 +183,24 @@ pub(crate) fn substitute_expression(
     match expr {
         // Replace index variable with literal k
         Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
-        // Replace value_var with array_name_{k} when iterating over arrays
+        // Replace the value variable with its source-impossible stack binding.
         Expression::Variable(var) if var == value_var => {
             if let Some(name) = array_name {
-                Expression::Variable(format!("{}_{}", name, k))
+                Expression::Variable(internal_array_binding_name(name, &k.to_string()))
             } else {
-                Expression::Variable(var.clone())
+                Expression::Literal(k.to_string())
             }
         }
-        // Replace value_var.property with appropriate indexed expression
-        Expression::GroupProperty { group, property } if group == value_var => {
-            match property.as_str() {
-                "sumInputs" => Expression::GroupSum {
-                    index: Box::new(Expression::Literal(k.to_string())),
-                    source: GroupSumSource::Inputs,
-                },
-                "sumOutputs" => Expression::GroupSum {
-                    index: Box::new(Expression::Literal(k.to_string())),
-                    source: GroupSumSource::Outputs,
-                },
-                // For delta, control, isFresh, assetId, metadataHash - replace group name with index literal
-                _ => Expression::GroupProperty {
-                    group: k.to_string(),
-                    property: property.clone(),
-                },
-            }
-        }
+        Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
+            array: array.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupProperty { group, property } => Expression::GroupProperty {
+            group: substitute_loop_name(group, index_var, value_var, k, array_name),
+            property: property.clone(),
+        },
         // Handle property strings that represent array indexing (e.g., "oracles[i]").
         Expression::Property(prop) => {
             // Check if this looks like array indexing
@@ -186,7 +209,18 @@ pub(crate) fn substitute_expression(
                     let arr_name = &prop[..bracket_start];
                     let idx = &prop[bracket_start + 1..bracket_end];
                     if idx == index_var {
-                        return Expression::Variable(format!("{}_{}", arr_name, k));
+                        return Expression::Variable(internal_array_binding_name(
+                            arr_name,
+                            &k.to_string(),
+                        ));
+                    }
+                    if idx == value_var {
+                        if let Some(array) = array_name {
+                            return Expression::Property(format!(
+                                "{arr_name}[{}]",
+                                internal_array_binding_name(array, &k.to_string())
+                            ));
+                        }
                     }
                 }
             }
@@ -202,63 +236,28 @@ pub(crate) fn substitute_expression(
                 right, index_var, value_var, k, array_name,
             )),
         },
-        // Handle CheckSigFromStackExpr
         Expression::CheckSigFromStackExpr {
             signature,
             pubkey,
             message,
-        } => {
-            let new_sig = if signature == value_var {
-                if let Some(arr) = array_name {
-                    format!("{}_{}", arr, k)
-                } else {
-                    signature.clone()
-                }
-            } else {
-                signature.clone()
-            };
-            // Check if pubkey is an array indexed expression (string form)
-            let new_pk = if pubkey.contains('[') && pubkey.contains(']') {
-                if let Some(bracket_start) = pubkey.find('[') {
-                    if let Some(bracket_end) = pubkey.find(']') {
-                        let arr_name = &pubkey[..bracket_start];
-                        let idx = &pubkey[bracket_start + 1..bracket_end];
-                        if idx == index_var {
-                            format!("{}_{}", arr_name, k)
-                        } else {
-                            pubkey.clone()
-                        }
-                    } else {
-                        pubkey.clone()
-                    }
-                } else {
-                    pubkey.clone()
-                }
-            } else {
-                pubkey.clone()
-            };
-            Expression::CheckSigFromStackExpr {
-                signature: new_sig,
-                pubkey: new_pk,
-                message: message.clone(),
-            }
-        }
-        // Handle CheckSigExpr
-        Expression::CheckSigExpr { signature, pubkey } => {
-            let new_sig = if signature == value_var {
-                if let Some(arr) = array_name {
-                    format!("{}_{}", arr, k)
-                } else {
-                    signature.clone()
-                }
-            } else {
-                signature.clone()
-            };
-            Expression::CheckSigExpr {
-                signature: new_sig,
-                pubkey: pubkey.clone(),
-            }
-        }
+        } => Expression::CheckSigFromStackExpr {
+            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
+            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
+            message: substitute_loop_name(message, index_var, value_var, k, array_name),
+        },
+        Expression::CheckSigExpr { signature, pubkey } => Expression::CheckSigExpr {
+            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
+            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
+        },
+        Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => Expression::CheckSigFromStackVerify {
+            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
+            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
+            message: substitute_loop_name(message, index_var, value_var, k, array_name),
+        },
         // Handle InputIntrospection - substitute index if it matches loop variable
         Expression::InputIntrospection { index, property } => Expression::InputIntrospection {
             index: Box::new(substitute_expression(
@@ -385,6 +384,12 @@ pub(crate) fn substitute_expression(
             )),
         },
         Expression::AssetCount { source, index } => Expression::AssetCount {
+            source: source.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+        },
+        Expression::GroupSum { source, index } => Expression::GroupSum {
             source: source.clone(),
             index: Box::new(substitute_expression(
                 index, index_var, value_var, k, array_name,
@@ -633,12 +638,7 @@ pub(crate) fn substitute_expression(
             asset_txid,
             asset_gidx,
         } => Expression::GroupControlIs {
-            // Replace the group name with the loop index when iterating groups.
-            group: if group == value_var {
-                k.to_string()
-            } else {
-                group.clone()
-            },
+            group: substitute_loop_name(group, index_var, value_var, k, array_name),
             asset_txid: Box::new(substitute_expression(
                 asset_txid, index_var, value_var, k, array_name,
             )),
