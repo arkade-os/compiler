@@ -56,11 +56,6 @@ enum StackItem {
     Temporary,
 }
 
-/// `tx.assetGroups` carries no declared size, so `for … in tx.assetGroups`
-/// unrolls this many iterations. Ceiling: groups past the third are not
-/// visited; raise this once the VM exposes a group-count bound.
-const ASSET_GROUP_LOOP_ITERATIONS: usize = 3;
-
 // `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
 const INTERNAL_ARRAY_INDEX_PREFIX: &str = "$array-index:";
@@ -798,16 +793,11 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let array_name = match iterable {
-                    Expression::Property(prop) if prop.trim() == "tx.assetGroups" => None,
-                    Expression::Variable(array_name) => Some(array_name.as_str()),
-                    _ => return Err("unsupported loop iterable".to_string()),
+                let Expression::Variable(array_name) = iterable else {
+                    return Err("unsupported loop iterable".to_string());
                 };
-                let iterations = match array_name {
-                    Some(array) => generator.array_length(array),
-                    None => ASSET_GROUP_LOOP_ITERATIONS,
-                };
-                for k in 0..iterations {
+                let array_name = array_name.as_str();
+                for k in 0..generator.array_length(array_name) {
                     let substituted =
                         substitute_loop_body(body, index_var, value_var, k, array_name);
                     let baseline = generator.stack.clone();

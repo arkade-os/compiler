@@ -3,24 +3,24 @@ use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
 };
 
-// Loop-unrolling primitive test over tx.assetGroups.
+// Loop-unrolling primitive test over a declared array of asset group indices.
 const BEACON_LOOP_CODE: &str = r#"
 contract PriceBeacon(
   bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
   pubkey oraclePk,
-  int numGroups
+  int[3] watchedGroups
 ) {
   function passthrough() {
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, numGroups), "broken");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, watchedGroups), "broken");
 
-    for (k, group) in tx.assetGroups {
+    for (k, group) in watchedGroups {
       require(group.sumOutputs >= group.sumInputs, "drained");
     }
   }
 
   function update(signature oracleSig) {
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, numGroups), "broken");
+    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, watchedGroups), "broken");
     require(checkSig(oracleSig, oraclePk), "bad sig");
   }
 }

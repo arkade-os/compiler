@@ -280,3 +280,25 @@ contract Local() {
 
     assert!(error.contains("array literal"), "unexpected error: {error}");
 }
+
+#[test]
+fn iterating_tx_asset_groups_is_rejected() {
+    let error = compile(
+        r#"
+contract Groups() {
+    function spend() {
+        for (k, group) in tx.assetGroups {
+            require(group.sumOutputs >= group.sumInputs, "drained");
+        }
+    }
+}
+"#,
+    )
+    .expect_err("the asset group count is not known at compile time")
+    .to_string();
+
+    assert!(
+        error.contains("cannot iterate 'tx.assetGroups'"),
+        "unexpected error: {error}"
+    );
+}

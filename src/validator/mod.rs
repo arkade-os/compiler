@@ -751,7 +751,13 @@ fn validate_binding_statements(
                         }
                     },
                     Expression::Property(property) if property.trim() == "tx.assetGroups" => {
-                        ArkType::Int
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{}': cannot iterate 'tx.assetGroups'; the group count is \
+                             not known at compile time. Iterate a declared array of group \
+                             indices instead",
+                            function_name
+                        )));
+                        ArkType::Unknown
                     }
                     _ => {
                         issues.push(ValidationIssue::error(format!(
