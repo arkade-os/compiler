@@ -1,5 +1,5 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_ADD, OP_CHECKSIGFROMSTACK, OP_LESSTHAN};
+use arkade_compiler::opcodes::{OP_ADD, OP_CHECKSIGFROMSTACK, OP_DROP, OP_LESSTHAN, OP_ROLL};
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
     asm.windows(expected.len()).any(|window| {
@@ -174,4 +174,109 @@ contract Scalar(int limit) {
     .to_string();
 
     assert!(error.contains(".length"), "unexpected error: {error}");
+}
+
+#[test]
+fn local_arrays_bind_one_element_per_declared_slot() {
+    let output = compile(
+        r#"
+contract Local(int limit) {
+    function spend(int amount, int index) {
+        int[3] weights = [1, 2, 5];
+        require(amount * weights[index] >= limit + weights.length);
+    }
+}
+"#,
+    )
+    .expect("local array must compile");
+
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        contains_tokens(&asm, &["5", "2", "1"]),
+        "elements are pushed deepest-last so element 0 sits closest to the top: {asm:?}"
+    );
+    assert!(
+        contains_tokens(&asm, &["OP_3", OP_LESSTHAN]),
+        "runtime index into a local array is bounded by its declared size: {asm:?}"
+    );
+}
+
+#[test]
+fn local_array_elements_are_assignable_at_a_literal_index() {
+    let output = compile(
+        r#"
+contract Local() {
+    function spend(int amount) {
+        int[2] weights = [1, 2];
+        weights[0] = 4;
+        require(amount >= weights[0]);
+    }
+}
+"#,
+    )
+    .expect("element assignment must compile");
+
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        contains_tokens(&asm, &["4", "OP_1", OP_ROLL, OP_DROP]),
+        "assignment overwrites the element in place: {asm:?}"
+    );
+}
+
+#[test]
+fn assignment_at_a_runtime_index_is_rejected() {
+    let error = compile(
+        r#"
+contract Local() {
+    function spend(int amount, int index) {
+        int[2] weights = [1, 2];
+        weights[index] = 4;
+        require(amount >= weights[0]);
+    }
+}
+"#,
+    )
+    .expect_err("runtime-index assignment must be rejected")
+    .to_string();
+
+    assert!(error.contains("runtime index"), "unexpected error: {error}");
+}
+
+#[test]
+fn array_literal_size_must_match_the_declaration() {
+    let error = compile(
+        r#"
+contract Local() {
+    function spend(int amount) {
+        int[3] weights = [1, 2];
+        require(amount >= weights[0]);
+    }
+}
+"#,
+    )
+    .expect_err("element count mismatch must be rejected")
+    .to_string();
+
+    assert!(
+        error.contains("int[3]") && error.contains("int[2]"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn array_literals_are_rejected_outside_array_declarations() {
+    let error = compile(
+        r#"
+contract Local() {
+    function spend(int amount) {
+        let weights = [1, 2];
+        require(amount >= weights);
+    }
+}
+"#,
+    )
+    .expect_err("array literal outside an array declaration must be rejected")
+    .to_string();
+
+    assert!(error.contains("array literal"), "unexpected error: {error}");
 }

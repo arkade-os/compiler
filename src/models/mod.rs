@@ -351,6 +351,8 @@ pub enum Expression {
     Literal(String),
     /// Property access (e.g., tx.time)
     Property(String),
+    /// Array literal; only valid as the initializer of an array declaration.
+    ArrayLiteral(Vec<Expression>),
     /// Array element selected by an integer expression.
     ArrayIndex {
         array: String,

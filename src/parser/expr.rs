@@ -206,6 +206,11 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 index: Box::new(parse_general_expression(index)?),
             })
         }
+        Rule::array_literal => Ok(Expression::ArrayLiteral(
+            pair.into_inner()
+                .map(parse_general_expression)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
         Rule::array_length_access => {
             let array = pair
                 .into_inner()

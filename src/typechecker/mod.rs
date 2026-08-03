@@ -207,6 +207,11 @@ fn check_statement(
                 .map(ArkType::parse)
                 .unwrap_or(inferred);
             // Seed the scope so downstream uses of `name` get the inferred type.
+            if let ArkType::Array(element, length) = &t {
+                for i in 0..*length {
+                    scope.insert(format!("{name}[{i}]"), (**element).clone());
+                }
+            }
             scope.insert(name.clone(), t);
         }
         Statement::VarAssign { name, value } => {
@@ -504,6 +509,15 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .unwrap_or(ArkType::Unknown),
         Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         Expression::Literal(_) => ArkType::Int,
+        Expression::ArrayLiteral(elements) => ArkType::Array(
+            Box::new(
+                elements
+                    .first()
+                    .map(|element| infer_type(element, scope))
+                    .unwrap_or(ArkType::Unknown),
+            ),
+            elements.len(),
+        ),
         Expression::ArrayIndex { array, .. } => match scope.get(array) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,

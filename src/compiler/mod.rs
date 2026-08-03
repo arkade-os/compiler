@@ -417,6 +417,12 @@ impl Generator {
                     .to_string(),
             );
         }
+        if matches!(expression, Expression::ArrayLiteral(_)) {
+            return Err(
+                "array literals may only initialize an array declaration; composite values are not supported"
+                    .to_string(),
+            );
+        }
         if matches!(
             expression,
             Expression::GroupIOAccess {
@@ -463,6 +469,17 @@ impl Generator {
     }
 
     fn assign(&mut self, name: &str) -> Result<(), String> {
+        if let Some((array, element)) = name.strip_suffix(']').and_then(|n| n.split_once('[')) {
+            if element.parse::<usize>().is_err() {
+                // Writing at a runtime depth needs a write-at-depth opcode
+                // (see docs: OP_PUT); emulating it costs one guarded write per
+                // element. Lift this once the VM provides that primitive.
+                return Err(format!(
+                    "assignment to '{array}' at a runtime index is not supported; use a literal index"
+                ));
+            }
+        }
+        let name = &Self::internal_binding_name(name);
         let index = self
             .binding_index(name)
             .ok_or_else(|| format!("assignment to undeclared binding '{name}'"))?;
@@ -804,10 +821,36 @@ fn generate_asm_from_statements_recursive(
                     }
                 }
             }
-            Statement::LetBinding { name, value, .. } => {
-                generator.emit_expression(value)?;
-                generator.bind_local(name)?;
-            }
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => match (
+                declared_type
+                    .as_deref()
+                    .and_then(crate::models::array_type_parts),
+                value,
+            ) {
+                (Some((_, length)), Expression::ArrayLiteral(elements)) => {
+                    if elements.len() != length {
+                        return Err(format!(
+                            "array '{name}' declares {length} elements but its initializer has {}",
+                            elements.len()
+                        ));
+                    }
+                    // Deepest element last, so element 0 sits closest to the top —
+                    // the layout parameter arrays already have.
+                    for (index, element) in elements.iter().enumerate().rev() {
+                        generator.emit_expression(element)?;
+                        generator
+                            .bind_local(&internal_array_binding_name(name, &index.to_string()))?;
+                    }
+                }
+                _ => {
+                    generator.emit_expression(value)?;
+                    generator.bind_local(name)?;
+                }
+            },
             Statement::VarAssign { name, value } => {
                 generator.emit_expression(value)?;
                 generator.assign(name)?;

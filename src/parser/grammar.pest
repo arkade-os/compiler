@@ -77,7 +77,7 @@ let_binding = {
 // Variable assignment (reassignment without let keyword)
 // Must check for = but not == or >= or <=
 var_assign = {
-    identifier ~ "=" ~ !("=") ~ general_expression ~ ";"
+    (array_index_access | identifier) ~ "=" ~ !("=") ~ general_expression ~ ";"
 }
 
 // Require statement
@@ -168,6 +168,7 @@ primary_expr = {
     constructor |
     function_call |
     array_index_access |
+    array_literal |
     bool_literal |
     number_literal |
     identifier
@@ -443,9 +444,9 @@ method_arg = {
     number_literal | identifier
 }
 
-// Array literal
+// Array literal — initializes a local array declaration
 array_literal = {
-    "[" ~ complex_expression ~ ("," ~ complex_expression)* ~ "]"
+    "[" ~ general_expression ~ ("," ~ general_expression)* ~ "]"
 }
 
 // Function call

@@ -371,6 +371,8 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
 
         Expression::ArrayIndex { index, .. } => vec![index],
 
+        Expression::ArrayLiteral(elements) => elements.iter().collect(),
+
         Expression::AssetLookup {
             index,
             asset_txid,
@@ -597,7 +599,22 @@ fn validate_binding_statements(
                 declared_type,
                 value,
             } => {
-                validate_binding_expression(value, function_name, scopes, issues, true);
+                // Array literals are the one composite value allowed in a value
+                // position, and only here; validate their elements instead.
+                match value {
+                    Expression::ArrayLiteral(elements) => {
+                        for element in elements {
+                            validate_binding_expression(
+                                element,
+                                function_name,
+                                scopes,
+                                issues,
+                                true,
+                            );
+                        }
+                    }
+                    _ => validate_binding_expression(value, function_name, scopes, issues, true),
+                }
                 let inferred = resolved_expression_type(value, scopes);
                 let binding_type = declared_type
                     .as_deref()
@@ -615,16 +632,38 @@ fn validate_binding_statements(
                         inferred.as_str()
                     )));
                 }
-                scopes
+                if matches!(value, Expression::ArrayLiteral(_))
+                    && declared_type
+                        .as_deref()
+                        .and_then(crate::models::array_type_parts)
+                        .is_none()
+                {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': array literal needs a declared array type, as in 'int[2] {} = …'",
+                        function_name, name
+                    )));
+                }
+                let frame = scopes
                     .last_mut()
-                    .expect("binding validation always has a scope")
-                    .insert(
-                        name.clone(),
-                        BindingInfo {
-                            binding_type,
-                            source: BindingSource::Local,
-                        },
-                    );
+                    .expect("binding validation always has a scope");
+                if let ArkType::Array(element, length) = &binding_type {
+                    for index in 0..*length {
+                        frame.insert(
+                            format!("{name}[{index}]"),
+                            BindingInfo {
+                                binding_type: (**element).clone(),
+                                source: BindingSource::Local,
+                            },
+                        );
+                    }
+                }
+                frame.insert(
+                    name.clone(),
+                    BindingInfo {
+                        binding_type,
+                        source: BindingSource::Local,
+                    },
+                );
             }
             Statement::VarAssign { name, value } => {
                 validate_binding_expression(value, function_name, scopes, issues, true);

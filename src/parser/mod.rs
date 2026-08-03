@@ -197,7 +197,8 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
                 .next()
                 .ok_or_else(|| "Parse error: Missing variable name in assignment".to_string())?
                 .as_str()
-                .to_string();
+                .split_whitespace()
+                .collect::<String>();
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
