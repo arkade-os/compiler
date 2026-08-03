@@ -154,8 +154,20 @@ fn substitute_loop_name(
             .unwrap_or_else(|| k.to_string());
     }
     if let Some(open) = name.find('[') {
-        if name.ends_with(']') && &name[open + 1..name.len() - 1] == index_var {
-            return internal_array_binding_name(&name[..open], &k.to_string());
+        if name.ends_with(']') {
+            let index = &name[open + 1..name.len() - 1];
+            if index == index_var {
+                return internal_array_binding_name(&name[..open], &k.to_string());
+            }
+            if index == value_var {
+                if let Some(array) = array_name {
+                    return format!(
+                        "{}[{}]",
+                        &name[..open],
+                        internal_array_binding_name(array, &k.to_string())
+                    );
+                }
+            }
         }
     }
     name.to_string()
@@ -179,6 +191,12 @@ pub(crate) fn substitute_expression(
                 Expression::Literal(k.to_string())
             }
         }
+        Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
+            array: array.clone(),
+            index: Box::new(substitute_expression(
+                index, index_var, value_var, k, array_name,
+            )),
+        },
         Expression::GroupProperty { group, property } => Expression::GroupProperty {
             group: substitute_loop_name(group, index_var, value_var, k, array_name),
             property: property.clone(),
@@ -195,6 +213,14 @@ pub(crate) fn substitute_expression(
                             arr_name,
                             &k.to_string(),
                         ));
+                    }
+                    if idx == value_var {
+                        if let Some(array) = array_name {
+                            return Expression::Property(format!(
+                                "{arr_name}[{}]",
+                                internal_array_binding_name(array, &k.to_string())
+                            ));
+                        }
                     }
                 }
             }

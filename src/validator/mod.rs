@@ -369,6 +369,8 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         | Expression::CheckSigFromStackExpr { .. }
         | Expression::CheckSigFromStackVerify { .. } => vec![],
 
+        Expression::ArrayIndex { index, .. } => vec![index],
+
         Expression::AssetLookup {
             index,
             asset_txid,
@@ -759,6 +761,26 @@ fn validate_named_binding(
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    if let Some((_, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
+        if index.parse::<usize>().is_err() {
+            match find_binding(scopes, index) {
+                None => issues.push(ValidationIssue::error(format!(
+                    "function '{}': array index '{}' is undefined",
+                    function_name, index
+                ))),
+                Some(binding) if binding.binding_type != ArkType::Int => {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': array index '{}' has type '{}', expected 'int'",
+                        function_name,
+                        index,
+                        binding.binding_type.as_str()
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
     match find_binding(scopes, name) {
         None => issues.push(ValidationIssue::error(format!(
             "function '{}': {} '{}' is undefined",
@@ -983,6 +1005,40 @@ fn validate_binding_expression(
     match expression {
         Expression::Variable(name) => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
+        }
+        Expression::ArrayIndex { array, index } => {
+            match find_binding(scopes, array) {
+                None => issues.push(ValidationIssue::error(format!(
+                    "function '{}': array '{}' is undefined",
+                    function_name, array
+                ))),
+                Some(binding) if !matches!(binding.binding_type, ArkType::Array(_)) => {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': binding '{}' is not an array",
+                        function_name, array
+                    )));
+                }
+                Some(_) => {}
+            }
+            let index_type = resolved_expression_type(index, scopes);
+            if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': array index has type '{}', expected 'int'",
+                    function_name,
+                    index_type.as_str()
+                )));
+            }
+            if let Expression::Literal(index) = index.as_ref() {
+                if index
+                    .parse::<usize>()
+                    .map_or(true, |index| index >= crate::models::DEFAULT_ARRAY_LENGTH)
+                {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': array index '{}' is out of range",
+                        function_name, index
+                    )));
+                }
+            }
         }
         Expression::Property(name) if name.contains('[') => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);

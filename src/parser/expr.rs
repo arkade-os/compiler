@@ -193,6 +193,19 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
         Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
+        Rule::array_index_access => {
+            let mut inner = pair.into_inner();
+            let array = inner
+                .next()
+                .ok_or("Missing array name")?
+                .as_str()
+                .to_string();
+            let index = inner.next().ok_or("Missing array index")?;
+            Ok(Expression::ArrayIndex {
+                array,
+                index: Box::new(parse_general_expression(index)?),
+            })
+        }
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
         Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
         Rule::check_sig => {

@@ -171,8 +171,13 @@ primary_expr = {
     identifier
 }
 
-// Array indexing: identifier[index]
+// Array indexing: identifier[integer expression]
 array_index_access = {
+    identifier ~ "[" ~ general_expression ~ "]"
+}
+
+// Named operands are string-backed; widen them to Expression before accepting computed indices.
+named_array_index_access = {
     identifier ~ "[" ~ (identifier | number_literal) ~ "]"
 }
 
@@ -467,7 +472,7 @@ check_sig_from_stack = {
 }
 
 // Signature function argument: identifier or array access
-sig_arg = { array_index_access | identifier }
+sig_arg = { named_array_index_access | identifier }
 
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }

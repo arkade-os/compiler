@@ -16,6 +16,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", var));
         }
         Expression::Literal(lit) => push_literal_asm(lit, asm),
+        Expression::ArrayIndex { array, index } => {
+            if let Expression::Literal(index) = index.as_ref() {
+                asm.push(format!("<{array}[{index}]>"));
+            } else {
+                emit_expression_asm(index, asm);
+                asm.push(format!("{INTERNAL_ARRAY_INDEX_PREFIX}{array}"));
+            }
+        }
         Expression::Property(prop) => {
             // Map the introspector "this" properties to their dedicated opcodes
             // (the parser stores them as Property strings; resolving them here

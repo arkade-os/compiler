@@ -355,6 +355,11 @@ pub enum Expression {
     Literal(String),
     /// Property access (e.g., tx.time)
     Property(String),
+    /// Array element selected by an integer expression.
+    ArrayIndex {
+        array: String,
+        index: Box<Expression>,
+    },
     /// Current input access (tx.input.current)
     CurrentInput(Option<String>),
     /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or

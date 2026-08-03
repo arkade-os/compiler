@@ -1,6 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_DROP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_IF, OP_MUL, OP_PICK, OP_ROLL,
+    OP_ADD, OP_DROP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
+    OP_MUL, OP_PICK, OP_ROLL,
 };
 
 fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
@@ -157,4 +158,132 @@ contract GroupIndices() {
         "each unrolled group value must read its flattened input binding"
     );
     assert!(covenant.asm.iter().all(|token| !token.contains("$array:")));
+}
+
+#[test]
+fn runtime_array_indices_are_bounded_and_pick_by_computed_depth() {
+    let covenant = covenant(
+        r#"
+contract RuntimeIndex() {
+    function spend(int[] values, int index) {
+        require(values[index] >= 0);
+    }
+}
+"#,
+        "spend",
+    );
+
+    for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_ADD, OP_PICK] {
+        assert!(
+            covenant.asm.iter().any(|token| token == opcode),
+            "runtime index must emit {opcode}: {:?}",
+            covenant.asm
+        );
+    }
+    assert!(contains_tokens(
+        &covenant.asm,
+        &[
+            "OP_3",
+            OP_PICK,
+            "OP_0",
+            OP_PICK,
+            "OP_0",
+            OP_GREATERTHANOREQUAL,
+            "OP_VERIFY",
+            "OP_0",
+            OP_PICK,
+            "OP_3",
+            OP_LESSTHAN,
+            "OP_VERIFY",
+            "OP_0",
+            OP_ADD,
+            OP_PICK,
+        ],
+    ));
+}
+
+#[test]
+fn array_index_accepts_integer_expressions() {
+    let covenant = covenant(
+        r#"
+contract ExpressionIndex() {
+    function spend(int[] values, int x, int y) {
+        require(values[x * y + 3] >= 0);
+    }
+}
+"#,
+        "spend",
+    );
+
+    assert!(contains_tokens(&covenant.asm, &[OP_MUL, "3", OP_ADD]));
+    assert!(contains_tokens(
+        &covenant.asm,
+        &[OP_GREATERTHANOREQUAL, "OP_VERIFY"]
+    ));
+    assert!(contains_tokens(&covenant.asm, &[OP_LESSTHAN, "OP_VERIFY"]));
+}
+
+#[test]
+fn literal_array_indices_remain_static() {
+    let covenant = covenant(
+        r#"
+contract StaticIndex() {
+    function spend(int[] values, int expected) {
+        require(values[2] == expected);
+    }
+}
+"#,
+        "spend",
+    );
+
+    assert!(!covenant.asm.iter().any(|token| token == OP_LESSTHAN));
+    assert!(!covenant
+        .asm
+        .iter()
+        .any(|token| token == OP_GREATERTHANOREQUAL));
+}
+
+#[test]
+fn runtime_array_indices_work_in_named_crypto_operands_and_loop_values() {
+    let cases = [
+        r#"
+contract RuntimeIndex(pubkey[] keys) {
+    function spend(signature sig, bytes32 msg, int index) {
+        require(checkSigFromStack(sig, keys[index], msg));
+    }
+}
+"#,
+        r#"
+contract LoopValueIndex() {
+    function spend(int[] indices, int[] values) {
+        for (i, index) in indices {
+            require(values[index] >= 0);
+        }
+    }
+}
+"#,
+    ];
+
+    for source in cases {
+        compile(source).expect("runtime array index must compile");
+    }
+}
+
+#[test]
+fn runtime_array_index_must_be_an_integer() {
+    let source = r#"
+contract RuntimeIndex() {
+    function spend(int[] values, bytes index) {
+        require(values[index] >= 0);
+    }
+}
+"#;
+
+    let error = compile(source)
+        .expect_err("non-integer array index must be rejected")
+        .to_string();
+    assert!(
+        error.contains("expected 'int'"),
+        "unexpected error: {error}"
+    );
 }

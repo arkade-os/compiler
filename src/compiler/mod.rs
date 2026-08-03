@@ -58,6 +58,7 @@ enum StackItem {
 
 // `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
+const INTERNAL_ARRAY_INDEX_PREFIX: &str = "$array-index:";
 
 fn internal_array_binding_name(array: &str, index: &str) -> String {
     format!("{INTERNAL_ARRAY_BINDING_PREFIX}{array}:{index}")
@@ -133,24 +134,77 @@ impl Generator {
         if name.starts_with(INTERNAL_ARRAY_BINDING_PREFIX) {
             return name.to_string();
         }
-        if let Some(open) = name.find('[') {
-            if name.ends_with(']') {
-                return internal_array_binding_name(&name[..open], &name[open + 1..name.len() - 1]);
+        if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
+            if index.parse::<usize>().is_ok() {
+                return internal_array_binding_name(array, index);
             }
         }
         name.to_string()
     }
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
+        if let Some((array, index)) = name
+            .trim()
+            .strip_suffix(']')
+            .and_then(|name| name.split_once('['))
+        {
+            if index.parse::<usize>().is_err() {
+                return self.read_indexed_binding(array, index);
+            }
+        }
         let name = Self::internal_binding_name(name);
+        self.read_static_binding(&name)
+    }
+
+    fn read_static_binding(&mut self, name: &str) -> Result<(), String> {
         let index = self
-            .binding_index(&name)
+            .binding_index(name)
             .ok_or_else(|| format!("undefined binding '{name}'"))?;
         let depth = self.stack.len() - 1 - index;
         self.push_depth(depth);
         self.asm.push(OP_PICK.to_string());
         self.stack.push(StackItem::Temporary);
         Ok(())
+    }
+
+    fn push_integer_temporary(&mut self, value: usize) {
+        self.push_temporary(if value <= 16 {
+            format!("OP_{value}")
+        } else {
+            value.to_string()
+        });
+    }
+
+    fn read_indexed_binding(&mut self, array: &str, index: &str) -> Result<(), String> {
+        self.read_binding(index)?;
+        self.select_indexed_value(array)
+    }
+
+    fn select_indexed_value(&mut self, array: &str) -> Result<(), String> {
+        let first_element = internal_array_binding_name(array, "0");
+        let first_index = self
+            .binding_index(&first_element)
+            .ok_or_else(|| format!("undefined array binding '{array}'"))?;
+        let first_depth = self.stack.len() - 1 - first_index;
+        let first_depth_without_index = first_depth.checked_sub(1).ok_or_else(|| {
+            format!("internal compiler error: array index for '{array}' is not on the stack")
+        })?;
+
+        self.push_integer_temporary(0);
+        self.apply(OP_PICK, 1, 1)?;
+        self.push_integer_temporary(0);
+        self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
+        self.apply(OP_VERIFY, 1, 0)?;
+
+        self.push_integer_temporary(0);
+        self.apply(OP_PICK, 1, 1)?;
+        self.push_integer_temporary(DEFAULT_ARRAY_LENGTH);
+        self.apply(OP_LESSTHAN, 2, 1)?;
+        self.apply(OP_VERIFY, 1, 0)?;
+
+        self.push_integer_temporary(first_depth_without_index);
+        self.apply(OP_ADD, 2, 1)?;
+        self.apply(OP_PICK, 1, 1)
     }
 
     fn read_binding_or_integer(&mut self, value: &str) -> Result<(), String> {
@@ -289,6 +343,9 @@ impl Generator {
     }
 
     fn lower_raw_token(&mut self, token: &str) -> Result<(), String> {
+        if let Some(array) = token.strip_prefix(INTERNAL_ARRAY_INDEX_PREFIX) {
+            return self.select_indexed_value(array);
+        }
         if token.starts_with("<VTXO:") {
             self.push_temporary(token);
             return Ok(());

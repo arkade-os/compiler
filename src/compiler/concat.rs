@@ -148,6 +148,20 @@ impl ConcatPass {
         scope: &Scope,
     ) -> (Expression, ArkType) {
         match expr {
+            Expression::ArrayIndex { array, index } => {
+                let (index, _) = self.rewrite_expression_concat(*index, scope);
+                let result_type = match scope.get(&array) {
+                    Some(ArkType::Array(element)) => (**element).clone(),
+                    _ => ArkType::Unknown,
+                };
+                (
+                    Expression::ArrayIndex {
+                        array,
+                        index: Box::new(index),
+                    },
+                    result_type,
+                )
+            }
             Expression::BinaryOp { left, op, right } => {
                 let (new_l, lt) = self.rewrite_expression_concat(*left, scope);
                 let (new_r, rt) = self.rewrite_expression_concat(*right, scope);

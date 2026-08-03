@@ -348,6 +348,16 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
 
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
     match expr {
+        Expression::ArrayIndex { array, index } => {
+            check_expression(index, scope, errors, fn_name);
+            let index_type = infer_type(index, scope);
+            if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
+                errors.push(TypeError::new(format!(
+                    "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
+                    index_type.as_str()
+                )));
+            }
+        }
         Expression::BinaryOp { left, op, right } => {
             check_expression(left, scope, errors, fn_name);
             check_expression(right, scope, errors, fn_name);
@@ -493,6 +503,10 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .unwrap_or(ArkType::Unknown),
         Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         Expression::Literal(_) => ArkType::Int,
+        Expression::ArrayIndex { array, .. } => match scope.get(array) {
+            Some(ArkType::Array(element)) => (**element).clone(),
+            _ => ArkType::Unknown,
+        },
         Expression::Property(property) => scope
             .get(property.trim())
             .cloned()
