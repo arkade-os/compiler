@@ -1,6 +1,6 @@
 use crate::models::{
     ArkadeCovenant, CompilerInfo, ContractJson, Expression, Function, FunctionInput, Parameter,
-    Requirement, Statement, DEFAULT_ARRAY_LENGTH,
+    Requirement, Statement,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
@@ -56,6 +56,11 @@ enum StackItem {
     Temporary,
 }
 
+/// `tx.assetGroups` carries no declared size, so `for … in tx.assetGroups`
+/// unrolls this many iterations. Ceiling: groups past the third are not
+/// visited; raise this once the VM exposes a group-count bound.
+const ASSET_GROUP_LOOP_ITERATIONS: usize = 3;
+
 // `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
 const INTERNAL_ARRAY_INDEX_PREFIX: &str = "$array-index:";
@@ -97,7 +102,7 @@ impl Generator {
                 expanded_placeholders.push(format!("<{placeholder}>"));
                 constructor_bindings.push((placeholder, binding_name));
             });
-            if parameter.param_type.ends_with("[]") {
+            if crate::models::array_type_parts(&parameter.param_type).is_some() {
                 constructor_array_expansions.push((
                     format!("<{}>", parameter.name),
                     expanded_placeholders.join(","),
@@ -138,6 +143,17 @@ impl Generator {
         self.stack.iter().position(
             |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
         )
+    }
+
+    /// Element count of an array binding, read off the symbolic stack: its
+    /// elements are bound as `$array:name:0 … $array:name:N-1`.
+    fn array_length(&self, array: &str) -> usize {
+        (0..)
+            .take_while(|i| {
+                self.binding_index(&internal_array_binding_name(array, &i.to_string()))
+                    .is_some()
+            })
+            .count()
     }
 
     fn internal_binding_name(name: &str) -> String {
@@ -209,7 +225,7 @@ impl Generator {
 
         self.push_integer_temporary(0);
         self.apply(OP_PICK, 1, 1)?;
-        self.push_integer_temporary(DEFAULT_ARRAY_LENGTH);
+        self.push_integer_temporary(self.array_length(array));
         self.apply(OP_LESSTHAN, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)?;
 
@@ -693,8 +709,8 @@ fn expand_function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
 }
 
 fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String, String)) {
-    if let Some(base_type) = param.param_type.strip_suffix("[]") {
-        for i in 0..DEFAULT_ARRAY_LENGTH {
+    if let Some((base_type, length)) = crate::models::array_type_parts(&param.param_type) {
+        for i in 0..length {
             f(
                 format!("{}_{}", param.name, i),
                 internal_array_binding_name(&param.name, &i.to_string()),
@@ -762,7 +778,11 @@ fn generate_asm_from_statements_recursive(
                     Expression::Variable(array_name) => Some(array_name.as_str()),
                     _ => return Err("unsupported loop iterable".to_string()),
                 };
-                for k in 0..DEFAULT_ARRAY_LENGTH {
+                let iterations = match array_name {
+                    Some(array) => generator.array_length(array),
+                    None => ASSET_GROUP_LOOP_ITERATIONS,
+                };
+                for k in 0..iterations {
                     let substituted =
                         substitute_loop_body(body, index_var, value_var, k, array_name);
                     let baseline = generator.stack.clone();

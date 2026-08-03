@@ -51,7 +51,7 @@ fn test_threshold_oracle_has_control_flow() {
 fn test_threshold_oracle_constructor_array_flattening() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    // pubkey[] oracles should be flattened to oracles_0, oracles_1, oracles_2
+    // pubkey[3] oracles should be flattened to oracles_0, oracles_1, oracles_2
     // in the constructorInputs (default 3 elements)
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
 
@@ -88,7 +88,7 @@ fn test_threshold_oracle_constructor_array_flattening() {
 fn test_threshold_oracle_witness_array_flattening() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    // signature[] oracleSigs should be flattened to oracleSigs_0, oracleSigs_1, oracleSigs_2
+    // signature[3] oracleSigs should be flattened to oracleSigs_0, oracleSigs_1, oracleSigs_2
     // in the arkade covenant inputs (function parameters going into the covenant)
     let input_names = arkade_inputs(&output, "attest");
 

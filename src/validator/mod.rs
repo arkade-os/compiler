@@ -494,16 +494,17 @@ fn insert_parameters(
     source: BindingSource,
 ) {
     for parameter in parameters {
-        if let Some(element_type) = parameter.param_type.strip_suffix("[]") {
+        if let Some((element_type, length)) = crate::models::array_type_parts(&parameter.param_type)
+        {
             let element_type = ArkType::parse(element_type);
             frame.insert(
                 parameter.name.clone(),
                 BindingInfo {
-                    binding_type: ArkType::Array(Box::new(element_type.clone())),
+                    binding_type: ArkType::Array(Box::new(element_type.clone()), length),
                     source,
                 },
             );
-            for index in 0..crate::models::DEFAULT_ARRAY_LENGTH {
+            for index in 0..length {
                 frame.insert(
                     format!("{}[{}]", parameter.name, index),
                     BindingInfo {
@@ -690,7 +691,7 @@ fn validate_binding_statements(
                 let element_type = match iterable {
                     Expression::Variable(name) => match find_binding(scopes, name) {
                         Some(BindingInfo {
-                            binding_type: ArkType::Array(element),
+                            binding_type: ArkType::Array(element, _),
                             ..
                         }) => (**element).clone(),
                         Some(binding) => {
@@ -912,7 +913,7 @@ fn validate_binding_expression(
     if value_position
         && matches!(
             resolved_expression_type(expression, scopes),
-            ArkType::Array(_)
+            ArkType::Array(..)
         )
     {
         issues.push(ValidationIssue::error(format!(
@@ -993,18 +994,22 @@ fn validate_binding_expression(
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
         Expression::ArrayIndex { array, index } => {
+            let mut length = None;
             match find_binding(scopes, array) {
                 None => issues.push(ValidationIssue::error(format!(
                     "function '{}': array '{}' is undefined",
                     function_name, array
                 ))),
-                Some(binding) if !matches!(binding.binding_type, ArkType::Array(_)) => {
+                Some(BindingInfo {
+                    binding_type: ArkType::Array(_, declared_length),
+                    ..
+                }) => length = Some(*declared_length),
+                Some(_) => {
                     issues.push(ValidationIssue::error(format!(
                         "function '{}': binding '{}' is not an array",
                         function_name, array
                     )));
                 }
-                Some(_) => {}
             }
             let index_type = resolved_expression_type(index, scopes);
             if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
@@ -1014,14 +1019,11 @@ fn validate_binding_expression(
                     index_type.as_str()
                 )));
             }
-            if let Expression::Literal(index) = index.as_ref() {
-                if index
-                    .parse::<usize>()
-                    .map_or(true, |index| index >= crate::models::DEFAULT_ARRAY_LENGTH)
-                {
+            if let (Expression::Literal(index), Some(length)) = (index.as_ref(), length) {
+                if index.parse::<usize>().map_or(true, |i| i >= length) {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': array index '{}' is out of range",
-                        function_name, index
+                        "function '{}': array index '{}' is out of range for '{}[{}]'",
+                        function_name, index, array, length
                     )));
                 }
             }

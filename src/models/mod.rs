@@ -4,19 +4,15 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-/// The number of elements that array-typed parameters (e.g. `pubkey[]`) are
-/// flattened into throughout the pipeline.
+/// Split a declared type string into element type and length when it is an
+/// array type (`"pubkey[3]"` → `("pubkey", 3)`), otherwise `None`.
 ///
-/// This single constant governs:
-/// - Constructor / function input flattening in the compiler
-/// - Witness schema generation (`pubkey_0 … pubkey_N`)
-/// - Compile-time loop unrolling (`for (k, v) in arr`)
-/// - Scope expansion in the type checker
-///
-/// Raising this value increases the size of every compiled tapscript that
-/// uses array parameters; lower it to tighten script sizes when contracts
-/// only need fewer elements.
-pub const DEFAULT_ARRAY_LENGTH: usize = 3;
+/// Array lengths are static and always present: the grammar has no unsized
+/// array type.
+pub fn array_type_parts(declared_type: &str) -> Option<(&str, usize)> {
+    let (element, length) = declared_type.strip_suffix(']')?.split_once('[')?;
+    Some((element, length.parse().ok()?))
+}
 
 // JSON output structures.
 // These represent the compiled contract in a serializable format.

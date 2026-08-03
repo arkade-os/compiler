@@ -77,7 +77,7 @@ contract IntMath(int a, int b) {
 fn test_loop_body_substitutes_index_through_byte_ops() {
     let code = r#"
 contract LoopHash(bytes32 tag) {
-  function check(int[] prices) {
+  function check(int[3] prices) {
     for (i, p) in prices {
       let m = sha256(tag + num2bin(p, 8));
       require(m == tag);

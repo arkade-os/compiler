@@ -286,7 +286,7 @@ fn rejects_bad_gidx_in_if_condition_predicate() {
 fn accepts_loop_index_as_gidx() {
     // The loop index variable is statically Int, so it is a valid gidx operand.
     let src = "contract C(bytes32 fooTxid, pubkey pk) {
-            function f(signature sig, signature[] sigs) {
+            function f(signature sig, signature[3] sigs) {
                 for (i, s) in sigs {
                     require(tx.outputs[i].assets.lookup(fooTxid, i) >= 1);
                 }

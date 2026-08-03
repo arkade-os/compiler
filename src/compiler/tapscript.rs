@@ -462,9 +462,9 @@ fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<St
 }
 
 fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElement>) {
-    if let Some(base) = p.param_type.strip_suffix("[]") {
+    if let Some((base, length)) = crate::models::array_type_parts(&p.param_type) {
         let t = ArkType::parse(base);
-        for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
+        for i in 0..length {
             out.push(WitnessElement {
                 name: format!("{}_{}", p.name, i),
                 elem_type: base.to_string(),

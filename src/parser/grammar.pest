@@ -25,9 +25,10 @@ parameter = { data_type ~ identifier }
 
 // Supported data types - atomic rule to prevent partial matches
 // Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
-// Array types use [] suffix (e.g., pubkey[], signature[])
+// Array types carry a static size (e.g., pubkey[3], signature[5])
 base_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
-data_type = { base_type ~ ("[]")? }
+array_size = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+data_type = { base_type ~ ("[" ~ array_size ~ "]")? }
 
 // Function definition. A `tapscript` modifier selects an L1 tapleaf body
 // (require-only); otherwise it is an ordinary covenant function body.

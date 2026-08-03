@@ -55,8 +55,8 @@ contract Demo(int amount) {
 fn allows_reassignment_of_local() {
     // `int valid = 0;` then `valid = valid + 1;` — the documented pattern.
     let src = r#"
-contract Demo(pubkey[] ks) {
-  function f(signature[] sigs, bytes32 msg) {
+contract Demo(pubkey[3] ks) {
+  function f(signature[3] sigs, bytes32 msg) {
     int valid = 0;
     for (i, s) in sigs {
       if (checkSigFromStack(s, ks[i], msg)) {
@@ -117,8 +117,8 @@ contract Demo(int limit) {
 #[test]
 fn rejects_inner_loop_var_shadowing_outer_loop_var() {
     let src = r#"
-contract Demo(pubkey[] ks) {
-  function f(signature[] sigs, bytes32 msg) {
+contract Demo(pubkey[3] ks) {
+  function f(signature[3] sigs, bytes32 msg) {
     for (i, s) in sigs {
       for (i, t) in sigs {
         require(checkSigFromStack(s, ks[i], msg));
@@ -141,7 +141,7 @@ contract Demo(pubkey[] ks) {
 fn rejects_loop_var_shadowing_constructor_param() {
     let src = r#"
 contract Demo(int i) {
-  function f(signature[] sigs, pubkey[] ks, bytes32 msg) {
+  function f(signature[3] sigs, pubkey[3] ks, bytes32 msg) {
     for (i, s) in sigs {
       require(checkSigFromStack(s, ks[i], msg));
     }
@@ -160,8 +160,8 @@ contract Demo(int i) {
 #[test]
 fn rejects_identical_loop_variables() {
     let src = r#"
-contract Demo(pubkey[] ks) {
-  function f(signature[] sigs, bytes32 msg) {
+contract Demo(pubkey[3] ks) {
+  function f(signature[3] sigs, bytes32 msg) {
     for (x, x) in sigs {
       require(checkSigFromStack(x, ks[0], msg));
     }
@@ -176,9 +176,9 @@ contract Demo(pubkey[] ks) {
 
 #[test]
 fn rejects_array_element_colliding_with_scalar_param() {
-    // Constructor `int[] xs` -> xs_0, xs_1, xs_2 ; function `int xs_0` -> xs_0.
+    // Constructor `int[3] xs` -> xs_0, xs_1, xs_2 ; function `int xs_0` -> xs_0.
     let src = r#"
-contract Demo(int[] xs) {
+contract Demo(int[3] xs) {
   function f(int xs_0) {
     require(xs_0 >= 1);
   }
@@ -197,7 +197,7 @@ contract Demo(int[] xs) {
 fn flattened_abi_names_do_not_alias_array_elements() {
     let cases = [
         r#"
-contract Demo(int[] xs) {
+contract Demo(int[3] xs) {
   function f() {
     require(xs_0 >= 1);
   }
@@ -205,14 +205,14 @@ contract Demo(int[] xs) {
 "#,
         r#"
 contract Demo() {
-  function f(int[] xs) {
+  function f(int[3] xs) {
     xs_0 = 5;
     require(xs[0] >= 1);
   }
 }
 "#,
         r#"
-contract Demo(pubkey[] keys) {
+contract Demo(pubkey[3] keys) {
   function f(signature sig, bytes32 msg) {
     require(checkSigFromStack(sig, keys_0, msg));
   }
@@ -234,7 +234,7 @@ contract Demo(pubkey[] keys) {
 #[test]
 fn source_bindings_can_reuse_flattened_abi_names() {
     let source = r#"
-contract Demo(int[] xs) {
+contract Demo(int[3] xs) {
   function f() {
     let xs_0 = 1;
     require(xs[0] >= xs_0);
@@ -254,7 +254,7 @@ contract Demo(int[] xs) {
 fn rejects_tapscript_array_expansion_collisions() {
     let cases = [
         r#"
-contract Demo(pubkey[] owners) {
+contract Demo(pubkey[3] owners) {
   function leaf(signature sig, pubkey owners_0) tapscript {
     require(checkSig(sig, owners_0));
   }
@@ -262,7 +262,7 @@ contract Demo(pubkey[] owners) {
 "#,
         r#"
 contract Demo(pubkey owner) {
-  function leaf(signature[] sigs, signature sigs_0) tapscript {
+  function leaf(signature[3] sigs, signature sigs_0) tapscript {
     require(checkSig(sigs_0, owner));
   }
 }
@@ -284,8 +284,8 @@ contract Demo(pubkey owner) {
 fn accepts_sibling_scope_reuse() {
     // let x in both branches; the same loop vars in two separate loops.
     let src = r#"
-contract Demo(pubkey[] ks) {
-  function f(signature[] sigs, bytes32 msg, int flag) {
+contract Demo(pubkey[3] ks) {
+  function f(signature[3] sigs, bytes32 msg, int flag) {
     if (flag >= 1) {
       int x = 1;
       require(x >= 1);

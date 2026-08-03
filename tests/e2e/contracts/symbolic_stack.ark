@@ -10,7 +10,7 @@ contract SymbolicStackStress(
     int carry,
     int selector,
     int expected,
-    int[] values,
+    int[3] values,
     signature ownerSig,
     pubkey attestor,
     signature attestSig,

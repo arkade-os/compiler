@@ -108,7 +108,7 @@ impl ConcatPass {
                 // The element type decides whether concatenating the loop value
                 // needs an explicit num2bin, so carry it rather than Unknown.
                 let element_type = match iter_type {
-                    ArkType::Array(inner) => *inner,
+                    ArkType::Array(inner, _) => *inner,
                     _ => ArkType::Unknown,
                 };
                 loop_scope.insert(value_var.clone(), element_type);
@@ -151,7 +151,7 @@ impl ConcatPass {
             Expression::ArrayIndex { array, index } => {
                 let (index, _) = self.rewrite_expression_concat(*index, scope);
                 let result_type = match scope.get(&array) {
-                    Some(ArkType::Array(element)) => (**element).clone(),
+                    Some(ArkType::Array(element, _)) => (**element).clone(),
                     _ => ArkType::Unknown,
                 };
                 (
