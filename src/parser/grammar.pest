@@ -82,7 +82,7 @@ let_binding = {
 // Variable assignment (reassignment without let keyword)
 // Must check for = but not == or >= or <=
 var_assign = {
-    (array_index_access | identifier) ~ "=" ~ !("=") ~ general_expression ~ ";"
+    (identifier_property_access | array_index_access | identifier) ~ "=" ~ !("=") ~ general_expression ~ ";"
 }
 
 // Require statement
@@ -167,9 +167,9 @@ primary_expr = {
     tx_introspection |
     group_control_is |
     array_length_access |
-    identifier_property_access |
     tx_property_access |
     this_property_access |
+    identifier_property_access |
     constructor |
     function_call |
     array_index_access |
@@ -241,6 +241,8 @@ complex_expression = _{
     tx_property_access |
     this_property_access |
     function_call |
+    identifier_property_access |
+    array_index_access |
     identifier |
     number_literal |
     array_literal
@@ -341,9 +343,9 @@ group_control_is = {
     identifier ~ "." ~ "controlIs" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
 }
 
-// Identifier property access: variable.property (e.g., group.sumInputs, tokenGroup.delta)
+// Named field path, optionally ending in an array index.
 identifier_property_access = {
-    identifier ~ "." ~ group_property
+    identifier ~ ("." ~ identifier)+ ~ ("[" ~ general_expression ~ "]")?
 }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
@@ -463,7 +465,7 @@ function_call = {
 
 // Key expression: a bare pubkey identifier (server, emulator, owner, …) or an
 // explicit emulator tweak. Used only inside checkSig/checkMultisig.
-key_expr = { tweak_key | identifier }
+key_expr = { tweak_key | named_binding }
 
 // Explicit emulator tweak: tweak(emulator, funcName)
 tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" }
@@ -473,7 +475,7 @@ key_array = { "[" ~ key_expr ~ ("," ~ key_expr)* ~ "]" }
 
 // CheckSig expression — key position accepts a key expression (incl. tweak()).
 check_sig = {
-    "checkSig" ~ "(" ~ identifier ~ "," ~ key_expr ~ ")"
+    "checkSig" ~ "(" ~ named_binding ~ "," ~ key_expr ~ ")"
 }
 
 // CheckSigFromStack expression
@@ -483,7 +485,7 @@ check_sig_from_stack = {
 }
 
 // Signature function argument: identifier or array access
-sig_arg = { named_array_index_access | identifier }
+sig_arg = { named_binding }
 
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }
@@ -496,7 +498,16 @@ check_threshold_multisig = {
 
 // Array of identifiers
 array = {
-    "[" ~ identifier ~ ("," ~ identifier)* ~ "]"
+    "[" ~ named_binding ~ ("," ~ named_binding)* ~ "]"
+}
+
+// Named operands used by crypto checks. Dynamic indices here remain limited
+// to a single binding because these AST nodes store operand names directly.
+named_binding = @{
+    identifier ~ (
+        ("." ~ identifier)+ ~ ("[" ~ (identifier | number_literal) ~ "]")? |
+        "[" ~ (identifier | number_literal) ~ "]"
+    )?
 }
 
 // SHA256 function. Accepts any additive expression so concatenation chains
@@ -585,7 +596,7 @@ byte_value = {
     input_introspection |
     output_introspection |
     asset_at |
-    identifier
+    named_binding
 }
 
 // Substring extraction: substr(data, offset, size) → OP_SUBSTR

@@ -248,14 +248,13 @@ pub fn validate_arkd_rules(
     c: &Closure,
     min_exit_delay: Option<u64>,
 ) -> Result<(), String> {
+    let constructor_scope =
+        crate::typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
     // Pubkeys in scope: constructor pubkey params + pubkey tapscript inputs.
     let in_scope = |name: &str| -> bool {
         name == "server"
             || name == "emulator"
-            || contract
-                .parameters
-                .iter()
-                .any(|p| p.name == name && p.param_type == "pubkey")
+            || constructor_scope.get(name) == Some(&ArkType::Pubkey)
             || ts
                 .inputs
                 .iter()
@@ -273,8 +272,7 @@ pub fn validate_arkd_rules(
 
     // Any declared name (constructor param or tapscript input), any type.
     let name_declared = |name: &str| -> bool {
-        contract.parameters.iter().any(|p| p.name == name)
-            || ts.inputs.iter().any(|p| p.name == name)
+        constructor_scope.contains_key(name) || ts.inputs.iter().any(|p| p.name == name)
     };
     // A declared `signature` input.
     let sig_input = |name: &str| -> bool {
@@ -495,10 +493,12 @@ pub fn build_function_groups(
             Binding::Standalone => ts.name.clone(),
         };
 
+        let mut asm = emit_leaf_asm(&closure, &ts.name, &binding);
+        resolve_constructor_field_placeholders(&mut asm, contract)?;
         grouped.entry(group_key).or_default().push(AbiLeaf {
             name: ts.name.clone(),
             witness: leaf_witness(ts),
-            asm: emit_leaf_asm(&closure, &ts.name, &binding),
+            asm,
         });
     }
 
@@ -528,6 +528,33 @@ pub fn build_function_groups(
     }
 
     Ok(groups)
+}
+
+fn resolve_constructor_field_placeholders(
+    asm: &mut [String],
+    contract: &Contract,
+) -> Result<(), String> {
+    let replacements = contract
+        .parameters
+        .iter()
+        .map(|parameter| crate::models::flatten_parameter(parameter, &contract.structs))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .filter(|leaf| leaf.access_name != leaf.emitted_name)
+        .map(|leaf| {
+            (
+                format!("<{}>", leaf.access_name),
+                format!("<{}>", leaf.emitted_name),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    for token in asm {
+        if let Some(replacement) = replacements.get(token) {
+            *token = replacement.clone();
+        }
+    }
+    Ok(())
 }
 
 /// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], …, 2).

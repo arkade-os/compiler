@@ -286,19 +286,44 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::asset_at => parse_asset_at_to_expression(pair),
         Rule::group_control_is => parse_group_control_is_to_expression(pair),
         Rule::identifier_property_access => {
-            let mut inner = pair.into_inner();
-            Ok(Expression::GroupProperty {
-                group: inner
-                    .next()
-                    .ok_or("Missing group name")?
-                    .as_str()
-                    .to_string(),
-                property: inner
-                    .next()
-                    .ok_or("Missing group property")?
-                    .as_str()
-                    .to_string(),
-            })
+            let text = pair.as_str().trim().to_string();
+            let mut inner = pair.into_inner().collect::<Vec<_>>();
+            if inner
+                .last()
+                .is_some_and(|part| part.as_rule() == Rule::general_expression)
+            {
+                let index = inner.pop().ok_or("Missing field array index")?;
+                let array = inner
+                    .iter()
+                    .map(|part| part.as_str())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                return Ok(Expression::ArrayIndex {
+                    array,
+                    index: Box::new(parse_general_expression(index)?),
+                });
+            }
+            let parts = inner.iter().map(|part| part.as_str()).collect::<Vec<_>>();
+            if parts.len() == 2
+                && matches!(
+                    parts[1],
+                    "numInputs"
+                        | "numOutputs"
+                        | "sumInputs"
+                        | "sumOutputs"
+                        | "delta"
+                        | "hasControl"
+                        | "metadataHash"
+                        | "assetId"
+                        | "isFresh"
+                )
+            {
+                return Ok(Expression::GroupProperty {
+                    group: parts[0].to_string(),
+                    property: parts[1].to_string(),
+                });
+            }
+            Ok(Expression::Property(text))
         }
         Rule::input_introspection => parse_input_introspection_to_expression(pair),
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
@@ -380,6 +405,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::output_introspection => parse_output_introspection_to_expression(inner),
         Rule::asset_at => parse_asset_at_to_expression(inner),
         Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
+        Rule::named_binding => Ok(Expression::Property(inner.as_str().to_string())),
         r => Err(format!("Unsupported byte_value rule: {:?}", r)),
     }
 }

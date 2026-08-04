@@ -129,24 +129,57 @@ impl TypeError {
 
 pub type Scope = HashMap<String, ArkType>;
 
-pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
+pub fn build_scope_with_structs(
+    params: &[crate::models::Parameter],
+    structs: &[crate::models::StructDefinition],
+) -> Scope {
     let mut scope = Scope::new();
     for p in params {
-        if let Some((base, length)) = crate::models::array_type_parts(&p.param_type) {
-            let elem_type = ArkType::parse(base);
-            // Register the bare name as the array type, plus each indexed element.
-            scope.insert(
-                p.name.clone(),
-                ArkType::Array(Box::new(elem_type.clone()), length),
-            );
-            for i in 0..length {
-                scope.insert(format!("{}[{}]", p.name, i), elem_type.clone());
-            }
-        } else {
-            scope.insert(p.name.clone(), ArkType::parse(&p.param_type));
-        }
+        insert_type_bindings(&mut scope, &p.name, &p.param_type, structs, &mut Vec::new());
     }
     scope
+}
+
+fn insert_type_bindings(
+    scope: &mut Scope,
+    name: &str,
+    declared_type: &str,
+    structs: &[crate::models::StructDefinition],
+    stack: &mut Vec<String>,
+) {
+    if let Some((base, length)) = crate::models::array_type_parts(declared_type) {
+        let element_type = ArkType::parse(base);
+        scope.insert(
+            name.to_string(),
+            ArkType::Array(Box::new(element_type.clone()), length),
+        );
+        for index in 0..length {
+            scope.insert(format!("{name}[{index}]"), element_type.clone());
+        }
+        return;
+    }
+    if let Some(definition) = structs
+        .iter()
+        .find(|definition| definition.name == declared_type)
+    {
+        scope.insert(name.to_string(), ArkType::Struct(declared_type.to_string()));
+        if stack.iter().any(|name| name == declared_type) {
+            return;
+        }
+        stack.push(declared_type.to_string());
+        for field in &definition.fields {
+            insert_type_bindings(
+                scope,
+                &format!("{name}.{}", field.name),
+                &field.param_type,
+                structs,
+                stack,
+            );
+        }
+        stack.pop();
+        return;
+    }
+    scope.insert(name.to_string(), ArkType::parse(declared_type));
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -156,18 +189,22 @@ pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
 /// Returns all type errors found across all functions.
 /// Currently non-fatal — the compiler emits these as warnings.
 pub fn check_contract(contract: &Contract) -> Vec<TypeError> {
-    let constructor_scope = build_scope(&contract.parameters);
+    let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     contract
         .functions
         .iter()
-        .flat_map(|f| check_function(f, &constructor_scope))
+        .flat_map(|f| check_function(f, &constructor_scope, &contract.structs))
         .collect()
 }
 
-fn check_function(function: &Function, constructor_scope: &Scope) -> Vec<TypeError> {
+fn check_function(
+    function: &Function,
+    constructor_scope: &Scope,
+    structs: &[crate::models::StructDefinition],
+) -> Vec<TypeError> {
     let mut scope = constructor_scope.clone();
     // Merge function parameters into scope
-    scope.extend(build_scope(&function.parameters));
+    scope.extend(build_scope_with_structs(&function.parameters, structs));
 
     let mut errors = Vec::new();
     check_statements(
@@ -446,9 +483,11 @@ fn check_comparison(
     if left_type == ArkType::Unknown || right_type == ArkType::Unknown {
         return;
     }
-    if matches!(left_type, ArkType::Array(..)) || matches!(right_type, ArkType::Array(..)) {
+    if matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
+        || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..))
+    {
         errors.push(TypeError::new(format!(
-            "fn {}: array comparison '{}' is not supported",
+            "fn {}: composite comparison '{}' is not supported",
             fn_name, op
         )));
         return;

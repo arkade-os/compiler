@@ -73,12 +73,16 @@ struct Generator {
 }
 
 impl Generator {
-    fn new(function_parameters: &[Parameter], constructor_parameters: &[Parameter]) -> Self {
+    fn new(
+        function_parameters: &[Parameter],
+        constructor_parameters: &[Parameter],
+        structs: &[crate::models::StructDefinition],
+    ) -> Result<Self, String> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
-            for_each_expanded_param(parameter, |_, binding_name, _| {
+            for_each_expanded_param(parameter, structs, |_, binding_name, _| {
                 function_bindings.push(binding_name);
-            });
+            })?;
         }
         let mut stack = function_bindings
             .into_iter()
@@ -93,11 +97,13 @@ impl Generator {
         let mut constructor_array_expansions = Vec::new();
         for parameter in constructor_parameters {
             let mut expanded_placeholders = Vec::new();
-            for_each_expanded_param(parameter, |placeholder, binding_name, _| {
+            for_each_expanded_param(parameter, structs, |placeholder, binding_name, _| {
                 expanded_placeholders.push(format!("<{placeholder}>"));
                 constructor_bindings.push((placeholder, binding_name));
-            });
-            if crate::models::array_type_parts(&parameter.param_type).is_some() {
+            })?;
+            if expanded_placeholders.len() != 1
+                || expanded_placeholders[0] != format!("<{}>", parameter.name)
+            {
                 constructor_array_expansions.push((
                     format!("<{}>", parameter.name),
                     expanded_placeholders.join(","),
@@ -112,13 +118,13 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        Self {
+        Ok(Self {
             asm,
             stack,
             scopes: Vec::new(),
             alt_depth: 0,
             constructor_array_expansions,
-        }
+        })
     }
 
     fn push_depth(&mut self, depth: usize) {
@@ -669,7 +675,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     for function in contract.functions.iter().filter(|f| !f.is_internal) {
         covenants.insert(
             function.name.clone(),
-            covenant_for(function, &contract.parameters)?,
+            covenant_for(function, &contract.parameters, &contract.structs)?,
         );
     }
 
@@ -698,23 +704,27 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 /// `pubkey[3]`) flatten to `name_0`, `name_1`, `name_2`; every other param
 /// passes through unchanged. This is the `<name>` namespace in `asm`, not the
 /// artifact ABI, which keeps one entry per source parameter.
-pub(crate) fn expanded_placeholder_params(params: &[Parameter]) -> Vec<Parameter> {
+pub(crate) fn expanded_placeholder_params(
+    params: &[Parameter],
+    structs: &[crate::models::StructDefinition],
+) -> Result<Vec<Parameter>, String> {
     let mut result = Vec::new();
     for param in params {
-        for_each_expanded_param(param, |name, _, param_type| {
+        for_each_expanded_param(param, structs, |name, _, param_type| {
             result.push(Parameter { name, param_type });
-        });
+        })?;
     }
-    result
+    Ok(result)
 }
 
 /// Build an `ArkadeCovenant` for a non-internal function.
 fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
+    structs: &[crate::models::StructDefinition],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
-    let mut generator = Generator::new(&function.parameters, constructor_parameters);
+    let mut generator = Generator::new(&function.parameters, constructor_parameters, structs)?;
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })
@@ -730,22 +740,16 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
         .collect()
 }
 
-fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String, String)) {
-    if let Some((base_type, length)) = crate::models::array_type_parts(&param.param_type) {
-        for i in 0..length {
-            f(
-                format!("{}_{}", param.name, i),
-                internal_array_binding_name(&param.name, &i.to_string()),
-                base_type.to_string(),
-            );
-        }
-    } else {
-        f(
-            param.name.clone(),
-            param.name.clone(),
-            param.param_type.clone(),
-        );
+fn for_each_expanded_param(
+    param: &Parameter,
+    structs: &[crate::models::StructDefinition],
+    mut f: impl FnMut(String, String, String),
+) -> Result<(), String> {
+    for leaf in crate::models::flatten_parameter(param, structs)? {
+        let binding_name = Generator::internal_binding_name(&leaf.access_name);
+        f(leaf.emitted_name, binding_name, leaf.leaf_type);
     }
+    Ok(())
 }
 
 /// Recursively generate assembly from statements
@@ -795,8 +799,9 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let Expression::Variable(array_name) = iterable else {
-                    return Err("unsupported loop iterable".to_string());
+                let array_name = match iterable {
+                    Expression::Variable(name) | Expression::Property(name) => name,
+                    _ => return Err("unsupported loop iterable".to_string()),
                 };
                 let array_name = array_name.as_str();
                 for k in 0..generator.array_length(array_name) {
@@ -1018,7 +1023,7 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             })
             .collect::<Vec<_>>();
-        let mut generator = Generator::new(&inputs, &[]);
+        let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
 
         generator.push_temporary("9");
         generator.assign("d").expect("deep assignment");

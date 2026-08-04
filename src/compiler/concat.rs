@@ -29,10 +29,14 @@ struct ConcatPass {
 
 pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) -> Result<(), String> {
     let mut pass = ConcatPass::default();
-    let constructor_scope = crate::typechecker::build_scope(&contract.parameters);
+    let constructor_scope =
+        crate::typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
     for function in &mut contract.functions {
         let mut scope = constructor_scope.clone();
-        scope.extend(crate::typechecker::build_scope(&function.parameters));
+        scope.extend(crate::typechecker::build_scope_with_structs(
+            &function.parameters,
+            &contract.structs,
+        ));
         pass.rewrite_statements_concat(&mut function.statements, &mut scope);
     }
     if pass.errors.is_empty() {

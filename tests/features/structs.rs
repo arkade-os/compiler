@@ -1,4 +1,5 @@
 use arkade_compiler::compile;
+use arkade_compiler::opcodes::{OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_LESSTHAN};
 
 #[test]
 fn struct_definitions_are_preserved_in_the_artifact() {
@@ -107,4 +108,164 @@ contract C(pubkey owner) {
     .to_string();
 
     assert!(error.contains("struct witnesses are not supported"));
+}
+
+#[test]
+fn nested_struct_parameters_flatten_and_fields_read_by_stack_depth() {
+    let output = compile(
+        r#"
+struct Signer {
+    pubkey key;
+    int weight;
+}
+
+struct Policy {
+    Signer primary;
+    int[2] limits;
+}
+
+contract Vault(Policy policy) {
+    function spend(Policy candidate, signature sig, bytes32 message) {
+        require(checkSigFromStack(sig, policy.primary.key, message));
+        require(candidate.limits[1] >= policy.primary.weight);
+        require(policy.limits.length == 2);
+    }
+}
+"#,
+    )
+    .expect("nested struct fields should compile");
+
+    assert_eq!(output.parameters[0].param_type, "Policy");
+    let arkade = output.functions[0].arkade.as_ref().expect("covenant");
+    assert_eq!(arkade.inputs[0].name, "candidate");
+    assert_eq!(arkade.inputs[0].param_type, "Policy");
+    assert_eq!(
+        &arkade.asm[..4],
+        [
+            "<policy_limits_1>",
+            "<policy_limits_0>",
+            "<policy_primary_weight>",
+            "<policy_primary_key>",
+        ]
+    );
+    assert!(arkade.asm.iter().any(|token| token == OP_CHECKSIGFROMSTACK));
+    assert!(arkade.asm[4..]
+        .iter()
+        .all(|token| !token.contains("policy.")));
+}
+
+#[test]
+fn unknown_fields_and_bare_struct_values_are_rejected() {
+    let unknown = compile(
+        r#"
+struct Point { int x; int y; }
+contract C(Point point) {
+    function spend() { require(point.z == 0); }
+}
+"#,
+    )
+    .expect_err("unknown field")
+    .to_string();
+    assert!(
+        unknown.contains("field 'point.z' is undefined"),
+        "{unknown}"
+    );
+
+    let composite = compile(
+        r#"
+struct Point { int x; int y; }
+contract C(Point point) {
+    function spend() { require(point == point); }
+}
+"#,
+    )
+    .expect_err("bare struct")
+    .to_string();
+    assert!(
+        composite.contains("struct expressions are composite values"),
+        "{composite}"
+    );
+}
+
+#[test]
+fn constructor_struct_arguments_expand_recursively() {
+    let output = compile(
+        r#"
+struct Point { int x; int y; }
+contract C(Point point) {
+    function renew() {
+        require(tx.outputs[0].scriptPubKey == new C(point));
+    }
+}
+"#,
+    )
+    .expect("whole constructor struct argument");
+
+    assert!(output.functions[0]
+        .arkade
+        .as_ref()
+        .expect("covenant")
+        .asm
+        .contains(&"<VTXO:C(<point_x>,<point_y>)>".to_string()));
+}
+
+#[test]
+fn constructor_struct_fields_are_available_to_tapscripts() {
+    let output = compile(
+        r#"
+struct Owner { pubkey key; int exit; }
+contract C(Owner owner) {
+    function exit(signature sig) tapscript {
+        require(older(owner.exit));
+        require(checkSig(sig, owner.key));
+    }
+}
+"#,
+    )
+    .expect("scalar constructor fields in tapscript");
+
+    let asm = &output.functions[0].leaves[0].asm;
+    assert!(asm.contains(&"<owner_exit>".to_string()));
+    assert!(asm.contains(&"<owner_key>".to_string()));
+    assert!(asm.contains(&OP_CHECKSIG.to_string()));
+}
+
+#[test]
+fn array_fields_support_runtime_indexing_and_loop_unrolling() {
+    let output = compile(
+        r#"
+struct Values { int[3] items; }
+contract C(Values values) {
+    function spend(int index, int expected) {
+        int total = 0;
+        for (i, value) in values.items {
+            total = total + value;
+        }
+        require(values.items[index] + total == expected);
+    }
+}
+"#,
+    )
+    .expect("array fields should retain array behavior");
+
+    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    assert!(asm.windows(2).any(|tokens| tokens == ["OP_3", OP_LESSTHAN]));
+    assert!(asm.iter().filter(|token| token.as_str() == OP_ADD).count() >= 4);
+}
+
+#[test]
+fn flattened_struct_names_cannot_collide() {
+    let error = compile(
+        r#"
+struct Inner { int b; }
+struct Ambiguous { int a_b; Inner a; }
+contract C(Ambiguous value) {
+    function spend() { require(true); }
+}
+"#,
+    )
+    .expect_err("flattened fields collide")
+    .to_string();
+
+    assert!(error.contains("value_a_b"), "{error}");
 }

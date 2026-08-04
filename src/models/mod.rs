@@ -40,6 +40,86 @@ pub struct StructDefinition {
     pub fields: Vec<Parameter>,
 }
 
+/// One scalar leaf in a recursively flattened parameter layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeLeaf {
+    /// Source path used by expressions, such as `policy.owner.key`.
+    pub access_name: String,
+    /// Artifact and placeholder name, such as `policy_owner_key`.
+    pub emitted_name: String,
+    pub leaf_type: String,
+}
+
+pub fn flatten_parameter(
+    parameter: &Parameter,
+    structs: &[StructDefinition],
+) -> Result<Vec<TypeLeaf>, String> {
+    let mut leaves = Vec::new();
+    flatten_type(
+        &parameter.name,
+        &parameter.name,
+        &parameter.param_type,
+        structs,
+        &mut Vec::new(),
+        &mut leaves,
+    )?;
+    Ok(leaves)
+}
+
+fn flatten_type(
+    access_name: &str,
+    emitted_name: &str,
+    declared_type: &str,
+    structs: &[StructDefinition],
+    stack: &mut Vec<String>,
+    leaves: &mut Vec<TypeLeaf>,
+) -> Result<(), String> {
+    if let Some((element_type, length)) = array_type_parts(declared_type) {
+        if !is_builtin_type(element_type) {
+            return Err(format!(
+                "arrays of structs are not supported: '{declared_type}'"
+            ));
+        }
+        for index in 0..length {
+            leaves.push(TypeLeaf {
+                access_name: format!("{access_name}[{index}]"),
+                emitted_name: format!("{emitted_name}_{index}"),
+                leaf_type: element_type.to_string(),
+            });
+        }
+        return Ok(());
+    }
+    if is_builtin_type(declared_type) {
+        leaves.push(TypeLeaf {
+            access_name: access_name.to_string(),
+            emitted_name: emitted_name.to_string(),
+            leaf_type: declared_type.to_string(),
+        });
+        return Ok(());
+    }
+
+    let definition = structs
+        .iter()
+        .find(|definition| definition.name == declared_type)
+        .ok_or_else(|| format!("unknown type '{declared_type}'"))?;
+    if stack.iter().any(|name| name == declared_type) {
+        return Err(format!("recursive struct layout: {declared_type}"));
+    }
+    stack.push(declared_type.to_string());
+    for field in &definition.fields {
+        flatten_type(
+            &format!("{access_name}.{}", field.name),
+            &format!("{emitted_name}_{}", field.name),
+            &field.param_type,
+            structs,
+            stack,
+            leaves,
+        )?;
+    }
+    stack.pop();
+    Ok(())
+}
+
 /// Function input parameter
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FunctionInput {

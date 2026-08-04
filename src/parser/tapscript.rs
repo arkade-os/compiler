@@ -189,7 +189,7 @@ pub(crate) fn parse_tap_multisig(pair: Pair<Rule>) -> Result<crate::models::TapI
 pub(crate) fn parse_key_expr(pair: Pair<Rule>) -> Result<crate::models::KeyExpr, String> {
     use crate::models::KeyExpr;
     match pair.as_rule() {
-        Rule::identifier => Ok(KeyExpr::Ident(pair.as_str().to_string())),
+        Rule::identifier | Rule::named_binding => Ok(KeyExpr::Ident(pair.as_str().to_string())),
         Rule::key_expr => {
             let inner = pair.into_inner().next().ok_or("Empty key expression")?;
             parse_key_expr(inner)
