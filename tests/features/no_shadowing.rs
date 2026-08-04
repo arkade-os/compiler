@@ -252,7 +252,9 @@ contract Demo(int[3] xs) {
 
 #[test]
 fn rejects_tapscript_array_expansion_collisions() {
-    let cases = [
+    // Tapscript inputs cannot be arrays, so the collision can only come from a
+    // constructor array expanding onto a declared tapscript input name.
+    let error = compile(
         r#"
 contract Demo(pubkey[3] owners) {
   function leaf(signature sig, pubkey owners_0) tapscript {
@@ -260,24 +262,13 @@ contract Demo(pubkey[3] owners) {
   }
 }
 "#,
-        r#"
-contract Demo(pubkey owner) {
-  function leaf(signature[3] sigs, signature sigs_0) tapscript {
-    require(checkSig(sigs_0, owner));
-  }
-}
-"#,
-    ];
-
-    for source in cases {
-        let error = compile(source)
-            .expect_err("expanded tapscript names must not collide")
-            .to_string();
-        assert!(
-            error.contains("collide in the emitted namespace"),
-            "unexpected error: {error}"
-        );
-    }
+    )
+    .expect_err("expanded tapscript names must not collide")
+    .to_string();
+    assert!(
+        error.contains("collide in the emitted namespace"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]

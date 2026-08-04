@@ -436,9 +436,8 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
     asm
 }
 
-/// Derive the leaf witness from the tapscript inputs: one entry per source
-/// input, array types carrying their size. Clients expand an array entry into
-/// its `name_0 … name_{N-1}` stack items.
+/// Derive the leaf witness from the tapscript inputs, one entry per input.
+/// Tapscript inputs are scalars; the validator rejects array types here.
 pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
     let mut out = Vec::new();
     let injected = injected_signature_names(ts);

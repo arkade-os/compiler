@@ -192,6 +192,13 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
                     ts.name, p.name
                 )));
             }
+            if crate::models::array_type_parts(&p.param_type).is_some() {
+                issues.push(ValidationIssue::error(format!(
+                    "tapscript '{}' input '{}' has array type '{}'; array witnesses are not \
+                     supported in tapscript functions",
+                    ts.name, p.name, p.param_type
+                )));
+            }
         }
         // Duplicate input names within a tapscript.
         let mut seen = std::collections::HashSet::new();

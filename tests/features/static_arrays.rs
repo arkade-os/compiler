@@ -302,3 +302,27 @@ contract Groups() {
         "unexpected error: {error}"
     );
 }
+
+#[test]
+fn array_inputs_are_rejected_in_tapscript_functions() {
+    let error = compile(
+        r#"
+contract Demo(pubkey owner) {
+    function spend(signature sig) {
+        require(checkSig(sig, owner));
+    }
+
+    function leaf(signature sig, signature[3] extras) tapscript {
+        require(checkSig(sig, owner));
+    }
+}
+"#,
+    )
+    .expect_err("array witnesses are not supported in tapscript functions")
+    .to_string();
+
+    assert!(
+        error.contains("array witnesses are not supported"),
+        "unexpected error: {error}"
+    );
+}

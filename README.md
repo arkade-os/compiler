@@ -293,7 +293,7 @@ contract FujiSafe(
 - `bool`: Boolean value
 - `asset`: Asset identifier (for asset-aware contracts)
 
-Any type can be declared as a fixed-size array by appending a size: `pubkey[5] oracles`, `signature[5] sigs`. The size is part of the type and must be a positive integer literal; there is no unsized array type. Array parameters are flattened into one input per element (`oracles_0 … oracles_4`), `for` loops over them unroll once per element, and each element is one stack item — so large sizes grow the compiled script proportionally.
+Any type can be declared as a fixed-size array by appending a size: `pubkey[5] oracles`, `signature[5] sigs`. The size is part of the type and must be a positive integer literal; there is no unsized array type. Array parameters are flattened into one input per element (`oracles_0 … oracles_4`), `for` loops over them unroll once per element, and each element is one stack item — so large sizes grow the compiled script proportionally. Arrays are allowed in constructor and covenant function parameters; `tapscript` function inputs must be scalars.
 
 ### Contract Structure
 
