@@ -627,6 +627,27 @@ fn validate_binding_statements(
                     .as_deref()
                     .map(ArkType::parse)
                     .unwrap_or_else(|| inferred.clone());
+                // The inferred array type only carries the first element's type,
+                // so check every element against the declared element type.
+                if let (Expression::ArrayLiteral(elements), ArkType::Array(element_type, _)) =
+                    (value, &binding_type)
+                {
+                    for (index, element) in elements.iter().enumerate() {
+                        let actual = resolved_expression_type(element, scopes);
+                        if actual != ArkType::Unknown
+                            && !binding_types_compatible(element_type, &actual)
+                        {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{}': element {} of array '{}' has type '{}', expected '{}'",
+                                function_name,
+                                index,
+                                name,
+                                actual.as_str(),
+                                element_type.as_str()
+                            )));
+                        }
+                    }
+                }
                 if declared_type.is_some()
                     && inferred != ArkType::Unknown
                     && !binding_types_compatible(&binding_type, &inferred)

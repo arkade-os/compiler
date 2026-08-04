@@ -148,6 +148,24 @@ impl ConcatPass {
         scope: &Scope,
     ) -> (Expression, ArkType) {
         match expr {
+            Expression::ArrayLiteral(elements) => {
+                let mut element_type = ArkType::Unknown;
+                let rewritten = elements
+                    .into_iter()
+                    .map(|element| {
+                        let (element, t) = self.rewrite_expression_concat(element, scope);
+                        if element_type == ArkType::Unknown {
+                            element_type = t;
+                        }
+                        element
+                    })
+                    .collect::<Vec<_>>();
+                let length = rewritten.len();
+                (
+                    Expression::ArrayLiteral(rewritten),
+                    ArkType::Array(Box::new(element_type), length),
+                )
+            }
             Expression::ArrayIndex { array, index } => {
                 let (index, _) = self.rewrite_expression_concat(*index, scope);
                 let result_type = match scope.get(&array) {

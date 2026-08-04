@@ -1,5 +1,7 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_ADD, OP_CHECKSIGFROMSTACK, OP_DROP, OP_LESSTHAN, OP_ROLL};
+use arkade_compiler::opcodes::{
+    OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DROP, OP_LESSTHAN, OP_ROLL, OP_SWAP,
+};
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
     asm.windows(expected.len()).any(|window| {
@@ -324,5 +326,100 @@ contract Demo(pubkey owner) {
     assert!(
         error.contains("array witnesses are not supported"),
         "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn array_literal_elements_are_substituted_inside_loops() {
+    let output = compile(
+        r#"
+contract Local(int limit) {
+    function spend(int[2] xs) {
+        for (i, v) in xs {
+            int[2] pair = [v, i];
+            require(pair[0] + pair[1] >= limit);
+        }
+    }
+}
+"#,
+    )
+    .expect("loop variables inside an array literal must be unrolled");
+
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        asm.iter().all(|token| !token.contains("$array:")),
+        "internal bindings must not leak: {asm:?}"
+    );
+}
+
+#[test]
+fn array_literal_elements_are_rewritten_by_the_concat_pass() {
+    let output = compile(
+        r#"
+contract Parts(bytes32 a, bytes32 b, bytes expected) {
+    function spend(int amount) {
+        bytes[2] parts = [a + b, a];
+        require(parts[0] == expected);
+        require(amount > 0);
+    }
+}
+"#,
+    )
+    .expect("byte concatenation inside an array literal must compile");
+
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        asm.iter().any(|token| token == OP_CAT),
+        "adding two byte operands must emit {OP_CAT}, not arithmetic: {asm:?}"
+    );
+    assert!(
+        !asm.iter().any(|token| token == OP_ADD),
+        "byte concatenation must not emit {OP_ADD}: {asm:?}"
+    );
+}
+
+#[test]
+fn array_literal_element_types_must_match_the_declared_element_type() {
+    let error = compile(
+        r#"
+contract Local(bytes32 h) {
+    function spend(int amount, bytes32 other) {
+        bytes32[2] xs = [h, 5];
+        require(xs[1] == other);
+        require(amount > 0);
+    }
+}
+"#,
+    )
+    .expect_err("a heterogeneous array literal must be rejected")
+    .to_string();
+
+    assert!(
+        error.contains("element 1 of array 'xs' has type 'int', expected 'bytes32'"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn local_array_elements_are_assignable_at_a_nonzero_literal_index() {
+    let output = compile(
+        r#"
+contract Local() {
+    function spend(int amount) {
+        int[3] weights = [1, 2, 3];
+        weights[1] = 9;
+        require(amount >= (weights[0] + weights[1]) + weights[2]);
+    }
+}
+"#,
+    )
+    .expect("element assignment at a non-zero index must compile");
+
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    // Index 0 sits directly under the pushed value (depth 1, no walk-back);
+    // index 1 is one deeper and must be swapped back into place.
+    assert!(
+        contains_tokens(&asm, &["9", "OP_2", OP_ROLL, OP_DROP, OP_SWAP]),
+        "the write must roll the element at its own depth, not index 0's: {asm:?}"
     );
 }

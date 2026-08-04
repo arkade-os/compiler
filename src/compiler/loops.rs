@@ -183,6 +183,12 @@ pub(crate) fn substitute_expression(
         Expression::Variable(var) if var == value_var => {
             Expression::Variable(internal_array_binding_name(array_name, &k.to_string()))
         }
+        Expression::ArrayLiteral(elements) => Expression::ArrayLiteral(
+            elements
+                .iter()
+                .map(|element| substitute_expression(element, index_var, value_var, k, array_name))
+                .collect(),
+        ),
         Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
             array: array.clone(),
             index: Box::new(substitute_expression(
