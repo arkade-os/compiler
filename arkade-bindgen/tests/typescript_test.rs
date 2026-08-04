@@ -103,3 +103,24 @@ fn test_typescript_group_order_preserved() {
     assert!(claim < refund);
     assert!(refund < uni);
 }
+
+#[test]
+fn test_typescript_dotted_fields_remain_distinct() {
+    let artifact = arkade_compiler::compile(
+        r#"
+struct Inner { int b; }
+struct Ambiguous { int a_b; Inner a; }
+contract C(Ambiguous value) {
+    function spend() { require(true); }
+}
+"#,
+    )
+    .unwrap();
+    let json = serde_json::to_string(&artifact).unwrap();
+    let code = generate_from_str(&json, Target::TypeScript, &Options::default())
+        .unwrap()
+        .content;
+
+    assert!(code.contains("\"value.a_b\": bigint;"));
+    assert!(code.contains("\"value.a.b\": bigint;"));
+}

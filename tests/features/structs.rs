@@ -142,10 +142,10 @@ contract Vault(Policy policy) {
     assert_eq!(
         &arkade.asm[..4],
         [
-            "<policy_limits_1>",
-            "<policy_limits_0>",
-            "<policy_primary_weight>",
-            "<policy_primary_key>",
+            "<policy.limits.1>",
+            "<policy.limits.0>",
+            "<policy.primary.weight>",
+            "<policy.primary.key>",
         ]
     );
     assert!(arkade.asm.iter().any(|token| token == OP_CHECKSIGFROMSTACK));
@@ -206,7 +206,7 @@ contract C(Point point) {
         .as_ref()
         .expect("covenant")
         .asm
-        .contains(&"<VTXO:C(<point_x>,<point_y>)>".to_string()));
+        .contains(&"<VTXO:C(<point.x>,<point.y>)>".to_string()));
 }
 
 #[test]
@@ -225,8 +225,8 @@ contract C(Owner owner) {
     .expect("scalar constructor fields in tapscript");
 
     let asm = &output.functions[0].leaves[0].asm;
-    assert!(asm.contains(&"<owner_exit>".to_string()));
-    assert!(asm.contains(&"<owner_key>".to_string()));
+    assert!(asm.contains(&"<owner.exit>".to_string()));
+    assert!(asm.contains(&"<owner.key>".to_string()));
     assert!(asm.contains(&OP_CHECKSIG.to_string()));
 }
 
@@ -254,8 +254,8 @@ contract C(Values values) {
 }
 
 #[test]
-fn flattened_struct_names_cannot_collide() {
-    let error = compile(
+fn dotted_paths_distinguish_underscores_from_nesting() {
+    let output = compile(
         r#"
 struct Inner { int b; }
 struct Ambiguous { int a_b; Inner a; }
@@ -264,10 +264,12 @@ contract C(Ambiguous value) {
 }
 "#,
     )
-    .expect_err("flattened fields collide")
-    .to_string();
+    .expect("dotted field paths are unambiguous");
 
-    assert!(error.contains("value_a_b"), "{error}");
+    assert_eq!(
+        &output.functions[0].arkade.as_ref().expect("covenant").asm[..2],
+        ["<value.a.b>", "<value.a_b>"]
+    );
 }
 
 #[test]

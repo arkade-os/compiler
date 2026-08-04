@@ -45,7 +45,7 @@ pub struct StructDefinition {
 pub struct TypeLeaf {
     /// Source path used by expressions, such as `policy.owner.key`.
     pub access_name: String,
-    /// Artifact and placeholder name, such as `policy_owner_key`.
+    /// Artifact and placeholder name, such as `policy.owner.key`.
     pub emitted_name: String,
     pub leaf_type: String,
 }
@@ -83,7 +83,7 @@ fn flatten_type(
         for index in 0..length {
             leaves.push(TypeLeaf {
                 access_name: format!("{access_name}[{index}]"),
-                emitted_name: format!("{emitted_name}_{index}"),
+                emitted_name: format!("{emitted_name}.{index}"),
                 leaf_type: element_type.to_string(),
             });
         }
@@ -109,7 +109,7 @@ fn flatten_type(
     for field in &definition.fields {
         flatten_type(
             &format!("{access_name}.{}", field.name),
-            &format!("{emitted_name}_{}", field.name),
+            &format!("{emitted_name}.{}", field.name),
             &field.param_type,
             structs,
             stack,

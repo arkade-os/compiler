@@ -46,7 +46,7 @@ func TestStaticArrays(t *testing.T) {
 		"owner": schnorr.SerializePubKey(ownerKey.PubKey()),
 	}
 	for i, weight := range weights {
-		constructorValues[fmt.Sprintf("weights_%d", i)] = scriptInt(t, weight)
+		constructorValues[fmt.Sprintf("weights.%d", i)] = scriptInt(t, weight)
 	}
 	arrays := instantiateGroup(
 		t, contract, "spend", constructorValues, serverKey.PubKey(), emulatorKey.PubKey(),
@@ -117,7 +117,7 @@ func TestStaticArrays(t *testing.T) {
 				"ownerSig":   nil,
 			}
 			for i, sample := range testCase.samples {
-				values[fmt.Sprintf("samples_%d", i)] = scriptInt(t, sample)
+				values[fmt.Sprintf("samples.%d", i)] = scriptInt(t, sample)
 			}
 
 			deployment := fundingTx(arrays.pkScript, 10_000)

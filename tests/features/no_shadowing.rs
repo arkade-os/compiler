@@ -175,8 +175,7 @@ contract Demo(pubkey[3] ks) {
 }
 
 #[test]
-fn rejects_array_element_colliding_with_scalar_param() {
-    // Constructor `int[3] xs` -> xs_0, xs_1, xs_2 ; function `int xs_0` -> xs_0.
+fn dotted_array_elements_do_not_collide_with_scalar_params() {
     let src = r#"
 contract Demo(int[3] xs) {
   function f(int xs_0) {
@@ -184,55 +183,11 @@ contract Demo(int[3] xs) {
   }
 }
 "#;
-    let err = compile(src)
-        .expect_err("expected a namespace collision error")
-        .to_string();
-    assert!(
-        err.contains("collide in the emitted namespace"),
-        "unexpected error: {err}"
-    );
+    compile(src).expect("xs.0 and xs_0 are distinct placeholder names");
 }
 
 #[test]
-fn flattened_abi_names_do_not_alias_array_elements() {
-    let cases = [
-        r#"
-contract Demo(int[3] xs) {
-  function f() {
-    require(xs_0 >= 1);
-  }
-}
-"#,
-        r#"
-contract Demo() {
-  function f(int[3] xs) {
-    xs_0 = 5;
-    require(xs[0] >= 1);
-  }
-}
-"#,
-        r#"
-contract Demo(pubkey[3] keys) {
-  function f(signature sig, bytes32 msg) {
-    require(checkSigFromStack(sig, keys_0, msg));
-  }
-}
-"#,
-    ];
-
-    for source in cases {
-        let error = compile(source)
-            .expect_err("flattened ABI name must not resolve as an array element")
-            .to_string();
-        assert!(
-            error.contains("undefined") || error.contains("undeclared"),
-            "unexpected error: {error}"
-        );
-    }
-}
-
-#[test]
-fn source_bindings_can_reuse_flattened_abi_names() {
+fn underscore_names_remain_regular_source_bindings() {
     let source = r#"
 contract Demo(int[3] xs) {
   function f() {
@@ -251,24 +206,21 @@ contract Demo(int[3] xs) {
 }
 
 #[test]
-fn rejects_tapscript_array_expansion_collisions() {
-    // Tapscript inputs cannot be arrays, so the collision can only come from a
-    // constructor array expanding onto a declared tapscript input name.
-    let error = compile(
+fn dotted_array_elements_do_not_collide_with_tapscript_inputs() {
+    let output = compile(
         r#"
-contract Demo(pubkey[3] owners) {
-  function leaf(signature sig, pubkey owners_0) tapscript {
-    require(checkSig(sig, owners_0));
+contract Demo(pubkey[3] owners, int exitDelay) {
+  function unilateral(signature arraySig, signature scalarSig, pubkey owners_0) tapscript {
+    require(older(exitDelay));
+    require(checkMultisig([owners[0], owners_0], [arraySig, scalarSig], 2));
   }
 }
 "#,
     )
-    .expect_err("expanded tapscript names must not collide")
-    .to_string();
-    assert!(
-        error.contains("collide in the emitted namespace"),
-        "unexpected error: {error}"
-    );
+    .expect("owners.0 and owners_0 are distinct placeholder names");
+    let asm = &output.functions[0].leaves[0].asm;
+    assert!(asm.contains(&"<owners.0>".to_string()));
+    assert!(asm.contains(&"<owners_0>".to_string()));
 }
 
 #[test]

@@ -293,7 +293,7 @@ contract FujiSafe(
 - `bool`: Boolean value
 - `asset`: Asset identifier (for asset-aware contracts)
 
-Any type can be declared as a fixed-size array by appending a size: `pubkey[5] oracles`, `signature[5] sigs`. The size is part of the type and must be a positive integer literal; there is no unsized array type. Array parameters are flattened into one input per element (`oracles_0 … oracles_4`), `for` loops over them unroll once per element, and each element is one stack item — so large sizes grow the compiled script proportionally. Arrays are allowed in constructor and covenant function parameters; `tapscript` function inputs must be scalars.
+Any type can be declared as a fixed-size array by appending a size: `pubkey[5] oracles`, `signature[5] sigs`. The size is part of the type and must be a positive integer literal; there is no unsized array type. Array parameters are flattened into one input per element (`oracles.0` … `oracles.4`), `for` loops over them unroll once per element, and each element is one stack item — so large sizes grow the compiled script proportionally. Arrays are allowed in constructor and covenant function parameters; `tapscript` function inputs must be scalars.
 
 Named structs are declared before the contract. Their scalar leaves occupy separate stack items and may include nested structs or fixed arrays of scalar types:
 
@@ -470,9 +470,9 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 
 `constructorInputs`, `arkade.inputs` and each leaf's `witness` describe the source ABI: one entry per source parameter, in declaration order. They do not describe the physical VM stack order.
 
-An array parameter stays one entry carrying its size in the type (`{ "name": "oracles", "type": "pubkey[3]" }`). Each array element is a separate stack item and a separate `<name_i>` placeholder, so clients expand an array entry into `name_0 … name_{N-1}` in index order.
+An array parameter stays one entry carrying its size in the type (`{ "name": "oracles", "type": "pubkey[3]" }`). Each array element is a separate stack item and a separate `<name.i>` placeholder, so clients expand an array entry into `name.0` … `name.{N-1}` in index order.
 
-A struct parameter also stays grouped under its named type. Clients use the artifact's `structs` declarations to flatten its scalar leaves recursively in field declaration order. For example, `Policy policy` above expands to `policy_primary_key`, `policy_primary_weight`, `policy_limits_0`, and `policy_limits_1`.
+A struct parameter also stays grouped under its named type. Clients use the artifact's `structs` declarations to flatten its scalar leaves recursively in field declaration order. For example, `Policy policy` above expands to `policy.primary.key`, `policy.primary.weight`, `policy.limits.0`, and `policy.limits.1`. Period-separated path segments are unambiguous because source identifiers cannot contain periods.
 
 Clients serialize covenant function inputs in reverse `arkade.inputs` order. For example, source inputs `[amount, sig]` produce the physical bottom-to-top witness `[sig, amount]`.
 

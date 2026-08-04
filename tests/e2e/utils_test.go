@@ -171,7 +171,7 @@ func arrayTypeParts(typeStr string) (string, int) {
 }
 
 // expandInput maps one ABI entry to the stack items it contributes, deepest
-// first: an array entry becomes name_{N-1} … name_0, so element 0 ends up
+// first: an array entry becomes name.{N-1} … name.0, so element 0 ends up
 // closest to the top.
 func expandInput(input abiInput) []string {
 	_, length := arrayTypeParts(input.Type)
@@ -180,7 +180,7 @@ func expandInput(input abiInput) []string {
 	}
 	names := make([]string, 0, length)
 	for index := length - 1; index >= 0; index-- {
-		names = append(names, fmt.Sprintf("%s_%d", input.Name, index))
+		names = append(names, fmt.Sprintf("%s.%d", input.Name, index))
 	}
 	return names
 }

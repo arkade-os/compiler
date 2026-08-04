@@ -43,6 +43,19 @@ function toSnakeCase(s) {
     return splitWords(s).map(w => w.toLowerCase()).join('_');
 }
 
+function toGoFieldName(s) {
+    if (!s.includes('.')) return toPascalCase(s);
+    return [...s].map((ch, index) => {
+        if (ch === '.') return '_D';
+        if (ch === '_') return '_U';
+        return index === 0 ? ch.toUpperCase() : ch;
+    }).join('');
+}
+
+function tsFieldName(s) {
+    return s.includes('.') ? JSON.stringify(s) : toCamelCase(s);
+}
+
 // ─── Encoding inference ──────────────────────────────────────────────
 
 function inferEncoding(typeStr) {
@@ -63,13 +76,13 @@ function expandFields(name, typeStr, isInjected, structs = []) {
     if (array) {
         const [, elementType, length] = array;
         return Array.from({ length: Number(length) }, (_, index) =>
-            expandFields(`${name}_${index}`, elementType, isInjected, structs)
+            expandFields(`${name}.${index}`, elementType, isInjected, structs)
         ).flat();
     }
     const definition = structs.find(definition => definition.name === typeStr);
     if (definition) {
         return definition.fields.flatMap(field =>
-            expandFields(`${name}_${field.name}`, field.type, isInjected, structs)
+            expandFields(`${name}.${field.name}`, field.type, isInjected, structs)
         );
     }
     return [{ name, arkType: typeStr, encoding: inferEncoding(typeStr), isInjected }];
@@ -147,7 +160,7 @@ function generateTypeScript(ir) {
     out += `/** Constructor parameters for ${ir.name} */\n`;
     out += `export interface ${ir.name}Params {\n`;
     for (const f of ir.constructorFields) {
-        out += `  /** ${f.arkType} (${f.encoding}) */\n  ${toCamelCase(f.name)}: ${tsTypeForField(f)};\n`;
+        out += `  /** ${f.arkType} (${f.encoding}) */\n  ${tsFieldName(f.name)}: ${tsTypeForField(f)};\n`;
     }
     out += `}\n\n`;
 
@@ -159,7 +172,7 @@ function generateTypeScript(ir) {
             out += `/** Witness for ${ir.name}.${func.name} leaf "${leaf.name}" */\n`;
             out += `export interface ${ifaceName} {\n`;
             for (const f of leaf.userFields) {
-                out += `  /** ${f.arkType} (${f.encoding}) */\n  ${toCamelCase(f.name)}: ${tsTypeForField(f)};\n`;
+                out += `  /** ${f.arkType} (${f.encoding}) */\n  ${tsFieldName(f.name)}: ${tsTypeForField(f)};\n`;
             }
             const injected = leaf.allFields.filter(f => f.isInjected).map(f => f.name).join(', ');
             if (injected) out += `  // ${injected} injected by Arkade infrastructure\n`;
@@ -222,7 +235,7 @@ const ENCODING_CONST = {
 };
 
 function goValueExpr(field, prefix) {
-    const goName = toPascalCase(field.name);
+    const goName = toGoFieldName(field.name);
     if (field.encoding === 'scriptnum') {
         return field.arkType === 'bool'
             ? `ark.EncodeBool(${prefix}.${goName})`
@@ -247,7 +260,7 @@ function generateGo(ir) {
     out += `// ${ir.name}Params holds constructor parameters for the ${ir.name} contract.\n`;
     out += `type ${ir.name}Params struct {\n`;
     for (const f of ir.constructorFields) {
-        out += `\t${toPascalCase(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
+        out += `\t${toGoFieldName(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
     }
     out += `}\n\n`;
 
@@ -259,9 +272,9 @@ function generateGo(ir) {
             out += `// ${structName} holds witness data for ${ir.name}.${func.name} leaf "${leaf.name}".\n`;
             out += `type ${structName} struct {\n`;
             for (const f of leaf.userFields) {
-                out += `\t${toPascalCase(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
+                out += `\t${toGoFieldName(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
             }
-            const injected = leaf.allFields.filter(f => f.isInjected).map(f => toPascalCase(f.name)).join(', ');
+            const injected = leaf.allFields.filter(f => f.isInjected).map(f => toGoFieldName(f.name)).join(', ');
             if (injected) out += `\t// ${injected} injected by Arkade infrastructure\n`;
             out += `}\n\n`;
         }

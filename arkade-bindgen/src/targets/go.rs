@@ -1,5 +1,5 @@
 use crate::ir::{ContractIR, Encoding, Field, GroupIR, LeafIR};
-use crate::naming::{to_camel_case, to_pascal_case, to_snake_case};
+use crate::naming::{to_camel_case, to_go_field_name, to_pascal_case, to_snake_case};
 use crate::targets::{CodegenOptions, CodegenTarget, GeneratedFile};
 
 pub struct GoTarget;
@@ -61,7 +61,7 @@ fn encoding_const(encoding: &Encoding) -> &'static str {
 
 /// How to convert a Go typed field value to []byte for the witness builder.
 fn value_expr(field: &Field, prefix: &str) -> String {
-    let go_name = to_pascal_case(&field.name);
+    let go_name = to_go_field_name(&field.name);
     match field.encoding {
         Encoding::ScriptNum => {
             if field.ark_type == "bool" {
@@ -126,7 +126,7 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
     for field in &ir.constructor_fields {
         out.push_str(&format!(
             "\t{} {} // {} ({})\n",
-            to_pascal_case(&field.name),
+            to_go_field_name(&field.name),
             go_type_for_field(field),
             field.ark_type,
             field.encoding.as_str(),
@@ -219,7 +219,7 @@ fn emit_witness_struct(out: &mut String, ir: &ContractIR, group: &GroupIR, leaf:
     for field in leaf.user_fields() {
         out.push_str(&format!(
             "\t{} {} // {} ({})\n",
-            to_pascal_case(&field.name),
+            to_go_field_name(&field.name),
             go_type_for_field(field),
             field.ark_type,
             field.encoding.as_str(),
@@ -228,7 +228,7 @@ fn emit_witness_struct(out: &mut String, ir: &ContractIR, group: &GroupIR, leaf:
     for field in leaf.witness_fields.iter().filter(|f| f.is_injected) {
         out.push_str(&format!(
             "\t// {} injected by Arkade\n",
-            to_pascal_case(&field.name)
+            to_go_field_name(&field.name)
         ));
     }
     out.push_str("}\n\n");

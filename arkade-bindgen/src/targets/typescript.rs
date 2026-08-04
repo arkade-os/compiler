@@ -44,6 +44,14 @@ fn sdk_type_alias(encoding: &Encoding) -> Option<&'static str> {
     }
 }
 
+fn field_name(name: &str) -> String {
+    if name.contains('.') {
+        format!("\"{name}\"")
+    } else {
+        to_camel_case(name)
+    }
+}
+
 /// Witness interface name for a leaf. Collapses the redundant name when a group
 /// has a single leaf sharing its name (e.g. `HTLCClaimWitness`, not
 /// `HTLCClaimClaimWitness`).
@@ -133,7 +141,7 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
             "  /** {} ({}) */\n  {}: {};\n",
             field.ark_type,
             field.encoding.as_str(),
-            to_camel_case(&field.name),
+            field_name(&field.name),
             field_ts_type(field),
         ));
     }
@@ -195,7 +203,7 @@ fn emit_witness_interface(out: &mut String, ir: &ContractIR, group: &GroupIR, le
             "  /** {} ({}) */\n  {}: {};\n",
             field.ark_type,
             field.encoding.as_str(),
-            to_camel_case(&field.name),
+            field_name(&field.name),
             field_ts_type(field),
         ));
     }

@@ -117,7 +117,7 @@ fn test_ir_expands_grouped_array_fields() {
             "name": "attest",
             "arkade": {
                 "inputs": [{ "name": "sigs", "type": "signature[2]" }],
-                "asm": ["<oracles_2>", "<oracles_1>", "<oracles_0>", "OP_1"]
+                "asm": ["<oracles.2>", "<oracles.1>", "<oracles.0>", "OP_1"]
             },
             "leaves": [{
                 "name": "attest",
@@ -134,7 +134,7 @@ fn test_ir_expands_grouped_array_fields() {
         .iter()
         .map(|f| f.name.as_str())
         .collect();
-    assert_eq!(names, ["oracles_0", "oracles_1", "oracles_2"]);
+    assert_eq!(names, ["oracles.0", "oracles.1", "oracles.2"]);
     assert!(ir
         .constructor_fields
         .iter()
@@ -149,14 +149,14 @@ fn test_ir_expands_grouped_array_fields() {
         .iter()
         .map(|f| f.name.as_str())
         .collect();
-    assert_eq!(inputs, ["sigs_0", "sigs_1"]);
+    assert_eq!(inputs, ["sigs.0", "sigs.1"]);
 
     let witness: Vec<&str> = group.leaves[0]
         .witness_fields
         .iter()
         .map(|f| f.name.as_str())
         .collect();
-    assert_eq!(witness, ["sigs_0", "sigs_1"]);
+    assert_eq!(witness, ["sigs.0", "sigs.1"]);
     assert!(group.leaves[0]
         .witness_fields
         .iter()
@@ -188,7 +188,7 @@ fn test_ir_expands_nested_struct_fields() {
             "name": "spend",
             "arkade": {
                 "inputs": [{ "name": "candidate", "type": "Policy" }],
-                "asm": ["<policy_limits_1>", "<policy_limits_0>", "<policy_primary_weight>", "<policy_primary_key>", "OP_1"]
+                "asm": ["<policy.limits.1>", "<policy.limits.0>", "<policy.primary.weight>", "<policy.primary.key>", "OP_1"]
             },
             "leaves": [{ "name": "spend", "witness": [], "asm": ["OP_1"] }]
         }]
@@ -203,10 +203,10 @@ fn test_ir_expands_nested_struct_fields() {
     assert_eq!(
         constructor,
         [
-            ("policy_primary_key", &Encoding::Compressed33),
-            ("policy_primary_weight", &Encoding::ScriptNum),
-            ("policy_limits_0", &Encoding::ScriptNum),
-            ("policy_limits_1", &Encoding::ScriptNum),
+            ("policy.primary.key", &Encoding::Compressed33),
+            ("policy.primary.weight", &Encoding::ScriptNum),
+            ("policy.limits.0", &Encoding::ScriptNum),
+            ("policy.limits.1", &Encoding::ScriptNum),
         ]
     );
     assert_eq!(
@@ -219,10 +219,10 @@ fn test_ir_expands_nested_struct_fields() {
             .map(|field| field.name.as_str())
             .collect::<Vec<_>>(),
         [
-            "candidate_primary_key",
-            "candidate_primary_weight",
-            "candidate_limits_0",
-            "candidate_limits_1",
+            "candidate.primary.key",
+            "candidate.primary.weight",
+            "candidate.limits.0",
+            "candidate.limits.1",
         ]
     );
 }

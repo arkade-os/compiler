@@ -52,6 +52,25 @@ pub fn to_camel_case(s: &str) -> String {
     format!("{}{}", first, chars.collect::<String>())
 }
 
+/// Convert a placeholder path to an exported Go field name without losing
+/// the distinction between path separators and source underscores.
+pub fn to_go_field_name(s: &str) -> String {
+    if !s.contains('.') {
+        return to_pascal_case(s);
+    }
+
+    let mut result = String::new();
+    for (index, ch) in s.chars().enumerate() {
+        match ch {
+            '.' => result.push_str("_D"),
+            '_' => result.push_str("_U"),
+            ch if index == 0 => result.push(ch.to_ascii_uppercase()),
+            ch => result.push(ch),
+        }
+    }
+    result
+}
+
 /// Convert a string to snake_case.
 ///
 /// - "receiverSig" → "receiver_sig"
@@ -121,6 +140,13 @@ mod tests {
         assert_eq!(to_pascal_case("non_interactive_swap"), "NonInteractiveSwap");
         assert_eq!(to_pascal_case("htlc"), "Htlc");
         assert_eq!(to_pascal_case("sender"), "Sender");
+    }
+
+    #[test]
+    fn test_to_go_field_name_preserves_dotted_paths() {
+        assert_eq!(to_go_field_name("value.a_b"), "Value_Da_Ub");
+        assert_eq!(to_go_field_name("value.a.b"), "Value_Da_Db");
+        assert_eq!(to_go_field_name("values.0"), "Values_D0");
     }
 
     #[test]

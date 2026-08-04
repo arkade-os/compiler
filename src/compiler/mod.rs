@@ -709,7 +709,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 }
 
 /// The placeholder namespace a parameter list emits: array types (e.g.
-/// `pubkey[3]`) flatten to `name_0`, `name_1`, `name_2`; every other param
+/// `pubkey[3]`) flatten to `name.0`, `name.1`, `name.2`; every other param
 /// passes through unchanged. This is the `<name>` namespace in `asm`, not the
 /// artifact ABI, which keeps one entry per source parameter.
 pub(crate) fn expanded_placeholder_params(

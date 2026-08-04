@@ -225,7 +225,6 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     }
 
     check_shadowing(contract, &mut issues);
-    check_expanded_namespace(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
 
@@ -1771,98 +1770,6 @@ fn walk_scope(
     }
 }
 
-/// Check 2: the names a function's parameters and the constructor's parameters
-/// contribute to the *emitted* placeholder namespace after array flattening
-/// must be unique. Distinct source names can
-/// still collide here (e.g. `int[] xs` vs `int xs_0`).
-fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    // Constructor params expanded exactly as the emitter expands them (array flattening).
-    let ctor_expanded =
-        match crate::compiler::expanded_placeholder_params(&contract.parameters, &contract.structs)
-        {
-            Ok(parameters) => parameters,
-            Err(error) => {
-                issues.push(ValidationIssue::error(error));
-                return;
-            }
-        };
-
-    for func in contract.functions.iter().filter(|f| !f.is_internal) {
-        let mut seen: HashSet<String> = HashSet::new();
-
-        for p in &ctor_expanded {
-            record_name(
-                p.name.clone(),
-                &format!("function '{}'", func.name),
-                &mut seen,
-                issues,
-            );
-        }
-
-        let expanded =
-            match crate::compiler::expanded_placeholder_params(&func.parameters, &contract.structs)
-            {
-                Ok(parameters) => parameters,
-                Err(error) => {
-                    issues.push(ValidationIssue::error(error));
-                    continue;
-                }
-            };
-        for p in expanded {
-            record_name(
-                p.name,
-                &format!("function '{}'", func.name),
-                &mut seen,
-                issues,
-            );
-        }
-    }
-
-    for tapscript in &contract.tapscripts {
-        let mut seen: HashSet<String> = HashSet::new();
-        for p in &ctor_expanded {
-            record_name(
-                p.name.clone(),
-                &format!("tapscript '{}'", tapscript.name),
-                &mut seen,
-                issues,
-            );
-        }
-        let expanded = match crate::compiler::expanded_placeholder_params(
-            &tapscript.inputs,
-            &contract.structs,
-        ) {
-            Ok(parameters) => parameters,
-            Err(error) => {
-                issues.push(ValidationIssue::error(error));
-                continue;
-            }
-        };
-        for p in expanded {
-            record_name(
-                p.name,
-                &format!("tapscript '{}'", tapscript.name),
-                &mut seen,
-                issues,
-            );
-        }
-    }
-}
-
-/// Insert an emitted name; on the first duplicate, record a collision error.
-fn record_name(
-    name: String,
-    context: &str,
-    seen: &mut HashSet<String>,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    if !seen.insert(name.clone()) {
-        issues.push(ValidationIssue::error(format!(
-            "parameters in {context} collide in the emitted namespace as '{name}'"
-        )));
-    }
-}
-
 // ─── Output validation ────────────────────────────────────────────────────────
 
 /// Validate the compiled [`ContractJson`] output for structural invariants.
@@ -1892,8 +1799,8 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 )));
             }
             // The ABI keeps one entry per source parameter; the prologue pushes
-            // one placeholder per array element, so compare against the
-            // flattened namespace.
+            // one placeholder per scalar leaf, so compare against the flattened
+            // layout.
             let expected_prologue = match crate::compiler::expanded_placeholder_params(
                 &output.parameters,
                 &output.structs,

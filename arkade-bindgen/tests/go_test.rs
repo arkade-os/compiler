@@ -106,3 +106,26 @@ fn test_go_fixed_array_types() {
     assert!(code.contains("PreimageHash [20]byte")); // bytes20
     assert!(code.contains("RefundTime int64")); // int
 }
+
+#[test]
+fn test_go_dotted_fields_remain_distinct() {
+    let artifact = arkade_compiler::compile(
+        r#"
+struct Inner { int b; }
+struct Ambiguous { int a_b; Inner a; }
+contract C(Ambiguous value) {
+    function spend() { require(true); }
+}
+"#,
+    )
+    .unwrap();
+    let json = serde_json::to_string(&artifact).unwrap();
+    let code = generate_from_str(&json, Target::Go, &Options::default())
+        .unwrap()
+        .content;
+
+    assert!(code.contains("Value_Da_Ub int64"));
+    assert!(code.contains("Value_Da_Db int64"));
+    assert!(code.contains("Name: \"value.a_b\""));
+    assert!(code.contains("Name: \"value.a.b\""));
+}
