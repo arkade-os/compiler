@@ -8,13 +8,17 @@ use pest::iterators::Pair;
 
 /// Parse an asset-id txid operand (a bytes32 identifier).
 pub(crate) fn parse_asset_id_txid(pair: Pair<Rule>) -> Expression {
-    Expression::Variable(pair.as_str().to_string())
+    match pair.as_rule() {
+        Rule::identifier_property_access => Expression::Property(pair.as_str().to_string()),
+        _ => Expression::Variable(pair.as_str().to_string()),
+    }
 }
 
 /// Parse an asset-id gidx operand (an int identifier or a numeric literal).
 pub(crate) fn parse_asset_id_gidx(pair: Pair<Rule>) -> Expression {
     match pair.as_rule() {
         Rule::number_literal => Expression::Literal(pair.as_str().to_string()),
+        Rule::identifier_property_access => Expression::Property(pair.as_str().to_string()),
         _ => Expression::Variable(pair.as_str().to_string()),
     }
 }
@@ -46,9 +50,13 @@ pub(crate) fn parse_asset_group_id_operands(
         .next()
         .ok_or("asset id requires (txid, gidx) operands")?;
 
-    if txid_pair.as_rule() != Rule::identifier
-        || !matches!(gidx_pair.as_rule(), Rule::identifier | Rule::number_literal)
-        || operands.next().is_some()
+    if !matches!(
+        txid_pair.as_rule(),
+        Rule::identifier | Rule::identifier_property_access
+    ) || !matches!(
+        gidx_pair.as_rule(),
+        Rule::identifier | Rule::identifier_property_access | Rule::number_literal
+    ) || operands.next().is_some()
     {
         return Err("asset id requires (txid, gidx) operands".to_string());
     }

@@ -234,7 +234,9 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
 fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let mut names = HashSet::new();
     for definition in &contract.structs {
-        if crate::models::is_builtin_type(&definition.name) {
+        if crate::models::is_builtin_type(&definition.name)
+            || crate::models::is_builtin_struct(&definition.name)
+        {
             issues.push(ValidationIssue::error(format!(
                 "struct '{}' collides with a built-in type",
                 definition.name
@@ -299,12 +301,16 @@ fn validate_local_types(
             Statement::LetBinding {
                 declared_type: Some(declared_type),
                 ..
-            } => validate_declared_type(
-                declared_type,
-                &format!("local declaration in function '{function_name}'"),
-                definitions,
-                issues,
-            ),
+            } => {
+                if !crate::models::is_builtin_struct(declared_type) {
+                    validate_declared_type(
+                        declared_type,
+                        &format!("local declaration in function '{function_name}'"),
+                        definitions,
+                        issues,
+                    );
+                }
+            }
             Statement::IfElse {
                 then_body,
                 else_body,
@@ -414,7 +420,13 @@ fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue
             &func.parameters,
             &contract.structs,
         ));
-        walk_asset_id_stmts(&func.statements, &mut scope, &func.name, issues);
+        walk_asset_id_stmts(
+            &func.statements,
+            &mut scope,
+            &func.name,
+            &contract.structs,
+            issues,
+        );
     }
 }
 
@@ -422,6 +434,7 @@ fn walk_asset_id_stmts(
     stmts: &[Statement],
     scope: &mut Scope,
     fname: &str,
+    structs: &[crate::models::StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
@@ -436,10 +449,27 @@ fn walk_asset_id_stmts(
                 }
                 _ => {}
             },
-            Statement::LetBinding { name, value, .. } => {
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => {
                 check_asset_id_expr(value, scope, fname, issues);
-                let t = infer_type(value, scope);
-                scope.insert(name.clone(), t);
+                let binding_type = declared_type
+                    .as_deref()
+                    .map(ArkType::parse)
+                    .unwrap_or_else(|| infer_type(value, scope));
+                if matches!(binding_type, ArkType::Struct(_)) {
+                    scope.extend(build_scope_with_structs(
+                        &[crate::models::Parameter {
+                            name: name.clone(),
+                            param_type: binding_type.as_str(),
+                        }],
+                        structs,
+                    ));
+                } else {
+                    scope.insert(name.clone(), binding_type);
+                }
             }
             Statement::VarAssign { name, value } => {
                 check_asset_id_expr(value, scope, fname, issues);
@@ -452,9 +482,9 @@ fn walk_asset_id_stmts(
                 else_body,
             } => {
                 check_asset_id_expr(condition, scope, fname, issues);
-                walk_asset_id_stmts(then_body, &mut scope.clone(), fname, issues);
+                walk_asset_id_stmts(then_body, &mut scope.clone(), fname, structs, issues);
                 if let Some(eb) = else_body {
-                    walk_asset_id_stmts(eb, &mut scope.clone(), fname, issues);
+                    walk_asset_id_stmts(eb, &mut scope.clone(), fname, structs, issues);
                 }
             }
             Statement::ForIn {
@@ -466,7 +496,7 @@ fn walk_asset_id_stmts(
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
                 loop_scope.insert(value_var.clone(), ArkType::Unknown);
-                walk_asset_id_stmts(body, &mut loop_scope, fname, issues);
+                walk_asset_id_stmts(body, &mut loop_scope, fname, structs, issues);
             }
         }
     }
@@ -769,8 +799,8 @@ fn validate_binding_statements(
                 declared_type,
                 value,
             } => {
-                // Array literals are the one composite value allowed in a value
-                // position, and only here; validate their elements instead.
+                // Composite initializers are validated through their scalar
+                // children; the declaration itself owns their result shape.
                 match value {
                     Expression::ArrayLiteral(elements) => {
                         for element in elements {
@@ -804,7 +834,13 @@ fn validate_binding_statements(
                             ))),
                         }
                     }
-                    _ => validate_binding_expression(value, function_name, scopes, issues, true),
+                    _ => validate_binding_expression(
+                        value,
+                        function_name,
+                        scopes,
+                        issues,
+                        crate::models::expression_result_struct(value).is_none(),
+                    ),
                 }
                 let inferred = resolved_expression_type(value, scopes);
                 let binding_type = declared_type
@@ -855,11 +891,14 @@ fn validate_binding_statements(
                         function_name, name
                     )));
                 }
-                if let ArkType::Struct(_) = &binding_type {
-                    if !matches!(value, Expression::StructLiteral(_)) {
+                if let ArkType::Struct(struct_type) = &binding_type {
+                    let result_type = crate::models::expression_result_struct(value);
+                    if !matches!(value, Expression::StructLiteral(_))
+                        && result_type != Some(struct_type.as_str())
+                    {
                         issues.push(ValidationIssue::error(format!(
-                            "function '{}': struct binding '{}' must be initialized with a struct literal",
-                            function_name, name
+                            "function '{}': struct binding '{}' must be initialized with a matching struct value",
+                            function_name, name,
                         )));
                     }
                 }
@@ -870,6 +909,22 @@ fn validate_binding_statements(
                     let parameter = crate::models::Parameter {
                         name: name.clone(),
                         param_type: declared_type.clone(),
+                    };
+                    for (binding_name, binding_type) in
+                        build_scope_with_structs(&[parameter], structs)
+                    {
+                        frame.insert(
+                            binding_name,
+                            BindingInfo {
+                                binding_type,
+                                source: BindingSource::Local,
+                            },
+                        );
+                    }
+                } else if matches!(binding_type, ArkType::Struct(_)) {
+                    let parameter = crate::models::Parameter {
+                        name: name.clone(),
+                        param_type: binding_type.as_str(),
                     };
                     for (binding_name, binding_type) in
                         build_scope_with_structs(&[parameter], structs)
@@ -1305,31 +1360,6 @@ fn validate_binding_expression(
         )));
     }
     if value_position
-        && (matches!(
-            expression,
-            Expression::EcAdd { .. } | Expression::EcMul { .. }
-        ) || matches!(
-            expression,
-            Expression::AssetAt { property, .. } if property == "assetId"
-        ))
-    {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': expression produces 2 stack items; composite values are not supported",
-            function_name
-        )));
-    }
-    if value_position
-        && matches!(
-            expression,
-            Expression::GroupProperty { property, .. } if property == "assetId"
-        )
-    {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': expression produces 2 stack items; composite values are not supported",
-            function_name
-        )));
-    }
-    if value_position
         && matches!(
             expression,
             Expression::GroupIOAccess { property: None, .. }
@@ -1340,20 +1370,6 @@ fn validate_binding_expression(
     {
         issues.push(ValidationIssue::error(format!(
             "function '{}': expression does not produce one stack item",
-            function_name
-        )));
-    }
-    if value_position
-        && (matches!(
-            expression,
-            Expression::CurrentInput(Some(property)) if property == "outpoint"
-        ) || matches!(
-            expression,
-            Expression::InputIntrospection { property, .. } if property == "outpoint"
-        ))
-    {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': outpoint inspection produces 2 stack items; composite values are not supported",
             function_name
         )));
     }

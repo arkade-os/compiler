@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
-    OP_NIP,
+    OP_NIP, OP_SWAP,
 };
 
 /// Test asset count and indexed asset access opcodes
@@ -71,23 +71,23 @@ fn test_asset_at_amount_parsing() {
 }
 
 #[test]
-fn test_asset_at_assetid_cannot_be_bound_as_one_value() {
+fn test_asset_at_assetid_returns_struct() {
     let code = r#"
         contract AssetIdInspector(pubkey owner, bytes32 expectedTxid) {
             function checkAssetId(signature ownerSig) {
                 require(checkSig(ownerSig, owner));
                 let assetId = tx.outputs[0].assets[0].assetId;
+                require(assetId.txid == expectedTxid);
+                require(assetId.gidx >= 0);
+                require(tx.outputs[0].assets.lookup(assetId.txid, assetId.gidx) >= 0);
             }
         }
     "#;
 
-    let error = compile(code)
-        .expect_err("assetId is a two-item value")
-        .to_string();
-    assert!(
-        error.contains("expression produces 2 stack items"),
-        "assetId binding must be rejected: {error}"
-    );
+    let output = compile(code).expect("assetId returns an AssetId struct");
+    let asm = crate::common::arkade_asm_tokens(&output, "checkAssetId");
+    assert!(asm.iter().any(|token| token == OP_INSPECTOUTASSETAT));
+    assert!(asm.iter().any(|token| token == OP_SWAP));
 }
 
 #[test]

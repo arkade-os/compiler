@@ -84,6 +84,13 @@ contract C(Pair pair) { function spend() { require(true); } }
 "#,
             "duplicate field 'value'",
         ),
+        (
+            r#"
+struct AssetId { bytes32 txid; int gidx; }
+contract C() { function spend() { require(true); } }
+"#,
+            "collides with a built-in type",
+        ),
     ];
 
     for (source, expected) in cases {
@@ -365,10 +372,7 @@ contract C(Point initial) {
     )
     .expect_err("whole struct copy")
     .to_string();
-    assert!(
-        copy.contains("must be initialized with a struct literal"),
-        "{copy}"
-    );
+    assert!(copy.contains("matching struct value"), "{copy}");
 
     let mutation = compile(
         r#"

@@ -408,18 +408,6 @@ impl Generator {
     }
 
     fn emit_expression(&mut self, expression: &Expression) -> Result<(), String> {
-        if matches!(
-            expression,
-            Expression::CurrentInput(Some(property)) if property == "outpoint"
-        ) || matches!(
-            expression,
-            Expression::InputIntrospection { property, .. } if property == "outpoint"
-        ) {
-            return Err(
-                "outpoint inspection produces 2 stack items; composite values are not supported"
-                    .to_string(),
-            );
-        }
         if matches!(expression, Expression::ArrayLiteral(_)) {
             return Err(
                 "array literals may only initialize an array declaration; composite values are not supported"
@@ -444,19 +432,57 @@ impl Generator {
                     .to_string(),
             );
         }
+        self.emit_expression_items(expression, 1)
+    }
+
+    fn emit_expression_items(
+        &mut self,
+        expression: &Expression,
+        expected: usize,
+    ) -> Result<(), String> {
         let before = self.stack.len();
         let mut raw = Vec::new();
         emit_expression_asm(expression, &mut raw);
         for token in raw {
             self.lower_raw_token(&token)?;
         }
-        if self.stack.len() != before + 1
-            || !matches!(self.stack.last(), Some(StackItem::Temporary))
+        if self.stack.len() != before + expected
+            || self.stack[before..]
+                .iter()
+                .any(|item| !matches!(item, StackItem::Temporary))
         {
             return Err(format!(
-                "expression produces {} stack items; exactly one is required",
-                self.stack.len().saturating_sub(before)
+                "expression produces {} stack items; exactly {expected} required",
+                self.stack.len().saturating_sub(before),
             ));
+        }
+        Ok(())
+    }
+
+    fn bind_native_struct(
+        &mut self,
+        name: &str,
+        declared_type: &str,
+        expression: &Expression,
+    ) -> Result<(), String> {
+        let fields = crate::models::builtin_struct_fields(declared_type)
+            .ok_or_else(|| format!("unknown native struct type '{declared_type}'"))?;
+        // Native multi-item opcodes currently all return two leaves. Replace
+        // this swap with a general reversal when a wider result is introduced.
+        if fields.len() != 2 {
+            return Err(format!(
+                "native struct '{declared_type}' has unsupported width {}",
+                fields.len()
+            ));
+        }
+        self.emit_expression_items(expression, fields.len())?;
+        self.swap()?;
+        let start = self.stack.len() - fields.len();
+        for ((field, _), item) in fields.iter().rev().zip(&mut self.stack[start..]) {
+            *item = StackItem::Binding {
+                name: Self::internal_binding_name(&format!("{name}.{field}")),
+                kind: BindingKind::Local,
+            };
         }
         Ok(())
     }
@@ -849,6 +875,19 @@ fn generate_asm_from_statements_recursive(
                         generator.emit_expression(&expression)?;
                         generator.bind_local(&Generator::internal_binding_name(&access_name))?;
                     }
+                }
+                (declared_type, value)
+                    if crate::models::expression_result_struct(value).is_some() =>
+                {
+                    let result_type = crate::models::expression_result_struct(value)
+                        .expect("matched a native struct result");
+                    if declared_type.is_some_and(|declared| declared != result_type) {
+                        return Err(format!(
+                            "binding '{name}' declares type '{}' but initializer has type '{result_type}'",
+                            declared_type.expect("checked as some"),
+                        ));
+                    }
+                    generator.bind_native_struct(name, result_type, value)?;
                 }
                 (Some(declared_type), Expression::ArrayLiteral(elements))
                     if crate::models::array_type_parts(declared_type).is_some() =>

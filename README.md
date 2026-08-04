@@ -322,6 +322,20 @@ contract Vault(Policy policy) {
 
 Struct literals require an explicit type and every named field exactly once. Scalar leaves may be read and assigned, while whole-struct assignment and comparison are unsupported. Structs can contain scalar arrays, but arrays of structs and struct-valued `tapscript` inputs are not supported.
 
+Fixed-width builtins that return multiple stack items expose native result structs. Their types and fields are `AssetId { bytes32 txid; int gidx; }`, `Outpoint { bytes32 txid; int vout; }`, and `ECPoint { int x; int y; }`. The type may be explicit or inferred with `let`:
+
+```solidity
+let assetId = tx.outputs[0].assets[0].assetId;
+Outpoint previous = tx.inputs[0].outpoint;
+ECPoint sum = ecAdd(x1, y1, x2, y2, curveId);
+
+require(assetId.gidx >= 0);
+require(previous.txid == expectedTxid);
+require(sum.x >= 0);
+```
+
+`AssetId` is returned by indexed asset and asset-group `.assetId` access, `Outpoint` by input `.outpoint` access, and `ECPoint` by `ecAdd` and `ecMul`. Native result structs are local values; whole-struct comparison remains unsupported.
+
 ### Contract Structure
 
 An Arkade Language file may start with zero or more `import` declarations, followed by a `contract` declaration:

@@ -251,17 +251,20 @@ complex_expression = _{
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
+asset_id_txid_operand = _{ identifier_property_access | identifier }
+asset_id_gidx_operand = _{ number_literal | identifier_property_access | identifier }
+
 // Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
 // txid is a bytes32 identifier; gidx is an int identifier or a 0..65535 literal.
 asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "lookup" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+        ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
 // Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) → Bool
 asset_has = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+        ~ "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
 // Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -323,8 +326,8 @@ output_introspection_property = { "value" | "scriptPubKey" }
 // tx.assetGroups[k].sumInputs, etc.
 asset_group_access = {
     "tx" ~ "." ~ "assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
-        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
+        "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
         array_access ~ "." ~ group_property
     )
@@ -337,11 +340,11 @@ group_property = @{
     "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
 }
 
-// Group control predicates (struct-free, replace the old `.control ==`):
+// Group control predicates compare explicit AssetId components:
 //   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
 //   group.hasControl            → Bool (handled as a plain group_property)
 group_control_is = {
-    identifier ~ "." ~ "controlIs" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+    identifier ~ "." ~ "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
 // Named field path, optionally ending in an array index.
@@ -393,8 +396,8 @@ tx_property_body = {
     ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
     // Asset groups access: find, has, length, or indexed property access
     ("assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
-        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
+        "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
         array_access ~ ("." ~ asset_group_property)?
     )?) |

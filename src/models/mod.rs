@@ -21,6 +21,21 @@ pub fn is_builtin_type(declared_type: &str) -> bool {
     )
 }
 
+pub fn builtin_struct_fields(
+    declared_type: &str,
+) -> Option<&'static [(&'static str, &'static str)]> {
+    match declared_type {
+        "AssetId" => Some(&[("txid", "bytes32"), ("gidx", "int")]),
+        "Outpoint" => Some(&[("txid", "bytes32"), ("vout", "int")]),
+        "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
+        _ => None,
+    }
+}
+
+pub fn is_builtin_struct(declared_type: &str) -> bool {
+    builtin_struct_fields(declared_type).is_some()
+}
+
 // JSON output structures.
 // These represent the compiled contract in a serializable format.
 /// Parameter in a contract or function
@@ -604,12 +619,7 @@ pub enum Expression {
         modulus: Box<Expression>,
     },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// EC point addition. Produces x and y as two stack items.
-    ///
-    /// TODO(asset-id-struct): like `group.assetId`, a two-item result has no
-    /// representation — `let` binds one name and `==` would only see y. The
-    /// result is unusable until the composite return type lands; the emission
-    /// is correct and ready for it.
+    /// EC point addition. Produces an `ECPoint`.
     EcAdd {
         x1: Box<Expression>,
         y1: Box<Expression>,
@@ -617,9 +627,7 @@ pub enum Expression {
         y2: Box<Expression>,
         curve_id: Box<Expression>,
     },
-    /// EC scalar multiplication. Produces x and y as two stack items.
-    ///
-    /// TODO(asset-id-struct): same two-item limitation as `EcAdd`.
+    /// EC scalar multiplication. Produces an `ECPoint`.
     EcMul {
         x: Box<Expression>,
         y: Box<Expression>,
@@ -700,4 +708,23 @@ pub enum Expression {
         index: Box<Expression>,
         packet_type: Box<Expression>,
     },
+}
+
+/// Native struct returned by a fixed-width multi-item expression.
+pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
+    match expression {
+        Expression::EcAdd { .. } | Expression::EcMul { .. } => Some("ECPoint"),
+        Expression::AssetAt { property, .. } | Expression::GroupProperty { property, .. }
+            if property == "assetId" =>
+        {
+            Some("AssetId")
+        }
+        Expression::CurrentInput(Some(property))
+        | Expression::InputIntrospection { property, .. }
+            if property == "outpoint" =>
+        {
+            Some("Outpoint")
+        }
+        _ => None,
+    }
 }

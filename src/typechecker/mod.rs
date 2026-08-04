@@ -158,6 +158,19 @@ fn insert_type_bindings(
         }
         return;
     }
+    if let Some(fields) = crate::models::builtin_struct_fields(declared_type) {
+        scope.insert(name.to_string(), ArkType::Struct(declared_type.to_string()));
+        for (field_name, field_type) in fields {
+            insert_type_bindings(
+                scope,
+                &format!("{name}.{field_name}"),
+                field_type,
+                structs,
+                stack,
+            );
+        }
+        return;
+    }
     if let Some(definition) = structs
         .iter()
         .find(|definition| definition.name == declared_type)
@@ -256,6 +269,14 @@ fn check_statement(
                     &[crate::models::Parameter {
                         name: name.clone(),
                         param_type: declared_type.clone(),
+                    }],
+                    structs,
+                ));
+            } else if matches!(t, ArkType::Struct(_)) {
+                scope.extend(build_scope_with_structs(
+                    &[crate::models::Parameter {
+                        name: name.clone(),
+                        param_type: t.as_str(),
                     }],
                     structs,
                 ));
@@ -602,7 +623,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             Some("value") => ArkType::Int,
             Some("scriptPubKey") => ArkType::Bytes,
             Some("sequence") => ArkType::Int,
-            Some("outpoint") => ArkType::Bytes32,
+            Some("outpoint") => ArkType::Struct("Outpoint".to_string()),
             _ => ArkType::Unknown,
         },
 
@@ -619,7 +640,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
             "sequence" => ArkType::Int,
-            "outpoint" => ArkType::Bytes32,
+            "outpoint" => ArkType::Struct("Outpoint".to_string()),
             "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
@@ -637,11 +658,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::AssetCount { .. } => ArkType::Int,
         Expression::AssetAt { property, .. } => match property.as_str() {
             "amount" => ArkType::Int,
-            // TODO(asset-id-struct): `.assetId` is really a two-item canonical
-            // Asset ID (asset_txid, asset_gidx), NOT a single bytes32. Typed as
-            // Bytes32 only as a stopgap until the composite `AssetId` struct
-            // return type lands (separate PR).
-            "assetId" => ArkType::Bytes32,
+            "assetId" => ArkType::Struct("AssetId".to_string()),
             _ => ArkType::Unknown,
         },
 
@@ -655,12 +672,8 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::GroupProperty { property, .. } => match property.as_str() {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,
             "numInputs" | "numOutputs" => ArkType::Int,
-            // TODO(asset-id-struct): `assetId` is really a two-item canonical
-            // Asset ID (asset_txid, asset_gidx), not a single bytes32; typed
-            // Bytes32 only as a stopgap until the composite `AssetId` struct
-            // lands, so `==` over it is unsound until then. `metadataHash`
-            // is genuinely a 32-byte hash and is correct.
-            "metadataHash" | "assetId" => ArkType::Bytes32,
+            "metadataHash" => ArkType::Bytes32,
+            "assetId" => ArkType::Struct("AssetId".to_string()),
             "isFresh" | "hasControl" => ArkType::Bool,
             _ => ArkType::Unknown,
         },
@@ -690,7 +703,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         | Expression::EcPairing { .. }
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => ArkType::Bool,
-        Expression::EcAdd { .. } | Expression::EcMul { .. } => ArkType::Unknown,
+        Expression::EcAdd { .. } | Expression::EcMul { .. } => {
+            ArkType::Struct("ECPoint".to_string())
+        }
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,
