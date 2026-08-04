@@ -56,31 +56,34 @@ function inferEncoding(typeStr) {
 
 // ─── IR construction ─────────────────────────────────────────────────
 
-// The artifact keeps one entry per source parameter, so an array type
-// (pubkey[3]) expands here into the name_0 … name_2 scalars the asm
-// placeholders and the witness stack actually carry.
-function expandFields(name, typeStr, isInjected) {
+// The artifact keeps one entry per source parameter. Expand arrays and structs
+// into the scalar fields the asm placeholders and witness stack carry.
+function expandFields(name, typeStr, isInjected, structs = []) {
     const array = /^(.+)\[(\d+)\]$/.exec(typeStr);
-    if (!array) {
-        return [{ name, arkType: typeStr, encoding: inferEncoding(typeStr), isInjected }];
+    if (array) {
+        const [, elementType, length] = array;
+        return Array.from({ length: Number(length) }, (_, index) =>
+            expandFields(`${name}_${index}`, elementType, isInjected, structs)
+        ).flat();
     }
-    const [, elementType, length] = array;
-    return Array.from({ length: Number(length) }, (_, index) => ({
-        name: `${name}_${index}`,
-        arkType: elementType,
-        encoding: inferEncoding(elementType),
-        isInjected,
-    }));
+    const definition = structs.find(definition => definition.name === typeStr);
+    if (definition) {
+        return definition.fields.flatMap(field =>
+            expandFields(`${name}_${field.name}`, field.type, isInjected, structs)
+        );
+    }
+    return [{ name, arkType: typeStr, encoding: inferEncoding(typeStr), isInjected }];
 }
 
 function buildIR(artifact) {
+    const structs = artifact.structs || [];
     const constructorFields = (artifact.constructorInputs || [])
-        .flatMap(p => expandFields(p.name, p.type, false));
+        .flatMap(p => expandFields(p.name, p.type, false, structs));
 
     const functions = (artifact.functions || []).map(group => {
         const leaves = (group.leaves || []).map(leaf => {
             const allFields = (leaf.witness || [])
-                .flatMap(w => expandFields(w.name, w.type, w.injected === true));
+                .flatMap(w => expandFields(w.name, w.type, w.injected === true, structs));
             return {
                 name: leaf.name,
                 allFields,

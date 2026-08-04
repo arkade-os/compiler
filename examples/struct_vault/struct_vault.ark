@@ -1,0 +1,37 @@
+struct Signer {
+  pubkey key;
+  int weight;
+}
+
+struct Policy {
+  Signer primary;
+  int[2] limits;
+  int exitDelay;
+}
+
+contract StructVault(Policy policy) {
+  function update(Policy next, signature sig, bytes32 message) {
+    require(checkSigFromStack(sig, policy.primary.key, message));
+
+    int total = 0;
+    for (i, limit) in next.limits {
+      total = total + limit;
+    }
+    require(total >= policy.primary.weight);
+
+    Policy local = {
+      primary: {
+        key: next.primary.key,
+        weight: total
+      },
+      limits: [next.limits[0], next.limits[1]],
+      exitDelay: policy.exitDelay
+    };
+    require(local.primary.weight == total);
+  }
+
+  function unilateral(signature sig) tapscript {
+    require(older(policy.exitDelay));
+    require(checkSig(sig, policy.primary.key));
+  }
+}

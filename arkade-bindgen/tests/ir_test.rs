@@ -162,3 +162,67 @@ fn test_ir_expands_grouped_array_fields() {
         .iter()
         .all(|f| f.encoding == Encoding::Schnorr64));
 }
+
+#[test]
+fn test_ir_expands_nested_struct_fields() {
+    let artifact = r#"{
+        "contractName": "Vault",
+        "structs": [
+            {
+                "name": "Signer",
+                "fields": [
+                    { "name": "key", "type": "pubkey" },
+                    { "name": "weight", "type": "int" }
+                ]
+            },
+            {
+                "name": "Policy",
+                "fields": [
+                    { "name": "primary", "type": "Signer" },
+                    { "name": "limits", "type": "int[2]" }
+                ]
+            }
+        ],
+        "constructorInputs": [{ "name": "policy", "type": "Policy" }],
+        "functions": [{
+            "name": "spend",
+            "arkade": {
+                "inputs": [{ "name": "candidate", "type": "Policy" }],
+                "asm": ["<policy_limits_1>", "<policy_limits_0>", "<policy_primary_weight>", "<policy_primary_key>", "OP_1"]
+            },
+            "leaves": [{ "name": "spend", "witness": [], "asm": ["OP_1"] }]
+        }]
+    }"#;
+
+    let ir = build_ir(&load_artifact_str(artifact).unwrap()).unwrap();
+    let constructor = ir
+        .constructor_fields
+        .iter()
+        .map(|field| (field.name.as_str(), &field.encoding))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        constructor,
+        [
+            ("policy_primary_key", &Encoding::Compressed33),
+            ("policy_primary_weight", &Encoding::ScriptNum),
+            ("policy_limits_0", &Encoding::ScriptNum),
+            ("policy_limits_1", &Encoding::ScriptNum),
+        ]
+    );
+    assert_eq!(
+        ir.groups[0]
+            .covenant
+            .as_ref()
+            .unwrap()
+            .inputs
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "candidate_primary_key",
+            "candidate_primary_weight",
+            "candidate_limits_0",
+            "candidate_limits_1",
+        ]
+    );
+}
