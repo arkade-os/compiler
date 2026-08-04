@@ -12,7 +12,6 @@ pub mod wasm;
 
 pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, WitnessElement,
-    DEFAULT_ARRAY_LENGTH,
 };
 pub use typechecker::{ArkType, TypeError};
 

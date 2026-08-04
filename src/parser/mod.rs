@@ -197,7 +197,8 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
                 .next()
                 .ok_or_else(|| "Parse error: Missing variable name in assignment".to_string())?
                 .as_str()
-                .to_string();
+                .split_whitespace()
+                .collect::<String>();
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
@@ -266,12 +267,11 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
         }
         Rule::variable_declaration => {
             let mut inner = pair.into_inner();
-            let declared_type = inner
-                .next()
-                .ok_or_else(|| "Parse error: Missing variable type".to_string())?
-                .as_str()
-                .trim()
-                .to_string();
+            let declared_type = parse_data_type(
+                inner
+                    .next()
+                    .ok_or_else(|| "Parse error: Missing variable type".to_string())?,
+            );
             let name = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing variable name".to_string())?
@@ -315,6 +315,19 @@ fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
     Ok(statements)
 }
 
+/// Canonical declared-type text: `pubkey`, or `pubkey[3]` for array types.
+pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> String {
+    let text = type_pair.as_str().trim().to_string();
+    let mut inner = type_pair.into_inner();
+    let Some(base) = inner.next() else {
+        return text;
+    };
+    match inner.next() {
+        Some(size) => format!("{}[{}]", base.as_str(), size.as_str()),
+        None => base.as_str().to_string(),
+    }
+}
+
 /// Parse parameter list from contracts or functions
 pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, String> {
     let mut parameters = Vec::new();
@@ -322,21 +335,7 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
         if param_pair.as_rule() == Rule::parameter {
             let mut param_inner = param_pair.into_inner();
             let param_type = match param_inner.next() {
-                Some(type_pair) => {
-                    // Extract the base type and check for an array suffix.
-                    let type_text = type_pair.as_str().trim();
-                    if type_text.ends_with("[]") {
-                        type_text.to_string()
-                    } else {
-                        // Parse inner to get just the base type
-                        let mut type_inner = type_pair.into_inner();
-                        if let Some(base) = type_inner.next() {
-                            base.as_str().to_string()
-                        } else {
-                            type_text.to_string()
-                        }
-                    }
-                }
+                Some(type_pair) => parse_data_type(type_pair),
                 None => return Err("Parameter is missing data type".to_string()),
             };
             let param_name = match param_inner.next() {

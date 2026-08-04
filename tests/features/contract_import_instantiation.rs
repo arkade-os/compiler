@@ -434,7 +434,7 @@ fn test_array_constructor_arg_is_flattened() {
     let code = r#"
 import "threshold_oracle.ark";
 
-contract Forwarder(pubkey[] owners) {
+contract Forwarder(pubkey[3] owners) {
   function forward() {
     require(tx.outputs[0].scriptPubKey == new ThresholdOracle(owners));
   }

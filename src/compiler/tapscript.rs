@@ -436,8 +436,8 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
     asm
 }
 
-/// Derive the leaf witness array from the tapscript inputs, with the same array
-/// expansion behavior as covenant function inputs (DEFAULT_ARRAY_LENGTH).
+/// Derive the leaf witness from the tapscript inputs, one entry per input.
+/// Tapscript inputs are scalars; the validator rejects array types here.
 pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
     let mut out = Vec::new();
     let injected = injected_signature_names(ts);
@@ -462,25 +462,12 @@ fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<St
 }
 
 fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElement>) {
-    if let Some(base) = p.param_type.strip_suffix("[]") {
-        let t = ArkType::parse(base);
-        for i in 0..crate::models::DEFAULT_ARRAY_LENGTH {
-            out.push(WitnessElement {
-                name: format!("{}_{}", p.name, i),
-                elem_type: base.to_string(),
-                encoding: t.encoding().to_string(),
-                injected,
-            });
-        }
-    } else {
-        let t = ArkType::parse(&p.param_type);
-        out.push(WitnessElement {
-            name: p.name.clone(),
-            elem_type: p.param_type.clone(),
-            encoding: t.encoding().to_string(),
-            injected,
-        });
-    }
+    out.push(WitnessElement {
+        name: p.name.clone(),
+        elem_type: p.param_type.clone(),
+        encoding: ArkType::parse(&p.param_type).encoding().to_string(),
+        injected,
+    });
 }
 
 /// Build the unified `functions[]` ABI: one group per covenant function plus

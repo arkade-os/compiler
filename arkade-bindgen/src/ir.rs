@@ -131,12 +131,23 @@ pub struct ContractIR {
     pub compiler_version: Option<String>,
 }
 
-fn field_from_ark_type(name: &str, ark_type: &str) -> Field {
-    Field {
-        name: name.to_string(),
+/// Expand one artifact entry into generated fields.
+///
+/// The artifact keeps one entry per source parameter, so an array type
+/// (`pubkey[3]`) becomes the `name_0 … name_2` scalars the covenant asm and the
+/// witness stack actually carry.
+fn fields_from_ark_type(name: &str, ark_type: &str, is_injected: bool) -> Vec<Field> {
+    let field = |name: String, ark_type: &str| Field {
+        name,
         ark_type: ark_type.to_string(),
         encoding: Encoding::from_ark_type(ark_type),
-        is_injected: false,
+        is_injected,
+    };
+    match arkade_compiler::models::array_type_parts(ark_type) {
+        Some((element, length)) => (0..length)
+            .map(|index| field(format!("{name}_{index}"), element))
+            .collect(),
+        None => vec![field(name.to_string(), ark_type)],
     }
 }
 
@@ -145,7 +156,7 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
     let constructor_fields = artifact
         .parameters
         .iter()
-        .map(|p| field_from_ark_type(&p.name, &p.param_type))
+        .flat_map(|p| fields_from_ark_type(&p.name, &p.param_type, false))
         .collect();
 
     let groups = artifact
@@ -157,7 +168,7 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
                 inputs: cov
                     .inputs
                     .iter()
-                    .map(|i| field_from_ark_type(&i.name, &i.param_type))
+                    .flat_map(|i| fields_from_ark_type(&i.name, &i.param_type, false))
                     .collect(),
                 asm: cov.asm.clone(),
             }),
@@ -169,12 +180,7 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
                     witness_fields: leaf
                         .witness
                         .iter()
-                        .map(|w| Field {
-                            name: w.name.clone(),
-                            ark_type: w.elem_type.clone(),
-                            encoding: Encoding::parse(&w.encoding),
-                            is_injected: w.injected,
-                        })
+                        .flat_map(|w| fields_from_ark_type(&w.name, &w.elem_type, w.injected))
                         .collect(),
                     asm: leaf.asm.clone(),
                 })

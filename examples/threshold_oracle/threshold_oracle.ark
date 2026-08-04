@@ -2,8 +2,8 @@
 // Generic threshold signature verifier for multi-oracle attestations.
 //
 // This contract demonstrates:
-// - Array types in constructor params (pubkey[] oracles)
-// - Array types in function params (signature[] oracleSigs)
+// - Array types in constructor params (pubkey[3] oracles)
+// - Array types in function params (signature[3] oracleSigs)
 // - Array indexing (oracles[i])
 // - Loop unrolling with array iteration
 // - Threshold counting for quorum verification
@@ -15,7 +15,7 @@ contract ThresholdOracle(
   int tokenAssetIdGidx,
   bytes32 ctrlAssetIdTxid,
   int ctrlAssetIdGidx,
-  pubkey[] oracles,
+  pubkey[3] oracles,
   int threshold,
   int exit
 ) {
@@ -23,7 +23,7 @@ contract ThresholdOracle(
     int amount,
     bytes32 messageHash,
     bytes recipientScriptPubKey,
-    signature[] oracleSigs
+    signature[3] oracleSigs
   ) {
     require(amount > 0, "zero");
 

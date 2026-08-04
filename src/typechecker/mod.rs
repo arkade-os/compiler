@@ -9,7 +9,7 @@
 ///   decides how to surface them)
 use std::collections::HashMap;
 
-use crate::models::{Contract, Expression, Function, Requirement, Statement, DEFAULT_ARRAY_LENGTH};
+use crate::models::{Contract, Expression, Function, Requirement, Statement};
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
@@ -41,18 +41,18 @@ pub enum ArkType {
     // ── Internal / introspection types ─────────────────────────────────────
 
     // ── Composite ──────────────────────────────────────────────────────────
-    /// Homogeneous array (e.g., `pubkey[]`)
-    Array(Box<ArkType>),
+    /// Homogeneous fixed-size array (e.g., `pubkey[3]`)
+    Array(Box<ArkType>, usize),
 
     /// Type could not be resolved (variable not in scope, etc.)
     Unknown,
 }
 
 impl ArkType {
-    /// Parse from a grammar `data_type` string (e.g., `"pubkey"`, `"bytes32[]"`).
+    /// Parse from a grammar `data_type` string (e.g., `"pubkey"`, `"bytes32[4]"`).
     pub fn parse(s: &str) -> ArkType {
-        if let Some(inner) = s.strip_suffix("[]") {
-            return ArkType::Array(Box::new(ArkType::parse(inner)));
+        if let Some((element, length)) = crate::models::array_type_parts(s) {
+            return ArkType::Array(Box::new(ArkType::parse(element)), length);
         }
         match s {
             "pubkey" => ArkType::Pubkey,
@@ -81,7 +81,7 @@ impl ArkType {
             ArkType::Int => "scriptnum",
             ArkType::Bool => "scriptnum",
             ArkType::Asset => "raw-32",
-            ArkType::Array(_) => "array",
+            ArkType::Array(..) => "array",
             ArkType::Unknown => "unknown",
         }
     }
@@ -97,7 +97,7 @@ impl ArkType {
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
             ArkType::Asset => "asset".to_string(),
-            ArkType::Array(inner) => format!("{}[]", inner.as_str()),
+            ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
             ArkType::Unknown => "unknown".to_string(),
         }
     }
@@ -127,13 +127,14 @@ pub type Scope = HashMap<String, ArkType>;
 pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
     let mut scope = Scope::new();
     for p in params {
-        if let Some(base) = p.param_type.strip_suffix("[]") {
+        if let Some((base, length)) = crate::models::array_type_parts(&p.param_type) {
             let elem_type = ArkType::parse(base);
-            // Register the bare name as the array type, plus each indexed
-            // element. The count must match
-            // DEFAULT_ARRAY_LENGTH so the type checker and compiler agree.
-            scope.insert(p.name.clone(), ArkType::Array(Box::new(elem_type.clone())));
-            for i in 0..DEFAULT_ARRAY_LENGTH {
+            // Register the bare name as the array type, plus each indexed element.
+            scope.insert(
+                p.name.clone(),
+                ArkType::Array(Box::new(elem_type.clone()), length),
+            );
+            for i in 0..length {
                 scope.insert(format!("{}[{}]", p.name, i), elem_type.clone());
             }
         } else {
@@ -206,6 +207,11 @@ fn check_statement(
                 .map(ArkType::parse)
                 .unwrap_or(inferred);
             // Seed the scope so downstream uses of `name` get the inferred type.
+            if let ArkType::Array(element, length) = &t {
+                for i in 0..*length {
+                    scope.insert(format!("{name}[{i}]"), (**element).clone());
+                }
+            }
             scope.insert(name.clone(), t);
         }
         Statement::VarAssign { name, value } => {
@@ -435,7 +441,7 @@ fn check_comparison(
     if left_type == ArkType::Unknown || right_type == ArkType::Unknown {
         return;
     }
-    if matches!(left_type, ArkType::Array(_)) || matches!(right_type, ArkType::Array(_)) {
+    if matches!(left_type, ArkType::Array(..)) || matches!(right_type, ArkType::Array(..)) {
         errors.push(TypeError::new(format!(
             "fn {}: array comparison '{}' is not supported",
             fn_name, op
@@ -503,20 +509,33 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .unwrap_or(ArkType::Unknown),
         Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         Expression::Literal(_) => ArkType::Int,
+        Expression::ArrayLiteral(elements) => ArkType::Array(
+            Box::new(
+                elements
+                    .first()
+                    .map(|element| infer_type(element, scope))
+                    .unwrap_or(ArkType::Unknown),
+            ),
+            elements.len(),
+        ),
         Expression::ArrayIndex { array, .. } => match scope.get(array) {
-            Some(ArkType::Array(element)) => (**element).clone(),
+            Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,
         },
         Expression::Property(property) => scope
             .get(property.trim())
             .cloned()
             .or_else(|| {
+                let array = property.trim().strip_suffix(".length")?;
+                matches!(scope.get(array)?, ArkType::Array(..)).then_some(ArkType::Int)
+            })
+            .or_else(|| {
                 let (array, index) = property.strip_suffix(']')?.split_once('[')?;
                 if index.parse::<usize>().is_ok() {
                     return None;
                 }
                 match scope.get(array)? {
-                    ArkType::Array(element) => Some((**element).clone()),
+                    ArkType::Array(element, _) => Some((**element).clone()),
                     _ => None,
                 }
             })

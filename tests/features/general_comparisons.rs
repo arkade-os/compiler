@@ -342,7 +342,7 @@ fn mismatched_comparisons_warn() {
 fn direct_array_equality_is_rejected() {
     let error = compile(
         "contract Invalid() {
-            function compare(int[] left, int[] right) {
+            function compare(int[3] left, int[3] right) {
                 require(left == right);
             }
         }",

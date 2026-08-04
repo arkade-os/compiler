@@ -25,9 +25,10 @@ parameter = { data_type ~ identifier }
 
 // Supported data types - atomic rule to prevent partial matches
 // Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
-// Array types use [] suffix (e.g., pubkey[], signature[])
+// Array types carry a static size (e.g., pubkey[3], signature[5])
 base_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
-data_type = { base_type ~ ("[]")? }
+array_size = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+data_type = { base_type ~ ("[" ~ array_size ~ "]")? }
 
 // Function definition. A `tapscript` modifier selects an L1 tapleaf body
 // (require-only); otherwise it is an ordinary covenant function body.
@@ -76,7 +77,7 @@ let_binding = {
 // Variable assignment (reassignment without let keyword)
 // Must check for = but not == or >= or <=
 var_assign = {
-    identifier ~ "=" ~ !("=") ~ general_expression ~ ";"
+    (array_index_access | identifier) ~ "=" ~ !("=") ~ general_expression ~ ";"
 }
 
 // Require statement
@@ -160,16 +161,21 @@ primary_expr = {
     output_introspection |
     tx_introspection |
     group_control_is |
+    array_length_access |
     identifier_property_access |
     tx_property_access |
     this_property_access |
     constructor |
     function_call |
     array_index_access |
+    array_literal |
     bool_literal |
     number_literal |
     identifier
 }
+
+// Static array length: arr.length — folded to a literal at compile time
+array_length_access = { identifier ~ "." ~ "length" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Array indexing: identifier[integer expression]
 array_index_access = {
@@ -438,9 +444,9 @@ method_arg = {
     number_literal | identifier
 }
 
-// Array literal
+// Array literal — initializes a local array declaration
 array_literal = {
-    "[" ~ complex_expression ~ ("," ~ complex_expression)* ~ "]"
+    "[" ~ general_expression ~ ("," ~ general_expression)* ~ "]"
 }
 
 // Function call

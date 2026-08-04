@@ -1,6 +1,6 @@
 use crate::models::{
     ArkadeCovenant, CompilerInfo, ContractJson, Expression, Function, FunctionInput, Parameter,
-    Requirement, Statement, DEFAULT_ARRAY_LENGTH,
+    Requirement, Statement,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
@@ -97,7 +97,7 @@ impl Generator {
                 expanded_placeholders.push(format!("<{placeholder}>"));
                 constructor_bindings.push((placeholder, binding_name));
             });
-            if parameter.param_type.ends_with("[]") {
+            if crate::models::array_type_parts(&parameter.param_type).is_some() {
                 constructor_array_expansions.push((
                     format!("<{}>", parameter.name),
                     expanded_placeholders.join(","),
@@ -140,6 +140,17 @@ impl Generator {
         )
     }
 
+    /// Element count of an array binding, read off the symbolic stack: its
+    /// elements are bound as `$array:name:0 … $array:name:N-1`.
+    fn array_length(&self, array: &str) -> usize {
+        (0..)
+            .take_while(|i| {
+                self.binding_index(&internal_array_binding_name(array, &i.to_string()))
+                    .is_some()
+            })
+            .count()
+    }
+
     fn internal_binding_name(name: &str) -> String {
         let name = name.trim();
         if name.starts_with(INTERNAL_ARRAY_BINDING_PREFIX) {
@@ -154,6 +165,14 @@ impl Generator {
     }
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
+        if let Some(array) = name.trim().strip_suffix(".length") {
+            let length = self.array_length(array);
+            if length == 0 {
+                return Err(format!("'{array}' is not an array; '.length' is undefined"));
+            }
+            self.push_integer_temporary(length);
+            return Ok(());
+        }
         if let Some((array, index)) = name
             .trim()
             .strip_suffix(']')
@@ -209,7 +228,7 @@ impl Generator {
 
         self.push_integer_temporary(0);
         self.apply(OP_PICK, 1, 1)?;
-        self.push_integer_temporary(DEFAULT_ARRAY_LENGTH);
+        self.push_integer_temporary(self.array_length(array));
         self.apply(OP_LESSTHAN, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)?;
 
@@ -393,6 +412,12 @@ impl Generator {
                     .to_string(),
             );
         }
+        if matches!(expression, Expression::ArrayLiteral(_)) {
+            return Err(
+                "array literals may only initialize an array declaration; composite values are not supported"
+                    .to_string(),
+            );
+        }
         if matches!(
             expression,
             Expression::GroupIOAccess {
@@ -439,6 +464,17 @@ impl Generator {
     }
 
     fn assign(&mut self, name: &str) -> Result<(), String> {
+        if let Some((array, element)) = name.strip_suffix(']').and_then(|n| n.split_once('[')) {
+            if element.parse::<usize>().is_err() {
+                // Writing at a runtime depth needs a write-at-depth opcode
+                // (see docs: OP_PUT); emulating it costs one guarded write per
+                // element. Lift this once the VM provides that primitive.
+                return Err(format!(
+                    "assignment to '{array}' at a runtime index is not supported; use a literal index"
+                ));
+            }
+        }
+        let name = &Self::internal_binding_name(name);
         let index = self
             .binding_index(name)
             .ok_or_else(|| format!("assignment to undeclared binding '{name}'"))?;
@@ -611,8 +647,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         }
     }
 
-    // Build constructor inputs (array params expand to indexed scalars).
-    let parameters = expand_abi_params(&contract.parameters);
+    let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
         name: contract.name.clone(),
@@ -658,9 +693,11 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     Ok(json)
 }
 
-/// Expand ABI params for emission. Array types (e.g., `pubkey[]`) are flattened
-/// to `name_0`, `name_1`, `name_2`, …; every other param passes through unchanged.
-pub(crate) fn expand_abi_params(params: &[Parameter]) -> Vec<Parameter> {
+/// The placeholder namespace a parameter list emits: array types (e.g.
+/// `pubkey[3]`) flatten to `name_0`, `name_1`, `name_2`; every other param
+/// passes through unchanged. This is the `<name>` namespace in `asm`, not the
+/// artifact ABI, which keeps one entry per source parameter.
+pub(crate) fn expanded_placeholder_params(params: &[Parameter]) -> Vec<Parameter> {
     let mut result = Vec::new();
     for param in params {
         for_each_expanded_param(param, |name, _, param_type| {
@@ -675,26 +712,26 @@ fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
 ) -> Result<ArkadeCovenant, String> {
-    let inputs = expand_function_inputs(&function.parameters);
+    let inputs = function_inputs(&function.parameters);
     let mut generator = Generator::new(&function.parameters, constructor_parameters);
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })
 }
 
-fn expand_function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
-    let mut inputs = Vec::new();
-    for param in params {
-        for_each_expanded_param(param, |name, _, param_type| {
-            inputs.push(FunctionInput { name, param_type });
-        });
-    }
-    inputs
+fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
+    params
+        .iter()
+        .map(|param| FunctionInput {
+            name: param.name.clone(),
+            param_type: param.param_type.clone(),
+        })
+        .collect()
 }
 
 fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String, String)) {
-    if let Some(base_type) = param.param_type.strip_suffix("[]") {
-        for i in 0..DEFAULT_ARRAY_LENGTH {
+    if let Some((base_type, length)) = crate::models::array_type_parts(&param.param_type) {
+        for i in 0..length {
             f(
                 format!("{}_{}", param.name, i),
                 internal_array_binding_name(&param.name, &i.to_string()),
@@ -757,12 +794,11 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let array_name = match iterable {
-                    Expression::Property(prop) if prop.trim() == "tx.assetGroups" => None,
-                    Expression::Variable(array_name) => Some(array_name.as_str()),
-                    _ => return Err("unsupported loop iterable".to_string()),
+                let Expression::Variable(array_name) = iterable else {
+                    return Err("unsupported loop iterable".to_string());
                 };
-                for k in 0..DEFAULT_ARRAY_LENGTH {
+                let array_name = array_name.as_str();
+                for k in 0..generator.array_length(array_name) {
                     let substituted =
                         substitute_loop_body(body, index_var, value_var, k, array_name);
                     let baseline = generator.stack.clone();
@@ -776,10 +812,36 @@ fn generate_asm_from_statements_recursive(
                     }
                 }
             }
-            Statement::LetBinding { name, value, .. } => {
-                generator.emit_expression(value)?;
-                generator.bind_local(name)?;
-            }
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => match (
+                declared_type
+                    .as_deref()
+                    .and_then(crate::models::array_type_parts),
+                value,
+            ) {
+                (Some((_, length)), Expression::ArrayLiteral(elements)) => {
+                    if elements.len() != length {
+                        return Err(format!(
+                            "array '{name}' declares {length} elements but its initializer has {}",
+                            elements.len()
+                        ));
+                    }
+                    // Deepest element last, so element 0 sits closest to the top —
+                    // the layout parameter arrays already have.
+                    for (index, element) in elements.iter().enumerate().rev() {
+                        generator.emit_expression(element)?;
+                        generator
+                            .bind_local(&internal_array_binding_name(name, &index.to_string()))?;
+                    }
+                }
+                _ => {
+                    generator.emit_expression(value)?;
+                    generator.bind_local(name)?;
+                }
+            },
             Statement::VarAssign { name, value } => {
                 generator.emit_expression(value)?;
                 generator.assign(name)?;

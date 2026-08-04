@@ -192,6 +192,13 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
                     ts.name, p.name
                 )));
             }
+            if crate::models::array_type_parts(&p.param_type).is_some() {
+                issues.push(ValidationIssue::error(format!(
+                    "tapscript '{}' input '{}' has array type '{}'; array witnesses are not \
+                     supported in tapscript functions",
+                    ts.name, p.name, p.param_type
+                )));
+            }
         }
         // Duplicate input names within a tapscript.
         let mut seen = std::collections::HashSet::new();
@@ -371,6 +378,8 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
 
         Expression::ArrayIndex { index, .. } => vec![index],
 
+        Expression::ArrayLiteral(elements) => elements.iter().collect(),
+
         Expression::AssetLookup {
             index,
             asset_txid,
@@ -494,16 +503,17 @@ fn insert_parameters(
     source: BindingSource,
 ) {
     for parameter in parameters {
-        if let Some(element_type) = parameter.param_type.strip_suffix("[]") {
+        if let Some((element_type, length)) = crate::models::array_type_parts(&parameter.param_type)
+        {
             let element_type = ArkType::parse(element_type);
             frame.insert(
                 parameter.name.clone(),
                 BindingInfo {
-                    binding_type: ArkType::Array(Box::new(element_type.clone())),
+                    binding_type: ArkType::Array(Box::new(element_type.clone()), length),
                     source,
                 },
             );
-            for index in 0..crate::models::DEFAULT_ARRAY_LENGTH {
+            for index in 0..length {
                 frame.insert(
                     format!("{}[{}]", parameter.name, index),
                     BindingInfo {
@@ -596,12 +606,48 @@ fn validate_binding_statements(
                 declared_type,
                 value,
             } => {
-                validate_binding_expression(value, function_name, scopes, issues, true);
+                // Array literals are the one composite value allowed in a value
+                // position, and only here; validate their elements instead.
+                match value {
+                    Expression::ArrayLiteral(elements) => {
+                        for element in elements {
+                            validate_binding_expression(
+                                element,
+                                function_name,
+                                scopes,
+                                issues,
+                                true,
+                            );
+                        }
+                    }
+                    _ => validate_binding_expression(value, function_name, scopes, issues, true),
+                }
                 let inferred = resolved_expression_type(value, scopes);
                 let binding_type = declared_type
                     .as_deref()
                     .map(ArkType::parse)
                     .unwrap_or_else(|| inferred.clone());
+                // The inferred array type only carries the first element's type,
+                // so check every element against the declared element type.
+                if let (Expression::ArrayLiteral(elements), ArkType::Array(element_type, _)) =
+                    (value, &binding_type)
+                {
+                    for (index, element) in elements.iter().enumerate() {
+                        let actual = resolved_expression_type(element, scopes);
+                        if actual != ArkType::Unknown
+                            && !binding_types_compatible(element_type, &actual)
+                        {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{}': element {} of array '{}' has type '{}', expected '{}'",
+                                function_name,
+                                index,
+                                name,
+                                actual.as_str(),
+                                element_type.as_str()
+                            )));
+                        }
+                    }
+                }
                 if declared_type.is_some()
                     && inferred != ArkType::Unknown
                     && !binding_types_compatible(&binding_type, &inferred)
@@ -614,16 +660,38 @@ fn validate_binding_statements(
                         inferred.as_str()
                     )));
                 }
-                scopes
+                if matches!(value, Expression::ArrayLiteral(_))
+                    && declared_type
+                        .as_deref()
+                        .and_then(crate::models::array_type_parts)
+                        .is_none()
+                {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': array literal needs a declared array type, as in 'int[2] {} = …'",
+                        function_name, name
+                    )));
+                }
+                let frame = scopes
                     .last_mut()
-                    .expect("binding validation always has a scope")
-                    .insert(
-                        name.clone(),
-                        BindingInfo {
-                            binding_type,
-                            source: BindingSource::Local,
-                        },
-                    );
+                    .expect("binding validation always has a scope");
+                if let ArkType::Array(element, length) = &binding_type {
+                    for index in 0..*length {
+                        frame.insert(
+                            format!("{name}[{index}]"),
+                            BindingInfo {
+                                binding_type: (**element).clone(),
+                                source: BindingSource::Local,
+                            },
+                        );
+                    }
+                }
+                frame.insert(
+                    name.clone(),
+                    BindingInfo {
+                        binding_type,
+                        source: BindingSource::Local,
+                    },
+                );
             }
             Statement::VarAssign { name, value } => {
                 validate_binding_expression(value, function_name, scopes, issues, true);
@@ -690,7 +758,7 @@ fn validate_binding_statements(
                 let element_type = match iterable {
                     Expression::Variable(name) => match find_binding(scopes, name) {
                         Some(BindingInfo {
-                            binding_type: ArkType::Array(element),
+                            binding_type: ArkType::Array(element, _),
                             ..
                         }) => (**element).clone(),
                         Some(binding) => {
@@ -711,7 +779,13 @@ fn validate_binding_statements(
                         }
                     },
                     Expression::Property(property) if property.trim() == "tx.assetGroups" => {
-                        ArkType::Int
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{}': cannot iterate 'tx.assetGroups'; the group count is \
+                             not known at compile time. Iterate a declared array of group \
+                             indices instead",
+                            function_name
+                        )));
+                        ArkType::Unknown
                     }
                     _ => {
                         issues.push(ValidationIssue::error(format!(
@@ -912,7 +986,7 @@ fn validate_binding_expression(
     if value_position
         && matches!(
             resolved_expression_type(expression, scopes),
-            ArkType::Array(_)
+            ArkType::Array(..)
         )
     {
         issues.push(ValidationIssue::error(format!(
@@ -993,18 +1067,22 @@ fn validate_binding_expression(
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
         Expression::ArrayIndex { array, index } => {
+            let mut length = None;
             match find_binding(scopes, array) {
                 None => issues.push(ValidationIssue::error(format!(
                     "function '{}': array '{}' is undefined",
                     function_name, array
                 ))),
-                Some(binding) if !matches!(binding.binding_type, ArkType::Array(_)) => {
+                Some(BindingInfo {
+                    binding_type: ArkType::Array(_, declared_length),
+                    ..
+                }) => length = Some(*declared_length),
+                Some(_) => {
                     issues.push(ValidationIssue::error(format!(
                         "function '{}': binding '{}' is not an array",
                         function_name, array
                     )));
                 }
-                Some(_) => {}
             }
             let index_type = resolved_expression_type(index, scopes);
             if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
@@ -1014,20 +1092,29 @@ fn validate_binding_expression(
                     index_type.as_str()
                 )));
             }
-            if let Expression::Literal(index) = index.as_ref() {
-                if index
-                    .parse::<usize>()
-                    .map_or(true, |index| index >= crate::models::DEFAULT_ARRAY_LENGTH)
-                {
+            if let (Expression::Literal(index), Some(length)) = (index.as_ref(), length) {
+                if index.parse::<usize>().map_or(true, |i| i >= length) {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': array index '{}' is out of range",
-                        function_name, index
+                        "function '{}': array index '{}' is out of range for '{}[{}]'",
+                        function_name, index, array, length
                     )));
                 }
             }
         }
         Expression::Property(name) if name.contains('[') => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
+        }
+        Expression::Property(name) if name.ends_with(".length") => {
+            let array = name.trim_end_matches(".length");
+            if !matches!(
+                find_binding(scopes, array).map(|binding| &binding.binding_type),
+                Some(ArkType::Array(..))
+            ) {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': '{}' is not an array; '.length' is undefined",
+                    function_name, array
+                )));
+            }
         }
         Expression::GroupProperty { group, .. } | Expression::GroupControlIs { group, .. }
             if group.parse::<usize>().is_err() =>
@@ -1364,7 +1451,7 @@ fn walk_scope(
 /// still collide here (e.g. `int[] xs` vs `int xs_0`).
 fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     // Constructor params expanded exactly as the emitter expands them (array flattening).
-    let ctor_expanded = crate::compiler::expand_abi_params(&contract.parameters);
+    let ctor_expanded = crate::compiler::expanded_placeholder_params(&contract.parameters);
 
     for func in contract.functions.iter().filter(|f| !f.is_internal) {
         let mut seen: HashSet<String> = HashSet::new();
@@ -1378,7 +1465,7 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
             );
         }
 
-        for p in crate::compiler::expand_abi_params(&func.parameters) {
+        for p in crate::compiler::expanded_placeholder_params(&func.parameters) {
             record_name(
                 p.name,
                 &format!("function '{}'", func.name),
@@ -1398,7 +1485,7 @@ fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssu
                 issues,
             );
         }
-        for p in crate::compiler::expand_abi_params(&tapscript.inputs) {
+        for p in crate::compiler::expanded_placeholder_params(&tapscript.inputs) {
             record_name(
                 p.name,
                 &format!("tapscript '{}'", tapscript.name),
@@ -1451,12 +1538,15 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
-            let expected_prologue = output
-                .parameters
-                .iter()
-                .rev()
-                .map(|parameter| format!("<{}>", parameter.name))
-                .collect::<Vec<_>>();
+            // The ABI keeps one entry per source parameter; the prologue pushes
+            // one placeholder per array element, so compare against the
+            // flattened namespace.
+            let expected_prologue =
+                crate::compiler::expanded_placeholder_params(&output.parameters)
+                    .iter()
+                    .rev()
+                    .map(|parameter| format!("<{}>", parameter.name))
+                    .collect::<Vec<_>>();
             if !arkade.asm.starts_with(&expected_prologue) {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' arkade covenant has an invalid constructor prologue",

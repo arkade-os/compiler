@@ -133,7 +133,7 @@ fn array_loop_values_remain_runtime_group_indices() {
     let covenant = covenant(
         r#"
 contract GroupIndices() {
-    function spend(int[] groups) {
+    function spend(int[3] groups) {
         let total = 0;
         for (i, group) in groups {
             total = total + group.sumInputs + i;
@@ -165,7 +165,7 @@ fn runtime_array_indices_are_bounded_and_pick_by_computed_depth() {
     let covenant = covenant(
         r#"
 contract RuntimeIndex() {
-    function spend(int[] values, int index) {
+    function spend(int[3] values, int index) {
         require(values[index] >= 0);
     }
 }
@@ -207,7 +207,7 @@ fn array_index_accepts_integer_expressions() {
     let covenant = covenant(
         r#"
 contract ExpressionIndex() {
-    function spend(int[] values, int x, int y) {
+    function spend(int[3] values, int x, int y) {
         require(values[x * y + 3] >= 0);
     }
 }
@@ -228,7 +228,7 @@ fn literal_array_indices_remain_static() {
     let covenant = covenant(
         r#"
 contract StaticIndex() {
-    function spend(int[] values, int expected) {
+    function spend(int[3] values, int expected) {
         require(values[2] == expected);
     }
 }
@@ -247,7 +247,7 @@ contract StaticIndex() {
 fn leading_zero_array_indices_are_rejected() {
     let source = r#"
 contract StaticIndex() {
-    function spend(int[] values, int expected) {
+    function spend(int[3] values, int expected) {
         require(values[01] == expected);
     }
 }
@@ -260,7 +260,7 @@ contract StaticIndex() {
 fn runtime_array_indices_work_in_named_crypto_operands_and_loop_values() {
     let cases = [
         r#"
-contract RuntimeIndex(pubkey[] keys) {
+contract RuntimeIndex(pubkey[3] keys) {
     function spend(signature sig, bytes32 msg, int index) {
         require(checkSigFromStack(sig, keys[index], msg));
     }
@@ -268,7 +268,7 @@ contract RuntimeIndex(pubkey[] keys) {
 "#,
         r#"
 contract LoopValueIndex() {
-    function spend(int[] indices, int[] values) {
+    function spend(int[3] indices, int[3] values) {
         for (i, index) in indices {
             require(values[index] >= 0);
         }
@@ -286,7 +286,7 @@ contract LoopValueIndex() {
 fn runtime_array_index_must_be_an_integer() {
     let source = r#"
 contract RuntimeIndex() {
-    function spend(int[] values, bytes index) {
+    function spend(int[3] values, bytes index) {
         require(values[index] >= 0);
     }
 }

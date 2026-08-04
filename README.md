@@ -14,7 +14,7 @@ This language significantly lowers the barrier for Bitcoin-native app developmen
 
 ## Emulator E2E Tests
 
-The self-contained E2E suite builds the compiler and runs the counter and HTLC artifacts through the Arkade VM and btcd tapscript interpreter.
+The self-contained E2E suite builds the compiler and runs the counter, HTLC, symbolic-stack and static-array artifacts through the Arkade VM and btcd tapscript interpreter.
 
 ```bash
 ./scripts/e2e.sh -v
@@ -293,6 +293,8 @@ contract FujiSafe(
 - `bool`: Boolean value
 - `asset`: Asset identifier (for asset-aware contracts)
 
+Any type can be declared as a fixed-size array by appending a size: `pubkey[5] oracles`, `signature[5] sigs`. The size is part of the type and must be a positive integer literal; there is no unsized array type. Array parameters are flattened into one input per element (`oracles_0 … oracles_4`), `for` loops over them unroll once per element, and each element is one stack item — so large sizes grow the compiled script proportionally. Arrays are allowed in constructor and covenant function parameters; `tapscript` function inputs must be scalars.
+
 ### Contract Structure
 
 An Arkade Language file may start with zero or more `import` declarations, followed by a `contract` declaration:
@@ -428,21 +430,23 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 | Field                 | Description                                                                               |
 |-----------------------|-------------------------------------------------------------------------------------------|
 | `contractName`        | Contract identifier                                                                       |
-| `constructorInputs`   | Constructor parameters in source declaration order after array expansion                  |
+| `constructorInputs`   | Constructor parameters in source declaration order, one entry per parameter               |
 | `functions`           | Spend groups: `{ name, arkade?, leaves[] }`                                               |
 | `arkade`              | Optional emulator-run covenant `{ inputs, asm }`                                          |
-| `arkade.inputs`       | Function parameters in source declaration order after array expansion                     |
+| `arkade.inputs`       | Function parameters in source declaration order, one entry per parameter                  |
 | `leaves`              | L1 tapleaf objects `{ name, witness, asm }`                                               |
 | `witness`             | Spend-time tapleaf witness fields, with `injected: true` for infrastructure signatures    |
 | `asm`                 | Assembly tokens, including the explicit constructor prologue and covenant body            |
 
 ### Arkade Covenant Stack ABI
 
-`constructorInputs` and `arkade.inputs` describe the source ABI and remain in source declaration order after fixed-size arrays are expanded. They do not describe the physical VM stack order.
+`constructorInputs`, `arkade.inputs` and each leaf's `witness` describe the source ABI: one entry per source parameter, in declaration order. They do not describe the physical VM stack order.
+
+An array parameter stays one entry carrying its size in the type (`{ "name": "oracles", "type": "pubkey[3]" }`). Each array element is a separate stack item and a separate `<name_i>` placeholder, so clients expand an array entry into `name_0 … name_{N-1}` in index order.
 
 Clients serialize covenant function inputs in reverse `arkade.inputs` order. For example, source inputs `[amount, sig]` produce the physical bottom-to-top witness `[sig, amount]`.
 
-Every covenant `asm` begins with one constructor placeholder per expanded constructor input, also in reverse order. Contract instantiation resolves these placeholders to concrete data pushes before the covenant hash is computed. For source constructor inputs `[limit, owner]`, the prologue is `["<owner>", "<limit>"]`, leaving `limit` nearest the top within the constructor frame.
+Every covenant `asm` begins with one constructor placeholder per expanded constructor input — arrays contribute one placeholder per element — also in reverse order. Contract instantiation resolves these placeholders to concrete data pushes before the covenant hash is computed. For source constructor inputs `[limit, owner]`, the prologue is `["<owner>", "<limit>"]`, leaving `limit` nearest the top within the constructor frame.
 
 The VM installs the function witness before executing the covenant, so the reversed constructor prologue leaves constructor values above function inputs. Covenant body expressions access constructor parameters, function inputs, and local variables through stack operations such as `OP_PICK`; function inputs are not emitted as `<name>` body placeholders.
 

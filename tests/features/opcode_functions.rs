@@ -170,7 +170,7 @@ fn test_unary_minus_negates() {
 fn test_unary_minus_substitutes_loop_index() {
     let code = r#"
         contract LoopNeg(pubkey owner) {
-            function f(int[] amounts) {
+            function f(int[3] amounts) {
                 for (i, amt) in amounts {
                     let d = -i;
                     require(d <= 0);

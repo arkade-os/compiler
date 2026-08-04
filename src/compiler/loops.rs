@@ -10,14 +10,14 @@ use super::internal_array_binding_name;
 /// - `GroupProperty { group: value_var, property: "sumOutputs" }` → `GroupSum { index: k, source: Outputs }`
 /// - `GroupProperty { group: value_var, property: "sumInputs" }` → `GroupSum { index: k, source: Inputs }`
 /// - `Variable(index_var)` → `Literal(k)`
-/// - `Variable(value_var)` when array_name is Some → its internal array-element binding
+/// - `Variable(value_var)` → its internal array-element binding
 /// - Property-form indexing `arr[index_var]` → the same internal binding
 pub(crate) fn substitute_loop_body(
     body: &[Statement],
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&str>,
+    array_name: &str,
 ) -> Vec<Statement> {
     body.iter()
         .map(|stmt| substitute_statement(stmt, index_var, value_var, k, array_name))
@@ -29,7 +29,7 @@ pub(crate) fn substitute_statement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&str>,
+    array_name: &str,
 ) -> Statement {
     match stmt {
         Statement::Require(req) => Statement::Require(substitute_requirement(
@@ -78,7 +78,7 @@ pub(crate) fn substitute_requirement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&str>,
+    array_name: &str,
 ) -> Requirement {
     match req {
         Requirement::Expression(expr) => Requirement::Expression(substitute_expression(
@@ -143,15 +143,13 @@ fn substitute_loop_name(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&str>,
+    array_name: &str,
 ) -> String {
     if name == index_var {
         return k.to_string();
     }
     if name == value_var {
-        return array_name
-            .map(|array| internal_array_binding_name(array, &k.to_string()))
-            .unwrap_or_else(|| k.to_string());
+        return internal_array_binding_name(array_name, &k.to_string());
     }
     if let Some(open) = name.find('[') {
         if name.ends_with(']') {
@@ -160,13 +158,11 @@ fn substitute_loop_name(
                 return internal_array_binding_name(&name[..open], &k.to_string());
             }
             if index == value_var {
-                if let Some(array) = array_name {
-                    return format!(
-                        "{}[{}]",
-                        &name[..open],
-                        internal_array_binding_name(array, &k.to_string())
-                    );
-                }
+                return format!(
+                    "{}[{}]",
+                    &name[..open],
+                    internal_array_binding_name(array_name, &k.to_string())
+                );
             }
         }
     }
@@ -178,19 +174,21 @@ pub(crate) fn substitute_expression(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: Option<&str>,
+    array_name: &str,
 ) -> Expression {
     match expr {
         // Replace index variable with literal k
         Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
         // Replace the value variable with its source-impossible stack binding.
         Expression::Variable(var) if var == value_var => {
-            if let Some(name) = array_name {
-                Expression::Variable(internal_array_binding_name(name, &k.to_string()))
-            } else {
-                Expression::Literal(k.to_string())
-            }
+            Expression::Variable(internal_array_binding_name(array_name, &k.to_string()))
         }
+        Expression::ArrayLiteral(elements) => Expression::ArrayLiteral(
+            elements
+                .iter()
+                .map(|element| substitute_expression(element, index_var, value_var, k, array_name))
+                .collect(),
+        ),
         Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
             array: array.clone(),
             index: Box::new(substitute_expression(
@@ -215,12 +213,10 @@ pub(crate) fn substitute_expression(
                         ));
                     }
                     if idx == value_var {
-                        if let Some(array) = array_name {
-                            return Expression::Property(format!(
-                                "{arr_name}[{}]",
-                                internal_array_binding_name(array, &k.to_string())
-                            ));
-                        }
+                        return Expression::Property(format!(
+                            "{arr_name}[{}]",
+                            internal_array_binding_name(array_name, &k.to_string())
+                        ));
                     }
                 }
             }
