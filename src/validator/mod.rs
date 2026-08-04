@@ -548,6 +548,7 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::ArrayIndex { index, .. } => vec![index],
 
         Expression::ArrayLiteral(elements) => elements.iter().collect(),
+        Expression::StructLiteral(fields) => fields.iter().map(|(_, value)| value).collect(),
 
         Expression::AssetLookup {
             index,
@@ -742,7 +743,13 @@ fn check_binding_semantics(contract: &Contract, issues: &mut Vec<ValidationIssue
             &contract.structs,
         );
         let mut scopes = vec![root];
-        validate_binding_statements(&function.statements, &function.name, &mut scopes, issues);
+        validate_binding_statements(
+            &function.statements,
+            &function.name,
+            &mut scopes,
+            &contract.structs,
+            issues,
+        );
     }
 }
 
@@ -750,6 +757,7 @@ fn validate_binding_statements(
     statements: &[Statement],
     function_name: &str,
     scopes: &mut BindingScopes,
+    structs: &[crate::models::StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for statement in statements {
@@ -774,6 +782,27 @@ fn validate_binding_statements(
                                 issues,
                                 true,
                             );
+                        }
+                    }
+                    Expression::StructLiteral(fields) => {
+                        match declared_type.as_deref().and_then(|declared_type| {
+                            structs
+                                .iter()
+                                .find(|definition| definition.name == declared_type)
+                        }) {
+                            Some(definition) => validate_struct_literal(
+                                name,
+                                definition,
+                                fields,
+                                function_name,
+                                scopes,
+                                structs,
+                                issues,
+                            ),
+                            None => issues.push(ValidationIssue::error(format!(
+                                "function '{}': struct literal needs a declared struct type",
+                                function_name
+                            ))),
                         }
                     }
                     _ => validate_binding_expression(value, function_name, scopes, issues, true),
@@ -827,27 +856,42 @@ fn validate_binding_statements(
                         function_name, name
                     )));
                 }
+                if let ArkType::Struct(_) = &binding_type {
+                    if !matches!(value, Expression::StructLiteral(_)) {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{}': struct binding '{}' must be initialized with a struct literal",
+                            function_name, name
+                        )));
+                    }
+                }
                 let frame = scopes
                     .last_mut()
                     .expect("binding validation always has a scope");
-                if let ArkType::Array(element, length) = &binding_type {
-                    for index in 0..*length {
+                if let Some(declared_type) = declared_type {
+                    let parameter = crate::models::Parameter {
+                        name: name.clone(),
+                        param_type: declared_type.clone(),
+                    };
+                    for (binding_name, binding_type) in
+                        build_scope_with_structs(&[parameter], structs)
+                    {
                         frame.insert(
-                            format!("{name}[{index}]"),
+                            binding_name,
                             BindingInfo {
-                                binding_type: (**element).clone(),
+                                binding_type,
                                 source: BindingSource::Local,
                             },
                         );
                     }
+                } else {
+                    frame.insert(
+                        name.clone(),
+                        BindingInfo {
+                            binding_type,
+                            source: BindingSource::Local,
+                        },
+                    );
                 }
-                frame.insert(
-                    name.clone(),
-                    BindingInfo {
-                        binding_type,
-                        source: BindingSource::Local,
-                    },
-                );
             }
             Statement::VarAssign { name, value } => {
                 validate_binding_expression(value, function_name, scopes, issues, true);
@@ -897,11 +941,11 @@ fn validate_binding_statements(
                     )));
                 }
                 scopes.push(HashMap::new());
-                validate_binding_statements(then_body, function_name, scopes, issues);
+                validate_binding_statements(then_body, function_name, scopes, structs, issues);
                 scopes.pop();
                 if let Some(else_body) = else_body {
                     scopes.push(HashMap::new());
-                    validate_binding_statements(else_body, function_name, scopes, issues);
+                    validate_binding_statements(else_body, function_name, scopes, structs, issues);
                     scopes.pop();
                 }
             }
@@ -966,9 +1010,115 @@ fn validate_binding_statements(
                     );
                 }
                 scopes.push(frame);
-                validate_binding_statements(body, function_name, scopes, issues);
+                validate_binding_statements(body, function_name, scopes, structs, issues);
                 scopes.pop();
             }
+        }
+    }
+}
+
+fn validate_struct_literal(
+    access_name: &str,
+    definition: &crate::models::StructDefinition,
+    fields: &[(String, Expression)],
+    function_name: &str,
+    scopes: &BindingScopes,
+    structs: &[crate::models::StructDefinition],
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let mut seen = HashSet::new();
+    for (name, _) in fields {
+        if !seen.insert(name.as_str()) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literal '{}' initializes field '{}' more than once",
+                function_name, access_name, name
+            )));
+        }
+        if !definition.fields.iter().any(|field| field.name == *name) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literal '{}' has unknown field '{}'",
+                function_name, access_name, name
+            )));
+        }
+    }
+
+    for field in &definition.fields {
+        let Some((_, value)) = fields.iter().find(|(name, _)| name == &field.name) else {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literal '{}' is missing field '{}'",
+                function_name, access_name, field.name
+            )));
+            continue;
+        };
+        let field_name = format!("{access_name}.{}", field.name);
+        if let Some((element_type, length)) = crate::models::array_type_parts(&field.param_type) {
+            let Expression::ArrayLiteral(elements) = value else {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': field '{}' must be initialized with an array literal",
+                    function_name, field_name
+                )));
+                continue;
+            };
+            if elements.len() != length {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': array field '{}' declares {} elements but its initializer has {}",
+                    function_name,
+                    field_name,
+                    length,
+                    elements.len()
+                )));
+            }
+            let expected = ArkType::parse(element_type);
+            for (index, element) in elements.iter().enumerate() {
+                validate_binding_expression(element, function_name, scopes, issues, true);
+                let actual = resolved_expression_type(element, scopes);
+                if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': field '{}[{}]' has type '{}', expected '{}'",
+                        function_name,
+                        field_name,
+                        index,
+                        actual.as_str(),
+                        expected.as_str()
+                    )));
+                }
+            }
+            continue;
+        }
+        if let Some(nested) = structs
+            .iter()
+            .find(|definition| definition.name == field.param_type)
+        {
+            let Expression::StructLiteral(nested_fields) = value else {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': field '{}' must be initialized with a struct literal",
+                    function_name, field_name
+                )));
+                continue;
+            };
+            validate_struct_literal(
+                &field_name,
+                nested,
+                nested_fields,
+                function_name,
+                scopes,
+                structs,
+                issues,
+            );
+            continue;
+        }
+
+        validate_binding_expression(value, function_name, scopes, issues, true);
+        let expected = ArkType::parse(&field.param_type);
+        let actual = resolved_expression_type(value, scopes);
+        if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': field '{}' has type '{}', expected '{}'",
+                function_name,
+                field_name,
+                actual.as_str(),
+                expected.as_str()
+            )));
         }
     }
 }
@@ -1224,6 +1374,12 @@ fn validate_binding_expression(
     }
 
     match expression {
+        Expression::StructLiteral(_) => {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literals may only initialize typed struct declarations",
+                function_name
+            )));
+        }
         Expression::Variable(name) => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }

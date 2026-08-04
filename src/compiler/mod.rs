@@ -70,6 +70,7 @@ struct Generator {
     scopes: Vec<usize>,
     alt_depth: usize,
     constructor_array_expansions: Vec<(String, String)>,
+    structs: Vec<crate::models::StructDefinition>,
 }
 
 impl Generator {
@@ -124,6 +125,7 @@ impl Generator {
             scopes: Vec::new(),
             alt_depth: 0,
             constructor_array_expansions,
+            structs: structs.to_vec(),
         })
     }
 
@@ -421,6 +423,12 @@ impl Generator {
         if matches!(expression, Expression::ArrayLiteral(_)) {
             return Err(
                 "array literals may only initialize an array declaration; composite values are not supported"
+                    .to_string(),
+            );
+        }
+        if matches!(expression, Expression::StructLiteral(_)) {
+            return Err(
+                "struct literals may only initialize a typed struct declaration; composite values are not supported"
                     .to_string(),
             );
         }
@@ -822,13 +830,31 @@ fn generate_asm_from_statements_recursive(
                 name,
                 declared_type,
                 value,
-            } => match (
-                declared_type
-                    .as_deref()
-                    .and_then(crate::models::array_type_parts),
-                value,
-            ) {
-                (Some((_, length)), Expression::ArrayLiteral(elements)) => {
+            } => match (declared_type.as_deref(), value) {
+                (Some(declared_type), Expression::StructLiteral(_))
+                    if generator
+                        .structs
+                        .iter()
+                        .any(|definition| definition.name == declared_type) =>
+                {
+                    let mut leaves = Vec::new();
+                    collect_struct_literal_leaves(
+                        name,
+                        declared_type,
+                        value,
+                        &generator.structs,
+                        &mut leaves,
+                    )?;
+                    for (access_name, expression) in leaves.into_iter().rev() {
+                        generator.emit_expression(&expression)?;
+                        generator.bind_local(&Generator::internal_binding_name(&access_name))?;
+                    }
+                }
+                (Some(declared_type), Expression::ArrayLiteral(elements))
+                    if crate::models::array_type_parts(declared_type).is_some() =>
+                {
+                    let (_, length) = crate::models::array_type_parts(declared_type)
+                        .expect("matched an array type");
                     if elements.len() != length {
                         return Err(format!(
                             "array '{name}' declares {length} elements but its initializer has {}",
@@ -854,6 +880,74 @@ fn generate_asm_from_statements_recursive(
             }
         }
         generator.assert_statement_boundary()?;
+    }
+    Ok(())
+}
+
+fn collect_struct_literal_leaves(
+    access_name: &str,
+    declared_type: &str,
+    value: &Expression,
+    structs: &[crate::models::StructDefinition],
+    leaves: &mut Vec<(String, Expression)>,
+) -> Result<(), String> {
+    if let Some((element_type, length)) = crate::models::array_type_parts(declared_type) {
+        let Expression::ArrayLiteral(elements) = value else {
+            return Err(format!(
+                "field '{access_name}' must be initialized with an array literal"
+            ));
+        };
+        if elements.len() != length {
+            return Err(format!(
+                "array field '{access_name}' declares {length} elements but its initializer has {}",
+                elements.len()
+            ));
+        }
+        for (index, element) in elements.iter().enumerate() {
+            if !crate::models::is_builtin_type(element_type) {
+                return Err("arrays of structs are not supported".to_string());
+            }
+            leaves.push((format!("{access_name}[{index}]"), element.clone()));
+        }
+        return Ok(());
+    }
+    if crate::models::is_builtin_type(declared_type) {
+        leaves.push((access_name.to_string(), value.clone()));
+        return Ok(());
+    }
+
+    let definition = structs
+        .iter()
+        .find(|definition| definition.name == declared_type)
+        .ok_or_else(|| format!("unknown struct type '{declared_type}'"))?;
+    let Expression::StructLiteral(fields) = value else {
+        return Err(format!(
+            "struct field '{access_name}' must be initialized with a struct literal"
+        ));
+    };
+    for field in &definition.fields {
+        let matches = fields
+            .iter()
+            .filter(|(name, _)| name == &field.name)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(format!(
+                "struct literal for '{access_name}' must initialize field '{}' exactly once",
+                field.name
+            ));
+        }
+        collect_struct_literal_leaves(
+            &format!("{access_name}.{}", field.name),
+            &field.param_type,
+            &matches[0].1,
+            structs,
+            leaves,
+        )?;
+    }
+    if fields.len() != definition.fields.len() {
+        return Err(format!(
+            "struct literal for '{access_name}' has unknown or duplicate fields"
+        ));
     }
     Ok(())
 }

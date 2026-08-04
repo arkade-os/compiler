@@ -25,10 +25,14 @@ fn is_numeric(t: &ArkType) -> bool {
 #[derive(Default)]
 struct ConcatPass {
     errors: Vec<String>,
+    structs: Vec<crate::models::StructDefinition>,
 }
 
 pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) -> Result<(), String> {
-    let mut pass = ConcatPass::default();
+    let mut pass = ConcatPass {
+        structs: contract.structs.clone(),
+        ..ConcatPass::default()
+    };
     let constructor_scope =
         crate::typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
     for function in &mut contract.functions {
@@ -66,10 +70,17 @@ impl ConcatPass {
                     scope,
                 );
                 *value = new_expr;
-                scope.insert(
-                    name.clone(),
-                    declared_type.as_deref().map(ArkType::parse).unwrap_or(t),
-                );
+                if let Some(declared_type) = declared_type {
+                    scope.extend(crate::typechecker::build_scope_with_structs(
+                        &[Parameter {
+                            name: name.clone(),
+                            param_type: declared_type.clone(),
+                        }],
+                        &self.structs,
+                    ));
+                } else {
+                    scope.insert(name.clone(), t);
+                }
             }
             Statement::VarAssign { name, value } => {
                 let (new_expr, t) = self.rewrite_expression_concat(
@@ -170,6 +181,15 @@ impl ConcatPass {
                     ArkType::Array(Box::new(element_type), length),
                 )
             }
+            Expression::StructLiteral(fields) => (
+                Expression::StructLiteral(
+                    fields
+                        .into_iter()
+                        .map(|(name, value)| (name, self.rewrite_expression_concat(value, scope).0))
+                        .collect(),
+                ),
+                ArkType::Unknown,
+            ),
             Expression::ArrayIndex { array, index } => {
                 let (index, _) = self.rewrite_expression_concat(*index, scope);
                 let result_type = match scope.get(&array) {

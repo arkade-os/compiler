@@ -269,3 +269,120 @@ contract C(Ambiguous value) {
 
     assert!(error.contains("value_a_b"), "{error}");
 }
+
+#[test]
+fn local_struct_literals_bind_and_assign_scalar_leaves() {
+    let output = compile(
+        r#"
+struct Signer { pubkey key; int weight; }
+struct Policy { Signer primary; int[2] limits; }
+contract C() {
+    function spend(pubkey key, int replacement) {
+        Policy policy = {
+            limits: [1, 2],
+            primary: { weight: 3, key: key }
+        };
+        policy.primary.weight = replacement;
+        policy.limits[1] = replacement;
+        require(policy.primary.weight == policy.limits[1]);
+    }
+}
+"#,
+    )
+    .expect("local struct leaves should behave like scalar locals");
+
+    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    assert!(asm.iter().all(|token| !token.contains("policy.")));
+}
+
+#[test]
+fn struct_literals_require_the_exact_declared_shape() {
+    let cases = [
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { function spend() { Point point = { x: 1 }; require(true); } }
+"#,
+            "missing field 'y'",
+        ),
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { function spend() { Point point = { x: 1, y: 2, z: 3 }; require(true); } }
+"#,
+            "unknown field 'z'",
+        ),
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { function spend() { Point point = { x: 1, x: 2, y: 3 }; require(true); } }
+"#,
+            "more than once",
+        ),
+        (
+            r#"
+struct Values { int[2] items; }
+contract C() { function spend() { Values values = { items: [1] }; require(true); } }
+"#,
+            "declares 2 elements",
+        ),
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { function spend() { Point point = { x: true, y: 2 }; require(true); } }
+"#,
+            "has type 'bool', expected 'int'",
+        ),
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { function spend() { let point = { x: 1, y: 2 }; require(true); } }
+"#,
+            "needs a declared struct type",
+        ),
+    ];
+
+    for (source, expected) in cases {
+        let error = compile(source).expect_err(expected).to_string();
+        assert!(error.contains(expected), "unexpected error: {error}");
+    }
+}
+
+#[test]
+fn whole_struct_copy_and_constructor_field_assignment_are_rejected() {
+    let copy = compile(
+        r#"
+struct Point { int x; int y; }
+contract C(Point initial) {
+    function spend() {
+        Point copied = initial;
+        require(copied.x == 1);
+    }
+}
+"#,
+    )
+    .expect_err("whole struct copy")
+    .to_string();
+    assert!(
+        copy.contains("must be initialized with a struct literal"),
+        "{copy}"
+    );
+
+    let mutation = compile(
+        r#"
+struct Point { int x; int y; }
+contract C(Point point) {
+    function spend(int next) {
+        point.x = next;
+        require(point.x == next);
+    }
+}
+"#,
+    )
+    .expect_err("constructor field mutation")
+    .to_string();
+    assert!(
+        mutation.contains("cannot assign to constructor parameter 'point.x'"),
+        "{mutation}"
+    );
+}

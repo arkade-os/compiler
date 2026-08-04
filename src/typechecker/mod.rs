@@ -212,6 +212,7 @@ fn check_function(
         &mut scope,
         &mut errors,
         &function.name,
+        structs,
     );
     errors
 }
@@ -221,9 +222,10 @@ fn check_statements(
     scope: &mut Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
+    structs: &[crate::models::StructDefinition],
 ) {
     for stmt in stmts {
-        check_statement(stmt, scope, errors, fn_name);
+        check_statement(stmt, scope, errors, fn_name, structs);
     }
 }
 
@@ -232,6 +234,7 @@ fn check_statement(
     scope: &mut Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
+    structs: &[crate::models::StructDefinition],
 ) {
     match stmt {
         Statement::Require(req) => {
@@ -248,13 +251,17 @@ fn check_statement(
                 .as_deref()
                 .map(ArkType::parse)
                 .unwrap_or(inferred);
-            // Seed the scope so downstream uses of `name` get the inferred type.
-            if let ArkType::Array(element, length) = &t {
-                for i in 0..*length {
-                    scope.insert(format!("{name}[{i}]"), (**element).clone());
-                }
+            if let Some(declared_type) = declared_type {
+                scope.extend(build_scope_with_structs(
+                    &[crate::models::Parameter {
+                        name: name.clone(),
+                        param_type: declared_type.clone(),
+                    }],
+                    structs,
+                ));
+            } else {
+                scope.insert(name.clone(), t);
             }
-            scope.insert(name.clone(), t);
         }
         Statement::VarAssign { name, value } => {
             let original_type = scope.get(name.as_str()).cloned();
@@ -297,9 +304,9 @@ fn check_statement(
             }
             // Use cloned child scopes so LetBindings inside branches don't
             // leak into the parent scope.
-            check_statements(then_body, &mut scope.clone(), errors, fn_name);
+            check_statements(then_body, &mut scope.clone(), errors, fn_name, structs);
             if let Some(else_stmts) = else_body {
-                check_statements(else_stmts, &mut scope.clone(), errors, fn_name);
+                check_statements(else_stmts, &mut scope.clone(), errors, fn_name, structs);
             }
         }
         Statement::ForIn {
@@ -313,7 +320,7 @@ fn check_statement(
             let mut loop_scope = scope.clone();
             loop_scope.insert(index_var.clone(), ArkType::Int);
             loop_scope.insert(value_var.clone(), ArkType::Unknown);
-            check_statements(body, &mut loop_scope, errors, fn_name);
+            check_statements(body, &mut loop_scope, errors, fn_name, structs);
         }
     }
 }
@@ -562,6 +569,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ),
             elements.len(),
         ),
+        Expression::StructLiteral(_) => ArkType::Unknown,
         Expression::ArrayIndex { array, .. } => match scope.get(array) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,

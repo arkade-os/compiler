@@ -173,6 +173,7 @@ primary_expr = {
     constructor |
     function_call |
     array_index_access |
+    struct_literal |
     array_literal |
     bool_literal |
     number_literal |
@@ -455,6 +456,12 @@ method_arg = {
 array_literal = {
     "[" ~ general_expression ~ ("," ~ general_expression)* ~ "]"
 }
+
+struct_literal = {
+    "{" ~ struct_literal_field ~ ("," ~ struct_literal_field)* ~ "}"
+}
+
+struct_literal_field = { identifier ~ ":" ~ general_expression }
 
 // Function call
 function_call = {

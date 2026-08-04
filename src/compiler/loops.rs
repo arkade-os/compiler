@@ -189,6 +189,17 @@ pub(crate) fn substitute_expression(
                 .map(|element| substitute_expression(element, index_var, value_var, k, array_name))
                 .collect(),
         ),
+        Expression::StructLiteral(fields) => Expression::StructLiteral(
+            fields
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        substitute_expression(value, index_var, value_var, k, array_name),
+                    )
+                })
+                .collect(),
+        ),
         Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
             array: array.clone(),
             index: Box::new(substitute_expression(

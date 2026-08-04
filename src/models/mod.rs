@@ -451,6 +451,8 @@ pub enum Expression {
     Property(String),
     /// Array literal; only valid as the initializer of an array declaration.
     ArrayLiteral(Vec<Expression>),
+    /// Named struct literal; only valid as the initializer of a typed declaration.
+    StructLiteral(Vec<(String, Expression)>),
     /// Array element selected by an integer expression.
     ArrayIndex {
         array: String,

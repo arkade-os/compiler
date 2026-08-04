@@ -211,6 +211,22 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 .map(parse_general_expression)
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Rule::struct_literal => Ok(Expression::StructLiteral(
+            pair.into_inner()
+                .map(|field| {
+                    let mut field = field.into_inner();
+                    let name = field
+                        .next()
+                        .ok_or("Missing struct literal field name")?
+                        .as_str()
+                        .to_string();
+                    let value = parse_general_expression(
+                        field.next().ok_or("Missing struct literal field value")?,
+                    )?;
+                    Ok((name, value))
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        )),
         Rule::array_length_access => {
             let array = pair
                 .into_inner()
