@@ -123,12 +123,12 @@ func TestStaticArrays(t *testing.T) {
 			deployment := fundingTx(arrays.pkScript, 10_000)
 			unsigned := spendingPSBTWithWitness(
 				t, deployment, arrays, 10_000, arrays.pkScript,
-				covenantWitness(t, group, values),
+				covenantWitness(t, contract, group, values),
 			)
 			values["ownerSig"] = signArkadeSighash(t, unsigned, 0, ownerKey)
 			signed := spendingPSBTWithWitness(
 				t, deployment, arrays, 10_000, arrays.pkScript,
-				covenantWitness(t, group, values),
+				covenantWitness(t, contract, group, values),
 			)
 
 			requireVMResult(t, signed, emulatorKey.PubKey(), testCase.wantErr)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,10 +23,16 @@ import (
 )
 
 type artifact struct {
-	Name              string          `json:"contractName"`
-	ConstructorInputs []abiInput      `json:"constructorInputs"`
-	Functions         []functionGroup `json:"functions"`
-	Warnings          []string        `json:"warnings"`
+	Name              string             `json:"contractName"`
+	Structs           []structDefinition `json:"structs"`
+	ConstructorInputs []abiInput         `json:"constructorInputs"`
+	Functions         []functionGroup    `json:"functions"`
+	Warnings          []string           `json:"warnings"`
+}
+
+type structDefinition struct {
+	Name   string     `json:"name"`
+	Fields []abiInput `json:"fields"`
 }
 
 type abiInput struct {
@@ -170,26 +177,43 @@ func arrayTypeParts(typeStr string) (string, int) {
 	return typeStr[:open], length
 }
 
-// expandInput maps one ABI entry to the stack items it contributes, deepest
-// first: an array entry becomes name.{N-1} … name.0, so element 0 ends up
-// closest to the top.
-func expandInput(input abiInput) []string {
-	_, length := arrayTypeParts(input.Type)
+func flattenInput(name, typeName string, structs []structDefinition) []string {
+	for _, definition := range structs {
+		if definition.Name != typeName {
+			continue
+		}
+		var names []string
+		for _, field := range definition.Fields {
+			names = append(names, flattenInput(name+"."+field.Name, field.Type, structs)...)
+		}
+		return names
+	}
+
+	_, length := arrayTypeParts(typeName)
 	if length == 0 {
-		return []string{input.Name}
+		return []string{name}
 	}
 	names := make([]string, 0, length)
-	for index := length - 1; index >= 0; index-- {
-		names = append(names, fmt.Sprintf("%s.%d", input.Name, index))
+	for index := range length {
+		names = append(names, fmt.Sprintf("%s.%d", name, index))
 	}
 	return names
 }
 
+// expandInput maps one ABI entry to the physical stack items it contributes,
+// deepest first, so the first logical scalar leaf ends up closest to the top.
+func expandInput(input abiInput, structs []structDefinition) []string {
+	names := flattenInput(input.Name, input.Type, structs)
+	slices.Reverse(names)
+	return names
+}
+
 // covenantWitness builds the covenant witness from the ABI alone: inputs in
-// reverse declaration order, array entries expanded per expandInput. This is
-// the client-side convention the artifact documents.
+// reverse declaration order, with composite entries expanded per expandInput.
+// This is the client-side convention the artifact documents.
 func covenantWitness(
 	t *testing.T,
+	contract artifact,
 	group *functionGroup,
 	values map[string][]byte,
 ) wire.TxWitness {
@@ -198,7 +222,7 @@ func covenantWitness(
 	inputs := group.Arkade.Inputs
 	witness := make(wire.TxWitness, 0, len(inputs))
 	for i := len(inputs) - 1; i >= 0; i-- {
-		for _, name := range expandInput(inputs[i]) {
+		for _, name := range expandInput(inputs[i], contract.Structs) {
 			value, ok := values[name]
 			if !ok {
 				t.Fatalf("missing witness value for covenant input %q", name)
