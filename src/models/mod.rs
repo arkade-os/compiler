@@ -14,6 +14,13 @@ pub fn array_type_parts(declared_type: &str) -> Option<(&str, usize)> {
     Some((element, length.parse().ok()?))
 }
 
+pub fn is_builtin_type(declared_type: &str) -> bool {
+    matches!(
+        declared_type,
+        "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "int" | "bool" | "asset"
+    )
+}
+
 // JSON output structures.
 // These represent the compiled contract in a serializable format.
 /// Parameter in a contract or function
@@ -24,6 +31,13 @@ pub struct Parameter {
     /// Parameter type (pubkey, signature, bytes32, int, bool, asset, value)
     #[serde(rename = "type")]
     pub param_type: String,
+}
+
+/// A named, statically laid-out source type.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StructDefinition {
+    pub name: String,
+    pub fields: Vec<Parameter>,
 }
 
 /// Function input parameter
@@ -104,6 +118,8 @@ pub struct AbiFunctionGroup {
 pub struct ContractJson {
     #[serde(rename = "contractName")]
     pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub structs: Vec<StructDefinition>,
     #[serde(rename = "constructorInputs")]
     pub parameters: Vec<Parameter>,
     pub functions: Vec<AbiFunctionGroup>,
@@ -132,6 +148,8 @@ pub struct CompilerInfo {
 pub struct Contract {
     /// Contract name
     pub name: String,
+    /// Struct types declared before this contract.
+    pub structs: Vec<StructDefinition>,
     /// Contract parameters
     pub parameters: Vec<Parameter>,
     /// Contract functions

@@ -651,6 +651,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 
     let mut json = ContractJson {
         name: contract.name.clone(),
+        structs: contract.structs.clone(),
         parameters,
         functions: Vec::new(),
         source: Some(strip_comments(source_code)),

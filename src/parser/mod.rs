@@ -1,4 +1,4 @@
-use crate::models::{Contract, Function, Parameter, Statement};
+use crate::models::{Contract, Function, Parameter, Statement, StructDefinition};
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
@@ -40,6 +40,7 @@ pub fn parse(source_code: &str) -> Result<Contract, Box<dyn std::error::Error>> 
 fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
+        structs: Vec::new(),
         parameters: Vec::new(),
         functions: Vec::new(),
         tapscripts: Vec::new(),
@@ -63,6 +64,9 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
                         Rule::contract => {
                             parse_contract(&mut contract, inner_pair)?;
                         }
+                        Rule::struct_definition => {
+                            contract.structs.push(parse_struct_definition(inner_pair)?);
+                        }
                         _ => {}
                     }
                 }
@@ -75,6 +79,32 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
     }
 
     Ok(contract)
+}
+
+fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String> {
+    let mut inner = pair.into_inner();
+    let name = inner
+        .next()
+        .ok_or_else(|| "Missing struct name".to_string())?
+        .as_str()
+        .to_string();
+    let fields = inner
+        .map(|field| {
+            let mut field = field.into_inner();
+            let param_type = parse_data_type(
+                field
+                    .next()
+                    .ok_or_else(|| format!("struct '{name}' field is missing a type"))?,
+            );
+            let name = field
+                .next()
+                .ok_or_else(|| format!("struct '{name}' field is missing a name"))?
+                .as_str()
+                .to_string();
+            Ok(Parameter { name, param_type })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(StructDefinition { name, fields })
 }
 
 /// Parse a contract definition: name, parameters, and functions

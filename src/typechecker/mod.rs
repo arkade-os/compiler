@@ -43,6 +43,8 @@ pub enum ArkType {
     // ── Composite ──────────────────────────────────────────────────────────
     /// Homogeneous fixed-size array (e.g., `pubkey[3]`)
     Array(Box<ArkType>, usize),
+    /// Named user-defined struct.
+    Struct(String),
 
     /// Type could not be resolved (variable not in scope, etc.)
     Unknown,
@@ -63,6 +65,7 @@ impl ArkType {
             "int" => ArkType::Int,
             "bool" => ArkType::Bool,
             "asset" => ArkType::Asset,
+            _ if !s.is_empty() => ArkType::Struct(s.to_string()),
             _ => ArkType::Unknown,
         }
     }
@@ -82,6 +85,7 @@ impl ArkType {
             ArkType::Bool => "scriptnum",
             ArkType::Asset => "raw-32",
             ArkType::Array(..) => "array",
+            ArkType::Struct(..) => "struct",
             ArkType::Unknown => "unknown",
         }
     }
@@ -98,6 +102,7 @@ impl ArkType {
             ArkType::Bool => "bool".to_string(),
             ArkType::Asset => "asset".to_string(),
             ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
+            ArkType::Struct(name) => name.clone(),
             ArkType::Unknown => "unknown".to_string(),
         }
     }

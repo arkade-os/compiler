@@ -11,7 +11,8 @@ mod validator;
 pub mod wasm;
 
 pub use models::{
-    Contract, ContractJson, Expression, Function, Parameter, Requirement, WitnessElement,
+    Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
+    WitnessElement,
 };
 pub use typechecker::{ArkType, TypeError};
 

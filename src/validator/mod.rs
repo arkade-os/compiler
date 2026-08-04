@@ -82,6 +82,8 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
+    check_struct_definitions(contract, &mut issues);
+
     // ── Contract name ──────────────────────────────────────────────────────
     if contract.name.is_empty() {
         issues.push(ValidationIssue::error("contract name must not be empty"));
@@ -199,6 +201,16 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
                     ts.name, p.name, p.param_type
                 )));
             }
+            if contract
+                .structs
+                .iter()
+                .any(|definition| definition.name == p.param_type)
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "tapscript '{}' input '{}' has struct type '{}'; struct witnesses are not supported in tapscript functions",
+                    ts.name, p.name, p.param_type
+                )));
+            }
         }
         // Duplicate input names within a tapscript.
         let mut seen = std::collections::HashSet::new();
@@ -218,6 +230,160 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     check_asset_id_operands(contract, &mut issues);
 
     issues
+}
+
+fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let mut names = HashSet::new();
+    for definition in &contract.structs {
+        if crate::models::is_builtin_type(&definition.name) {
+            issues.push(ValidationIssue::error(format!(
+                "struct '{}' collides with a built-in type",
+                definition.name
+            )));
+        }
+        if !names.insert(definition.name.as_str()) {
+            issues.push(ValidationIssue::error(format!(
+                "duplicate struct definition '{}'",
+                definition.name
+            )));
+        }
+        let mut fields = HashSet::new();
+        for field in &definition.fields {
+            if !fields.insert(field.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "duplicate field '{}' in struct '{}'",
+                    field.name, definition.name
+                )));
+            }
+        }
+    }
+
+    let definitions = contract
+        .structs
+        .iter()
+        .map(|definition| (definition.name.as_str(), definition))
+        .collect::<HashMap<_, _>>();
+    for definition in &contract.structs {
+        validate_struct_fields(definition, &definitions, &mut Vec::new(), issues);
+    }
+    for parameter in contract
+        .parameters
+        .iter()
+        .chain(
+            contract
+                .functions
+                .iter()
+                .flat_map(|function| &function.parameters),
+        )
+        .chain(
+            contract
+                .tapscripts
+                .iter()
+                .flat_map(|tapscript| &tapscript.inputs),
+        )
+    {
+        validate_declared_type(&parameter.param_type, "parameter", &definitions, issues);
+    }
+    for function in &contract.functions {
+        validate_local_types(&function.statements, &function.name, &definitions, issues);
+    }
+}
+
+fn validate_local_types(
+    statements: &[Statement],
+    function_name: &str,
+    definitions: &HashMap<&str, &crate::models::StructDefinition>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::LetBinding {
+                declared_type: Some(declared_type),
+                ..
+            } => validate_declared_type(
+                declared_type,
+                &format!("local declaration in function '{function_name}'"),
+                definitions,
+                issues,
+            ),
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                validate_local_types(then_body, function_name, definitions, issues);
+                if let Some(else_body) = else_body {
+                    validate_local_types(else_body, function_name, definitions, issues);
+                }
+            }
+            Statement::ForIn { body, .. } => {
+                validate_local_types(body, function_name, definitions, issues);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn validate_struct_fields<'a>(
+    definition: &'a crate::models::StructDefinition,
+    definitions: &HashMap<&'a str, &'a crate::models::StructDefinition>,
+    stack: &mut Vec<&'a str>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if stack.contains(&definition.name.as_str()) {
+        let mut cycle = stack.join(" -> ");
+        if !cycle.is_empty() {
+            cycle.push_str(" -> ");
+        }
+        cycle.push_str(&definition.name);
+        issues.push(ValidationIssue::error(format!(
+            "recursive struct layout: {cycle}"
+        )));
+        return;
+    }
+    stack.push(&definition.name);
+    for field in &definition.fields {
+        validate_declared_type(
+            &field.param_type,
+            &format!("field '{}.{}'", definition.name, field.name),
+            definitions,
+            issues,
+        );
+        let (base, is_array) = crate::models::array_type_parts(&field.param_type)
+            .map(|(base, _)| (base, true))
+            .unwrap_or((field.param_type.as_str(), false));
+        if let Some(nested) = definitions.get(base) {
+            if is_array {
+                issues.push(ValidationIssue::error(format!(
+                    "field '{}.{}' is an array of structs; arrays of structs are not supported",
+                    definition.name, field.name
+                )));
+            } else {
+                validate_struct_fields(nested, definitions, stack, issues);
+            }
+        }
+    }
+    stack.pop();
+}
+
+fn validate_declared_type(
+    declared_type: &str,
+    context: &str,
+    definitions: &HashMap<&str, &crate::models::StructDefinition>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let array = crate::models::array_type_parts(declared_type);
+    let base = array.map(|(base, _)| base).unwrap_or(declared_type);
+    if !crate::models::is_builtin_type(base) && !definitions.contains_key(base) {
+        issues.push(ValidationIssue::error(format!(
+            "{context} uses unknown type '{base}'"
+        )));
+    }
+    if array.is_some() && definitions.contains_key(base) {
+        issues.push(ValidationIssue::error(format!(
+            "{context} uses an array of structs; arrays of structs are not supported"
+        )));
+    }
 }
 
 fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
@@ -1607,6 +1773,7 @@ mod tests {
     fn make_contract(name: &str) -> Contract {
         Contract {
             name: name.to_string(),
+            structs: vec![],
             parameters: vec![Parameter {
                 name: "owner".to_string(),
                 param_type: "pubkey".to_string(),
@@ -1731,6 +1898,7 @@ mod tests {
         }];
         ContractJson {
             name: name.to_string(),
+            structs: vec![],
             parameters: vec![],
             functions: vec![AbiFunctionGroup {
                 name: "spend".to_string(),
