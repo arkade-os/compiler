@@ -56,17 +56,31 @@ function inferEncoding(typeStr) {
 
 // ─── IR construction ─────────────────────────────────────────────────
 
-function buildIR(artifact) {
-    const constructorFields = (artifact.constructorInputs || []).map(p => ({
-        name: p.name, arkType: p.type, encoding: inferEncoding(p.type),
+// The artifact keeps one entry per source parameter, so an array type
+// (pubkey[3]) expands here into the name_0 … name_2 scalars the asm
+// placeholders and the witness stack actually carry.
+function expandFields(name, typeStr, isInjected) {
+    const array = /^(.+)\[(\d+)\]$/.exec(typeStr);
+    if (!array) {
+        return [{ name, arkType: typeStr, encoding: inferEncoding(typeStr), isInjected }];
+    }
+    const [, elementType, length] = array;
+    return Array.from({ length: Number(length) }, (_, index) => ({
+        name: `${name}_${index}`,
+        arkType: elementType,
+        encoding: inferEncoding(elementType),
+        isInjected,
     }));
+}
+
+function buildIR(artifact) {
+    const constructorFields = (artifact.constructorInputs || [])
+        .flatMap(p => expandFields(p.name, p.type, false));
 
     const functions = (artifact.functions || []).map(group => {
         const leaves = (group.leaves || []).map(leaf => {
-            const allFields = (leaf.witness || []).map(w => ({
-                name: w.name, arkType: w.type, encoding: w.encoding,
-                isInjected: w.injected === true,
-            }));
+            const allFields = (leaf.witness || [])
+                .flatMap(w => expandFields(w.name, w.type, w.injected === true));
             return {
                 name: leaf.name,
                 allFields,
