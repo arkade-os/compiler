@@ -39,6 +39,13 @@ const projects = {
             'repayment_pool.ark': contracts.repayment_pool,
             'bond_mint.ark': contracts.bond_mint,
         }
+    },
+    mining_margin: {
+        name: 'Mining Margin',
+        description: 'Hashrate derivatives on the mining margin: paired RIG/GRID legs escrow the margin cap and settle on oracle hashprice − power cost fixings',
+        files: {
+            'mining_margin_vault.ark': contracts.mining_margin_vault,
+        }
     }
 };
 
