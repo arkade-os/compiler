@@ -42,7 +42,7 @@ const projects = {
     },
     mining_margin: {
         name: 'Mining Margin',
-        description: 'Hashrate derivatives on the mining margin: paired RIG/GRID legs escrow the margin cap and settle on oracle hashprice − power cost fixings',
+        description: 'Hashrate derivatives on the mining margin: paired RIG/GRID legs escrow the margin cap and settle on oracle hashprice − power cost fixings. State transitions await compiler support — compiles to a disabled placeholder today',
         files: {
             'mining_margin_vault.ark': contracts.mining_margin_vault,
         }
