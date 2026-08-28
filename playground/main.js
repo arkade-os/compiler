@@ -26,10 +26,11 @@ const projects = {
     },
     options: {
         name: 'Options',
-        description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
+        description: 'European covered call + cash-secured put (physically settled, buyer-exercised) and an oracle-settled covered call (cash-settled in BTC, 3-of-5 oracle median, permissionless settlement)',
         files: {
             'covered_call.ark': contracts.covered_call,
             'cash_secured_put.ark': contracts.cash_secured_put,
+            'oracle_covered_call.ark': contracts.oracle_covered_call,
         }
     },
     bonds: {
