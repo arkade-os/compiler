@@ -1,5 +1,7 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_LESSTHAN};
+use arkade_compiler::opcodes::{
+    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTASSETGROUPASSETID, OP_LESSTHAN, OP_PICK,
+};
 
 #[test]
 fn struct_definitions_are_preserved_in_the_artifact() {
@@ -277,6 +279,23 @@ contract C(Ambiguous value) {
         &output.functions[0].arkade.as_ref().expect("covenant").asm[..2],
         ["<value.a.b>", "<value.a_b>"]
     );
+}
+
+#[test]
+fn group_property_names_are_valid_struct_fields() {
+    let output = compile(
+        r#"
+struct Token { int assetId; }
+contract C(Token token) {
+    function spend() { require(token.assetId >= 0); }
+}
+"#,
+    )
+    .expect("asset-group property names should remain valid struct fields");
+
+    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    assert!(asm.iter().all(|token| token != OP_INSPECTASSETGROUPASSETID));
+    assert!(asm.iter().any(|token| token == OP_PICK));
 }
 
 #[test]

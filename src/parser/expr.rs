@@ -319,26 +319,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                     index: Box::new(parse_general_expression(index)?),
                 });
             }
-            let parts = inner.iter().map(|part| part.as_str()).collect::<Vec<_>>();
-            if parts.len() == 2
-                && matches!(
-                    parts[1],
-                    "numInputs"
-                        | "numOutputs"
-                        | "sumInputs"
-                        | "sumOutputs"
-                        | "delta"
-                        | "hasControl"
-                        | "metadataHash"
-                        | "assetId"
-                        | "isFresh"
-                )
-            {
-                return Ok(Expression::GroupProperty {
-                    group: parts[0].to_string(),
-                    property: parts[1].to_string(),
-                });
-            }
             Ok(Expression::Property(text))
         }
         Rule::input_introspection => parse_input_introspection_to_expression(pair),

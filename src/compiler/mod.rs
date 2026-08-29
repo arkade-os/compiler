@@ -655,6 +655,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
+    typechecker::resolve_group_properties(&mut contract);
+
     // ── Semantic validation ────────────────────────────────────────────────
     // Catch errors the PEG grammar cannot express (duplicate names, missing
     // timelocks, etc.) before we attempt code generation.
