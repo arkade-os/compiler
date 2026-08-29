@@ -78,6 +78,14 @@ impl ConcatPass {
                         }],
                         &self.structs,
                     ));
+                } else if matches!(t, ArkType::Struct(_)) {
+                    scope.extend(crate::typechecker::build_scope_with_structs(
+                        &[Parameter {
+                            name: name.clone(),
+                            param_type: t.as_str(),
+                        }],
+                        &self.structs,
+                    ));
                 } else {
                     scope.insert(name.clone(), t);
                 }

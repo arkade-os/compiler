@@ -300,6 +300,27 @@ fn test_ec_mul_infers_point_type() {
 }
 
 #[test]
+fn test_inferred_point_fields_keep_their_types_during_concat_rewrite() {
+    let error = compile(
+        r#"
+        contract EllipticCurve(int curveId) {
+            function multiply(int x, int y, int scalar, bytes suffix) {
+                let result = ecMul(x, y, scalar, curveId);
+                require(result.x + suffix == suffix);
+            }
+        }
+    "#,
+    )
+    .expect_err("numeric ECPoint field needs an explicit byte width")
+    .to_string();
+
+    assert!(
+        error.contains("cannot concatenate bytes with the left `int` operand"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn test_ec_pairing() {
     let code = r#"
         contract EllipticCurve(int curveId) {

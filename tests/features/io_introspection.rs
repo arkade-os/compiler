@@ -107,6 +107,27 @@ fn test_input_outpoint_returns_struct() {
     assert!(asm.iter().any(|token| token == OP_SWAP));
 }
 
+#[test]
+fn test_input_outpoint_cannot_be_compared_as_a_scalar() {
+    let error = compile(
+        r#"
+        contract OutpointChecker() {
+            function checkOutpoint() {
+                let expected = tx.input.current.outpoint;
+                require(tx.inputs[0].outpoint == expected);
+            }
+        }
+    "#,
+    )
+    .expect_err("outpoint equality is a composite comparison")
+    .to_string();
+
+    assert!(
+        error.contains("struct expressions are composite values"),
+        "{error}"
+    );
+}
+
 /// Test output introspection opcodes
 #[test]
 fn test_output_value() {

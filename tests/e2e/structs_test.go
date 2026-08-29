@@ -38,7 +38,11 @@ func TestStructs(t *testing.T) {
 	}
 
 	group := covenantGroup(t, contract, "spend")
-	for index, name := range expandInput(contract.ConstructorInputs[0], contract.Structs) {
+	constructorInputs := expandInput(contract.ConstructorInputs[0], contract.Structs)
+	if got, want := len(group.Arkade.ASM), len(constructorInputs); got < want {
+		t.Fatalf("covenant asm has %d tokens, need at least %d constructor prologue tokens", got, want)
+	}
+	for index, name := range constructorInputs {
 		if got, want := group.Arkade.ASM[index], "<"+name+">"; got != want {
 			t.Fatalf("constructor prologue token %d = %q, want %q", index, got, want)
 		}

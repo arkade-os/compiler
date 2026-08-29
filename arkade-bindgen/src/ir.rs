@@ -65,7 +65,7 @@ impl Encoding {
 /// A typed field in the IR (constructor param, covenant input, or witness element).
 #[derive(Debug, Clone)]
 pub struct Field {
-    /// Scalar placeholder name as it appears in the artifact.
+    /// Flattened scalar path used by assembly placeholders and witness entries.
     pub name: String,
     /// Arkade Script type string (e.g., "pubkey", "signature").
     pub ark_type: String,

@@ -48,6 +48,7 @@ function toGoFieldName(s) {
     return [...s].map((ch, index) => {
         if (ch === '.') return '_D';
         if (ch === '_') return '_U';
+        if (index === 0 && ch >= 'A' && ch <= 'Z') return `${ch}_C`;
         return index === 0 ? ch.toUpperCase() : ch;
     }).join('');
 }
@@ -79,7 +80,13 @@ function expandFields(name, typeStr, isInjected, structs = []) {
             expandFields(`${name}.${index}`, elementType, isInjected, structs)
         ).flat();
     }
-    const definition = structs.find(definition => definition.name === typeStr);
+    const nativeFields = {
+        AssetId: [{ name: 'txid', type: 'bytes32' }, { name: 'gidx', type: 'int' }],
+        Outpoint: [{ name: 'txid', type: 'bytes32' }, { name: 'vout', type: 'int' }],
+        ECPoint: [{ name: 'x', type: 'int' }, { name: 'y', type: 'int' }],
+    };
+    const definition = structs.find(definition => definition.name === typeStr)
+        || (nativeFields[typeStr] && { fields: nativeFields[typeStr] });
     if (definition) {
         return definition.fields.flatMap(field =>
             expandFields(`${name}.${field.name}`, field.type, isInjected, structs)

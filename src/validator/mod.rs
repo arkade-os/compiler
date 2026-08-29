@@ -201,10 +201,11 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
                     ts.name, p.name, p.param_type
                 )));
             }
-            if contract
-                .structs
-                .iter()
-                .any(|definition| definition.name == p.param_type)
+            if crate::models::is_builtin_struct(&p.param_type)
+                || contract
+                    .structs
+                    .iter()
+                    .any(|definition| definition.name == p.param_type)
             {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' has struct type '{}'; struct witnesses are not supported in tapscript functions",
@@ -348,12 +349,14 @@ fn validate_struct_fields<'a>(
     }
     stack.push(&definition.name);
     for field in &definition.fields {
-        validate_declared_type(
-            &field.param_type,
-            &format!("field '{}.{}'", definition.name, field.name),
-            definitions,
-            issues,
-        );
+        if !crate::models::is_builtin_struct(&field.param_type) {
+            validate_declared_type(
+                &field.param_type,
+                &format!("field '{}.{}'", definition.name, field.name),
+                definitions,
+                issues,
+            );
+        }
         let (base, is_array) = crate::models::array_type_parts(&field.param_type)
             .map(|(base, _)| (base, true))
             .unwrap_or((field.param_type.as_str(), false));
@@ -1159,6 +1162,21 @@ fn validate_struct_literal(
                 structs,
                 issues,
             );
+            continue;
+        }
+        if crate::models::is_builtin_struct(&field.param_type) {
+            validate_binding_expression(value, function_name, scopes, issues, false);
+            let expected = ArkType::parse(&field.param_type);
+            let actual = resolved_expression_type(value, scopes);
+            if actual != expected {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': field '{}' has type '{}', expected '{}'",
+                    function_name,
+                    field_name,
+                    actual.as_str(),
+                    expected.as_str()
+                )));
+            }
             continue;
         }
 

@@ -270,9 +270,11 @@ pub fn validate_arkd_rules(
         }
     }
 
-    // Any declared name (constructor param or tapscript input), any type.
+    // Any scalar constructor binding or tapscript input.
     let name_declared = |name: &str| -> bool {
-        constructor_scope.contains_key(name) || ts.inputs.iter().any(|p| p.name == name)
+        constructor_scope.get(name).is_some_and(|binding_type| {
+            !matches!(binding_type, ArkType::Struct(_) | ArkType::Array(..))
+        }) || ts.inputs.iter().any(|p| p.name == name)
     };
     // A declared `signature` input.
     let sig_input = |name: &str| -> bool {

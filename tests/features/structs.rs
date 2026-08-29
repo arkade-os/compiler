@@ -1,6 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTASSETGROUPASSETID, OP_LESSTHAN, OP_PICK,
+    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_INSPECTASSETGROUPASSETID,
+    OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_PICK, OP_SWAP,
 };
 
 #[test]
@@ -240,6 +241,29 @@ contract C(Owner owner) {
 }
 
 #[test]
+fn composite_constructor_values_are_rejected_in_tapscripts() {
+    let error = compile(
+        r#"
+struct Delay { int blocks; }
+struct Policy { Delay exit; }
+contract C(Policy policy, pubkey owner) {
+    function exit(signature sig) tapscript {
+        require(older(policy.exit));
+        require(checkSig(sig, owner));
+    }
+}
+"#,
+    )
+    .expect_err("intermediate struct values are not tapscript operands")
+    .to_string();
+
+    assert!(
+        error.contains("timelock `policy.exit` is not a literal"),
+        "{error}"
+    );
+}
+
+#[test]
 fn array_fields_support_runtime_indexing_and_loop_unrolling() {
     let output = compile(
         r#"
@@ -321,6 +345,40 @@ contract C() {
 
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
     assert!(asm.iter().all(|token| !token.contains("policy.")));
+    assert!(asm.iter().filter(|token| *token == OP_PICK).count() >= 2);
+    assert!(asm.iter().any(|token| token == OP_EQUAL));
+}
+
+#[test]
+fn native_results_can_initialize_nested_struct_fields() {
+    let output = compile(
+        r#"
+struct Snapshot { Outpoint outpoint; int minimumVout; }
+contract C(Snapshot expected) {
+    function spend(int inputIndex) {
+        Snapshot snapshot = {
+            outpoint: tx.inputs[inputIndex].outpoint,
+            minimumVout: expected.minimumVout
+        };
+        require(snapshot.outpoint.vout >= expected.outpoint.vout);
+    }
+}
+"#,
+    )
+    .expect("native struct result nested in a user struct");
+
+    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    assert_eq!(
+        &asm[..3],
+        [
+            "<expected.minimumVout>",
+            "<expected.outpoint.vout>",
+            "<expected.outpoint.txid>",
+        ]
+    );
+    assert!(asm.iter().any(|token| token == OP_INSPECTINPUTOUTPOINT));
+    assert!(asm.iter().any(|token| token == OP_SWAP));
+    assert!(asm.iter().filter(|token| *token == OP_PICK).count() >= 2);
 }
 
 #[test]

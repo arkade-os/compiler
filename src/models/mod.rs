@@ -21,6 +21,7 @@ pub fn is_builtin_type(declared_type: &str) -> bool {
     )
 }
 
+/// Native struct fields in source order; producing opcodes push the first field deepest.
 pub fn builtin_struct_fields(
     declared_type: &str,
 ) -> Option<&'static [(&'static str, &'static str)]> {
@@ -110,6 +111,19 @@ fn flatten_type(
             emitted_name: emitted_name.to_string(),
             leaf_type: declared_type.to_string(),
         });
+        return Ok(());
+    }
+    if let Some(fields) = builtin_struct_fields(declared_type) {
+        for (field_name, field_type) in fields {
+            flatten_type(
+                &format!("{access_name}.{field_name}"),
+                &format!("{emitted_name}.{field_name}"),
+                field_type,
+                structs,
+                stack,
+                leaves,
+            )?;
+        }
         return Ok(());
     }
 

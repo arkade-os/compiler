@@ -467,8 +467,8 @@ impl Generator {
     ) -> Result<(), String> {
         let fields = crate::models::builtin_struct_fields(declared_type)
             .ok_or_else(|| format!("unknown native struct type '{declared_type}'"))?;
-        // Native multi-item opcodes currently all return two leaves. Replace
-        // this swap with a general reversal when a wider result is introduced.
+        // Native expressions push fields in declaration order, first deepest.
+        // Replace this swap with a general reversal when a wider result is introduced.
         if fields.len() != 2 {
             return Err(format!(
                 "native struct '{declared_type}' has unsupported width {}",
@@ -873,9 +873,14 @@ fn generate_asm_from_statements_recursive(
                         &generator.structs,
                         &mut leaves,
                     )?;
-                    for (access_name, expression) in leaves.into_iter().rev() {
-                        generator.emit_expression(&expression)?;
-                        generator.bind_local(&Generator::internal_binding_name(&access_name))?;
+                    for (access_name, leaf_type, expression) in leaves.into_iter().rev() {
+                        if crate::models::is_builtin_struct(&leaf_type) {
+                            generator.bind_native_struct(&access_name, &leaf_type, &expression)?;
+                        } else {
+                            generator.emit_expression(&expression)?;
+                            generator
+                                .bind_local(&Generator::internal_binding_name(&access_name))?;
+                        }
                     }
                 }
                 (declared_type, value)
@@ -930,7 +935,7 @@ fn collect_struct_literal_leaves(
     declared_type: &str,
     value: &Expression,
     structs: &[crate::models::StructDefinition],
-    leaves: &mut Vec<(String, Expression)>,
+    leaves: &mut Vec<(String, String, Expression)>,
 ) -> Result<(), String> {
     if let Some((element_type, length)) = crate::models::array_type_parts(declared_type) {
         let Expression::ArrayLiteral(elements) = value else {
@@ -948,12 +953,28 @@ fn collect_struct_literal_leaves(
             if !crate::models::is_builtin_type(element_type) {
                 return Err("arrays of structs are not supported".to_string());
             }
-            leaves.push((format!("{access_name}[{index}]"), element.clone()));
+            leaves.push((
+                format!("{access_name}[{index}]"),
+                element_type.to_string(),
+                element.clone(),
+            ));
         }
         return Ok(());
     }
     if crate::models::is_builtin_type(declared_type) {
-        leaves.push((access_name.to_string(), value.clone()));
+        leaves.push((
+            access_name.to_string(),
+            declared_type.to_string(),
+            value.clone(),
+        ));
+        return Ok(());
+    }
+    if crate::models::is_builtin_struct(declared_type) {
+        leaves.push((
+            access_name.to_string(),
+            declared_type.to_string(),
+            value.clone(),
+        ));
         return Ok(());
     }
 

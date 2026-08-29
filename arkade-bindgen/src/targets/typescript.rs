@@ -45,6 +45,7 @@ fn sdk_type_alias(encoding: &Encoding) -> Option<&'static str> {
 }
 
 fn field_name(name: &str) -> String {
+    // Flat dotted paths stay verbatim so they cannot collide with underscored names.
     if name.contains('.') {
         format!("\"{name}\"")
     } else {

@@ -53,7 +53,7 @@ pub fn to_camel_case(s: &str) -> String {
 }
 
 /// Convert a placeholder path to an exported Go field name without losing
-/// the distinction between path separators and source underscores.
+/// path separators, source underscores, or initial-letter case.
 pub fn to_go_field_name(s: &str) -> String {
     if !s.contains('.') {
         return to_pascal_case(s);
@@ -64,6 +64,10 @@ pub fn to_go_field_name(s: &str) -> String {
         match ch {
             '.' => result.push_str("_D"),
             '_' => result.push_str("_U"),
+            ch if index == 0 && ch.is_ascii_uppercase() => {
+                result.push(ch);
+                result.push_str("_C");
+            }
             ch if index == 0 => result.push(ch.to_ascii_uppercase()),
             ch => result.push(ch),
         }
@@ -147,6 +151,7 @@ mod tests {
         assert_eq!(to_go_field_name("value.a_b"), "Value_Da_Ub");
         assert_eq!(to_go_field_name("value.a.b"), "Value_Da_Db");
         assert_eq!(to_go_field_name("values.0"), "Values_D0");
+        assert_ne!(to_go_field_name("value.a"), to_go_field_name("Value.a"));
     }
 
     #[test]

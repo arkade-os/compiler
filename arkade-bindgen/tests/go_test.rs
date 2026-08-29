@@ -129,3 +129,23 @@ contract C(Ambiguous value) {
     assert!(code.contains("Name: \"value.a_b\""));
     assert!(code.contains("Name: \"value.a.b\""));
 }
+
+#[test]
+fn test_go_dotted_fields_preserve_initial_case() {
+    let artifact = arkade_compiler::compile(
+        r#"
+struct Value { int a; }
+contract C(Value value, Value Value) {
+    function spend() { require(true); }
+}
+"#,
+    )
+    .unwrap();
+    let json = serde_json::to_string(&artifact).unwrap();
+    let code = generate_from_str(&json, Target::Go, &Options::default())
+        .unwrap()
+        .content;
+
+    assert!(code.contains("Value_Da int64"));
+    assert!(code.contains("V_Calue_Da int64"));
+}
