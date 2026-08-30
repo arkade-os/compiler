@@ -195,6 +195,28 @@ fn insert_type_bindings(
     scope.insert(name.to_string(), ArkType::parse(declared_type));
 }
 
+pub(crate) fn bind_local_type(
+    scope: &mut Scope,
+    name: &str,
+    declared_type: Option<&str>,
+    inferred: ArkType,
+    structs: &[crate::models::StructDefinition],
+) {
+    let expanded = match declared_type {
+        Some(declared_type) => Some(declared_type.to_string()),
+        None if matches!(inferred, ArkType::Struct(_)) => Some(inferred.as_str()),
+        None => None,
+    };
+    match expanded {
+        Some(declared_type) => {
+            insert_type_bindings(scope, name, &declared_type, structs, &mut Vec::new())
+        }
+        None => {
+            scope.insert(name.to_string(), inferred);
+        }
+    }
+}
+
 pub(crate) fn resolve_group_properties(contract: &mut Contract) {
     let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     for function in &mut contract.functions {
@@ -232,25 +254,7 @@ fn resolve_statements(
                     .as_deref()
                     .map(ArkType::parse)
                     .unwrap_or_else(|| infer_type(value, scope));
-                if let Some(declared_type) = declared_type {
-                    scope.extend(build_scope_with_structs(
-                        &[crate::models::Parameter {
-                            name: name.clone(),
-                            param_type: declared_type.clone(),
-                        }],
-                        structs,
-                    ));
-                } else if matches!(binding_type, ArkType::Struct(_)) {
-                    scope.extend(build_scope_with_structs(
-                        &[crate::models::Parameter {
-                            name: name.clone(),
-                            param_type: binding_type.as_str(),
-                        }],
-                        structs,
-                    ));
-                } else {
-                    scope.insert(name.clone(), binding_type);
-                }
+                bind_local_type(scope, name, declared_type.as_deref(), binding_type, structs);
             }
             Statement::VarAssign { value, .. } => resolve_expression(value, scope),
             Statement::IfElse {
@@ -564,25 +568,7 @@ fn check_statement(
                 .as_deref()
                 .map(ArkType::parse)
                 .unwrap_or(inferred);
-            if let Some(declared_type) = declared_type {
-                scope.extend(build_scope_with_structs(
-                    &[crate::models::Parameter {
-                        name: name.clone(),
-                        param_type: declared_type.clone(),
-                    }],
-                    structs,
-                ));
-            } else if matches!(t, ArkType::Struct(_)) {
-                scope.extend(build_scope_with_structs(
-                    &[crate::models::Parameter {
-                        name: name.clone(),
-                        param_type: t.as_str(),
-                    }],
-                    structs,
-                ));
-            } else {
-                scope.insert(name.clone(), t);
-            }
+            bind_local_type(scope, name, declared_type.as_deref(), t, structs);
         }
         Statement::VarAssign { name, value } => {
             let original_type = scope.get(name.as_str()).cloned();

@@ -4,7 +4,6 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
-/// Parse tx.time >= variable → After requirement
 pub(crate) fn parse_time_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
     let timelock_var = inner.next().ok_or("Missing timelock")?.as_str().to_string();
@@ -32,12 +31,14 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     // and literals surface as `Variable` / `Literal`, while byte-producing
     // primitives (substr/cat/…) and arithmetic surface as their own variants.
     let preimage_expr = parse_additive_expr(preimage_pair)?;
-    let rhs_is_identifier = matches!(rhs_pair.as_rule(), Rule::identifier);
+    let rhs_is_binding = matches!(rhs_pair.as_rule(), Rule::named_binding);
 
-    // Fast path: a bare identifier/literal preimage AND identifier RHS keep the
+    // Fast path: a bare binding/literal preimage and binding RHS keep the
     // structured HashEqual emission (`<preimage> OP_<HASH> <hash> OP_EQUAL`).
-    if rhs_is_identifier {
-        if let Expression::Variable(name) | Expression::Literal(name) = &preimage_expr {
+    if rhs_is_binding {
+        if let Expression::Variable(name) | Expression::Literal(name) | Expression::Property(name) =
+            &preimage_expr
+        {
             return Ok(Requirement::HashEqual {
                 hash_fn,
                 preimage: name.clone(),

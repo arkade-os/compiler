@@ -301,26 +301,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
         Rule::group_control_is => parse_group_control_is_to_expression(pair),
-        Rule::identifier_property_access => {
-            let text = pair.as_str().trim().to_string();
-            let mut inner = pair.into_inner().collect::<Vec<_>>();
-            if inner
-                .last()
-                .is_some_and(|part| part.as_rule() == Rule::general_expression)
-            {
-                let index = inner.pop().ok_or("Missing field array index")?;
-                let array = inner
-                    .iter()
-                    .map(|part| part.as_str())
-                    .collect::<Vec<_>>()
-                    .join(".");
-                return Ok(Expression::ArrayIndex {
-                    array,
-                    index: Box::new(parse_general_expression(index)?),
-                });
-            }
-            Ok(Expression::Property(text))
-        }
+        Rule::identifier_property_access => parse_property_access(pair),
         Rule::input_introspection => parse_input_introspection_to_expression(pair),
         Rule::output_introspection => parse_output_introspection_to_expression(pair),
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
@@ -385,6 +366,28 @@ pub(crate) fn parse_atom_pair(pair: Pair<Rule>) -> Expression {
     }
 }
 
+pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner().collect::<Vec<_>>();
+    let index = match inner.last() {
+        Some(part) if part.as_rule() == Rule::general_expression => {
+            Some(inner.pop().ok_or("Missing field array index")?)
+        }
+        _ => None,
+    };
+    let path = inner
+        .iter()
+        .map(|part| part.as_str())
+        .collect::<Vec<_>>()
+        .join(".");
+    match index {
+        Some(index) => Ok(Expression::ArrayIndex {
+            array: path,
+            index: Box::new(parse_general_expression(index)?),
+        }),
+        None => Ok(Expression::Property(path)),
+    }
+}
+
 /// Parse a `byte_value` rule into an Expression. Used wherever the grammar
 /// accepts an arbitrary byte-producing operand (substr/cat/bin2num/size args).
 pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
@@ -401,7 +404,14 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::output_introspection => parse_output_introspection_to_expression(inner),
         Rule::asset_at => parse_asset_at_to_expression(inner),
         Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
-        Rule::named_binding => Ok(Expression::Property(inner.as_str().to_string())),
+        Rule::named_binding => {
+            let name = inner.as_str().to_string();
+            if name.contains(['.', '[']) {
+                Ok(Expression::Property(name))
+            } else {
+                Ok(Expression::Variable(name))
+            }
+        }
         r => Err(format!("Unsupported byte_value rule: {:?}", r)),
     }
 }

@@ -248,3 +248,23 @@ contract Demo(pubkey[3] ks) {
     let result = compile(src);
     assert!(result.is_ok(), "expected clean compile: {:?}", result.err());
 }
+
+#[test]
+fn rejects_tapscript_input_shadowing_constructor_param() {
+    let err = compile(
+        r#"
+contract Demo(pubkey owner, int exitDelay) {
+  function unilateral(signature sig, pubkey owner) tapscript {
+    require(older(exitDelay));
+    require(checkSig(sig, owner));
+  }
+}
+"#,
+    )
+    .expect_err("expected a tapscript shadowing error")
+    .to_string();
+    assert!(
+        err.contains("input 'owner' in tapscript 'unilateral' shadows constructor parameter"),
+        "unexpected error: {err}"
+    );
+}

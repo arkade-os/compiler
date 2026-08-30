@@ -338,3 +338,21 @@ fn all_validation_errors_have_non_empty_messages() {
         );
     }
 }
+
+#[test]
+fn undefined_byte_operands_are_caught_by_validation() {
+    let error = compile(
+        r#"
+contract Demo(bytes32 expected) {
+    function spend() {
+        require(reverseBytes(missing) == expected);
+    }
+}"#,
+    )
+    .expect_err("an undefined byte operand must be rejected")
+    .to_string();
+    assert!(
+        error.contains("function 'spend': binding 'missing' is undefined"),
+        "expected a validation diagnostic, got: {error}"
+    );
+}

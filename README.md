@@ -334,7 +334,7 @@ require(previous.txid == expectedTxid);
 require(sum.x >= 0);
 ```
 
-`AssetId` is returned by indexed asset and asset-group `.assetId` access, `Outpoint` by input `.outpoint` access, and `ECPoint` by `ecAdd` and `ecMul`. Native result structs are local values; whole-struct comparison remains unsupported.
+`AssetId` is returned by indexed asset and asset-group `.assetId` access, `Outpoint` by input `.outpoint` access, and `ECPoint` by `ecAdd` and `ecMul`. They are also valid constructor and covenant function parameter types, flattening to their scalar leaves like any other struct; whole-struct comparison remains unsupported. Because their layouts are fixed, they are not repeated in the artifact's `structs` list.
 
 ### Contract Structure
 

@@ -173,7 +173,11 @@ impl Generator {
     }
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
-        if let Some(array) = name.trim().strip_suffix(".length") {
+        // A field named `length` outranks synthetic array length.
+        let is_binding = self
+            .binding_index(&Self::internal_binding_name(name))
+            .is_some();
+        if let Some(array) = name.trim().strip_suffix(".length").filter(|_| !is_binding) {
             let length = self.array_length(array);
             if length == 0 {
                 return Err(format!("'{array}' is not an array; '.length' is undefined"));

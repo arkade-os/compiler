@@ -70,25 +70,13 @@ impl ConcatPass {
                     scope,
                 );
                 *value = new_expr;
-                if let Some(declared_type) = declared_type {
-                    scope.extend(crate::typechecker::build_scope_with_structs(
-                        &[Parameter {
-                            name: name.clone(),
-                            param_type: declared_type.clone(),
-                        }],
-                        &self.structs,
-                    ));
-                } else if matches!(t, ArkType::Struct(_)) {
-                    scope.extend(crate::typechecker::build_scope_with_structs(
-                        &[Parameter {
-                            name: name.clone(),
-                            param_type: t.as_str(),
-                        }],
-                        &self.structs,
-                    ));
-                } else {
-                    scope.insert(name.clone(), t);
-                }
+                crate::typechecker::bind_local_type(
+                    scope,
+                    name,
+                    declared_type.as_deref(),
+                    t,
+                    &self.structs,
+                );
             }
             Statement::VarAssign { name, value } => {
                 let (new_expr, t) = self.rewrite_expression_concat(

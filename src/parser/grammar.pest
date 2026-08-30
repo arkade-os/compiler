@@ -181,16 +181,11 @@ primary_expr = {
 }
 
 // Static array length: arr.length — folded to a literal at compile time
-array_length_access = { identifier ~ "." ~ "length" ~ !(ASCII_ALPHANUMERIC | "_") }
+array_length_access = { identifier ~ "." ~ "length" ~ !(ASCII_ALPHANUMERIC | "_" | "[" | ".") }
 
 // Array indexing: identifier[integer expression]
 array_index_access = {
     identifier ~ "[" ~ general_expression ~ "]"
-}
-
-// Named operands are string-backed; widen them to Expression before accepting computed indices.
-named_array_index_access = {
-    identifier ~ "[" ~ (identifier | number_literal) ~ "]"
 }
 
 // Operators
@@ -356,7 +351,7 @@ identifier_property_access = {
 
 // Time comparison (tx.time >= timelock)
 time_comparison = {
-    "tx.time" ~ ">=" ~ identifier
+    "tx.time" ~ ">=" ~ named_binding
 }
 
 // Generalized hash condition function name.
@@ -370,7 +365,7 @@ hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
 // that constructions like `sha256(substr(packet, ...)) == substr(other, ...)`
 // — used by the LayerZero scripts — parse natively.
 hash_comparison = {
-    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | identifier)
+    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | named_binding)
 }
 
 // Constructor expression: new ContractName(args)

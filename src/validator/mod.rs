@@ -265,8 +265,15 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
         .iter()
         .map(|definition| (definition.name.as_str(), definition))
         .collect::<HashMap<_, _>>();
+    let mut validated = HashSet::new();
     for definition in &contract.structs {
-        validate_struct_fields(definition, &definitions, &mut Vec::new(), issues);
+        validate_struct_fields(
+            definition,
+            &definitions,
+            &mut Vec::new(),
+            &mut validated,
+            issues,
+        );
     }
     for parameter in contract
         .parameters
@@ -334,6 +341,7 @@ fn validate_struct_fields<'a>(
     definition: &'a crate::models::StructDefinition,
     definitions: &HashMap<&'a str, &'a crate::models::StructDefinition>,
     stack: &mut Vec<&'a str>,
+    validated: &mut HashSet<&'a str>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     if stack.contains(&definition.name.as_str()) {
@@ -345,6 +353,9 @@ fn validate_struct_fields<'a>(
         issues.push(ValidationIssue::error(format!(
             "recursive struct layout: {cycle}"
         )));
+        return;
+    }
+    if !validated.insert(definition.name.as_str()) {
         return;
     }
     stack.push(&definition.name);
@@ -367,7 +378,7 @@ fn validate_struct_fields<'a>(
                     definition.name, field.name
                 )));
             } else {
-                validate_struct_fields(nested, definitions, stack, issues);
+                validate_struct_fields(nested, definitions, stack, validated, issues);
             }
         }
     }
@@ -382,12 +393,16 @@ fn validate_declared_type(
 ) {
     let array = crate::models::array_type_parts(declared_type);
     let base = array.map(|(base, _)| base).unwrap_or(declared_type);
-    if !crate::models::is_builtin_type(base) && !definitions.contains_key(base) {
+    if !crate::models::is_builtin_type(base)
+        && !crate::models::is_builtin_struct(base)
+        && !definitions.contains_key(base)
+    {
         issues.push(ValidationIssue::error(format!(
             "{context} uses unknown type '{base}'"
         )));
     }
-    if array.is_some() && definitions.contains_key(base) {
+    if array.is_some() && (definitions.contains_key(base) || crate::models::is_builtin_struct(base))
+    {
         issues.push(ValidationIssue::error(format!(
             "{context} uses an array of structs; arrays of structs are not supported"
         )));
@@ -462,17 +477,13 @@ fn walk_asset_id_stmts(
                     .as_deref()
                     .map(ArkType::parse)
                     .unwrap_or_else(|| infer_type(value, scope));
-                if matches!(binding_type, ArkType::Struct(_)) {
-                    scope.extend(build_scope_with_structs(
-                        &[crate::models::Parameter {
-                            name: name.clone(),
-                            param_type: binding_type.as_str(),
-                        }],
-                        structs,
-                    ));
-                } else {
-                    scope.insert(name.clone(), binding_type);
-                }
+                crate::typechecker::bind_local_type(
+                    scope,
+                    name,
+                    declared_type.as_deref(),
+                    binding_type,
+                    structs,
+                );
             }
             Statement::VarAssign { name, value } => {
                 check_asset_id_expr(value, scope, fname, issues);
@@ -908,41 +919,17 @@ fn validate_binding_statements(
                 let frame = scopes
                     .last_mut()
                     .expect("binding validation always has a scope");
-                if let Some(declared_type) = declared_type {
-                    let parameter = crate::models::Parameter {
-                        name: name.clone(),
-                        param_type: declared_type.clone(),
-                    };
-                    for (binding_name, binding_type) in
-                        build_scope_with_structs(&[parameter], structs)
-                    {
-                        frame.insert(
-                            binding_name,
-                            BindingInfo {
-                                binding_type,
-                                source: BindingSource::Local,
-                            },
-                        );
-                    }
-                } else if matches!(binding_type, ArkType::Struct(_)) {
-                    let parameter = crate::models::Parameter {
-                        name: name.clone(),
-                        param_type: binding_type.as_str(),
-                    };
-                    for (binding_name, binding_type) in
-                        build_scope_with_structs(&[parameter], structs)
-                    {
-                        frame.insert(
-                            binding_name,
-                            BindingInfo {
-                                binding_type,
-                                source: BindingSource::Local,
-                            },
-                        );
-                    }
-                } else {
+                let mut local = Scope::new();
+                crate::typechecker::bind_local_type(
+                    &mut local,
+                    name,
+                    declared_type.as_deref(),
+                    binding_type,
+                    structs,
+                );
+                for (binding_name, binding_type) in local {
                     frame.insert(
-                        name.clone(),
+                        binding_name,
                         BindingInfo {
                             binding_type,
                             source: BindingSource::Local,
@@ -1454,7 +1441,9 @@ fn validate_binding_expression(
         Expression::Property(name) if name.contains('[') => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
-        Expression::Property(name) if name.ends_with(".length") => {
+        Expression::Property(name)
+            if name.ends_with(".length") && find_binding(scopes, name).is_none() =>
+        {
             let array = name.trim_end_matches(".length");
             if !matches!(
                 find_binding(scopes, array).map(|binding| &binding.binding_type),
@@ -1468,10 +1457,7 @@ fn validate_binding_expression(
         }
         Expression::Property(name) => {
             let root = name.split('.').next().unwrap_or(name);
-            if matches!(
-                find_binding(scopes, root).map(|binding| &binding.binding_type),
-                Some(ArkType::Struct(..))
-            ) {
+            if name.contains('.') && find_binding(scopes, root).is_some() {
                 validate_named_binding(name, None, "field", function_name, scopes, issues);
             }
         }
@@ -1615,8 +1601,9 @@ fn validate_asset_id(
 
 fn describe_operand(expr: &Expression) -> String {
     match expr {
-        Expression::Variable(v) => format!("'{}'", v),
-        Expression::Literal(l) => format!("'{}'", l),
+        Expression::Variable(name) | Expression::Literal(name) | Expression::Property(name) => {
+            format!("'{}'", name)
+        }
         _ => "<expr>".to_string(),
     }
 }
@@ -1650,16 +1637,24 @@ fn statement_guarantees_require(stmt: &Statement) -> bool {
     }
 }
 
-/// Check 1: reject any binding that shadows a name still live in an enclosing
-/// scope, plus `for (x, x)`. Function parameters are compared against
-/// constructor parameters explicitly before seeding (a collapsed set would
-/// silently swallow the duplicate).
+/// Check 1: reject any binding that shadows a name still live in an enclosing scope.
 fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let ctor_names: HashSet<&str> = contract
         .parameters
         .iter()
         .map(|p| p.name.as_str())
         .collect();
+
+    for tapscript in &contract.tapscripts {
+        for input in &tapscript.inputs {
+            if ctor_names.contains(input.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "input '{}' in tapscript '{}' shadows constructor parameter '{}'",
+                    input.name, tapscript.name, input.name
+                )));
+            }
+        }
+    }
 
     for func in &contract.functions {
         // Seed frame: constructor params + this function's params.

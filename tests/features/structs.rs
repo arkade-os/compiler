@@ -469,3 +469,107 @@ contract C(Point point) {
         "{mutation}"
     );
 }
+
+#[test]
+fn shared_nested_structs_are_validated_once() {
+    let mut source = String::from("struct S0 { Missing m; }\n");
+    for level in 1..=12 {
+        source.push_str(&format!(
+            "struct S{level} {{ S{prev} a; S{prev} b; }}\n",
+            prev = level - 1
+        ));
+    }
+    source.push_str("contract C(S12 q) { function f() { require(true); } }\n");
+
+    let error = compile(&source)
+        .expect_err("an unknown field type must be rejected")
+        .to_string();
+    assert_eq!(
+        error.matches("unknown type 'Missing'").count(),
+        1,
+        "expected one diagnostic per bad field, got: {error}"
+    );
+}
+
+#[test]
+fn whitespace_around_field_separators_is_ignored() {
+    compile(
+        r#"
+struct Policy { pubkey key; int weight; bytes32 txid; int gidx; }
+contract C(Policy policy) {
+    function spend(int amount) {
+        require(amount == policy . weight);
+        require(tx.outputs[0].assets.lookup(policy . txid, policy . gidx) >= 0);
+    }
+}
+"#,
+    )
+    .expect("interior whitespace in a field path is insignificant");
+}
+
+#[test]
+fn struct_fields_are_accepted_as_hash_and_timelock_operands() {
+    compile(
+        r#"
+struct Terms { bytes32 digest; int deadline; }
+contract C(Terms terms) {
+    function claim(bytes preimage) {
+        require(tx.time >= terms.deadline);
+        require(sha256(preimage) == terms.digest);
+    }
+}
+"#,
+    )
+    .expect("struct fields are valid hash and timelock operands");
+}
+
+#[test]
+fn native_result_structs_are_valid_parameter_types() {
+    let output = compile(
+        r#"
+contract C(AssetId expected) {
+    function spend(Outpoint previous, int vout) {
+        require(previous.vout == vout);
+        require(previous.txid == expected.txid);
+    }
+}
+"#,
+    )
+    .expect("native result structs flatten like any other struct");
+
+    assert_eq!(output.parameters[0].param_type, "AssetId");
+    let covenant = output.functions[0].arkade.as_ref().expect("covenant");
+    assert_eq!(covenant.inputs[0].param_type, "Outpoint");
+    assert_eq!(
+        &covenant.asm[..2],
+        ["<expected.gidx>", "<expected.txid>"],
+        "constructor leaves push in reverse flattened order"
+    );
+}
+
+#[test]
+fn a_field_named_length_outranks_the_array_length_form() {
+    let output = compile(
+        r#"
+struct Packet { int length; int[3] payload; }
+struct Wrapper { Packet length; }
+struct ArrayField { int[2] length; }
+contract C(Packet packet, Wrapper wrapper, ArrayField array) {
+    function spend(int expected) {
+        require(packet.length == expected);
+        require(packet.payload.length == 3);
+        require(packet.payload[0] == expected);
+        require(wrapper.length.length == expected);
+        require(array.length[0] == expected);
+    }
+}
+"#,
+    )
+    .expect("a scalar field named `length` is a binding, not an array length");
+
+    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    assert!(
+        asm.iter().any(|token| token == "<packet.length>"),
+        "the field must be read from its own stack leaf: {asm:?}"
+    );
+}
