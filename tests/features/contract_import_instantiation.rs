@@ -448,7 +448,7 @@ contract Forwarder(pubkey[3] owners) {
         .expect("VTXO placeholder");
     assert_eq!(
         placeholder,
-        "<VTXO:ThresholdOracle(<owners_0>,<owners_1>,<owners_2>)>"
+        "<VTXO:ThresholdOracle(<owners.0>,<owners.1>,<owners.2>)>"
     );
 }
 

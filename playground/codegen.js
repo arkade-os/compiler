@@ -43,6 +43,20 @@ function toSnakeCase(s) {
     return splitWords(s).map(w => w.toLowerCase()).join('_');
 }
 
+function toGoFieldName(s) {
+    if (!s.includes('.')) return toPascalCase(s);
+    return [...s].map((ch, index) => {
+        if (ch === '.') return '_D';
+        if (ch === '_') return '_U';
+        if (index === 0 && ch >= 'A' && ch <= 'Z') return `${ch}_C`;
+        return index === 0 ? ch.toUpperCase() : ch;
+    }).join('');
+}
+
+function tsFieldName(s) {
+    return s.includes('.') ? JSON.stringify(s) : toCamelCase(s);
+}
+
 // ─── Encoding inference ──────────────────────────────────────────────
 
 function inferEncoding(typeStr) {
@@ -56,31 +70,40 @@ function inferEncoding(typeStr) {
 
 // ─── IR construction ─────────────────────────────────────────────────
 
-// The artifact keeps one entry per source parameter, so an array type
-// (pubkey[3]) expands here into the name_0 … name_2 scalars the asm
-// placeholders and the witness stack actually carry.
-function expandFields(name, typeStr, isInjected) {
+// The artifact keeps one entry per source parameter. Expand arrays and structs
+// into the scalar fields the asm placeholders and witness stack carry.
+function expandFields(name, typeStr, isInjected, structs = []) {
     const array = /^(.+)\[(\d+)\]$/.exec(typeStr);
-    if (!array) {
-        return [{ name, arkType: typeStr, encoding: inferEncoding(typeStr), isInjected }];
+    if (array) {
+        const [, elementType, length] = array;
+        return Array.from({ length: Number(length) }, (_, index) =>
+            expandFields(`${name}.${index}`, elementType, isInjected, structs)
+        ).flat();
     }
-    const [, elementType, length] = array;
-    return Array.from({ length: Number(length) }, (_, index) => ({
-        name: `${name}_${index}`,
-        arkType: elementType,
-        encoding: inferEncoding(elementType),
-        isInjected,
-    }));
+    const nativeFields = {
+        AssetId: [{ name: 'txid', type: 'bytes32' }, { name: 'gidx', type: 'int' }],
+        Outpoint: [{ name: 'txid', type: 'bytes32' }, { name: 'vout', type: 'int' }],
+        ECPoint: [{ name: 'x', type: 'int' }, { name: 'y', type: 'int' }],
+    };
+    const definition = structs.find(definition => definition.name === typeStr)
+        || (nativeFields[typeStr] && { fields: nativeFields[typeStr] });
+    if (definition) {
+        return definition.fields.flatMap(field =>
+            expandFields(`${name}.${field.name}`, field.type, isInjected, structs)
+        );
+    }
+    return [{ name, arkType: typeStr, encoding: inferEncoding(typeStr), isInjected }];
 }
 
 function buildIR(artifact) {
+    const structs = artifact.structs || [];
     const constructorFields = (artifact.constructorInputs || [])
-        .flatMap(p => expandFields(p.name, p.type, false));
+        .flatMap(p => expandFields(p.name, p.type, false, structs));
 
     const functions = (artifact.functions || []).map(group => {
         const leaves = (group.leaves || []).map(leaf => {
             const allFields = (leaf.witness || [])
-                .flatMap(w => expandFields(w.name, w.type, w.injected === true));
+                .flatMap(w => expandFields(w.name, w.type, w.injected === true, structs));
             return {
                 name: leaf.name,
                 allFields,
@@ -144,7 +167,7 @@ function generateTypeScript(ir) {
     out += `/** Constructor parameters for ${ir.name} */\n`;
     out += `export interface ${ir.name}Params {\n`;
     for (const f of ir.constructorFields) {
-        out += `  /** ${f.arkType} (${f.encoding}) */\n  ${toCamelCase(f.name)}: ${tsTypeForField(f)};\n`;
+        out += `  /** ${f.arkType} (${f.encoding}) */\n  ${tsFieldName(f.name)}: ${tsTypeForField(f)};\n`;
     }
     out += `}\n\n`;
 
@@ -156,7 +179,7 @@ function generateTypeScript(ir) {
             out += `/** Witness for ${ir.name}.${func.name} leaf "${leaf.name}" */\n`;
             out += `export interface ${ifaceName} {\n`;
             for (const f of leaf.userFields) {
-                out += `  /** ${f.arkType} (${f.encoding}) */\n  ${toCamelCase(f.name)}: ${tsTypeForField(f)};\n`;
+                out += `  /** ${f.arkType} (${f.encoding}) */\n  ${tsFieldName(f.name)}: ${tsTypeForField(f)};\n`;
             }
             const injected = leaf.allFields.filter(f => f.isInjected).map(f => f.name).join(', ');
             if (injected) out += `  // ${injected} injected by Arkade infrastructure\n`;
@@ -219,7 +242,7 @@ const ENCODING_CONST = {
 };
 
 function goValueExpr(field, prefix) {
-    const goName = toPascalCase(field.name);
+    const goName = toGoFieldName(field.name);
     if (field.encoding === 'scriptnum') {
         return field.arkType === 'bool'
             ? `ark.EncodeBool(${prefix}.${goName})`
@@ -244,7 +267,7 @@ function generateGo(ir) {
     out += `// ${ir.name}Params holds constructor parameters for the ${ir.name} contract.\n`;
     out += `type ${ir.name}Params struct {\n`;
     for (const f of ir.constructorFields) {
-        out += `\t${toPascalCase(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
+        out += `\t${toGoFieldName(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
     }
     out += `}\n\n`;
 
@@ -256,9 +279,9 @@ function generateGo(ir) {
             out += `// ${structName} holds witness data for ${ir.name}.${func.name} leaf "${leaf.name}".\n`;
             out += `type ${structName} struct {\n`;
             for (const f of leaf.userFields) {
-                out += `\t${toPascalCase(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
+                out += `\t${toGoFieldName(f.name)} ${goTypeForField(f)} // ${f.arkType} (${f.encoding})\n`;
             }
-            const injected = leaf.allFields.filter(f => f.isInjected).map(f => toPascalCase(f.name)).join(', ');
+            const injected = leaf.allFields.filter(f => f.isInjected).map(f => toGoFieldName(f.name)).join(', ');
             if (injected) out += `\t// ${injected} injected by Arkade infrastructure\n`;
             out += `}\n\n`;
         }

@@ -20,7 +20,7 @@
 //! whether any are fatal.
 
 use crate::models::{Contract, ContractJson, Expression, Requirement, Statement};
-use crate::typechecker::{build_scope, infer_type, ArkType, Scope};
+use crate::typechecker::{build_scope_with_structs, infer_type, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
@@ -81,6 +81,8 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Asset ID operands have the expected txid/gidx types.
 pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
+
+    check_struct_definitions(contract, &mut issues);
 
     // ── Contract name ──────────────────────────────────────────────────────
     if contract.name.is_empty() {
@@ -199,6 +201,17 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
                     ts.name, p.name, p.param_type
                 )));
             }
+            if crate::models::is_builtin_struct(&p.param_type)
+                || contract
+                    .structs
+                    .iter()
+                    .any(|definition| definition.name == p.param_type)
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "tapscript '{}' input '{}' has struct type '{}'; struct witnesses are not supported in tapscript functions",
+                    ts.name, p.name, p.param_type
+                )));
+            }
         }
         // Duplicate input names within a tapscript.
         let mut seen = std::collections::HashSet::new();
@@ -213,11 +226,187 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     }
 
     check_shadowing(contract, &mut issues);
-    check_expanded_namespace(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
 
     issues
+}
+
+fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let mut names = HashSet::new();
+    for definition in &contract.structs {
+        if crate::models::is_builtin_type(&definition.name)
+            || crate::models::is_builtin_struct(&definition.name)
+        {
+            issues.push(ValidationIssue::error(format!(
+                "struct '{}' collides with a built-in type",
+                definition.name
+            )));
+        }
+        if !names.insert(definition.name.as_str()) {
+            issues.push(ValidationIssue::error(format!(
+                "duplicate struct definition '{}'",
+                definition.name
+            )));
+        }
+        let mut fields = HashSet::new();
+        for field in &definition.fields {
+            if !fields.insert(field.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "duplicate field '{}' in struct '{}'",
+                    field.name, definition.name
+                )));
+            }
+        }
+    }
+
+    let definitions = contract
+        .structs
+        .iter()
+        .map(|definition| (definition.name.as_str(), definition))
+        .collect::<HashMap<_, _>>();
+    let mut validated = HashSet::new();
+    for definition in &contract.structs {
+        validate_struct_fields(
+            definition,
+            &definitions,
+            &mut Vec::new(),
+            &mut validated,
+            issues,
+        );
+    }
+    for parameter in contract
+        .parameters
+        .iter()
+        .chain(
+            contract
+                .functions
+                .iter()
+                .flat_map(|function| &function.parameters),
+        )
+        .chain(
+            contract
+                .tapscripts
+                .iter()
+                .flat_map(|tapscript| &tapscript.inputs),
+        )
+    {
+        validate_declared_type(&parameter.param_type, "parameter", &definitions, issues);
+    }
+    for function in &contract.functions {
+        validate_local_types(&function.statements, &function.name, &definitions, issues);
+    }
+}
+
+fn validate_local_types(
+    statements: &[Statement],
+    function_name: &str,
+    definitions: &HashMap<&str, &crate::models::StructDefinition>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::LetBinding {
+                declared_type: Some(declared_type),
+                ..
+            } => {
+                if !crate::models::is_builtin_struct(declared_type) {
+                    validate_declared_type(
+                        declared_type,
+                        &format!("local declaration in function '{function_name}'"),
+                        definitions,
+                        issues,
+                    );
+                }
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                validate_local_types(then_body, function_name, definitions, issues);
+                if let Some(else_body) = else_body {
+                    validate_local_types(else_body, function_name, definitions, issues);
+                }
+            }
+            Statement::ForIn { body, .. } => {
+                validate_local_types(body, function_name, definitions, issues);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn validate_struct_fields<'a>(
+    definition: &'a crate::models::StructDefinition,
+    definitions: &HashMap<&'a str, &'a crate::models::StructDefinition>,
+    stack: &mut Vec<&'a str>,
+    validated: &mut HashSet<&'a str>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if stack.contains(&definition.name.as_str()) {
+        let mut cycle = stack.join(" -> ");
+        if !cycle.is_empty() {
+            cycle.push_str(" -> ");
+        }
+        cycle.push_str(&definition.name);
+        issues.push(ValidationIssue::error(format!(
+            "recursive struct layout: {cycle}"
+        )));
+        return;
+    }
+    if !validated.insert(definition.name.as_str()) {
+        return;
+    }
+    stack.push(&definition.name);
+    for field in &definition.fields {
+        if !crate::models::is_builtin_struct(&field.param_type) {
+            validate_declared_type(
+                &field.param_type,
+                &format!("field '{}.{}'", definition.name, field.name),
+                definitions,
+                issues,
+            );
+        }
+        let (base, is_array) = crate::models::array_type_parts(&field.param_type)
+            .map(|(base, _)| (base, true))
+            .unwrap_or((field.param_type.as_str(), false));
+        if let Some(nested) = definitions.get(base) {
+            if is_array {
+                issues.push(ValidationIssue::error(format!(
+                    "field '{}.{}' is an array of structs; arrays of structs are not supported",
+                    definition.name, field.name
+                )));
+            } else {
+                validate_struct_fields(nested, definitions, stack, validated, issues);
+            }
+        }
+    }
+    stack.pop();
+}
+
+fn validate_declared_type(
+    declared_type: &str,
+    context: &str,
+    definitions: &HashMap<&str, &crate::models::StructDefinition>,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let array = crate::models::array_type_parts(declared_type);
+    let base = array.map(|(base, _)| base).unwrap_or(declared_type);
+    if !crate::models::is_builtin_type(base)
+        && !crate::models::is_builtin_struct(base)
+        && !definitions.contains_key(base)
+    {
+        issues.push(ValidationIssue::error(format!(
+            "{context} uses unknown type '{base}'"
+        )));
+    }
+    if array.is_some() && (definitions.contains_key(base) || crate::models::is_builtin_struct(base))
+    {
+        issues.push(ValidationIssue::error(format!(
+            "{context} uses an array of structs; arrays of structs are not supported"
+        )));
+    }
 }
 
 fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
@@ -242,11 +431,20 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
 /// variable stays `Unknown` (no iterable-element typing yet) and is therefore
 /// not accepted as an Asset ID component.
 fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    let ctor_scope = build_scope(&contract.parameters);
+    let ctor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     for func in &contract.functions {
         let mut scope = ctor_scope.clone();
-        scope.extend(build_scope(&func.parameters));
-        walk_asset_id_stmts(&func.statements, &mut scope, &func.name, issues);
+        scope.extend(build_scope_with_structs(
+            &func.parameters,
+            &contract.structs,
+        ));
+        walk_asset_id_stmts(
+            &func.statements,
+            &mut scope,
+            &func.name,
+            &contract.structs,
+            issues,
+        );
     }
 }
 
@@ -254,6 +452,7 @@ fn walk_asset_id_stmts(
     stmts: &[Statement],
     scope: &mut Scope,
     fname: &str,
+    structs: &[crate::models::StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
@@ -268,10 +467,23 @@ fn walk_asset_id_stmts(
                 }
                 _ => {}
             },
-            Statement::LetBinding { name, value, .. } => {
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => {
                 check_asset_id_expr(value, scope, fname, issues);
-                let t = infer_type(value, scope);
-                scope.insert(name.clone(), t);
+                let binding_type = declared_type
+                    .as_deref()
+                    .map(ArkType::parse)
+                    .unwrap_or_else(|| infer_type(value, scope));
+                crate::typechecker::bind_local_type(
+                    scope,
+                    name,
+                    declared_type.as_deref(),
+                    binding_type,
+                    structs,
+                );
             }
             Statement::VarAssign { name, value } => {
                 check_asset_id_expr(value, scope, fname, issues);
@@ -284,9 +496,9 @@ fn walk_asset_id_stmts(
                 else_body,
             } => {
                 check_asset_id_expr(condition, scope, fname, issues);
-                walk_asset_id_stmts(then_body, &mut scope.clone(), fname, issues);
+                walk_asset_id_stmts(then_body, &mut scope.clone(), fname, structs, issues);
                 if let Some(eb) = else_body {
-                    walk_asset_id_stmts(eb, &mut scope.clone(), fname, issues);
+                    walk_asset_id_stmts(eb, &mut scope.clone(), fname, structs, issues);
                 }
             }
             Statement::ForIn {
@@ -298,7 +510,7 @@ fn walk_asset_id_stmts(
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
                 loop_scope.insert(value_var.clone(), ArkType::Unknown);
-                walk_asset_id_stmts(body, &mut loop_scope, fname, issues);
+                walk_asset_id_stmts(body, &mut loop_scope, fname, structs, issues);
             }
         }
     }
@@ -379,6 +591,7 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::ArrayIndex { index, .. } => vec![index],
 
         Expression::ArrayLiteral(elements) => elements.iter().collect(),
+        Expression::StructLiteral(fields) => fields.iter().map(|(_, value)| value).collect(),
 
         Expression::AssetLookup {
             index,
@@ -501,36 +714,17 @@ fn insert_parameters(
     frame: &mut HashMap<String, BindingInfo>,
     parameters: &[crate::models::Parameter],
     source: BindingSource,
+    structs: &[crate::models::StructDefinition],
 ) {
-    for parameter in parameters {
-        if let Some((element_type, length)) = crate::models::array_type_parts(&parameter.param_type)
-        {
-            let element_type = ArkType::parse(element_type);
-            frame.insert(
-                parameter.name.clone(),
-                BindingInfo {
-                    binding_type: ArkType::Array(Box::new(element_type.clone()), length),
-                    source,
-                },
-            );
-            for index in 0..length {
-                frame.insert(
-                    format!("{}[{}]", parameter.name, index),
-                    BindingInfo {
-                        binding_type: element_type.clone(),
-                        source,
-                    },
-                );
-            }
-        } else {
-            frame.insert(
-                parameter.name.clone(),
-                BindingInfo {
-                    binding_type: ArkType::parse(&parameter.param_type),
-                    source,
-                },
-            );
-        }
+    let types = build_scope_with_structs(parameters, structs);
+    for (name, binding_type) in types {
+        frame.insert(
+            name,
+            BindingInfo {
+                binding_type,
+                source,
+            },
+        );
     }
 }
 
@@ -579,14 +773,26 @@ fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
 fn check_binding_semantics(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for function in &contract.functions {
         let mut root = HashMap::new();
-        insert_parameters(&mut root, &contract.parameters, BindingSource::Constructor);
+        insert_parameters(
+            &mut root,
+            &contract.parameters,
+            BindingSource::Constructor,
+            &contract.structs,
+        );
         insert_parameters(
             &mut root,
             &function.parameters,
             BindingSource::FunctionInput,
+            &contract.structs,
         );
         let mut scopes = vec![root];
-        validate_binding_statements(&function.statements, &function.name, &mut scopes, issues);
+        validate_binding_statements(
+            &function.statements,
+            &function.name,
+            &mut scopes,
+            &contract.structs,
+            issues,
+        );
     }
 }
 
@@ -594,6 +800,7 @@ fn validate_binding_statements(
     statements: &[Statement],
     function_name: &str,
     scopes: &mut BindingScopes,
+    structs: &[crate::models::StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for statement in statements {
@@ -606,8 +813,8 @@ fn validate_binding_statements(
                 declared_type,
                 value,
             } => {
-                // Array literals are the one composite value allowed in a value
-                // position, and only here; validate their elements instead.
+                // Composite initializers are validated through their scalar
+                // children; the declaration itself owns their result shape.
                 match value {
                     Expression::ArrayLiteral(elements) => {
                         for element in elements {
@@ -620,7 +827,34 @@ fn validate_binding_statements(
                             );
                         }
                     }
-                    _ => validate_binding_expression(value, function_name, scopes, issues, true),
+                    Expression::StructLiteral(fields) => {
+                        match declared_type.as_deref().and_then(|declared_type| {
+                            structs
+                                .iter()
+                                .find(|definition| definition.name == declared_type)
+                        }) {
+                            Some(definition) => validate_struct_literal(
+                                name,
+                                definition,
+                                fields,
+                                function_name,
+                                scopes,
+                                structs,
+                                issues,
+                            ),
+                            None => issues.push(ValidationIssue::error(format!(
+                                "function '{}': struct literal needs a declared struct type",
+                                function_name
+                            ))),
+                        }
+                    }
+                    _ => validate_binding_expression(
+                        value,
+                        function_name,
+                        scopes,
+                        issues,
+                        crate::models::expression_result_struct(value).is_none(),
+                    ),
                 }
                 let inferred = resolved_expression_type(value, scopes);
                 let binding_type = declared_type
@@ -671,27 +905,37 @@ fn validate_binding_statements(
                         function_name, name
                     )));
                 }
+                if let ArkType::Struct(struct_type) = &binding_type {
+                    let result_type = crate::models::expression_result_struct(value);
+                    if !matches!(value, Expression::StructLiteral(_))
+                        && result_type != Some(struct_type.as_str())
+                    {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{}': struct binding '{}' must be initialized with a matching struct value",
+                            function_name, name,
+                        )));
+                    }
+                }
                 let frame = scopes
                     .last_mut()
                     .expect("binding validation always has a scope");
-                if let ArkType::Array(element, length) = &binding_type {
-                    for index in 0..*length {
-                        frame.insert(
-                            format!("{name}[{index}]"),
-                            BindingInfo {
-                                binding_type: (**element).clone(),
-                                source: BindingSource::Local,
-                            },
-                        );
-                    }
-                }
-                frame.insert(
-                    name.clone(),
-                    BindingInfo {
-                        binding_type,
-                        source: BindingSource::Local,
-                    },
+                let mut local = Scope::new();
+                crate::typechecker::bind_local_type(
+                    &mut local,
+                    name,
+                    declared_type.as_deref(),
+                    binding_type,
+                    structs,
                 );
+                for (binding_name, binding_type) in local {
+                    frame.insert(
+                        binding_name,
+                        BindingInfo {
+                            binding_type,
+                            source: BindingSource::Local,
+                        },
+                    );
+                }
             }
             Statement::VarAssign { name, value } => {
                 validate_binding_expression(value, function_name, scopes, issues, true);
@@ -741,11 +985,11 @@ fn validate_binding_statements(
                     )));
                 }
                 scopes.push(HashMap::new());
-                validate_binding_statements(then_body, function_name, scopes, issues);
+                validate_binding_statements(then_body, function_name, scopes, structs, issues);
                 scopes.pop();
                 if let Some(else_body) = else_body {
                     scopes.push(HashMap::new());
-                    validate_binding_statements(else_body, function_name, scopes, issues);
+                    validate_binding_statements(else_body, function_name, scopes, structs, issues);
                     scopes.pop();
                 }
             }
@@ -756,28 +1000,32 @@ fn validate_binding_statements(
                 body,
             } => {
                 let element_type = match iterable {
-                    Expression::Variable(name) => match find_binding(scopes, name) {
-                        Some(BindingInfo {
-                            binding_type: ArkType::Array(element, _),
-                            ..
-                        }) => (**element).clone(),
-                        Some(binding) => {
-                            issues.push(ValidationIssue::error(format!(
+                    Expression::Variable(name) | Expression::Property(name)
+                        if name.trim() != "tx.assetGroups" =>
+                    {
+                        match find_binding(scopes, name) {
+                            Some(BindingInfo {
+                                binding_type: ArkType::Array(element, _),
+                                ..
+                            }) => (**element).clone(),
+                            Some(binding) => {
+                                issues.push(ValidationIssue::error(format!(
                                 "function '{}': loop iterable '{}' has type '{}', expected array",
                                 function_name,
                                 name,
                                 binding.binding_type.as_str()
                             )));
-                            ArkType::Unknown
+                                ArkType::Unknown
+                            }
+                            None => {
+                                issues.push(ValidationIssue::error(format!(
+                                    "function '{}': loop iterable '{}' is undefined",
+                                    function_name, name
+                                )));
+                                ArkType::Unknown
+                            }
                         }
-                        None => {
-                            issues.push(ValidationIssue::error(format!(
-                                "function '{}': loop iterable '{}' is undefined",
-                                function_name, name
-                            )));
-                            ArkType::Unknown
-                        }
-                    },
+                    }
                     Expression::Property(property) if property.trim() == "tx.assetGroups" => {
                         issues.push(ValidationIssue::error(format!(
                             "function '{}': cannot iterate 'tx.assetGroups'; the group count is \
@@ -806,9 +1054,130 @@ fn validate_binding_statements(
                     );
                 }
                 scopes.push(frame);
-                validate_binding_statements(body, function_name, scopes, issues);
+                validate_binding_statements(body, function_name, scopes, structs, issues);
                 scopes.pop();
             }
+        }
+    }
+}
+
+fn validate_struct_literal(
+    access_name: &str,
+    definition: &crate::models::StructDefinition,
+    fields: &[(String, Expression)],
+    function_name: &str,
+    scopes: &BindingScopes,
+    structs: &[crate::models::StructDefinition],
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let mut seen = HashSet::new();
+    for (name, _) in fields {
+        if !seen.insert(name.as_str()) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literal '{}' initializes field '{}' more than once",
+                function_name, access_name, name
+            )));
+        }
+        if !definition.fields.iter().any(|field| field.name == *name) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literal '{}' has unknown field '{}'",
+                function_name, access_name, name
+            )));
+        }
+    }
+
+    for field in &definition.fields {
+        let Some((_, value)) = fields.iter().find(|(name, _)| name == &field.name) else {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literal '{}' is missing field '{}'",
+                function_name, access_name, field.name
+            )));
+            continue;
+        };
+        let field_name = format!("{access_name}.{}", field.name);
+        if let Some((element_type, length)) = crate::models::array_type_parts(&field.param_type) {
+            let Expression::ArrayLiteral(elements) = value else {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': field '{}' must be initialized with an array literal",
+                    function_name, field_name
+                )));
+                continue;
+            };
+            if elements.len() != length {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': array field '{}' declares {} elements but its initializer has {}",
+                    function_name,
+                    field_name,
+                    length,
+                    elements.len()
+                )));
+            }
+            let expected = ArkType::parse(element_type);
+            for (index, element) in elements.iter().enumerate() {
+                validate_binding_expression(element, function_name, scopes, issues, true);
+                let actual = resolved_expression_type(element, scopes);
+                if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': field '{}[{}]' has type '{}', expected '{}'",
+                        function_name,
+                        field_name,
+                        index,
+                        actual.as_str(),
+                        expected.as_str()
+                    )));
+                }
+            }
+            continue;
+        }
+        if let Some(nested) = structs
+            .iter()
+            .find(|definition| definition.name == field.param_type)
+        {
+            let Expression::StructLiteral(nested_fields) = value else {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': field '{}' must be initialized with a struct literal",
+                    function_name, field_name
+                )));
+                continue;
+            };
+            validate_struct_literal(
+                &field_name,
+                nested,
+                nested_fields,
+                function_name,
+                scopes,
+                structs,
+                issues,
+            );
+            continue;
+        }
+        if crate::models::is_builtin_struct(&field.param_type) {
+            validate_binding_expression(value, function_name, scopes, issues, false);
+            let expected = ArkType::parse(&field.param_type);
+            let actual = resolved_expression_type(value, scopes);
+            if actual != expected {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': field '{}' has type '{}', expected '{}'",
+                    function_name,
+                    field_name,
+                    actual.as_str(),
+                    expected.as_str()
+                )));
+            }
+            continue;
+        }
+
+        validate_binding_expression(value, function_name, scopes, issues, true);
+        let expected = ArkType::parse(&field.param_type);
+        let actual = resolved_expression_type(value, scopes);
+        if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': field '{}' has type '{}', expected '{}'",
+                function_name,
+                field_name,
+                actual.as_str(),
+                expected.as_str()
+            )));
         }
     }
 }
@@ -983,40 +1352,16 @@ fn validate_binding_expression(
     issues: &mut Vec<ValidationIssue>,
     value_position: bool,
 ) {
-    if value_position
-        && matches!(
-            resolved_expression_type(expression, scopes),
-            ArkType::Array(..)
-        )
-    {
+    let expression_type = resolved_expression_type(expression, scopes);
+    if value_position && matches!(expression_type, ArkType::Array(..) | ArkType::Struct(..)) {
+        let kind = if matches!(expression_type, ArkType::Struct(..)) {
+            "struct"
+        } else {
+            "array"
+        };
         issues.push(ValidationIssue::error(format!(
-            "function '{}': array expressions are composite values and cannot be used here",
-            function_name
-        )));
-    }
-    if value_position
-        && (matches!(
-            expression,
-            Expression::EcAdd { .. } | Expression::EcMul { .. }
-        ) || matches!(
-            expression,
-            Expression::AssetAt { property, .. } if property == "assetId"
-        ))
-    {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': expression produces 2 stack items; composite values are not supported",
-            function_name
-        )));
-    }
-    if value_position
-        && matches!(
-            expression,
-            Expression::GroupProperty { property, .. } if property == "assetId"
-        )
-    {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': expression produces 2 stack items; composite values are not supported",
-            function_name
+            "function '{}': {kind} expressions are composite values and cannot be used here",
+            function_name,
         )));
     }
     if value_position
@@ -1030,20 +1375,6 @@ fn validate_binding_expression(
     {
         issues.push(ValidationIssue::error(format!(
             "function '{}': expression does not produce one stack item",
-            function_name
-        )));
-    }
-    if value_position
-        && (matches!(
-            expression,
-            Expression::CurrentInput(Some(property)) if property == "outpoint"
-        ) || matches!(
-            expression,
-            Expression::InputIntrospection { property, .. } if property == "outpoint"
-        ))
-    {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': outpoint inspection produces 2 stack items; composite values are not supported",
             function_name
         )));
     }
@@ -1063,6 +1394,12 @@ fn validate_binding_expression(
     }
 
     match expression {
+        Expression::StructLiteral(_) => {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': struct literals may only initialize typed struct declarations",
+                function_name
+            )));
+        }
         Expression::Variable(name) => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
@@ -1104,7 +1441,9 @@ fn validate_binding_expression(
         Expression::Property(name) if name.contains('[') => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
-        Expression::Property(name) if name.ends_with(".length") => {
+        Expression::Property(name)
+            if name.ends_with(".length") && find_binding(scopes, name).is_none() =>
+        {
             let array = name.trim_end_matches(".length");
             if !matches!(
                 find_binding(scopes, array).map(|binding| &binding.binding_type),
@@ -1114,6 +1453,12 @@ fn validate_binding_expression(
                     "function '{}': '{}' is not an array; '.length' is undefined",
                     function_name, array
                 )));
+            }
+        }
+        Expression::Property(name) => {
+            let root = name.split('.').next().unwrap_or(name);
+            if name.contains('.') && find_binding(scopes, root).is_some() {
+                validate_named_binding(name, None, "field", function_name, scopes, issues);
             }
         }
         Expression::GroupProperty { group, .. } | Expression::GroupControlIs { group, .. }
@@ -1256,8 +1601,9 @@ fn validate_asset_id(
 
 fn describe_operand(expr: &Expression) -> String {
     match expr {
-        Expression::Variable(v) => format!("'{}'", v),
-        Expression::Literal(l) => format!("'{}'", l),
+        Expression::Variable(name) | Expression::Literal(name) | Expression::Property(name) => {
+            format!("'{}'", name)
+        }
         _ => "<expr>".to_string(),
     }
 }
@@ -1291,16 +1637,24 @@ fn statement_guarantees_require(stmt: &Statement) -> bool {
     }
 }
 
-/// Check 1: reject any binding that shadows a name still live in an enclosing
-/// scope, plus `for (x, x)`. Function parameters are compared against
-/// constructor parameters explicitly before seeding (a collapsed set would
-/// silently swallow the duplicate).
+/// Check 1: reject any binding that shadows a name still live in an enclosing scope.
 fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let ctor_names: HashSet<&str> = contract
         .parameters
         .iter()
         .map(|p| p.name.as_str())
         .collect();
+
+    for tapscript in &contract.tapscripts {
+        for input in &tapscript.inputs {
+            if ctor_names.contains(input.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "input '{}' in tapscript '{}' shadows constructor parameter '{}'",
+                    input.name, tapscript.name, input.name
+                )));
+            }
+        }
+    }
 
     for func in &contract.functions {
         // Seed frame: constructor params + this function's params.
@@ -1445,71 +1799,6 @@ fn walk_scope(
     }
 }
 
-/// Check 2: the names a function's parameters and the constructor's parameters
-/// contribute to the *emitted* placeholder namespace after array flattening
-/// must be unique. Distinct source names can
-/// still collide here (e.g. `int[] xs` vs `int xs_0`).
-fn check_expanded_namespace(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    // Constructor params expanded exactly as the emitter expands them (array flattening).
-    let ctor_expanded = crate::compiler::expanded_placeholder_params(&contract.parameters);
-
-    for func in contract.functions.iter().filter(|f| !f.is_internal) {
-        let mut seen: HashSet<String> = HashSet::new();
-
-        for p in &ctor_expanded {
-            record_name(
-                p.name.clone(),
-                &format!("function '{}'", func.name),
-                &mut seen,
-                issues,
-            );
-        }
-
-        for p in crate::compiler::expanded_placeholder_params(&func.parameters) {
-            record_name(
-                p.name,
-                &format!("function '{}'", func.name),
-                &mut seen,
-                issues,
-            );
-        }
-    }
-
-    for tapscript in &contract.tapscripts {
-        let mut seen: HashSet<String> = HashSet::new();
-        for p in &ctor_expanded {
-            record_name(
-                p.name.clone(),
-                &format!("tapscript '{}'", tapscript.name),
-                &mut seen,
-                issues,
-            );
-        }
-        for p in crate::compiler::expanded_placeholder_params(&tapscript.inputs) {
-            record_name(
-                p.name,
-                &format!("tapscript '{}'", tapscript.name),
-                &mut seen,
-                issues,
-            );
-        }
-    }
-}
-
-/// Insert an emitted name; on the first duplicate, record a collision error.
-fn record_name(
-    name: String,
-    context: &str,
-    seen: &mut HashSet<String>,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    if !seen.insert(name.clone()) {
-        issues.push(ValidationIssue::error(format!(
-            "parameters in {context} collide in the emitted namespace as '{name}'"
-        )));
-    }
-}
-
 // ─── Output validation ────────────────────────────────────────────────────────
 
 /// Validate the compiled [`ContractJson`] output for structural invariants.
@@ -1539,14 +1828,25 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 )));
             }
             // The ABI keeps one entry per source parameter; the prologue pushes
-            // one placeholder per array element, so compare against the
-            // flattened namespace.
-            let expected_prologue =
-                crate::compiler::expanded_placeholder_params(&output.parameters)
+            // one placeholder per scalar leaf, so compare against the flattened
+            // layout.
+            let expected_prologue = match crate::compiler::expanded_placeholder_params(
+                &output.parameters,
+                &output.structs,
+            ) {
+                Ok(parameters) => parameters
                     .iter()
                     .rev()
                     .map(|parameter| format!("<{}>", parameter.name))
-                    .collect::<Vec<_>>();
+                    .collect::<Vec<_>>(),
+                Err(error) => {
+                    issues.push(ValidationIssue::error(format!(
+                        "group '{}' has an invalid type layout: {error}",
+                        group.name
+                    )));
+                    continue;
+                }
+            };
             if !arkade.asm.starts_with(&expected_prologue) {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' arkade covenant has an invalid constructor prologue",
@@ -1607,6 +1907,7 @@ mod tests {
     fn make_contract(name: &str) -> Contract {
         Contract {
             name: name.to_string(),
+            structs: vec![],
             parameters: vec![Parameter {
                 name: "owner".to_string(),
                 param_type: "pubkey".to_string(),
@@ -1731,6 +2032,7 @@ mod tests {
         }];
         ContractJson {
             name: name.to_string(),
+            structs: vec![],
             parameters: vec![],
             functions: vec![AbiFunctionGroup {
                 name: "spend".to_string(),

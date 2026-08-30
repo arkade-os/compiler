@@ -6,7 +6,13 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
 import_stmt = { "import" ~ string_literal ~ ";" }
 
 // Main entry point - must consume the entire input
-main = { SOI ~ import_stmt* ~ contract ~ EOI }
+main = { SOI ~ import_stmt* ~ struct_definition* ~ contract ~ EOI }
+
+struct_definition = {
+    "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
+}
+
+struct_field = { data_type ~ identifier ~ ";" }
 
 // Contract definition
 contract = {
@@ -26,9 +32,8 @@ parameter = { data_type ~ identifier }
 // Supported data types - atomic rule to prevent partial matches
 // Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
 // Array types carry a static size (e.g., pubkey[3], signature[5])
-base_type = @{ "pubkey" | "signature" | "bytes32" | "bytes20" | "bytes" | "asset" | "int" | "bool" }
 array_size = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
-data_type = { base_type ~ ("[" ~ array_size ~ "]")? }
+data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
 
 // Function definition. A `tapscript` modifier selects an L1 tapleaf body
 // (require-only); otherwise it is an ordinary covenant function body.
@@ -77,7 +82,7 @@ let_binding = {
 // Variable assignment (reassignment without let keyword)
 // Must check for = but not == or >= or <=
 var_assign = {
-    (array_index_access | identifier) ~ "=" ~ !("=") ~ general_expression ~ ";"
+    (identifier_property_access | array_index_access | identifier) ~ "=" ~ !("=") ~ general_expression ~ ";"
 }
 
 // Require statement
@@ -162,12 +167,13 @@ primary_expr = {
     tx_introspection |
     group_control_is |
     array_length_access |
-    identifier_property_access |
     tx_property_access |
     this_property_access |
+    identifier_property_access |
     constructor |
     function_call |
     array_index_access |
+    struct_literal |
     array_literal |
     bool_literal |
     number_literal |
@@ -175,16 +181,11 @@ primary_expr = {
 }
 
 // Static array length: arr.length — folded to a literal at compile time
-array_length_access = { identifier ~ "." ~ "length" ~ !(ASCII_ALPHANUMERIC | "_") }
+array_length_access = { identifier ~ "." ~ "length" ~ !(ASCII_ALPHANUMERIC | "_" | "[" | ".") }
 
 // Array indexing: identifier[integer expression]
 array_index_access = {
     identifier ~ "[" ~ general_expression ~ "]"
-}
-
-// Named operands are string-backed; widen them to Expression before accepting computed indices.
-named_array_index_access = {
-    identifier ~ "[" ~ (identifier | number_literal) ~ "]"
 }
 
 // Operators
@@ -236,6 +237,8 @@ complex_expression = _{
     tx_property_access |
     this_property_access |
     function_call |
+    identifier_property_access |
+    array_index_access |
     identifier |
     number_literal |
     array_literal
@@ -243,17 +246,20 @@ complex_expression = _{
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
+asset_id_txid_operand = _{ identifier_property_access | identifier }
+asset_id_gidx_operand = _{ number_literal | identifier_property_access | identifier }
+
 // Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
 // txid is a bytes32 identifier; gidx is an int identifier or a 0..65535 literal.
 asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "lookup" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+        ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
 // Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) → Bool
 asset_has = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+        ~ "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
 // Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -315,8 +321,8 @@ output_introspection_property = { "value" | "scriptPubKey" }
 // tx.assetGroups[k].sumInputs, etc.
 asset_group_access = {
     "tx" ~ "." ~ "assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
-        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
+        "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
         array_access ~ "." ~ group_property
     )
@@ -329,23 +335,23 @@ group_property = @{
     "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
 }
 
-// Group control predicates (struct-free, replace the old `.control ==`):
+// Group control predicates compare explicit AssetId components:
 //   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
 //   group.hasControl            → Bool (handled as a plain group_property)
 group_control_is = {
-    identifier ~ "." ~ "controlIs" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+    identifier ~ "." ~ "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
-// Identifier property access: variable.property (e.g., group.sumInputs, tokenGroup.delta)
+// Named field path, optionally ending in an array index.
 identifier_property_access = {
-    identifier ~ "." ~ group_property
+    identifier ~ ("." ~ identifier)+ ~ ("[" ~ general_expression ~ "]")?
 }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
 
 // Time comparison (tx.time >= timelock)
 time_comparison = {
-    "tx.time" ~ ">=" ~ identifier
+    "tx.time" ~ ">=" ~ named_binding
 }
 
 // Generalized hash condition function name.
@@ -359,7 +365,7 @@ hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
 // that constructions like `sha256(substr(packet, ...)) == substr(other, ...)`
 // — used by the LayerZero scripts — parse natively.
 hash_comparison = {
-    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | identifier)
+    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | named_binding)
 }
 
 // Constructor expression: new ContractName(args)
@@ -385,8 +391,8 @@ tx_property_body = {
     ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
     // Asset groups access: find, has, length, or indexed property access
     ("assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
-        "." ~ "has" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")" |
+        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
+        "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
         array_access ~ ("." ~ asset_group_property)?
     )?) |
@@ -449,6 +455,12 @@ array_literal = {
     "[" ~ general_expression ~ ("," ~ general_expression)* ~ "]"
 }
 
+struct_literal = {
+    "{" ~ struct_literal_field ~ ("," ~ struct_literal_field)* ~ "}"
+}
+
+struct_literal_field = { identifier ~ ":" ~ general_expression }
+
 // Function call
 function_call = {
     identifier ~ "(" ~ (complex_expression ~ ("," ~ complex_expression)*)? ~ ")"
@@ -458,7 +470,7 @@ function_call = {
 
 // Key expression: a bare pubkey identifier (server, emulator, owner, …) or an
 // explicit emulator tweak. Used only inside checkSig/checkMultisig.
-key_expr = { tweak_key | identifier }
+key_expr = { tweak_key | named_binding }
 
 // Explicit emulator tweak: tweak(emulator, funcName)
 tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" }
@@ -468,7 +480,7 @@ key_array = { "[" ~ key_expr ~ ("," ~ key_expr)* ~ "]" }
 
 // CheckSig expression — key position accepts a key expression (incl. tweak()).
 check_sig = {
-    "checkSig" ~ "(" ~ identifier ~ "," ~ key_expr ~ ")"
+    "checkSig" ~ "(" ~ named_binding ~ "," ~ key_expr ~ ")"
 }
 
 // CheckSigFromStack expression
@@ -478,7 +490,7 @@ check_sig_from_stack = {
 }
 
 // Signature function argument: identifier or array access
-sig_arg = { named_array_index_access | identifier }
+sig_arg = { named_binding }
 
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }
@@ -491,7 +503,16 @@ check_threshold_multisig = {
 
 // Array of identifiers
 array = {
-    "[" ~ identifier ~ ("," ~ identifier)* ~ "]"
+    "[" ~ named_binding ~ ("," ~ named_binding)* ~ "]"
+}
+
+// Named operands used by crypto checks. Dynamic indices here remain limited
+// to a single binding because these AST nodes store operand names directly.
+named_binding = @{
+    identifier ~ (
+        ("." ~ identifier)+ ~ ("[" ~ (identifier | number_literal) ~ "]")? |
+        "[" ~ (identifier | number_literal) ~ "]"
+    )?
 }
 
 // SHA256 function. Accepts any additive expression so concatenation chains
@@ -580,7 +601,7 @@ byte_value = {
     input_introspection |
     output_introspection |
     asset_at |
-    identifier
+    named_binding
 }
 
 // Substring extraction: substr(data, offset, size) → OP_SUBSTR

@@ -150,10 +150,6 @@ pub(crate) fn emit_asset_at_asm(
     match property {
         "assetId" => {
             // Drop the amount, keep the canonical Asset ID (asset_txid, asset_gidx).
-            // TODO(asset-id-struct): this intentionally leaves TWO stack items, so
-            // `.assetId` needs a composite `AssetId` struct return type before it
-            // can be destructured (.txid/.gidx) or compared safely. Deferred to a
-            // separate PR.
             asm.push(OP_DROP.to_string());
         }
         "amount" => {
@@ -214,11 +210,7 @@ pub(crate) fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec
             asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string());
         }
         "assetId" => {
-            // Returns the canonical Asset ID (asset_txid, asset_gidx) — TWO stack items.
-            // TODO(asset-id-struct): like asset_at `.assetId`, this needs a composite
-            // `AssetId` struct return type before it can be destructured (.txid/.gidx)
-            // or compared with `==` (a single OP_EQUAL only sees the top item, the
-            // gidx). Deferred to a separate PR.
+            // Returns the canonical Asset ID (asset_txid, asset_gidx).
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
         }

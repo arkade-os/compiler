@@ -66,7 +66,7 @@ fn test_threshold_oracle_constructor_array_is_one_grouped_input() {
 
     // The asm prologue still pushes one placeholder per element.
     let asm = crate::common::arkade_asm(&output, "attest");
-    for placeholder in ["<oracles_0>", "<oracles_1>", "<oracles_2>"] {
+    for placeholder in ["<oracles.0>", "<oracles.1>", "<oracles.2>"] {
         assert!(asm.contains(placeholder), "missing {placeholder} in: {asm}");
     }
 }
@@ -114,20 +114,20 @@ fn test_threshold_oracle_array_indexing_in_loop() {
 
     let asm_str = arkade_asm(&output, "attest");
 
-    // When loop unrolls, oracles[i] should become <oracles_0>, <oracles_1>, <oracles_2>
+    // When loop unrolls, oracles[i] should become <oracles.0>, <oracles.1>, <oracles.2>
     assert!(
-        asm_str.contains("<oracles_0>"),
-        "Missing <oracles_0> in assembly (from oracles[0]). ASM: {}",
+        asm_str.contains("<oracles.0>"),
+        "Missing <oracles.0> in assembly (from oracles[0]). ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("<oracles_1>"),
-        "Missing <oracles_1> in assembly (from oracles[1]). ASM: {}",
+        asm_str.contains("<oracles.1>"),
+        "Missing <oracles.1> in assembly (from oracles[1]). ASM: {}",
         asm_str
     );
     assert!(
-        asm_str.contains("<oracles_2>"),
-        "Missing <oracles_2> in assembly (from oracles[2]). ASM: {}",
+        asm_str.contains("<oracles.2>"),
+        "Missing <oracles.2> in assembly (from oracles[2]). ASM: {}",
         asm_str
     );
 

@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECMULSCALARVERIFY,
-    OP_ECPAIRING, OP_MODEXP, OP_NEGATE, OP_PICK, OP_SHA256FINALIZE, OP_SHA256INITIALIZE,
-    OP_SHA256UPDATE, OP_SIGHASH, OP_SUB, OP_TWEAKVERIFY,
+    OP_0, OP_1, OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL,
+    OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP, OP_NEGATE, OP_PICK, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SUB, OP_SWAP, OP_TWEAKVERIFY,
 };
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
@@ -239,42 +239,84 @@ fn test_mod_exp() {
 // ─── Elliptic Curve ────────────────────────────────────────────────────
 
 #[test]
-fn test_ec_add_cannot_be_bound_as_one_value() {
+fn test_ec_add_returns_typed_point() {
     let code = r#"
         contract EllipticCurve(int curveId) {
             function add(int x1, int y1, int x2, int y2) {
-                let result = ecAdd(x1, y1, x2, y2, curveId);
-                require(true);
+                ECPoint result = ecAdd(x1, y1, x2, y2, curveId);
+                require(result.x >= 0);
+                require(result.y >= 0);
             }
         }
     "#;
 
-    let error = compile(code)
-        .expect_err("ecAdd produces a composite value")
-        .to_string();
+    let output = compile(code).expect("ecAdd returns ECPoint");
+    let asm = crate::common::arkade_asm_tokens(&output, "add");
     assert!(
-        error.contains("expression produces 2 stack items"),
-        "ecAdd binding must be rejected: {error}"
+        contains_tokens(&asm, &[OP_ECADD, OP_SWAP, OP_0, OP_PICK]),
+        "EC point output must be normalized to struct field order: {asm:?}"
     );
 }
 
 #[test]
-fn test_ec_mul_cannot_be_bound_as_one_value() {
+fn test_native_result_type_must_match_declaration() {
+    let error = compile(
+        r#"
+        contract EllipticCurve(int curveId) {
+            function add(int x1, int y1, int x2, int y2) {
+                AssetId result = ecAdd(x1, y1, x2, y2, curveId);
+                require(result.gidx >= 0);
+            }
+        }
+    "#,
+    )
+    .expect_err("ECPoint cannot initialize AssetId")
+    .to_string();
+
+    assert!(
+        error.contains("declares type 'AssetId' but initializer has type 'ECPoint'"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn test_ec_mul_infers_point_type() {
     let code = r#"
         contract EllipticCurve(int curveId) {
             function multiply(int x, int y, int scalar) {
                 let result = ecMul(x, y, scalar, curveId);
-                require(true);
+                require(result.x >= 0);
+                require(result.y >= 0);
             }
         }
     "#;
 
-    let error = compile(code)
-        .expect_err("ecMul produces a composite value")
-        .to_string();
+    let output = compile(code).expect("ecMul infers ECPoint");
+    let asm = crate::common::arkade_asm_tokens(&output, "multiply");
     assert!(
-        error.contains("expression produces 2 stack items"),
-        "ecMul binding must be rejected: {error}"
+        contains_tokens(&asm, &[OP_ECMUL, OP_SWAP]),
+        "EC point output must be normalized to struct field order: {asm:?}"
+    );
+}
+
+#[test]
+fn test_inferred_point_fields_keep_their_types_during_concat_rewrite() {
+    let error = compile(
+        r#"
+        contract EllipticCurve(int curveId) {
+            function multiply(int x, int y, int scalar, bytes suffix) {
+                let result = ecMul(x, y, scalar, curveId);
+                require(result.x + suffix == suffix);
+            }
+        }
+    "#,
+    )
+    .expect_err("numeric ECPoint field needs an explicit byte width")
+    .to_string();
+
+    assert!(
+        error.contains("cannot concatenate bytes with the left `int` operand"),
+        "unexpected error: {error}"
     );
 }
 

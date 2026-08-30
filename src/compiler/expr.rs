@@ -18,6 +18,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::Literal(lit) => push_literal_asm(lit, asm),
         // Rejected before emission; array declarations emit their elements directly.
         Expression::ArrayLiteral(_) => {}
+        // Rejected before emission; typed struct declarations emit scalar leaves directly.
+        Expression::StructLiteral(_) => {}
         Expression::ArrayIndex { array, index } => {
             if let Expression::Literal(index) = index.as_ref() {
                 asm.push(format!("<{array}[{index}]>"));

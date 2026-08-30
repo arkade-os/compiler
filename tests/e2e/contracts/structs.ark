@@ -1,0 +1,76 @@
+struct Inner {
+  int b;
+}
+
+struct Rules {
+  int a_b;
+  Inner a;
+  int[3] weights;
+}
+
+struct Point {
+  int x;
+  int y;
+}
+
+struct Account {
+  pubkey owner;
+  Rules rules;
+}
+
+contract Structs(Account account) {
+  function spend(
+    Rules supplied,
+    Point generator,
+    int index,
+    int expected,
+    signature ownerSig
+  ) {
+    require(account.rules.a_b == 11, "constructor field");
+    require(account.rules.a.b == 17, "nested constructor field");
+    require(account.rules.weights[2] == 23, "constructor array field");
+    require(supplied.a_b == 29, "function field");
+    require(supplied.a.b == 37, "nested function field");
+    require(supplied.weights[index] == 43, "indexed struct array");
+
+    Rules local = {
+      weights: [supplied.weights[0], supplied.weights[1], supplied.weights[2]],
+      a: { b: supplied.a.b },
+      a_b: supplied.a_b
+    };
+    local.a.b = local.a.b + account.rules.a.b;
+    local.weights[1] = local.weights[1] + account.rules.weights[1];
+
+    int total = local.a_b + local.a.b;
+    for (i, weight) in local.weights {
+      total = total + (weight * (i + 1));
+    }
+    require(local.weights.length == 3, "array field length");
+    require(total == expected, "local struct result");
+
+    let indexedOutpoint = tx.inputs[0].outpoint;
+    Outpoint currentOutpoint = tx.input.current.outpoint;
+    require(indexedOutpoint.txid == currentOutpoint.txid, "outpoint txid");
+    require(indexedOutpoint.vout == currentOutpoint.vout, "outpoint vout");
+    require(currentOutpoint.vout == 0, "funding vout");
+
+    let outputAssetId = tx.outputs[0].assets[0].assetId;
+    require(outputAssetId.gidx == 0, "asset group index");
+    require(tx.outputs[0].assets.lookup(outputAssetId.txid, outputAssetId.gidx) == 7, "asset lookup");
+    let assetGroup = tx.assetGroups.find(outputAssetId.txid, outputAssetId.gidx);
+    AssetId groupAssetId = assetGroup.assetId;
+    require(groupAssetId.txid == outputAssetId.txid, "group asset txid");
+    require(groupAssetId.gidx == outputAssetId.gidx, "group asset index");
+
+    let generatorX = generator.x;
+    let generatorY = generator.y;
+    ECPoint added = ecAdd(0, 0, generatorX, generatorY, 0);
+    let multiplied = ecMul(generatorX, generatorY, 1, 0);
+    require(added.x == generator.x, "ecAdd x");
+    require(added.y == generator.y, "ecAdd y");
+    require(multiplied.x == generator.x, "ecMul x");
+    require(multiplied.y == generator.y, "ecMul y");
+
+    require(checkSig(ownerSig, account.owner));
+  }
+}

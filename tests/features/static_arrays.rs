@@ -43,14 +43,14 @@ contract Sized(pubkey[2] owners) {
     );
 
     let asm = crate::common::arkade_asm(&output, "spend");
-    for placeholder in ["<owners_0>", "<owners_1>"] {
+    for placeholder in ["<owners.0>", "<owners.1>"] {
         assert!(
             asm.contains(placeholder),
             "constructor array expands to its declared size: {asm}"
         );
     }
     assert!(
-        !asm.contains("<owners_2>"),
+        !asm.contains("<owners.2>"),
         "constructor array must not expand past its declared size: {asm}"
     );
 }

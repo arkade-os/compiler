@@ -70,15 +70,20 @@ struct Generator {
     scopes: Vec<usize>,
     alt_depth: usize,
     constructor_array_expansions: Vec<(String, String)>,
+    structs: Vec<crate::models::StructDefinition>,
 }
 
 impl Generator {
-    fn new(function_parameters: &[Parameter], constructor_parameters: &[Parameter]) -> Self {
+    fn new(
+        function_parameters: &[Parameter],
+        constructor_parameters: &[Parameter],
+        structs: &[crate::models::StructDefinition],
+    ) -> Result<Self, String> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
-            for_each_expanded_param(parameter, |_, binding_name, _| {
+            for_each_expanded_param(parameter, structs, |_, binding_name, _| {
                 function_bindings.push(binding_name);
-            });
+            })?;
         }
         let mut stack = function_bindings
             .into_iter()
@@ -93,11 +98,13 @@ impl Generator {
         let mut constructor_array_expansions = Vec::new();
         for parameter in constructor_parameters {
             let mut expanded_placeholders = Vec::new();
-            for_each_expanded_param(parameter, |placeholder, binding_name, _| {
+            for_each_expanded_param(parameter, structs, |placeholder, binding_name, _| {
                 expanded_placeholders.push(format!("<{placeholder}>"));
                 constructor_bindings.push((placeholder, binding_name));
-            });
-            if crate::models::array_type_parts(&parameter.param_type).is_some() {
+            })?;
+            if expanded_placeholders.len() != 1
+                || expanded_placeholders[0] != format!("<{}>", parameter.name)
+            {
                 constructor_array_expansions.push((
                     format!("<{}>", parameter.name),
                     expanded_placeholders.join(","),
@@ -112,13 +119,14 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        Self {
+        Ok(Self {
             asm,
             stack,
             scopes: Vec::new(),
             alt_depth: 0,
             constructor_array_expansions,
-        }
+            structs: structs.to_vec(),
+        })
     }
 
     fn push_depth(&mut self, depth: usize) {
@@ -165,7 +173,11 @@ impl Generator {
     }
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
-        if let Some(array) = name.trim().strip_suffix(".length") {
+        // A field named `length` outranks synthetic array length.
+        let is_binding = self
+            .binding_index(&Self::internal_binding_name(name))
+            .is_some();
+        if let Some(array) = name.trim().strip_suffix(".length").filter(|_| !is_binding) {
             let length = self.array_length(array);
             if length == 0 {
                 return Err(format!("'{array}' is not an array; '.length' is undefined"));
@@ -400,21 +412,15 @@ impl Generator {
     }
 
     fn emit_expression(&mut self, expression: &Expression) -> Result<(), String> {
-        if matches!(
-            expression,
-            Expression::CurrentInput(Some(property)) if property == "outpoint"
-        ) || matches!(
-            expression,
-            Expression::InputIntrospection { property, .. } if property == "outpoint"
-        ) {
-            return Err(
-                "outpoint inspection produces 2 stack items; composite values are not supported"
-                    .to_string(),
-            );
-        }
         if matches!(expression, Expression::ArrayLiteral(_)) {
             return Err(
                 "array literals may only initialize an array declaration; composite values are not supported"
+                    .to_string(),
+            );
+        }
+        if matches!(expression, Expression::StructLiteral(_)) {
+            return Err(
+                "struct literals may only initialize a typed struct declaration; composite values are not supported"
                     .to_string(),
             );
         }
@@ -430,19 +436,57 @@ impl Generator {
                     .to_string(),
             );
         }
+        self.emit_expression_items(expression, 1)
+    }
+
+    fn emit_expression_items(
+        &mut self,
+        expression: &Expression,
+        expected: usize,
+    ) -> Result<(), String> {
         let before = self.stack.len();
         let mut raw = Vec::new();
         emit_expression_asm(expression, &mut raw);
         for token in raw {
             self.lower_raw_token(&token)?;
         }
-        if self.stack.len() != before + 1
-            || !matches!(self.stack.last(), Some(StackItem::Temporary))
+        if self.stack.len() != before + expected
+            || self.stack[before..]
+                .iter()
+                .any(|item| !matches!(item, StackItem::Temporary))
         {
             return Err(format!(
-                "expression produces {} stack items; exactly one is required",
-                self.stack.len().saturating_sub(before)
+                "expression produces {} stack items; exactly {expected} required",
+                self.stack.len().saturating_sub(before),
             ));
+        }
+        Ok(())
+    }
+
+    fn bind_native_struct(
+        &mut self,
+        name: &str,
+        declared_type: &str,
+        expression: &Expression,
+    ) -> Result<(), String> {
+        let fields = crate::models::builtin_struct_fields(declared_type)
+            .ok_or_else(|| format!("unknown native struct type '{declared_type}'"))?;
+        // Native expressions push fields in declaration order, first deepest.
+        // Replace this swap with a general reversal when a wider result is introduced.
+        if fields.len() != 2 {
+            return Err(format!(
+                "native struct '{declared_type}' has unsupported width {}",
+                fields.len()
+            ));
+        }
+        self.emit_expression_items(expression, fields.len())?;
+        self.swap()?;
+        let start = self.stack.len() - fields.len();
+        for ((field, _), item) in fields.iter().rev().zip(&mut self.stack[start..]) {
+            *item = StackItem::Binding {
+                name: Self::internal_binding_name(&format!("{name}.{field}")),
+                kind: BindingKind::Local,
+            };
         }
         Ok(())
     }
@@ -615,6 +659,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
+    typechecker::resolve_group_properties(&mut contract);
+
     // ── Semantic validation ────────────────────────────────────────────────
     // Catch errors the PEG grammar cannot express (duplicate names, missing
     // timelocks, etc.) before we attempt code generation.
@@ -651,6 +697,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 
     let mut json = ContractJson {
         name: contract.name.clone(),
+        structs: contract.structs.clone(),
         parameters,
         functions: Vec::new(),
         source: Some(strip_comments(source_code)),
@@ -668,7 +715,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     for function in contract.functions.iter().filter(|f| !f.is_internal) {
         covenants.insert(
             function.name.clone(),
-            covenant_for(function, &contract.parameters)?,
+            covenant_for(function, &contract.parameters, &contract.structs)?,
         );
     }
 
@@ -694,26 +741,30 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 }
 
 /// The placeholder namespace a parameter list emits: array types (e.g.
-/// `pubkey[3]`) flatten to `name_0`, `name_1`, `name_2`; every other param
+/// `pubkey[3]`) flatten to `name.0`, `name.1`, `name.2`; every other param
 /// passes through unchanged. This is the `<name>` namespace in `asm`, not the
 /// artifact ABI, which keeps one entry per source parameter.
-pub(crate) fn expanded_placeholder_params(params: &[Parameter]) -> Vec<Parameter> {
+pub(crate) fn expanded_placeholder_params(
+    params: &[Parameter],
+    structs: &[crate::models::StructDefinition],
+) -> Result<Vec<Parameter>, String> {
     let mut result = Vec::new();
     for param in params {
-        for_each_expanded_param(param, |name, _, param_type| {
+        for_each_expanded_param(param, structs, |name, _, param_type| {
             result.push(Parameter { name, param_type });
-        });
+        })?;
     }
-    result
+    Ok(result)
 }
 
 /// Build an `ArkadeCovenant` for a non-internal function.
 fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
+    structs: &[crate::models::StructDefinition],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
-    let mut generator = Generator::new(&function.parameters, constructor_parameters);
+    let mut generator = Generator::new(&function.parameters, constructor_parameters, structs)?;
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })
@@ -729,22 +780,16 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
         .collect()
 }
 
-fn for_each_expanded_param(param: &Parameter, mut f: impl FnMut(String, String, String)) {
-    if let Some((base_type, length)) = crate::models::array_type_parts(&param.param_type) {
-        for i in 0..length {
-            f(
-                format!("{}_{}", param.name, i),
-                internal_array_binding_name(&param.name, &i.to_string()),
-                base_type.to_string(),
-            );
-        }
-    } else {
-        f(
-            param.name.clone(),
-            param.name.clone(),
-            param.param_type.clone(),
-        );
+fn for_each_expanded_param(
+    param: &Parameter,
+    structs: &[crate::models::StructDefinition],
+    mut f: impl FnMut(String, String, String),
+) -> Result<(), String> {
+    for leaf in crate::models::flatten_parameter(param, structs)? {
+        let binding_name = Generator::internal_binding_name(&leaf.access_name);
+        f(leaf.emitted_name, binding_name, leaf.leaf_type);
     }
+    Ok(())
 }
 
 /// Recursively generate assembly from statements
@@ -794,8 +839,9 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let Expression::Variable(array_name) = iterable else {
-                    return Err("unsupported loop iterable".to_string());
+                let array_name = match iterable {
+                    Expression::Variable(name) | Expression::Property(name) => name,
+                    _ => return Err("unsupported loop iterable".to_string()),
                 };
                 let array_name = array_name.as_str();
                 for k in 0..generator.array_length(array_name) {
@@ -816,13 +862,49 @@ fn generate_asm_from_statements_recursive(
                 name,
                 declared_type,
                 value,
-            } => match (
-                declared_type
-                    .as_deref()
-                    .and_then(crate::models::array_type_parts),
-                value,
-            ) {
-                (Some((_, length)), Expression::ArrayLiteral(elements)) => {
+            } => match (declared_type.as_deref(), value) {
+                (Some(declared_type), Expression::StructLiteral(_))
+                    if generator
+                        .structs
+                        .iter()
+                        .any(|definition| definition.name == declared_type) =>
+                {
+                    let mut leaves = Vec::new();
+                    collect_struct_literal_leaves(
+                        name,
+                        declared_type,
+                        value,
+                        &generator.structs,
+                        &mut leaves,
+                    )?;
+                    for (access_name, leaf_type, expression) in leaves.into_iter().rev() {
+                        if crate::models::is_builtin_struct(&leaf_type) {
+                            generator.bind_native_struct(&access_name, &leaf_type, &expression)?;
+                        } else {
+                            generator.emit_expression(&expression)?;
+                            generator
+                                .bind_local(&Generator::internal_binding_name(&access_name))?;
+                        }
+                    }
+                }
+                (declared_type, value)
+                    if crate::models::expression_result_struct(value).is_some() =>
+                {
+                    let result_type = crate::models::expression_result_struct(value)
+                        .expect("matched a native struct result");
+                    if declared_type.is_some_and(|declared| declared != result_type) {
+                        return Err(format!(
+                            "binding '{name}' declares type '{}' but initializer has type '{result_type}'",
+                            declared_type.expect("checked as some"),
+                        ));
+                    }
+                    generator.bind_native_struct(name, result_type, value)?;
+                }
+                (Some(declared_type), Expression::ArrayLiteral(elements))
+                    if crate::models::array_type_parts(declared_type).is_some() =>
+                {
+                    let (_, length) = crate::models::array_type_parts(declared_type)
+                        .expect("matched an array type");
                     if elements.len() != length {
                         return Err(format!(
                             "array '{name}' declares {length} elements but its initializer has {}",
@@ -848,6 +930,90 @@ fn generate_asm_from_statements_recursive(
             }
         }
         generator.assert_statement_boundary()?;
+    }
+    Ok(())
+}
+
+fn collect_struct_literal_leaves(
+    access_name: &str,
+    declared_type: &str,
+    value: &Expression,
+    structs: &[crate::models::StructDefinition],
+    leaves: &mut Vec<(String, String, Expression)>,
+) -> Result<(), String> {
+    if let Some((element_type, length)) = crate::models::array_type_parts(declared_type) {
+        let Expression::ArrayLiteral(elements) = value else {
+            return Err(format!(
+                "field '{access_name}' must be initialized with an array literal"
+            ));
+        };
+        if elements.len() != length {
+            return Err(format!(
+                "array field '{access_name}' declares {length} elements but its initializer has {}",
+                elements.len()
+            ));
+        }
+        for (index, element) in elements.iter().enumerate() {
+            if !crate::models::is_builtin_type(element_type) {
+                return Err("arrays of structs are not supported".to_string());
+            }
+            leaves.push((
+                format!("{access_name}[{index}]"),
+                element_type.to_string(),
+                element.clone(),
+            ));
+        }
+        return Ok(());
+    }
+    if crate::models::is_builtin_type(declared_type) {
+        leaves.push((
+            access_name.to_string(),
+            declared_type.to_string(),
+            value.clone(),
+        ));
+        return Ok(());
+    }
+    if crate::models::is_builtin_struct(declared_type) {
+        leaves.push((
+            access_name.to_string(),
+            declared_type.to_string(),
+            value.clone(),
+        ));
+        return Ok(());
+    }
+
+    let definition = structs
+        .iter()
+        .find(|definition| definition.name == declared_type)
+        .ok_or_else(|| format!("unknown struct type '{declared_type}'"))?;
+    let Expression::StructLiteral(fields) = value else {
+        return Err(format!(
+            "struct field '{access_name}' must be initialized with a struct literal"
+        ));
+    };
+    for field in &definition.fields {
+        let matches = fields
+            .iter()
+            .filter(|(name, _)| name == &field.name)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(format!(
+                "struct literal for '{access_name}' must initialize field '{}' exactly once",
+                field.name
+            ));
+        }
+        collect_struct_literal_leaves(
+            &format!("{access_name}.{}", field.name),
+            &field.param_type,
+            &matches[0].1,
+            structs,
+            leaves,
+        )?;
+    }
+    if fields.len() != definition.fields.len() {
+        return Err(format!(
+            "struct literal for '{access_name}' has unknown or duplicate fields"
+        ));
     }
     Ok(())
 }
@@ -1017,7 +1183,7 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             })
             .collect::<Vec<_>>();
-        let mut generator = Generator::new(&inputs, &[]);
+        let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
 
         generator.push_temporary("9");
         generator.assign("d").expect("deep assignment");

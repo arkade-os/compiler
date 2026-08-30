@@ -30,6 +30,8 @@ mod opcode_functions;
 mod packet_primitives;
 #[path = "features/static_arrays.rs"]
 mod static_arrays;
+#[path = "features/structs.rs"]
+mod structs;
 #[path = "features/symbolic_stack.rs"]
 mod symbolic_stack;
 #[path = "features/tapscript_abi.rs"]

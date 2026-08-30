@@ -65,7 +65,7 @@ impl Encoding {
 /// A typed field in the IR (constructor param, covenant input, or witness element).
 #[derive(Debug, Clone)]
 pub struct Field {
-    /// Field name as it appears in the artifact (camelCase).
+    /// Flattened scalar path used by assembly placeholders and witness entries.
     pub name: String,
     /// Arkade Script type string (e.g., "pubkey", "signature").
     pub ark_type: String,
@@ -133,22 +133,32 @@ pub struct ContractIR {
 
 /// Expand one artifact entry into generated fields.
 ///
-/// The artifact keeps one entry per source parameter, so an array type
-/// (`pubkey[3]`) becomes the `name_0 … name_2` scalars the covenant asm and the
-/// witness stack actually carry.
-fn fields_from_ark_type(name: &str, ark_type: &str, is_injected: bool) -> Vec<Field> {
-    let field = |name: String, ark_type: &str| Field {
-        name,
-        ark_type: ark_type.to_string(),
-        encoding: Encoding::from_ark_type(ark_type),
-        is_injected,
-    };
-    match arkade_compiler::models::array_type_parts(ark_type) {
-        Some((element, length)) => (0..length)
-            .map(|index| field(format!("{name}_{index}"), element))
-            .collect(),
-        None => vec![field(name.to_string(), ark_type)],
-    }
+/// The artifact keeps one entry per source parameter, so arrays and structs
+/// expand into the scalar fields the covenant asm and witness stack carry.
+fn fields_from_ark_type(
+    name: &str,
+    ark_type: &str,
+    is_injected: bool,
+    structs: &[arkade_compiler::StructDefinition],
+) -> Result<Vec<Field>, String> {
+    arkade_compiler::models::flatten_parameter(
+        &arkade_compiler::Parameter {
+            name: name.to_string(),
+            param_type: ark_type.to_string(),
+        },
+        structs,
+    )
+    .map(|leaves| {
+        leaves
+            .into_iter()
+            .map(|leaf| Field {
+                name: leaf.emitted_name,
+                encoding: Encoding::from_ark_type(&leaf.leaf_type),
+                ark_type: leaf.leaf_type,
+                is_injected,
+            })
+            .collect()
+    })
 }
 
 /// Build an IR from a compiled contract artifact.
@@ -156,37 +166,72 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
     let constructor_fields = artifact
         .parameters
         .iter()
-        .flat_map(|p| fields_from_ark_type(&p.name, &p.param_type, false))
+        .map(|p| fields_from_ark_type(&p.name, &p.param_type, false, &artifact.structs))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
         .collect();
 
     let groups = artifact
         .functions
         .iter()
-        .map(|group| GroupIR {
-            name: group.name.clone(),
-            covenant: group.arkade.as_ref().map(|cov| CovenantIR {
-                inputs: cov
-                    .inputs
-                    .iter()
-                    .flat_map(|i| fields_from_ark_type(&i.name, &i.param_type, false))
-                    .collect(),
-                asm: cov.asm.clone(),
-            }),
-            leaves: group
+        .map(|group| {
+            let covenant = group
+                .arkade
+                .as_ref()
+                .map(|cov| -> Result<CovenantIR, String> {
+                    Ok(CovenantIR {
+                        inputs: cov
+                            .inputs
+                            .iter()
+                            .map(|input| {
+                                fields_from_ark_type(
+                                    &input.name,
+                                    &input.param_type,
+                                    false,
+                                    &artifact.structs,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, String>>()?
+                            .into_iter()
+                            .flatten()
+                            .collect(),
+                        asm: cov.asm.clone(),
+                    })
+                })
+                .transpose()?;
+            let leaves = group
                 .leaves
                 .iter()
-                .map(|leaf| LeafIR {
-                    name: leaf.name.clone(),
-                    witness_fields: leaf
-                        .witness
-                        .iter()
-                        .flat_map(|w| fields_from_ark_type(&w.name, &w.elem_type, w.injected))
-                        .collect(),
-                    asm: leaf.asm.clone(),
+                .map(|leaf| {
+                    Ok(LeafIR {
+                        name: leaf.name.clone(),
+                        witness_fields: leaf
+                            .witness
+                            .iter()
+                            .map(|witness| {
+                                fields_from_ark_type(
+                                    &witness.name,
+                                    &witness.elem_type,
+                                    witness.injected,
+                                    &artifact.structs,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, String>>()?
+                            .into_iter()
+                            .flatten()
+                            .collect(),
+                        asm: leaf.asm.clone(),
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(GroupIR {
+                name: group.name.clone(),
+                covenant,
+                leaves,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
 
     Ok(ContractIR {
         name: artifact.name.clone(),

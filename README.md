@@ -293,7 +293,48 @@ contract FujiSafe(
 - `bool`: Boolean value
 - `asset`: Asset identifier (for asset-aware contracts)
 
-Any type can be declared as a fixed-size array by appending a size: `pubkey[5] oracles`, `signature[5] sigs`. The size is part of the type and must be a positive integer literal; there is no unsized array type. Array parameters are flattened into one input per element (`oracles_0 … oracles_4`), `for` loops over them unroll once per element, and each element is one stack item — so large sizes grow the compiled script proportionally. Arrays are allowed in constructor and covenant function parameters; `tapscript` function inputs must be scalars.
+Any type can be declared as a fixed-size array by appending a size: `pubkey[5] oracles`, `signature[5] sigs`. The size is part of the type and must be a positive integer literal; there is no unsized array type. Array parameters are flattened into one input per element (`oracles.0` … `oracles.4`), `for` loops over them unroll once per element, and each element is one stack item — so large sizes grow the compiled script proportionally. Arrays are allowed in constructor and covenant function parameters; `tapscript` function inputs must be scalars.
+
+Named structs are declared before the contract. Their scalar leaves occupy separate stack items and may include nested structs or fixed arrays of scalar types:
+
+```solidity
+struct Signer {
+  pubkey key;
+  int weight;
+}
+
+struct Policy {
+  Signer primary;
+  int[2] limits;
+}
+
+contract Vault(Policy policy) {
+  function spend(int expected) {
+    Policy local = {
+      primary: { key: policy.primary.key, weight: expected },
+      limits: [1, 2]
+    };
+    local.primary.weight = local.limits[1];
+    require(local.primary.weight == expected);
+  }
+}
+```
+
+Struct literals require an explicit type and every named field exactly once. Scalar leaves may be read and assigned, while whole-struct assignment and comparison are unsupported. Structs can contain scalar arrays, but arrays of structs and struct-valued `tapscript` inputs are not supported.
+
+Fixed-width builtins that return multiple stack items expose native result structs. Their types and fields are `AssetId { bytes32 txid; int gidx; }`, `Outpoint { bytes32 txid; int vout; }`, and `ECPoint { int x; int y; }`. The type may be explicit or inferred with `let`:
+
+```solidity
+let assetId = tx.outputs[0].assets[0].assetId;
+Outpoint previous = tx.inputs[0].outpoint;
+ECPoint sum = ecAdd(x1, y1, x2, y2, curveId);
+
+require(assetId.gidx >= 0);
+require(previous.txid == expectedTxid);
+require(sum.x >= 0);
+```
+
+`AssetId` is returned by indexed asset and asset-group `.assetId` access, `Outpoint` by input `.outpoint` access, and `ECPoint` by `ecAdd` and `ecMul`. They are also valid constructor and covenant function parameter types, flattening to their scalar leaves like any other struct; whole-struct comparison remains unsupported. Because their layouts are fixed, they are not repeated in the artifact's `structs` list.
 
 ### Contract Structure
 
@@ -431,6 +472,7 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 |-----------------------|-------------------------------------------------------------------------------------------|
 | `contractName`        | Contract identifier                                                                       |
 | `constructorInputs`   | Constructor parameters in source declaration order, one entry per parameter               |
+| `structs`             | User-defined struct layouts in source declaration order                                   |
 | `functions`           | Spend groups: `{ name, arkade?, leaves[] }`                                               |
 | `arkade`              | Optional emulator-run covenant `{ inputs, asm }`                                          |
 | `arkade.inputs`       | Function parameters in source declaration order, one entry per parameter                  |
@@ -442,7 +484,9 @@ Arkade Language compiles to Arkade Script and produces a JSON artifact for use w
 
 `constructorInputs`, `arkade.inputs` and each leaf's `witness` describe the source ABI: one entry per source parameter, in declaration order. They do not describe the physical VM stack order.
 
-An array parameter stays one entry carrying its size in the type (`{ "name": "oracles", "type": "pubkey[3]" }`). Each array element is a separate stack item and a separate `<name_i>` placeholder, so clients expand an array entry into `name_0 … name_{N-1}` in index order.
+An array parameter stays one entry carrying its size in the type (`{ "name": "oracles", "type": "pubkey[3]" }`). Each array element is a separate stack item and a separate `<name.i>` placeholder, so clients expand an array entry into `name.0` … `name.{N-1}` in index order.
+
+A struct parameter also stays grouped under its named type. Clients use the artifact's `structs` declarations to flatten its scalar leaves recursively in field declaration order. For example, `Policy policy` above expands to `policy.primary.key`, `policy.primary.weight`, `policy.limits.0`, and `policy.limits.1`. Period-separated path segments are unambiguous because source identifiers cannot contain periods.
 
 Clients serialize covenant function inputs in reverse `arkade.inputs` order. For example, source inputs `[amount, sig]` produce the physical bottom-to-top witness `[sig, amount]`.
 

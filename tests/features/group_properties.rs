@@ -2,31 +2,32 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPASSETID,
     OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_SUB, OP_TXID,
+    OP_INSPECTASSETGROUPSUM, OP_SUB, OP_SWAP, OP_TXID,
 };
 
 use crate::common::arkade_asm;
 
-/// Test that group.assetId emits OP_INSPECTASSETGROUPASSETID
+/// Test that group.assetId returns an AssetId struct.
 #[test]
-fn test_group_asset_id_cannot_be_compared_as_one_value() {
+fn test_group_asset_id_returns_struct() {
     let code = r#"
-        contract AssetIdTest(bytes32 tokenAssetIdTxid, int tokenAssetIdGidx, bytes32 expectedAssetId) {
+        contract AssetIdTest(bytes32 tokenAssetIdTxid, int tokenAssetIdGidx) {
             function checkAssetId(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
-                require(tokenGroup.assetId == expectedAssetId, "asset id mismatch");
+                AssetId id = tokenGroup.assetId;
+                require(id.txid == tokenAssetIdTxid, "asset txid mismatch");
+                require(id.gidx == tokenAssetIdGidx, "asset gidx mismatch");
+                let sameGroup = tx.assetGroups.find(id.txid, id.gidx);
+                require(sameGroup == tokenGroup);
             }
         }
     "#;
 
-    let error = compile(code)
-        .expect_err("group assetId is a two-item value")
-        .to_string();
-    assert!(
-        error.contains("expression produces 2 stack items"),
-        "group assetId comparison must be rejected: {error}"
-    );
+    let output = compile(code).expect("group assetId returns an AssetId struct");
+    let asm = crate::common::arkade_asm_tokens(&output, "checkAssetId");
+    assert!(asm.iter().any(|token| token == OP_INSPECTASSETGROUPASSETID));
+    assert!(asm.iter().any(|token| token == OP_SWAP));
 }
 
 /// Test that group.isFresh emits the correct opcode sequence:

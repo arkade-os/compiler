@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_SWAP,
 };
 
 /// Test input introspection opcodes
@@ -87,22 +87,44 @@ fn test_input_sequence() {
 }
 
 #[test]
-fn test_input_outpoint_cannot_be_compared_as_one_value() {
+fn test_input_outpoint_returns_struct() {
     let code = r#"
-        contract OutpointChecker(pubkey owner, bytes32 expectedOutpoint) {
-            function checkOutpoint(signature ownerSig) {
+        contract OutpointChecker(pubkey owner, bytes32 expectedTxid, int expectedVout) {
+            function checkOutpoint(signature ownerSig, int inputIndex) {
                 require(checkSig(ownerSig, owner));
-                require(tx.inputs[0].outpoint == expectedOutpoint);
+                let outpoint = tx.inputs[inputIndex].outpoint;
+                Outpoint current = tx.input.current.outpoint;
+                require(outpoint.txid == expectedTxid);
+                require(outpoint.vout == expectedVout);
+                require(current.vout >= 0);
             }
         }
     "#;
 
-    let error = compile(code)
-        .expect_err("outpoint is a two-item value")
-        .to_string();
+    let output = compile(code).expect("outpoint returns an Outpoint struct");
+    let asm = crate::common::arkade_asm_tokens(&output, "checkOutpoint");
+    assert!(asm.iter().any(|token| token == OP_INSPECTINPUTOUTPOINT));
+    assert!(asm.iter().any(|token| token == OP_SWAP));
+}
+
+#[test]
+fn test_input_outpoint_cannot_be_compared_as_a_scalar() {
+    let error = compile(
+        r#"
+        contract OutpointChecker() {
+            function checkOutpoint() {
+                let expected = tx.input.current.outpoint;
+                require(tx.inputs[0].outpoint == expected);
+            }
+        }
+    "#,
+    )
+    .expect_err("outpoint equality is a composite comparison")
+    .to_string();
+
     assert!(
-        error.contains("outpoint inspection produces 2 stack items"),
-        "outpoint comparison must be rejected: {error}"
+        error.contains("struct expressions are composite values"),
+        "{error}"
     );
 }
 

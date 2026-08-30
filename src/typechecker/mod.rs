@@ -43,6 +43,8 @@ pub enum ArkType {
     // ── Composite ──────────────────────────────────────────────────────────
     /// Homogeneous fixed-size array (e.g., `pubkey[3]`)
     Array(Box<ArkType>, usize),
+    /// Named user-defined struct.
+    Struct(String),
 
     /// Type could not be resolved (variable not in scope, etc.)
     Unknown,
@@ -63,6 +65,7 @@ impl ArkType {
             "int" => ArkType::Int,
             "bool" => ArkType::Bool,
             "asset" => ArkType::Asset,
+            _ if !s.is_empty() => ArkType::Struct(s.to_string()),
             _ => ArkType::Unknown,
         }
     }
@@ -82,6 +85,7 @@ impl ArkType {
             ArkType::Bool => "scriptnum",
             ArkType::Asset => "raw-32",
             ArkType::Array(..) => "array",
+            ArkType::Struct(..) => "struct",
             ArkType::Unknown => "unknown",
         }
     }
@@ -98,6 +102,7 @@ impl ArkType {
             ArkType::Bool => "bool".to_string(),
             ArkType::Asset => "asset".to_string(),
             ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
+            ArkType::Struct(name) => name.clone(),
             ArkType::Unknown => "unknown".to_string(),
         }
     }
@@ -124,24 +129,374 @@ impl TypeError {
 
 pub type Scope = HashMap<String, ArkType>;
 
-pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
+pub fn build_scope_with_structs(
+    params: &[crate::models::Parameter],
+    structs: &[crate::models::StructDefinition],
+) -> Scope {
     let mut scope = Scope::new();
     for p in params {
-        if let Some((base, length)) = crate::models::array_type_parts(&p.param_type) {
-            let elem_type = ArkType::parse(base);
-            // Register the bare name as the array type, plus each indexed element.
-            scope.insert(
-                p.name.clone(),
-                ArkType::Array(Box::new(elem_type.clone()), length),
-            );
-            for i in 0..length {
-                scope.insert(format!("{}[{}]", p.name, i), elem_type.clone());
-            }
-        } else {
-            scope.insert(p.name.clone(), ArkType::parse(&p.param_type));
-        }
+        insert_type_bindings(&mut scope, &p.name, &p.param_type, structs, &mut Vec::new());
     }
     scope
+}
+
+fn insert_type_bindings(
+    scope: &mut Scope,
+    name: &str,
+    declared_type: &str,
+    structs: &[crate::models::StructDefinition],
+    stack: &mut Vec<String>,
+) {
+    if let Some((base, length)) = crate::models::array_type_parts(declared_type) {
+        let element_type = ArkType::parse(base);
+        scope.insert(
+            name.to_string(),
+            ArkType::Array(Box::new(element_type.clone()), length),
+        );
+        for index in 0..length {
+            scope.insert(format!("{name}[{index}]"), element_type.clone());
+        }
+        return;
+    }
+    if let Some(fields) = crate::models::builtin_struct_fields(declared_type) {
+        scope.insert(name.to_string(), ArkType::Struct(declared_type.to_string()));
+        for (field_name, field_type) in fields {
+            insert_type_bindings(
+                scope,
+                &format!("{name}.{field_name}"),
+                field_type,
+                structs,
+                stack,
+            );
+        }
+        return;
+    }
+    if let Some(definition) = structs
+        .iter()
+        .find(|definition| definition.name == declared_type)
+    {
+        scope.insert(name.to_string(), ArkType::Struct(declared_type.to_string()));
+        if stack.iter().any(|name| name == declared_type) {
+            return;
+        }
+        stack.push(declared_type.to_string());
+        for field in &definition.fields {
+            insert_type_bindings(
+                scope,
+                &format!("{name}.{}", field.name),
+                &field.param_type,
+                structs,
+                stack,
+            );
+        }
+        stack.pop();
+        return;
+    }
+    scope.insert(name.to_string(), ArkType::parse(declared_type));
+}
+
+pub(crate) fn bind_local_type(
+    scope: &mut Scope,
+    name: &str,
+    declared_type: Option<&str>,
+    inferred: ArkType,
+    structs: &[crate::models::StructDefinition],
+) {
+    let expanded = match declared_type {
+        Some(declared_type) => Some(declared_type.to_string()),
+        None if matches!(inferred, ArkType::Struct(_)) => Some(inferred.as_str()),
+        None => None,
+    };
+    match expanded {
+        Some(declared_type) => {
+            insert_type_bindings(scope, name, &declared_type, structs, &mut Vec::new())
+        }
+        None => {
+            scope.insert(name.to_string(), inferred);
+        }
+    }
+}
+
+pub(crate) fn resolve_group_properties(contract: &mut Contract) {
+    let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
+    for function in &mut contract.functions {
+        let mut scope = constructor_scope.clone();
+        scope.extend(build_scope_with_structs(
+            &function.parameters,
+            &contract.structs,
+        ));
+        resolve_statements(&mut function.statements, &mut scope, &contract.structs);
+    }
+}
+
+fn resolve_statements(
+    statements: &mut [Statement],
+    scope: &mut Scope,
+    structs: &[crate::models::StructDefinition],
+) {
+    for statement in statements {
+        match statement {
+            Statement::Require(requirement) => match requirement {
+                Requirement::Expression(expression) => resolve_expression(expression, scope),
+                Requirement::Comparison { left, right, .. } => {
+                    resolve_expression(left, scope);
+                    resolve_expression(right, scope);
+                }
+                _ => {}
+            },
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => {
+                resolve_expression(value, scope);
+                let binding_type = declared_type
+                    .as_deref()
+                    .map(ArkType::parse)
+                    .unwrap_or_else(|| infer_type(value, scope));
+                bind_local_type(scope, name, declared_type.as_deref(), binding_type, structs);
+            }
+            Statement::VarAssign { value, .. } => resolve_expression(value, scope),
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                resolve_expression(condition, scope);
+                resolve_statements(then_body, &mut scope.clone(), structs);
+                if let Some(else_body) = else_body {
+                    resolve_statements(else_body, &mut scope.clone(), structs);
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                iterable,
+                body,
+            } => {
+                resolve_expression(iterable, scope);
+                let element_type = match infer_type(iterable, scope) {
+                    ArkType::Array(element, _) => *element,
+                    _ => ArkType::Unknown,
+                };
+                let mut loop_scope = scope.clone();
+                loop_scope.insert(index_var.clone(), ArkType::Int);
+                loop_scope.insert(value_var.clone(), element_type);
+                resolve_statements(body, &mut loop_scope, structs);
+            }
+        }
+    }
+}
+
+fn resolve_expression(expression: &mut Expression, scope: &Scope) {
+    match expression {
+        Expression::ArrayLiteral(elements)
+        | Expression::ContractInstance { args: elements, .. } => {
+            for element in elements {
+                resolve_expression(element, scope);
+            }
+        }
+        Expression::StructLiteral(fields) => {
+            for (_, value) in fields {
+                resolve_expression(value, scope);
+            }
+        }
+        Expression::ArrayIndex { index, .. }
+        | Expression::AssetCount { index, .. }
+        | Expression::InputIntrospection { index, .. }
+        | Expression::OutputIntrospection { index, .. }
+        | Expression::GroupSum { index, .. }
+        | Expression::GroupNumIO { index, .. } => resolve_expression(index, scope),
+        Expression::AssetLookup {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        }
+        | Expression::AssetHas {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        } => {
+            resolve_expression(index, scope);
+            resolve_expression(asset_txid, scope);
+            resolve_expression(asset_gidx, scope);
+        }
+        Expression::AssetAt {
+            io_index,
+            asset_index,
+            ..
+        } => {
+            resolve_expression(io_index, scope);
+            resolve_expression(asset_index, scope);
+        }
+        Expression::BinaryOp { left, right, .. }
+        | Expression::Concat { left, right }
+        | Expression::Cat { left, right } => {
+            resolve_expression(left, scope);
+            resolve_expression(right, scope);
+        }
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupControlIs {
+            asset_txid,
+            asset_gidx,
+            ..
+        } => {
+            resolve_expression(asset_txid, scope);
+            resolve_expression(asset_gidx, scope);
+        }
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => {
+            resolve_expression(group_index, scope);
+            resolve_expression(io_index, scope);
+        }
+        Expression::Sha256 { data }
+        | Expression::Sha256Initialize { data }
+        | Expression::Negate { value: data }
+        | Expression::Bin2Num { data }
+        | Expression::ReverseBytes { data }
+        | Expression::SizeOf { data }
+        | Expression::PacketInspect { packet_type: data } => resolve_expression(data, scope),
+        Expression::Sha256Update { context, chunk } => {
+            resolve_expression(context, scope);
+            resolve_expression(chunk, scope);
+        }
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => {
+            resolve_expression(context, scope);
+            resolve_expression(last_chunk, scope);
+        }
+        Expression::Sighash { hash_type } => resolve_expression(hash_type, scope),
+        Expression::Digest { data, hash_type } => {
+            resolve_expression(data, scope);
+            resolve_expression(hash_type, scope);
+        }
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => {
+            for child in [base, exponent, modulus] {
+                resolve_expression(child, scope);
+            }
+        }
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => {
+            for child in [x1, y1, x2, y2, curve_id] {
+                resolve_expression(child, scope);
+            }
+        }
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => {
+            for child in [x, y, scalar, curve_id] {
+                resolve_expression(child, scope);
+            }
+        }
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => {
+            for child in [g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id] {
+                resolve_expression(child, scope);
+            }
+        }
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => {
+            for child in [scalar, point_p, point_q] {
+                resolve_expression(child, scope);
+            }
+        }
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => {
+            for child in [point_p, tweak, point_q] {
+                resolve_expression(child, scope);
+            }
+        }
+        Expression::Substr { data, offset, size } => {
+            for child in [data, offset, size] {
+                resolve_expression(child, scope);
+            }
+        }
+        Expression::Num2Bin { value, size } => {
+            resolve_expression(value, scope);
+            resolve_expression(size, scope);
+        }
+        Expression::InputPacketInspect { index, packet_type } => {
+            resolve_expression(index, scope);
+            resolve_expression(packet_type, scope);
+        }
+        Expression::Variable(_)
+        | Expression::Literal(_)
+        | Expression::Property(_)
+        | Expression::CurrentInput(_)
+        | Expression::TxIntrospection { .. }
+        | Expression::GroupProperty { .. }
+        | Expression::AssetGroupsLength
+        | Expression::CheckSigExpr { .. }
+        | Expression::CheckSigFromStackExpr { .. }
+        | Expression::CheckSigFromStackVerify { .. } => {}
+    }
+
+    let Expression::Property(path) = expression else {
+        return;
+    };
+    let Some((group, property)) = path.split_once('.') else {
+        return;
+    };
+    if property.contains('.')
+        || !matches!(
+            property,
+            "numInputs"
+                | "numOutputs"
+                | "sumInputs"
+                | "sumOutputs"
+                | "delta"
+                | "hasControl"
+                | "metadataHash"
+                | "assetId"
+                | "isFresh"
+        )
+        || matches!(scope.get(group), Some(ArkType::Struct(_)))
+    {
+        return;
+    }
+    *expression = Expression::GroupProperty {
+        group: group.to_string(),
+        property: property.to_string(),
+    };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -151,18 +506,22 @@ pub fn build_scope(params: &[crate::models::Parameter]) -> Scope {
 /// Returns all type errors found across all functions.
 /// Currently non-fatal — the compiler emits these as warnings.
 pub fn check_contract(contract: &Contract) -> Vec<TypeError> {
-    let constructor_scope = build_scope(&contract.parameters);
+    let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     contract
         .functions
         .iter()
-        .flat_map(|f| check_function(f, &constructor_scope))
+        .flat_map(|f| check_function(f, &constructor_scope, &contract.structs))
         .collect()
 }
 
-fn check_function(function: &Function, constructor_scope: &Scope) -> Vec<TypeError> {
+fn check_function(
+    function: &Function,
+    constructor_scope: &Scope,
+    structs: &[crate::models::StructDefinition],
+) -> Vec<TypeError> {
     let mut scope = constructor_scope.clone();
     // Merge function parameters into scope
-    scope.extend(build_scope(&function.parameters));
+    scope.extend(build_scope_with_structs(&function.parameters, structs));
 
     let mut errors = Vec::new();
     check_statements(
@@ -170,6 +529,7 @@ fn check_function(function: &Function, constructor_scope: &Scope) -> Vec<TypeErr
         &mut scope,
         &mut errors,
         &function.name,
+        structs,
     );
     errors
 }
@@ -179,9 +539,10 @@ fn check_statements(
     scope: &mut Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
+    structs: &[crate::models::StructDefinition],
 ) {
     for stmt in stmts {
-        check_statement(stmt, scope, errors, fn_name);
+        check_statement(stmt, scope, errors, fn_name, structs);
     }
 }
 
@@ -190,6 +551,7 @@ fn check_statement(
     scope: &mut Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
+    structs: &[crate::models::StructDefinition],
 ) {
     match stmt {
         Statement::Require(req) => {
@@ -206,13 +568,7 @@ fn check_statement(
                 .as_deref()
                 .map(ArkType::parse)
                 .unwrap_or(inferred);
-            // Seed the scope so downstream uses of `name` get the inferred type.
-            if let ArkType::Array(element, length) = &t {
-                for i in 0..*length {
-                    scope.insert(format!("{name}[{i}]"), (**element).clone());
-                }
-            }
-            scope.insert(name.clone(), t);
+            bind_local_type(scope, name, declared_type.as_deref(), t, structs);
         }
         Statement::VarAssign { name, value } => {
             let original_type = scope.get(name.as_str()).cloned();
@@ -255,9 +611,9 @@ fn check_statement(
             }
             // Use cloned child scopes so LetBindings inside branches don't
             // leak into the parent scope.
-            check_statements(then_body, &mut scope.clone(), errors, fn_name);
+            check_statements(then_body, &mut scope.clone(), errors, fn_name, structs);
             if let Some(else_stmts) = else_body {
-                check_statements(else_stmts, &mut scope.clone(), errors, fn_name);
+                check_statements(else_stmts, &mut scope.clone(), errors, fn_name, structs);
             }
         }
         Statement::ForIn {
@@ -271,7 +627,7 @@ fn check_statement(
             let mut loop_scope = scope.clone();
             loop_scope.insert(index_var.clone(), ArkType::Int);
             loop_scope.insert(value_var.clone(), ArkType::Unknown);
-            check_statements(body, &mut loop_scope, errors, fn_name);
+            check_statements(body, &mut loop_scope, errors, fn_name, structs);
         }
     }
 }
@@ -441,9 +797,11 @@ fn check_comparison(
     if left_type == ArkType::Unknown || right_type == ArkType::Unknown {
         return;
     }
-    if matches!(left_type, ArkType::Array(..)) || matches!(right_type, ArkType::Array(..)) {
+    if matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
+        || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..))
+    {
         errors.push(TypeError::new(format!(
-            "fn {}: array comparison '{}' is not supported",
+            "fn {}: composite comparison '{}' is not supported",
             fn_name, op
         )));
         return;
@@ -518,6 +876,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ),
             elements.len(),
         ),
+        Expression::StructLiteral(_) => ArkType::Unknown,
         Expression::ArrayIndex { array, .. } => match scope.get(array) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,
@@ -550,7 +909,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             Some("value") => ArkType::Int,
             Some("scriptPubKey") => ArkType::Bytes,
             Some("sequence") => ArkType::Int,
-            Some("outpoint") => ArkType::Bytes32,
+            Some("outpoint") => ArkType::Struct("Outpoint".to_string()),
             _ => ArkType::Unknown,
         },
 
@@ -567,7 +926,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
             "sequence" => ArkType::Int,
-            "outpoint" => ArkType::Bytes32,
+            "outpoint" => ArkType::Struct("Outpoint".to_string()),
             "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
@@ -585,11 +944,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::AssetCount { .. } => ArkType::Int,
         Expression::AssetAt { property, .. } => match property.as_str() {
             "amount" => ArkType::Int,
-            // TODO(asset-id-struct): `.assetId` is really a two-item canonical
-            // Asset ID (asset_txid, asset_gidx), NOT a single bytes32. Typed as
-            // Bytes32 only as a stopgap until the composite `AssetId` struct
-            // return type lands (separate PR).
-            "assetId" => ArkType::Bytes32,
+            "assetId" => ArkType::Struct("AssetId".to_string()),
             _ => ArkType::Unknown,
         },
 
@@ -603,12 +958,8 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::GroupProperty { property, .. } => match property.as_str() {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,
             "numInputs" | "numOutputs" => ArkType::Int,
-            // TODO(asset-id-struct): `assetId` is really a two-item canonical
-            // Asset ID (asset_txid, asset_gidx), not a single bytes32; typed
-            // Bytes32 only as a stopgap until the composite `AssetId` struct
-            // lands, so `==` over it is unsound until then. `metadataHash`
-            // is genuinely a 32-byte hash and is correct.
-            "metadataHash" | "assetId" => ArkType::Bytes32,
+            "metadataHash" => ArkType::Bytes32,
+            "assetId" => ArkType::Struct("AssetId".to_string()),
             "isFresh" | "hasControl" => ArkType::Bool,
             _ => ArkType::Unknown,
         },
@@ -638,7 +989,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         | Expression::EcPairing { .. }
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => ArkType::Bool,
-        Expression::EcAdd { .. } | Expression::EcMul { .. } => ArkType::Unknown,
+        Expression::EcAdd { .. } | Expression::EcMul { .. } => {
+            ArkType::Struct("ECPoint".to_string())
+        }
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,

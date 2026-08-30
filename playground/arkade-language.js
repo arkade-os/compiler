@@ -5,7 +5,7 @@ const arkadeMonarch = {
     defaultToken: 'invalid',
 
     keywords: [
-        'contract', 'function', 'tapscript', 'require', 'if', 'else',
+        'contract', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
         'for', 'in', 'let', 'internal', 'new'
     ],
 
@@ -36,7 +36,7 @@ const arkadeMonarch = {
             [/\s+/, 'white'],
 
             // Keywords
-            [/\b(contract|function|tapscript|require|if|else|for|in|let|internal|new)\b/, 'keyword'],
+            [/\b(contract|struct|function|tapscript|require|if|else|for|in|let|internal|new)\b/, 'keyword'],
 
             // Types
             [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
@@ -130,6 +130,7 @@ const arkadeTheme = {
 const arkadeCompletions = [
     // Keywords
     { label: 'contract', kind: 'Keyword', insertText: 'contract ${1:Name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
+    { label: 'struct', kind: 'Keyword', insertText: 'struct ${1:Name} {\n\t${2:int} ${3:field};\n}', insertTextRules: 4 },
     { label: 'function', kind: 'Keyword', insertText: 'function ${1:name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
     { label: 'require', kind: 'Keyword', insertText: 'require(${1:condition});', insertTextRules: 4 },
     { label: 'tapscript', kind: 'Keyword', insertText: 'tapscript {\n\t$0\n}', insertTextRules: 4 },
