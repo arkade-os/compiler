@@ -47,6 +47,7 @@ const examples = {
     single_sig: { name: 'SingleSig', code: contracts.single_sig },
     htlc: { name: 'HTLC', code: contracts.htlc },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
+    struct_vault: { name: 'StructVault', code: contracts.struct_vault },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
 };
 
