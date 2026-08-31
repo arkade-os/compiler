@@ -768,6 +768,11 @@ fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
             (expected, actual),
             (ArkType::Bytes, ArkType::Bytes20 | ArkType::Bytes32)
         )
+        || matches!(
+            (expected, actual),
+            (ArkType::Array(expected, expected_len), ArkType::Array(actual, actual_len))
+                if expected_len == actual_len && binding_types_compatible(expected, actual)
+        )
 }
 
 fn check_binding_semantics(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
