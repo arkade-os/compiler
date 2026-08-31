@@ -32,6 +32,14 @@ const projects = {
             'cash_secured_put.ark': contracts.cash_secured_put,
         }
     },
+    dividend_stream: {
+        name: 'Streaming Dividends',
+        description: 'Corporate dividends that accrue every second: a BTC treasury reserve services per-holder StreamingShare positions whose fixed USD-cent dividend accrues continuously (tx.offchainTime) and pays in sats at an oracle-attested BTC/USD price; transfers and splits carry accrual with them, so record dates disappear',
+        files: {
+            'dividend_treasury.ark': contracts.dividend_treasury,
+            'streaming_share.ark': contracts.streaming_share,
+        }
+    },
     bonds: {
         name: 'Bonds',
         description: "Fixed-maturity bond market with a phased lifecycle: borrowers self-issue 1:1 credit + debit tokens against collateral and sell credit on the order book for USDT (no interest rate); permissionless oracle-priced margin call (pre-maturity, fires when collateralValue < liqThresholdBps × mintedAmount / 10000) keeps every vault thresholded healthy so credit tokens are genuinely fungible; post-maturity auction window settles defaulted collateral; credit holders redeem pro-rata into single-sig wallets",
