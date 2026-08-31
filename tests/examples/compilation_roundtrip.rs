@@ -121,6 +121,12 @@ fn roundtrip_controlled_mint() {
 }
 
 #[test]
+fn roundtrip_mining_margin_vault() {
+    let output = compile_example("mining_margin/mining_margin_vault.ark");
+    assert_output_invariants(&output, "mining_margin/mining_margin_vault.ark");
+}
+
+#[test]
 fn roundtrip_nft_mint() {
     let output = compile_example("nft_mint/nft_mint.ark");
     assert_output_invariants(&output, "nft_mint/nft_mint.ark");

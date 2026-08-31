@@ -24,6 +24,8 @@ mod fuji_safe;
 mod htlc;
 #[path = "examples/layerzero.rs"]
 mod layerzero;
+#[path = "examples/mining_margin.rs"]
+mod mining_margin;
 #[path = "examples/repayment_pool.rs"]
 mod repayment_pool;
 #[path = "examples/stability_vault.rs"]

@@ -1,0 +1,327 @@
+// MiningMarginVault Contract
+//
+// A two-sided, fully-collateralized range vault on the MINING MARGIN — what
+// one contract unit of hashrate earns over the power it burns:
+//
+//   margin = clamp(hashPrice − powerCost, 0, cap)   sats per pair
+//
+// One vault per (oracle, hashTicker, powerTicker, cap, maturity) series,
+// following the stateful two-token vault design of the hashprice option
+// vaults: both legs are fungible Arkade Assets minted in pairs against an
+// escrow of `cap` sats, the pot is split once at settlement, and legs redeem
+// pro-rata afterwards.
+//
+// ── Fixings are averaged indices, stamped at maturity ───────────────────────
+//   A contract unit is a fixed quantity of hashrate-time at a reference
+//   machine efficiency (e.g. 1 PH·day at 20 J/TH). Both fixings are AVERAGED
+//   (Asian) indices over a window stated in the oracle spec and ending at
+//   maturity: hashPrice is the sats the unit earned over that window,
+//   powerCost the sats its electricity cost at the series' hub. Averages,
+//   not spot prints — a point print on power is unrepresentative and
+//   gameable; the average is what a machine actually earned. The ticker
+//   preimage must encode unit, reference efficiency, averaging window, and
+//   hub, so a series is self-describing
+//   (e.g. sha256("HASHPRICE/BTC/1PHDAY/AVG7D"), sha256("POWER/ERCOT-WEST/20JTH/AVG7D")).
+//
+//   Both fixings are signed over exactly `maturity`
+//   (msg = sha256(ticker || price(8) || maturity(8))): one message slot per
+//   (ticker, maturity), so two prices for one slot are provable oracle
+//   equivocation, a fixing for one series cannot be replayed into another,
+//   and there is no timestamp window for a settler to shop in. settle also
+//   requires wall-clock maturity, so an early print cannot fix the margin
+//   or freeze the vault ahead of schedule. Negative power fixings are
+//   admitted (routine at volatile hubs); the oracle spec must use the same
+//   signed 8-byte num2bin encoding.
+//
+// ── Two legs, one escrow ────────────────────────────────────────────────────
+//   RIG  pays margin       — long a call spread on the margin
+//   GRID pays cap − margin — a cap-sat escrow claim short the same spread
+//   The clamp at zero mirrors the curtailment right at the fixing horizon;
+//   the clamp at cap bounds the escrow, so RIG + GRID always equals cap and
+//   the vault is exactly collateralized at every fixing — no margin calls,
+//   no liquidations. One series settles one averaged window; replicating a
+//   machine's hour-by-hour curtailment takes a strip of maturities (basis
+//   and positioning are covered in mining_margin.md).
+//
+// ── Recovery ────────────────────────────────────────────────────────────────
+//   burnPair stays open until settlement: a matched pair is worth exactly
+//   cap under every possible fixing, so if the oracle never publishes,
+//   matched pairs still recover escrow 1:1. Single-sided holders bear
+//   oracle liveness — a lone leg cannot be valued without the fixing.
+//
+// ── Assumptions & bounds ────────────────────────────────────────────────────
+//   The identity singleton's genesis mints exactly ONE token: mint control
+//   and the single-vault-UTXO model both rest on that. Every function pins
+//   the vault at input 0, so two vault inputs cannot validate against one
+//   recreation. Vault value is accounted relative to the spent input, so
+//   incidental balance above the backing is preserved, never claimable.
+//   issue bounds amount so pairs × cap ≤ total bitcoin supply; fixings are
+//   range-bounded before use; all products stay inside int64.
+//
+// ── Exit model ──────────────────────────────────────────────────────────────
+//   A pooled vault cannot express per-holder unilateral exit as a single CSV
+//   leaf; `exit` parameterizes the off-chain recurrent exit tree (refreshed
+//   on every issue/burn), as in the other pooled examples.
+
+contract MiningMarginVault(
+  pubkey  oraclePk,        // signs both fixings
+  bytes32 hashTicker,      // self-describing hashprice index id (unit, efficiency, window)
+  bytes32 powerTicker,     // self-describing power index id (hub, efficiency, window)
+  int     cap,             // sats per pair — margin cap and per-pair escrow
+  int     maturity,        // unix seconds; both fixings are signed over exactly this
+  bytes32 rigIdTxid,       // RIG leg asset id — issuance txid
+  int     rigIdGidx,       // RIG leg asset id — issuance group index
+  bytes32 gridIdTxid,      // GRID leg asset id — issuance txid
+  int     gridIdGidx,      // GRID leg asset id — issuance group index
+  bytes32 contractIdTxid,  // vault identity singleton — genesis txid (mint control)
+  int     contractIdGidx,  // vault identity singleton — genesis group index
+  int     settled,         // 0 = open, 1 = settled
+  int     rigShares,       // pre: RIG supply (== gridShares == pairs). post: remaining
+  int     gridShares,      // pre: GRID supply (== rigShares). post: remaining
+  int     rigPot,          // pre: 0. post: sats remaining for the RIG side
+  int     gridPot,         // pre: 0. post: sats remaining for the GRID side
+  int     exit             // exit timelock in blocks (off-chain recurrent exit tree)
+) {
+
+  // State transitions need dynamic taproot reconstruction (the symbolic-stack
+  // validator rejects runtime values as contract-instance arguments). When
+  // the compiler restores dynamic contract transitions:
+  //   1. uncomment the five functions below,
+  //   2. delete the disabled() placeholder at the bottom,
+  //   3. in tests/examples/mining_margin.rs: remove the placeholder test,
+  //      un-ignore the five design tests, and retire the guard test
+  //      (test_commented_design_fails_only_on_dynamic_recreation), which
+  //      fails loudly the moment this design compiles.
+
+  // -------------------------------------------------------------------------
+  // ISSUE — permissionless, before maturity. Deposit `amount × cap` sats;
+  // mint `amount` RIG + `amount` GRID to the depositor. Both supplies rise
+  // together, so the pool stays exactly collateralized.
+  //   input[0]:  this vault (holds the identity singleton)
+  //   input[1+]: depositor's sats (>= amount × cap + fee)
+  //   output[0]: vault re-created (rigShares+amount, gridShares+amount)
+  //   output[1]: amount RIG + amount GRID → depositor
+  // -------------------------------------------------------------------------
+//   function issue(int amount) {
+//     require(settled == 0, "already settled");
+//     require(amount > 0, "zero amount");
+//     require(cap > 0, "empty band");
+//     require(amount <= 2100000000000000 / cap, "exceeds sat supply");
+//     require(this.activeInputIndex == 0, "vault must be input 0");
+//     int untilMaturity = maturity - tx.offchainTime;
+//     require(untilMaturity > 0, "matured");
+
+//     int deposit    = amount * cap;
+//     int newRig     = rigShares + amount;
+//     int newGrid    = gridShares + amount;
+//     int newBacking = newRig * cap;
+
+//     // Identity-gated paired mint: RIG and GRID supply each rise by exactly
+//     // `amount`, both controlled by the vault identity; identity unchanged.
+//     let rigGroup = tx.assetGroups.find(rigIdTxid, rigIdGidx);
+//     require(rigGroup.delta == amount, "rig supply != amount");
+//     require(rigGroup.controlIs(contractIdTxid, contractIdGidx), "wrong rig control");
+//     let gridGroup = tx.assetGroups.find(gridIdTxid, gridIdGidx);
+//     require(gridGroup.delta == amount, "grid supply != amount");
+//     require(gridGroup.controlIs(contractIdTxid, contractIdGidx), "wrong grid control");
+//     let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+//     require(idGroup.delta == 0, "identity supply changed");
+
+//     // Both freshly minted legs go to the depositor.
+//     require(tx.outputs[1].assets.lookup(rigIdTxid, rigIdGidx) == amount, "rig not delivered");
+//     require(tx.outputs[1].assets.lookup(gridIdTxid, gridIdGidx) == amount, "grid not delivered");
+
+//     require(
+//       tx.outputs[0].scriptPubKey == new MiningMarginVault(
+//         oraclePk, hashTicker, powerTicker, cap, maturity,
+//         rigIdTxid, rigIdGidx, gridIdTxid, gridIdGidx, contractIdTxid, contractIdGidx,
+//         settled, newRig, newGrid, rigPot, gridPot, exit
+//       ),
+//       "invalid vault recreation"
+//     );
+//     // Input-relative accounting preserves any incidental vault balance;
+//     // the absolute floor anchors backing >= pairs × cap inductively.
+//     require(tx.outputs[0].value >= tx.inputs[0].value + deposit, "collateral not deposited");
+//     require(tx.outputs[0].value >= newBacking, "backing below pairs x cap");
+//     require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+//   }
+
+  // -------------------------------------------------------------------------
+  // BURN PAIR — permissionless, any time before settlement. Return `amount`
+  // RIG + `amount` GRID (a matched pair) and take `amount × cap` sats back.
+  // Deliberately NOT maturity-gated: a matched pair is worth exactly cap
+  // under every possible fixing, so this stays arbitrage-free after maturity
+  // and is the recovery path if the oracle never publishes. The burn
+  // authenticates: the holder must spend both legs as inputs.
+  //   output[0]: vault re-created (rigShares-amount, gridShares-amount)
+  //   output[1]: amount × cap sats → burner
+  // -------------------------------------------------------------------------
+//   function burnPair(int amount) {
+//     require(settled == 0, "already settled");
+//     require(amount > 0, "zero amount");
+//     require(this.activeInputIndex == 0, "vault must be input 0");
+
+//     // amount <= circulating pairs, so refund <= sats escrowed — in range.
+//     int refund  = amount * cap;
+//     int newRig  = rigShares - amount;
+//     int newGrid = gridShares - amount;
+
+//     // Burn exactly `amount` of BOTH legs; identity unchanged.
+//     let rigGroup = tx.assetGroups.find(rigIdTxid, rigIdGidx);
+//     require(rigGroup.sumInputs == rigGroup.sumOutputs + amount, "rig not burned exactly");
+//     let gridGroup = tx.assetGroups.find(gridIdTxid, gridIdGidx);
+//     require(gridGroup.sumInputs == gridGroup.sumOutputs + amount, "grid not burned exactly");
+//     let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+//     require(idGroup.delta == 0, "identity supply changed");
+
+//     require(
+//       tx.outputs[0].scriptPubKey == new MiningMarginVault(
+//         oraclePk, hashTicker, powerTicker, cap, maturity,
+//         rigIdTxid, rigIdGidx, gridIdTxid, gridIdGidx, contractIdTxid, contractIdGidx,
+//         settled, newRig, newGrid, rigPot, gridPot, exit
+//       ),
+//       "invalid vault recreation"
+//     );
+//     require(tx.outputs[0].value >= tx.inputs[0].value - refund, "vault overdrawn");
+//     require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+//     if (refund > 330) {
+//       require(tx.outputs[1].value >= refund, "burner underpaid");
+//     }
+//   }
+
+  // -------------------------------------------------------------------------
+  // SETTLE — permissionless, once, at or after maturity. Fix the margin from
+  // the two maturity-stamped fixings and split the pot. No BTC leaves the
+  // vault; this only records the split and flips `settled`. Payoffs are
+  // already sats, so the split is exact with no division:
+  // gridPot = totalPot − rigPot.
+  //   output[0]: vault re-created (settled=1, rigPot/gridPot set)
+  // -------------------------------------------------------------------------
+//   function settle(int hashPrice, signature hashSig, int powerCost, signature powerSig) {
+//     require(settled == 0, "already settled");
+//     require(rigShares == gridShares, "supply invariant broken");
+//     require(rigShares > 0, "nothing to settle");
+//     require(this.activeInputIndex == 0, "vault must be input 0");
+
+//     // Wall-clock gate: an oracle print published early cannot fix the
+//     // margin or end the issue/burn phase before maturity.
+//     int sinceMaturity = tx.offchainTime - maturity;
+//     require(sinceMaturity >= 0, "before maturity");
+
+//     // Range-bound the fixings (revenue cannot be negative; power can —
+//     // both bounded by total sat supply so all arithmetic stays in int64).
+//     require(hashPrice >= 0, "negative hashprice");
+//     require(hashPrice <= 2100000000000000, "hashprice out of range");
+//     require(powerCost >= 0 - 2100000000000000, "power fixing out of range");
+//     require(powerCost <= 2100000000000000, "power fixing out of range");
+
+//     // One message slot per (ticker, maturity): no timestamp freedom, no
+//     // cross-series replay, equivocation provable.
+//     let hashMsg = sha256(hashTicker + num2bin(hashPrice, 8) + num2bin(maturity, 8));
+//     require(checkSigFromStack(hashSig, oraclePk, hashMsg), "invalid hashprice fixing");
+//     let powerMsg = sha256(powerTicker + num2bin(powerCost, 8) + num2bin(maturity, 8));
+//     require(checkSigFromStack(powerSig, oraclePk, powerMsg), "invalid power fixing");
+
+//     int margin = hashPrice - powerCost;
+//     if (margin < 0) { margin = 0; }      // curtailment floor
+//     if (margin > cap) { margin = cap; }  // escrow bounds the payout
+//     int totalPot   = rigShares * cap;
+//     int newRigPot  = rigShares * margin;
+//     int newGridPot = totalPot - newRigPot;
+
+//     require(
+//       tx.outputs[0].scriptPubKey == new MiningMarginVault(
+//         oraclePk, hashTicker, powerTicker, cap, maturity,
+//         rigIdTxid, rigIdGidx, gridIdTxid, gridIdGidx, contractIdTxid, contractIdGidx,
+//         1, rigShares, gridShares, newRigPot, newGridPot, exit
+//       ),
+//       "invalid settle output"
+//     );
+//     require(tx.outputs[0].value >= tx.inputs[0].value, "vault drained at settle");
+//     require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+//   }
+
+  // -------------------------------------------------------------------------
+  // REDEEM RIG — after settlement. Burn `amount` RIG for a pro-rata slice of
+  // the RIG pot. Pot and supply drain together; floor division shifts
+  // sub-share remainders to later redeemers (bounded, and the final
+  // full-supply redemption sweeps the pot exactly). GRID must not move.
+  //   output[0]: vault re-created (rigShares-amount, rigPot-payout)
+  //   output[1]: payout sats → redeemer (when above dust)
+  // -------------------------------------------------------------------------
+//   function redeemRig(int amount) {
+//     require(settled == 1, "not settled");
+//     require(amount > 0, "zero amount");
+//     require(amount <= rigShares, "exceeds rig supply");
+//     require(rigShares > 0, "no rig supply");
+//     require(this.activeInputIndex == 0, "vault must be input 0");
+
+//     int payout    = amount * rigPot / rigShares;
+//     int newRigPot = rigPot - payout;
+//     int newRig    = rigShares - amount;
+
+//     let rigGroup = tx.assetGroups.find(rigIdTxid, rigIdGidx);
+//     require(rigGroup.sumInputs == rigGroup.sumOutputs + amount, "rig not burned exactly");
+//     let gridGroup = tx.assetGroups.find(gridIdTxid, gridIdGidx);
+//     require(gridGroup.delta == 0, "grid must not move");
+//     let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+//     require(idGroup.delta == 0, "identity supply changed");
+
+//     require(
+//       tx.outputs[0].scriptPubKey == new MiningMarginVault(
+//         oraclePk, hashTicker, powerTicker, cap, maturity,
+//         rigIdTxid, rigIdGidx, gridIdTxid, gridIdGidx, contractIdTxid, contractIdGidx,
+//         1, newRig, gridShares, newRigPot, gridPot, exit
+//       ),
+//       "invalid vault recreation"
+//     );
+//     require(tx.outputs[0].value >= tx.inputs[0].value - payout, "vault overdrawn");
+//     require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+//     if (payout > 330) {
+//       require(tx.outputs[1].value >= payout, "redeemer underpaid");
+//     }
+//   }
+
+  // -------------------------------------------------------------------------
+  // REDEEM GRID — after settlement. Mirror of redeemRig on the GRID pot.
+  //   output[0]: vault re-created (gridShares-amount, gridPot-payout)
+  //   output[1]: payout sats → redeemer (when above dust)
+  // -------------------------------------------------------------------------
+//   function redeemGrid(int amount) {
+//     require(settled == 1, "not settled");
+//     require(amount > 0, "zero amount");
+//     require(amount <= gridShares, "exceeds grid supply");
+//     require(gridShares > 0, "no grid supply");
+//     require(this.activeInputIndex == 0, "vault must be input 0");
+
+//     int payout     = amount * gridPot / gridShares;
+//     int newGridPot = gridPot - payout;
+//     int newGrid    = gridShares - amount;
+
+//     let gridGroup = tx.assetGroups.find(gridIdTxid, gridIdGidx);
+//     require(gridGroup.sumInputs == gridGroup.sumOutputs + amount, "grid not burned exactly");
+//     let rigGroup = tx.assetGroups.find(rigIdTxid, rigIdGidx);
+//     require(rigGroup.delta == 0, "rig must not move");
+//     let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+//     require(idGroup.delta == 0, "identity supply changed");
+
+//     require(
+//       tx.outputs[0].scriptPubKey == new MiningMarginVault(
+//         oraclePk, hashTicker, powerTicker, cap, maturity,
+//         rigIdTxid, rigIdGidx, gridIdTxid, gridIdGidx, contractIdTxid, contractIdGidx,
+//         1, rigShares, newGrid, rigPot, newGridPot, exit
+//       ),
+//       "invalid vault recreation"
+//     );
+//     require(tx.outputs[0].value >= tx.inputs[0].value - payout, "vault overdrawn");
+//     require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+//     if (payout > 330) {
+//       require(tx.outputs[1].value >= payout, "redeemer underpaid");
+//     }
+//   }
+
+  // Delete this placeholder when restoring the functions above.
+  function disabled() {
+    require(0 == 1, "temporarily disabled");
+  }
+}
