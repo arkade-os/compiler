@@ -24,6 +24,8 @@ mod fuji_safe;
 mod htlc;
 #[path = "examples/layerzero.rs"]
 mod layerzero;
+#[path = "examples/oracle_covered_call.rs"]
+mod oracle_covered_call;
 #[path = "examples/repayment_pool.rs"]
 mod repayment_pool;
 #[path = "examples/stability_vault.rs"]

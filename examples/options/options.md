@@ -18,6 +18,8 @@ Two paired contracts for selling and buying volatility on Bitcoin, faithful to R
 | `CoveredCall` | `btcSats` BTC | `strikeAmount` stablecoin | spot > strike (buyer wants to buy BTC at the cheaper strike) |
 | `CashSecuredPut` | `stableAmount` stablecoin | `btcSats` BTC | spot < strike (buyer wants to sell BTC at the higher strike) |
 
+A third contract, [`OracleCoveredCall`](#oraclecoveredcall), implements the oracle-settled, BTC-cash-settled "Covered Call (CC)" type of the Arkade Options functional specification — no stablecoin, no buyer liveness requirement, settlement is a permissionless crank against a designated oracle set.
+
 The premium is paid MM→seller upfront, off-contract, in the same atomic funding transaction. Same model as Rysk pays premium in USD upfront.
 
 ### Terminology
@@ -103,6 +105,46 @@ output[0]:  SingleSig(sellerPk)      (btcSats BTC)
 output[1]:  SingleSig(buyerPk)       (stableAmount of stableAssetId)
 output[2+]: buyer's BTC change       (unconstrained)
 ```
+
+---
+
+## OracleCoveredCall
+
+The "Covered Call (CC)" type from the Arkade Options high-level functional specification: fully collateralized, **cash-settled in BTC**, settled against a designated oracle set instead of by buyer action. Terminology follows the spec: **Writer (W)** locks the notional, **Holder (H)** paid the premium.
+
+Constructor: `writerPk, holderPk, writerScript, holderScript, oracles[5], tickerHash, strike, expiry, priceWindow, refundAt, notional, coopExit, exit`
+
+Payoff with `ST` the settlement reference price and `Q = notional`, `K = strike`:
+
+```
+ST <= K:  PH = 0                  PW = Q
+ST  > K:  PH = Q * (1 - K / ST)   PW = Q - PH
+```
+
+### Functions
+
+**`settle(oracleIdx[3], prices[3], timestamps[3], oracleSigs[3])`** — permissionless crank, valid from `expiry`. Anyone (holder, writer, operator, or a third party) supplies 3 prices signed by 3 **distinct** oracles of the designated 5, each timestamped inside `[expiry - priceWindow, expiry]`. `ST` is the median of the 3. The covenant recomputes each attestation digest — `sha256(tickerHash || price_le8 || ts_le8)` — verifies the signatures via `OP_CHECKSIGFROMSTACK`, and enforces the payoff split to the fixed `holderScript` / `writerScript` payout programs. A payout leg under 330 sats is routed into the counterparty's output. `tx.numInputs == 1` guards against multi-vault double-satisfaction, and the vault input must hold **exactly** `notional` (only outputs 0/1 are inspected, so any surplus would otherwise be claimable by whoever cranks — a mis-funded vault is refund-only by design).
+
+**`refund(writerSig, serverSig)`** — CLTV leaf at `refundAt`: the writer reclaims if nobody settled (oracle outage or abandoned OTM position).
+
+**`coop(holderSig, writerSig)`** — CSV leaf: both parties unwind early without oracles or operator.
+
+**`unilateral(writerSig)`** — CSV leaf: writer's L1 safety valve.
+
+### Settle transaction layout
+
+```
+input[0]:   OracleCoveredCall vault  (notional sats)
+ST > K:     output[0] holderScript   (PH)      output[1] writerScript (PW)
+ST <= K:    output[0] writerScript   (notional)
+```
+
+### Notes
+
+- The narrow pre-expiry `priceWindow` (spec: 1 minute) pins `ST` to the expiry spot; residual intra-window cherry-picking is bounded by the window. The spec's target version replaces the median with a half-hour TWAP.
+- Oracle attestations encode numeric fields as 8-byte little-endian binary (the language has no string values), displayed off-chain as `BTCUSD|PRICE_IN_CENTS|UNIXTIMESTAMP`.
+- The only product in the payoff math is `notional * strike`, which must stay below 2^63 — enforce `Qmax` at inception accordingly.
+- Compared to the buyer-exercised `CoveredCall` above: the holder makes no exercise *decision* and any party can crank settlement, at the cost of an oracle trust assumption. Liveness is not fully eliminated: if nobody cranks before `refundAt`, the writer + operator can reclaim the full notional of an ITM vault — size the `refundAt` grace window so that at least one interested cranker is expected to show up within it.
 
 ---
 
