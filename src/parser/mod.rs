@@ -1,4 +1,4 @@
-use crate::models::{Contract, Function, Parameter, Statement, StructDefinition};
+use crate::models::{AssignmentTarget, Contract, Function, Parameter, Statement, StructDefinition};
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
@@ -223,18 +223,17 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
         }
         Rule::var_assign => {
             let mut inner = pair.into_inner();
-            let name = inner
-                .next()
-                .ok_or_else(|| "Parse error: Missing variable name in assignment".to_string())?
-                .as_str()
-                .split_whitespace()
-                .collect::<String>();
+            let target = parse_assignment_target(
+                inner
+                    .next()
+                    .ok_or_else(|| "Parse error: Missing assignment target".to_string())?,
+            )?;
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::VarAssign { name, value });
+            func.statements.push(Statement::VarAssign { target, value });
             Ok(())
         }
         Rule::if_stmt => {
@@ -323,6 +322,29 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
     }
 }
 
+fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
+    let mut path = Vec::new();
+    let mut index = None;
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::identifier => path.push(part.as_str().to_string()),
+            Rule::general_expression => index = Some(parse_general_expression(part)?),
+            rule => return Err(format!("Unexpected rule in assignment target: {rule:?}")),
+        }
+    }
+    let name = path.join(".");
+    if name.is_empty() {
+        return Err("Parse error: Missing assignment target".to_string());
+    }
+    Ok(match index {
+        Some(index) => AssignmentTarget::ArrayIndex {
+            array: name,
+            index: Box::new(index),
+        },
+        None => AssignmentTarget::Binding(name),
+    })
+}
+
 // ─── Expression Parsing ────────────────────────────────────────────────────────
 
 // Parse a block of statements
@@ -385,7 +407,53 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::models::{Requirement, Statement};
+    use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+
+    #[test]
+    fn parses_structured_assignment_targets() {
+        let contract = parse(
+            r#"
+struct State {
+    bool enabled;
+    int[3] values;
+}
+
+contract Demo() {
+    function spend(State state, int index) {
+        state.enabled = true;
+        state.values[index + 1] = 9;
+        index = 0;
+        require(true);
+    }
+}
+"#,
+        )
+        .expect("contract should parse");
+
+        let statements = &contract.functions[0].statements;
+        assert!(matches!(
+            &statements[0],
+            Statement::VarAssign {
+                target: AssignmentTarget::Binding(name),
+                ..
+            } if name == "state.enabled"
+        ));
+        assert!(matches!(
+            &statements[1],
+            Statement::VarAssign {
+                target: AssignmentTarget::ArrayIndex { array, index },
+                ..
+            } if array == "state.values"
+                && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "+")
+        ));
+        assert!(matches!(
+            &statements[2],
+            Statement::VarAssign {
+                target: AssignmentTarget::Binding(name),
+                ..
+            } if name == "index"
+        ));
+    }
 
     #[test]
     fn retains_declared_local_types_and_multisig_signatures() {

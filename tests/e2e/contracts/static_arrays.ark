@@ -1,6 +1,6 @@
 // Static array coverage for the emulator VM: sized constructor and function
 // arrays, literal and runtime indexing, per-array loop unrolling, `.length`,
-// and a local array with one element reassigned.
+// and a local array with an expression-indexed element reassigned.
 
 contract StaticArrays(
   int[4] weights,
@@ -8,7 +8,7 @@ contract StaticArrays(
 ) {
   function spend(
     int index,
-    int scaleIndex,
+    int writeIndex,
     int expected,
     int[5] samples,
     signature ownerSig
@@ -16,9 +16,9 @@ contract StaticArrays(
     require(weights.length + samples.length == 9, "declared sizes");
 
     int[3] scale = [1, 2, 3];
-    scale[1] = 10;
+    scale[writeIndex + 1] = 10;
 
-    int total = (samples[index] * scale[scaleIndex]) + scale[0];
+    int total = (samples[index] * scale[writeIndex + 1]) + scale[0];
 
     for (i, weight) in weights {
       total = total + (weight * (i + 1));

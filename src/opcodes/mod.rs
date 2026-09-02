@@ -106,6 +106,7 @@ pub const OP_DUP: &str = "OP_DUP";
 pub const OP_ROT: &str = "OP_ROT";
 pub const OP_OVER: &str = "OP_OVER";
 pub const OP_PICK: &str = "OP_PICK";
+pub const OP_PUT: &str = "OP_PUT";
 pub const OP_ROLL: &str = "OP_ROLL";
 pub const OP_TUCK: &str = "OP_TUCK";
 pub const OP_IFDUP: &str = "OP_IFDUP";

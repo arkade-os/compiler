@@ -9,7 +9,7 @@
 ///   decides how to surface them)
 use std::collections::HashMap;
 
-use crate::models::{Contract, Expression, Function, Requirement, Statement};
+use crate::models::{AssignmentTarget, Contract, Expression, Function, Requirement, Statement};
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
@@ -256,7 +256,12 @@ fn resolve_statements(
                     .unwrap_or_else(|| infer_type(value, scope));
                 bind_local_type(scope, name, declared_type.as_deref(), binding_type, structs);
             }
-            Statement::VarAssign { value, .. } => resolve_expression(value, scope),
+            Statement::VarAssign { target, value } => {
+                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                    resolve_expression(index, scope);
+                }
+                resolve_expression(value, scope);
+            }
             Statement::IfElse {
                 condition,
                 then_body,
@@ -570,14 +575,23 @@ fn check_statement(
                 .unwrap_or(inferred);
             bind_local_type(scope, name, declared_type.as_deref(), t, structs);
         }
-        Statement::VarAssign { name, value } => {
-            let original_type = scope.get(name.as_str()).cloned();
-            if original_type.is_none() {
-                errors.push(TypeError::new(format!(
-                    "fn {}: assignment to undeclared variable '{}'",
-                    fn_name, name
-                )));
-            }
+        Statement::VarAssign { target, value } => {
+            let (target_name, original_type) = match target {
+                AssignmentTarget::Binding(name) => {
+                    let original_type = scope.get(name.as_str()).cloned();
+                    if original_type.is_none() {
+                        errors.push(TypeError::new(format!(
+                            "fn {}: assignment to undeclared variable '{}'",
+                            fn_name, name
+                        )));
+                    }
+                    (format!("'{name}'"), original_type)
+                }
+                AssignmentTarget::ArrayIndex { array, index } => (
+                    format!("an element of '{array}'"),
+                    check_array_index(array, index, scope, errors, fn_name),
+                ),
+            };
             check_expression(value, scope, errors, fn_name);
             let assigned_type = infer_type(value, scope);
             if let Some(original_type) = original_type {
@@ -586,9 +600,9 @@ fn check_statement(
                     && original_type != assigned_type
                 {
                     errors.push(TypeError::new(format!(
-                        "fn {}: assignment to '{}' changes its type from '{}' to '{}'",
+                        "fn {}: assignment to {} changes its type from '{}' to '{}'",
                         fn_name,
-                        name,
+                        target_name,
                         original_type.as_str(),
                         assigned_type.as_str()
                     )));
@@ -711,14 +725,7 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
     match expr {
         Expression::ArrayIndex { array, index } => {
-            check_expression(index, scope, errors, fn_name);
-            let index_type = infer_type(index, scope);
-            if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-                errors.push(TypeError::new(format!(
-                    "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
-                    index_type.as_str()
-                )));
-            }
+            check_array_index(array, index, scope, errors, fn_name);
         }
         Expression::BinaryOp { left, op, right } => {
             check_expression(left, scope, errors, fn_name);
@@ -746,6 +753,38 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
             );
         }
         _ => {}
+    }
+}
+
+fn check_array_index(
+    array: &str,
+    index: &Expression,
+    scope: &Scope,
+    errors: &mut Vec<TypeError>,
+    fn_name: &str,
+) -> Option<ArkType> {
+    check_expression(index, scope, errors, fn_name);
+    let index_type = infer_type(index, scope);
+    if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
+        errors.push(TypeError::new(format!(
+            "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
+            index_type.as_str()
+        )));
+    }
+    match scope.get(array) {
+        Some(ArkType::Array(element, _)) => Some((**element).clone()),
+        _ => None,
+    }
+}
+
+pub(crate) fn literal_index(expression: &Expression) -> Option<(bool, &str)> {
+    match expression {
+        Expression::Literal(value) => Some((false, value)),
+        Expression::Negate { value } => match value.as_ref() {
+            Expression::Literal(value) => Some((true, value)),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
