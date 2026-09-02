@@ -78,13 +78,22 @@ impl ConcatPass {
                     &self.structs,
                 );
             }
-            Statement::VarAssign { name, value } => {
+            Statement::VarAssign { target, value } => {
+                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                    let (new_index, _) = self.rewrite_expression_concat(
+                        std::mem::replace(index.as_mut(), Expression::Literal(String::new())),
+                        scope,
+                    );
+                    **index = new_index;
+                }
                 let (new_expr, t) = self.rewrite_expression_concat(
                     std::mem::replace(value, Expression::Literal(String::new())),
                     scope,
                 );
                 *value = new_expr;
-                scope.insert(name.clone(), t);
+                if let AssignmentTarget::Binding(name) = target {
+                    scope.insert(name.clone(), t);
+                }
             }
             Statement::IfElse {
                 condition,
