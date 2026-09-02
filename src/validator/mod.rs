@@ -19,8 +19,8 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
-use crate::models::{Contract, ContractJson, Expression, Requirement, Statement};
-use crate::typechecker::{build_scope_with_structs, infer_type, ArkType, Scope};
+use crate::models::{AssignmentTarget, Contract, ContractJson, Expression, Requirement, Statement};
+use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
@@ -485,10 +485,15 @@ fn walk_asset_id_stmts(
                     structs,
                 );
             }
-            Statement::VarAssign { name, value } => {
+            Statement::VarAssign { target, value } => {
+                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                    check_asset_id_expr(index, scope, fname, issues);
+                }
                 check_asset_id_expr(value, scope, fname, issues);
-                let t = infer_type(value, scope);
-                scope.insert(name.clone(), t);
+                if let AssignmentTarget::Binding(name) = target {
+                    let t = infer_type(value, scope);
+                    scope.insert(name.clone(), t);
+                }
             }
             Statement::IfElse {
                 condition,
@@ -942,37 +947,63 @@ fn validate_binding_statements(
                     );
                 }
             }
-            Statement::VarAssign { name, value } => {
+            Statement::VarAssign { target, value } => {
                 validate_binding_expression(value, function_name, scopes, issues, true);
                 let inferred = resolved_expression_type(value, scopes);
-                match find_binding(scopes, name) {
-                    None => issues.push(ValidationIssue::error(format!(
-                        "function '{}': assignment to undeclared variable '{}'",
-                        function_name, name
-                    ))),
-                    Some(binding) if binding.source == BindingSource::Constructor => {
-                        // The existing shadowing walk owns the constructor-mutation diagnostic.
-                    }
-                    Some(binding) if binding.source == BindingSource::Loop => {
-                        issues.push(ValidationIssue::error(format!(
-                            "function '{}': cannot assign to compile-time loop variable '{}'",
+                match target {
+                    AssignmentTarget::Binding(name) => match find_binding(scopes, name) {
+                        None => issues.push(ValidationIssue::error(format!(
+                            "function '{}': assignment to undeclared variable '{}'",
                             function_name, name
-                        )));
+                        ))),
+                        Some(binding) if binding.source == BindingSource::Constructor => {
+                            // The shadowing walk owns the constructor-mutation diagnostic.
+                        }
+                        Some(binding) if binding.source == BindingSource::Loop => {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{}': cannot assign to compile-time loop variable '{}'",
+                                function_name, name
+                            )));
+                        }
+                        Some(binding)
+                            if inferred != ArkType::Unknown
+                                && binding.binding_type != ArkType::Unknown
+                                && !binding_types_compatible(&binding.binding_type, &inferred) =>
+                        {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{}': assignment to '{}' changes its type from '{}' to '{}'",
+                                function_name,
+                                name,
+                                binding.binding_type.as_str(),
+                                inferred.as_str()
+                            )));
+                        }
+                        Some(_) => {}
+                    },
+                    AssignmentTarget::ArrayIndex { array, index } => {
+                        if let Some((element_type, source)) =
+                            validate_array_index(array, index, function_name, scopes, issues)
+                        {
+                            if source == BindingSource::Loop {
+                                issues.push(ValidationIssue::error(format!(
+                                    "function '{}': cannot assign to compile-time loop variable '{}'",
+                                    function_name, array
+                                )));
+                            } else if inferred != ArkType::Unknown
+                                && element_type != ArkType::Unknown
+                                && !binding_types_compatible(&element_type, &inferred)
+                            {
+                                issues.push(ValidationIssue::error(format!(
+                                    "function '{}': assignment to an element of '{}' changes its type from '{}' to '{}'",
+                                    function_name,
+                                    array,
+                                    element_type.as_str(),
+                                    inferred.as_str()
+                                )));
+                            }
+                        }
+                        validate_binding_expression(index, function_name, scopes, issues, true);
                     }
-                    Some(binding)
-                        if inferred != ArkType::Unknown
-                            && binding.binding_type != ArkType::Unknown
-                            && !binding_types_compatible(&binding.binding_type, &inferred) =>
-                    {
-                        issues.push(ValidationIssue::error(format!(
-                            "function '{}': assignment to '{}' changes its type from '{}' to '{}'",
-                            function_name,
-                            name,
-                            binding.binding_type.as_str(),
-                            inferred.as_str()
-                        )));
-                    }
-                    Some(_) => {}
                 }
             }
             Statement::IfElse {
@@ -1409,39 +1440,7 @@ fn validate_binding_expression(
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
         Expression::ArrayIndex { array, index } => {
-            let mut length = None;
-            match find_binding(scopes, array) {
-                None => issues.push(ValidationIssue::error(format!(
-                    "function '{}': array '{}' is undefined",
-                    function_name, array
-                ))),
-                Some(BindingInfo {
-                    binding_type: ArkType::Array(_, declared_length),
-                    ..
-                }) => length = Some(*declared_length),
-                Some(_) => {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{}': binding '{}' is not an array",
-                        function_name, array
-                    )));
-                }
-            }
-            let index_type = resolved_expression_type(index, scopes);
-            if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': array index has type '{}', expected 'int'",
-                    function_name,
-                    index_type.as_str()
-                )));
-            }
-            if let (Expression::Literal(index), Some(length)) = (index.as_ref(), length) {
-                if index.parse::<usize>().map_or(true, |i| i >= length) {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{}': array index '{}' is out of range for '{}[{}]'",
-                        function_name, index, array, length
-                    )));
-                }
-            }
+            validate_array_index(array, index, function_name, scopes, issues);
         }
         Expression::Property(name) if name.contains('[') => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
@@ -1557,6 +1556,62 @@ fn validate_binding_expression(
             !matches!(expression, Expression::ContractInstance { .. }),
         );
     }
+}
+
+fn validate_array_index(
+    array: &str,
+    index: &Expression,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) -> Option<(ArkType, BindingSource)> {
+    let array_info = match find_binding(scopes, array) {
+        None => {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': array '{}' is undefined",
+                function_name, array
+            )));
+            None
+        }
+        Some(BindingInfo {
+            binding_type: ArkType::Array(element, length),
+            source,
+        }) => Some(((**element).clone(), *length, *source)),
+        Some(_) => {
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': binding '{}' is not an array",
+                function_name, array
+            )));
+            None
+        }
+    };
+
+    let index_type = resolved_expression_type(index, scopes);
+    if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': array index has type '{}', expected 'int'",
+            function_name,
+            index_type.as_str()
+        )));
+    }
+    if let (Some((negative, literal)), Some((_, length, _))) =
+        (literal_index(index), array_info.as_ref())
+    {
+        let in_bounds = if negative {
+            literal == "0"
+        } else {
+            literal.parse::<usize>().is_ok_and(|index| index < *length)
+        };
+        if !in_bounds {
+            let sign = if negative { "-" } else { "" };
+            issues.push(ValidationIssue::error(format!(
+                "function '{}': array index '{}{}' is out of range for '{}[{}]'",
+                function_name, sign, literal, array, length
+            )));
+        }
+    }
+
+    array_info.map(|(element_type, _, source)| (element_type, source))
 }
 
 /// Validate one `(asset_txid, asset_gidx)` pair.
@@ -1681,8 +1736,8 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     }
 }
 
-/// Reject `name = expr;` where `name` is a constructor parameter; constructor
-/// parameters are immutable. Recurses into branch and loop bodies.
+/// Reject assignments to constructor parameters or their flattened children.
+/// Recurses into branch and loop bodies.
 fn check_ctor_assignment(
     stmts: &[Statement],
     fname: &str,
@@ -1691,8 +1746,13 @@ fn check_ctor_assignment(
 ) {
     for stmt in stmts {
         match stmt {
-            Statement::VarAssign { name, .. } => {
-                if ctor_names.contains(name.as_str()) {
+            Statement::VarAssign { target, .. } => {
+                let name = match target {
+                    AssignmentTarget::Binding(name) => name,
+                    AssignmentTarget::ArrayIndex { array, .. } => array,
+                };
+                let root = name.split('.').next().unwrap_or(name);
+                if ctor_names.contains(root) {
                     issues.push(ValidationIssue::error(format!(
                         "cannot assign to constructor parameter '{}' in function '{}'; \
                          constructor parameters are immutable",
@@ -1908,6 +1968,78 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
 mod tests {
     use super::*;
     use crate::models::{AbiFunctionGroup, AbiLeaf, Contract, Function, Parameter, WitnessElement};
+
+    fn parse_and_validate(source: &str) -> Vec<ValidationIssue> {
+        validate_ast(&crate::parser::parse(source).expect("contract should parse"))
+    }
+
+    #[test]
+    fn validates_dynamic_array_assignment_target() {
+        let issues = parse_and_validate(
+            r#"
+contract Demo() {
+    function spend(int offset) {
+        int[3] values = [1, 2, 3];
+        values[offset + 1] = 4;
+        require(values[0] == 1);
+    }
+}
+"#,
+        );
+        assert!(!has_errors(&issues), "{issues:?}");
+    }
+
+    #[test]
+    fn rejects_invalid_array_assignment_targets_once() {
+        for (target, expected) in [
+            ("value[0]", "binding 'value' is not an array"),
+            ("missing[0]", "array 'missing' is undefined"),
+            ("values[flag]", "array index has type 'bool'"),
+            ("values[missing]", "binding 'missing' is undefined"),
+            ("values[3]", "array index '3' is out of range"),
+            ("values[-1]", "array index '-1' is out of range"),
+        ] {
+            let source = format!(
+                r#"
+contract Demo() {{
+    function spend(bool flag) {{
+        int value = 1;
+        int[3] values = [1, 2, 3];
+        {target} = 4;
+        require(true);
+    }}
+}}
+"#
+            );
+            let issues = parse_and_validate(&source);
+            assert_eq!(
+                issues
+                    .iter()
+                    .filter(|issue| issue.message.contains(expected))
+                    .count(),
+                1,
+                "{issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_array_assignment_with_wrong_element_type() {
+        let issues = parse_and_validate(
+            r#"
+contract Demo() {
+    function spend() {
+        int[2] values = [1, 2];
+        values[0] = true;
+        require(true);
+    }
+}
+"#,
+        );
+        assert!(issues.iter().any(|issue| issue
+            .message
+            .contains("assignment to an element of 'values' changes its type")));
+    }
 
     fn make_contract(name: &str) -> Contract {
         Contract {

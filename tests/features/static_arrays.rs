@@ -1,6 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DROP, OP_LESSTHAN, OP_ROLL, OP_SWAP,
+    OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DUP, OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_PUT,
+    OP_VERIFY,
 };
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
@@ -220,28 +221,42 @@ contract Local() {
 
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert!(
-        contains_tokens(&asm, &["4", "OP_1", OP_ROLL, OP_DROP]),
+        contains_tokens(&asm, &["4", "OP_0", OP_PUT]),
         "assignment overwrites the element in place: {asm:?}"
     );
 }
 
 #[test]
-fn assignment_at_a_runtime_index_is_rejected() {
-    let error = compile(
+fn array_element_assignment_accepts_runtime_index_expressions() {
+    let output = compile(
         r#"
 contract Local() {
     function spend(int amount, int index) {
         int[2] weights = [1, 2];
-        weights[index] = 4;
+        weights[index + 1] = 4;
         require(amount >= weights[0]);
     }
 }
 "#,
     )
-    .expect_err("runtime-index assignment must be rejected")
-    .to_string();
+    .expect("runtime expression-index assignment must compile");
 
-    assert!(error.contains("runtime index"), "unexpected error: {error}");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        contains_tokens(
+            &asm,
+            &[OP_ADD, OP_DUP, "OP_0", OP_GREATERTHANOREQUAL, OP_VERIFY]
+        ),
+        "assignment must check the computed index's lower bound: {asm:?}"
+    );
+    assert!(
+        contains_tokens(&asm, &[OP_DUP, "OP_2", OP_LESSTHAN, OP_VERIFY, OP_PUT]),
+        "assignment must check the computed index against the array size: {asm:?}"
+    );
+    assert!(
+        asm.iter().any(|token| token == OP_PUT),
+        "assignment must write the computed stack depth with {OP_PUT}: {asm:?}"
+    );
 }
 
 #[test]
@@ -431,10 +446,8 @@ contract Local() {
     .expect("element assignment at a non-zero index must compile");
 
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
-    // Index 0 sits directly under the pushed value (depth 1, no walk-back);
-    // index 1 is one deeper and must be swapped back into place.
     assert!(
-        contains_tokens(&asm, &["9", "OP_2", OP_ROLL, OP_DROP, OP_SWAP]),
-        "the write must roll the element at its own depth, not index 0's: {asm:?}"
+        contains_tokens(&asm, &["9", "OP_1", OP_PUT]),
+        "the write must replace the element at its own depth, not index 0's: {asm:?}"
     );
 }

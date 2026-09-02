@@ -1,7 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_INSPECTASSETGROUPASSETID,
-    OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_PICK, OP_SWAP,
+    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_EQUAL, OP_GREATERTHANOREQUAL,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_PICK, OP_PUT, OP_SWAP,
+    OP_VERIFY,
 };
 
 #[test]
@@ -284,6 +285,36 @@ contract C(Values values) {
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
     assert!(asm.windows(2).any(|tokens| tokens == ["OP_3", OP_LESSTHAN]));
     assert!(asm.iter().filter(|token| token.as_str() == OP_ADD).count() >= 4);
+}
+
+#[test]
+fn local_struct_array_field_supports_expression_index_assignment() {
+    let output = compile(
+        r#"
+struct State { int[3] values; }
+contract C() {
+    function spend(int index, int next) {
+        State state = { values: [1, 2, 3] };
+        state.values[index + 1] = next;
+        require(state.values[index + 1] == next);
+    }
+}
+"#,
+    )
+    .expect("local struct array fields should support expression-indexed assignment");
+
+    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    assert!(asm.iter().any(|token| token == OP_PUT), "{asm:?}");
+    assert!(
+        asm.windows(4)
+            .any(|tokens| { tokens == [OP_DUP, "OP_0", OP_GREATERTHANOREQUAL, OP_VERIFY] }),
+        "missing lower-bound check: {asm:?}"
+    );
+    assert!(
+        asm.windows(4)
+            .any(|tokens| { tokens == [OP_DUP, "OP_3", OP_LESSTHAN, OP_VERIFY] }),
+        "missing upper-bound check: {asm:?}"
+    );
 }
 
 #[test]

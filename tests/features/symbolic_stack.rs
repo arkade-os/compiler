@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_DROP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
-    OP_MUL, OP_PICK, OP_ROLL,
+    OP_ADD, OP_DROP, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
+    OP_LESSTHAN, OP_MUL, OP_PICK, OP_PUT,
 };
 
 fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
@@ -101,8 +101,13 @@ contract Mutate() {
     );
 
     assert!(
-        covenant.asm.iter().any(|token| token == OP_ROLL),
-        "in-place reassignment must roll the old slot into position: {:?}",
+        covenant
+            .asm
+            .iter()
+            .filter(|token| token.as_str() == OP_PUT)
+            .count()
+            >= 3,
+        "each scalar reassignment must replace its existing slot with {OP_PUT}: {:?}",
         covenant.asm
     );
     let if_index = covenant
@@ -173,7 +178,7 @@ contract RuntimeIndex() {
         "spend",
     );
 
-    for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_ADD, OP_PICK] {
+    for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_DUP, OP_PICK] {
         assert!(
             covenant.asm.iter().any(|token| token == opcode),
             "runtime index must emit {opcode}: {:?}",
@@ -185,18 +190,14 @@ contract RuntimeIndex() {
         &[
             "OP_3",
             OP_PICK,
-            "OP_0",
-            OP_PICK,
+            OP_DUP,
             "OP_0",
             OP_GREATERTHANOREQUAL,
             "OP_VERIFY",
-            "OP_0",
-            OP_PICK,
+            OP_DUP,
             "OP_3",
             OP_LESSTHAN,
             "OP_VERIFY",
-            "OP_0",
-            OP_ADD,
             OP_PICK,
         ],
     ));

@@ -293,8 +293,11 @@ pub enum Statement {
         declared_type: Option<String>,
         value: Expression,
     },
-    /// name = expr; (variable reassignment)
-    VarAssign { name: String, value: Expression },
+    /// name = expr; or name[index] = expr; (variable reassignment)
+    VarAssign {
+        target: AssignmentTarget,
+        value: Expression,
+    },
     /// if (condition) { then_body } else { else_body }
     IfElse {
         condition: Expression,
@@ -307,6 +310,16 @@ pub enum Statement {
         value_var: String,
         iterable: Expression,
         body: Vec<Statement>,
+    },
+}
+
+/// A binding or array element on the left-hand side of an assignment.
+#[derive(Debug, Clone)]
+pub enum AssignmentTarget {
+    Binding(String),
+    ArrayIndex {
+        array: String,
+        index: Box<Expression>,
     },
 }
 

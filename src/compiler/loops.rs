@@ -44,8 +44,16 @@ pub(crate) fn substitute_statement(
             declared_type: declared_type.clone(),
             value: substitute_expression(value, index_var, value_var, k, array_name),
         },
-        Statement::VarAssign { name, value } => Statement::VarAssign {
-            name: name.clone(),
+        Statement::VarAssign { target, value } => Statement::VarAssign {
+            target: match target {
+                AssignmentTarget::Binding(name) => AssignmentTarget::Binding(name.clone()),
+                AssignmentTarget::ArrayIndex { array, index } => AssignmentTarget::ArrayIndex {
+                    array: array.clone(),
+                    index: Box::new(substitute_expression(
+                        index, index_var, value_var, k, array_name,
+                    )),
+                },
+            },
             value: substitute_expression(value, index_var, value_var, k, array_name),
         },
         Statement::IfElse {

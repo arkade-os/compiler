@@ -2,16 +2,17 @@ package e2e
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
 
 // Mirrors contracts/static_arrays.ark, computed independently of the compiler.
-// scale is [1, 2, 3] with element 1 reassigned to 10.
-func expectedTotal(weights [4]int64, samples [5]int64, index, scaleIndex int64) int64 {
-	scale := [3]int64{1, 10, 3}
-	total := samples[index]*scale[scaleIndex] + scale[0]
+func expectedTotal(weights [4]int64, samples [5]int64, index, writeIndex int64) int64 {
+	scale := [3]int64{1, 2, 3}
+	scale[writeIndex+1] = 10
+	total := samples[index]*scale[writeIndex+1] + scale[0]
 	for i, weight := range weights {
 		total += weight * int64(i+1)
 	}
@@ -19,7 +20,7 @@ func expectedTotal(weights [4]int64, samples [5]int64, index, scaleIndex int64) 
 		if sample > 0 {
 			total += sample * int64(j+1)
 		} else {
-			total -= 3
+			total -= scale[2]
 		}
 	}
 	return total
@@ -36,6 +37,9 @@ func TestStaticArrays(t *testing.T) {
 		t.Fatalf("constructor input 0 = %+v, want weights int[4]", got)
 	}
 	group := covenantGroup(t, contract, "spend")
+	if !slices.Contains(group.Arkade.ASM, "OP_PUT") {
+		t.Fatalf("covenant does not contain OP_PUT: %v", group.Arkade.ASM)
+	}
 	if got := group.Arkade.Inputs[3]; got.Name != "samples" || got.Type != "int[5]" {
 		t.Fatalf("covenant input 3 = %+v, want samples int[5]", got)
 	}
@@ -55,16 +59,15 @@ func TestStaticArrays(t *testing.T) {
 	testCases := []struct {
 		name       string
 		index      int64
-		scaleIndex int64
+		writeIndex int64
 		samples    [5]int64
 		total      int64
 		wantErr    string
 	}{
-		// scaleIndex indexes the local array at runtime, so these also pin the
-		// order its elements are pushed in.
-		{name: "first element", index: 0, scaleIndex: 0, samples: [5]int64{4, 6, 8, 1, 2}},
-		{name: "middle element", index: 2, scaleIndex: 1, samples: [5]int64{5, -1, 7, 0, 9}},
-		{name: "last element", index: 4, scaleIndex: 2, samples: [5]int64{1, 2, 3, 4, 5}},
+		// writeIndex + 1 targets each local-array element and pins its stack order.
+		{name: "first element", index: 0, writeIndex: -1, samples: [5]int64{4, 6, 8, 1, 2}},
+		{name: "middle element", index: 2, writeIndex: 0, samples: [5]int64{5, -1, 7, 0, 9}},
+		{name: "last element", index: 4, writeIndex: 1, samples: [5]int64{1, 2, 3, 4, 5}},
 		{
 			name:    "index past the declared size is rejected",
 			index:   5,
@@ -80,9 +83,17 @@ func TestStaticArrays(t *testing.T) {
 			wantErr: "OP_VERIFY failed",
 		},
 		{
-			name:       "local array index past its declared size is rejected",
+			// Without the array upper bound, OP_PUT could overwrite an adjacent slot.
+			name:       "computed write index past the array is rejected",
 			index:      1,
-			scaleIndex: 3,
+			writeIndex: 2,
+			samples:    [5]int64{1, 2, 3, 4, 5},
+			wantErr:    "OP_VERIFY failed",
+		},
+		{
+			name:       "negative computed write index fails the bound check",
+			index:      1,
+			writeIndex: -2,
 			samples:    [5]int64{1, 2, 3, 4, 5},
 			wantErr:    "OP_VERIFY failed",
 		},
@@ -103,16 +114,16 @@ func TestStaticArrays(t *testing.T) {
 				if index < 0 || index >= int64(len(testCase.samples)) {
 					index = 0
 				}
-				scaleIndex := testCase.scaleIndex
-				if scaleIndex < 0 || scaleIndex > 2 {
-					scaleIndex = 0
+				writeIndex := testCase.writeIndex
+				if writeIndex < -1 || writeIndex > 1 {
+					writeIndex = 0
 				}
-				total = expectedTotal(weights, testCase.samples, index, scaleIndex)
+				total = expectedTotal(weights, testCase.samples, index, writeIndex)
 			}
 
 			values := map[string][]byte{
 				"index":      scriptInt(t, testCase.index),
-				"scaleIndex": scriptInt(t, testCase.scaleIndex),
+				"writeIndex": scriptInt(t, testCase.writeIndex),
 				"expected":   scriptInt(t, total),
 				"ownerSig":   nil,
 			}

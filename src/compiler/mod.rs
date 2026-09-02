@@ -1,24 +1,24 @@
 use crate::models::{
-    ArkadeCovenant, CompilerInfo, ContractJson, Expression, Function, FunctionInput, Parameter,
-    Requirement, Statement,
+    ArkadeCovenant, AssignmentTarget, CompilerInfo, ContractJson, Expression, Function,
+    FunctionInput, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
-    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_DIV, OP_DROP, OP_ECADD, OP_ECMUL,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP, OP_ECADD, OP_ECMUL,
     OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
-    OP_FINDASSETGROUPBYASSETID, OP_FROMALTSTACK, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
-    OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
-    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
-    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTOUTPOINT,
-    OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
-    OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS,
-    OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION,
-    OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN,
-    OP_NUMEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_REVERSEBYTES, OP_ROLL, OP_SHA256,
-    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB,
-    OP_SUBSTR, OP_SWAP, OP_TOALTSTACK, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
+    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
+    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MODEXP, OP_MUL,
+    OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUT,
+    OP_REVERSEBYTES, OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE,
+    OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT,
+    OP_VERIFY,
 };
 use crate::parser;
 use crate::typechecker::{self};
@@ -68,7 +68,6 @@ struct Generator {
     asm: Vec<String>,
     stack: Vec<StackItem>,
     scopes: Vec<usize>,
-    alt_depth: usize,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
 }
@@ -123,18 +122,9 @@ impl Generator {
             asm,
             stack,
             scopes: Vec::new(),
-            alt_depth: 0,
             constructor_array_expansions,
             structs: structs.to_vec(),
         })
-    }
-
-    fn push_depth(&mut self, depth: usize) {
-        self.asm.push(if depth <= 16 {
-            format!("OP_{depth}")
-        } else {
-            depth.to_string()
-        });
     }
 
     fn push_temporary(&mut self, token: impl Into<String>) {
@@ -203,10 +193,8 @@ impl Generator {
             .binding_index(name)
             .ok_or_else(|| format!("undefined binding '{name}'"))?;
         let depth = self.stack.len() - 1 - index;
-        self.push_depth(depth);
-        self.asm.push(OP_PICK.to_string());
-        self.stack.push(StackItem::Temporary);
-        Ok(())
+        self.push_integer_temporary(depth);
+        self.apply(OP_PICK, 1, 1)
     }
 
     fn push_integer_temporary(&mut self, value: usize) {
@@ -222,30 +210,38 @@ impl Generator {
         self.select_indexed_value(array)
     }
 
+    fn check_array_index(&mut self, array: &str) -> Result<(), String> {
+        self.apply(OP_DUP, 1, 2)?;
+        self.push_integer_temporary(0);
+        self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
+        self.apply(OP_VERIFY, 1, 0)?;
+
+        self.apply(OP_DUP, 1, 2)?;
+        self.push_integer_temporary(self.array_length(array));
+        self.apply(OP_LESSTHAN, 2, 1)?;
+        self.apply(OP_VERIFY, 1, 0)
+    }
+
     fn select_indexed_value(&mut self, array: &str) -> Result<(), String> {
         let first_element = internal_array_binding_name(array, "0");
         let first_index = self
             .binding_index(&first_element)
             .ok_or_else(|| format!("undefined array binding '{array}'"))?;
-        let first_depth = self.stack.len() - 1 - first_index;
-        let first_depth_without_index = first_depth.checked_sub(1).ok_or_else(|| {
-            format!("internal compiler error: array index for '{array}' is not on the stack")
-        })?;
+        let first_depth_without_index =
+            self.stack
+                .len()
+                .checked_sub(first_index + 2)
+                .ok_or_else(|| {
+                    format!(
+                        "internal compiler error: array index for '{array}' is not on the stack"
+                    )
+                })?;
 
-        self.push_integer_temporary(0);
-        self.apply(OP_PICK, 1, 1)?;
-        self.push_integer_temporary(0);
-        self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
-        self.apply(OP_VERIFY, 1, 0)?;
-
-        self.push_integer_temporary(0);
-        self.apply(OP_PICK, 1, 1)?;
-        self.push_integer_temporary(self.array_length(array));
-        self.apply(OP_LESSTHAN, 2, 1)?;
-        self.apply(OP_VERIFY, 1, 0)?;
-
-        self.push_integer_temporary(first_depth_without_index);
-        self.apply(OP_ADD, 2, 1)?;
+        self.check_array_index(array)?;
+        if first_depth_without_index != 0 {
+            self.push_integer_temporary(first_depth_without_index);
+            self.apply(OP_ADD, 2, 1)?;
+        }
         self.apply(OP_PICK, 1, 1)
     }
 
@@ -507,21 +503,24 @@ impl Generator {
         Ok(())
     }
 
-    fn assign(&mut self, name: &str) -> Result<(), String> {
-        if let Some((array, element)) = name.strip_suffix(']').and_then(|n| n.split_once('[')) {
-            if element.parse::<usize>().is_err() {
-                // Writing at a runtime depth needs a write-at-depth opcode
-                // (see docs: OP_PUT); emulating it costs one guarded write per
-                // element. Lift this once the VM provides that primitive.
-                return Err(format!(
-                    "assignment to '{array}' at a runtime index is not supported; use a literal index"
-                ));
-            }
+    fn assign(&mut self, target: &AssignmentTarget) -> Result<(), String> {
+        match target {
+            AssignmentTarget::Binding(name) => self.assign_static_binding(name, name),
+            AssignmentTarget::ArrayIndex { array, index } => match index.as_ref() {
+                Expression::Literal(index) => self.assign_static_binding(
+                    &internal_array_binding_name(array, index),
+                    &format!("{array}[{index}]"),
+                ),
+                index => self.assign_indexed_binding(array, index),
+            },
         }
-        let name = &Self::internal_binding_name(name);
+    }
+
+    fn assign_static_binding(&mut self, name: &str, display_name: &str) -> Result<(), String> {
+        let name = Self::internal_binding_name(name);
         let index = self
-            .binding_index(name)
-            .ok_or_else(|| format!("assignment to undeclared binding '{name}'"))?;
+            .binding_index(&name)
+            .ok_or_else(|| format!("assignment to undeclared binding '{display_name}'"))?;
         if matches!(
             self.stack[index],
             StackItem::Binding {
@@ -530,37 +529,55 @@ impl Generator {
             }
         ) {
             return Err(format!(
-                "cannot assign to constructor parameter '{name}'; constructor parameters are immutable"
+                "cannot assign to constructor parameter '{display_name}'; constructor parameters are immutable"
             ));
         }
         if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
             return Err("internal compiler error: assignment has no result value".to_string());
         }
-        let depth = self.stack.len() - 1 - index;
-        self.push_depth(depth);
-        self.asm.push(OP_ROLL.to_string());
-        self.asm.push(OP_DROP.to_string());
-        for step in 0..depth.saturating_sub(1) {
-            self.asm.push(OP_SWAP.to_string());
-            if step + 1 < depth - 1 {
-                self.asm.push(OP_TOALTSTACK.to_string());
-                self.alt_depth += 1;
+        let depth = self.stack.len().checked_sub(index + 2).ok_or_else(|| {
+            format!("internal compiler error: invalid assignment target '{display_name}'")
+        })?;
+        self.push_integer_temporary(depth);
+        self.apply(OP_PUT, 2, 0)
+    }
+
+    fn assign_indexed_binding(&mut self, array: &str, index: &Expression) -> Result<(), String> {
+        let first_element = internal_array_binding_name(array, "0");
+        let first_index = self
+            .binding_index(&first_element)
+            .ok_or_else(|| format!("undefined array binding '{array}'"))?;
+        if matches!(
+            self.stack[first_index],
+            StackItem::Binding {
+                kind: BindingKind::Constructor,
+                ..
             }
+        ) {
+            return Err(format!(
+                "cannot assign to constructor parameter '{array}'; constructor parameters are immutable"
+            ));
         }
-        for _ in 0..depth.saturating_sub(2) {
-            self.asm.push(OP_FROMALTSTACK.to_string());
-            self.alt_depth = self.alt_depth.checked_sub(1).ok_or_else(|| {
-                "internal compiler error: assignment alternate-stack underflow".to_string()
-            })?;
+        if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
+            return Err("internal compiler error: assignment has no result value".to_string());
         }
-        self.stack.pop();
-        if self.alt_depth != 0 {
-            return Err(
-                "internal compiler error: assignment left values on the alternate stack"
-                    .to_string(),
-            );
+
+        self.emit_expression(index)?;
+        let first_depth_without_operands =
+            self.stack
+                .len()
+                .checked_sub(first_index + 3)
+                .ok_or_else(|| {
+                    format!(
+                        "internal compiler error: array assignment operands for '{array}' are not on the stack"
+                    )
+                })?;
+        self.check_array_index(array)?;
+        if first_depth_without_operands != 0 {
+            self.push_integer_temporary(first_depth_without_operands);
+            self.apply(OP_ADD, 2, 1)?;
         }
-        Ok(())
+        self.apply(OP_PUT, 2, 0)
     }
 
     fn enter_scope(&mut self) {
@@ -593,11 +610,10 @@ impl Generator {
     }
 
     fn assert_statement_boundary(&self) -> Result<(), String> {
-        if self.alt_depth != 0
-            || self
-                .stack
-                .iter()
-                .any(|item| matches!(item, StackItem::Temporary))
+        if self
+            .stack
+            .iter()
+            .any(|item| matches!(item, StackItem::Temporary))
         {
             return Err(
                 "internal compiler error: statement left a temporary stack value".to_string(),
@@ -607,7 +623,7 @@ impl Generator {
     }
 
     fn finish(mut self) -> Result<Vec<String>, String> {
-        if !self.scopes.is_empty() || self.alt_depth != 0 {
+        if !self.scopes.is_empty() {
             return Err("internal compiler error: unbalanced generator scope".to_string());
         }
         self.push_temporary(OP_1);
@@ -924,9 +940,9 @@ fn generate_asm_from_statements_recursive(
                     generator.bind_local(name)?;
                 }
             },
-            Statement::VarAssign { name, value } => {
+            Statement::VarAssign { target, value } => {
                 generator.emit_expression(value)?;
-                generator.assign(name)?;
+                generator.assign(target)?;
             }
         }
         generator.assert_statement_boundary()?;
@@ -1175,7 +1191,7 @@ mod symbolic_stack_tests {
     use super::*;
 
     #[test]
-    fn deep_assignment_replaces_the_original_slot_and_restores_the_alt_stack() {
+    fn deep_assignment_uses_put_at_the_remaining_stack_depth() {
         let inputs = ["a", "b", "c", "d"]
             .into_iter()
             .map(|name| Parameter {
@@ -1186,25 +1202,11 @@ mod symbolic_stack_tests {
         let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
 
         generator.push_temporary("9");
-        generator.assign("d").expect("deep assignment");
+        generator
+            .assign(&AssignmentTarget::Binding("d".to_string()))
+            .expect("deep assignment");
 
-        assert_eq!(
-            generator.asm,
-            [
-                "9",
-                "OP_4",
-                "OP_ROLL",
-                "OP_DROP",
-                "OP_SWAP",
-                "OP_TOALTSTACK",
-                "OP_SWAP",
-                "OP_TOALTSTACK",
-                "OP_SWAP",
-                "OP_FROMALTSTACK",
-                "OP_FROMALTSTACK",
-            ]
-        );
-        assert_eq!(generator.alt_depth, 0);
+        assert_eq!(generator.asm, ["9", "OP_3", "OP_PUT"]);
         assert_eq!(
             generator.stack,
             ["d", "c", "b", "a"]
@@ -1214,6 +1216,98 @@ mod symbolic_stack_tests {
                     kind: BindingKind::FunctionInput,
                 })
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn shallow_assignment_uses_zero_depth_put() {
+        let inputs = ["a", "b"]
+            .into_iter()
+            .map(|name| Parameter {
+                name: name.to_string(),
+                param_type: "int".to_string(),
+            })
+            .collect::<Vec<_>>();
+        let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
+
+        generator.push_temporary("9");
+        generator
+            .assign(&AssignmentTarget::Binding("a".to_string()))
+            .expect("shallow assignment");
+
+        assert_eq!(generator.asm, ["9", "OP_0", "OP_PUT"]);
+        assert_eq!(
+            generator.stack,
+            ["b", "a"]
+                .into_iter()
+                .map(|name| StackItem::Binding {
+                    name: name.to_string(),
+                    kind: BindingKind::FunctionInput,
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn expression_index_assignment_checks_bounds_and_uses_put() {
+        let inputs = [
+            Parameter {
+                name: "values".to_string(),
+                param_type: "int[3]".to_string(),
+            },
+            Parameter {
+                name: "i".to_string(),
+                param_type: "int".to_string(),
+            },
+        ];
+        let mut generator = Generator::new(&inputs, &[], &[]).expect("array test inputs");
+        generator.push_temporary("7");
+        generator.bind_local("above").expect("local above array");
+
+        generator.push_temporary("9");
+        generator
+            .assign(&AssignmentTarget::ArrayIndex {
+                array: "values".to_string(),
+                index: Box::new(Expression::BinaryOp {
+                    left: Box::new(Expression::Variable("i".to_string())),
+                    op: "+".to_string(),
+                    right: Box::new(Expression::Literal("1".to_string())),
+                }),
+            })
+            .expect("expression index assignment");
+
+        assert_eq!(
+            generator.asm,
+            [
+                "7",
+                "9",
+                "OP_5",
+                "OP_PICK",
+                "1",
+                "OP_ADD",
+                "OP_DUP",
+                "OP_0",
+                "OP_GREATERTHANOREQUAL",
+                "OP_VERIFY",
+                "OP_DUP",
+                "OP_3",
+                "OP_LESSTHAN",
+                "OP_VERIFY",
+                "OP_1",
+                "OP_ADD",
+                "OP_PUT",
+            ]
+        );
+        assert!(generator
+            .stack
+            .iter()
+            .all(|item| !matches!(item, StackItem::Temporary)));
+        assert_eq!(
+            generator.stack.last(),
+            Some(&StackItem::Binding {
+                name: "above".to_string(),
+                kind: BindingKind::Local,
+            })
         );
     }
 }
