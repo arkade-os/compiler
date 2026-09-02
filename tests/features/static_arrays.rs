@@ -401,6 +401,21 @@ contract Local(bytes32 h) {
 }
 
 #[test]
+fn array_elements_use_scalar_type_widening() {
+    compile(
+        r#"
+contract Local(bytes32 first, bytes32 second) {
+    function spend(bytes expected) {
+        bytes[2] values = [first, second];
+        require(values[0] == expected);
+    }
+}
+"#,
+    )
+    .expect("bytes32 array elements must widen to bytes");
+}
+
+#[test]
 fn local_array_elements_are_assignable_at_a_nonzero_literal_index() {
     let output = compile(
         r#"
