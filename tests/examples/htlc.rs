@@ -1,3 +1,4 @@
+use arkade_compiler::analysis::analyze_output;
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY,
@@ -18,6 +19,13 @@ fn test_htlc_contract() {
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
+
+    let out_analysis = analyze_output(&output);
+    assert!(
+        out_analysis.is_ok(),
+        "Analysis failed: {:?}",
+        out_analysis.err()
+    );
 
     // Verify contract name
     assert_eq!(output.name, "HTLC");

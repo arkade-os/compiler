@@ -7,6 +7,7 @@ mod parser;
 mod typechecker;
 mod validator;
 
+pub mod analysis;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
