@@ -359,6 +359,8 @@ contract MyContract(pubkey user, int exit) {
 
 Functions without a modifier define arkade covenants. `tapscript` functions define L1 tapleaves. A covenant function with no matching or tweaked tapleaf receives a synthesized collaborative leaf using `server` and `tweak(emulator, functionName)`.
 
+`internal` functions are helpers, not spending paths. Calling one as a statement (`verify();`) inlines its body at the call site, so its requires run in the caller's covenant. Helpers take no parameters and can be declared before or after their callers; a helper may call only helpers declared above it.
+
 ```solidity
 // Arkade covenant.
 function spend(signature userSig) {

@@ -1,6 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY, OP_LESSTHAN,
+    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY,
+    OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
 };
 
 #[test]
@@ -59,6 +60,12 @@ fn test_fuji_safe_contract() {
         "claim covenant should verify treasury sig: {}",
         claim_asm
     );
+    // Inlined verifyTreasuryFujiBurning helper
+    assert!(
+        claim_asm.contains(OP_INSPECTOUTPUTVALUE),
+        "claim covenant should run the inlined burn check: {}",
+        claim_asm
+    );
 
     // claim leaf carries server + emulator cosig
     let claim_leaf = crate::common::leaf_asm(&output, "claim", "claim");
@@ -88,6 +95,11 @@ fn test_fuji_safe_contract() {
     assert!(
         liquidate_asm.contains(OP_CHECKSIG),
         "liquidate covenant should verify treasury sig: {}",
+        liquidate_asm
+    );
+    assert!(
+        liquidate_asm.contains(OP_INSPECTOUTPUTVALUE),
+        "liquidate covenant should run the inlined burn check: {}",
         liquidate_asm
     );
 

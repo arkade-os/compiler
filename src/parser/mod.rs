@@ -2,6 +2,7 @@ use crate::models::{Contract, Function, Parameter, Statement, StructDefinition};
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
+use std::collections::HashMap;
 
 /// Pest parser generated from grammar.pest
 #[derive(Parser)]
@@ -124,23 +125,53 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
 
     // Functions (covenant) and tapscript declarations share the `function` rule;
     // a tapscript carries a `tapscript_block` body.
-    for func_pair in inner_pairs {
-        if func_pair.as_rule() != Rule::function {
-            continue;
+    let func_pairs: Vec<_> = inner_pairs
+        .filter(|p| p.as_rule() == Rule::function)
+        .collect();
+
+    // Internal helpers are parsed first so callers can inline them regardless
+    // of declaration order. A helper may call helpers declared above it only.
+    let mut helpers: HashMap<String, Vec<Statement>> = HashMap::new();
+    for func_pair in func_pairs.iter().filter(|p| function_pair_is_internal(p)) {
+        let func = parse_function(func_pair.clone(), &helpers)?;
+        if !func.parameters.is_empty() {
+            return Err(format!(
+                "Parse error: internal function '{}' cannot declare parameters",
+                func.name
+            ));
         }
+        helpers.insert(func.name.clone(), func.statements.clone());
+        contract.functions.push(func);
+    }
+
+    for func_pair in func_pairs
+        .into_iter()
+        .filter(|p| !function_pair_is_internal(p))
+    {
         if function_pair_is_tapscript(&func_pair) {
             let ts = parse_named_tapscript(func_pair)?;
             contract.tapscripts.push(ts);
         } else {
-            let func = parse_function(func_pair)?;
+            let func = parse_function(func_pair, &helpers)?;
             contract.functions.push(func);
         }
     }
     Ok(())
 }
 
-/// Parse a function definition
-fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
+/// Whether a `function` pair carries the `internal` modifier.
+fn function_pair_is_internal(pair: &Pair<Rule>) -> bool {
+    pair.clone()
+        .into_inner()
+        .any(|p| p.as_rule() == Rule::function_modifier)
+}
+
+/// Parse a function definition. `helpers` maps internal function names to
+/// their statements, which are inlined at each call site.
+fn parse_function(
+    pair: Pair<Rule>,
+    helpers: &HashMap<String, Vec<Statement>>,
+) -> Result<Function, String> {
     let mut func = Function {
         name: String::new(),
         parameters: Vec::new(),
@@ -166,12 +197,12 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
         if next_pair.as_rule() == Rule::function_modifier {
             func.is_internal = true;
             for req_pair in inner_pairs {
-                parse_function_body(&mut func, req_pair)?;
+                parse_function_body(&mut func, req_pair, helpers)?;
             }
         } else {
-            parse_function_body(&mut func, next_pair)?;
+            parse_function_body(&mut func, next_pair, helpers)?;
             for req_pair in inner_pairs {
-                parse_function_body(&mut func, req_pair)?;
+                parse_function_body(&mut func, req_pair, helpers)?;
             }
         }
     }
@@ -180,7 +211,11 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
-fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), String> {
+fn parse_function_body(
+    func: &mut Function,
+    pair: Pair<Rule>,
+    helpers: &HashMap<String, Vec<Statement>>,
+) -> Result<(), String> {
     match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
@@ -247,10 +282,10 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let then_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
-            let then_body = parse_block(then_block)?;
+            let then_body = parse_block(then_block, helpers)?;
 
             let else_body = if let Some(else_block) = inner.next() {
-                Some(parse_block(else_block)?)
+                Some(parse_block(else_block, helpers)?)
             } else {
                 None
             };
@@ -281,7 +316,7 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let body_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?;
-            let body = parse_block(body_block)?;
+            let body = parse_block(body_block, helpers)?;
 
             func.statements.push(Statement::ForIn {
                 index_var,
@@ -292,7 +327,24 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::function_call_stmt => {
-            // Function calls to internal helpers — not yet fully supported
+            // Calls to internal helpers are inlined. Helpers take no
+            // parameters today; supporting them needs expression
+            // substitution in the inlined body.
+            let mut inner = pair.into_inner();
+            let name = inner
+                .next()
+                .ok_or_else(|| "Parse error: Missing function name in call".to_string())?
+                .as_str()
+                .to_string();
+            if inner.next().is_some() {
+                return Err(format!(
+                    "Parse error: internal function '{name}' cannot take arguments"
+                ));
+            }
+            let body = helpers.get(&name).ok_or_else(|| {
+                format!("Parse error: call to unknown internal function '{name}'")
+            })?;
+            func.statements.extend(body.iter().cloned());
             Ok(())
         }
         Rule::variable_declaration => {
@@ -326,7 +378,10 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
 // ─── Expression Parsing ────────────────────────────────────────────────────────
 
 // Parse a block of statements
-fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
+fn parse_block(
+    pair: Pair<Rule>,
+    helpers: &HashMap<String, Vec<Statement>>,
+) -> Result<Vec<Statement>, String> {
     let mut statements = Vec::new();
 
     for inner in pair.into_inner() {
@@ -338,7 +393,7 @@ fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
             is_internal: false,
         };
 
-        parse_function_body(&mut temp_func, inner)?;
+        parse_function_body(&mut temp_func, inner, helpers)?;
         statements.extend(temp_func.statements);
     }
 
