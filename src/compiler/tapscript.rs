@@ -10,6 +10,7 @@ use crate::opcodes::{
     OP_EQUAL, OP_VERIFY,
 };
 use crate::typechecker::ArkType;
+use crate::StructDefinition;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -42,6 +43,100 @@ pub struct Closure {
     pub timelock: Option<String>,            // CSV or CLTV bound (literal or param)
     pub keys: Vec<KeyExpr>,
     pub threshold: Option<u16>,
+}
+
+impl Closure {
+    pub(crate) fn from_leaf(leaf: &AbiLeaf) -> Result<Closure, String> {
+        let mut condition: Option<(HashFn, String)> = None;
+        let mut timelock: Option<String> = None;
+        let mut keys: Vec<KeyExpr> = Vec::new();
+        let mut threshold: Option<u16> = None;
+
+        let hash_fn = HashFn::from_opcode(leaf.asm[0].as_str());
+
+        if hash_fn.is_some() {
+            let preimage_hash = leaf.asm[1].to_string().replace("<", "").replace(">", "");
+            let hash_fn = match hash_fn {
+                Some(hash_fn) => hash_fn,
+                _ => return Err("hash function not found".to_string()),
+            };
+            condition = Some((hash_fn, preimage_hash))
+        }
+
+        let is_csv: bool;
+        if condition.is_some() {
+            is_csv = leaf.asm[5] == OP_CHECKSEQUENCEVERIFY;
+            if is_csv {
+                timelock = Some(leaf.asm[4].replace("<", "").replace(">", ""));
+            }
+        } else {
+            is_csv = leaf.asm[1] == OP_CHECKSEQUENCEVERIFY;
+            if leaf.asm[1] == OP_CHECKSEQUENCEVERIFY || leaf.asm[1] == OP_CHECKLOCKTIMEVERIFY {
+                timelock = Some(leaf.asm[0].replace("<", "").replace(">", ""));
+            }
+        }
+
+        let asm_size = leaf.asm.len();
+        let asm_last_index = asm_size - 1;
+
+        for i in (0..asm_last_index).step_by(2) {
+            let op_index = asm_last_index - i;
+            let key_index = op_index - 1;
+
+            let op_code = &leaf.asm[op_index];
+            let key_placeholder = &leaf.asm[key_index];
+
+            if op_index == asm_size - 1 && op_code != OP_CHECKSIG {
+                return Err(format!(
+                    "invalid last ASM item, expected {OP_CHECKSIG} but found {op_code}"
+                ));
+            }
+
+            if op_code == OP_CHECKSIG || op_code == OP_CHECKSIGVERIFY {
+                let key = KeyExpr::from_placeholder(key_placeholder);
+                keys.push(key);
+            }
+        }
+
+        if !keys.is_empty() {
+            threshold = Some(keys.len() as u16);
+            keys.reverse();
+        }
+
+        let class = derive_closure_class(&condition, &timelock, is_csv, &leaf.name)?;
+
+        Ok(Self {
+            class,
+            condition,
+            timelock,
+            keys,
+            threshold,
+        })
+    }
+}
+
+fn derive_closure_class(
+    condition: &Option<(HashFn, String)>,
+    timelock: &Option<String>,
+    is_csv: bool,
+    tapscript_name: &String,
+) -> Result<ClosureClass, String> {
+    let class = match (&condition, &timelock, is_csv) {
+        (None, None, _) => ClosureClass::Multisig,
+        (None, Some(_), false) => ClosureClass::CltvMultisig,
+        (None, Some(_), true) => ClosureClass::CsvMultisig,
+        (Some(_), None, _) => ClosureClass::ConditionMultisig,
+        (Some(_), Some(_), true) => ClosureClass::ConditionCsvMultisig,
+        (Some(_), Some(_), false) => {
+            eprintln!("{condition:?}, {timelock:?}, {is_csv}");
+            return Err(format!(
+                "tapscript `{}`: condition + CLTV is not a recognized closure shape; \
+                 split into two tapscripts (one ConditionMultisig forfeit, one CLTV forfeit)",
+                tapscript_name
+            ));
+        }
+    };
+    Ok(class)
 }
 
 /// Assemble a tapscript body into exactly one closure, enforcing the
@@ -120,20 +215,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
         )
     })?;
 
-    let class = match (&condition, &timelock, is_csv) {
-        (None, None, _) => ClosureClass::Multisig,
-        (None, Some(_), false) => ClosureClass::CltvMultisig,
-        (None, Some(_), true) => ClosureClass::CsvMultisig,
-        (Some(_), None, _) => ClosureClass::ConditionMultisig,
-        (Some(_), Some(_), true) => ClosureClass::ConditionCsvMultisig,
-        (Some(_), Some(_), false) => {
-            return Err(format!(
-                "tapscript `{}`: condition + CLTV is not a recognized closure shape; \
-                 split into two tapscripts (one ConditionMultisig forfeit, one CLTV forfeit)",
-                ts.name
-            ))
-        }
-    };
+    let class = derive_closure_class(&condition, &timelock, is_csv, &ts.name)?;
 
     Ok(Closure {
         class,
@@ -243,13 +325,13 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
 /// arkd structural rules F2/F3/E1/E3 + key resolution (§5.3). `min_exit_delay`
 /// enables literal-only E3 magnitude checks.
 pub fn validate_arkd_rules(
-    contract: &Contract,
+    parameters: &Vec<Parameter>,
+    structs: &Vec<StructDefinition>,
     ts: &NamedTapscript,
     c: &Closure,
     min_exit_delay: Option<u64>,
 ) -> Result<(), String> {
-    let constructor_scope =
-        crate::typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
+    let constructor_scope = crate::typechecker::build_scope_with_structs(&parameters, &structs);
     // Pubkeys in scope: constructor pubkey params + pubkey tapscript inputs.
     let in_scope = |name: &str| -> bool {
         name == "server"
@@ -487,7 +569,7 @@ pub fn build_function_groups(
         let closure = assemble_closure(ts)?;
         validate_closure_shape(&closure, &ts.name)?;
         let binding = resolve_binding(contract, ts)?;
-        validate_arkd_rules(contract, ts, &closure, None)?;
+        validate_arkd_rules(&contract.parameters, &contract.structs, ts, &closure, None)?;
 
         let group_key = match &binding {
             Binding::NameMatched => ts.name.clone(),
@@ -925,7 +1007,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("server"), "got: {err}");
     }
 
@@ -949,7 +1031,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        assert!(validate_arkd_rules(&c, &leaf, &cl, None).is_ok());
+        assert!(validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, None).is_ok());
     }
 
     #[test]
@@ -962,7 +1044,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("unknown key"), "got: {err}");
     }
 
@@ -979,7 +1061,8 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, Some(144)).unwrap_err();
+        let err =
+            validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, Some(144)).unwrap_err();
         assert!(err.contains("exit delay too short"), "got: {err}");
     }
 
@@ -1003,7 +1086,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        assert!(validate_arkd_rules(&c, &leaf, &cl, Some(144)).is_ok());
+        assert!(validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, Some(144)).is_ok());
     }
 
     #[test]
@@ -1024,7 +1107,7 @@ mod tests {
         let c = contract_with(&["x"], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("align 1:1"), "got: {err}");
     }
 
@@ -1043,7 +1126,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, None).unwrap_err();
         assert!(
             err.contains("not a declared `signature` input"),
             "got: {err}"
@@ -1066,7 +1149,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("timelock `typoDelay`"), "got: {err}");
     }
 
@@ -1101,7 +1184,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c.parameters, &c.structs, &leaf, &cl, None).unwrap_err();
         assert!(err.contains("hash value `typoHash`"), "got: {err}");
     }
 

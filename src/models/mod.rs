@@ -1,3 +1,4 @@
+use crate::compiler::tapscript::{Closure, ClosureClass};
 use serde::{Deserialize, Serialize};
 
 fn is_false(value: &bool) -> bool {
@@ -357,10 +358,11 @@ pub enum HashFn {
     Ripemd160,
 }
 
+use crate::opcodes::{OP_HASH160, OP_HASH256, OP_RIPEMD160, OP_SHA256};
+
 impl HashFn {
     /// The Bitcoin opcode string this hash function emits.
     pub fn opcode(&self) -> &'static str {
-        use crate::opcodes::{OP_HASH160, OP_HASH256, OP_RIPEMD160, OP_SHA256};
         match self {
             HashFn::Sha256 => OP_SHA256,
             HashFn::Hash160 => OP_HASH160,
@@ -376,6 +378,16 @@ impl HashFn {
             "hash160" => Some(HashFn::Hash160),
             "hash256" => Some(HashFn::Hash256),
             "ripemd160" => Some(HashFn::Ripemd160),
+            _ => None,
+        }
+    }
+
+    pub fn from_opcode(opcode: &str) -> Option<HashFn> {
+        match opcode {
+            OP_SHA256 => Some(HashFn::Sha256),
+            OP_HASH160 => Some(HashFn::Hash160),
+            OP_HASH256 => Some(HashFn::Hash256),
+            OP_RIPEMD160 => Some(HashFn::Ripemd160),
             _ => None,
         }
     }
@@ -406,6 +418,17 @@ impl KeyExpr {
     /// `server`, bare `emulator`, or an explicit `tweak(emulator, …)`.
     pub fn is_cosigner(&self) -> bool {
         self.is_server() || self.is_emulator() || matches!(self, KeyExpr::Tweak { .. })
+    }
+
+    pub fn from_placeholder(placeholder: &String) -> KeyExpr {
+        let mut id = placeholder.replace("<", "").replace(">", "");
+        if placeholder == "<SERVER_KEY>" {
+            id = "server".to_string()
+        }
+        if placeholder.starts_with("<EMULATOR_KEY:") {
+            id = "emulator".to_string()
+        }
+        KeyExpr::Ident(id)
     }
 }
 
@@ -440,6 +463,73 @@ pub struct NamedTapscript {
     pub inputs: Vec<Parameter>,
     /// Ordered closure components.
     pub items: Vec<TapItem>,
+}
+
+impl NamedTapscript {
+    pub fn from_leaf(leaf: &AbiLeaf, closure: &Closure) -> NamedTapscript {
+        let mut inputs: Vec<Parameter> = Vec::new();
+        let mut items: Vec<TapItem> = Vec::new();
+
+        let mut preimage: String = "".to_string();
+        let mut sigs: Vec<String> = Vec::new();
+
+        for element in &leaf.witness {
+            if element.elem_type == "signature" {
+                sigs.push(element.name.to_string())
+            }
+            if element.elem_type == "bytes" {
+                preimage = element.name.to_string();
+            }
+            let param = Parameter {
+                name: element.name.to_string(),
+                param_type: element.elem_type.to_string(),
+            };
+            inputs.push(param);
+        }
+
+        if let Some((hash_fn, hash_placeholder)) = &closure.condition {
+            let hash = hash_placeholder.replace("<", "").replace(">", "");
+            let hash_item = TapItem::Hash {
+                hash_fn: hash_fn.clone(),
+                preimage,
+                hash,
+            };
+            items.push(hash_item);
+        }
+
+        if let Some(timelock) = &closure.timelock {
+            match &closure.class {
+                ClosureClass::CsvMultisig | ClosureClass::ConditionCsvMultisig => {
+                    let csv_timelock_item = TapItem::Older {
+                        value: timelock.to_string(),
+                    };
+                    items.push(csv_timelock_item);
+                }
+                ClosureClass::CltvMultisig => {
+                    let cltv_timelock_item = TapItem::After {
+                        value: timelock.to_string(),
+                    };
+                    items.push(cltv_timelock_item);
+                }
+                _ => {}
+            };
+        }
+
+        if !closure.keys.is_empty() && closure.threshold.is_some() {
+            let sig_item = TapItem::Sig {
+                keys: closure.keys.clone(),
+                sigs,
+                threshold: closure.threshold,
+            };
+            items.push(sig_item);
+        }
+
+        Self {
+            name: leaf.name.to_string(),
+            inputs,
+            items,
+        }
+    }
 }
 
 /// Source of an asset lookup (input or output)
