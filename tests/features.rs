@@ -20,6 +20,8 @@ mod epoch_limiter;
 mod general_comparisons;
 #[path = "features/group_properties.rs"]
 mod group_properties;
+#[path = "features/internal_functions.rs"]
+mod internal_functions;
 #[path = "features/io_introspection.rs"]
 mod io_introspection;
 #[path = "features/no_shadowing.rs"]
