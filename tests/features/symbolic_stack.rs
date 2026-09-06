@@ -80,7 +80,7 @@ contract Nested() {
 
 #[test]
 fn reassignment_replaces_the_existing_slot_and_scopes_clean_up() {
-    let covenant = covenant(
+    let output = compile(
         r#"
 contract Mutate() {
     function spend(int value, bool choose) {
@@ -97,7 +97,29 @@ contract Mutate() {
     }
 }
 "#,
-        "spend",
+    )
+    .expect("compile");
+
+    assert_eq!(output.functions.len(), 1);
+    let group = crate::common::group(&output, "spend");
+    assert_eq!(group.leaves.len(), 1);
+    assert_eq!(group.leaves[0].name, "spend");
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert!(group.leaves[0]
+        .witness
+        .iter()
+        .all(|w| w.elem_type == "signature" && w.injected));
+    assert_eq!(
+        crate::common::leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+    let covenant = group.arkade.as_ref().expect("spend covenant");
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["value", "choose"]
     );
 
     assert!(
@@ -167,7 +189,7 @@ contract GroupIndices() {
 
 #[test]
 fn runtime_array_indices_are_bounded_and_pick_by_computed_depth() {
-    let covenant = covenant(
+    let output = compile(
         r#"
 contract RuntimeIndex() {
     function spend(int[3] values, int index) {
@@ -175,7 +197,29 @@ contract RuntimeIndex() {
     }
 }
 "#,
-        "spend",
+    )
+    .expect("compile");
+
+    assert_eq!(output.functions.len(), 1);
+    let group = crate::common::group(&output, "spend");
+    assert_eq!(group.leaves.len(), 1);
+    assert_eq!(group.leaves[0].name, "spend");
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert!(group.leaves[0]
+        .witness
+        .iter()
+        .all(|w| w.elem_type == "signature" && w.injected));
+    assert_eq!(
+        crate::common::leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+    let covenant = group.arkade.as_ref().expect("spend covenant");
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["values", "index"]
     );
 
     for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_DUP, OP_PICK] {

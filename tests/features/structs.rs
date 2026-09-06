@@ -303,7 +303,28 @@ contract C() {
     )
     .expect("local struct array fields should support expression-indexed assignment");
 
-    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    assert_eq!(output.functions.len(), 1);
+    let group = crate::common::group(&output, "spend");
+    assert_eq!(group.leaves.len(), 1);
+    assert_eq!(group.leaves[0].name, "spend");
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert!(group.leaves[0]
+        .witness
+        .iter()
+        .all(|w| w.elem_type == "signature" && w.injected));
+    assert_eq!(
+        crate::common::leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+    let covenant = group.arkade.as_ref().expect("spend covenant");
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["index", "next"]
+    );
+    let asm = &covenant.asm;
     assert!(asm.iter().any(|token| token == OP_PUT), "{asm:?}");
     assert!(
         asm.windows(4)

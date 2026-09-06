@@ -1249,6 +1249,47 @@ mod symbolic_stack_tests {
     }
 
     #[test]
+    fn indexed_assignment_without_offset_preserves_bindings() {
+        let inputs = [
+            Parameter {
+                name: "values".into(),
+                param_type: "int[3]".into(),
+            },
+            Parameter {
+                name: "i".into(),
+                param_type: "int".into(),
+            },
+        ];
+        let mut generator = Generator::new(&inputs, &[], &[]).expect("array test inputs");
+        let bindings = generator.stack.clone();
+        generator.push_temporary("9");
+        generator
+            .assign(&AssignmentTarget::ArrayIndex {
+                array: "values".into(),
+                index: Box::new(Expression::Variable("i".into())),
+            })
+            .expect("indexed assignment");
+        assert_eq!(
+            generator.asm,
+            [
+                "9",
+                "OP_4",
+                "OP_PICK",
+                "OP_DUP",
+                "OP_0",
+                "OP_GREATERTHANOREQUAL",
+                "OP_VERIFY",
+                "OP_DUP",
+                "OP_3",
+                "OP_LESSTHAN",
+                "OP_VERIFY",
+                "OP_PUT",
+            ]
+        );
+        assert_eq!(generator.stack, bindings);
+    }
+
+    #[test]
     fn expression_index_assignment_checks_bounds_and_uses_put() {
         let inputs = [
             Parameter {

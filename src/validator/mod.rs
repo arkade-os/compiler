@@ -1974,6 +1974,29 @@ mod tests {
     }
 
     #[test]
+    fn rejects_undefined_bindings_in_array_indices_once() {
+        for statement in [
+            "require(values[missing] == 1);",
+            "require(values[missing + 1] == 1);",
+            "values[missing] = 1;",
+            "values[missing + 1] = 1;",
+        ] {
+            let issues = parse_and_validate(&format!(
+                "contract C() {{ function spend(int[3] values) {{ {statement} require(true); }} }}"
+            ));
+            assert_eq!(
+                issues
+                    .iter()
+                    .filter(|issue| issue.message.contains("'missing'"))
+                    .count(),
+                1,
+                "{statement}: {issues:?}"
+            );
+            assert!(has_errors(&issues), "{issues:?}");
+        }
+    }
+
+    #[test]
     fn validates_dynamic_array_assignment_target() {
         let issues = parse_and_validate(
             r#"
