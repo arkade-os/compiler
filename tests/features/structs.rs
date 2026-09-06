@@ -345,7 +345,7 @@ fn dotted_paths_distinguish_underscores_from_nesting() {
 struct Inner { int b; }
 struct Ambiguous { int a_b; Inner a; }
 contract C(Ambiguous value) {
-    function spend() { require(true); }
+    function spend() { require(value.a_b == value.a.b); }
 }
 "#,
     )

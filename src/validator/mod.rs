@@ -579,7 +579,7 @@ fn check_asset_id_expr(
 /// [`Expression`] variant will fail to compile here until its nested
 /// expressions — if any — are declared, guaranteeing that walkers built on top
 /// of this (e.g. [`check_asset_id_expr`]) cover every new construct.
-fn child_exprs(expr: &Expression) -> Vec<&Expression> {
+pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
     match expr {
         // Leaf nodes: no nested expressions.
         Expression::Variable(_)
@@ -1892,11 +1892,26 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
-            // The ABI keeps one entry per source parameter; the prologue pushes
-            // one placeholder per scalar leaf, so compare against the flattened
-            // layout.
+            let prologue = arkade
+                .asm
+                .iter()
+                .take_while(|token| {
+                    token.starts_with('<') && token.ends_with('>') && !token.starts_with("<VTXO:")
+                })
+                .collect::<Vec<_>>();
+            let retained_names = prologue
+                .iter()
+                .map(|token| token[1..token.len() - 1].split('.').next().unwrap())
+                .collect::<HashSet<_>>();
+            let retained_parameters = output
+                .parameters
+                .iter()
+                .filter(|parameter| retained_names.contains(parameter.name.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            // Retained parameters push every scalar leaf in reverse declaration order.
             let expected_prologue = match crate::compiler::expanded_placeholder_params(
-                &output.parameters,
+                &retained_parameters,
                 &output.structs,
             ) {
                 Ok(parameters) => parameters
@@ -1912,18 +1927,15 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     continue;
                 }
             };
-            if !arkade.asm.starts_with(&expected_prologue) {
+            if !prologue.iter().copied().eq(expected_prologue.iter()) {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' arkade covenant has an invalid constructor prologue",
                     group.name
                 )));
             }
-            if arkade.asm[expected_prologue.len().min(arkade.asm.len())..]
-                .iter()
-                .any(|token| {
-                    token.starts_with('<') && token.ends_with('>') && !token.starts_with("<VTXO:")
-                })
-            {
+            if arkade.asm[prologue.len()..].iter().any(|token| {
+                token.starts_with('<') && token.ends_with('>') && !token.starts_with("<VTXO:")
+            }) {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' arkade covenant has a placeholder outside its constructor prologue",
                     group.name
@@ -1968,6 +1980,27 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
 mod tests {
     use super::*;
     use crate::models::{AbiFunctionGroup, AbiLeaf, Contract, Function, Parameter, WitnessElement};
+
+    #[test]
+    fn output_validation_checks_filtered_constructor_layouts() {
+        let output = crate::compile("contract C(int unused, int[2] values, int limit) { function spend() { require(values[0] > limit); } }").unwrap();
+        for prologue in [
+            vec!["<values.1>", "<values.0>", "<limit>"],
+            vec!["<limit>", "<values.0>"],
+            vec!["<limit>", "<limit>"],
+            vec!["<unknown>"],
+            vec!["OP_1", "<limit>"],
+        ] {
+            let mut invalid = output.clone();
+            let asm = &mut invalid.functions[0].arkade.as_mut().unwrap().asm;
+            asm.splice(..3, prologue.into_iter().map(String::from));
+            assert!(
+                has_errors(&validate_output(&invalid)),
+                "{:?}",
+                invalid.functions[0].arkade.as_ref().unwrap().asm
+            );
+        }
+    }
 
     fn parse_and_validate(source: &str) -> Vec<ValidationIssue> {
         validate_ast(&crate::parser::parse(source).expect("contract should parse"))
