@@ -649,7 +649,7 @@ fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         } => vec![context, last_chunk],
         Expression::Sighash { hash_type } => vec![hash_type],
         Expression::Digest { data, hash_type } => vec![data, hash_type],
-        Expression::Negate { value } => vec![value],
+        Expression::Negate { value } | Expression::Not { value } => vec![value],
         Expression::ModExp {
             base,
             exponent,
@@ -1430,6 +1430,24 @@ fn validate_binding_expression(
     }
 
     match expression {
+        Expression::Negate { value } | Expression::Not { value } => {
+            let (operator, expected) = if matches!(expression, Expression::Negate { .. }) {
+                ("-", ArkType::Int)
+            } else {
+                ("!", ArkType::Bool)
+            };
+            let actual = resolved_expression_type(value, scopes);
+            if actual != expected && actual != ArkType::Unknown {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{}': unary '{}' operand has type '{}', expected '{}'",
+                    function_name,
+                    operator,
+                    actual.as_str(),
+                    expected.as_str()
+                )));
+            }
+        }
+
         Expression::StructLiteral(_) => {
             issues.push(ValidationIssue::error(format!(
                 "function '{}': struct literals may only initialize typed struct declarations",

@@ -637,8 +637,10 @@ pub enum Expression {
         hash_type: Box<Expression>,
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
-    /// Negate a BigNum value: negate(value)
+    /// Arithmetic negation: -value
     Negate { value: Box<Expression> },
+    /// Boolean negation: !value
+    Not { value: Box<Expression> },
     /// Modular exponentiation: modExp(base, exponent, modulus)
     ModExp {
         base: Box<Expression>,

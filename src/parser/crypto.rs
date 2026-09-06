@@ -10,11 +10,7 @@ use pest::iterators::Pair;
 pub(crate) fn parse_sha256_initialize(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let data_pair = inner.next().ok_or("Missing data in sha256Initialize")?;
-    let data = match data_pair.as_rule() {
-        Rule::identifier => Expression::Variable(data_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(data_pair.as_str().to_string()),
-        _ => Expression::Property(data_pair.as_str().to_string()),
-    };
+    let data = parse_general_expression(data_pair)?;
     Ok(Expression::Sha256Initialize {
         data: Box::new(data),
     })
@@ -27,11 +23,7 @@ pub(crate) fn parse_sha256_update(pair: Pair<Rule>) -> Result<Expression, String
     let context = Expression::Variable(ctx_pair.as_str().to_string());
 
     let chunk_pair = inner.next().ok_or("Missing chunk in sha256Update")?;
-    let chunk = match chunk_pair.as_rule() {
-        Rule::identifier => Expression::Variable(chunk_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(chunk_pair.as_str().to_string()),
-        _ => Expression::Property(chunk_pair.as_str().to_string()),
-    };
+    let chunk = parse_general_expression(chunk_pair)?;
     Ok(Expression::Sha256Update {
         context: Box::new(context),
         chunk: Box::new(chunk),
@@ -45,11 +37,7 @@ pub(crate) fn parse_sha256_finalize(pair: Pair<Rule>) -> Result<Expression, Stri
     let context = Expression::Variable(ctx_pair.as_str().to_string());
 
     let chunk_pair = inner.next().ok_or("Missing lastChunk in sha256Finalize")?;
-    let last_chunk = match chunk_pair.as_rule() {
-        Rule::identifier => Expression::Variable(chunk_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(chunk_pair.as_str().to_string()),
-        _ => Expression::Property(chunk_pair.as_str().to_string()),
-    };
+    let last_chunk = parse_general_expression(chunk_pair)?;
     Ok(Expression::Sha256Finalize {
         context: Box::new(context),
         last_chunk: Box::new(last_chunk),
@@ -62,14 +50,14 @@ pub(crate) fn parse_sighash(pair: Pair<Rule>) -> Result<Expression, String> {
         .next()
         .ok_or("Missing hash type in sighash")?;
     Ok(Expression::Sighash {
-        hash_type: Box::new(parse_atom_pair(hash_type)),
+        hash_type: Box::new(parse_general_expression(hash_type)?),
     })
 }
 
 pub(crate) fn parse_digest(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let data = parse_additive_expr(inner.next().ok_or("Missing data in digest")?)?;
-    let hash_type = parse_atom_pair(inner.next().ok_or("Missing hash type in digest")?);
+    let hash_type = parse_general_expression(inner.next().ok_or("Missing hash type in digest")?)?;
     Ok(Expression::Digest {
         data: Box::new(data),
         hash_type: Box::new(hash_type),
@@ -82,15 +70,15 @@ pub(crate) fn parse_digest(pair: Pair<Rule>) -> Result<Expression, String> {
 pub(crate) fn parse_mod_exp(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::ModExp {
-        base: Box::new(parse_atom_pair(
+        base: Box::new(parse_general_expression(
             inner.next().ok_or("Missing base in modExp")?,
-        )),
-        exponent: Box::new(parse_atom_pair(
+        )?),
+        exponent: Box::new(parse_general_expression(
             inner.next().ok_or("Missing exponent in modExp")?,
-        )),
-        modulus: Box::new(parse_atom_pair(
+        )?),
+        modulus: Box::new(parse_general_expression(
             inner.next().ok_or("Missing modulus in modExp")?,
-        )),
+        )?),
     })
 }
 
@@ -99,54 +87,66 @@ pub(crate) fn parse_mod_exp(pair: Pair<Rule>) -> Result<Expression, String> {
 pub(crate) fn parse_ec_add(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::EcAdd {
-        x1: Box::new(parse_atom_pair(inner.next().ok_or("Missing x1 in ecAdd")?)),
-        y1: Box::new(parse_atom_pair(inner.next().ok_or("Missing y1 in ecAdd")?)),
-        x2: Box::new(parse_atom_pair(inner.next().ok_or("Missing x2 in ecAdd")?)),
-        y2: Box::new(parse_atom_pair(inner.next().ok_or("Missing y2 in ecAdd")?)),
-        curve_id: Box::new(parse_atom_pair(
+        x1: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing x1 in ecAdd")?,
+        )?),
+        y1: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing y1 in ecAdd")?,
+        )?),
+        x2: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing x2 in ecAdd")?,
+        )?),
+        y2: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing y2 in ecAdd")?,
+        )?),
+        curve_id: Box::new(parse_general_expression(
             inner.next().ok_or("Missing curve ID in ecAdd")?,
-        )),
+        )?),
     })
 }
 
 pub(crate) fn parse_ec_mul(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::EcMul {
-        x: Box::new(parse_atom_pair(inner.next().ok_or("Missing x in ecMul")?)),
-        y: Box::new(parse_atom_pair(inner.next().ok_or("Missing y in ecMul")?)),
-        scalar: Box::new(parse_atom_pair(
+        x: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing x in ecMul")?,
+        )?),
+        y: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing y in ecMul")?,
+        )?),
+        scalar: Box::new(parse_general_expression(
             inner.next().ok_or("Missing scalar in ecMul")?,
-        )),
-        curve_id: Box::new(parse_atom_pair(
+        )?),
+        curve_id: Box::new(parse_general_expression(
             inner.next().ok_or("Missing curve ID in ecMul")?,
-        )),
+        )?),
     })
 }
 
 pub(crate) fn parse_ec_pairing(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::EcPairing {
-        g1_x: Box::new(parse_atom_pair(
+        g1_x: Box::new(parse_general_expression(
             inner.next().ok_or("Missing G1 x in ecPairing")?,
-        )),
-        g1_y: Box::new(parse_atom_pair(
+        )?),
+        g1_y: Box::new(parse_general_expression(
             inner.next().ok_or("Missing G1 y in ecPairing")?,
-        )),
-        g2_x_c1: Box::new(parse_atom_pair(
+        )?),
+        g2_x_c1: Box::new(parse_general_expression(
             inner.next().ok_or("Missing G2 x c1 in ecPairing")?,
-        )),
-        g2_x_c0: Box::new(parse_atom_pair(
+        )?),
+        g2_x_c0: Box::new(parse_general_expression(
             inner.next().ok_or("Missing G2 x c0 in ecPairing")?,
-        )),
-        g2_y_c1: Box::new(parse_atom_pair(
+        )?),
+        g2_y_c1: Box::new(parse_general_expression(
             inner.next().ok_or("Missing G2 y c1 in ecPairing")?,
-        )),
-        g2_y_c0: Box::new(parse_atom_pair(
+        )?),
+        g2_y_c0: Box::new(parse_general_expression(
             inner.next().ok_or("Missing G2 y c0 in ecPairing")?,
-        )),
-        curve_id: Box::new(parse_atom_pair(
+        )?),
+        curve_id: Box::new(parse_general_expression(
             inner.next().ok_or("Missing curve ID in ecPairing")?,
-        )),
+        )?),
     })
 }
 
@@ -157,25 +157,13 @@ pub(crate) fn parse_ec_mul_scalar_verify(pair: Pair<Rule>) -> Result<Expression,
     let scalar_pair = inner
         .next()
         .ok_or("Missing scalar k in ecMulScalarVerify")?;
-    let scalar = match scalar_pair.as_rule() {
-        Rule::identifier => Expression::Variable(scalar_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(scalar_pair.as_str().to_string()),
-        _ => Expression::Property(scalar_pair.as_str().to_string()),
-    };
+    let scalar = parse_general_expression(scalar_pair)?;
 
     let point_p_pair = inner.next().ok_or("Missing point P in ecMulScalarVerify")?;
-    let point_p = match point_p_pair.as_rule() {
-        Rule::identifier => Expression::Variable(point_p_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(point_p_pair.as_str().to_string()),
-        _ => Expression::Property(point_p_pair.as_str().to_string()),
-    };
+    let point_p = parse_general_expression(point_p_pair)?;
 
     let point_q_pair = inner.next().ok_or("Missing point Q in ecMulScalarVerify")?;
-    let point_q = match point_q_pair.as_rule() {
-        Rule::identifier => Expression::Variable(point_q_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(point_q_pair.as_str().to_string()),
-        _ => Expression::Property(point_q_pair.as_str().to_string()),
-    };
+    let point_q = parse_general_expression(point_q_pair)?;
 
     Ok(Expression::EcMulScalarVerify {
         scalar: Box::new(scalar),
@@ -189,25 +177,13 @@ pub(crate) fn parse_tweak_verify(pair: Pair<Rule>) -> Result<Expression, String>
     let mut inner = pair.into_inner();
 
     let point_p_pair = inner.next().ok_or("Missing point P in tweakVerify")?;
-    let point_p = match point_p_pair.as_rule() {
-        Rule::identifier => Expression::Variable(point_p_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(point_p_pair.as_str().to_string()),
-        _ => Expression::Property(point_p_pair.as_str().to_string()),
-    };
+    let point_p = parse_general_expression(point_p_pair)?;
 
     let tweak_pair = inner.next().ok_or("Missing tweak k in tweakVerify")?;
-    let tweak = match tweak_pair.as_rule() {
-        Rule::identifier => Expression::Variable(tweak_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(tweak_pair.as_str().to_string()),
-        _ => Expression::Property(tweak_pair.as_str().to_string()),
-    };
+    let tweak = parse_general_expression(tweak_pair)?;
 
     let point_q_pair = inner.next().ok_or("Missing point Q in tweakVerify")?;
-    let point_q = match point_q_pair.as_rule() {
-        Rule::identifier => Expression::Variable(point_q_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(point_q_pair.as_str().to_string()),
-        _ => Expression::Property(point_q_pair.as_str().to_string()),
-    };
+    let point_q = parse_general_expression(point_q_pair)?;
 
     Ok(Expression::TweakVerify {
         point_p: Box::new(point_p),
@@ -255,8 +231,8 @@ pub(crate) fn parse_check_sig_from_stack_verify_expr(
 pub(crate) fn parse_substr(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let data = parse_byte_value(inner.next().ok_or("Missing data in substr")?)?;
-    let offset = parse_atom_pair(inner.next().ok_or("Missing offset in substr")?);
-    let size = parse_atom_pair(inner.next().ok_or("Missing size in substr")?);
+    let offset = parse_general_expression(inner.next().ok_or("Missing offset in substr")?)?;
+    let size = parse_general_expression(inner.next().ok_or("Missing size in substr")?)?;
     Ok(Expression::Substr {
         data: Box::new(data),
         offset: Box::new(offset),
@@ -287,8 +263,8 @@ pub(crate) fn parse_bin2num(pair: Pair<Rule>) -> Result<Expression, String> {
 /// Parse num2bin(value, size) → Expression::Num2Bin
 pub(crate) fn parse_num2bin(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let value = parse_atom_pair(inner.next().ok_or("Missing value in num2bin")?);
-    let size = parse_atom_pair(inner.next().ok_or("Missing size in num2bin")?);
+    let value = parse_general_expression(inner.next().ok_or("Missing value in num2bin")?)?;
+    let size = parse_general_expression(inner.next().ok_or("Missing size in num2bin")?)?;
     Ok(Expression::Num2Bin {
         value: Box::new(value),
         size: Box::new(size),

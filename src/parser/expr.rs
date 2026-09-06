@@ -174,17 +174,22 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
             parse_primary_expr(inner)
         }
-        // `-operand` negates; without the leading `-` this is a pass-through.
-        Rule::unary_expr => {
+        Rule::unary_expr | Rule::unary_atom => {
             let mut inner = pair.into_inner();
-            let first = inner.next().ok_or("Empty unary expression")?;
-            if first.as_rule() != Rule::sub_op {
-                return parse_primary_expr(first);
+            let operand = inner.next_back().ok_or("Empty unary expression")?;
+            let mut value = parse_primary_expr(operand)?;
+            for operator in inner.rev() {
+                value = match operator.as_rule() {
+                    Rule::sub_op => Expression::Negate {
+                        value: Box::new(value),
+                    },
+                    Rule::not_op => Expression::Not {
+                        value: Box::new(value),
+                    },
+                    _ => return Err("Unexpected unary operator".to_string()),
+                };
             }
-            let operand = inner.next().ok_or("Missing operand after unary `-`")?;
-            Ok(Expression::Negate {
-                value: Box::new(parse_primary_expr(operand)?),
-            })
+            Ok(value)
         }
         Rule::general_expression | Rule::comparison_expr => {
             // Parenthesized expression
@@ -354,17 +359,6 @@ pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, 
 }
 
 // ─── Byte-string Manipulation Parsing ──────────────────────────────────
-
-/// Helper: convert an inner pair to an Expression for the byte-string
-/// and packet primitives. Identifiers → Variable, numbers → Literal,
-/// everything else → Property.
-pub(crate) fn parse_atom_pair(pair: Pair<Rule>) -> Expression {
-    match pair.as_rule() {
-        Rule::identifier => Expression::Variable(pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(pair.as_str().to_string()),
-        _ => Expression::Property(pair.as_str().to_string()),
-    }
-}
 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner().collect::<Vec<_>>();

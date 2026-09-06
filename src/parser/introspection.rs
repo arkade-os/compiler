@@ -89,7 +89,8 @@ pub(crate) fn parse_output_introspection_to_expression(
 /// Parse tx.packet(packetType) → Expression::PacketInspect
 pub(crate) fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let packet_type = parse_atom_pair(inner.next().ok_or("Missing packet type in tx.packet()")?);
+    let packet_type =
+        parse_general_expression(inner.next().ok_or("Missing packet type in tx.packet()")?)?;
     Ok(Expression::PacketInspect {
         packet_type: Box::new(packet_type),
     })
@@ -107,13 +108,13 @@ pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression,
         .into_inner()
         .next()
         .ok_or("Empty array access in tx.inputs[i].packet()")?;
-    let index = parse_atom_pair(index_pair);
+    let index = parse_general_expression(index_pair)?;
 
-    let packet_type = parse_atom_pair(
+    let packet_type = parse_general_expression(
         inner
             .next()
             .ok_or("Missing packet type in tx.inputs[i].packet()")?,
-    );
+    )?;
 
     Ok(Expression::InputPacketInspect {
         index: Box::new(index),

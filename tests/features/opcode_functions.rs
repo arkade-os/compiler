@@ -488,3 +488,238 @@ fn test_streaming_hash_full_workflow() {
         asm_str
     );
 }
+
+#[test]
+fn unary_negation_precedence_and_spend_shape() {
+    for (expression, expected) in [
+        ("--1", "1 OP_NEGATE OP_NEGATE"),
+        ("-(-1)", "1 OP_NEGATE OP_NEGATE"),
+        ("1 - -2 * 3", "1 2 OP_NEGATE 3 OP_MUL OP_SUB"),
+        ("-(1 + 2) * 3", "1 2 OP_ADD OP_NEGATE 3 OP_MUL"),
+        ("!true", "OP_1 OP_NOT"),
+        ("!false", "OP_0 OP_NOT"),
+        ("!!true", "OP_1 OP_NOT OP_NOT"),
+        ("!!false", "OP_0 OP_NOT OP_NOT"),
+        ("!(1 < 2)", "1 2 OP_LESSTHAN OP_NOT"),
+        ("!true != false", "OP_1 OP_NOT OP_0 OP_EQUAL OP_NOT"),
+        ("num2bin(-1, 4)", "1 OP_NEGATE 4 OP_NUM2BIN"),
+        ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
+    ] {
+        let source = format!(
+            "contract Unary() {{ function spend() {{ let result = {expression}; require(result == result); }} }}"
+        );
+        let output = compile(&source).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        assert!(
+            output.warnings.is_empty(),
+            "{expression}: {:?}",
+            output.warnings
+        );
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        assert!(
+            contains_tokens(&asm, &expected.split_whitespace().collect::<Vec<_>>()),
+            "{expression}: {asm:?}"
+        );
+        assert_eq!(output.functions.len(), 1);
+        assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
+        assert!(crate::common::arkade_inputs(&output, "spend").is_empty());
+        assert_eq!(
+            crate::common::witness_names(&output, "spend", "spend"),
+            ["serverSig", "emulatorSig"]
+        );
+        assert_eq!(
+            crate::common::leaf_asm(&output, "spend", "spend"),
+            "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        );
+    }
+}
+
+#[test]
+fn unary_negation_in_loops_and_conditions() {
+    let output = compile(
+        r#"
+        contract Unary() {
+            function spend(bool[2] flags) {
+                for (i, flag) in flags {
+                    if (!flag) { require(!!flag == false); }
+                    let bytes = num2bin(-i, 4);
+                    require(size(bytes) == 4);
+                }
+            }
+        }
+    "#,
+    )
+    .expect("negated loop operands compile");
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    let asm = crate::common::arkade_asm(&output, "spend");
+    for index in 0..2 {
+        assert!(
+            asm.contains(&format!("{index} OP_NEGATE 4 OP_NUM2BIN")),
+            "{asm}"
+        );
+    }
+    assert_eq!(
+        crate::common::opcode_count_in_arkade(&output, "spend", "OP_NOT"),
+        6
+    );
+    assert!(!asm.contains("<flag>") && !asm.contains("<i>"), "{asm}");
+}
+
+#[test]
+fn unary_negation_rejects_invalid_operand_types() {
+    for (params, expression, expected) in [
+        ("bool value", "-value", "expected 'int'"),
+        ("bytes value", "-value", "expected 'int'"),
+        ("int value", "!value", "expected 'bool'"),
+        ("bytes value", "!value", "expected 'bool'"),
+        ("bool value", "num2bin(-value, 4)", "expected 'int'"),
+        ("bool value", "modExp(-value, 2, 3)", "expected 'int'"),
+        ("bool value", "!-value", "expected 'int'"),
+        ("int value", "-!value", "expected 'bool'"),
+        ("bool[2] value", "-value[0]", "expected 'int'"),
+        ("int[2] value", "!value[0]", "expected 'bool'"),
+    ] {
+        let source = format!("contract Unary() {{ function spend({params}) {{ let result = {expression}; require(true); }} }}");
+        let error = compile(&source).expect_err(&source).to_string();
+        assert!(
+            error.contains("unary '") && error.contains(expected),
+            "{expression}: {error}"
+        );
+    }
+}
+
+#[test]
+fn unary_negation_preserves_literal_index_bounds() {
+    for (index, valid) in [
+        ("--1", true),
+        ("---0", true),
+        ("---1", false),
+        ("--2", false),
+    ] {
+        let source = format!("contract Unary() {{ function spend(int[2] values) {{ require(values[{index}] == 0); }} }}");
+        let result = compile(&source);
+        if valid {
+            result.expect(&source);
+        } else {
+            assert!(
+                result.unwrap_err().to_string().contains("out of range"),
+                "{index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unary_negation_remains_unsupported_in_l1_tapscripts() {
+    for condition in [
+        "!checkSig(sig, owner)",
+        "-checkSig(sig, owner)",
+        "!!checkSig(sig, owner)",
+    ] {
+        let source = format!("contract Unary(pubkey owner) {{ function spend(signature sig) tapscript {{ require({condition}); }} }}");
+        let error = compile(&source).expect_err(&source).to_string();
+        assert!(
+            error.contains("unsupported compound expression in tapscript"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn unary_negation_in_builtin_atom_arguments() {
+    for (statement, expected) in [
+        (
+            "let result = num2bin(-(-1), 4);",
+            "1 OP_NEGATE OP_NEGATE 4 OP_NUM2BIN",
+        ),
+        (
+            "let result = num2bin(-value, 4);",
+            "OP_0 OP_PICK OP_NEGATE 4 OP_NUM2BIN",
+        ),
+        (
+            "let result = modExp(--value, 2, 3);",
+            "OP_0 OP_PICK OP_NEGATE OP_NEGATE 2 3 OP_MODEXP",
+        ),
+        (
+            "let result = ecAdd(-1, 2, 3, 4, 0);",
+            "1 OP_NEGATE 2 3 4 0 OP_ECADD",
+        ),
+        (
+            "let result = ecMul(1, 2, -3, 0);",
+            "1 2 3 OP_NEGATE 0 OP_ECMUL",
+        ),
+        (
+            "let result = ecPairing(1, -2, 3, 4, 5, 6, 0);",
+            "1 2 OP_NEGATE 3 4 5 6 OP_1 0 OP_ECPAIRING",
+        ),
+        (
+            "require(ecMulScalarVerify(-1, 2, 3));",
+            "1 OP_NEGATE 2 3 OP_ECMULSCALARVERIFY",
+        ),
+        (
+            "require(tweakVerify(1, -2, 3));",
+            "1 2 OP_NEGATE 3 OP_TWEAKVERIFY",
+        ),
+        (
+            "let result = sha256Initialize(-1);",
+            "1 OP_NEGATE OP_SHA256INITIALIZE",
+        ),
+        (
+            "let result = sha256Update(data, -1);",
+            "1 OP_NEGATE OP_SHA256UPDATE",
+        ),
+        (
+            "let result = sha256Finalize(data, -1);",
+            "1 OP_NEGATE OP_SHA256FINALIZE",
+        ),
+        ("let result = sighash(-1);", "1 OP_NEGATE OP_SIGHASH"),
+        ("let result = digest(data, -1);", "1 OP_NEGATE OP_DIGEST"),
+        (
+            "let result = substr(data, --0, 1);",
+            "0 OP_NEGATE OP_NEGATE 1 OP_SUBSTR",
+        ),
+        (
+            "let result = tx.packet(--1);",
+            "1 OP_NEGATE OP_NEGATE OP_INSPECTPACKET",
+        ),
+        (
+            "let result = tx.inputs[0].packet(--1);",
+            "1 OP_NEGATE OP_NEGATE 0 OP_INSPECTINPUTPACKET",
+        ),
+    ] {
+        let source = format!("contract Unary() {{ function spend(int value, bytes data) {{ {statement} require(true); }} }}");
+        let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        assert!(
+            contains_tokens(&asm, &expected.split_whitespace().collect::<Vec<_>>()),
+            "{statement}: {asm:?}"
+        );
+    }
+}
+
+#[test]
+fn logical_negation_preserves_nested_expressions() {
+    let output = compile(
+        r#"
+        struct State { bool enabled; }
+        contract Unary(pubkey owner) {
+            function spend(State state, signature sig, bytes left, bytes right) {
+                require(!state.enabled);
+                require(!(left + right == left));
+                require(!checkSig(sig, owner));
+            }
+        }
+    "#,
+    )
+    .expect("nested logical operands compile");
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(asm.iter().any(|token| token == "OP_CAT"), "{asm:?}");
+    assert!(
+        contains_tokens(&asm, &["OP_EQUAL", "OP_NOT", "OP_VERIFY"]),
+        "{asm:?}"
+    );
+    assert!(
+        contains_tokens(&asm, &["OP_CHECKSIG", "OP_NOT", "OP_VERIFY"]),
+        "{asm:?}"
+    );
+}

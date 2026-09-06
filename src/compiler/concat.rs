@@ -322,6 +322,15 @@ impl ConcatPass {
                     ArkType::Int,
                 )
             }
+            Expression::Not { value } => {
+                let (nv, _) = self.rewrite_expression_concat(*value, scope);
+                (
+                    Expression::Not {
+                        value: Box::new(nv),
+                    },
+                    ArkType::Bool,
+                )
+            }
             Expression::ContractInstance {
                 contract_name,
                 args,

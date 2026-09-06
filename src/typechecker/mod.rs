@@ -369,6 +369,7 @@ fn resolve_expression(expression: &mut Expression, scope: &Scope) {
         Expression::Sha256 { data }
         | Expression::Sha256Initialize { data }
         | Expression::Negate { value: data }
+        | Expression::Not { value: data }
         | Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
         | Expression::SizeOf { data }
@@ -724,6 +725,9 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
 
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
     match expr {
+        Expression::Negate { value } | Expression::Not { value } => {
+            check_expression(value, scope, errors, fn_name);
+        }
         Expression::ArrayIndex { array, index } => {
             check_array_index(array, index, scope, errors, fn_name);
         }
@@ -777,13 +781,14 @@ fn check_array_index(
     }
 }
 
-pub(crate) fn literal_index(expression: &Expression) -> Option<(bool, &str)> {
+pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
+    let mut negative = false;
+    while let Expression::Negate { value } = expression {
+        negative = !negative;
+        expression = value;
+    }
     match expression {
-        Expression::Literal(value) => Some((false, value)),
-        Expression::Negate { value } => match value.as_ref() {
-            Expression::Literal(value) => Some((true, value)),
-            _ => None,
-        },
+        Expression::Literal(value) => Some((negative, value)),
         _ => None,
     }
 }
@@ -1020,6 +1025,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Arithmetic
         Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,
+        Expression::Not { .. } => ArkType::Bool,
 
         // Crypto expressions
         Expression::CheckSigExpr { .. }

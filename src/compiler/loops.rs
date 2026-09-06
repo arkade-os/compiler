@@ -292,6 +292,11 @@ pub(crate) fn substitute_expression(
                 value, index_var, value_var, k, array_name,
             )),
         },
+        Expression::Not { value } => Expression::Not {
+            value: Box::new(substitute_expression(
+                value, index_var, value_var, k, array_name,
+            )),
+        },
         Expression::ReverseBytes { data } => Expression::ReverseBytes {
             data: Box::new(substitute_expression(
                 data, index_var, value_var, k, array_name,

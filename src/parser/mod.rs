@@ -410,6 +410,30 @@ mod tests {
     use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
 
     #[test]
+    fn parses_unary_prefix_order_and_boolean_boundaries() {
+        let contract = parse("contract Unary() { function spend() { let result = -!true != false; let truth = !trueValue; } }").unwrap();
+        let Statement::LetBinding {
+            value: Expression::BinaryOp { left, op, right },
+            ..
+        } = &contract.functions[0].statements[0]
+        else {
+            panic!("comparison must be the outer expression");
+        };
+        assert_eq!(op, "!=");
+        let Expression::Negate { value } = left.as_ref() else {
+            panic!("minus must be the outer prefix");
+        };
+        let Expression::Not { value } = value.as_ref() else {
+            panic!("not must be the inner prefix");
+        };
+        assert!(matches!(value.as_ref(), Expression::Literal(value) if value == "true"));
+        assert!(matches!(right.as_ref(), Expression::Literal(value) if value == "false"));
+        assert!(
+            matches!(&contract.functions[0].statements[1], Statement::LetBinding { value: Expression::Not { value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
+        );
+    }
+
+    #[test]
     fn parses_structured_assignment_targets() {
         let contract = parse(
             r#"
