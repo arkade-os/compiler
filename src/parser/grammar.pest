@@ -82,7 +82,11 @@ let_binding = {
 // Variable assignment (reassignment without let keyword)
 // Must check for = but not == or >= or <=
 var_assign = {
-    (identifier_property_access | array_index_access | identifier) ~ "=" ~ !("=") ~ general_expression ~ ";"
+    assignment_target ~ "=" ~ !("=") ~ general_expression ~ ";"
+}
+
+assignment_target = {
+    identifier ~ ("." ~ identifier)* ~ ("[" ~ general_expression ~ "]")?
 }
 
 // Require statement

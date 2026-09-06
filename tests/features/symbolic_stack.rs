@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_DROP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
-    OP_MUL, OP_PICK, OP_ROLL,
+    OP_ADD, OP_DROP, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
+    OP_LESSTHAN, OP_MUL, OP_PICK, OP_PUT,
 };
 
 fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
@@ -80,7 +80,7 @@ contract Nested() {
 
 #[test]
 fn reassignment_replaces_the_existing_slot_and_scopes_clean_up() {
-    let covenant = covenant(
+    let output = compile(
         r#"
 contract Mutate() {
     function spend(int value, bool choose) {
@@ -97,12 +97,39 @@ contract Mutate() {
     }
 }
 "#,
-        "spend",
+    )
+    .expect("compile");
+
+    assert_eq!(output.functions.len(), 1);
+    let group = crate::common::group(&output, "spend");
+    assert_eq!(group.leaves.len(), 1);
+    assert_eq!(group.leaves[0].name, "spend");
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert!(group.leaves[0]
+        .witness
+        .iter()
+        .all(|w| w.elem_type == "signature" && w.injected));
+    assert_eq!(
+        crate::common::leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+    let covenant = group.arkade.as_ref().expect("spend covenant");
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["value", "choose"]
     );
 
     assert!(
-        covenant.asm.iter().any(|token| token == OP_ROLL),
-        "in-place reassignment must roll the old slot into position: {:?}",
+        covenant
+            .asm
+            .iter()
+            .filter(|token| token.as_str() == OP_PUT)
+            .count()
+            >= 3,
+        "each scalar reassignment must replace its existing slot with {OP_PUT}: {:?}",
         covenant.asm
     );
     let if_index = covenant
@@ -162,7 +189,7 @@ contract GroupIndices() {
 
 #[test]
 fn runtime_array_indices_are_bounded_and_pick_by_computed_depth() {
-    let covenant = covenant(
+    let output = compile(
         r#"
 contract RuntimeIndex() {
     function spend(int[3] values, int index) {
@@ -170,10 +197,32 @@ contract RuntimeIndex() {
     }
 }
 "#,
-        "spend",
+    )
+    .expect("compile");
+
+    assert_eq!(output.functions.len(), 1);
+    let group = crate::common::group(&output, "spend");
+    assert_eq!(group.leaves.len(), 1);
+    assert_eq!(group.leaves[0].name, "spend");
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert!(group.leaves[0]
+        .witness
+        .iter()
+        .all(|w| w.elem_type == "signature" && w.injected));
+    assert_eq!(
+        crate::common::leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+    let covenant = group.arkade.as_ref().expect("spend covenant");
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["values", "index"]
     );
 
-    for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_ADD, OP_PICK] {
+    for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_DUP, OP_PICK] {
         assert!(
             covenant.asm.iter().any(|token| token == opcode),
             "runtime index must emit {opcode}: {:?}",
@@ -185,18 +234,14 @@ contract RuntimeIndex() {
         &[
             "OP_3",
             OP_PICK,
-            "OP_0",
-            OP_PICK,
+            OP_DUP,
             "OP_0",
             OP_GREATERTHANOREQUAL,
             "OP_VERIFY",
-            "OP_0",
-            OP_PICK,
+            OP_DUP,
             "OP_3",
             OP_LESSTHAN,
             "OP_VERIFY",
-            "OP_0",
-            OP_ADD,
             OP_PICK,
         ],
     ));
