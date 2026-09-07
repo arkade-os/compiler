@@ -217,6 +217,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(value, asm);
             asm.push(OP_NEGATE.to_string());
         }
+        Expression::Not { value } => {
+            emit_expression_asm(value, asm);
+            asm.push(OP_NOT.to_string());
+        }
         Expression::ModExp {
             base,
             exponent,

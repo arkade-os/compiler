@@ -133,8 +133,11 @@ multiplicative_expr = {
     unary_expr ~ ((mul_op | div_op) ~ unary_expr)*
 }
 
-// Unary expressions: an optional leading `-` negates its operand.
-unary_expr = { sub_op? ~ primary_expr }
+// Prefix operators bind tighter than multiplication and apply right to left.
+unary_expr = { (sub_op | not_op)* ~ primary_expr }
+
+// Built-in operands accept prefixes on literals, bindings, and grouped expressions.
+unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | bool_literal | identifier | number_literal) }
 
 // Primary expressions (atoms)
 primary_expr = {
@@ -194,9 +197,10 @@ array_index_access = {
 
 // Operators
 comparison_operator = { ">=" | "<=" | "==" | "!=" | ">" | "<" }
-bool_literal = { ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
+bool_literal = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
 add_op = { "+" }
 sub_op = { "-" }
+not_op = { "!" ~ !"=" }
 mul_op = { "*" }
 div_op = { "/" }
 
@@ -530,56 +534,56 @@ sha256_func = {
 
 // Streaming SHA256 initialize: sha256Initialize(data) → OP_SHA256INITIALIZE
 sha256_initialize = {
-    "sha256Initialize" ~ "(" ~ (identifier | number_literal) ~ ")"
+    "sha256Initialize" ~ "(" ~ unary_atom ~ ")"
 }
 
 // Streaming SHA256 update: sha256Update(ctx, chunk) → OP_SHA256UPDATE
 sha256_update = {
-    "sha256Update" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+    "sha256Update" ~ "(" ~ identifier ~ "," ~ unary_atom ~ ")"
 }
 
 // Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk) → OP_SHA256FINALIZE
 sha256_finalize = {
-    "sha256Finalize" ~ "(" ~ identifier ~ "," ~ (identifier | number_literal) ~ ")"
+    "sha256Finalize" ~ "(" ~ identifier ~ "," ~ unary_atom ~ ")"
 }
 
 sighash_func = {
-    "sighash" ~ "(" ~ (identifier | number_literal) ~ ")"
+    "sighash" ~ "(" ~ unary_atom ~ ")"
 }
 
 digest_func = {
-    "digest" ~ "(" ~ additive_expr ~ "," ~ (identifier | number_literal) ~ ")"
+    "digest" ~ "(" ~ additive_expr ~ "," ~ unary_atom ~ ")"
 }
 
 // ─── Arithmetic ────────────────────────────────────────────────────────
 
 // Modular exponentiation: modExp(base, exponent, modulus) → OP_MODEXP
 mod_exp_func = {
-    "modExp" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "modExp" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
 
 ec_add = {
-    "ecAdd" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 ec_mul = {
-    "ecMul" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 ec_pairing = {
-    "ecPairing" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY
 ec_mul_scalar_verify = {
-    "ecMulScalarVerify" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "ecMulScalarVerify" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // Tweak verification: tweakVerify(P, k, Q) → OP_TWEAKVERIFY
 tweak_verify = {
-    "tweakVerify" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "tweakVerify" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
@@ -610,7 +614,7 @@ byte_value = {
 
 // Substring extraction: substr(data, offset, size) → OP_SUBSTR
 substr_func = {
-    "substr" ~ "(" ~ byte_value ~ "," ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "substr" ~ "(" ~ byte_value ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // Byte concatenation: cat(a, b) → OP_CAT
@@ -625,7 +629,7 @@ bin2num_func = {
 
 // BigNum → fixed-width bytes: num2bin(num, size) → OP_NUM2BIN
 num2bin_func = {
-    "num2bin" ~ "(" ~ (identifier | number_literal) ~ "," ~ (identifier | number_literal) ~ ")"
+    "num2bin" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // Reverse a byte array: reverseBytes(bytes) → OP_REVERSEBYTES
@@ -646,13 +650,13 @@ size_func = {
 
 // Current-tx packet: tx.packet(packetType) → <packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY
 packet_inspect = {
-    "tx" ~ "." ~ "packet" ~ "(" ~ (identifier | number_literal) ~ ")"
+    "tx" ~ "." ~ "packet" ~ "(" ~ unary_atom ~ ")"
 }
 
 // Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
 // → <packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY
 input_packet_inspect = {
-    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ (identifier | number_literal) ~ ")"
+    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ unary_atom ~ ")"
 }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────
