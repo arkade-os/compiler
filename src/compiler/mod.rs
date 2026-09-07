@@ -35,6 +35,7 @@ mod concat;
 mod expr;
 mod introspection;
 mod loops;
+mod references;
 
 pub(crate) use asset::*;
 pub(crate) use comparison::*;
@@ -780,7 +781,13 @@ fn covenant_for(
     structs: &[crate::models::StructDefinition],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
-    let mut generator = Generator::new(&function.parameters, constructor_parameters, structs)?;
+    let references = references::referenced_parameters(&function.statements);
+    let retained_parameters = constructor_parameters
+        .iter()
+        .filter(|parameter| references.contains(parameter.name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut generator = Generator::new(&function.parameters, &retained_parameters, structs)?;
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })

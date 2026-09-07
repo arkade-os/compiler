@@ -345,3 +345,104 @@ contract RuntimeIndex() {
         "unexpected error: {error}"
     );
 }
+
+#[test]
+fn constructor_parameters_are_filtered_per_spending_path() {
+    let output = compile(
+        r#"
+contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
+    function first(int value) { require(value == left); }
+    function second(int value) { require(value == right); }
+    function neither() { require(true); }
+    function exit(signature ownerSig) tapscript {
+        require(older(delay));
+        require(checkSig(ownerSig, exitKey));
+    }
+}
+"#,
+    )
+    .expect("compile");
+    assert_eq!(output.parameters.len(), 5);
+    assert_eq!(output.functions.len(), 4);
+    for (name, parameter) in [("first", "left"), ("second", "right")] {
+        let group = crate::common::group(&output, name);
+        let covenant = group.arkade.as_ref().unwrap();
+        assert_eq!(
+            covenant.asm,
+            format!(
+                "<{parameter}> OP_1 OP_PICK OP_1 OP_PICK OP_EQUAL OP_VERIFY OP_1 OP_NIP OP_NIP"
+            )
+            .split_whitespace()
+            .map(String::from)
+            .collect::<Vec<_>>()
+        );
+        assert_eq!(crate::common::arkade_inputs(&output, name), ["value"]);
+        assert_eq!(group.leaves.len(), 1);
+        assert_eq!(
+            crate::common::witness_names(&output, name, name),
+            ["serverSig", "emulatorSig"]
+        );
+        assert_eq!(
+            crate::common::leaf_asm(&output, name, name),
+            format!("<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:{name}> OP_CHECKSIG")
+        );
+    }
+    assert_eq!(
+        crate::common::arkade_asm_tokens(&output, "neither"),
+        ["OP_1", "OP_VERIFY", "OP_1"]
+    );
+    assert!(crate::common::group(&output, "exit").arkade.is_none());
+    assert_eq!(
+        crate::common::witness_names(&output, "exit", "exit"),
+        ["ownerSig"]
+    );
+    assert_eq!(
+        crate::common::leaf_asm(&output, "exit", "exit"),
+        "<delay> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
+    );
+}
+
+#[test]
+fn constructor_references_cover_nested_bodies_and_named_operands() {
+    for (parameters, inputs, body, expected) in [
+        ("int limit, int alternate, bool choose", "int value",
+         "let total = 0; if (choose) { total = limit; } else { total = alternate; } require(total > value);",
+         vec!["<choose>", "<alternate>", "<limit>"]),
+        ("int[2] values, int limit", "",
+         "for (i, value) in values { require(value > limit); }",
+         vec!["<limit>", "<values.1>", "<values.0>"]),
+        ("int index, int amount", "",
+         "int[2] values = [0, 0]; values[index] = amount; require(values[0] >= 0);",
+         vec!["<amount>", "<index>"]),
+        ("Policy policy", "int index",
+         "require(policy.limits[index] > 0); require(policy.limits.length == 2);",
+         vec!["<policy.limits.1>", "<policy.limits.0>", "<policy.key>"]),
+        ("pubkey[2] keys, int index, bytes32 message", "signature sig",
+         "require(checkSigFromStack(sig, keys[index], message));",
+         vec!["<message>", "<index>", "<keys.1>", "<keys.0>"]),
+        ("pubkey key", "signature sig",
+         "if (checkSig(sig, key)) { require(true); } else { require(false); }",
+         vec!["<key>"]),
+        ("bytes32 digest, int deadline", "bytes preimage",
+         "require(sha256(preimage) == digest); require(tx.time >= deadline);",
+         vec!["<deadline>", "<digest>"]),
+        ("int groupIndex, bytes32 txid, int gidx", "",
+         "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
+         vec!["<gidx>", "<txid>", "<groupIndex>"]),
+        ("Policy policy", "",
+         "require(tx.outputs[0].scriptPubKey == new Child(policy));",
+         vec!["<policy.limits.1>", "<policy.limits.0>", "<policy.key>"]),
+    ] {
+        let source = format!(
+            "struct Policy {{ pubkey key; int[2] limits; }} contract C(int unused, Policy unusedPolicy, {parameters}, int unusedTail) {{ function spend({inputs}) {{ {body} }} }}"
+        );
+        let actual = covenant(&source, "spend");
+        let prologue = actual.asm.iter().take_while(|token| token.starts_with('<')).map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(prologue, expected, "{body}");
+        let baseline = covenant(&source.replace("int unused, Policy unusedPolicy, ", "").replace(", int unusedTail", ""), "spend");
+        assert_eq!(actual.asm, baseline.asm, "{body}");
+        if body.contains("new Child") {
+            assert!(actual.asm.contains(&"<VTXO:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
+        }
+    }
+}
