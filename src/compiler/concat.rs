@@ -349,7 +349,21 @@ impl ConcatPass {
                     Expression::InputPacketInspect { index, packet_type } => {
                         vec![index, packet_type]
                     }
-                    _ => vec![],
+                    // These compound variants are handled above.
+                    Expression::ArrayLiteral(_)
+                    | Expression::StructLiteral(_)
+                    | Expression::ArrayIndex { .. }
+                    | Expression::BinaryOp { .. } => vec![],
+                    Expression::Variable(_)
+                    | Expression::Literal(_)
+                    | Expression::Property(_)
+                    | Expression::CurrentInput(_)
+                    | Expression::TxIntrospection { .. }
+                    | Expression::GroupProperty { .. }
+                    | Expression::AssetGroupsLength
+                    | Expression::CheckSigExpr { .. }
+                    | Expression::CheckSigFromStackExpr { .. }
+                    | Expression::CheckSigFromStackVerify { .. } => vec![],
                 };
                 for child in children {
                     *child = self
