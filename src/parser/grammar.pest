@@ -136,8 +136,8 @@ multiplicative_expr = {
 // Prefix operators bind tighter than multiplication and apply right to left.
 unary_expr = { (sub_op | not_op)* ~ primary_expr }
 
-// Built-in atom arguments accept prefix operators on literals and bindings.
-unary_atom = { (sub_op | not_op)* ~ ("(" ~ unary_atom ~ ")" | bool_literal | identifier | number_literal) }
+// Built-in operands accept prefixes on literals, bindings, and grouped expressions.
+unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | bool_literal | identifier | number_literal) }
 
 // Primary expressions (atoms)
 primary_expr = {

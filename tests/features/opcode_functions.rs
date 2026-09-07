@@ -541,7 +541,7 @@ fn unary_negation_in_loops_and_conditions() {
             function spend(bool[2] flags) {
                 for (i, flag) in flags {
                     if (!flag) { require(!!flag == false); }
-                    let bytes = num2bin(-i, 4);
+                    let bytes = num2bin(-(i + 1), 4);
                     require(size(bytes) == 4);
                 }
             }
@@ -553,7 +553,7 @@ fn unary_negation_in_loops_and_conditions() {
     let asm = crate::common::arkade_asm(&output, "spend");
     for index in 0..2 {
         assert!(
-            asm.contains(&format!("{index} OP_NEGATE 4 OP_NUM2BIN")),
+            asm.contains(&format!("{index} 1 OP_ADD OP_NEGATE 4 OP_NUM2BIN")),
             "{asm}"
         );
     }
@@ -572,6 +572,7 @@ fn unary_negation_rejects_invalid_operand_types() {
         ("int value", "!value", "expected 'bool'"),
         ("bytes value", "!value", "expected 'bool'"),
         ("bool value", "num2bin(-value, 4)", "expected 'int'"),
+        ("int value", "num2bin(-(value == 1), 4)", "expected 'int'"),
         ("bool value", "modExp(-value, 2, 3)", "expected 'int'"),
         ("bool value", "!-value", "expected 'int'"),
         ("int value", "-!value", "expected 'bool'"),
@@ -674,6 +675,18 @@ fn unary_negation_in_builtin_atom_arguments() {
         ("let result = sighash(-1);", "1 OP_NEGATE OP_SIGHASH"),
         ("let result = digest(data, -1);", "1 OP_NEGATE OP_DIGEST"),
         (
+            "let result = substr(data, -(value + 1), (2 * 3));",
+            "1 OP_ADD OP_NEGATE 2 3 OP_MUL OP_SUBSTR",
+        ),
+        (
+            "let result = num2bin(-(value + 1), (2 + 2));",
+            "1 OP_ADD OP_NEGATE 2 2 OP_ADD OP_NUM2BIN",
+        ),
+        (
+            "require(ecMulScalarVerify(value, (data + data), data));",
+            "OP_CAT",
+        ),
+        (
             "let result = substr(data, --0, 1);",
             "0 OP_NEGATE OP_NEGATE 1 OP_SUBSTR",
         ),
@@ -722,4 +735,12 @@ fn logical_negation_preserves_nested_expressions() {
         contains_tokens(&asm, &["OP_CHECKSIG", "OP_NOT", "OP_VERIFY"]),
         "{asm:?}"
     );
+}
+
+#[test]
+fn grouped_builtin_operands_reject_implicit_byte_conversion() {
+    let error = compile("contract Grouped() { function spend(bytes data) { require(ecMulScalarVerify(1, (data + 1), data)); } }")
+        .expect_err("grouped operands must validate concatenation types")
+        .to_string();
+    assert!(error.contains("cannot concatenate bytes"), "{error}");
 }

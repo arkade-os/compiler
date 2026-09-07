@@ -247,108 +247,118 @@ impl ConcatPass {
                     )
                 }
             }
-            Expression::Sha256 { data } => {
-                let (new_data, _) = self.rewrite_expression_concat(*data, scope);
-                (
-                    Expression::Sha256 {
-                        data: Box::new(new_data),
-                    },
-                    ArkType::Bytes32,
-                )
-            }
-            Expression::Sha256Initialize { data } => {
-                let (new_data, _) = self.rewrite_expression_concat(*data, scope);
-                (
-                    Expression::Sha256Initialize {
-                        data: Box::new(new_data),
-                    },
-                    ArkType::Bytes32,
-                )
-            }
-            Expression::Sha256Update { context, chunk } => {
-                let (new_ctx, _) = self.rewrite_expression_concat(*context, scope);
-                let (new_chunk, _) = self.rewrite_expression_concat(*chunk, scope);
-                (
-                    Expression::Sha256Update {
-                        context: Box::new(new_ctx),
-                        chunk: Box::new(new_chunk),
-                    },
-                    ArkType::Bytes32,
-                )
-            }
-            Expression::Sha256Finalize {
-                context,
-                last_chunk,
-            } => {
-                let (new_ctx, _) = self.rewrite_expression_concat(*context, scope);
-                let (new_chunk, _) = self.rewrite_expression_concat(*last_chunk, scope);
-                (
+            mut other => {
+                let children: Vec<&mut Expression> = match &mut other {
+                    Expression::AssetLookup {
+                        index,
+                        asset_txid,
+                        asset_gidx,
+                        ..
+                    }
+                    | Expression::AssetHas {
+                        index,
+                        asset_txid,
+                        asset_gidx,
+                        ..
+                    } => vec![index, asset_txid, asset_gidx],
+                    Expression::AssetCount { index, .. }
+                    | Expression::InputIntrospection { index, .. }
+                    | Expression::OutputIntrospection { index, .. }
+                    | Expression::GroupSum { index, .. }
+                    | Expression::GroupNumIO { index, .. } => vec![index],
+                    Expression::AssetAt {
+                        io_index,
+                        asset_index,
+                        ..
+                    } => vec![io_index, asset_index],
+                    Expression::GroupFind {
+                        asset_txid,
+                        asset_gidx,
+                    }
+                    | Expression::GroupHas {
+                        asset_txid,
+                        asset_gidx,
+                    }
+                    | Expression::GroupControlIs {
+                        asset_txid,
+                        asset_gidx,
+                        ..
+                    } => vec![asset_txid, asset_gidx],
+                    Expression::GroupIOAccess {
+                        group_index,
+                        io_index,
+                        ..
+                    } => vec![group_index, io_index],
+                    Expression::Sha256 { data }
+                    | Expression::Sha256Initialize { data }
+                    | Expression::Bin2Num { data }
+                    | Expression::ReverseBytes { data }
+                    | Expression::SizeOf { data } => vec![data],
+                    Expression::Sha256Update { context, chunk } => vec![context, chunk],
                     Expression::Sha256Finalize {
-                        context: Box::new(new_ctx),
-                        last_chunk: Box::new(new_chunk),
-                    },
-                    ArkType::Bytes32,
-                )
-            }
-            Expression::Concat { left, right } => {
-                let (new_l, _) = self.rewrite_expression_concat(*left, scope);
-                let (new_r, _) = self.rewrite_expression_concat(*right, scope);
-                (
-                    Expression::Concat {
-                        left: Box::new(new_l),
-                        right: Box::new(new_r),
-                    },
-                    ArkType::Bytes,
-                )
-            }
-            // `data` is parsed as an additive expression, same as Sha256, so a
-            // `+` underneath it still has to be rewritten into a Concat.
-            Expression::Digest { data, hash_type } => {
-                let (new_data, _) = self.rewrite_expression_concat(*data, scope);
-                (
-                    Expression::Digest {
-                        data: Box::new(new_data),
-                        hash_type,
-                    },
-                    ArkType::Bytes,
-                )
-            }
-            Expression::Negate { value } => {
-                let (nv, _) = self.rewrite_expression_concat(*value, scope);
-                (
-                    Expression::Negate {
-                        value: Box::new(nv),
-                    },
-                    ArkType::Int,
-                )
-            }
-            Expression::Not { value } => {
-                let (nv, _) = self.rewrite_expression_concat(*value, scope);
-                (
-                    Expression::Not {
-                        value: Box::new(nv),
-                    },
-                    ArkType::Bool,
-                )
-            }
-            Expression::ContractInstance {
-                contract_name,
-                args,
-            } => {
-                let new_args = args
-                    .into_iter()
-                    .map(|a| self.rewrite_expression_concat(a, scope).0)
-                    .collect();
-                (
-                    Expression::ContractInstance {
-                        contract_name,
-                        args: new_args,
-                    },
-                    ArkType::Bytes,
-                )
-            }
-            // Leaves and other compound expressions: no `+` to rewrite below the surface.
-            other => {
+                        context,
+                        last_chunk,
+                    } => vec![context, last_chunk],
+                    Expression::Sighash { hash_type } => vec![hash_type],
+                    Expression::Digest { data, hash_type } => vec![data, hash_type],
+                    Expression::Negate { value } | Expression::Not { value } => vec![value],
+                    Expression::ModExp {
+                        base,
+                        exponent,
+                        modulus,
+                    } => vec![base, exponent, modulus],
+                    Expression::EcAdd {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        curve_id,
+                    } => vec![x1, y1, x2, y2, curve_id],
+                    Expression::EcMul {
+                        x,
+                        y,
+                        scalar,
+                        curve_id,
+                    } => vec![x, y, scalar, curve_id],
+                    Expression::EcPairing {
+                        g1_x,
+                        g1_y,
+                        g2_x_c1,
+                        g2_x_c0,
+                        g2_y_c1,
+                        g2_y_c0,
+                        curve_id,
+                    } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
+                    Expression::EcMulScalarVerify {
+                        scalar,
+                        point_p,
+                        point_q,
+                    } => vec![scalar, point_p, point_q],
+                    Expression::TweakVerify {
+                        point_p,
+                        tweak,
+                        point_q,
+                    } => vec![point_p, tweak, point_q],
+                    Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
+                    Expression::Substr { data, offset, size } => vec![data, offset, size],
+                    Expression::Concat { left, right } | Expression::Cat { left, right } => {
+                        vec![left, right]
+                    }
+                    Expression::Num2Bin { value, size } => vec![value, size],
+                    Expression::PacketInspect { packet_type } => vec![packet_type],
+                    Expression::InputPacketInspect { index, packet_type } => {
+                        vec![index, packet_type]
+                    }
+                    _ => vec![],
+                };
+                for child in children {
+                    *child = self
+                        .rewrite_expression_concat(
+                            std::mem::replace(child, Expression::Literal(String::new())),
+                            scope,
+                        )
+                        .0;
+                }
                 let t = crate::typechecker::infer_type(&other, scope);
                 (other, t)
             }
