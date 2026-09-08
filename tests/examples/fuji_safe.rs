@@ -47,6 +47,16 @@ fn test_fuji_safe_contract() {
         "missing unilateral group"
     );
 
+    for function in ["claim", "liquidate"] {
+        for opcode in ["OP_INSPECTOUTPUTSCRIPTPUBKEY", "OP_INSPECTOUTPUTVALUE"] {
+            assert_eq!(
+                crate::common::opcode_count_in_arkade(&output, function, opcode),
+                1,
+                "{function} must enforce the private treasury burning helper"
+            );
+        }
+    }
+
     // Verify claim function: checks expiration timeout (CLTV) in arkade covenant
     let claim_asm = crate::common::arkade_asm(&output, "claim");
     assert!(

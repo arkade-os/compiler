@@ -23,6 +23,8 @@ use crate::models::{AssignmentTarget, Contract, ContractJson, Expression, Requir
 use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
+mod functions;
+
 // ─── Issue types ──────────────────────────────────────────────────────────────
 
 /// Severity of a validation issue.
@@ -72,7 +74,7 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 ///
 /// Checks performed:
 /// - Contract name is non-empty.
-/// - At least one non-internal function is declared.
+/// - At least one public function is declared.
 /// - Function names are unique within the contract.
 /// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
@@ -89,11 +91,11 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         issues.push(ValidationIssue::error("contract name must not be empty"));
     }
 
-    // ── At least one non-internal function or tapscript ──────────────────
-    let non_internal_count = contract.functions.iter().filter(|f| !f.is_internal).count();
-    if non_internal_count == 0 && contract.tapscripts.is_empty() {
+    // ── At least one public function or tapscript ──────────────────
+    let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
+    if public_count == 0 && contract.tapscripts.is_empty() {
         issues.push(ValidationIssue::error(
-            "contract must declare at least one non-internal function",
+            "contract must declare at least one public function",
         ));
     }
 
@@ -142,20 +144,7 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
         }
     }
 
-    // ── Require-guard check ────────────────────────────
-    // Every execution path through a covenant function must hit at least one
-    // require(). Each require() fails fast via OP_VERIFY and the covenant
-    // terminates with OP_1, so a path that reaches the end with no require()
-    // would pass any spend on that path — almost certainly a security bug.
-    for func in contract.functions.iter().filter(|f| !f.is_internal) {
-        if !block_guarantees_require(&func.statements) {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}' has a spend path with no require(); \
-                 every branch must enforce at least one condition",
-                func.name
-            )));
-        }
-    }
+    functions::validate_functions(contract, &mut issues);
 
     // ── Tapscript reserved-name + duplicate checks ────────────────────────
     {
@@ -457,6 +446,10 @@ fn walk_asset_id_stmts(
 ) {
     for stmt in stmts {
         match stmt {
+            Statement::Call(expression) | Statement::Return(Some(expression)) => {
+                check_asset_id_expr(expression, scope, fname, issues)
+            }
+            Statement::Return(None) => {}
             Statement::Require(req) => match req {
                 Requirement::Expression(expr) => {
                     check_asset_id_expr(expr, scope, fname, issues);
@@ -595,7 +588,9 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
 
         Expression::ArrayIndex { index, .. } => vec![index],
 
-        Expression::ArrayLiteral(elements) => elements.iter().collect(),
+        Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
+            elements.iter().collect()
+        }
         Expression::StructLiteral(fields) => fields.iter().map(|(_, value)| value).collect(),
 
         Expression::AssetLookup {
@@ -815,6 +810,13 @@ fn validate_binding_statements(
 ) {
     for statement in statements {
         match statement {
+            Statement::Call(expression) => {
+                validate_binding_expression(expression, function_name, scopes, issues, false)
+            }
+            Statement::Return(Some(expression)) => {
+                validate_value_expression(expression, function_name, scopes, issues)
+            }
+            Statement::Return(None) => {}
             Statement::Require(requirement) => {
                 validate_binding_requirement(requirement, function_name, scopes, issues);
             }
@@ -863,7 +865,8 @@ fn validate_binding_statements(
                         function_name,
                         scopes,
                         issues,
-                        crate::models::expression_result_struct(value).is_none(),
+                        crate::models::expression_result_struct(value).is_none()
+                            && !matches!(value, Expression::Call { .. }),
                     ),
                 }
                 let inferred = resolved_expression_type(value, scopes);
@@ -919,6 +922,7 @@ fn validate_binding_statements(
                     let result_type = crate::models::expression_result_struct(value);
                     if !matches!(value, Expression::StructLiteral(_))
                         && result_type != Some(struct_type.as_str())
+                        && !matches!(value, Expression::Call { .. })
                     {
                         issues.push(ValidationIssue::error(format!(
                             "function '{}': struct binding '{}' must be initialized with a matching struct value",
@@ -1131,7 +1135,9 @@ fn validate_struct_literal(
             continue;
         };
         let field_name = format!("{access_name}.{}", field.name);
-        if let Some((element_type, length)) = crate::models::array_type_parts(&field.param_type) {
+        if let Some((element_type, length)) = crate::models::array_type_parts(&field.param_type)
+            .filter(|_| !matches!(value, Expression::Call { .. }))
+        {
             let Expression::ArrayLiteral(elements) = value else {
                 issues.push(ValidationIssue::error(format!(
                     "function '{}': field '{}' must be initialized with an array literal",
@@ -1168,6 +1174,7 @@ fn validate_struct_literal(
         if let Some(nested) = structs
             .iter()
             .find(|definition| definition.name == field.param_type)
+            .filter(|_| !matches!(value, Expression::Call { .. }))
         {
             let Expression::StructLiteral(nested_fields) = value else {
                 issues.push(ValidationIssue::error(format!(
@@ -1187,26 +1194,18 @@ fn validate_struct_literal(
             );
             continue;
         }
-        if crate::models::is_builtin_struct(&field.param_type) {
-            validate_binding_expression(value, function_name, scopes, issues, false);
-            let expected = ArkType::parse(&field.param_type);
-            let actual = resolved_expression_type(value, scopes);
-            if actual != expected {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': field '{}' has type '{}', expected '{}'",
-                    function_name,
-                    field_name,
-                    actual.as_str(),
-                    expected.as_str()
-                )));
-            }
-            continue;
-        }
-
-        validate_binding_expression(value, function_name, scopes, issues, true);
+        validate_binding_expression(
+            value,
+            function_name,
+            scopes,
+            issues,
+            crate::models::is_builtin_type(&field.param_type),
+        );
         let expected = ArkType::parse(&field.param_type);
         let actual = resolved_expression_type(value, scopes);
-        if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
+        if (actual != ArkType::Unknown || crate::models::is_builtin_struct(&field.param_type))
+            && !binding_types_compatible(&expected, &actual)
+        {
             issues.push(ValidationIssue::error(format!(
                 "function '{}': field '{}' has type '{}', expected '{}'",
                 function_name,
@@ -1381,6 +1380,19 @@ fn validate_binding_requirement(
     }
 }
 
+fn validate_value_expression(
+    expression: &Expression,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let scalar = !matches!(
+        resolved_expression_type(expression, scopes),
+        ArkType::Array(..) | ArkType::Struct(..)
+    ) && !matches!(expression, Expression::StructLiteral(_));
+    validate_binding_expression(expression, function_name, scopes, issues, scalar);
+}
+
 fn validate_binding_expression(
     expression: &Expression,
     function_name: &str,
@@ -1448,7 +1460,7 @@ fn validate_binding_expression(
             }
         }
 
-        Expression::StructLiteral(_) => {
+        Expression::StructLiteral(_) if value_position => {
             issues.push(ValidationIssue::error(format!(
                 "function '{}': struct literals may only initialize typed struct declarations",
                 function_name
@@ -1566,13 +1578,20 @@ fn validate_binding_expression(
     }
 
     for child in child_exprs(expression) {
-        validate_binding_expression(
-            child,
-            function_name,
-            scopes,
-            issues,
-            !matches!(expression, Expression::ContractInstance { .. }),
-        );
+        if matches!(
+            expression,
+            Expression::Call { .. } | Expression::StructLiteral(_) | Expression::ArrayLiteral(_)
+        ) {
+            validate_value_expression(child, function_name, scopes, issues);
+        } else {
+            validate_binding_expression(
+                child,
+                function_name,
+                scopes,
+                issues,
+                !matches!(expression, Expression::ContractInstance { .. }),
+            );
+        }
     }
 }
 
@@ -1688,33 +1707,6 @@ fn describe_operand(expr: &Expression) -> String {
 
 // ─── AST helpers ─────────────────────────────────────────────────────────────
 
-/// Returns `true` if every execution path through the block hits at least one
-/// `require()`. A block guarantees a require when any of its (sequential)
-/// statements does; an if/else guarantees one only when both branches do (so a
-/// missing `else` is a bare path); a loop body's guarantee counts because the
-/// unroller always emits at least one iteration.
-fn block_guarantees_require(stmts: &[Statement]) -> bool {
-    stmts.iter().any(statement_guarantees_require)
-}
-
-fn statement_guarantees_require(stmt: &Statement) -> bool {
-    match stmt {
-        Statement::Require(_) => true,
-        Statement::LetBinding { .. } | Statement::VarAssign { .. } => false,
-        Statement::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            block_guarantees_require(then_body)
-                && else_body
-                    .as_ref()
-                    .is_some_and(|b| block_guarantees_require(b))
-        }
-        Statement::ForIn { body, .. } => block_guarantees_require(body),
-    }
-}
-
 /// Check 1: reject any binding that shadows a name still live in an enclosing scope.
 fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let ctor_names: HashSet<&str> = contract
@@ -1791,7 +1783,10 @@ fn check_ctor_assignment(
             Statement::ForIn { body, .. } => {
                 check_ctor_assignment(body, fname, ctor_names, issues);
             }
-            Statement::LetBinding { .. } | Statement::Require(_) => {}
+            Statement::LetBinding { .. }
+            | Statement::Require(_)
+            | Statement::Call(_)
+            | Statement::Return(_) => {}
         }
     }
 }
@@ -1877,7 +1872,10 @@ fn walk_scope(
                 }
             }
             // Reassignment is handled separately; requires introduce no bindings.
-            Statement::VarAssign { .. } | Statement::Require(_) => {}
+            Statement::VarAssign { .. }
+            | Statement::Require(_)
+            | Statement::Call(_)
+            | Statement::Return(_) => {}
         }
     }
 }
@@ -2139,7 +2137,8 @@ contract Demo() {
                     signature: "ownerSig".to_string(),
                     pubkey: "owner".to_string(),
                 })],
-                is_internal: false,
+                is_private: false,
+                return_type: None,
             }],
             tapscripts: Vec::new(),
             imports: vec![],
@@ -2204,15 +2203,13 @@ contract Demo() {
         contract.functions.clear();
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
-        assert!(issues
-            .iter()
-            .any(|i| i.message.contains("non-internal function")));
+        assert!(issues.iter().any(|i| i.message.contains("public function")));
     }
 
     #[test]
-    fn only_internal_functions_is_error() {
+    fn only_private_functions_is_error() {
         let mut contract = make_contract("AllInternal");
-        contract.functions[0].is_internal = true;
+        contract.functions[0].is_private = true;
         let issues = validate_ast(&contract);
         assert!(has_errors(&issues));
     }

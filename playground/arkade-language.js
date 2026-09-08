@@ -6,7 +6,7 @@ const arkadeMonarch = {
 
     keywords: [
         'contract', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
-        'for', 'in', 'let', 'internal', 'new'
+        'for', 'in', 'let', 'private', 'public', 'return', 'new'
     ],
 
     typeKeywords: [
@@ -36,7 +36,7 @@ const arkadeMonarch = {
             [/\s+/, 'white'],
 
             // Keywords
-            [/\b(contract|struct|function|tapscript|require|if|else|for|in|let|internal|new)\b/, 'keyword'],
+            [/\b(contract|struct|function|tapscript|require|if|else|for|in|let|private|public|return|new)\b/, 'keyword'],
 
             // Types
             [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
@@ -137,7 +137,9 @@ const arkadeCompletions = [
     { label: 'if', kind: 'Keyword', insertText: 'if (${1:condition}) {\n\t$0\n}', insertTextRules: 4 },
     { label: 'for', kind: 'Keyword', insertText: 'for (${1:i}, ${2:item}) in ${3:array} {\n\t$0\n}', insertTextRules: 4 },
     { label: 'let', kind: 'Keyword', insertText: 'let ${1:name} = ${2:value};', insertTextRules: 4 },
-    { label: 'internal', kind: 'Keyword', insertText: 'internal' },
+    { label: 'private', kind: 'Keyword', insertText: 'private function ${1:name}(${2:params}) ${3:bool} {\n\treturn ${4:value};\n}', insertTextRules: 4 },
+    { label: 'public', kind: 'Keyword', insertText: 'public' },
+    { label: 'return', kind: 'Keyword', insertText: 'return ${1:value};', insertTextRules: 4 },
 
     // Types
     { label: 'pubkey', kind: 'TypeParameter', insertText: 'pubkey' },

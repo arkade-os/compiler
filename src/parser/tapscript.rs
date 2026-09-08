@@ -14,7 +14,14 @@ pub(crate) fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
 pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
 ) -> Result<crate::models::NamedTapscript, String> {
-    let mut inner = pair.into_inner();
+    let mut inner = pair.into_inner().peekable();
+    if inner
+        .peek()
+        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
+        && inner.next().expect("visibility").as_str() == "private"
+    {
+        return Err("tapscript functions cannot be private".to_string());
+    }
     let name = inner
         .next()
         .ok_or("Missing tapscript name")?

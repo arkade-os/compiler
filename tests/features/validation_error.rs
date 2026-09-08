@@ -122,7 +122,7 @@ contract GenericCall(pubkey owner) {
         .expect_err("unsupported calls cannot be represented as symbolic stack reads")
         .to_string();
     assert!(
-        error.contains("undefined binding 'foo(sig, owner, extra)'"),
+        error.contains("unknown private function 'foo'"),
         "unexpected generic-call error: {error}"
     );
 }
@@ -255,17 +255,17 @@ contract Empty(pubkey owner) {
 }
 
 #[test]
-fn only_internal_functions_is_rejected() {
+fn only_private_functions_is_rejected() {
     let source = r#"
 contract AllInternal(pubkey owner) {
-    function helper(signature sig) internal {
+    private function helper(signature sig) {
         require(checkSig(sig, owner));
     }
 }"#;
     let result = compile(source);
     assert!(
         result.is_err(),
-        "contract with only internal functions must be rejected; no callable entry points"
+        "contract with only private functions must be rejected; no callable entry points"
     );
 }
 

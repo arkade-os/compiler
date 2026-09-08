@@ -313,7 +313,20 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::constructor => parse_constructor_to_expression(pair),
         Rule::function_call => {
             reject_reserved_function_call(&pair)?;
-            Ok(Expression::Property(pair.as_str().to_string()))
+            let mut inner = pair.into_inner();
+            let name = inner
+                .next()
+                .ok_or("Missing function name")?
+                .as_str()
+                .to_string();
+            let args = inner
+                .map(parse_general_expression)
+                .collect::<Result<_, _>>()?;
+            Ok(Expression::Call {
+                name,
+                args,
+                return_type: None,
+            })
         }
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),

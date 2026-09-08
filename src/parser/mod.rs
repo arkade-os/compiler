@@ -141,41 +141,45 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
 
 /// Parse a function definition
 fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
+    let mut inner = pair.into_inner().peekable();
+    let is_private = if inner
+        .peek()
+        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
+    {
+        inner.next().expect("visibility").as_str() == "private"
+    } else {
+        false
+    };
+    let name = inner
+        .next()
+        .ok_or("Missing function name")?
+        .as_str()
+        .to_string();
+    if is_private
+        && (expr::reserved_function_signature(&name).is_some()
+            || matches!(
+                name.as_str(),
+                "require" | "return" | "negate" | "neg64" | "le64ToScriptNum" | "le32ToLe64"
+            ))
+    {
+        return Err(format!("function name '{name}' is reserved"));
+    }
+    let parameters = parse_parameters(inner.next().ok_or("Missing parameter list")?)?;
+    let return_type = if inner.peek().is_some_and(|p| p.as_rule() == Rule::data_type) {
+        Some(parse_data_type(inner.next().expect("return type")))
+    } else {
+        None
+    };
     let mut func = Function {
-        name: String::new(),
-        parameters: Vec::new(),
+        name,
+        parameters,
         statements: Vec::new(),
-        is_internal: false,
+        is_private,
+        return_type,
     };
-
-    let mut inner_pairs = pair.into_inner();
-
-    // Function name (required)
-    func.name = match inner_pairs.next() {
-        Some(name) => name.as_str().to_string(),
-        None => return Err("Missing function name".to_string()),
-    };
-
-    // Parameters
-    if let Some(param_list) = inner_pairs.next() {
-        func.parameters = parse_parameters(param_list)?;
+    for statement in inner {
+        parse_function_body(&mut func, statement)?;
     }
-
-    // Check for function modifier (internal) and body
-    if let Some(next_pair) = inner_pairs.next() {
-        if next_pair.as_rule() == Rule::function_modifier {
-            func.is_internal = true;
-            for req_pair in inner_pairs {
-                parse_function_body(&mut func, req_pair)?;
-            }
-        } else {
-            parse_function_body(&mut func, next_pair)?;
-            for req_pair in inner_pairs {
-                parse_function_body(&mut func, req_pair)?;
-            }
-        }
-    }
-
     Ok(func)
 }
 
@@ -291,7 +295,18 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             Ok(())
         }
         Rule::function_call_stmt => {
-            // Function calls to internal helpers — not yet fully supported
+            let call = pair.into_inner().next().ok_or("Missing function call")?;
+            func.statements
+                .push(Statement::Call(parse_general_expression(call)?));
+            Ok(())
+        }
+        Rule::return_stmt => {
+            let value = pair
+                .into_inner()
+                .nth(1)
+                .map(parse_general_expression)
+                .transpose()?;
+            func.statements.push(Statement::Return(value));
             Ok(())
         }
         Rule::variable_declaration => {
@@ -357,7 +372,8 @@ fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
             name: String::new(),
             parameters: Vec::new(),
             statements: Vec::new(),
-            is_internal: false,
+            is_private: false,
+            return_type: None,
         };
 
         parse_function_body(&mut temp_func, inner)?;
@@ -408,6 +424,35 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 mod tests {
     use super::parse;
     use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+
+    #[test]
+    fn parses_private_visibility_return_types_and_call_arguments() {
+        use crate::models::Expression;
+        let contract = parse(
+            r#"contract C() {
+            public function spend(int amount) { check(amount + 1 * 2); }
+            private function check(int value) { let returnValue = value; return; }
+            private function sufficient(int value) bool { return value >= 1; }
+            function other() { require(true); }
+        }"#,
+        )
+        .unwrap();
+        assert!(!contract.functions[0].is_private);
+        assert!(contract.functions[1].is_private);
+        assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
+        assert!(!contract.functions[3].is_private);
+        assert!(
+            matches!(&contract.functions[0].statements[0], Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op == "+"))
+        );
+        assert!(matches!(
+            &contract.functions[1].statements[1],
+            Statement::Return(None)
+        ));
+        assert!(matches!(
+            &contract.functions[2].statements[0],
+            Statement::Return(Some(_))
+        ));
+    }
 
     #[test]
     fn parses_unary_prefix_order_and_boolean_boundaries() {

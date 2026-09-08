@@ -59,6 +59,11 @@ impl ConcatPass {
 
     fn rewrite_statement_concat(&mut self, stmt: &mut Statement, scope: &mut Scope) {
         match stmt {
+            Statement::Call(expression) | Statement::Return(Some(expression)) => {
+                let (rewritten, _) = self.rewrite_expression_concat(expression.clone(), scope);
+                *expression = rewritten;
+            }
+            Statement::Return(None) => {}
             Statement::Require(req) => self.rewrite_requirement_concat(req, scope),
             Statement::LetBinding {
                 name,
@@ -168,6 +173,28 @@ impl ConcatPass {
         scope: &Scope,
     ) -> (Expression, ArkType) {
         match expr {
+            Expression::Call {
+                name,
+                args,
+                return_type,
+            } => {
+                let args = args
+                    .into_iter()
+                    .map(|arg| self.rewrite_expression_concat(arg, scope).0)
+                    .collect();
+                let ty = return_type
+                    .as_deref()
+                    .map(ArkType::parse)
+                    .unwrap_or(ArkType::Unknown);
+                (
+                    Expression::Call {
+                        name,
+                        args,
+                        return_type,
+                    },
+                    ty,
+                )
+            }
             Expression::ArrayLiteral(elements) => {
                 let mut element_type = ArkType::Unknown;
                 let rewritten = elements
@@ -248,123 +275,7 @@ impl ConcatPass {
                 }
             }
             mut other => {
-                let children: Vec<&mut Expression> = match &mut other {
-                    Expression::AssetLookup {
-                        index,
-                        asset_txid,
-                        asset_gidx,
-                        ..
-                    }
-                    | Expression::AssetHas {
-                        index,
-                        asset_txid,
-                        asset_gidx,
-                        ..
-                    } => vec![index, asset_txid, asset_gidx],
-                    Expression::AssetCount { index, .. }
-                    | Expression::InputIntrospection { index, .. }
-                    | Expression::OutputIntrospection { index, .. }
-                    | Expression::GroupSum { index, .. }
-                    | Expression::GroupNumIO { index, .. } => vec![index],
-                    Expression::AssetAt {
-                        io_index,
-                        asset_index,
-                        ..
-                    } => vec![io_index, asset_index],
-                    Expression::GroupFind {
-                        asset_txid,
-                        asset_gidx,
-                    }
-                    | Expression::GroupHas {
-                        asset_txid,
-                        asset_gidx,
-                    }
-                    | Expression::GroupControlIs {
-                        asset_txid,
-                        asset_gidx,
-                        ..
-                    } => vec![asset_txid, asset_gidx],
-                    Expression::GroupIOAccess {
-                        group_index,
-                        io_index,
-                        ..
-                    } => vec![group_index, io_index],
-                    Expression::Sha256 { data }
-                    | Expression::Sha256Initialize { data }
-                    | Expression::Bin2Num { data }
-                    | Expression::ReverseBytes { data }
-                    | Expression::SizeOf { data } => vec![data],
-                    Expression::Sha256Update { context, chunk } => vec![context, chunk],
-                    Expression::Sha256Finalize {
-                        context,
-                        last_chunk,
-                    } => vec![context, last_chunk],
-                    Expression::Sighash { hash_type } => vec![hash_type],
-                    Expression::Digest { data, hash_type } => vec![data, hash_type],
-                    Expression::Negate { value } | Expression::Not { value } => vec![value],
-                    Expression::ModExp {
-                        base,
-                        exponent,
-                        modulus,
-                    } => vec![base, exponent, modulus],
-                    Expression::EcAdd {
-                        x1,
-                        y1,
-                        x2,
-                        y2,
-                        curve_id,
-                    } => vec![x1, y1, x2, y2, curve_id],
-                    Expression::EcMul {
-                        x,
-                        y,
-                        scalar,
-                        curve_id,
-                    } => vec![x, y, scalar, curve_id],
-                    Expression::EcPairing {
-                        g1_x,
-                        g1_y,
-                        g2_x_c1,
-                        g2_x_c0,
-                        g2_y_c1,
-                        g2_y_c0,
-                        curve_id,
-                    } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
-                    Expression::EcMulScalarVerify {
-                        scalar,
-                        point_p,
-                        point_q,
-                    } => vec![scalar, point_p, point_q],
-                    Expression::TweakVerify {
-                        point_p,
-                        tweak,
-                        point_q,
-                    } => vec![point_p, tweak, point_q],
-                    Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
-                    Expression::Substr { data, offset, size } => vec![data, offset, size],
-                    Expression::Concat { left, right } | Expression::Cat { left, right } => {
-                        vec![left, right]
-                    }
-                    Expression::Num2Bin { value, size } => vec![value, size],
-                    Expression::PacketInspect { packet_type } => vec![packet_type],
-                    Expression::InputPacketInspect { index, packet_type } => {
-                        vec![index, packet_type]
-                    }
-                    // These compound variants are handled above.
-                    Expression::ArrayLiteral(_)
-                    | Expression::StructLiteral(_)
-                    | Expression::ArrayIndex { .. }
-                    | Expression::BinaryOp { .. } => vec![],
-                    Expression::Variable(_)
-                    | Expression::Literal(_)
-                    | Expression::Property(_)
-                    | Expression::CurrentInput(_)
-                    | Expression::TxIntrospection { .. }
-                    | Expression::GroupProperty { .. }
-                    | Expression::AssetGroupsLength
-                    | Expression::CheckSigExpr { .. }
-                    | Expression::CheckSigFromStackExpr { .. }
-                    | Expression::CheckSigFromStackVerify { .. } => vec![],
-                };
+                let children = crate::models::child_exprs_mut(&mut other);
                 for child in children {
                     *child = self
                         .rewrite_expression_concat(
