@@ -1,6 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTOUTASSETLOOKUP,
+    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTLOCKTIME,
+    OP_INSPECTOUTASSETLOOKUP,
 };
 
 use crate::common::{arkade_asm, arkade_inputs, group};
@@ -64,13 +65,13 @@ fn test_exercise_verifies_btc_delivery_and_stable_payout() {
         "exercise must verify output 0's BTC value"
     );
     assert!(
-        asm.contains(OP_CHECKLOCKTIMEVERIFY),
+        asm.contains(OP_INSPECTLOCKTIME),
         "exercise must enforce tx.time >= expiryHeight"
     );
 }
 
 #[test]
-fn test_reclaim_is_seller_only_with_cltv() {
+fn test_reclaim_is_seller_only_with_timelock() {
     let out = compile(PUT_CODE).unwrap();
     let names = arkade_inputs(&out, "reclaim");
     assert!(
@@ -83,7 +84,7 @@ fn test_reclaim_is_seller_only_with_cltv() {
     );
     let asm = arkade_asm(&out, "reclaim");
     assert!(
-        asm.contains(OP_CHECKLOCKTIMEVERIFY),
+        asm.contains(OP_INSPECTLOCKTIME),
         "reclaim must enforce timelock"
     );
     assert!(

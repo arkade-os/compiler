@@ -3,8 +3,8 @@ use crate::models::{
     FunctionInput, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG,
-    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP, OP_ECADD, OP_ECMUL,
+    OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
+    OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP, OP_ECADD, OP_ECMUL,
     OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
     OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
@@ -32,11 +32,11 @@ pub mod tapscript;
 mod asset;
 mod comparison;
 mod concat;
+mod constants;
 mod expr;
 mod functions;
 mod introspection;
 mod loops;
-mod references;
 
 pub(crate) use asset::*;
 pub(crate) use comparison::*;
@@ -665,6 +665,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
+    constants::fold(&mut contract)?;
+
     typechecker::resolve_group_properties(&mut contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -776,7 +778,8 @@ fn covenant_for(
     functions: &[Function],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
-    let references = references::referenced_parameters(&function.statements, functions);
+    let references =
+        crate::validator::references::referenced_parameters(&function.statements, functions);
     let retained_parameters = constructor_parameters
         .iter()
         .filter(|parameter| references.contains(parameter.name.as_str()))
@@ -1028,19 +1031,6 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             }
             generator.apply(OP_NUMEQUAL, 2, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-        Requirement::After {
-            blocks,
-            timelock_var,
-        } => {
-            if let Some(var) = timelock_var {
-                generator.read_binding_or_integer(var)?;
-            } else {
-                generator.push_temporary(blocks.to_string());
-            }
-            generator.apply(OP_CHECKLOCKTIMEVERIFY, 1, 1)?;
-            generator.apply(OP_DROP, 1, 0)?;
             Ok(())
         }
         Requirement::HashEqual {

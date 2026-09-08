@@ -1,4 +1,6 @@
-use crate::models::{AssignmentTarget, Contract, Function, Parameter, Statement, StructDefinition};
+use crate::models::{
+    AssignmentTarget, Constant, Contract, Function, Parameter, Statement, StructDefinition,
+};
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
@@ -45,6 +47,7 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
         functions: Vec::new(),
         tapscripts: Vec::new(),
         imports: Vec::new(),
+        constants: Vec::new(),
     };
 
     for pair in pairs {
@@ -122,6 +125,12 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
         contract.parameters = parse_parameters(param_list)?;
     }
 
+    contract.constants = inner_pairs
+        .clone()
+        .filter(|pair| pair.as_rule() == Rule::const_decl)
+        .map(parse_const_decl)
+        .collect::<Result<_, _>>()?;
+
     // Functions (covenant) and tapscript declarations share the `function` rule;
     // a tapscript carries a `tapscript_block` body.
     for func_pair in inner_pairs {
@@ -129,27 +138,47 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
             continue;
         }
         if function_pair_is_tapscript(&func_pair) {
-            let ts = parse_named_tapscript(func_pair)?;
+            let ts = parse_named_tapscript(func_pair, &contract.constants)?;
             contract.tapscripts.push(ts);
         } else {
-            let func = parse_function(func_pair)?;
+            let func = parse_function(func_pair, &contract.constants)?;
             contract.functions.push(func);
         }
     }
     Ok(())
 }
 
+fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
+    let mut inner = pair
+        .into_inner()
+        .filter(|p| p.as_rule() != Rule::const_keyword);
+    let const_type = parse_data_type(inner.next().ok_or("Missing constant type")?);
+    let name = inner
+        .next()
+        .ok_or("Missing constant name")?
+        .as_str()
+        .to_string();
+    let value = parse_general_expression(inner.next().ok_or("Missing constant value")?)?;
+    Ok(Constant {
+        name,
+        const_type,
+        value,
+    })
+}
+
 /// Parse a function definition
-fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
+fn parse_function(pair: Pair<Rule>, constants: &[Constant]) -> Result<Function, String> {
     let mut inner = pair.into_inner().peekable();
-    let is_private = if inner
+    let visibility = if inner
         .peek()
         .is_some_and(|p| p.as_rule() == Rule::function_visibility)
     {
-        inner.next().expect("visibility").as_str() == "private"
+        inner.next().expect("visibility").as_str()
     } else {
-        false
+        "public"
     };
+    let is_static = visibility == "static";
+    let is_private = visibility != "public";
     let name = inner
         .next()
         .ok_or("Missing function name")?
@@ -175,16 +204,21 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
         parameters,
         statements: Vec::new(),
         is_private,
+        is_static,
         return_type,
     };
     for statement in inner {
-        parse_function_body(&mut func, statement)?;
+        parse_function_body(&mut func, statement, constants)?;
     }
     Ok(func)
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
-fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), String> {
+fn parse_function_body(
+    func: &mut Function,
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<(), String> {
     match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
@@ -197,7 +231,7 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
                     ))
                 }
             };
-            let requirement = parse_complex_expression(expr)?;
+            let requirement = parse_complex_expression(expr, constants)?;
 
             // Capture optional error message (stored in requirement metadata)
             let _message = inner.next().map(|p| p.as_str().to_string());
@@ -250,10 +284,10 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let then_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
-            let then_body = parse_block(then_block)?;
+            let then_body = parse_block(then_block, constants)?;
 
             let else_body = if let Some(else_block) = inner.next() {
-                Some(parse_block(else_block)?)
+                Some(parse_block(else_block, constants)?)
             } else {
                 None
             };
@@ -284,7 +318,7 @@ fn parse_function_body(func: &mut Function, pair: Pair<Rule>) -> Result<(), Stri
             let body_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?;
-            let body = parse_block(body_block)?;
+            let body = parse_block(body_block, constants)?;
 
             func.statements.push(Statement::ForIn {
                 index_var,
@@ -363,7 +397,7 @@ fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String>
 // ─── Expression Parsing ────────────────────────────────────────────────────────
 
 // Parse a block of statements
-fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
+fn parse_block(pair: Pair<Rule>, constants: &[Constant]) -> Result<Vec<Statement>, String> {
     let mut statements = Vec::new();
 
     for inner in pair.into_inner() {
@@ -373,10 +407,11 @@ fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
             parameters: Vec::new(),
             statements: Vec::new(),
             is_private: false,
+            is_static: false,
             return_type: None,
         };
 
-        parse_function_body(&mut temp_func, inner)?;
+        parse_function_body(&mut temp_func, inner, constants)?;
         statements.extend(temp_func.statements);
     }
 
@@ -564,6 +599,36 @@ contract Demo(pubkey first, pubkey second) {
                 threshold: 2,
             }) if pubkeys == &["first", "second"] && signatures == &["firstSig", "secondSig"]
         ));
+    }
+
+    #[test]
+    fn resolves_constant_thresholds_in_nested_helper_bodies() {
+        let contract = parse(
+            r#"
+contract Demo() {
+    static function authorize(pubkey key, signature sig, bool choose) {
+        if (choose) { require(checkMultisig([key], [sig], QUORUM)); }
+        else { require(checkMultisig([key], [sig], QUORUM)); }
+    }
+    const int QUORUM = 1;
+}
+"#,
+        )
+        .unwrap();
+        let Statement::IfElse {
+            then_body,
+            else_body: Some(else_body),
+            ..
+        } = &contract.functions[0].statements[0]
+        else {
+            panic!("expected if/else");
+        };
+        for body in [then_body, else_body] {
+            assert!(matches!(
+                body[0],
+                Statement::Require(Requirement::CheckMultisig { threshold: 1, .. })
+            ));
+        }
     }
 
     #[test]

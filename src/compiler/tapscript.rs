@@ -789,11 +789,13 @@ mod tests {
                     parameters: vec![],
                     statements: vec![],
                     is_private: false,
+                    is_static: false,
                     return_type: None,
                 })
                 .collect(),
             tapscripts,
             imports: vec![],
+            constants: vec![],
         }
     }
 

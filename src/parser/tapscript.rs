@@ -13,14 +13,17 @@ pub(crate) fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
 /// Parse a `function <name>(<params>) tapscript { … }` declaration.
 pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
+    constants: &[Constant],
 ) -> Result<crate::models::NamedTapscript, String> {
     let mut inner = pair.into_inner().peekable();
     if inner
         .peek()
         .is_some_and(|p| p.as_rule() == Rule::function_visibility)
-        && inner.next().expect("visibility").as_str() == "private"
     {
-        return Err("tapscript functions cannot be private".to_string());
+        let visibility = inner.next().expect("visibility").as_str();
+        if visibility != "public" {
+            return Err(format!("tapscript functions cannot be {visibility}"));
+        }
     }
     let name = inner
         .next()
@@ -37,7 +40,7 @@ pub(crate) fn parse_named_tapscript(
                 .into_inner()
                 .next()
                 .ok_or("Empty require() in tapscript")?;
-            items.push(parse_tap_item(expr)?);
+            items.push(parse_tap_item(expr, constants)?);
         }
     }
     Ok(crate::models::NamedTapscript {
@@ -48,7 +51,10 @@ pub(crate) fn parse_named_tapscript(
 }
 
 /// Interpret one `require(...)` inner expression as a tapscript item.
-pub(crate) fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
+pub(crate) fn parse_tap_item(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<crate::models::TapItem, String> {
     use crate::models::{HashFn, TapItem};
     match pair.as_rule() {
         Rule::general_expression
@@ -64,7 +70,7 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem,
             if inner.next().is_some() {
                 return Err("unsupported compound expression in tapscript require()".to_string());
             }
-            parse_tap_item(item)
+            parse_tap_item(item, constants)
         }
         Rule::hash_comparison => {
             let mut inner = pair.into_inner();
@@ -119,7 +125,7 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem,
                 .into_inner()
                 .next()
                 .ok_or("Missing checkMultisig body")?;
-            parse_tap_multisig(inner)
+            parse_tap_multisig(inner, constants)
         }
         Rule::function_call => {
             // older(n) / after(n)
@@ -153,7 +159,10 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem,
 }
 
 /// Parse `check_threshold_multisig` inner pairs into a Sig item.
-pub(crate) fn parse_tap_multisig(pair: Pair<Rule>) -> Result<crate::models::TapItem, String> {
+pub(crate) fn parse_tap_multisig(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<crate::models::TapItem, String> {
     use crate::models::TapItem;
     let mut keys = Vec::new();
     let mut sigs = Vec::new();
@@ -170,13 +179,8 @@ pub(crate) fn parse_tap_multisig(pair: Pair<Rule>) -> Result<crate::models::TapI
                     sigs.push(s.as_str().to_string());
                 }
             }
-            Rule::number_literal => {
-                threshold = Some(
-                    child
-                        .as_str()
-                        .parse::<u16>()
-                        .map_err(|e| format!("invalid threshold: {e}"))?,
-                );
+            Rule::number_literal | Rule::identifier => {
+                threshold = Some(parse_multisig_threshold(child, constants)?);
             }
             _ => {}
         }

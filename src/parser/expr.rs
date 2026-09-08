@@ -338,7 +338,10 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
 }
 
 /// Parse a complex expression into a Requirement AST node
-pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
+pub(crate) fn parse_complex_expression(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<Requirement, String> {
     match pair.as_rule() {
         Rule::general_expression => {
             let expression = parse_general_expression(pair)?;
@@ -361,7 +364,7 @@ pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, 
         Rule::check_sig => parse_check_sig(pair),
         Rule::check_sig_from_stack => parse_check_sig_from_stack(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
-        Rule::check_multisig => parse_check_multisig(pair),
+        Rule::check_multisig => parse_check_multisig(pair, constants),
         Rule::time_comparison => parse_time_comparison(pair),
         Rule::hash_comparison => parse_hash_comparison(pair),
         _ => Err(format!(

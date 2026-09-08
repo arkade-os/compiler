@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
+use super::child_exprs;
 use crate::models::{AssignmentTarget, Expression, Function, Requirement, Statement};
-use crate::validator::child_exprs;
 
 // Parameters are retained whole; pruning individual composite fields needs a sparse stack layout.
-pub(super) fn referenced_parameters<'a>(
+pub(crate) fn referenced_parameters<'a>(
     statements: &'a [Statement],
     functions: &'a [Function],
 ) -> HashSet<&'a str> {
@@ -96,11 +96,6 @@ fn collect_requirement<'a>(
             ..
         } => {
             for name in pubkeys.iter().chain(signatures) {
-                collect_name(name, names);
-            }
-        }
-        Requirement::After { timelock_var, .. } => {
-            if let Some(name) = timelock_var {
                 collect_name(name, names);
             }
         }

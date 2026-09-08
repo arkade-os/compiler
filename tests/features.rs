@@ -12,6 +12,8 @@ mod bare_vtxo;
 mod beacon;
 #[path = "features/concat_op.rs"]
 mod concat_op;
+#[path = "features/constants.rs"]
+mod constants;
 #[path = "features/contract_import_instantiation.rs"]
 mod contract_import_instantiation;
 #[path = "features/epoch_limiter.rs"]
@@ -32,6 +34,8 @@ mod packet_primitives;
 mod private_functions;
 #[path = "features/static_arrays.rs"]
 mod static_arrays;
+#[path = "features/static_functions.rs"]
+mod static_functions;
 #[path = "features/structs.rs"]
 mod structs;
 #[path = "features/symbolic_stack.rs"]

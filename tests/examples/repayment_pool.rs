@@ -555,47 +555,32 @@ fn test_redeem_is_pro_rata_post_window() {
     );
     assert!(asm.contains(OP_CHECKSIG), "redeem needs holder sig");
 
-    // The post-window gate `require(tx.time >= maturity + auctionWindow)` is
-    // what makes the redemption rate (usdtBalance / totalCreditOutstanding)
-    // fixed and fair for all orderings — it is the keystone of the phased
-    // design. The compiler lowers `tx.time >= redeemStart` to
-    // OP_CHECKLOCKTIMEVERIFY (the dedicated Bitcoin time-lock opcode),
-    // because that's exactly the "block height ≥ N" semantic.
+    // Redemption opens after maturity + auctionWindow.
     assert_eq!(
-        opcode_count_in_arkade(&output, "redeem", "OP_CHECKLOCKTIMEVERIFY"),
+        opcode_count_in_arkade(&output, "redeem", "OP_INSPECTLOCKTIME"),
         1,
-        "redeem must gate on tx.time >= maturity + auctionWindow (CLTV, post-window phase)"
+        "redeem must inspect locktime for the post-window gate"
     );
-
-    // Verify the CLTV operand actually DERIVES FROM the contract's two
-    // time-axis constructor parameters: a future refactor that accidentally
-    // lowered `tx.time >= 0` (or any literal) to a CLTV would pass the
-    // opcode-count check above but bypass the gate semantically. Both
-    // `<maturity>` and `<auctionWindow>` placeholders must appear in the
-    // redeem ASM for the gate's operand to be the intended sum.
     let tokens = arkade_asm_tokens(&output, "redeem");
-    assert!(
-        tokens.iter().any(|t| t == "<maturity>"),
-        "redeem CLTV operand must derive from maturity (placeholder missing)"
-    );
-    assert!(
-        tokens.iter().any(|t| t == "<auctionWindow>"),
-        "redeem CLTV operand must derive from auctionWindow (placeholder missing)"
-    );
-    // Structural check: the token IMMEDIATELY BEFORE OP_CHECKLOCKTIMEVERIFY
-    // must be the redeemStart let-binding placeholder — not a literal, not
-    // an unrelated placeholder. A refactor that accidentally locked CLTV to
-    // a literal (e.g. `tx.time >= 0`) would push something other than
-    // <redeemStart> here and fail the test.
-    let cltv_idx = tokens
+    for parameter in ["<maturity>", "<auctionWindow>"] {
+        assert!(tokens.iter().any(|token| token == parameter));
+    }
+    assert!(!tokens.iter().any(|token| token == "OP_CHECKLOCKTIMEVERIFY"));
+    // The inspected locktime must feed the gate, not be read and discarded.
+    let inspect = tokens
         .iter()
-        .position(|op| op == "OP_CHECKLOCKTIMEVERIFY")
-        .expect("OP_CHECKLOCKTIMEVERIFY missing");
-    assert!(cltv_idx > 0, "OP_CHECKLOCKTIMEVERIFY must have an operand");
-    let operand = &tokens[cltv_idx - 1];
-    assert_eq!(
-        operand, "<redeemStart>",
-        "CLTV operand must be the redeemStart let-binding (= maturity + auctionWindow), got: {operand}"
+        .position(|token| token == "OP_INSPECTLOCKTIME")
+        .expect("OP_INSPECTLOCKTIME missing");
+    let gate = tokens
+        .iter()
+        .skip(inspect)
+        .position(|token| token == "OP_GREATERTHANOREQUAL")
+        .expect("locktime gate missing");
+    assert_eq!(tokens[inspect + gate + 1], "OP_VERIFY");
+    let bound = &tokens[inspect + 1..inspect + gate];
+    assert!(
+        bound.iter().any(|token| token == "OP_PICK"),
+        "locktime bound must read the redeemStart binding, not a literal: {bound:?}"
     );
 }
 
