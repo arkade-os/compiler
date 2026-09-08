@@ -35,23 +35,21 @@ parameter = { data_type ~ identifier }
 array_size = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
 
-// Function definition. A `tapscript` modifier selects an L1 tapleaf body
-// (require-only); otherwise it is an ordinary covenant function body.
+// Visibility defaults to public. Tapscript declarations have no return type.
 function = {
-    "function" ~ identifier ~
+    function_visibility? ~ "function" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     ( "tapscript" ~ tapscript_block
-    | function_modifier? ~ "{" ~ statement* ~ "}" )
+    | data_type? ~ "{" ~ statement* ~ "}" )
 }
-
-// Tapscript body: only require() statements (single-interpreter leaf).
+function_visibility = @{ ("private" | "public") ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_block = { "{" ~ require_stmt* ~ "}" }
-
-// Function modifier (internal, etc.)
-function_modifier = { "internal" }
+return_keyword = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
+return_stmt = { return_keyword ~ general_expression? ~ ";" }
 
 // Statement types - order matters, more specific first
 statement = _{
+    return_stmt |
     if_stmt |
     for_stmt |
     let_binding |
@@ -106,7 +104,7 @@ require_expression = _{
 
 // Function call statement
 function_call_stmt = {
-    identifier ~ "(" ~ (complex_expression ~ ("," ~ complex_expression)*)? ~ ")" ~ ";"
+    function_call ~ ";"
 }
 
 // Variable declaration (typed)
@@ -471,7 +469,7 @@ struct_literal_field = { identifier ~ ":" ~ general_expression }
 
 // Function call
 function_call = {
-    identifier ~ "(" ~ (complex_expression ~ ("," ~ complex_expression)*)? ~ ")"
+    identifier ~ "(" ~ (general_expression ~ ("," ~ general_expression)*)? ~ ")"
 }
 
 // ─── Cryptographic Primitives ──────────────────────────────────────────────────

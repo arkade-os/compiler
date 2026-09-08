@@ -204,7 +204,9 @@ pub(crate) fn bind_local_type(
 ) {
     let expanded = match declared_type {
         Some(declared_type) => Some(declared_type.to_string()),
-        None if matches!(inferred, ArkType::Struct(_)) => Some(inferred.as_str()),
+        None if matches!(inferred, ArkType::Struct(_) | ArkType::Array(..)) => {
+            Some(inferred.as_str())
+        }
         None => None,
     };
     match expanded {
@@ -219,13 +221,23 @@ pub(crate) fn bind_local_type(
 
 pub(crate) fn resolve_group_properties(contract: &mut Contract) {
     let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
+    let returns = contract
+        .functions
+        .iter()
+        .map(|f| (f.name.clone(), f.return_type.clone()))
+        .collect();
     for function in &mut contract.functions {
         let mut scope = constructor_scope.clone();
         scope.extend(build_scope_with_structs(
             &function.parameters,
             &contract.structs,
         ));
-        resolve_statements(&mut function.statements, &mut scope, &contract.structs);
+        resolve_statements(
+            &mut function.statements,
+            &mut scope,
+            &contract.structs,
+            &returns,
+        );
     }
 }
 
@@ -233,14 +245,21 @@ fn resolve_statements(
     statements: &mut [Statement],
     scope: &mut Scope,
     structs: &[crate::models::StructDefinition],
+    returns: &HashMap<String, Option<String>>,
 ) {
     for statement in statements {
         match statement {
+            Statement::Call(expression) | Statement::Return(Some(expression)) => {
+                resolve_expression(expression, scope, returns)
+            }
+            Statement::Return(None) => {}
             Statement::Require(requirement) => match requirement {
-                Requirement::Expression(expression) => resolve_expression(expression, scope),
+                Requirement::Expression(expression) => {
+                    resolve_expression(expression, scope, returns)
+                }
                 Requirement::Comparison { left, right, .. } => {
-                    resolve_expression(left, scope);
-                    resolve_expression(right, scope);
+                    resolve_expression(left, scope, returns);
+                    resolve_expression(right, scope, returns);
                 }
                 _ => {}
             },
@@ -249,7 +268,7 @@ fn resolve_statements(
                 declared_type,
                 value,
             } => {
-                resolve_expression(value, scope);
+                resolve_expression(value, scope, returns);
                 let binding_type = declared_type
                     .as_deref()
                     .map(ArkType::parse)
@@ -258,19 +277,19 @@ fn resolve_statements(
             }
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. } = target {
-                    resolve_expression(index, scope);
+                    resolve_expression(index, scope, returns);
                 }
-                resolve_expression(value, scope);
+                resolve_expression(value, scope, returns);
             }
             Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
             } => {
-                resolve_expression(condition, scope);
-                resolve_statements(then_body, &mut scope.clone(), structs);
+                resolve_expression(condition, scope, returns);
+                resolve_statements(then_body, &mut scope.clone(), structs, returns);
                 if let Some(else_body) = else_body {
-                    resolve_statements(else_body, &mut scope.clone(), structs);
+                    resolve_statements(else_body, &mut scope.clone(), structs, returns);
                 }
             }
             Statement::ForIn {
@@ -279,7 +298,7 @@ fn resolve_statements(
                 iterable,
                 body,
             } => {
-                resolve_expression(iterable, scope);
+                resolve_expression(iterable, scope, returns);
                 let element_type = match infer_type(iterable, scope) {
                     ArkType::Array(element, _) => *element,
                     _ => ArkType::Unknown,
@@ -287,193 +306,25 @@ fn resolve_statements(
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
                 loop_scope.insert(value_var.clone(), element_type);
-                resolve_statements(body, &mut loop_scope, structs);
+                resolve_statements(body, &mut loop_scope, structs, returns);
             }
         }
     }
 }
 
-fn resolve_expression(expression: &mut Expression, scope: &Scope) {
-    match expression {
-        Expression::ArrayLiteral(elements)
-        | Expression::ContractInstance { args: elements, .. } => {
-            for element in elements {
-                resolve_expression(element, scope);
-            }
-        }
-        Expression::StructLiteral(fields) => {
-            for (_, value) in fields {
-                resolve_expression(value, scope);
-            }
-        }
-        Expression::ArrayIndex { index, .. }
-        | Expression::AssetCount { index, .. }
-        | Expression::InputIntrospection { index, .. }
-        | Expression::OutputIntrospection { index, .. }
-        | Expression::GroupSum { index, .. }
-        | Expression::GroupNumIO { index, .. } => resolve_expression(index, scope),
-        Expression::AssetLookup {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        }
-        | Expression::AssetHas {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        } => {
-            resolve_expression(index, scope);
-            resolve_expression(asset_txid, scope);
-            resolve_expression(asset_gidx, scope);
-        }
-        Expression::AssetAt {
-            io_index,
-            asset_index,
-            ..
-        } => {
-            resolve_expression(io_index, scope);
-            resolve_expression(asset_index, scope);
-        }
-        Expression::BinaryOp { left, right, .. }
-        | Expression::Concat { left, right }
-        | Expression::Cat { left, right } => {
-            resolve_expression(left, scope);
-            resolve_expression(right, scope);
-        }
-        Expression::GroupFind {
-            asset_txid,
-            asset_gidx,
-        }
-        | Expression::GroupHas {
-            asset_txid,
-            asset_gidx,
-        }
-        | Expression::GroupControlIs {
-            asset_txid,
-            asset_gidx,
-            ..
-        } => {
-            resolve_expression(asset_txid, scope);
-            resolve_expression(asset_gidx, scope);
-        }
-        Expression::GroupIOAccess {
-            group_index,
-            io_index,
-            ..
-        } => {
-            resolve_expression(group_index, scope);
-            resolve_expression(io_index, scope);
-        }
-        Expression::Sha256 { data }
-        | Expression::Sha256Initialize { data }
-        | Expression::Negate { value: data }
-        | Expression::Not { value: data }
-        | Expression::Bin2Num { data }
-        | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data }
-        | Expression::PacketInspect { packet_type: data } => resolve_expression(data, scope),
-        Expression::Sha256Update { context, chunk } => {
-            resolve_expression(context, scope);
-            resolve_expression(chunk, scope);
-        }
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => {
-            resolve_expression(context, scope);
-            resolve_expression(last_chunk, scope);
-        }
-        Expression::Sighash { hash_type } => resolve_expression(hash_type, scope),
-        Expression::Digest { data, hash_type } => {
-            resolve_expression(data, scope);
-            resolve_expression(hash_type, scope);
-        }
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => {
-            for child in [base, exponent, modulus] {
-                resolve_expression(child, scope);
-            }
-        }
-        Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
-            curve_id,
-        } => {
-            for child in [x1, y1, x2, y2, curve_id] {
-                resolve_expression(child, scope);
-            }
-        }
-        Expression::EcMul {
-            x,
-            y,
-            scalar,
-            curve_id,
-        } => {
-            for child in [x, y, scalar, curve_id] {
-                resolve_expression(child, scope);
-            }
-        }
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => {
-            for child in [g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id] {
-                resolve_expression(child, scope);
-            }
-        }
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => {
-            for child in [scalar, point_p, point_q] {
-                resolve_expression(child, scope);
-            }
-        }
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => {
-            for child in [point_p, tweak, point_q] {
-                resolve_expression(child, scope);
-            }
-        }
-        Expression::Substr { data, offset, size } => {
-            for child in [data, offset, size] {
-                resolve_expression(child, scope);
-            }
-        }
-        Expression::Num2Bin { value, size } => {
-            resolve_expression(value, scope);
-            resolve_expression(size, scope);
-        }
-        Expression::InputPacketInspect { index, packet_type } => {
-            resolve_expression(index, scope);
-            resolve_expression(packet_type, scope);
-        }
-        Expression::Variable(_)
-        | Expression::Literal(_)
-        | Expression::Property(_)
-        | Expression::CurrentInput(_)
-        | Expression::TxIntrospection { .. }
-        | Expression::GroupProperty { .. }
-        | Expression::AssetGroupsLength
-        | Expression::CheckSigExpr { .. }
-        | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. } => {}
+fn resolve_expression(
+    expression: &mut Expression,
+    scope: &Scope,
+    returns: &HashMap<String, Option<String>>,
+) {
+    for child in crate::models::child_exprs_mut(expression) {
+        resolve_expression(child, scope, returns);
+    }
+    if let Expression::Call {
+        name, return_type, ..
+    } = expression
+    {
+        *return_type = returns.get(name).cloned().flatten();
     }
 
     let Expression::Property(path) = expression else {
@@ -560,6 +411,10 @@ fn check_statement(
     structs: &[crate::models::StructDefinition],
 ) {
     match stmt {
+        Statement::Call(expression) | Statement::Return(Some(expression)) => {
+            check_expression(expression, scope, errors, fn_name)
+        }
+        Statement::Return(None) => {}
         Statement::Require(req) => {
             check_requirement(req, scope, errors, fn_name);
         }
@@ -641,7 +496,11 @@ fn check_statement(
             // Use a cloned child scope so loop variables don't leak out.
             let mut loop_scope = scope.clone();
             loop_scope.insert(index_var.clone(), ArkType::Int);
-            loop_scope.insert(value_var.clone(), ArkType::Unknown);
+            let element = match infer_type(iterable, scope) {
+                ArkType::Array(element, _) => *element,
+                _ => ArkType::Unknown,
+            };
+            loop_scope.insert(value_var.clone(), element);
             check_statements(body, &mut loop_scope, errors, fn_name, structs);
         }
     }
@@ -725,6 +584,16 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
 
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
     match expr {
+        Expression::Call { args, .. } | Expression::ArrayLiteral(args) => {
+            for argument in args {
+                check_expression(argument, scope, errors, fn_name);
+            }
+        }
+        Expression::StructLiteral(fields) => {
+            for (_, value) in fields {
+                check_expression(value, scope, errors, fn_name);
+            }
+        }
         Expression::Negate { value } | Expression::Not { value } => {
             check_expression(value, scope, errors, fn_name);
         }
@@ -905,6 +774,10 @@ fn expect_type(
 /// statically (e.g., unresolved variables, not-yet-implemented forms).
 pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     match expr {
+        Expression::Call { return_type, .. } => return_type
+            .as_deref()
+            .map(ArkType::parse)
+            .unwrap_or(ArkType::Unknown),
         Expression::Variable(name) => scope
             .get(name.as_str())
             .cloned()

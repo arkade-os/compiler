@@ -14,7 +14,14 @@ pub(crate) fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
 pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
 ) -> Result<crate::models::NamedTapscript, String> {
-    let mut inner = pair.into_inner();
+    let mut inner = pair.into_inner().peekable();
+    if inner
+        .peek()
+        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
+        && inner.next().expect("visibility").as_str() == "private"
+    {
+        return Err("tapscript functions cannot be private".to_string());
+    }
     let name = inner
         .next()
         .ok_or("Missing tapscript name")?
@@ -122,25 +129,21 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem,
                 .ok_or("Missing call name")?
                 .as_str()
                 .to_string();
+            if !matches!(name.as_str(), "older" | "after") {
+                return Err(format!("unsupported tapscript call `{name}(...)`"));
+            }
             let arg = inner
                 .next()
                 .ok_or_else(|| format!("{name}() requires one argument"))?
                 .as_str()
                 .to_string();
-            match name.as_str() {
-                "older" => {
-                    if inner.next().is_some() {
-                        return Err(format!("{name}() requires one argument"));
-                    }
-                    Ok(TapItem::Older { value: arg })
-                }
-                "after" => {
-                    if inner.next().is_some() {
-                        return Err(format!("{name}() requires one argument"));
-                    }
-                    Ok(TapItem::After { value: arg })
-                }
-                other => Err(format!("unsupported tapscript call `{other}(...)`")),
+            if inner.next().is_some() {
+                return Err(format!("{name}() requires one argument"));
+            }
+            if name == "older" {
+                Ok(TapItem::Older { value: arg })
+            } else {
+                Ok(TapItem::After { value: arg })
             }
         }
         other => Err(format!(

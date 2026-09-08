@@ -257,15 +257,34 @@ Arrays and structs are allowed in constructor and covenant parameters and as loc
 ### Functions
 
 ```solidity
-function name(<params>) { ... }             // Arkade covenant, run by the Arkade VM
-function name(<params>) tapscript { ... }   // L1 tapleaf, plain Bitcoin Script
+function name(<params>) { ... }                // Public Arkade transaction entrypoint
+public function name(<params>) { ... }         // Explicit public visibility
+private function name(<params>) { ... }        // Void helper
+private function name(<params>) bool { ... }   // Helper with a typed result
+function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Script
 ```
 
 A covenant with no tapscript of the same name gets a synthesized `server` + `tweak(emulator, name)` leaf. A covenant and a tapscript that share a name form one spend group. A tapscript with no matching covenant is a standalone leaf, which is how unilateral exits are written.
 
-The `internal` modifier parses and excludes the function from the spend surface, but call statements to it are currently dropped by the parser rather than inlined. Do not rely on `internal` for enforcement until that lands; write the checks in the calling function.
+Private functions are callable only from covenant functions in the same contract, including other private functions. Calls are inlined, and private functions create no spend group or leaf. Tapscript functions cannot call or bind to a private function, including through `tweak(emulator, name)`. Public covenant functions remain transaction entrypoints and cannot be called as helpers. Declaration order does not matter; direct and mutual recursion are rejected. The old `internal` modifier is not supported.
 
-Every spend path must contain at least one `require`. An `if` without `else`, or an `else` branch without a `require`, is rejected as a bare path.
+Arguments are evaluated once, left to right, and passed by value. Each helper sees its own parameters and locals plus the immutable constructor parameters, including struct fields and array elements. It cannot read or mutate caller locals unless their values are passed as arguments; modifying a parameter changes only the helper's copy.
+
+A return type follows the parameter list directly and is allowed only on private functions. It can be a scalar, fixed-size array, or struct, including native result structs such as `ECPoint`. Every path through a value-returning helper must return a compatible value. A helper without a return type may fall through or use `return;`. Early returns inside branches or loops exit the helper and resume the caller. Returning a boolean does not enforce it: use `require(predicate(...));`. Value-returning calls cannot discard their result; void calls cannot be used in expressions.
+
+```solidity
+contract Minimum(int minimum) {
+    private function sufficient(int amount) bool {
+        return amount >= minimum;
+    }
+
+    function spend(int amount) {
+        require(sufficient(amount));
+    }
+}
+```
+
+Every spend path must contain at least one `require`, directly or through a helper that enforces a requirement on every path. An `if` without `else`, or an `else` branch without a `require`, is rejected as a bare path.
 
 ### Statements (covenant bodies)
 

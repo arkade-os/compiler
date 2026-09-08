@@ -177,7 +177,20 @@ pub enum Binding {
 /// Resolve a tapscript's binding and enforce the `emulator` rule + key
 /// resolution (§5.3). `contract` supplies the covenant function names.
 pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Binding, String> {
-    let name_matches = contract.functions.iter().any(|f| f.name == ts.name);
+    if contract
+        .functions
+        .iter()
+        .any(|f| f.is_private && f.name == ts.name)
+    {
+        return Err(format!(
+            "tapscript '{}' cannot bind to a private function",
+            ts.name
+        ));
+    }
+    let name_matches = contract
+        .functions
+        .iter()
+        .any(|f| !f.is_private && f.name == ts.name);
 
     // Collect bare-emulator usage and explicit tweak targets across all keys.
     let mut uses_bare_emulator = false;
@@ -225,7 +238,11 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
         0 => Ok(Binding::Standalone),
         1 => {
             let func = unique_targets.iter().next().expect("one target");
-            if !contract.functions.iter().any(|f| &f.name == func) {
+            if !contract
+                .functions
+                .iter()
+                .any(|f| !f.is_private && &f.name == func)
+            {
                 return Err(format!(
                     "tweak(emulator, {func}) in tapscript `{}`: no function named `{func}`",
                     ts.name
@@ -507,7 +524,7 @@ pub fn build_function_groups(
     let mut groups = Vec::new();
 
     // One group per covenant function, in declaration order.
-    for f in contract.functions.iter().filter(|f| !f.is_internal) {
+    for f in contract.functions.iter().filter(|f| !f.is_private) {
         let arkade = covenants.remove(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
         if leaves.is_empty() {
@@ -771,7 +788,8 @@ mod tests {
                     name: (*n).into(),
                     parameters: vec![],
                     statements: vec![],
-                    is_internal: false,
+                    is_private: false,
+                    return_type: None,
                 })
                 .collect(),
             tapscripts,

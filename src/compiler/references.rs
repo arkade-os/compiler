@@ -1,12 +1,15 @@
 use std::collections::HashSet;
 
-use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+use crate::models::{AssignmentTarget, Expression, Function, Requirement, Statement};
 use crate::validator::child_exprs;
 
 // Parameters are retained whole; pruning individual composite fields needs a sparse stack layout.
-pub(super) fn referenced_parameters(statements: &[Statement]) -> HashSet<&str> {
+pub(super) fn referenced_parameters<'a>(
+    statements: &'a [Statement],
+    functions: &'a [Function],
+) -> HashSet<&'a str> {
     let mut names = HashSet::new();
-    collect_statements(statements, &mut names);
+    collect_statements(statements, &mut names, functions, &mut HashSet::new());
     names
 }
 
@@ -18,8 +21,18 @@ fn collect_name<'a>(name: &'a str, names: &mut HashSet<&'a str>) {
     }
 }
 
-fn collect_expression<'a>(expression: &'a Expression, names: &mut HashSet<&'a str>) {
+fn collect_expression<'a>(
+    expression: &'a Expression,
+    names: &mut HashSet<&'a str>,
+    functions: &'a [Function],
+    visited: &mut HashSet<&'a str>,
+) {
     match expression {
+        Expression::Call { name, .. } if visited.insert(name) => {
+            if let Some(function) = functions.iter().find(|f| f.is_private && f.name == *name) {
+                collect_statements(&function.statements, names, functions, visited);
+            }
+        }
         Expression::Variable(name)
         | Expression::Property(name)
         | Expression::ArrayIndex { array: name, .. }
@@ -46,16 +59,23 @@ fn collect_expression<'a>(expression: &'a Expression, names: &mut HashSet<&'a st
         _ => {}
     }
     for child in child_exprs(expression) {
-        collect_expression(child, names);
+        collect_expression(child, names, functions, visited);
     }
 }
 
-fn collect_requirement<'a>(requirement: &'a Requirement, names: &mut HashSet<&'a str>) {
+fn collect_requirement<'a>(
+    requirement: &'a Requirement,
+    names: &mut HashSet<&'a str>,
+    functions: &'a [Function],
+    visited: &mut HashSet<&'a str>,
+) {
     match requirement {
-        Requirement::Expression(expression) => collect_expression(expression, names),
+        Requirement::Expression(expression) => {
+            collect_expression(expression, names, functions, visited)
+        }
         Requirement::Comparison { left, right, .. } => {
-            collect_expression(left, names);
-            collect_expression(right, names);
+            collect_expression(left, names, functions, visited);
+            collect_expression(right, names, functions, visited);
         }
         Requirement::CheckSig { signature, pubkey } => {
             collect_name(signature, names);
@@ -91,31 +111,44 @@ fn collect_requirement<'a>(requirement: &'a Requirement, names: &mut HashSet<&'a
     }
 }
 
-fn collect_statements<'a>(statements: &'a [Statement], names: &mut HashSet<&'a str>) {
+fn collect_statements<'a>(
+    statements: &'a [Statement],
+    names: &mut HashSet<&'a str>,
+    functions: &'a [Function],
+    visited: &mut HashSet<&'a str>,
+) {
     for statement in statements {
         match statement {
-            Statement::Require(requirement) => collect_requirement(requirement, names),
-            Statement::LetBinding { value, .. } => collect_expression(value, names),
+            Statement::Call(expression) | Statement::Return(Some(expression)) => {
+                collect_expression(expression, names, functions, visited);
+            }
+            Statement::Return(None) => {}
+            Statement::Require(requirement) => {
+                collect_requirement(requirement, names, functions, visited)
+            }
+            Statement::LetBinding { value, .. } => {
+                collect_expression(value, names, functions, visited)
+            }
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. } = target {
-                    collect_expression(index, names);
+                    collect_expression(index, names, functions, visited);
                 }
-                collect_expression(value, names);
+                collect_expression(value, names, functions, visited);
             }
             Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
             } => {
-                collect_expression(condition, names);
-                collect_statements(then_body, names);
+                collect_expression(condition, names, functions, visited);
+                collect_statements(then_body, names, functions, visited);
                 if let Some(body) = else_body {
-                    collect_statements(body, names);
+                    collect_statements(body, names, functions, visited);
                 }
             }
             Statement::ForIn { iterable, body, .. } => {
-                collect_expression(iterable, names);
-                collect_statements(body, names);
+                collect_expression(iterable, names, functions, visited);
+                collect_statements(body, names, functions, visited);
             }
         }
     }

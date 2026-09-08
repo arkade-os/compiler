@@ -1,0 +1,93 @@
+struct Config { int minimum; int[2] offsets; }
+struct Result { int selected; int[2] values; }
+struct NativeResults { ECPoint point; Outpoint previous; Result result; }
+
+contract PrivateFunctions(Config config) {
+    private function offset() int { return config.offsets[0] + config.offsets[1]; }
+
+    private function bump(int value) int {
+        value = value + offset();
+        return value;
+    }
+
+    private function first(int[3] values) int {
+        for (i, value) in values {
+            if (value >= config.minimum) {
+                return bump(value) + i;
+            }
+        }
+        return config.minimum;
+    }
+
+    private function nested(int[3] values) int {
+        for (i, value) in values {
+            for (j, other) in values {
+                if (other >= config.minimum) { return other + i + j; }
+            }
+        }
+        return config.minimum;
+    }
+
+    private function pair(int value) int[2] { return [value, value + 1]; }
+    private function change(int[2] values) int[2] {
+        values[0] = values[0] + 10;
+        return values;
+    }
+    private function result(int value) Result {
+        return { selected: value, values: [value + 1, value + 2] };
+    }
+    private function copy(Result value) Result {
+        value.selected = value.selected + 1;
+        return value;
+    }
+    private function checked(bool pass) {
+        require(pass);
+        if (pass) { return; }
+        require(false);
+    }
+    private function skip(bool pass) {
+        if (pass) { return; }
+        require(false);
+    }
+    private function verify(int value, int expected) { require(value == expected); }
+    private function difference(int left, int right) int { return left - right; }
+
+    private function point(int x, int y) ECPoint { return ecMul(x, y, 1, 0); }
+    private function outpoint() Outpoint { return tx.input.current.outpoint; }
+
+    public function spend(int[3] values, int expected, bool pass, int x, int y) {
+        NativeResults wrapped = { point: point(x, y), previous: outpoint(), result: result(5) };
+        require(wrapped.point.x == x);
+        require(wrapped.point.y == y);
+        require(wrapped.previous.vout == 0);
+        require(wrapped.result.selected == 5);
+        require(wrapped.result.values[1] == 7);
+        Result composed = { selected: 5, values: pair(5) };
+        require(composed.values[0] == 5);
+        require(composed.values[1] == 6);
+        let native = point(x, y);
+        require(native.x == x);
+        require(native.y == y);
+        let previous = outpoint();
+        let direct = tx.inputs[0].outpoint;
+        require(previous.txid == direct.txid);
+        require(previous.vout == 0);
+        let value = first(values);
+        let original = result(value);
+        let copied = copy(original);
+        let initial = pair(value);
+        let changed = change(initial);
+        require(original.selected == value);
+        require(initial[0] == value);
+        require(copied.selected == value + 1);
+        require(changed[0] == value + 10);
+        require(changed[1] == value + 1);
+        require(original.values[0] == value + 1);
+        require(original.values[1] == value + 2);
+        require(difference(bump(value), bump(value + 1)) == -1);
+        checked(pass);
+        skip(pass);
+        verify(100 + bump(value) * 2 + first(values) + nested(values), expected);
+        require(value == first(values));
+    }
+}

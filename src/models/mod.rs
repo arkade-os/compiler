@@ -278,13 +278,19 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     /// Function body statements.
     pub statements: Vec<Statement>,
-    /// Whether this is an internal function
-    pub is_internal: bool,
+    /// Whether this is a callable helper rather than a transaction entrypoint.
+    pub is_private: bool,
+    /// Explicit result type; None means the function returns no value.
+    pub return_type: Option<String>,
 }
 
 /// Statement AST - represents any executable statement in a function body
 #[derive(Debug, Clone)]
 pub enum Statement {
+    /// A void private function call.
+    Call(Expression),
+    /// Return from a private function.
+    Return(Option<Expression>),
     /// require(expr, "message");
     Require(Requirement),
     /// let name = expr; or type name = expr;
@@ -485,6 +491,12 @@ pub enum GroupIOSource {
 /// Expression AST
 #[derive(Debug, Clone)]
 pub enum Expression {
+    /// A private function call; the declared result type is resolved before validation.
+    Call {
+        name: String,
+        args: Vec<Expression>,
+        return_type: Option<String>,
+    },
     /// Variable reference
     Variable(String),
     /// Literal value
@@ -755,5 +767,127 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
             Some("Outpoint")
         }
         _ => None,
+    }
+}
+
+pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
+    match expr {
+        // Leaf nodes: no nested expressions.
+        Expression::Variable(_)
+        | Expression::Literal(_)
+        | Expression::Property(_)
+        | Expression::CurrentInput(_)
+        | Expression::TxIntrospection { .. }
+        | Expression::GroupProperty { .. }
+        | Expression::AssetGroupsLength
+        | Expression::CheckSigExpr { .. }
+        | Expression::CheckSigFromStackExpr { .. }
+        | Expression::CheckSigFromStackVerify { .. } => vec![],
+
+        Expression::ArrayIndex { index, .. } => vec![index],
+
+        Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
+            elements.iter_mut().collect()
+        }
+        Expression::StructLiteral(fields) => fields.iter_mut().map(|(_, value)| value).collect(),
+
+        Expression::AssetLookup {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        }
+        | Expression::AssetHas {
+            index,
+            asset_txid,
+            asset_gidx,
+            ..
+        } => vec![index, asset_txid, asset_gidx],
+        Expression::AssetCount { index, .. }
+        | Expression::InputIntrospection { index, .. }
+        | Expression::OutputIntrospection { index, .. }
+        | Expression::GroupSum { index, .. }
+        | Expression::GroupNumIO { index, .. } => vec![index],
+        Expression::AssetAt {
+            io_index,
+            asset_index,
+            ..
+        } => vec![io_index, asset_index],
+        Expression::BinaryOp { left, right, .. } | Expression::Concat { left, right, .. } => {
+            vec![left, right]
+        }
+        Expression::GroupFind {
+            asset_txid,
+            asset_gidx,
+        }
+        | Expression::GroupHas {
+            asset_txid,
+            asset_gidx,
+        } => vec![asset_txid, asset_gidx],
+        Expression::GroupControlIs {
+            asset_txid,
+            asset_gidx,
+            ..
+        } => vec![asset_txid, asset_gidx],
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => vec![group_index, io_index],
+        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
+        Expression::Sha256Update { context, chunk } => vec![context, chunk],
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => vec![context, last_chunk],
+        Expression::Sighash { hash_type } => vec![hash_type],
+        Expression::Digest { data, hash_type } => vec![data, hash_type],
+        Expression::Negate { value } | Expression::Not { value } => vec![value],
+        Expression::ModExp {
+            base,
+            exponent,
+            modulus,
+        } => vec![base, exponent, modulus],
+        Expression::EcAdd {
+            x1,
+            y1,
+            x2,
+            y2,
+            curve_id,
+        } => vec![x1, y1, x2, y2, curve_id],
+        Expression::EcMul {
+            x,
+            y,
+            scalar,
+            curve_id,
+        } => vec![x, y, scalar, curve_id],
+        Expression::EcPairing {
+            g1_x,
+            g1_y,
+            g2_x_c1,
+            g2_x_c0,
+            g2_y_c1,
+            g2_y_c0,
+            curve_id,
+        } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
+        Expression::EcMulScalarVerify {
+            scalar,
+            point_p,
+            point_q,
+        } => vec![scalar, point_p, point_q],
+        Expression::TweakVerify {
+            point_p,
+            tweak,
+            point_q,
+        } => vec![point_p, tweak, point_q],
+        Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
+        Expression::Substr { data, offset, size } => vec![data, offset, size],
+        Expression::Cat { left, right } => vec![left, right],
+        Expression::Bin2Num { data }
+        | Expression::ReverseBytes { data }
+        | Expression::SizeOf { data } => vec![data],
+        Expression::Num2Bin { value, size } => vec![value, size],
+        Expression::PacketInspect { packet_type } => vec![packet_type],
+        Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
     }
 }

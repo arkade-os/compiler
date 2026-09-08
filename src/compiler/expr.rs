@@ -12,6 +12,9 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
 /// Emit assembly for an expression (push its value onto the stack)
 pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
     match expr {
+        Expression::Call { .. } => {
+            unreachable!("private calls are extracted before raw expression emission")
+        }
         Expression::Variable(var) => {
             asm.push(format!("<{}>", var));
         }

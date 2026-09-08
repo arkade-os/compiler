@@ -22,7 +22,7 @@ contract FujiSafe(
   int exit
 ) {
   // Helper function to verify treasury Fuji token burning via Taproot output
-  function verifyTreasuryFujiBurning() internal {
+  private function verifyTreasuryFujiBurning() {
     // In Taproot, we verify the output is a P2TR that commits to our asset
     bytes p2trScript = new P2TR(treasuryPk, assetCommitmentHash);
 

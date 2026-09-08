@@ -32,6 +32,12 @@ pub(crate) fn substitute_statement(
     array_name: &str,
 ) -> Statement {
     match stmt {
+        Statement::Call(expression) => Statement::Call(substitute_expression(
+            expression, index_var, value_var, k, array_name,
+        )),
+        Statement::Return(value) => Statement::Return(value.as_ref().map(|expression| {
+            substitute_expression(expression, index_var, value_var, k, array_name)
+        })),
         Statement::Require(req) => Statement::Require(substitute_requirement(
             req, index_var, value_var, k, array_name,
         )),
@@ -185,6 +191,18 @@ pub(crate) fn substitute_expression(
     array_name: &str,
 ) -> Expression {
     match expr {
+        Expression::Call {
+            name,
+            args,
+            return_type,
+        } => Expression::Call {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| substitute_expression(arg, index_var, value_var, k, array_name))
+                .collect(),
+            return_type: return_type.clone(),
+        },
         // Replace index variable with literal k
         Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
         // Replace the value variable with its source-impossible stack binding.

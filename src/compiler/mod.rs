@@ -33,6 +33,7 @@ mod asset;
 mod comparison;
 mod concat;
 mod expr;
+mod functions;
 mod introspection;
 mod loops;
 mod references;
@@ -71,6 +72,9 @@ struct Generator {
     scopes: Vec<usize>,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
+    functions: Vec<Function>,
+    // None outside a helper; Some(None) inside a void helper.
+    return_type: Option<Option<String>>,
 }
 
 impl Generator {
@@ -125,6 +129,8 @@ impl Generator {
             scopes: Vec::new(),
             constructor_array_expansions,
             structs: structs.to_vec(),
+            functions: Vec::new(),
+            return_type: None,
         })
     }
 
@@ -443,9 +449,20 @@ impl Generator {
     ) -> Result<(), String> {
         let before = self.stack.len();
         let mut raw = Vec::new();
-        emit_expression_asm(expression, &mut raw);
+        let mut expression = expression.clone();
+        let mut calls = Vec::new();
+        functions::extract_calls(&mut expression, &mut calls);
+        emit_expression_asm(&expression, &mut raw);
         for token in raw {
-            self.lower_raw_token(&token)?;
+            if let Some(index) = token
+                .strip_prefix("<$call:")
+                .and_then(|s| s.strip_suffix('>'))
+            {
+                let index = index.parse::<usize>().map_err(|_| "invalid call marker")?;
+                self.emit_call(calls.get(index).ok_or("invalid call marker")?)?;
+            } else {
+                self.lower_raw_token(&token)?;
+            }
         }
         if self.stack.len() != before + expected
             || self.stack[before..]
@@ -456,34 +473,6 @@ impl Generator {
                 "expression produces {} stack items; exactly {expected} required",
                 self.stack.len().saturating_sub(before),
             ));
-        }
-        Ok(())
-    }
-
-    fn bind_native_struct(
-        &mut self,
-        name: &str,
-        declared_type: &str,
-        expression: &Expression,
-    ) -> Result<(), String> {
-        let fields = crate::models::builtin_struct_fields(declared_type)
-            .ok_or_else(|| format!("unknown native struct type '{declared_type}'"))?;
-        // Native expressions push fields in declaration order, first deepest.
-        // Replace this swap with a general reversal when a wider result is introduced.
-        if fields.len() != 2 {
-            return Err(format!(
-                "native struct '{declared_type}' has unsupported width {}",
-                fields.len()
-            ));
-        }
-        self.emit_expression_items(expression, fields.len())?;
-        self.swap()?;
-        let start = self.stack.len() - fields.len();
-        for ((field, _), item) in fields.iter().rev().zip(&mut self.stack[start..]) {
-            *item = StackItem::Binding {
-                name: Self::internal_binding_name(&format!("{name}.{field}")),
-                kind: BindingKind::Local,
-            };
         }
         Ok(())
     }
@@ -726,13 +715,18 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         warnings,
     };
 
-    // Build covenant objects for non-internal functions.
+    // Build covenant objects for public functions.
     let mut covenants: std::collections::HashMap<String, ArkadeCovenant> =
         std::collections::HashMap::new();
-    for function in contract.functions.iter().filter(|f| !f.is_internal) {
+    for function in contract.functions.iter().filter(|f| !f.is_private) {
         covenants.insert(
             function.name.clone(),
-            covenant_for(function, &contract.parameters, &contract.structs)?,
+            covenant_for(
+                function,
+                &contract.parameters,
+                &contract.structs,
+                &contract.functions,
+            )?,
         );
     }
 
@@ -774,20 +768,22 @@ pub(crate) fn expanded_placeholder_params(
     Ok(result)
 }
 
-/// Build an `ArkadeCovenant` for a non-internal function.
+/// Build an `ArkadeCovenant` for a public function.
 fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
     structs: &[crate::models::StructDefinition],
+    functions: &[Function],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
-    let references = references::referenced_parameters(&function.statements);
+    let references = references::referenced_parameters(&function.statements, functions);
     let retained_parameters = constructor_parameters
         .iter()
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
     let mut generator = Generator::new(&function.parameters, &retained_parameters, structs)?;
+    generator.functions = functions.to_vec();
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })
@@ -820,8 +816,13 @@ fn generate_asm_from_statements_recursive(
     statements: &[Statement],
     generator: &mut Generator,
 ) -> Result<(), String> {
-    for stmt in statements {
+    for (index, stmt) in statements.iter().enumerate() {
         match stmt {
+            Statement::Call(expression) => generator.emit_call(expression)?,
+            Statement::Return(value) => {
+                generator.emit_return(value.as_ref())?;
+                return Ok(());
+            }
             Statement::Require(req) => {
                 generate_requirement_asm(req, generator)?;
             }
@@ -872,7 +873,11 @@ fn generate_asm_from_statements_recursive(
                         substitute_loop_body(body, index_var, value_var, k, array_name);
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
-                    generate_asm_from_statements_recursive(&substituted, generator)?;
+                    if k > 0 && functions::contains_return(body) {
+                        generator.emit_unless_returned(&substituted)?;
+                    } else {
+                        generate_asm_from_statements_recursive(&substituted, generator)?;
+                    }
                     generator.exit_scope()?;
                     if generator.stack != baseline {
                         return Err(format!(
@@ -885,158 +890,29 @@ fn generate_asm_from_statements_recursive(
                 name,
                 declared_type,
                 value,
-            } => match (declared_type.as_deref(), value) {
-                (Some(declared_type), Expression::StructLiteral(_))
-                    if generator
-                        .structs
-                        .iter()
-                        .any(|definition| definition.name == declared_type) =>
-                {
-                    let mut leaves = Vec::new();
-                    collect_struct_literal_leaves(
-                        name,
-                        declared_type,
-                        value,
-                        &generator.structs,
-                        &mut leaves,
-                    )?;
-                    for (access_name, leaf_type, expression) in leaves.into_iter().rev() {
-                        if crate::models::is_builtin_struct(&leaf_type) {
-                            generator.bind_native_struct(&access_name, &leaf_type, &expression)?;
-                        } else {
-                            generator.emit_expression(&expression)?;
-                            generator
-                                .bind_local(&Generator::internal_binding_name(&access_name))?;
-                        }
-                    }
-                }
-                (declared_type, value)
-                    if crate::models::expression_result_struct(value).is_some() =>
-                {
-                    let result_type = crate::models::expression_result_struct(value)
-                        .expect("matched a native struct result");
-                    if declared_type.is_some_and(|declared| declared != result_type) {
-                        return Err(format!(
-                            "binding '{name}' declares type '{}' but initializer has type '{result_type}'",
-                            declared_type.expect("checked as some"),
-                        ));
-                    }
-                    generator.bind_native_struct(name, result_type, value)?;
-                }
-                (Some(declared_type), Expression::ArrayLiteral(elements))
-                    if crate::models::array_type_parts(declared_type).is_some() =>
-                {
-                    let (_, length) = crate::models::array_type_parts(declared_type)
-                        .expect("matched an array type");
-                    if elements.len() != length {
-                        return Err(format!(
-                            "array '{name}' declares {length} elements but its initializer has {}",
-                            elements.len()
-                        ));
-                    }
-                    // Deepest element last, so element 0 sits closest to the top —
-                    // the layout parameter arrays already have.
-                    for (index, element) in elements.iter().enumerate().rev() {
-                        generator.emit_expression(element)?;
-                        generator
-                            .bind_local(&internal_array_binding_name(name, &index.to_string()))?;
-                    }
-                }
-                _ => {
+            } => {
+                let result_type = declared_type.as_deref().or_else(|| match value {
+                    Expression::Call { return_type, .. } => return_type.as_deref(),
+                    _ => crate::models::expression_result_struct(value),
+                });
+                if let Some(ty) = result_type {
+                    generator.emit_typed_value(value, ty)?;
+                    generator.bind_value(name, ty)?;
+                } else {
                     generator.emit_expression(value)?;
                     generator.bind_local(name)?;
                 }
-            },
+            }
             Statement::VarAssign { target, value } => {
                 generator.emit_expression(value)?;
                 generator.assign(target)?;
             }
         }
         generator.assert_statement_boundary()?;
-    }
-    Ok(())
-}
-
-fn collect_struct_literal_leaves(
-    access_name: &str,
-    declared_type: &str,
-    value: &Expression,
-    structs: &[crate::models::StructDefinition],
-    leaves: &mut Vec<(String, String, Expression)>,
-) -> Result<(), String> {
-    if let Some((element_type, length)) = crate::models::array_type_parts(declared_type) {
-        let Expression::ArrayLiteral(elements) = value else {
-            return Err(format!(
-                "field '{access_name}' must be initialized with an array literal"
-            ));
-        };
-        if elements.len() != length {
-            return Err(format!(
-                "array field '{access_name}' declares {length} elements but its initializer has {}",
-                elements.len()
-            ));
+        if functions::contains_return(std::slice::from_ref(stmt)) && index + 1 < statements.len() {
+            generator.emit_unless_returned(&statements[index + 1..])?;
+            return Ok(());
         }
-        for (index, element) in elements.iter().enumerate() {
-            if !crate::models::is_builtin_type(element_type) {
-                return Err("arrays of structs are not supported".to_string());
-            }
-            leaves.push((
-                format!("{access_name}[{index}]"),
-                element_type.to_string(),
-                element.clone(),
-            ));
-        }
-        return Ok(());
-    }
-    if crate::models::is_builtin_type(declared_type) {
-        leaves.push((
-            access_name.to_string(),
-            declared_type.to_string(),
-            value.clone(),
-        ));
-        return Ok(());
-    }
-    if crate::models::is_builtin_struct(declared_type) {
-        leaves.push((
-            access_name.to_string(),
-            declared_type.to_string(),
-            value.clone(),
-        ));
-        return Ok(());
-    }
-
-    let definition = structs
-        .iter()
-        .find(|definition| definition.name == declared_type)
-        .ok_or_else(|| format!("unknown struct type '{declared_type}'"))?;
-    let Expression::StructLiteral(fields) = value else {
-        return Err(format!(
-            "struct field '{access_name}' must be initialized with a struct literal"
-        ));
-    };
-    for field in &definition.fields {
-        let matches = fields
-            .iter()
-            .filter(|(name, _)| name == &field.name)
-            .collect::<Vec<_>>();
-        if matches.len() != 1 {
-            return Err(format!(
-                "struct literal for '{access_name}' must initialize field '{}' exactly once",
-                field.name
-            ));
-        }
-        collect_struct_literal_leaves(
-            &format!("{access_name}.{}", field.name),
-            &field.param_type,
-            &matches[0].1,
-            structs,
-            leaves,
-        )?;
-    }
-    if fields.len() != definition.fields.len() {
-        return Err(format!(
-            "struct literal for '{access_name}' has unknown or duplicate fields"
-        ));
     }
     Ok(())
 }
