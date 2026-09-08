@@ -129,25 +129,21 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>) -> Result<crate::models::TapItem,
                 .ok_or("Missing call name")?
                 .as_str()
                 .to_string();
+            if !matches!(name.as_str(), "older" | "after") {
+                return Err(format!("unsupported tapscript call `{name}(...)`"));
+            }
             let arg = inner
                 .next()
                 .ok_or_else(|| format!("{name}() requires one argument"))?
                 .as_str()
                 .to_string();
-            match name.as_str() {
-                "older" => {
-                    if inner.next().is_some() {
-                        return Err(format!("{name}() requires one argument"));
-                    }
-                    Ok(TapItem::Older { value: arg })
-                }
-                "after" => {
-                    if inner.next().is_some() {
-                        return Err(format!("{name}() requires one argument"));
-                    }
-                    Ok(TapItem::After { value: arg })
-                }
-                other => Err(format!("unsupported tapscript call `{other}(...)`")),
+            if inner.next().is_some() {
+                return Err(format!("{name}() requires one argument"));
+            }
+            if name == "older" {
+                Ok(TapItem::Older { value: arg })
+            } else {
+                Ok(TapItem::After { value: arg })
             }
         }
         other => Err(format!(

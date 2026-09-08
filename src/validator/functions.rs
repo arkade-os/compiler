@@ -289,7 +289,7 @@ fn analyze_function(
     if visiting.contains(&function.name) {
         visiting.push(function.name.clone());
         return Err(format!(
-            "recursive private function call: {}",
+            "recursive function call: {}",
             visiting.join(" -> ")
         ));
     }
