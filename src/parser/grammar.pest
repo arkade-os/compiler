@@ -361,7 +361,7 @@ identifier_property_access = {
 
 // Time comparison (tx.time >= timelock)
 time_comparison = {
-    "tx.time" ~ ">=" ~ named_binding
+    "tx.time" ~ ">=" ~ additive_expr
 }
 
 // Generalized hash condition function name.
@@ -508,7 +508,7 @@ check_multisig = { check_threshold_multisig }
 // checkMultisig([keys], [sigs], threshold?) — keys may be tweak()s; the second
 // array carries the aligned signature inputs and the final threshold is optional.
 check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ number_literal)? ~ ")"
+    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ (number_literal | identifier))? ~ ")"
 }
 
 // Array of identifiers

@@ -360,11 +360,6 @@ pub enum Requirement {
         signatures: Vec<String>,
         threshold: u16,
     },
-    /// After requirement
-    After {
-        blocks: u64,
-        timelock_var: Option<String>,
-    },
     /// Hash equal requirement
     HashEqual {
         hash_fn: HashFn,

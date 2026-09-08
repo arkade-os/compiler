@@ -99,11 +99,6 @@ fn collect_requirement<'a>(
                 collect_name(name, names);
             }
         }
-        Requirement::After { timelock_var, .. } => {
-            if let Some(name) = timelock_var {
-                collect_name(name, names);
-            }
-        }
         Requirement::HashEqual { preimage, hash, .. } => {
             collect_name(preimage, names);
             collect_name(hash, names);

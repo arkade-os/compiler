@@ -131,15 +131,6 @@ pub(crate) fn substitute_requirement(
                 .collect(),
             threshold: *threshold,
         },
-        Requirement::After {
-            blocks,
-            timelock_var,
-        } => Requirement::After {
-            blocks: *blocks,
-            timelock_var: timelock_var
-                .as_ref()
-                .map(|name| substitute_loop_name(name, index_var, value_var, k, array_name)),
-        },
         Requirement::HashEqual {
             hash_fn,
             preimage,

@@ -1358,18 +1358,6 @@ fn validate_binding_requirement(
                 );
             }
         }
-        Requirement::After {
-            timelock_var: Some(name),
-            ..
-        } => validate_named_binding(
-            name,
-            Some(ArkType::Int),
-            "timelock",
-            function_name,
-            scopes,
-            issues,
-        ),
-        Requirement::After { .. } => {}
         Requirement::HashEqual { preimage, hash, .. } => {
             validate_named_binding(preimage, None, "preimage", function_name, scopes, issues);
             validate_named_binding(hash, None, "hash", function_name, scopes, issues);

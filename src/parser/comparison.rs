@@ -6,10 +6,10 @@ use pest::iterators::Pair;
 
 pub(crate) fn parse_time_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let timelock_var = inner.next().ok_or("Missing timelock")?.as_str().to_string();
-    Ok(Requirement::After {
-        blocks: 0,
-        timelock_var: Some(timelock_var),
+    Ok(Requirement::Comparison {
+        left: Expression::Property("tx.time".to_string()),
+        op: ">=".to_string(),
+        right: parse_additive_expr(inner.next().ok_or("Missing timelock")?)?,
     })
 }
 

@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY, OP_LESSTHAN,
+    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY, OP_INSPECTLOCKTIME, OP_LESSTHAN,
 };
 
 #[test]
@@ -57,10 +57,10 @@ fn test_fuji_safe_contract() {
         }
     }
 
-    // Verify claim function: checks expiration timeout (CLTV) in arkade covenant
+    // The claim covenant checks expiration through locktime inspection.
     let claim_asm = crate::common::arkade_asm(&output, "claim");
     assert!(
-        claim_asm.contains(OP_CHECKLOCKTIMEVERIFY),
+        claim_asm.contains(OP_INSPECTLOCKTIME),
         "claim covenant should enforce expiration timeout: {}",
         claim_asm
     );

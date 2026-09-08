@@ -3,7 +3,6 @@ use super::Rule;
 use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
-use std::str::FromStr;
 
 /// Parse checkSig(sig, pubkey) → CheckSig requirement
 pub(crate) fn parse_check_sig(pair: Pair<Rule>) -> Result<Requirement, String> {
@@ -43,7 +42,10 @@ pub(crate) fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement
 }
 
 /// Parse checkMultisig([pubkeys], [sigs], threshold?) → CheckMultisig requirement
-pub(crate) fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, String> {
+pub(crate) fn parse_check_multisig(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<Requirement, String> {
     let mut inner = pair
         .into_inner()
         .next()
@@ -64,10 +66,7 @@ pub(crate) fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, Stri
         .collect();
 
     let threshold = match inner.next() {
-        Some(next_pair) => match u16::from_str(next_pair.as_str()) {
-            Ok(threshold) => threshold,
-            Err(e) => return Err(format!("{}", e)),
-        },
+        Some(next_pair) => parse_multisig_threshold(next_pair, constants)?,
         None => pubkeys.len() as u16,
     };
 
@@ -76,4 +75,29 @@ pub(crate) fn parse_check_multisig(pair: Pair<Rule>) -> Result<Requirement, Stri
         signatures,
         threshold,
     })
+}
+
+pub(crate) fn parse_multisig_threshold(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<u16, String> {
+    let name = pair.as_str();
+    let text = if pair.as_rule() == Rule::identifier {
+        let constant = constants
+            .iter()
+            .find(|constant| constant.name == name)
+            .ok_or_else(|| format!("multisig threshold '{name}' must be an int constant"))?;
+        match (&constant.value, constant.const_type.as_str()) {
+            (Expression::Literal(text), "int") => text.as_str(),
+            _ => {
+                return Err(format!(
+                    "multisig threshold '{name}' must be an int literal constant"
+                ))
+            }
+        }
+    } else {
+        name
+    };
+    text.parse::<u16>()
+        .map_err(|e| format!("invalid multisig threshold '{name}': {e}"))
 }

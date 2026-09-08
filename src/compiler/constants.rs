@@ -1,5 +1,5 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Expression, Requirement, Statement, TapItem,
+    AssignmentTarget, Constant, Contract, Expression, KeyExpr, Requirement, Statement, TapItem,
 };
 use std::collections::HashMap;
 
@@ -15,9 +15,25 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
     }
     for tapscript in &mut contract.tapscripts {
         for item in &mut tapscript.items {
-            if let TapItem::Older { value } | TapItem::After { value } = item {
-                if let Some(text) = values.get(value.as_str()) {
-                    *value = text.clone();
+            match item {
+                TapItem::Older { value } | TapItem::After { value } => {
+                    if let Some(text) = values.get(value.as_str()) {
+                        *value = text.clone();
+                    }
+                }
+                TapItem::Hash { preimage, hash, .. } => {
+                    fold_named_index(preimage, &values);
+                    fold_named_index(hash, &values);
+                }
+                TapItem::Sig { keys, sigs, .. } => {
+                    for key in keys {
+                        if let KeyExpr::Ident(name) = key {
+                            fold_named_index(name, &values);
+                        }
+                    }
+                    for name in sigs {
+                        fold_named_index(name, &values);
+                    }
                 }
             }
         }
@@ -33,6 +49,12 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         value,
     } in &contract.constants
     {
+        if matches!(
+            name.as_str(),
+            "true" | "false" | "server" | "emulator" | "SERVER_KEY"
+        ) {
+            return Err(format!("constant name '{name}' is reserved"));
+        }
         if values.contains_key(name) {
             return Err(format!("duplicate constant '{name}'"));
         }
@@ -108,30 +130,73 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
             fold_expression(left, values);
             fold_expression(right, values);
         }
-        Requirement::After {
-            blocks,
-            timelock_var,
+        Requirement::CheckSig { signature, pubkey } => {
+            fold_named_index(signature, values);
+            fold_named_index(pubkey, values);
+        }
+        Requirement::CheckSigFromStack {
+            signature,
+            pubkey,
+            message,
         } => {
-            let Some(name) = timelock_var.as_deref() else {
-                return;
-            };
-            if let Some(Ok(value)) = values.get(name).map(|text| text.parse::<u64>()) {
-                *blocks = value;
-                *timelock_var = None;
+            fold_named_index(signature, values);
+            fold_named_index(pubkey, values);
+            fold_named_index(message, values);
+        }
+        Requirement::CheckMultisig {
+            pubkeys,
+            signatures,
+            ..
+        } => {
+            for name in pubkeys.iter_mut().chain(signatures) {
+                fold_named_index(name, values);
             }
         }
-        _ => {}
+        Requirement::HashEqual { preimage, hash, .. } => {
+            fold_named_index(preimage, values);
+            fold_named_index(hash, values);
+        }
     }
 }
 
 fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
-    if let Expression::Variable(name) = expression {
-        if let Some(text) = values.get(name.as_str()) {
-            *expression = Expression::Literal(text.clone());
-            return;
+    match expression {
+        Expression::Variable(name) => {
+            if let Some(text) = values.get(name.as_str()) {
+                *expression = Expression::Literal(text.clone());
+                return;
+            }
         }
+        Expression::Property(name) => fold_named_index(name, values),
+        Expression::CheckSigExpr { signature, pubkey } => {
+            fold_named_index(signature, values);
+            fold_named_index(pubkey, values);
+        }
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => {
+            fold_named_index(signature, values);
+            fold_named_index(pubkey, values);
+            fold_named_index(message, values);
+        }
+        _ => {}
     }
     for child in crate::models::child_exprs_mut(expression) {
         fold_expression(child, values);
+    }
+}
+
+fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
+    if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
+        if let Some(value) = values.get(index) {
+            *name = format!("{array}[{value}]");
+        }
     }
 }

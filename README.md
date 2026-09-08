@@ -169,7 +169,7 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | Directory | Shows |
 |---|---|
 | `single_sig`, `htlc` | Minimum viable VTXO and hash/time locks |
-| `non_interactive_swap` | Atomic asset swap with `new SingleSig(...)` payout and CLTV cancel |
+| `non_interactive_swap` | Atomic asset swap with `new SingleSig(...)` payout and locktime-gated cancel |
 | `payment_auth` | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
 | `token_vault`, `controlled_mint`, `nft_mint` | Asset lookups, asset groups, control assets |
 | `struct_vault`, `threshold_oracle` | Structs, arrays, loops, oracle quorum |
@@ -298,7 +298,7 @@ const bool STRICT = true;
 
 Constants are declared in the contract body, in any position, and are folded into a literal at every use site before validation. They are `int` or `bool` only — the language has no other literal form — and the initializer must be a literal, not an expression. They never reach the artifact: no constructor input, no placeholder, no ABI entry.
 
-A constant is readable anywhere a literal is, including covenant bodies, private and static helpers, and a tapleaf's `older(...)` or `after(...)` operand — which is the point, since a delay shared by a covenant and its L1 exit is written once.
+A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes still require numeric literals.
 
 Constant names may not collide with a constructor parameter or a function, and no parameter, binding, loop variable, or tapscript input may shadow one. Constants cannot be assigned to.
 
@@ -350,7 +350,7 @@ Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. `+` o
 
 **Hashes.** `sha256`, `hash160`, `hash256`, `ripemd160` as `require(hashFn(preimage) == hash)`. `sha256(expr)` also works as a value, including over concatenations and `substr` results. Streaming: `sha256Initialize`, `sha256Update`, `sha256Finalize`. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
-**Time.** In covenants, `tx.time` is the transaction locktime as an `int`, so `require(tx.time >= deadline)` is a CLTV check. In tapscripts, `older(n)` emits CSV and `after(n)` or `tx.time >= n` emits CLTV. `after(...)` is tapscript-only.
+**Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits CSV and `after(n)` or `tx.time >= n` emits CLTV. `after(...)` is tapscript-only.
 
 **Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`, `this.activeBytecode`.
 

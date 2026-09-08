@@ -578,7 +578,6 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
             check_expression(right, scope, errors, fn_name);
             check_comparison(left, op, right, scope, errors, fn_name);
         }
-        Requirement::After { .. } => {} // No type checking needed
     }
 }
 
