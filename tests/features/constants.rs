@@ -9,29 +9,64 @@ fn error(source: &str) -> String {
 
 #[test]
 fn constants_fold_into_covenant_and_tapleaf() {
-    let output = compile(
-        r#"
-contract Vault(pubkey owner) {
-    const int EXIT_DELAY = 144;
-    const bool STRICT = true;
-    function spend(signature sig, int amount) {
+    let source = |declarations: &str, delay: &str, strict: &str| {
+        format!(
+            r#"
+contract Vault(pubkey owner) {{
+    {declarations}
+    function spend(signature sig, int amount) {{
         require(checkSig(sig, owner));
-        require(amount > EXIT_DELAY);
-        require(STRICT);
-    }
-    function exit(signature sig) tapscript {
-        require(older(EXIT_DELAY));
+        require(amount > {delay});
+        require({strict});
+    }}
+    function exit(signature sig) tapscript {{
+        require(older({delay}));
         require(checkSig(sig, owner));
-    }
-}
-"#,
-    )
+    }}
+}}
+"#
+        )
+    };
+    let output = compile(&source(
+        "const int EXIT_DELAY = 144; const bool STRICT = true;",
+        "EXIT_DELAY",
+        "STRICT",
+    ))
     .expect("constants");
+    let literal = compile(&source("", "144", "true")).expect("literal");
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);
-    assert!(arkade_asm_tokens(&output, "spend").contains(&"144".to_string()));
+
     assert_eq!(
-        leaf_asm_tokens(&output, "exit", "exit")[0],
-        "144".to_string()
+        leaf_asm(&output, "exit", "exit"),
+        "144 OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
+    );
+    assert_eq!(witness_names(&output, "exit", "exit"), ["sig"]);
+    assert!(group(&output, "exit").arkade.is_none());
+
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+    assert_eq!(
+        leaf_asm(&output, "exit", "exit"),
+        leaf_asm(&literal, "exit", "exit")
+    );
+    assert_eq!(
+        leaf_asm(&output, "spend", "spend"),
+        leaf_asm(&literal, "spend", "spend")
+    );
+    assert_eq!(
+        witness_names(&output, "spend", "spend"),
+        witness_names(&literal, "spend", "spend")
+    );
+    assert_eq!(arkade_inputs(&output, "spend"), ["sig", "amount"]);
+    assert_eq!(
+        output
+            .functions
+            .iter()
+            .map(|g| g.name.as_str())
+            .collect::<Vec<_>>(),
+        ["spend", "exit"]
     );
     assert!(!arkade_asm(&output, "spend").contains("EXIT_DELAY"));
     assert_eq!(
