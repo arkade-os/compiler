@@ -32,11 +32,11 @@ pub mod tapscript;
 mod asset;
 mod comparison;
 mod concat;
+mod constants;
 mod expr;
 mod functions;
 mod introspection;
 mod loops;
-mod references;
 
 pub(crate) use asset::*;
 pub(crate) use comparison::*;
@@ -665,6 +665,8 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         Err(e) => return Err(format!("Parse error: {}", e)),
     };
 
+    constants::fold(&mut contract)?;
+
     typechecker::resolve_group_properties(&mut contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -776,7 +778,8 @@ fn covenant_for(
     functions: &[Function],
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
-    let references = references::referenced_parameters(&function.statements, functions);
+    let references =
+        crate::validator::references::referenced_parameters(&function.statements, functions);
     let retained_parameters = constructor_parameters
         .iter()
         .filter(|parameter| references.contains(parameter.name.as_str()))

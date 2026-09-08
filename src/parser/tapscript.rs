@@ -18,9 +18,11 @@ pub(crate) fn parse_named_tapscript(
     if inner
         .peek()
         .is_some_and(|p| p.as_rule() == Rule::function_visibility)
-        && inner.next().expect("visibility").as_str() == "private"
     {
-        return Err("tapscript functions cannot be private".to_string());
+        let visibility = inner.next().expect("visibility").as_str();
+        if visibility != "public" {
+            return Err(format!("tapscript functions cannot be {visibility}"));
+        }
     }
     let name = inner
         .next()

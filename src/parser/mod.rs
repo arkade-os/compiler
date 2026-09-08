@@ -1,4 +1,6 @@
-use crate::models::{AssignmentTarget, Contract, Function, Parameter, Statement, StructDefinition};
+use crate::models::{
+    AssignmentTarget, Constant, Contract, Function, Parameter, Statement, StructDefinition,
+};
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
@@ -45,6 +47,7 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
         functions: Vec::new(),
         tapscripts: Vec::new(),
         imports: Vec::new(),
+        constants: Vec::new(),
     };
 
     for pair in pairs {
@@ -125,6 +128,10 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
     // Functions (covenant) and tapscript declarations share the `function` rule;
     // a tapscript carries a `tapscript_block` body.
     for func_pair in inner_pairs {
+        if func_pair.as_rule() == Rule::const_decl {
+            contract.constants.push(parse_const_decl(func_pair)?);
+            continue;
+        }
         if func_pair.as_rule() != Rule::function {
             continue;
         }
@@ -139,17 +146,37 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
     Ok(())
 }
 
+fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
+    let mut inner = pair
+        .into_inner()
+        .filter(|p| p.as_rule() != Rule::const_keyword);
+    let const_type = parse_data_type(inner.next().ok_or("Missing constant type")?);
+    let name = inner
+        .next()
+        .ok_or("Missing constant name")?
+        .as_str()
+        .to_string();
+    let value = parse_general_expression(inner.next().ok_or("Missing constant value")?)?;
+    Ok(Constant {
+        name,
+        const_type,
+        value,
+    })
+}
+
 /// Parse a function definition
 fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
     let mut inner = pair.into_inner().peekable();
-    let is_private = if inner
+    let visibility = if inner
         .peek()
         .is_some_and(|p| p.as_rule() == Rule::function_visibility)
     {
-        inner.next().expect("visibility").as_str() == "private"
+        inner.next().expect("visibility").as_str()
     } else {
-        false
+        "public"
     };
+    let is_static = visibility == "static";
+    let is_private = visibility != "public";
     let name = inner
         .next()
         .ok_or("Missing function name")?
@@ -175,6 +202,7 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function, String> {
         parameters,
         statements: Vec::new(),
         is_private,
+        is_static,
         return_type,
     };
     for statement in inner {
@@ -373,6 +401,7 @@ fn parse_block(pair: Pair<Rule>) -> Result<Vec<Statement>, String> {
             parameters: Vec::new(),
             statements: Vec::new(),
             is_private: false,
+            is_static: false,
             return_type: None,
         };
 

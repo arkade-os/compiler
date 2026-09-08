@@ -267,6 +267,16 @@ pub struct Contract {
     pub tapscripts: Vec<NamedTapscript>,
     /// Imported contract file paths (declared via `import "path.ark";`)
     pub imports: Vec<String>,
+    /// Compile-time constants declared in the contract body.
+    pub constants: Vec<Constant>,
+}
+
+/// A compile-time constant, folded into every use site before validation.
+#[derive(Debug, Clone)]
+pub struct Constant {
+    pub name: String,
+    pub const_type: String,
+    pub value: Expression,
 }
 
 /// Function AST
@@ -280,6 +290,8 @@ pub struct Function {
     pub statements: Vec<Statement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
     pub is_private: bool,
+    /// Whether this helper is a contract member that cannot see constructor state.
+    pub is_static: bool,
     /// Explicit result type; None means the function returns no value.
     pub return_type: Option<String>,
 }

@@ -261,6 +261,7 @@ function name(<params>) { ... }                // Public Arkade transaction entr
 public function name(<params>) { ... }         // Explicit public visibility
 private function name(<params>) { ... }        // Void helper
 private function name(<params>) bool { ... }   // Helper with a typed result
+static function name(<params>) int { ... }     // Helper without access to constructor state
 function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Script
 ```
 
@@ -269,6 +270,8 @@ A covenant with no tapscript of the same name gets a synthesized `server` + `twe
 Private functions are callable only from covenant functions in the same contract, including other private functions. Calls are inlined, and private functions create no spend group or leaf. Tapscript functions cannot call or bind to a private function, including through `tweak(emulator, name)`. Public covenant functions remain transaction entrypoints and cannot be called as helpers. Declaration order does not matter; direct and mutual recursion are rejected. The old `internal` modifier is not supported.
 
 Arguments are evaluated once, left to right, and passed by value. Each helper sees its own parameters and locals plus the immutable constructor parameters, including struct fields and array elements. It cannot read or mutate caller locals unless their values are passed as arguments; modifying a parameter changes only the helper's copy.
+
+A `static` function is a private helper that belongs to the contract rather than to an instance of it. It sees only its own parameters, its locals, and compile-time constants; referencing a constructor parameter, or a field or element of one, is rejected. It may call other static functions but not private or public ones. Everything else matches a private function, including inlining, the return-type rules, and the recursion ban. `static` is a visibility of its own: `public static` and `private static` do not parse.
 
 A return type follows the parameter list directly and is allowed only on private functions. It can be a scalar, fixed-size array, or struct, including native result structs such as `ECPoint`. Every path through a value-returning helper must return a compatible value. A helper without a return type may fall through or use `return;`. Early returns inside branches or loops exit the helper and resume the caller. Returning a boolean does not enforce it: use `require(predicate(...));`. Value-returning calls cannot discard their result; void calls cannot be used in expressions.
 
@@ -285,6 +288,39 @@ contract Minimum(int minimum) {
 ```
 
 Every spend path must contain at least one `require`, directly or through a helper that enforces a requirement on every path. An `if` without `else`, or an `else` branch without a `require`, is rejected as a bare path.
+
+### Constants
+
+```solidity
+const int EXIT_DELAY = 144;
+const bool STRICT = true;
+```
+
+Constants are declared in the contract body, in any position, and are folded into a literal at every use site before validation. They are `int` or `bool` only — the language has no other literal form — and the initializer must be a literal, not an expression. They never reach the artifact: no constructor input, no placeholder, no ABI entry.
+
+A constant is readable anywhere a literal is, including covenant bodies, private and static helpers, and a tapleaf's `older(...)` or `after(...)` operand — which is the point, since a delay shared by a covenant and its L1 exit is written once.
+
+Constant names may not collide with a constructor parameter or a function, and no parameter, binding, loop variable, or tapscript input may shadow one. Constants cannot be assigned to.
+
+```solidity
+contract Vault(pubkey owner) {
+    const int EXIT_DELAY = 144;
+
+    static function pct(int amount, int bps) int {
+        return amount * bps / 10000;
+    }
+
+    function spend(signature sig, int amount) {
+        require(checkSig(sig, owner));
+        require(pct(amount, 50) > 0);
+    }
+
+    function exit(signature sig) tapscript {
+        require(older(EXIT_DELAY));
+        require(checkSig(sig, owner));
+    }
+}
+```
 
 ### Statements (covenant bodies)
 

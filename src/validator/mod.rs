@@ -24,6 +24,7 @@ use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, Ar
 use std::collections::{HashMap, HashSet};
 
 mod functions;
+pub(crate) mod references;
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
 
@@ -1714,6 +1715,7 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         .iter()
         .map(|p| p.name.as_str())
         .collect();
+    let const_names: HashSet<&str> = contract.constants.iter().map(|c| c.name.as_str()).collect();
 
     for tapscript in &contract.tapscripts {
         for input in &tapscript.inputs {
@@ -1723,16 +1725,32 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
                     input.name, tapscript.name, input.name
                 )));
             }
+            if const_names.contains(input.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "input '{}' in tapscript '{}' shadows constant '{}'",
+                    input.name, tapscript.name, input.name
+                )));
+            }
         }
     }
 
     for func in &contract.functions {
         // Seed frame: constructor params + this function's params.
-        let mut seed: HashSet<String> = ctor_names.iter().map(|s| s.to_string()).collect();
+        let mut seed: HashSet<String> = ctor_names
+            .iter()
+            .chain(&const_names)
+            .map(|s| s.to_string())
+            .collect();
         for param in &func.parameters {
             if ctor_names.contains(param.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
                     "parameter '{}' in function '{}' shadows constructor parameter '{}'",
+                    param.name, func.name, param.name
+                )));
+            }
+            if const_names.contains(param.name.as_str()) {
+                issues.push(ValidationIssue::error(format!(
+                    "parameter '{}' in function '{}' shadows constant '{}'",
                     param.name, func.name, param.name
                 )));
             }
@@ -1742,7 +1760,13 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         let mut stack: Vec<HashSet<String>> = vec![seed];
         walk_scope(&func.statements, &func.name, &mut stack, issues);
 
-        check_ctor_assignment(&func.statements, &func.name, &ctor_names, issues);
+        check_ctor_assignment(
+            &func.statements,
+            &func.name,
+            &ctor_names,
+            &const_names,
+            issues,
+        );
     }
 }
 
@@ -1752,6 +1776,7 @@ fn check_ctor_assignment(
     stmts: &[Statement],
     fname: &str,
     ctor_names: &HashSet<&str>,
+    const_names: &HashSet<&str>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
@@ -1769,19 +1794,25 @@ fn check_ctor_assignment(
                         name, fname
                     )));
                 }
+                if const_names.contains(root) {
+                    issues.push(ValidationIssue::error(format!(
+                        "cannot assign to constant '{}' in function '{}'",
+                        name, fname
+                    )));
+                }
             }
             Statement::IfElse {
                 then_body,
                 else_body,
                 ..
             } => {
-                check_ctor_assignment(then_body, fname, ctor_names, issues);
+                check_ctor_assignment(then_body, fname, ctor_names, const_names, issues);
                 if let Some(eb) = else_body {
-                    check_ctor_assignment(eb, fname, ctor_names, issues);
+                    check_ctor_assignment(eb, fname, ctor_names, const_names, issues);
                 }
             }
             Statement::ForIn { body, .. } => {
-                check_ctor_assignment(body, fname, ctor_names, issues);
+                check_ctor_assignment(body, fname, ctor_names, const_names, issues);
             }
             Statement::LetBinding { .. }
             | Statement::Require(_)
@@ -2138,10 +2169,12 @@ contract Demo() {
                     pubkey: "owner".to_string(),
                 })],
                 is_private: false,
+                is_static: false,
                 return_type: None,
             }],
             tapscripts: Vec::new(),
             imports: vec![],
+            constants: vec![],
         }
     }
 

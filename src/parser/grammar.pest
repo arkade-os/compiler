@@ -18,8 +18,12 @@ struct_field = { data_type ~ identifier ~ ";" }
 contract = {
     "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
-    "{" ~ function* ~ "}"
+    "{" ~ (const_decl | function)* ~ "}"
 }
+
+// Compile-time constant: const int NAME = 144;
+const_keyword = @{ "const" ~ !(ASCII_ALPHANUMERIC | "_") }
+const_decl = { const_keyword ~ data_type ~ identifier ~ "=" ~ general_expression ~ ";" }
 
 // Parameter list with proper comma separation
 param_list = {
@@ -42,7 +46,7 @@ function = {
     ( "tapscript" ~ tapscript_block
     | data_type? ~ "{" ~ statement* ~ "}" )
 }
-function_visibility = @{ ("private" | "public") ~ !(ASCII_ALPHANUMERIC | "_") }
+function_visibility = @{ ("private" | "public" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_block = { "{" ~ require_stmt* ~ "}" }
 return_keyword = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
 return_stmt = { return_keyword ~ general_expression? ~ ";" }

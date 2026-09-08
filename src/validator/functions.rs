@@ -17,6 +17,17 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
             }
             validate_declared_type(result, "return type", &definitions, issues);
         }
+        if function.is_static {
+            let referenced = super::references::referenced_parameters(&function.statements, &[]);
+            for parameter in &contract.parameters {
+                if referenced.contains(parameter.name.as_str()) {
+                    issues.push(ValidationIssue::error(format!(
+                        "static function '{}' cannot reference constructor parameter '{}'",
+                        function.name, parameter.name
+                    )));
+                }
+            }
+        }
         let mut scope = build_scope_with_structs(&contract.parameters, &contract.structs);
         scope.extend(build_scope_with_structs(
             &function.parameters,
@@ -58,6 +69,7 @@ fn validate_body(
             validate_calls(
                 expression,
                 !matches!(statement, Statement::Call(_)),
+                function,
                 scope,
                 contract,
                 issues,
@@ -137,6 +149,7 @@ fn validate_body(
 fn validate_calls(
     expression: &Expression,
     value_position: bool,
+    caller: &Function,
     scope: &Scope,
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
@@ -150,6 +163,12 @@ fn validate_calls(
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(
                         "public function '{name}' is an entrypoint and cannot be called"
+                    )));
+                }
+                if caller.is_static && !function.is_static {
+                    issues.push(ValidationIssue::error(format!(
+                        "static function '{}' cannot call non-static function '{name}'",
+                        caller.name
                     )));
                 }
                 if value_position && function.return_type.is_none() {
@@ -182,7 +201,7 @@ fn validate_calls(
         }
     }
     for child in child_exprs(expression) {
-        validate_calls(child, true, scope, contract, issues);
+        validate_calls(child, true, caller, scope, contract, issues);
     }
 }
 
