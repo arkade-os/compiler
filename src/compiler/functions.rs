@@ -30,7 +30,7 @@ pub(super) fn contains_return(statements: &[Statement]) -> bool {
 }
 
 impl Generator {
-    fn value_leaves(&self, name: &str, ty: &str) -> Result<Vec<TypeLeaf>, String> {
+    pub(super) fn value_leaves(&self, name: &str, ty: &str) -> Result<Vec<TypeLeaf>, String> {
         flatten_parameter(
             &Parameter {
                 name: name.to_string(),
@@ -177,6 +177,9 @@ impl Generator {
                     kind: BindingKind::Local,
                 };
             }
+        }
+        for parameter in &function.parameters {
+            self.bind_type(&parameter.name, &parameter.param_type);
         }
         let previous_return = self.return_type.replace(function.return_type.clone());
         self.push_temporary(OP_0);

@@ -50,6 +50,7 @@ contract PrivateFunctions(Config config) {
         require(false);
     }
     private function verify(int value, int expected) { require(value == expected); }
+    private function same(Result left, Result right) { require(left == right); }
     private function difference(int left, int right) int { return left - right; }
 
     private function point(int x, int y) ECPoint { return ecMul(x, y, 1, 0); }
@@ -84,6 +85,10 @@ contract PrivateFunctions(Config config) {
         require(changed[1] == value + 1);
         require(original.values[0] == value + 1);
         require(original.values[1] == value + 2);
+        require(previous == direct);
+        require(original == result(value));
+        require(initial != changed);
+        same(original, result(value));
         require(difference(bump(value), bump(value + 1)) == -1);
         checked(pass);
         skip(pass);

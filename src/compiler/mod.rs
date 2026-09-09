@@ -72,6 +72,7 @@ struct Generator {
     scopes: Vec<usize>,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
+    scope: typechecker::Scope,
     functions: Vec<Function>,
     // None outside a helper; Some(None) inside a void helper.
     return_type: Option<Option<String>>,
@@ -123,12 +124,18 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
+        let mut scope = typechecker::build_scope_with_structs(function_parameters, structs);
+        scope.extend(typechecker::build_scope_with_structs(
+            constructor_parameters,
+            structs,
+        ));
         Ok(Self {
             asm,
             stack,
             scopes: Vec::new(),
             constructor_array_expansions,
             structs: structs.to_vec(),
+            scope,
             functions: Vec::new(),
             return_type: None,
         })
@@ -901,6 +908,7 @@ fn generate_asm_from_statements_recursive(
                 if let Some(ty) = result_type {
                     generator.emit_typed_value(value, ty)?;
                     generator.bind_value(name, ty)?;
+                    generator.bind_type(name, ty);
                 } else {
                     generator.emit_expression(value)?;
                     generator.bind_local(name)?;
@@ -1046,6 +1054,12 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             Ok(())
         }
         Requirement::Comparison { left, op, right } => {
+            if let Some(ty) = generator
+                .composite_type(left)
+                .or_else(|| generator.composite_type(right))
+            {
+                return generator.emit_composite_requirement(left, op, right, &ty);
+            }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;
             let mut raw = Vec::new();

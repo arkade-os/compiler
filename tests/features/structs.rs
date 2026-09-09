@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_EQUAL, OP_GREATERTHANOREQUAL,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_PICK, OP_PUT, OP_SWAP,
-    OP_VERIFY,
+    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_EQUAL, OP_EQUALVERIFY,
+    OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN,
+    OP_PICK, OP_PUT, OP_SWAP, OP_VERIFY,
 };
 
 #[test]
@@ -186,7 +186,7 @@ contract C(Point point) {
         r#"
 struct Point { int x; int y; }
 contract C(Point point) {
-    function spend() { require(point == point); }
+    function spend() { require(point); }
 }
 "#,
     )
@@ -195,6 +195,42 @@ contract C(Point point) {
     assert!(
         composite.contains("struct expressions are composite values"),
         "{composite}"
+    );
+}
+
+#[test]
+fn struct_equality_compares_every_field() {
+    let output = compile(
+        r#"
+struct Point { int x; int y; }
+struct Pair { Point a; Point b; }
+contract C(Pair left) {
+    function spend(Pair right) { require(left == right); }
+}
+"#,
+    )
+    .expect("struct equality compares leaf by leaf");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert_eq!(
+        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        4,
+        "every leaf of the nested struct is verified: {asm:?}"
+    );
+
+    let mismatch = compile(
+        r#"
+struct Point { int x; int y; }
+struct Pair { Point a; Point b; }
+contract C(Point point) {
+    function spend(Pair pair) { require(point == pair); }
+}
+"#,
+    )
+    .expect_err("structs with different layouts")
+    .to_string();
+    assert!(
+        mismatch.contains("comparison '==' is not defined between 'Point' and 'Pair'"),
+        "{mismatch}"
     );
 }
 
