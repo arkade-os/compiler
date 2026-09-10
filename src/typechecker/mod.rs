@@ -712,10 +712,15 @@ fn check_comparison(
     if matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
         || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..))
     {
-        errors.push(TypeError::new(format!(
-            "fn {}: composite comparison '{}' is not supported",
-            fn_name, op
-        )));
+        if !matches!(op, "==" | "!=") || left_type != right_type {
+            errors.push(TypeError::new(format!(
+                "fn {}: comparison '{}' is not defined between '{}' and '{}'",
+                fn_name,
+                op,
+                left_type.as_str(),
+                right_type.as_str()
+            )));
+        }
         return;
     }
 

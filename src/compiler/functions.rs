@@ -30,7 +30,7 @@ pub(super) fn contains_return(statements: &[Statement]) -> bool {
 }
 
 impl Generator {
-    fn value_leaves(&self, name: &str, ty: &str) -> Result<Vec<TypeLeaf>, String> {
+    pub(super) fn value_leaves(&self, name: &str, ty: &str) -> Result<Vec<TypeLeaf>, String> {
         flatten_parameter(
             &Parameter {
                 name: name.to_string(),
@@ -141,6 +141,7 @@ impl Generator {
             return Err(format!("wrong argument count for '{name}'"));
         }
         let caller = self.stack.clone();
+        let caller_scope = self.scope.clone();
         let baseline = caller.len();
         let mut arguments = Vec::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
@@ -178,6 +179,9 @@ impl Generator {
                 };
             }
         }
+        for parameter in &function.parameters {
+            self.bind_type(&parameter.name, &parameter.param_type);
+        }
         let previous_return = self.return_type.replace(function.return_type.clone());
         self.push_temporary(OP_0);
         self.bind_local("$returned")?;
@@ -197,6 +201,7 @@ impl Generator {
         }
         self.discard_call_frame(baseline, results.len())?;
         self.stack[..baseline].clone_from_slice(&caller);
+        self.scope = caller_scope;
         self.return_type = previous_return;
         Ok(())
     }

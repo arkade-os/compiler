@@ -47,12 +47,15 @@ contract Structs(Account account) {
     }
     require(local.weights.length == 3, "array field length");
     require(total == expected, "local struct result");
+    require(local != supplied, "mutated struct differs");
+    require(supplied.weights == [41, 43, 47], "whole array equality");
 
     let indexedOutpoint = tx.inputs[0].outpoint;
     Outpoint currentOutpoint = tx.input.current.outpoint;
     require(indexedOutpoint.txid == currentOutpoint.txid, "outpoint txid");
     require(indexedOutpoint.vout == currentOutpoint.vout, "outpoint vout");
     require(currentOutpoint.vout == 0, "funding vout");
+    require(indexedOutpoint == currentOutpoint, "whole outpoint equality");
 
     let outputAssetId = tx.outputs[0].assets[0].assetId;
     require(outputAssetId.gidx == 0, "asset group index");
@@ -61,6 +64,7 @@ contract Structs(Account account) {
     AssetId groupAssetId = assetGroup.assetId;
     require(groupAssetId.txid == outputAssetId.txid, "group asset txid");
     require(groupAssetId.gidx == outputAssetId.gidx, "group asset index");
+    require(groupAssetId == outputAssetId, "whole asset id equality");
 
     let generatorX = generator.x;
     let generatorY = generator.y;
@@ -70,6 +74,7 @@ contract Structs(Account account) {
     require(added.y == generator.y, "ecAdd y");
     require(multiplied.x == generator.x, "ecMul x");
     require(multiplied.y == generator.y, "ecMul y");
+    require(added == multiplied, "whole ec point equality");
 
     require(checkSig(ownerSig, account.owner));
   }

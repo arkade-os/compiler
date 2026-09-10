@@ -252,7 +252,7 @@ Comments use `//`. Identifiers start with a letter and contain letters, digits, 
 | `struct` | User-declared, nested structs and scalar arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint` | Native result structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}` |
 
-Arrays and structs are allowed in constructor and covenant parameters and as locals. Tapscript inputs must be scalars. Arrays of structs, whole-struct assignment, and whole-struct comparison are not supported.
+Arrays and structs are allowed in constructor and covenant parameters and as locals. Tapscript inputs must be scalars. Arrays of structs and whole-struct assignment are not supported. Whole arrays and structs compare with `==` and `!=` inside `require`, leaf by leaf, and both sides must have the same declared type.
 
 ### Functions
 

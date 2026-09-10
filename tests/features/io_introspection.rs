@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_EQUALVERIFY, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
     OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_SWAP,
 };
 
@@ -108,8 +108,8 @@ fn test_input_outpoint_returns_struct() {
 }
 
 #[test]
-fn test_input_outpoint_cannot_be_compared_as_a_scalar() {
-    let error = compile(
+fn test_input_outpoint_is_compared_field_by_field() {
+    let output = compile(
         r#"
         contract OutpointChecker() {
             function checkOutpoint() {
@@ -119,12 +119,20 @@ fn test_input_outpoint_cannot_be_compared_as_a_scalar() {
         }
     "#,
     )
-    .expect_err("outpoint equality is a composite comparison")
-    .to_string();
+    .expect("outpoint equality compares txid and vout");
 
-    assert!(
-        error.contains("struct expressions are composite values"),
-        "{error}"
+    let asm = crate::common::arkade_asm_tokens(&output, "checkOutpoint");
+    assert_eq!(
+        asm.iter()
+            .filter(|token| *token == OP_INSPECTINPUTOUTPOINT)
+            .count(),
+        2,
+        "both outpoints are inspected: {asm:?}"
+    );
+    assert_eq!(
+        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        2,
+        "txid and vout are both verified: {asm:?}"
     );
 }
 

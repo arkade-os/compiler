@@ -1,7 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_GREATERTHAN, OP_GREATERTHANOREQUAL,
-    OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_VERIFY,
+    OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_EQUALVERIFY,
+    OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PICK,
+    OP_PUSHCURRENTINPUTINDEX, OP_ROLL, OP_VERIFY,
 };
 
 fn compile_asm(source: &str) -> Vec<String> {
@@ -339,18 +340,112 @@ fn mismatched_comparisons_warn() {
 }
 
 #[test]
-fn direct_array_equality_is_rejected() {
-    let error = compile(
-        "contract Invalid() {
+fn array_equality_compares_every_element() {
+    let asm = compile_asm(
+        "contract Compare() {
             function compare(int[3] left, int[3] right) {
                 require(left == right);
             }
         }",
+    );
+    assert_eq!(
+        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        3,
+        "every element pair must be verified: {asm:?}"
+    );
+    assert!(
+        asm.iter().any(|token| token == OP_ROLL),
+        "element pairs are rolled together: {asm:?}"
+    );
+
+    let error = compile(
+        "contract Invalid() {
+            function compare(int[3] left, int[2] right) {
+                require(left == right);
+            }
+        }",
     )
-    .expect_err("array bindings cannot be read as one stack item")
+    .expect_err("arrays of different length have no common layout")
     .to_string();
     assert!(
-        error.contains("array expressions are composite values"),
-        "direct array equality must be rejected: {error}"
+        error.contains("comparison '==' is not defined between 'int[3]' and 'int[2]'"),
+        "{error}"
     );
+}
+
+#[test]
+fn array_inequality_negates_the_folded_comparison() {
+    let asm = compile_asm(
+        "contract Compare() {
+            function compare(int[2] left, int[2] right) {
+                require(left != right);
+            }
+        }",
+    );
+    assert_eq!(
+        asm.iter().filter(|token| *token == OP_EQUAL).count(),
+        2,
+        "both element pairs are compared: {asm:?}"
+    );
+    assert!(
+        contains_tokens(&asm, &[OP_BOOLAND, OP_NOT, OP_VERIFY]),
+        "the folded result must be negated: {asm:?}"
+    );
+}
+
+#[test]
+fn composite_comparison_literals_are_validated() {
+    for (ty, literal, diagnostic) in [
+        ("int[2]", "[1, true]", "expected 'int', got 'bool'"),
+        ("Point", "{x: 1, y: 2, y: 3}", "duplicate field 'y'"),
+        ("Point", "{x: 1, y: 2, z: 3}", "unknown field 'z'"),
+        ("Point", "{x: 1}", "missing field 'y'"),
+        ("Point", "{x: true, y: 2}", "expected 'int', got 'bool'"),
+        (
+            "Nested",
+            "{point: {x: 1, y: 2}, values: [1, true]}",
+            "expected 'int', got 'bool'",
+        ),
+    ] {
+        for op in ["==", "!="] {
+            for (left, right) in [("value", literal), (literal, "value")] {
+                let source = format!(
+                    "struct Point {{ int x; int y; }}
+                     struct Nested {{ Point point; int[2] values; }}
+                     contract C() {{
+                         function spend({ty} value) {{ require({left} {op} {right}); }}
+                     }}"
+                );
+                let error = compile(&source).expect_err(&source).to_string();
+                assert!(error.contains(diagnostic), "{source}: {error}");
+            }
+        }
+    }
+    let error = compile("contract C() { function spend() { require([1, true] == [1, 2]); } }")
+        .expect_err("both operands are literals")
+        .to_string();
+    assert!(error.contains("expected 'int', got 'bool'"), "{error}");
+}
+
+#[test]
+fn composite_comparisons_resolve_inferred_locals() {
+    let source = "struct Point { int x; int y; }
+        contract C() {
+            private function helper() { let q = 5; require(q == 5); }
+            function compare(Point q, int[2] a) {
+                helper();
+                let n = 1;
+                require([n, 2] == a);
+                require(a == [n, 2]);
+                require([n, 3] != a);
+                require(a != [n, 3]);
+                require(q == {x: 1, y: 2});
+            }
+        }";
+    let asm = compile_asm(source);
+    assert_eq!(
+        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        6
+    );
+    assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 2);
 }
