@@ -1,3 +1,4 @@
+use arkade_compiler::analysis::analyze_output;
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTLOCKTIME, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTVERSION, OP_TXWEIGHT,
@@ -23,6 +24,13 @@ fn test_tx_version() {
     );
 
     let output = result.unwrap();
+    let output_analysis = analyze_output(&output);
+    assert!(
+        output_analysis.is_ok(),
+        "Analysis failed: {:?}",
+        output_analysis.err()
+    );
+
     let asm_str = crate::common::arkade_asm(&output, "checkVersion");
     assert!(
         asm_str.contains(OP_INSPECTVERSION),

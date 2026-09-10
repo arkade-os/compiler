@@ -1,3 +1,4 @@
+use arkade_compiler::analysis::analyze_output;
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
@@ -20,6 +21,13 @@ fn test_arkade_kitties_compiles() {
 #[test]
 fn test_arkade_kitties_structure() {
     let output = compile(ARKADE_KITTIES_CODE).unwrap();
+
+    let out_analysis = analyze_output(&output);
+    assert!(
+        out_analysis.is_ok(),
+        "Analysis failed: {:?}",
+        out_analysis.err()
+    );
 
     assert_eq!(output.name, "ArkadeKitties");
 
