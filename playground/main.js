@@ -109,28 +109,13 @@ function loadFromStorage() {
 
 // ── URL sharing ───────────────────────────────────────────────────
 
-async function compressCode(text) {
-    const stream = new CompressionStream('deflate-raw');
-    const writer = stream.writable.getWriter();
-    writer.write(new TextEncoder().encode(text));
-    writer.close();
-    const chunks = [];
-    const reader = stream.readable.getReader();
-    let result;
-    while (!(result = await reader.read()).done) chunks.push(result.value);
-    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-    let i = 0;
-    for (const c of chunks) { out.set(c, i); i += c.length; }
-    let bin = '';
-    for (let j = 0; j < out.length; j++) bin += String.fromCharCode(out[j]);
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
+const MAX_SHARED_ENCODED_CHARS = 1024 * 1024;
+const MAX_SHARED_DECODED_BYTES = 4 * 1024 * 1024;
 
-async function decompressCode(b64url) {
-    const bin = atob(b64url.replace(/-/g, '+').replace(/_/g, '/'));
-    const data = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
-    const stream = new DecompressionStream('deflate-raw');
+async function compressCode(text) {
+    const data = new TextEncoder().encode(text);
+    if (data.length > MAX_SHARED_DECODED_BYTES) throw new Error('Shared source exceeds 4 MiB');
+    const stream = new CompressionStream('deflate-raw');
     const writer = stream.writable.getWriter();
     writer.write(data);
     writer.close();
@@ -141,20 +126,51 @@ async function decompressCode(b64url) {
     const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
     let i = 0;
     for (const c of chunks) { out.set(c, i); i += c.length; }
+    let bin = '';
+    for (let j = 0; j < out.length; j++) bin += String.fromCharCode(out[j]);
+    const encoded = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    if (encoded.length > MAX_SHARED_ENCODED_CHARS) throw new Error('Encoded share link exceeds 1 MiB');
+    return encoded;
+}
+
+async function decompressCode(b64url) {
+    if (b64url.length > MAX_SHARED_ENCODED_CHARS) throw new Error('Encoded share link exceeds 1 MiB');
+    const bin = atob(b64url.replace(/-/g, '+').replace(/_/g, '/'));
+    const data = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+    const reader = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+    const chunks = [];
+    let size = 0;
+    try {
+        let result;
+        while (!(result = await reader.read()).done) {
+            size += result.value.length;
+            if (size > MAX_SHARED_DECODED_BYTES) {
+                await reader.cancel();
+                throw new Error('Shared source exceeds 4 MiB');
+            }
+            chunks.push(result.value);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    const out = new Uint8Array(size);
+    let i = 0;
+    for (const c of chunks) { out.set(c, i); i += c.length; }
     return new TextDecoder().decode(out);
 }
 
 async function shareContract() {
     if (!editor) return;
-    let bundle;
+    let encoded;
     try {
         const { entry, files } = compilationSources();
-        bundle = JSON.parse(compile_sources(entry, JSON.stringify(files))).source;
+        const bundle = JSON.parse(compile_sources(entry, JSON.stringify(files))).source;
+        encoded = await compressCode(JSON.stringify(bundle));
     } catch (error) {
         showError(error.toString());
         return;
     }
-    const encoded = await compressCode(JSON.stringify(bundle));
     const url = `${location.origin}${location.pathname}#project=${encoded}`;
     await navigator.clipboard.writeText(url);
     const btn = document.getElementById('share-btn');

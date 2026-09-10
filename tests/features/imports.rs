@@ -209,6 +209,36 @@ fn imports_validate_paths_cycles_and_name_collisions() {
 }
 
 #[test]
+fn import_depth_limit_includes_the_entry_file() {
+    for count in [128, 129] {
+        let files = (0..count)
+            .map(|index| {
+                let import = if index + 1 < count {
+                    format!("import \"{}.ark\";", index + 1)
+                } else {
+                    String::new()
+                };
+                (
+                    format!("{index}.ark"),
+                    format!(
+                        "{import} contract C{index}() {{ function spend() {{ require(true); }} }}"
+                    ),
+                )
+            })
+            .collect();
+        let result = compile_sources("0.ark", &files);
+        if count == 128 {
+            assert_eq!(result.unwrap().source.unwrap().files.len(), count);
+        } else {
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("import depth exceeds 128 files"));
+        }
+    }
+}
+
+#[test]
 fn constructors_require_visible_contracts_and_matching_signatures() {
     for (call, succeeds) in [
         ("Other(owner)", true),
