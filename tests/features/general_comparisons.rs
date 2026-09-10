@@ -392,3 +392,60 @@ fn array_inequality_negates_the_folded_comparison() {
         "the folded result must be negated: {asm:?}"
     );
 }
+
+#[test]
+fn composite_comparison_literals_are_validated() {
+    for (ty, literal, diagnostic) in [
+        ("int[2]", "[1, true]", "expected 'int', got 'bool'"),
+        ("Point", "{x: 1, y: 2, y: 3}", "duplicate field 'y'"),
+        ("Point", "{x: 1, y: 2, z: 3}", "unknown field 'z'"),
+        ("Point", "{x: 1}", "missing field 'y'"),
+        ("Point", "{x: true, y: 2}", "expected 'int', got 'bool'"),
+        (
+            "Nested",
+            "{point: {x: 1, y: 2}, values: [1, true]}",
+            "expected 'int', got 'bool'",
+        ),
+    ] {
+        for op in ["==", "!="] {
+            for (left, right) in [("value", literal), (literal, "value")] {
+                let source = format!(
+                    "struct Point {{ int x; int y; }}
+                     struct Nested {{ Point point; int[2] values; }}
+                     contract C() {{
+                         function spend({ty} value) {{ require({left} {op} {right}); }}
+                     }}"
+                );
+                let error = compile(&source).expect_err(&source).to_string();
+                assert!(error.contains(diagnostic), "{source}: {error}");
+            }
+        }
+    }
+    let error = compile("contract C() { function spend() { require([1, true] == [1, 2]); } }")
+        .expect_err("both operands are literals")
+        .to_string();
+    assert!(error.contains("expected 'int', got 'bool'"), "{error}");
+}
+
+#[test]
+fn composite_comparisons_resolve_inferred_locals() {
+    let source = "struct Point { int x; int y; }
+        contract C() {
+            private function helper() { let q = 5; require(q == 5); }
+            function compare(Point q, int[2] a) {
+                helper();
+                let n = 1;
+                require([n, 2] == a);
+                require(a == [n, 2]);
+                require([n, 3] != a);
+                require(a != [n, 3]);
+                require(q == {x: 1, y: 2});
+            }
+        }";
+    let asm = compile_asm(source);
+    assert_eq!(
+        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        6
+    );
+    assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 2);
+}

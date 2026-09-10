@@ -76,6 +76,26 @@ fn validate_body(
             );
         }
         match statement {
+            Statement::Require(Requirement::Comparison { left, right, .. }) => {
+                for (value, other) in [(left, right), (right, left)] {
+                    if matches!(
+                        value,
+                        Expression::ArrayLiteral(_) | Expression::StructLiteral(_)
+                    ) {
+                        let expected = infer_type(other, scope);
+                        if matches!(expected, ArkType::Array(..) | ArkType::Struct(_)) {
+                            validate_value(
+                                &expected.as_str(),
+                                value,
+                                scope,
+                                contract,
+                                &format!("comparison in '{}'", function.name),
+                                issues,
+                            );
+                        }
+                    }
+                }
+            }
             Statement::Return(value) => {
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(

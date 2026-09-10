@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
-    OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN,
-    OP_PICK, OP_PUT, OP_SWAP, OP_VERIFY,
+    OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL,
+    OP_EQUALVERIFY, OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT,
+    OP_LESSTHAN, OP_NOT, OP_PICK, OP_PUT, OP_SWAP, OP_VERIFY,
 };
 
 #[test]
@@ -245,6 +245,30 @@ contract C(bytes[1] a) {
     assert!(
         widened.contains("comparison '==' is not defined between 'bytes[1]' and 'bytes20[1]'"),
         "{widened}"
+    );
+}
+
+#[test]
+fn struct_inequality_checks_the_final_leaf() {
+    let output = compile(
+        "struct Point { int x; int y; }
+         struct Pair { Point a; Point b; }
+         contract C() {
+             function spend() {
+                 Pair left = {a: {x: 1, y: 2}, b: {x: 3, y: 4}};
+                 Pair right = {a: {x: 1, y: 2}, b: {x: 3, y: 5}};
+                 require(left != right);
+             }
+         }",
+    )
+    .expect("only the final leaf differs");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert_eq!(asm.iter().filter(|token| *token == OP_EQUAL).count(), 4);
+    assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 3);
+    assert!(
+        asm.windows(4)
+            .any(|tokens| tokens == [OP_EQUAL, OP_BOOLAND, OP_NOT, OP_VERIFY]),
+        "{asm:?}"
     );
 }
 

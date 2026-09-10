@@ -913,6 +913,8 @@ fn generate_asm_from_statements_recursive(
                 } else {
                     generator.emit_expression(value)?;
                     generator.bind_local(name)?;
+                    let ty = typechecker::infer_type(value, &generator.scope);
+                    generator.scope.insert(name.clone(), ty);
                 }
             }
             Statement::VarAssign { target, value } => {

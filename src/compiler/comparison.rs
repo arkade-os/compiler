@@ -47,9 +47,13 @@ impl Generator {
     }
 
     pub(super) fn bind_type(&mut self, name: &str, ty: &str) {
-        let structs = std::mem::take(&mut self.structs);
-        bind_local_type(&mut self.scope, name, Some(ty), ArkType::Unknown, &structs);
-        self.structs = structs;
+        bind_local_type(
+            &mut self.scope,
+            name,
+            Some(ty),
+            ArkType::Unknown,
+            &self.structs,
+        );
     }
 
     pub(super) fn emit_composite_requirement(
