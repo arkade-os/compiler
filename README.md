@@ -17,13 +17,11 @@ The playground runs the real compiler as WebAssembly. Nothing is installed and n
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
 | Errors | Parse, type, and validation errors; the offending line is selected in the editor |
 
-The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The link button compiles the selected contract and copies a URL containing its source bundle, including imports, so a contract can be shared without a backend.
+The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 
 Every pull request gets its own build at `https://arkade-os.github.io/compiler/pr-previews/pr-<number>/`, posted as a comment on the PR.
 
 ## A tour by example
-
-Every snippet below compiles on `master`. Paste any of them into the playground.
 
 ### One key, one exit
 
@@ -90,7 +88,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 }
 ```
 
-`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's Taproot scriptPubKey at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments must be constructor parameters or literals; function inputs only exist at spend time and cannot be baked into a placeholder. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's Taproot scriptPubKey at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -200,7 +198,7 @@ cargo run -p arkade-bindgen -- --list-targets
 
 `--embed` inlines the artifact JSON into the generated file; `--package` sets the module or namespace name.
 
-Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename and cannot load imports. The `wasm` feature exposes `compile`, `compile_sources`, `validate`, and `version`; the WASM `compile_sources(entry, files)` accepts the file map as a JSON string and returns the artifact as a JSON string.
+Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `validate`, and `version`; the WASM `compile_sources(entry, files)` accepts the file map as a JSON string and returns the artifact as a JSON string.
 
 ### Run the playground locally
 
@@ -241,7 +239,7 @@ Comments use `//`. Identifiers start with a letter and contain letters, digits, 
 
 ### Imports
 
-Imports resolve relative to the importing file, with explicit `.ark` filenames. Files may declare structs and at most one contract. Imported contracts may contain spend functions and tapscripts, or just constants and static helpers. Only the entry contract emits spend groups and must have a spend function or tapscript. Importers can access constants, call static helpers, and instantiate the imported contract with `new Contract(...)`; they cannot call its spend functions or private helpers.
+Imports use explicit `.ark` paths relative to the importing file. Each file may declare structs and one contract. An import exposes those structs, the contract's constants and static functions, and its constructor through `new Contract(...)`. The entry contract defines the artifact's spend groups; imported contracts supply reusable definitions.
 
 ```solidity
 // types.ark
@@ -269,15 +267,11 @@ contract Vault(Policy policy) {
 }
 ```
 
-Structs use their declared names; contract constants and static functions use `Contract.member`. Private functions and spend functions cannot be called externally. Imported static helpers inline into the calling covenant and cannot access the caller's state. Imported constants work wherever local constants work, including tapscript timelocks and multisig thresholds; static helper calls remain covenant-only.
+Structs use their declared names; constants and static functions use `Contract.member`. Each file sees its own declarations and its direct imports. Dependencies load recursively, and imported code keeps its defining scope. Static helpers inline into covenants; constants fold into literals, including in tapscript timelocks and multisig thresholds.
 
-Each file sees its own declarations and declarations directly imported from other files. Dependencies of imported code retain their defining scope and are loaded recursively, but are not re-exported. Struct and contract names must be unique across the loaded files; repeated imports of the same normalized path are deduplicated. Bindings cannot shadow a visible contract namespace. Missing files, unknown members, and circular imports are errors. Import chains are limited to 128 files. There are no aliases, selective imports, package search paths, remote imports, or library objects.
+Struct and contract names must be unique across loaded files. The compiler loads each normalized path once and reports missing files, unknown members, namespace collisions, and circular imports as errors. Import chains have a maximum depth of 128 files, including the entry file.
 
-`new Contract(args...)` requires the current contract or a directly imported contract and checks the constructor's argument count and types. It still emits a runtime VTXO placeholder; imported contracts do not add spend groups to the entry artifact.
-
-**FujiSafe constructor migration:** the constructor now takes 12 arguments. Append `bytes32 treasuryBurnScript` and `bytes32 borrowerBurnScript`, in that order, after `exit`. Clients construct these burn-output witness programs from the corresponding keys and asset commitment and preserve both on renewal. Regenerate FujiSafe artifacts and bindings, and update construction and scriptPubKey verification code together. The old ten-argument layout is rejected by the compiler and cannot be used to derive outputs for the updated contract.
-
-The playground compiles against the files in its Explorer. Source paths appear above the editor; default shared SingleSig lives at `single_sig/single_sig.ark`. Imported files are editable, and shared links contain the files used by the selected contract. Sharing is limited to 1 MiB of encoded URL content and 4 MiB of decompressed UTF-8 source data.
+`new Contract(args...)` refers to the current contract or a directly imported contract. The compiler checks constructor argument counts and types and emits a VTXO placeholder for the runtime to resolve.
 
 ### Types
 
@@ -293,7 +287,7 @@ The playground compiles against the files in its Explorer. Source paths appear a
 | `struct` | User-declared, nested structs and scalar arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint` | Native result structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}` |
 
-Arrays and structs are allowed in constructor and covenant parameters and as locals. Tapscript inputs must be scalars. Arrays of structs, whole-struct assignment, and whole-struct comparison are not supported.
+Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalar elements; structs contain scalars, arrays, and nested structs. Read, assign, and compare struct fields individually. Tapscript inputs are scalars.
 
 ### Functions
 
@@ -308,13 +302,13 @@ function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Scri
 
 A covenant with no tapscript of the same name gets a synthesized `server` + `tweak(emulator, name)` leaf. A covenant and a tapscript that share a name form one spend group. A tapscript with no matching covenant is a standalone leaf, which is how unilateral exits are written.
 
-Private functions are callable only from covenant functions in the same contract, including other private functions. Calls are inlined, and private functions create no spend group or leaf. Tapscript functions cannot call or bind to a private function, including through `tweak(emulator, name)`. Public covenant functions remain transaction entrypoints and cannot be called as helpers. Declaration order does not matter; direct and mutual recursion are rejected. The old `internal` modifier is not supported.
+Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Public functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
 
-Arguments are evaluated once, left to right, and passed by value. Each helper sees its own parameters and locals plus the immutable constructor parameters, including struct fields and array elements. It cannot read or mutate caller locals unless their values are passed as arguments; modifying a parameter changes only the helper's copy.
+Arguments are evaluated once, left to right, and passed by value. Private helpers see their own parameters and locals plus immutable constructor state. Modifying a parameter changes the helper's local copy.
 
-A `static` function is a private helper that belongs to the contract rather than to an instance of it. It sees only its own parameters, its locals, and compile-time constants; referencing a constructor parameter, or a field or element of one, is rejected. It may call other static functions but not private or public ones. Everything else matches a private function, including inlining, the return-type rules, and the recursion ban. `static` is a visibility of its own: `public static` and `private static` do not parse.
+Static helpers see only their own parameters, locals, and compile-time constants. They can call other static helpers and are accessible through imports. Both private and static helpers use the same inlining and return rules.
 
-A return type follows the parameter list directly and is allowed only on private functions. It can be a scalar, fixed-size array, or struct, including native result structs such as `ECPoint`. Every path through a value-returning helper must return a compatible value. A helper without a return type may fall through or use `return;`. Early returns inside branches or loops exit the helper and resume the caller. Returning a boolean does not enforce it: use `require(predicate(...));`. Value-returning calls cannot discard their result; void calls cannot be used in expressions.
+A helper's return type follows its parameter list and can be a scalar, fixed-size array, or struct. Every path through a value-returning helper must return a compatible value, and each call's result must be used. Void helpers use `return;` or fall through. Early returns exit the helper and resume the caller. To enforce a boolean result, use `require(predicate(...));`.
 
 ```solidity
 contract Minimum(int minimum) {
@@ -337,11 +331,11 @@ const int EXIT_DELAY = 144;
 const bool STRICT = true;
 ```
 
-Constants are declared in the contract body, in any position, and are folded into a literal at every use site before validation. They are `int` or `bool` only — the language has no other literal form — and the initializer must be a literal, not an expression. They never reach the artifact: no constructor input, no placeholder, no ABI entry.
+Constants are `int` or `bool` literals declared anywhere in the contract body. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
-A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes still require numeric literals.
+A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes use positive integer literals.
 
-Constant names may not collide with a constructor parameter or a function, and no parameter, binding, loop variable, or tapscript input may shadow one. Constants cannot be assigned to.
+Constants are immutable, and their names must be distinct from all other bindings and function names in the contract.
 
 ```solidity
 contract Vault(pubkey owner) {
@@ -373,17 +367,17 @@ int fee = amount / 100;            // declared type
 Policy p = { primary: {...}, limits: [1, 2], exitDelay: 10 };
 int[3] scale = [1, 2, 3];
 x = <expr>;                        // reassignment keeps the declared type
-scale[1] = 10;                     // literal index only on master, see Upcoming
+scale[x + 1] = 10;                 // runtime index with bounds checking
 p.primary.weight = 5;
 if (<expr>) { ... } else { ... }
 for (i, item) in arr { ... }       // unrolled at compile time
 ```
 
-Shadowing a live name is an error. Constructor parameters cannot be reassigned.
+Each live binding has a unique name. Constructor parameters are immutable.
 
 ### Expressions
 
-Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you widen it with `num2bin(value, width)`, because the width is consensus-visible. `arr.length` folds to the declared size. Array indices may be any `int` expression when reading; a runtime index emits a bounds check.
+Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you widen it with `num2bin(value, width)`, because the width is consensus-visible. `arr.length` folds to the declared size. Array reads and writes accept `int` index expressions; runtime indices emit bounds checks.
 
 ### Built-ins
 
@@ -456,25 +450,15 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 
 Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
-The `source` field is a bundle object, replacing the previous single string. This is an intentional breaking format change: regenerate string-source artifacts with this compiler before loading them in updated consumers such as `arkade-bindgen`, and upgrade compiler and consumers together. It includes only files loaded for this compilation. Paths are normalized and relative, preserving import relationships; native compilation strips the common directory prefix from the loaded files. File contents are preserved verbatim. Recompile with the same compiler version using `compile_sources(source.entry, &source.files)`; `updatedAt` is the only dynamic field. Standalone compilation produces a one-file bundle with entry `main.ark`.
+The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
 
-Previous compiler versions stripped comments from embedded source; this version retains them. Source hashes and whole-artifact comparisons across that boundary change even when contract logic is identical. Regenerate stored comparison baselines and use the same compiler version for reproducibility checks. Warnings from loaded dependencies remain visible and include paths relative to the source bundle root.
+Type-check and validation warnings identify their source file relative to the bundle root, including warnings from dependencies.
 
 ### Covenant stack ABI
 
 `constructorInputs`, `arkade.inputs`, and `witness` describe the source ABI, not the physical stack. Clients expand an array entry `oracles` of type `pubkey[3]` into `oracles.0`, `oracles.1`, `oracles.2`, and a struct entry into its scalar leaves in field order, recursively, using dotted paths such as `policy.primary.key`.
 
 Clients serialize covenant inputs in reverse `arkade.inputs` order. Every covenant `asm` opens with one `<name>` placeholder per expanded constructor input, also reversed, which instantiation replaces with data pushes before the covenant hash is computed. The VM installs the function witness first, so constructor values sit above function inputs; the body reaches everything through `OP_PICK` and friends and never emits function inputs as placeholders. After instantiation the only remaining placeholders are `<VTXO:Contract(<a>,<b>)>` tokens, which the runtime resolves to the child contract's scriptPubKey.
-
-## Upcoming
-
-The README tracks `master`. These are in review and will change what compiles:
-
-**Expression-indexed element writes ([#82](https://github.com/arkade-os/compiler/pull/82)).** `scale[writeIndex + 1] = 10;` and `state.values[i + 1] = next;` become legal with any `int` index expression, with lower and upper bound checks emitted at runtime. Reassignment of scalars and elements moves to `OP_PUT`, which shortens the emitted covenant. On `master` an element write needs a literal index.
-
-**Artifact static analysis ([#81](https://github.com/arkade-os/compiler/pull/81)).** A public `arkade_compiler::analysis::analyze_output(&ContractJson)` re-derives each leaf's closure from its ASM and re-runs the tapscript rules against the emitted artifact, so consumers can validate artifacts they did not compile themselves.
-
-**Wall-clock time.** Several draft example PRs reference `tx.offchainTime`, the TEE introspector's unix-seconds clock, as distinct from `tx.time` block height. It is not a recognized binding on `master` yet, so those examples keep it in comments.
 
 ## Security
 
