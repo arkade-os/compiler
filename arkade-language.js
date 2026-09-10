@@ -6,7 +6,7 @@ const arkadeMonarch = {
 
     keywords: [
         'contract', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
-        'for', 'in', 'let', 'private', 'public', 'static', 'const', 'return', 'new'
+        'for', 'in', 'let', 'private', 'public', 'static', 'const', 'return', 'new', 'import'
     ],
 
     typeKeywords: [
@@ -36,7 +36,7 @@ const arkadeMonarch = {
             [/\s+/, 'white'],
 
             // Keywords
-            [/\b(contract|struct|function|tapscript|require|if|else|for|in|let|private|public|static|const|return|new)\b/, 'keyword'],
+            [/\b(contract|struct|function|tapscript|require|if|else|for|in|let|private|public|static|const|return|new|import)\b/, 'keyword'],
 
             // Types
             [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
@@ -46,9 +46,6 @@ const arkadeMonarch = {
 
             // Transaction/this keywords
             [/\b(tx|this)\b/, 'variable.predefined'],
-
-            // P2TR constructor
-            [/\bP2TR\b/, 'type'],
 
             // Numbers
             [/\b\d+\b/, 'number'],
@@ -168,8 +165,7 @@ const arkadeCompletions = [
     { label: 'tx.outputs', kind: 'Property', insertText: 'tx.outputs[${1:o}]', insertTextRules: 4, detail: 'Transaction outputs' },
     { label: 'tx.input.current', kind: 'Property', insertText: 'tx.input.current', detail: 'Current input' },
 
-    // P2TR
-    { label: 'P2TR', kind: 'Constructor', insertText: 'new P2TR(${1:internalKey})', insertTextRules: 4, detail: 'Create P2TR scriptPubKey' },
+    { label: 'import', kind: 'Keyword', insertText: 'import "${1:./contract.ark}";', insertTextRules: 4, detail: 'Import structs and a contract from a relative file' },
 ];
 
 // Export all parts
