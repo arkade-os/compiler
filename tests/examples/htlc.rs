@@ -176,7 +176,7 @@ fn test_htlc_cli() {
     fs::write(&input_path, HTLC_CODE).unwrap();
 
     // Compile via library
-    let result = compile(HTLC_CODE);
+    let result = arkade_compiler::compile_file(&input_path);
     assert!(result.is_ok());
 
     // Run the CLI command

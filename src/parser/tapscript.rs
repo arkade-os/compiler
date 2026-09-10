@@ -179,7 +179,7 @@ pub(crate) fn parse_tap_multisig(
                     sigs.push(s.as_str().to_string());
                 }
             }
-            Rule::number_literal | Rule::identifier => {
+            Rule::number_literal | Rule::qualified_name => {
                 threshold = Some(parse_multisig_threshold(child, constants)?);
             }
             _ => {}

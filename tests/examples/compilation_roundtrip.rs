@@ -12,7 +12,7 @@
 //! These tests catch regressions where the compiler silently emits structurally
 //! broken output without failing.
 
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 use std::fs;
 use std::path::PathBuf;
 
@@ -24,9 +24,7 @@ fn examples_dir() -> PathBuf {
 
 fn compile_example(filename: &str) -> arkade_compiler::models::ContractJson {
     let path = examples_dir().join(filename);
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
-    compile(&source).unwrap_or_else(|e| panic!("failed to compile {}: {}", filename, e))
+    compile_file(path).unwrap_or_else(|e| panic!("failed to compile {}: {}", filename, e))
 }
 
 /// Assert every structural invariant on a compiled `ContractJson`.
@@ -262,10 +260,8 @@ fn all_examples_compile_and_satisfy_invariants() {
     for path in &paths {
         let rel = path.strip_prefix(&dir).unwrap_or(path);
         let label = rel.display().to_string();
-        let source = fs::read_to_string(path)
-            .unwrap_or_else(|e| panic!("failed to read {}: {}", path.display(), e));
         let output =
-            compile(&source).unwrap_or_else(|e| panic!("failed to compile {}: {}", label, e));
+            compile_file(path).unwrap_or_else(|e| panic!("failed to compile {}: {}", label, e));
         assert_output_invariants(&output, &label);
     }
 

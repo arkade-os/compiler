@@ -7,7 +7,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         .iter()
         .map(|s| (s.name.as_str(), s))
         .collect();
-    for function in &contract.functions {
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         if let Some(result) = &function.return_type {
             if !function.is_private {
                 issues.push(ValidationIssue::error(format!(
@@ -37,13 +37,13 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
     }
 
     let mut guarantees = HashMap::new();
-    for function in &contract.functions {
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         if let Err(error) = analyze_function(function, contract, &mut Vec::new(), &mut guarantees) {
             issues.push(ValidationIssue::error(error));
             return;
         }
     }
-    for function in &contract.functions {
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let flow = flow_block(&function.statements, 1, &guarantees);
         if function.is_private && function.return_type.is_some() && flow.fallthrough != 0 {
             issues.push(ValidationIssue::error(format!(

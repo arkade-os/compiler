@@ -10,7 +10,7 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
     if values.is_empty() {
         return Ok(());
     }
-    for function in &mut contract.functions {
+    for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
         fold_statements(&mut function.statements, &values);
     }
     for tapscript in &mut contract.tapscripts {
@@ -84,6 +84,12 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
             ));
         }
         values.insert(name.clone(), text.clone());
+    }
+    for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
+        values.insert(
+            format!("{}.{}", contract.name, constant.name),
+            values[&constant.name].clone(),
+        );
     }
     Ok(values)
 }
@@ -161,11 +167,9 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
 
 fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
     match expression {
-        Expression::Variable(name) => {
-            if let Some(text) = values.get(name.as_str()) {
-                *expression = Expression::Literal(text.clone());
-                return;
-            }
+        Expression::Variable(name) | Expression::Property(name) if values.contains_key(name) => {
+            *expression = Expression::Literal(values[name].clone());
+            return;
         }
         Expression::Property(name) => fold_named_index(name, values),
         Expression::CheckSigExpr { signature, pubkey } => {

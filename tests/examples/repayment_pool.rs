@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV, OP_FINDASSETGROUPBYASSETID,
     OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY,
@@ -10,12 +10,15 @@ use crate::common::{
     arkade_asm, arkade_asm_tokens, arkade_inputs, opcode_count_in_arkade, user_signatures,
 };
 
-const CODE: &str = include_str!("../../examples/bonds/repayment_pool.ark");
+const PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/bonds/repayment_pool.ark"
+);
 
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_repayment_pool_compiles() {
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     assert_eq!(output.name, "RepaymentPool");
     // 7 covenant functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
     // acceptAuction, redeem) produce 7 function groups.
@@ -145,7 +148,7 @@ fn test_pool_retains_debit_ctrl_in_every_function() {
     // at least three: usdtAssetId balance + creditCtrlId retention +
     // debitCtrlId retention. (issue, rollIn additionally check credit/debit
     // delivery to the borrower output, so they emit more.)
-    let output = compile(CODE).expect("pool compilation failed");
+    let output = compile_file(PATH).expect("pool compilation failed");
     let pool_recreating_fns = [
         "issue",
         "acceptRepayment",
@@ -175,7 +178,7 @@ fn test_no_interest_rate_anywhere() {
     // match, case-insensitive) rather than a hard-coded pair of names — so
     // a future regression that re-adds interest accrual under any plausible
     // name is caught.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let names: Vec<String> = output
         .parameters
         .iter()
@@ -206,7 +209,7 @@ fn test_no_interest_rate_anywhere() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_issue_is_oracle_priced_and_dual_mints() {
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "issue");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
@@ -262,7 +265,7 @@ fn test_issue_enforces_deployment_invariants() {
     // the EXACT count means removing any single invariant fails the test —
     // a `>= 5` lower bound would let one be silently deleted.
     // (OP_GREATERTHANOREQUAL / *_64 are distinct opcodes, not counted here.)
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let gt = opcode_count_in_arkade(&output, "issue", "OP_GREATERTHAN");
     assert_eq!(
         gt, 6,
@@ -347,7 +350,7 @@ fn test_issue_uses_ceiling_division_on_required_collateral() {
     // on the presence of `9999` as a token in both issue + rollIn locks in
     // the fix at the ASM level — a regression to floor division (or to
     // a different bias like + 5000) trips this test.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     for fn_name in ["issue", "rollIn"] {
         let tokens = arkade_asm_tokens(&output, fn_name);
         assert!(
@@ -362,7 +365,7 @@ fn test_issue_uses_ceiling_division_on_required_collateral() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_accept_repayment_validates_vault_and_burns_debit() {
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "acceptRepayment");
     assert!(
         asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
@@ -391,7 +394,7 @@ fn test_accept_repayment_validates_vault_and_burns_debit() {
 fn test_accept_auction_is_permissionless_oracle_priced_phased() {
     // Oracle witness only. Auctioneer identity = witness pubkey.
     // Phased gate: tx.time >= maturity AND tx.time < maturity + auctionWindow.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "acceptAuction");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
@@ -450,7 +453,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     // collateral when collateralValue < liqThresholdBps × mintedAmount / 10000.
     // Same two-branch payout as acceptAuction, same auctioneer-discount
     // incentive — but pre-maturity and triggered by the health threshold.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "liquidate");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
@@ -518,7 +521,7 @@ fn test_liquidate_and_accept_auction_are_phase_disjoint() {
     // (discount bound + pre-maturity gate + health gate); acceptAuction carries
     // an OP_LESSTHAN for its window upper bound but its lower bound is a
     // >= comparison — so the two paths can never both be valid at one height.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     assert_eq!(
         opcode_count_in_arkade(&output, "liquidate", "OP_LESSTHAN"),
         3,
@@ -535,7 +538,7 @@ fn test_liquidate_and_accept_auction_are_phase_disjoint() {
 fn test_redeem_is_pro_rata_post_window() {
     // redeem only opens AFTER the auction window closes, so the rate
     // (usdtBalance / totalCreditOutstanding) is locked and fair for all orderings.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "redeem");
     assert!(
         asm.contains(OP_MUL) && asm.contains(OP_DIV),
@@ -599,7 +602,7 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
     // and force-liquidate a healthy vault at par price, bypassing
     // pool.liquidate's oracle + healthFloor gate entirely. The pool-side sig
     // is the gate that blocks that pairing.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "rollOut");
     assert!(
         asm.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
@@ -664,7 +667,7 @@ fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
     // over-collateralisation; mints credit + debit; pins the new BondMint
     // vault + the credit destination + the pool recreation, all at witness
     // output indices.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "rollIn");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
@@ -725,7 +728,7 @@ fn test_roll_pair_enforces_all_deployment_invariants() {
     // liqThresholdBps > 0, auctionWindow > 0, auctionDiscountBps in
     // [0, 10000)). Without these re-checks a misconfigured pool that
     // somehow escaped issue could still mint fresh vaults via rollIn.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let gt = opcode_count_in_arkade(&output, "rollIn", "OP_GREATERTHAN");
     // 3 `> 0` value guards (newMintedAmount, newCollateral, oraclePrice) +
     // 3 deployment invariants (initRatioBps > liqThresholdBps,
@@ -772,7 +775,7 @@ fn test_default_leaves_carry_no_introspection() {
     // All covenant introspection lives in the arkade block; the leaves are
     // pure cosig. This test verifies no introspection opcode leaked into any
     // default leaf.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     for fn_name in [
         "issue",
         "acceptRepayment",
@@ -802,13 +805,7 @@ fn test_repayment_pool_cli() {
     use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
-    fs::write(
-        dir.path().join("bond_mint.ark"),
-        include_str!("../../examples/bonds/bond_mint.ark"),
-    )
-    .unwrap();
-    let input = dir.path().join("repayment_pool.ark");
-    fs::write(&input, CODE).unwrap();
+    let input = std::path::Path::new(PATH);
     let out = dir.path().join("repayment_pool.json");
 
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

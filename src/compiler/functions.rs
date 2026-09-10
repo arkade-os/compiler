@@ -152,15 +152,17 @@ impl Generator {
                 self.value_leaves(&parameter.name, &parameter.param_type)?,
             ));
         }
-        // Only constructor bindings cross the call boundary; caller temporaries are hidden too.
+        // Static calls hide all caller bindings; instance helpers retain constructor state.
         for (index, item) in self.stack[..baseline].iter_mut().enumerate() {
-            if !matches!(
-                item,
-                StackItem::Binding {
-                    kind: BindingKind::Constructor,
-                    ..
-                }
-            ) {
+            if function.is_static
+                || !matches!(
+                    item,
+                    StackItem::Binding {
+                        kind: BindingKind::Constructor,
+                        ..
+                    }
+                )
+            {
                 *item = StackItem::Binding {
                     name: format!("$caller:{index}"),
                     kind: BindingKind::Local,

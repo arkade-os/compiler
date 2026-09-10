@@ -14,7 +14,7 @@
 //! coverage, and over targeted synthetic contracts to verify each check fires
 //! correctly when the invariant is violated.
 
-use arkade_compiler::compile;
+use arkade_compiler::{compile, compile_file};
 use std::fs;
 use std::path::PathBuf;
 
@@ -136,8 +136,7 @@ fn all_examples_have_balanced_if_else_endif() {
     for entry in entries {
         let path = entry.path();
         let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-        let source = fs::read_to_string(&path).unwrap();
-        let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
         for group in &output.functions {
             if let Some(arkade) = &group.arkade {
@@ -173,8 +172,7 @@ fn all_examples_have_no_empty_asm_instructions() {
     for entry in entries {
         let path = entry.path();
         let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-        let source = fs::read_to_string(&path).unwrap();
-        let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
         for group in &output.functions {
             if let Some(arkade) = &group.arkade {
@@ -221,8 +219,7 @@ fn all_examples_have_well_formed_placeholders() {
     for entry in entries {
         let path = entry.path();
         let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-        let source = fs::read_to_string(&path).unwrap();
-        let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
         for group in &output.functions {
             if let Some(arkade) = &group.arkade {
@@ -266,9 +263,7 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
     let simple = ["single_sig/single_sig.ark", "htlc/htlc.ark"];
     for filename in &simple {
         let path = examples_dir().join(filename);
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("{} must exist in examples/: {}", filename, e));
-        let output = compile(&source).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
 
         let ctor_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
 
@@ -318,8 +313,7 @@ fn local_variable_placeholders_are_resolved() {
     if !path.exists() {
         return;
     }
-    let source = fs::read_to_string(&path).unwrap();
-    let output = compile(&source).expect("arkade_kitties.ark must compile");
+    let output = compile_file(&path).expect("arkade_kitties.ark must compile");
 
     // Find the breed function group
     let breed_group = output.functions.iter().find(|g| g.name == "breed");

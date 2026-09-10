@@ -1,5 +1,5 @@
 use crate::models::{
-    ArkadeCovenant, AssignmentTarget, CompilerInfo, ContractJson, Expression, Function,
+    ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
     FunctionInput, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
@@ -20,7 +20,6 @@ use crate::opcodes::{
     OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT,
     OP_VERIFY,
 };
-use crate::parser;
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
 use chrono::Utc;
@@ -33,6 +32,7 @@ mod asset;
 mod comparison;
 mod concat;
 mod constants;
+pub(crate) use constants::fold as fold_constants;
 mod expr;
 mod functions;
 mod introspection;
@@ -627,24 +627,6 @@ impl Generator {
     }
 }
 
-fn strip_comments(source: &str) -> String {
-    source
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.starts_with("//") {
-                None
-            } else if let Some(idx) = line.find("//") {
-                let without_comment = line[..idx].trim_end();
-                Some(without_comment.to_string())
-            } else {
-                Some(line.to_string())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Compiles an Arkade Script contract into a JSON-serializable structure.
 ///
 /// Takes source code, parses it into an AST, and transforms it into a ContractJson
@@ -660,19 +642,22 @@ fn strip_comments(source: &str) -> String {
 ///
 /// A Result containing a ContractJson or an error message
 pub fn compile(source_code: &str) -> Result<ContractJson, String> {
-    let mut contract = match parser::parse(source_code) {
-        Ok(contract) => contract,
-        Err(e) => return Err(format!("Parse error: {}", e)),
-    };
+    crate::imports::compile_sources(
+        "main.ark",
+        &std::collections::BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
+    )
+}
 
-    constants::fold(&mut contract)?;
-
-    typechecker::resolve_group_properties(&mut contract);
+pub(crate) fn prepare(
+    contract: &mut Contract,
+    require_entrypoint: bool,
+) -> Result<Vec<String>, String> {
+    typechecker::resolve_group_properties(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
     // Catch errors the PEG grammar cannot express (duplicate names, missing
     // timelocks, etc.) before we attempt code generation.
-    let ast_issues = validator::validate_ast(&contract);
+    let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if validator::has_errors(&ast_issues) {
         let errors: Vec<String> = ast_issues
             .iter()
@@ -683,12 +668,12 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(&mut contract)?;
+    rewrite_concat_ops(contract)?;
 
     // ── Type checking ──────────────────────────────────────────────────────
     // Run the type checker. Errors are non-fatal and returned as warnings on
     // ContractJson so callers (CLI, WASM, tests) can surface them as they see fit.
-    let type_errors = typechecker::check_contract(&contract);
+    let type_errors = typechecker::check_contract(contract);
     let mut warnings: Vec<String> = type_errors
         .iter()
         .map(|e| format!("warning[type]: {}", e.message))
@@ -701,6 +686,14 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         }
     }
 
+    Ok(warnings)
+}
+
+pub(crate) fn emit(
+    contract: &Contract,
+    source: crate::models::SourceBundle,
+    warnings: Vec<String>,
+) -> Result<ContractJson, String> {
     let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
@@ -708,7 +701,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         structs: contract.structs.clone(),
         parameters,
         functions: Vec::new(),
-        source: Some(strip_comments(source_code)),
+        source: Some(source),
         compiler: Some(CompilerInfo {
             name: "arkade-compiler".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -732,7 +725,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
         );
     }
 
-    json.functions = tapscript::build_function_groups(&contract, covenants)?;
+    json.functions = tapscript::build_function_groups(contract, covenants)?;
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.

@@ -82,19 +82,19 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Each function's parameter names are unique within that function.
 /// - Tapscript inputs do not collide with reserved key roles.
 /// - Asset ID operands have the expected txid/gidx types.
-pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
+pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
     check_struct_definitions(contract, &mut issues);
 
     // ── Contract name ──────────────────────────────────────────────────────
-    if contract.name.is_empty() {
+    if require_entrypoint && contract.name.is_empty() {
         issues.push(ValidationIssue::error("contract name must not be empty"));
     }
 
     // ── At least one public function or tapscript ──────────────────
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
-    if public_count == 0 && contract.tapscripts.is_empty() {
+    if require_entrypoint && public_count == 0 && contract.tapscripts.is_empty() {
         issues.push(ValidationIssue::error(
             "contract must declare at least one public function",
         ));
@@ -103,7 +103,7 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     // ── Unique function names ──────────────────────────────────────────────
     {
         let mut seen: HashSet<&str> = HashSet::new();
-        for func in &contract.functions {
+        for func in contract.functions.iter().filter(|f| !f.is_imported()) {
             if !seen.insert(func.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
                     "duplicate function name '{}'; each function must have a unique name",
@@ -128,7 +128,7 @@ pub fn validate_ast(contract: &Contract) -> Vec<ValidationIssue> {
     }
 
     // ── Unique parameter names within each function ────────────────────────
-    for func in &contract.functions {
+    for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &func.parameters {
             validate_source_identifier(
@@ -283,7 +283,7 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
     {
         validate_declared_type(&parameter.param_type, "parameter", &definitions, issues);
     }
-    for function in &contract.functions {
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         validate_local_types(&function.statements, &function.name, &definitions, issues);
     }
 }
@@ -422,7 +422,7 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
 /// not accepted as an Asset ID component.
 fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let ctor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
-    for func in &contract.functions {
+    for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         let mut scope = ctor_scope.clone();
         scope.extend(build_scope_with_structs(
             &func.parameters,
@@ -763,7 +763,7 @@ fn resolved_expression_type(expression: &Expression, scopes: &BindingScopes) -> 
     }
 }
 
-fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
+pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
     expected == actual
         || matches!(
             (expected, actual),
@@ -777,7 +777,7 @@ fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
 }
 
 fn check_binding_semantics(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    for function in &contract.functions {
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let mut root = HashMap::new();
         insert_parameters(
             &mut root,
@@ -1722,7 +1722,7 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         }
     }
 
-    for func in &contract.functions {
+    for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         // Seed frame: constructor params + this function's params.
         let mut seed: HashSet<String> = ctor_names
             .iter()
@@ -2038,7 +2038,10 @@ mod tests {
     }
 
     fn parse_and_validate(source: &str) -> Vec<ValidationIssue> {
-        validate_ast(&crate::parser::parse(source).expect("contract should parse"))
+        validate_ast(
+            &crate::parser::parse(source).expect("contract should parse"),
+            true,
+        )
     }
 
     #[test]
@@ -2169,7 +2172,7 @@ contract Demo() {
     #[test]
     fn valid_contract_has_no_issues() {
         let contract = make_contract("Simple");
-        let issues = validate_ast(&contract);
+        let issues = validate_ast(&contract, true);
         assert!(!has_errors(&issues));
     }
 
@@ -2186,7 +2189,7 @@ contract Demo() {
             })],
             else_body: None,
         }];
-        let issues = validate_ast(&contract);
+        let issues = validate_ast(&contract, true);
         assert!(has_errors(&issues));
         assert!(issues
             .iter()
@@ -2207,13 +2210,13 @@ contract Demo() {
             then_body: vec![req()],
             else_body: Some(vec![req()]),
         }];
-        assert!(!has_errors(&validate_ast(&contract)));
+        assert!(!has_errors(&validate_ast(&contract, true)));
     }
 
     #[test]
     fn empty_contract_name_is_error() {
         let contract = make_contract("");
-        let issues = validate_ast(&contract);
+        let issues = validate_ast(&contract, true);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("name")));
     }
@@ -2222,7 +2225,7 @@ contract Demo() {
     fn no_functions_is_error() {
         let mut contract = make_contract("Empty");
         contract.functions.clear();
-        let issues = validate_ast(&contract);
+        let issues = validate_ast(&contract, true);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("public function")));
     }
@@ -2231,7 +2234,7 @@ contract Demo() {
     fn only_private_functions_is_error() {
         let mut contract = make_contract("AllInternal");
         contract.functions[0].is_private = true;
-        let issues = validate_ast(&contract);
+        let issues = validate_ast(&contract, true);
         assert!(has_errors(&issues));
     }
 
@@ -2239,7 +2242,7 @@ contract Demo() {
     fn duplicate_function_name_is_error() {
         let mut contract = make_contract("Dup");
         contract.functions.push(contract.functions[0].clone());
-        let issues = validate_ast(&contract);
+        let issues = validate_ast(&contract, true);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("spend")));
     }
@@ -2248,7 +2251,7 @@ contract Demo() {
     fn duplicate_constructor_param_is_error() {
         let mut contract = make_contract("Dup");
         contract.parameters.push(contract.parameters[0].clone());
-        let issues = validate_ast(&contract);
+        let issues = validate_ast(&contract, true);
         assert!(has_errors(&issues));
     }
 

@@ -270,8 +270,7 @@ fn comparison_results_can_be_compared_as_boolean_operands() {
 
 #[test]
 fn constructor_and_introspection_results_use_general_comparisons() {
-    let asm = compile_asm(
-        r#"
+    let source = r#"
 import "single_sig.ark";
 
 contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
@@ -280,8 +279,21 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
         require(expectedTxid == tx.id);
     }
 }
-"#,
-    );
+"#;
+    let output = arkade_compiler::compile_sources(
+        "main.ark",
+        &[
+            ("main.ark".into(), source.into()),
+            (
+                "single_sig.ark".into(),
+                "contract SingleSig(pubkey owner) {}".into(),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    )
+    .unwrap();
+    let asm = crate::common::arkade_asm_tokens(&output, "compare");
 
     assert!(
         asm.windows(4).any(|window| {
