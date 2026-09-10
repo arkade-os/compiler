@@ -273,7 +273,9 @@ Structs use their declared names; contract constants and static functions use `C
 
 Each file sees its own declarations and declarations directly imported from other files. Dependencies of imported code retain their defining scope and are loaded recursively, but are not re-exported. Struct and contract names must be unique across the loaded files; repeated imports of the same normalized path are deduplicated. Bindings cannot shadow a visible contract namespace. Missing files, unknown members, and circular imports are errors. Import chains are limited to 128 files. There are no aliases, selective imports, package search paths, remote imports, or library objects.
 
-`new Contract(args...)` requires the current contract or a directly imported contract and checks the constructor's argument count and types. It still emits a runtime VTXO placeholder; imported contracts do not add spend groups to the entry artifact. FujiSafe accepts its treasury and borrower burn-output witness programs as constructor inputs; clients construct these from the keys and asset commitment and preserve them on renewal.
+`new Contract(args...)` requires the current contract or a directly imported contract and checks the constructor's argument count and types. It still emits a runtime VTXO placeholder; imported contracts do not add spend groups to the entry artifact.
+
+**FujiSafe constructor migration:** the constructor now takes 12 arguments. Append `bytes32 treasuryBurnScript` and `bytes32 borrowerBurnScript`, in that order, after `exit`. Clients construct these burn-output witness programs from the corresponding keys and asset commitment and preserve both on renewal. Regenerate FujiSafe artifacts and bindings, and update construction and scriptPubKey verification code together. The old ten-argument layout is rejected by the compiler and cannot be used to derive outputs for the updated contract.
 
 The playground compiles against the files in its Explorer. Source paths appear above the editor; default shared SingleSig lives at `single_sig/single_sig.ark`. Imported files are editable, and shared links contain the files used by the selected contract. Sharing is limited to 1 MiB of encoded URL content and 4 MiB of decompressed UTF-8 source data.
 
@@ -449,12 +451,14 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
-| `warnings` | Type-check warnings, omitted when empty |
+| `warnings` | Type-check and validation warnings include their source file path; omitted when empty |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 
 Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` field is a bundle object, replacing the previous single string. This is an intentional breaking format change: regenerate string-source artifacts with this compiler before loading them in updated consumers such as `arkade-bindgen`, and upgrade compiler and consumers together. It includes only files loaded for this compilation. Paths are normalized and relative, preserving import relationships; native compilation strips the common directory prefix from the loaded files. File contents are preserved verbatim. Recompile with the same compiler version using `compile_sources(source.entry, &source.files)`; `updatedAt` is the only dynamic field. Standalone compilation produces a one-file bundle with entry `main.ark`.
+
+Previous compiler versions stripped comments from embedded source; this version retains them. Source hashes and whole-artifact comparisons across that boundary change even when contract logic is identical. Regenerate stored comparison baselines and use the same compiler version for reproducibility checks. Warnings from loaded dependencies remain visible and include paths relative to the source bundle root.
 
 ### Covenant stack ABI
 

@@ -496,6 +496,21 @@ mod tests {
     use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
 
     #[test]
+    fn distinguishes_property_access_from_qualified_calls() {
+        let contract = parse(
+            "contract C() { function spend() { let field = x.field; let call = Helper.value(); } }",
+        )
+        .unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(
+            matches!(&statements[0], Statement::LetBinding { value: Expression::Property(name), .. } if name == "x.field")
+        );
+        assert!(
+            matches!(&statements[1], Statement::LetBinding { value: Expression::Call { name, args, .. }, .. } if name == "Helper.value" && args.is_empty())
+        );
+    }
+
+    #[test]
     fn parses_private_visibility_return_types_and_call_arguments() {
         use crate::models::Expression;
         let contract = parse(

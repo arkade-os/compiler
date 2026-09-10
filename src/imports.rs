@@ -112,16 +112,13 @@ fn compile_with_loader(
         &mut HashMap::new(),
     )?;
     let root = &modules[entry];
-    let warnings = modules
-        .values()
-        .flat_map(|module| module.warnings.clone())
-        .collect();
     let mut bundle = SourceBundle {
         entry: entry.to_string(),
         files,
     };
+    let mut base = PathBuf::new();
     if filesystem {
-        let mut base = Path::new(entry)
+        base = Path::new(entry)
             .parent()
             .expect("absolute entry")
             .to_path_buf();
@@ -150,6 +147,20 @@ fn compile_with_loader(
             })
             .collect();
     }
+    let warnings = modules
+        .iter()
+        .flat_map(|(path, module)| {
+            let path = Path::new(path)
+                .strip_prefix(&base)
+                .expect("common root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            module
+                .warnings
+                .iter()
+                .map(move |warning| format!("{warning} ({path})"))
+        })
+        .collect();
     compiler::emit(&root.contract, bundle, warnings)
 }
 

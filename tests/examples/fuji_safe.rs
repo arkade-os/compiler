@@ -4,6 +4,17 @@ use arkade_compiler::opcodes::{
 };
 
 #[test]
+fn fuji_safe_rejects_the_old_constructor_layout() {
+    let source = include_str!("../../examples/fuji_safe/fuji_safe.ark")
+        .replace(",\n        treasuryBurnScript, borrowerBurnScript\n", "\n");
+    let error = compile(&source).unwrap_err().to_string();
+    assert!(
+        error.contains("constructor 'FujiSafe' expects 12 arguments, got 10"),
+        "{error}"
+    );
+}
+
+#[test]
 fn test_fuji_safe_contract() {
     let fuji_code = include_str!("../../examples/fuji_safe/fuji_safe.ark");
 

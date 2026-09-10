@@ -268,11 +268,21 @@ fn constructors_require_visible_contracts_and_matching_signatures() {
 fn native_and_virtual_compilation_match_and_bundle_is_portable() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("contracts")).unwrap();
-    let source = r#"import "../helper.ark"; contract Main() { function spend() { require(Helper.VALUE == 1); } }"#;
-    let helper = "contract Helper() { const int VALUE = 1; }";
+    let source = r#"import "../helper.ark"; contract Main() { function spend() { require(Helper.VALUE == 1); require(1); } }"#;
+    let helper = "contract Helper() { const int VALUE = 1; function spend() { require(2); } }";
     std::fs::write(dir.path().join("contracts/main.ark"), source).unwrap();
     std::fs::write(dir.path().join("helper.ark"), helper).unwrap();
     let output = compile_file(dir.path().join("contracts/main.ark")).unwrap();
+    assert_eq!(output.warnings.len(), 2);
+    for path in ["contracts/main.ark", "helper.ark"] {
+        assert!(
+            output.warnings.iter().any(|warning| {
+                warning.starts_with("warning[type]:") && warning.ends_with(&format!(" ({path})"))
+            }),
+            "{:?}",
+            output.warnings
+        );
+    }
     let mut virtual_output = project(
         "contracts/main.ark",
         &[("contracts/main.ark", source), ("helper.ark", helper)],
