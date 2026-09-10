@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_EQUAL, OP_EQUALVERIFY,
+    OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
     OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN,
     OP_PICK, OP_PUT, OP_SWAP, OP_VERIFY,
 };
@@ -232,6 +232,56 @@ contract C(Point point) {
         mismatch.contains("comparison '==' is not defined between 'Point' and 'Pair'"),
         "{mismatch}"
     );
+
+    let widened = compile(
+        r#"
+contract C(bytes[1] a) {
+    function spend(bytes20[1] b) { require(a == b); }
+}
+"#,
+    )
+    .expect_err("element types must match exactly")
+    .to_string();
+    assert!(
+        widened.contains("comparison '==' is not defined between 'bytes[1]' and 'bytes20[1]'"),
+        "{widened}"
+    );
+}
+
+#[test]
+fn composite_types_do_not_outlive_their_bindings() {
+    let after_call = compile(
+        r#"
+struct Res { int selected; int other; }
+contract C() {
+    private function same(Res left, Res right) { require(left == right); }
+    function spend(Res a, Res b, int left) {
+        same(a, b);
+        require(left == 1);
+    }
+}
+"#,
+    )
+    .expect("helper parameter types stay inside the helper");
+    assert!(crate::common::arkade_asm(&after_call, "spend").contains(OP_EQUALVERIFY));
+
+    let after_block = compile(
+        r#"
+struct Point { int x; int y; }
+contract C() {
+    function spend(int flag) {
+        if (flag == 1) {
+            Point q = { x: 1, y: 2 };
+            require(q.x == 1);
+        }
+        let q = 5;
+        require(q == 5);
+    }
+}
+"#,
+    )
+    .expect("block-local struct types end with the block");
+    assert!(crate::common::arkade_asm(&after_block, "spend").contains(OP_ENDIF));
 }
 
 #[test]

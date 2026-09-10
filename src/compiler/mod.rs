@@ -69,7 +69,7 @@ fn internal_array_binding_name(array: &str, index: &str) -> String {
 struct Generator {
     asm: Vec<String>,
     stack: Vec<StackItem>,
-    scopes: Vec<usize>,
+    scopes: Vec<(usize, typechecker::Scope)>,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
     scope: typechecker::Scope,
@@ -124,9 +124,9 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        let mut scope = typechecker::build_scope_with_structs(function_parameters, structs);
+        let mut scope = typechecker::build_scope_with_structs(constructor_parameters, structs);
         scope.extend(typechecker::build_scope_with_structs(
-            constructor_parameters,
+            function_parameters,
             structs,
         ));
         Ok(Self {
@@ -578,14 +578,15 @@ impl Generator {
     }
 
     fn enter_scope(&mut self) {
-        self.scopes.push(self.stack.len());
+        self.scopes.push((self.stack.len(), self.scope.clone()));
     }
 
     fn exit_scope(&mut self) -> Result<(), String> {
-        let baseline = self
+        let (baseline, scope) = self
             .scopes
             .pop()
             .ok_or_else(|| "internal compiler error: scope stack underflow".to_string())?;
+        self.scope = scope;
         while self.stack.len() > baseline {
             match self.stack.last() {
                 Some(StackItem::Binding {

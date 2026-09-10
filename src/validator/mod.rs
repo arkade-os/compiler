@@ -1375,8 +1375,7 @@ fn validate_binding_requirement(
                     )));
                 } else if left_type != ArkType::Unknown
                     && right_type != ArkType::Unknown
-                    && !binding_types_compatible(&left_type, &right_type)
-                    && !binding_types_compatible(&right_type, &left_type)
+                    && left_type != right_type
                 {
                     issues.push(ValidationIssue::error(format!(
                         "function '{}': comparison '{}' is not defined between '{}' and '{}'",
