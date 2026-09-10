@@ -36,7 +36,7 @@
 // Transfer functions are retained below but disabled until dynamic taproot
 // reconstruction is supported.
 
-import "single_sig.ark";
+import "../single_sig/single_sig.ark";
 
 contract CoveredCall(
   pubkey  sellerPk,         // option writer; locks the BTC

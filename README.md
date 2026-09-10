@@ -17,7 +17,7 @@ The playground runs the real compiler as WebAssembly. Nothing is installed and n
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
 | Errors | Parse, type, and validation errors; the offending line is selected in the editor |
 
-The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The link button copies a URL with your current source compressed into the hash, so a contract can be shared without a backend.
+The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The link button compiles the selected contract and copies a URL containing its source bundle, including imports, so a contract can be shared without a backend.
 
 Every pull request gets its own build at `https://arkade-os.github.io/compiler/pr-previews/pr-<number>/`, posted as a comment on the PR.
 
@@ -90,7 +90,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 }
 ```
 
-`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's Taproot scriptPubKey at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments must be constructor parameters or literals; function inputs only exist at spend time and cannot be baked into a placeholder. A contract can instantiate itself with `import "self.ark";` to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's Taproot scriptPubKey at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments must be constructor parameters or literals; function inputs only exist at spend time and cannot be baked into a placeholder. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -200,7 +200,7 @@ cargo run -p arkade-bindgen -- --list-targets
 
 `--embed` inlines the artifact JSON into the generated file; `--package` sets the module or namespace name.
 
-Use the compiler as a library with `arkade_compiler::compile(source) -> Result<ContractJson, _>`. The `wasm` feature exposes `compile`, `validate`, and `version` through `wasm-bindgen`; that is what the playground calls.
+Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename and cannot load imports. The `wasm` feature exposes `compile`, `compile_sources`, `validate`, and `version`; the WASM `compile_sources(entry, files)` accepts the file map as a JSON string and returns the artifact as a JSON string.
 
 ### Run the playground locally
 
@@ -218,6 +218,7 @@ cargo install wasm-pack
 cargo test --workspace                                   # unit, feature, and example tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
+node playground/imports.test.mjs                         # after the playground build
 ./scripts/e2e.sh -v                                      # builds arkadec, runs artifacts through the Arkade VM and btcd (Go)
 cp ./scripts/pre-commit .git/hooks                       # fmt + test before every commit
 ```
@@ -229,14 +230,52 @@ The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator
 ### File layout
 
 ```solidity
-import "other.ark";          // zero or more; declares contracts usable in `new`
+import "./other.ark";        // zero or more; imports structs and the contract name
 struct Name { ... }          // zero or more, before the contract
-contract Name(<params>) {    // exactly one
+contract Name(<params>) {    // optional in an imported file; one in the entry file
   function ...
 }
 ```
 
 Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers; string literals appear only in `import` and as `require` messages.
+
+### Imports
+
+Imports resolve relative to the importing file, with explicit `.ark` filenames. Files may declare structs and at most one contract. An imported contract can contain only constants and static helpers; compiling an entry contract still requires a spend function or tapscript.
+
+```solidity
+// types.ark
+struct Policy { int maximum; }
+```
+
+```solidity
+// fees.ark
+contract Fees() {
+    const int MINIMUM = 10;
+    static function calculate(int amount) int { return amount / 100; }
+}
+```
+
+```solidity
+// vault.ark
+import "./types.ark";
+import "./fees.ark";
+
+contract Vault(Policy policy) {
+    function spend(int amount) {
+        require(amount >= Fees.MINIMUM);
+        require(Fees.calculate(amount) <= policy.maximum);
+    }
+}
+```
+
+Structs use their declared names; contract constants and static functions use `Contract.member`. Private functions and spend functions cannot be called externally. Imported static helpers inline into the calling covenant and cannot access the caller's state. Imported constants work wherever local constants work, including tapscript timelocks and multisig thresholds; static helper calls remain covenant-only.
+
+Each file sees its own declarations and declarations directly imported from other files. Dependencies of imported code retain their defining scope and are loaded recursively, but are not re-exported. Struct and contract names must be unique across the loaded files; repeated imports of the same normalized path are deduplicated. Bindings cannot shadow a visible contract namespace. Missing files, unknown members, and circular imports are errors. Import chains are limited to 128 files. There are no aliases, selective imports, package search paths, remote imports, or library objects.
+
+`new Contract(args...)` requires the current contract or a directly imported contract and checks the constructor's argument count and types. It still emits a runtime VTXO placeholder; imported contracts do not add spend groups to the entry artifact. FujiSafe accepts its treasury and borrower burn-output witness programs as constructor inputs; clients construct these from the keys and asset commitment and preserve them on renewal.
+
+The playground compiles against the files in its Explorer. Source paths appear above the editor; default shared SingleSig lives at `single_sig/single_sig.ark`. Imported files are editable, and shared links contain the files used by the selected contract.
 
 ### Types
 
@@ -397,7 +436,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
     },
     { "name": "unilateral", "leaves": [ ... ] }
   ],
-  "source": "...",
+  "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkade-compiler", "version": "0.1.0" },
   "updatedAt": "2026-01-01T00:00:00Z"
 }
@@ -411,8 +450,11 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
 | `warnings` | Type-check warnings, omitted when empty |
+| `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 
 Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
+
+The `source` field is a bundle object, replacing the previous single string. It includes only files loaded for this compilation. Paths are normalized and relative, preserving import relationships; native compilation strips the common directory prefix from the loaded files. File contents are preserved verbatim. Recompile with the same compiler version using `compile_sources(source.entry, &source.files)`; `updatedAt` is the only dynamic field. Standalone compilation produces a one-file bundle with entry `main.ark`.
 
 ### Covenant stack ABI
 

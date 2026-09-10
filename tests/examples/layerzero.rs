@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use arkade_compiler::compile_sources;
 use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DROP, OP_FINDASSETGROUPBYASSETID,
@@ -53,6 +53,23 @@ fn has_self_continuation(asm: &[String]) -> bool {
 //   - Both marker contracts pin themselves to the consuming contract's
 //     control-asset singleton.
 // ---------------------------------------------------------------------------
+
+fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Box<dyn std::error::Error>> {
+    let files = [
+        ("main.ark".to_string(), source.to_string()),
+        (
+            "receive_marker.ark".to_string(),
+            include_str!("../../examples/layerzero/receive_marker.ark").to_string(),
+        ),
+        (
+            "send_marker.ark".to_string(),
+            include_str!("../../examples/layerzero/send_marker.ark").to_string(),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    compile_sources("main.ark", &files)
+}
 
 fn load_example(name: &str) -> String {
     let path = format!("examples/layerzero/{}.ark", name);

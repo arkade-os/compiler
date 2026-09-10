@@ -29,7 +29,10 @@ fn collect_expression<'a>(
 ) {
     match expression {
         Expression::Call { name, .. } if visited.insert(name) => {
-            if let Some(function) = functions.iter().find(|f| f.is_private && f.name == *name) {
+            if let Some(function) = functions
+                .iter()
+                .find(|f| f.is_private && !f.is_static && f.name == *name)
+            {
                 collect_statements(&function.statements, names, functions, visited);
             }
         }

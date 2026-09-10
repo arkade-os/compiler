@@ -19,15 +19,14 @@ contract FujiSafe(
   // The asset pair identifier
   bytes assetPair,
   // Exit timelock in blocks
-  int exit
+  int exit,
+  // Burn-output witness programs, constructed from the keys and asset commitment by the client
+  bytes32 treasuryBurnScript,
+  bytes32 borrowerBurnScript
 ) {
   // Helper function to verify treasury Fuji token burning via Taproot output
   private function verifyTreasuryFujiBurning() {
-    // In Taproot, we verify the output is a P2TR that commits to our asset
-    bytes p2trScript = new P2TR(treasuryPk, assetCommitmentHash);
-
-    // Verify output 0 has the correct P2TR scriptPubKey and value
-    require(tx.outputs[0].scriptPubKey == p2trScript, "P2TR output mismatch");
+    require(tx.outputs[0].scriptPubKey == treasuryBurnScript, "burn output mismatch");
     require(tx.outputs[0].value == borrowAmount, "Value mismatch");
   }
 
@@ -67,8 +66,7 @@ contract FujiSafe(
   // Private Redemption: Only owner can unlock all collateral with key when burning Fuji
   function redeem(signature borrowerSig) {
     // Verify burning of Fuji token using borrower key
-    bytes p2trScript = new P2TR(borrowerPk, assetCommitmentHash);
-    require(tx.outputs[0].scriptPubKey == p2trScript, "P2TR output mismatch");
+    require(tx.outputs[0].scriptPubKey == borrowerBurnScript, "burn output mismatch");
     require(tx.outputs[0].value == borrowAmount, "Value mismatch");
 
     // Require borrower signature
@@ -83,7 +81,8 @@ contract FujiSafe(
     require(
       tx.outputs[0].scriptPubKey == new FujiSafe(
         assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,
-        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair, exit
+        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair, exit,
+        treasuryBurnScript, borrowerBurnScript
       ),
       "contract mismatch"
     );

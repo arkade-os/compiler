@@ -1,6 +1,7 @@
-// Public API surface: `compile` plus the data model (`models`) and opcode
-// constants consumers need. The pipeline stages are crate-internal.
+// Compilation entry points, data models, and opcode constants are public.
+// Pipeline stages are crate-internal.
 mod compiler;
+mod imports;
 pub mod models;
 pub mod opcodes;
 mod parser;
@@ -63,4 +64,19 @@ pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Er
         Ok(output) => Ok(output),
         Err(err) => Err(err.into()),
     }
+}
+
+/// Compile an entry file and its relative imports from the filesystem.
+pub fn compile_file(
+    path: impl AsRef<std::path::Path>,
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    imports::compile_file(path.as_ref()).map_err(Into::into)
+}
+
+/// Compile an entry file from an in-memory map of relative paths to source text.
+pub fn compile_sources(
+    entry: &str,
+    files: &std::collections::BTreeMap<String, String>,
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    imports::compile_sources(entry, files).map_err(Into::into)
 }

@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP,
     OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
@@ -6,11 +6,11 @@ use arkade_compiler::opcodes::{
 
 use crate::common::{arkade_asm, arkade_inputs, user_signatures};
 
-const CODE: &str = include_str!("../../examples/bonds/bond_mint.ark");
+const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/bonds/bond_mint.ark");
 
 #[test]
 fn test_bond_mint_compiles() {
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     assert_eq!(output.name, "BondMint");
     // 4 covenant functions (repay, liquidate, auction, roll) + 1 tapscript (unilateral) = 5 groups
     assert_eq!(output.functions.len(), 5, "expected 5 function groups");
@@ -32,7 +32,7 @@ fn test_bond_mint_compiles() {
 
 #[test]
 fn test_repay_is_atomic_with_pool() {
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "repay");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
@@ -60,7 +60,7 @@ fn test_liquidate_is_permissionless_prematurity() {
     // pre-maturity gated (tx.time < maturity), pool co-spent, debit-burned,
     // caller-selected collateral output. The oracle + threshold + payout
     // math lives on the pool side.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "liquidate");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
@@ -108,7 +108,7 @@ fn test_auction_is_permissionless_and_phased() {
     //   - debit burn
     //   - caller-selected collateral output
     // The destination is a witness scriptPubKey; no user signature.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "auction");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
@@ -154,7 +154,7 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
     // pre-maturity. It does NOT pin any output — outputs are claimed by
     // the paired rollOut/rollIn/swap covenants at their witness-supplied
     // indices.
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "roll");
     assert!(
         asm.contains(OP_INSPECTINASSETLOOKUP),
@@ -200,7 +200,7 @@ fn test_unilateral_exit_is_csv_timelocked() {
     // The shared unilateral exit leaf must be CSV-timelocked, avoid covenant
     // introspection, and require only the borrower's signature.
     use arkade_compiler::opcodes::OP_DROP;
-    let output = compile(CODE).expect("compilation failed");
+    let output = compile_file(PATH).expect("compilation failed");
     let asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         asm.contains(OP_CHECKSEQUENCEVERIFY),
@@ -235,8 +235,7 @@ fn test_bond_mint_cli() {
     use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
-    let input = dir.path().join("bond_mint.ark");
-    fs::write(&input, CODE).unwrap();
+    let input = std::path::Path::new(PATH);
     let out = dir.path().join("bond_mint.json");
 
     let result = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))

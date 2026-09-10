@@ -16,7 +16,9 @@ fn test_fuji_safe_contract() {
     assert_eq!(output.name, "FujiSafe");
 
     // Verify parameters
-    assert_eq!(output.parameters.len(), 10);
+    assert_eq!(output.parameters.len(), 12);
+    assert_eq!(output.parameters[10].name, "treasuryBurnScript");
+    assert_eq!(output.parameters[11].name, "borrowerBurnScript");
     assert_eq!(output.parameters[0].name, "assetCommitmentHash");
     assert_eq!(output.parameters[0].param_type, "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
@@ -56,6 +58,18 @@ fn test_fuji_safe_contract() {
             );
         }
     }
+
+    for (function, script) in [
+        ("claim", "treasuryBurnScript"),
+        ("liquidate", "treasuryBurnScript"),
+        ("redeem", "borrowerBurnScript"),
+    ] {
+        assert!(
+            crate::common::arkade_asm_tokens(&output, function).contains(&format!("<{script}>"))
+        );
+    }
+    let renewal = crate::common::arkade_asm(&output, "renew");
+    assert!(renewal.contains("<treasuryBurnScript>,<borrowerBurnScript>)>"));
 
     // The claim covenant checks expiration through locktime inspection.
     let claim_asm = crate::common::arkade_asm(&output, "claim");

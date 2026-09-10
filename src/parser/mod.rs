@@ -28,18 +28,40 @@ pub(crate) use expr::*;
 pub(crate) use introspection::*;
 pub(crate) use tapscript::*;
 
-/// Parse Arkade Script source code into a Contract AST.
-///
-/// This is the main entry point for the parser. It tokenizes the source code
-/// using the Pest grammar and builds a typed AST.
-pub fn parse(source_code: &str) -> Result<Contract, Box<dyn std::error::Error>> {
-    let pairs = ArkadeParser::parse(Rule::main, source_code)?;
-    let ast = build_ast(pairs)?;
-    Ok(ast)
+#[cfg(test)]
+pub fn parse(source: &str) -> Result<Contract, String> {
+    parse_with_constants(source, &[])
+}
+
+pub(crate) fn imports(source: &str) -> Result<Vec<String>, String> {
+    let mut pairs =
+        ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
+    Ok(pairs
+        .next()
+        .expect("main")
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::import_stmt)
+        .map(|p| {
+            p.into_inner()
+                .next()
+                .expect("import path")
+                .as_str()
+                .trim_matches('"')
+                .to_string()
+        })
+        .collect())
+}
+
+pub(crate) fn parse_with_constants(
+    source: &str,
+    constants: &[Constant],
+) -> Result<Contract, String> {
+    let pairs = ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
+    build_ast(pairs, constants)
 }
 
 /// Build a Contract AST from parsed Pest pairs
-fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
+fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
         structs: Vec::new(),
@@ -47,7 +69,7 @@ fn build_ast(pairs: Pairs<Rule>) -> Result<Contract, String> {
         functions: Vec::new(),
         tapscripts: Vec::new(),
         imports: Vec::new(),
-        constants: Vec::new(),
+        constants: constants.to_vec(),
     };
 
     for pair in pairs {
@@ -125,11 +147,24 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
         contract.parameters = parse_parameters(param_list)?;
     }
 
-    contract.constants = inner_pairs
+    let constants = inner_pairs
         .clone()
         .filter(|pair| pair.as_rule() == Rule::const_decl)
         .map(parse_const_decl)
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
+    contract.constants.extend(constants);
+    let mut parsing_constants = contract.constants.clone();
+    parsing_constants.extend(
+        contract
+            .constants
+            .iter()
+            .filter(|c| !c.name.contains('.'))
+            .cloned()
+            .map(|mut constant| {
+                constant.name = format!("{}.{}", contract.name, constant.name);
+                constant
+            }),
+    );
 
     // Functions (covenant) and tapscript declarations share the `function` rule;
     // a tapscript carries a `tapscript_block` body.
@@ -138,10 +173,10 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
             continue;
         }
         if function_pair_is_tapscript(&func_pair) {
-            let ts = parse_named_tapscript(func_pair, &contract.constants)?;
+            let ts = parse_named_tapscript(func_pair, &parsing_constants)?;
             contract.tapscripts.push(ts);
         } else {
-            let func = parse_function(func_pair, &contract.constants)?;
+            let func = parse_function(func_pair, &parsing_constants)?;
             contract.functions.push(func);
         }
     }

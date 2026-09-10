@@ -2,7 +2,7 @@ use clap::Parser as ClapParser;
 use std::fs;
 use std::path::Path;
 
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 
 /// Arkade Compiler CLI
 ///
@@ -48,11 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Input file must have .ark extension".into());
     }
 
-    // Read source code
-    let source_code = fs::read_to_string(&args.file)?;
-
     // Compile source code to JSON
-    let output = match compile(&source_code) {
+    let output = match compile_file(file_path) {
         Ok(json) => json,
         Err(err) => {
             eprintln!("Compilation error: {}", err);

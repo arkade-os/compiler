@@ -48,3 +48,11 @@ pub fn validate(source: &str) -> Result<bool, String> {
         Err(e) => Err(e.to_string()),
     }
 }
+
+/// Compile a virtual project. `files` is a JSON object mapping relative .ark paths to source text.
+#[wasm_bindgen]
+pub fn compile_sources(entry: &str, files: &str) -> Result<String, String> {
+    let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    let output = crate::imports::compile_sources(entry, &files)?;
+    serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))
+}

@@ -31,6 +31,8 @@
 //     111..143  remoteRecipient
 //     143..175  messageHash
 
+import "send_marker.ark";
+
 contract OApp(
   bytes32 oappCtrlAssetIdTxid,
   int     oappCtrlAssetIdGidx,

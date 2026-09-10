@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile, version, validate, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { compile_sources, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -49,6 +49,14 @@ const examples = {
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
     struct_vault: { name: 'StructVault', code: contracts.struct_vault },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
+};
+
+const examplePaths = {
+    single_sig: 'single_sig/single_sig.ark',
+    htlc: 'htlc/htlc.ark',
+    fuji_safe: 'fuji_safe/fuji_safe.ark',
+    struct_vault: 'struct_vault/struct_vault.ark',
+    swap: 'non_interactive_swap/non_interactive_swap.ark',
 };
 
 // Global state
@@ -138,8 +146,16 @@ async function decompressCode(b64url) {
 
 async function shareContract() {
     if (!editor) return;
-    const encoded = await compressCode(editor.getValue());
-    const url = `${location.origin}${location.pathname}#code=${encoded}`;
+    let bundle;
+    try {
+        const { entry, files } = compilationSources();
+        bundle = JSON.parse(compile_sources(entry, JSON.stringify(files))).source;
+    } catch (error) {
+        showError(error.toString());
+        return;
+    }
+    const encoded = await compressCode(JSON.stringify(bundle));
+    const url = `${location.origin}${location.pathname}#project=${encoded}`;
     await navigator.clipboard.writeText(url);
     const btn = document.getElementById('share-btn');
     const orig = btn.innerHTML;
@@ -148,9 +164,20 @@ async function shareContract() {
 }
 
 async function loadFromUrl() {
-    if (!location.hash.startsWith('#code=')) return null;
+    const isProject = location.hash.startsWith('#project=');
+    if (!isProject && !location.hash.startsWith('#code=')) return null;
     try {
-        return await decompressCode(location.hash.slice(6));
+        const source = await decompressCode(location.hash.slice(isProject ? 9 : 6));
+        if (!isProject) return { entry: 'main.ark', files: { 'main.ark': source } };
+        const bundle = JSON.parse(source);
+        if (typeof bundle.entry !== 'string' || !bundle.files || Array.isArray(bundle.files)
+            || typeof bundle.files !== 'object' || !Object.hasOwn(bundle.files, bundle.entry)
+            || Object.entries(bundle.files).some(([path, text]) => typeof text !== 'string'
+                || !path.endsWith('.ark') || /[<>"'&\\:\u0000-\u001f]/.test(path)
+                || path.split('/').some(part => !part || part === '.' || part === '..'))) {
+            throw new Error('Invalid shared source bundle');
+        }
+        return bundle;
     } catch (e) {
         console.warn('Failed to decode shared contract from URL:', e);
         return null;
@@ -1014,7 +1041,8 @@ function closeTab(tabId) {
 
 // Update current file name display
 function updateCurrentFileName(name) {
-    document.getElementById('current-file').textContent = name;
+    document.getElementById('current-file').textContent = currentProject
+        ? `${currentProject}/${name}` : examplePaths[currentFile] || `_examples/${currentFile}.ark`;
 }
 
 // Initialize Monaco Editor
@@ -1089,12 +1117,12 @@ function initMonaco() {
         });
 
         // Load shared contract from URL hash if present
-        window._urlCodePromise.then(urlCode => {
-            if (urlCode) {
-                const id = uniqueId('shared', examples);
-                examples[id] = { name: 'Shared', code: urlCode };
+        window._urlCodePromise.then(bundle => {
+            if (bundle) {
+                const id = uniqueId('shared', projects);
+                projects[id] = { name: 'Shared', description: '', files: bundle.files };
                 saveToStorage();
-                selectExample(id);
+                selectProjectFile(id, bundle.entry);
                 history.replaceState(null, '', location.pathname + location.search);
             }
         });
@@ -1124,6 +1152,25 @@ function markCompiled() {
     btn.classList.add('compiled');
 }
 
+function compilationSources() {
+    saveCurrentFile();
+    const files = {};
+    for (const [id, project] of Object.entries(projects)) {
+        for (const [name, source] of Object.entries(project.files)) {
+            files[`${id}/${name}`] = source;
+        }
+    }
+    for (const [id, example] of Object.entries(examples)) {
+        const path = examplePaths[id] || `_examples/${id}.ark`;
+        if (Object.hasOwn(files, path)) throw new Error(`Duplicate source path: ${path}`);
+        files[path] = example.code;
+    }
+    const entry = currentProject ? `${currentProject}/${currentFile}`
+        : examplePaths[currentFile] || `_examples/${currentFile || 'main'}.ark`;
+    files[entry] = editor.getValue();
+    return { entry, files };
+}
+
 // Compile the source code
 function doCompile() {
     if (!wasmReady || !editor) return;
@@ -1132,7 +1179,8 @@ function doCompile() {
     clearErrors();
 
     try {
-        const result = compile(source);
+        const { entry, files } = compilationSources();
+        const result = compile_sources(entry, JSON.stringify(files));
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
