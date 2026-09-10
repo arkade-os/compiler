@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
 import { initSync, compile_sources } from './pkg/arkade_compiler.js';
 
@@ -11,7 +12,7 @@ const context = vm.createContext({
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
-    CompressionStream, DecompressionStream, TextEncoder, TextDecoder, btoa, atob,
+    Blob, CompressionStream, DecompressionStream, TextEncoder, TextDecoder, btoa, atob,
     console: { warn() {} },
 });
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
@@ -65,4 +66,21 @@ assert.match(JSON.parse(compile_sources(edited.entry, JSON.stringify(edited.file
 context.bundle = { entry: '<img>.ark', files: { '<img>.ark': 'contract Invalid() {}' } };
 await vm.runInContext(`compressCode(JSON.stringify(bundle)).then(encoded => { location.hash = '#project=' + encoded; });`, context);
 assert.equal(await vm.runInContext('loadFromUrl()', context), null);
+const encodedLimit = vm.runInContext('MAX_SHARED_ENCODED_CHARS', context);
+const decodedLimit = vm.runInContext('MAX_SHARED_DECODED_BYTES', context);
+context.encoded = 'A'.repeat(encodedLimit + 1);
+await assert.rejects(vm.runInContext('decompressCode(encoded)', context), /Encoded share link exceeds/);
+for (const size of [decodedLimit, decodedLimit + 1]) {
+    context.encoded = deflateRawSync(Buffer.alloc(size, 'a')).toString('base64url');
+    const decoded = vm.runInContext('decompressCode(encoded)', context);
+    if (size === decodedLimit) assert.equal((await decoded).length, size);
+    else await assert.rejects(decoded, /Shared source exceeds/);
+}
+context.encoded = 'AA';
+await assert.rejects(vm.runInContext('decompressCode(encoded)', context));
+for (const prefix of ['#code=', '#project=']) {
+    context.location.hash = prefix + deflateRawSync(Buffer.alloc(decodedLimit + 1, 'a')).toString('base64url');
+    assert.equal(await vm.runInContext('loadFromUrl()', context), null);
+}
+await assert.rejects(vm.runInContext("compressCode('a'.repeat(MAX_SHARED_DECODED_BYTES + 1))", context), /Shared source exceeds/);
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, and dependency edits.`);
