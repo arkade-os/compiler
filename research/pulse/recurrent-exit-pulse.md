@@ -1,11 +1,11 @@
 # PULSE — Recurrent Unilateral Exit for Emulator-Enforced Pools
 
-**Pooled Unilateral-exit via Lattice State Epochs. Revision 2.1 (amended).**
+**Pooled Unilateral-exit via Lattice State Epochs. Revision 2.2 (amended).**
 
 A protocol for giving open-membership pool contracts on Arkade a *standing* unilateral
 exit, enforced by recurrent state updates between the transacting parties. This document
 is a design specification: it defines the protocol lifecycle, the trust model, the
-attack analysis — twenty-three adversarial findings (A1–A23), detailed in §10 — that shaped
+attack analysis — twenty-four adversarial findings (A1–A24), detailed in §10 — that shaped
 it, and the compiler surface that would standardize it. It proposes no code changes; the
 compiler-facing sections are future work.
 
@@ -126,6 +126,42 @@ covenants and today's exit asymmetry).
 14. Evidence lists (§8, §13.4), the GSR annex (§12.2), §13.1, and the trust
     statement updated for the self-enforcing layer; new vocabulary (`EOTS`, nonce
     chain, `B_eq`, `w_max`).
+
+**Revision 2.2** — corrections arising from an independent formal-verification pass
+over revision 2.1 (TLA+ models of the ceremony and the timed exit race; Lean proofs of
+the §9.2 algebra). The formalization is a separate research artifact, not part of this
+repository; it is cited here only for provenance of these corrections:
+
+15. **A24 — honest-operation self-slash (§9.2), the substantive fix in this
+    revision.** Revision 2.1 specified nonce commitments indexed *per epoch*, while
+    the same operator threshold signs two artifacts per epoch (`A_k` and `h_k`). Those
+    are distinct messages under one committed nonce — the extraction condition — so a
+    correct implementation of 2.1 would have leaked its own key and burned its own bond
+    during honest operation. The nonce index is now the *(epoch, artifact role)* pair.
+    This is a protocol change, not an editorial one: anyone who built against §9.2 as
+    previously written must re-derive their nonce schedule.
+16. **§9.2 extraction premise stated precisely.** Extraction requires `e₁ ≠ e₂`;
+    distinct *messages* imply distinct *challenges* only under collision resistance of
+    the challenge hash. Revision 2.1's prose asserted the message form, which is the
+    weaker, not-quite-sufficient statement. Equal challenges extract nothing.
+17. **§7.1 "atomic" scoped honestly.** Abandonment is clean only through step 4; a
+    transition signed in step 5 is broadcastable and cannot be recalled by declaring
+    the ceremony abandoned.
+18. **§7.1a distinguishes selection from spendability.** Auto-exit on `k−1` names the
+    epoch clients select; because a signed transition can be broadcast before any seal
+    exists, it does not promise that epoch's input is unspent. §8a's race analysis
+    governs recovery.
+19. **§7.5 identifies which defense actually prevents an unlawful eviction.** Of the
+    four listed consequences, only enclave/threshold refusal operates before a
+    transaction exists; client non-finality, seal refusal, and bond slashing are
+    after-the-fact. Seal refusal is not a consensus veto.
+
+Known gaps in that verification pass, recorded so they are not mistaken for results:
+the ordering invariant for §7.1 steps 3–5 (A4) is enforced by construction in the model
+rather than independently falsified, and the §7.4 timelock inequality is a property of
+the chosen parameters rather than of the protocol. The §13.2 trilemma remains
+unformalized — what was proved there is a restricted game whose theft-authorization is
+an explicit premise, not an impossibility result.
 
 ---
 
@@ -303,8 +339,8 @@ PULSE closes this gap.
 | **`renew`** | The pool's absolute expiry, after which the Operator's sweep path eventually matures |
 | **Bond** | The Operator's optional on-chain security deposit, held by a `k`-of-`n` federation of referees independent of the Operator; pays victims on objective evidence or returns to the Operator at expiry (§9) |
 | **`requiredCoverage`** | The minimum bond size for a given adversary class — quantified per class in §9.4 (revision 2.1 corrects revision 2's at-risk-per-epoch claim) |
-| **EOTS** | Extractable one-time signature: a Schnorr signature that is protocol-valid only under a pre-committed per-epoch nonce; signing two messages for one epoch leaks the secret key (§9.2) |
-| **Nonce chain** | The Merkle-committed sequence of per-epoch signing nonces published at genesis and each heartbeat; attestations, seals, and commitments are valid only under their committed nonce (§9.2) |
+| **EOTS** | Extractable one-time signature: a Schnorr signature that is protocol-valid only under the nonce pre-committed for its *(epoch, artifact role)* slot; two signatures under one committed nonce with distinct challenges leak the secret key (§9.2, A24) |
+| **Nonce chain** | The Merkle-committed sequence of signing nonces published at genesis and each heartbeat, indexed by *(epoch, artifact role)*; attestations, seals, and commitments are valid only under the nonce committed for their own slot (§9.2, A24) |
 | **Equivocation bond `B_eq`** | Plain-BTC bond whose only pre-timelock spend is a pre-signed burn completable by anyone holding the EOTS-extracted key — self-executing slashing of the double-sign class (§9.2, §9.4) |
 | **Outflow cap `w_max`** | Client/enclave-enforced bound on one pulse's net on-chain outflow; bounds every *detectable* theft class (§9.4) |
 
@@ -371,7 +407,12 @@ emits — instead of a fixed-key CHECKSIG:
 ### 7.1 Pulse ceremony (D1) — atomic; order is load-bearing
 
 A pulse either completes fully or is abandoned, leaving the pool on `U_k`, whose
-lattice is already valid.
+lattice is already valid. **Abandonment is clean only up to step 5.** Once `T_{k+1}`
+is signed it is a broadcastable transaction, and no ceremony-level declaration recalls
+it: an aborting party can refuse to continue, but it cannot un-sign. So "atomic" here
+means *steps 1–4 are abandonable*, not that a signed transition can be withdrawn —
+see §8a, where this is exactly why "the pool stays on the last good epoch" is a claim
+about which epoch clients *select*, not a guarantee that its input is still unspent.
 
 1. **Propose.** A transition `T_{k+1}` is proposed, changing only the transacting
    parties' balances. The Operator emulates the contract's introspection covenant
@@ -471,7 +512,12 @@ is virtual (both objective from committed data):
 If either fails — or the pre-image data needed to check them is withheld (which is
 itself the §7.1 step 6 / A3 stall) — **conforming wallets and watchtowers MUST treat
 pulse `k` as non-final and auto-exit on epoch `k−1`**, the last epoch that passed both
-checks (genesis `h_0` is checked at deposit). This converts a malformed or
+checks (genesis `h_0` is checked at deposit). **This selects an epoch; it does not
+promise that epoch's input is still spendable.** A transition signed in step 5 is
+broadcastable before any seal exists (§7.1), so `U_{k−1}` may already be consumed by
+the time the halt fires. Auto-exit on `k−1` is therefore the correct *client policy*
+and simultaneously the weakest link in the recourse ladder — §8a's race analysis
+governs what it actually recovers. This converts a malformed or
 over-allocating lattice from a *silent loss* into a *liveness halt*, and it does so
 without any covenant: the data is public and the arithmetic is objective. The only
 residual is a counterparty who already treated pulse `k` as final off-chain before
@@ -581,6 +627,15 @@ Both directions are closed by one normative rule.
 > unsignable under the primary model's enclave policy (§9), and — where the optional
 > bond exists — slashable on the objective evidence pair (sealed `X_k(m)`, sealed or
 > broadcast displacement lacking the payout).
+>
+> **Only one of those four actually stops the spend.** Enclave refusal is the sole
+> leg that operates *before* a transaction exists: a signature the threshold will not
+> produce is a transaction that cannot confirm. Client non-finality, seal refusal, and
+> bond slashing are all *after-the-fact* — Bitcoin accepts a validly signed transition
+> whether or not any sealer blessed it, so those three bound the attacker's ongoing
+> business and compensate the victim, they do not veto the displacement. Deployments
+> must therefore state which signing threshold enforces the payout rule; a bonded
+> deployment with no signing-policy enforcement has deterrence but no prevention.
 
 Consequences:
 
@@ -957,20 +1012,33 @@ an **extractable one-time signature (EOTS)**, and it makes the double-sign class
 misbehavior *self-punishing on plain Bitcoin, today, with no judges, no token, and no
 fork*:
 
-- **Nonce commitment.** At genesis and at each heartbeat, every artifact signer (the
-  operator threshold for `A_k`/`h_k`; each sealer for `σ_k`) publishes a Merkle
-  commitment to its per-epoch nonces `R_1 … R_H` covering the horizon to the next
-  heartbeat plus margin (A19). For a FROST signer this is the aggregate nonce per
-  epoch, fixed by the standard preprocessing round.
+- **Nonce commitment — one nonce per *(epoch, artifact role)*, never per epoch.** At
+  genesis and at each heartbeat, every artifact signer (the operator threshold for
+  `A_k`/`h_k`; each sealer for `σ_k`) publishes a Merkle commitment to its nonces
+  `R_1 … R_H` covering the horizon to the next heartbeat plus margin (A19). For a
+  FROST signer this is the aggregate nonce, fixed by the standard preprocessing round.
+  **The index must be the (epoch, role) pair.** The operator threshold signs two
+  artifacts in the same epoch — the attestation `A_k` and the commitment `h_k` — and
+  those are different messages; reusing one `R_k` across both is a same-nonce,
+  distinct-challenge pair, which is precisely the extraction condition above. An
+  operator following a per-epoch schedule would therefore **leak its own key and burn
+  its own bond during entirely honest operation** (A24). Role separation inside the
+  signed message does *not* help: different messages are what drives the extraction.
+  Commit `R_{k,A}`, `R_{k,h}`, `R_{k,σ}` as distinct leaves — or give each role its own
+  key — and treat any role whose nonce index is not distinct as unsafe to deploy.
 - **Validity rule.** An attestation, seal, or commitment for epoch `k` is valid
   **only if signed under the committed `R_k`.** A fresh-nonce signature is not
   "cheating detected" — it is *not an artifact at all*: every conforming verifier
   rejects it, so signing with a fresh nonce buys the cheater nothing. This is the move
   Script cannot make and conforming software can.
-- **Extraction.** Two artifacts for the same epoch under the same `R_k` on different
-  messages leak the secret key by plain Schnorr algebra:
+- **Extraction.** Two artifacts for the same epoch under the same `R_k` with
+  **distinct challenges** leak the secret key by plain Schnorr algebra:
   `s₁ − s₂ = (e₁ − e₂)·x ⇒ x = (s₁ − s₂)/(e₁ − e₂)`. Anyone holding both artifacts —
-  one honest gossip partner suffices — computes `x`.
+  one honest gossip partner suffices — computes `x`. State the premise precisely: the
+  division needs `e₁ ≠ e₂`, and *distinct messages give distinct challenges only under
+  collision resistance of the challenge hash*. Equal challenges yield a zero
+  denominator and extract nothing, so the mechanism's soundness rests on the hash, not
+  on message inequality alone.
 - **The bond that spends itself.** The equivocation bond `B_eq` is a taproot UTXO with
   exactly two paths: (i) a **pre-signed burn transaction** (output provably
   unspendable, plus a P2A anchor for fees — A20) whose signature is
@@ -1109,10 +1177,11 @@ and threshold members rotate out without coverage ever dipping.
 
 ## 10. Attack analysis appendix
 
-Twenty-three adversarial findings shaped this spec — A1–A13 from the protocol
+Twenty-four adversarial findings shaped this spec — A1–A13 from the protocol
 red-team, A14–A15 from the recourse analysis (§8a), A16–A17 from the revision-2
 current-state exit analysis (§7.5), A18–A23 from the revision-2.1 red-team of the
-self-enforcing bond and federation-hardening layers (§9.2–§9.4). Severity:
+self-enforcing bond and federation-hardening layers (§9.2–§9.4), and A24 from the
+revision-2.2 formal-verification pass (§0). Severity:
 **CRITICAL** (breaks the safety claim), **HIGH** (loses funds or bricks exit under a
 realistic adversary), **MED** (griefing/liveness/cost).
 
@@ -1141,6 +1210,7 @@ realistic adversary), **MED** (griefing/liveness/cost).
 | A21 | **DA sampling eclipse** — a Sybilled mesh answers samples for data that is globally missing, faking availability to light verifiers | MED | Sampling over independent transports against the committed root; the seal remains a k-of-n *possession* receipt — sampling supplements it, never replaces it; sealers are bonded identities (§9.3) |
 | A22 | **Reshare capture** — permissionless proactive resharing lets one entity accumulate `t` shares across refresh windows behind distinct facades | HIGH | Fidelity-bond-gated admission (§9.1, §9.4); rate-limited membership churn per refresh window (§9.3); Nakamoto-coefficient floor gating the "threshold-secured" label (§13.5) |
 | A23 | **Correlated per-identity bonds** — one identity's fidelity bond, amortized across many pools, under-collateralizes a correlated theft across its whole book | MED→HIGH | The §9.4 aggregation rule: `b_identity ≥ Σ(marginal exposure)` across the identity's book, else the fractional-reserve ratio is computed, displayed, and the identity is excluded from `t`/`k` counts by conforming clients |
+| A24 | **Honest-operation self-slash via per-epoch nonce reuse** — the operator threshold signs both `A_k` and `h_k` in epoch `k`; under a nonce schedule indexed by epoch alone, those two distinct messages share one committed `R_k`, which is exactly the EOTS extraction condition. A fully honest, protocol-following operator leaks its own key and its bond is burned by any observer. Distinct from A18, which is a crash/restart fault: this one fires on the specified happy path | CRITICAL (for any deployment of §9.2 as previously written) | Nonce index is the *(epoch, artifact role)* pair, not the epoch: commit `R_{k,A}`, `R_{k,h}`, `R_{k,σ}` separately, or give each artifact role its own key (§9.2). Message-level role separation is explicitly **not** a fix. Surfaced by the Lean formalization of §9.2, which showed extraction needs distinct challenges rather than distinct messages |
 
 ## 11. Compiler surface (future work — gated zones)
 
