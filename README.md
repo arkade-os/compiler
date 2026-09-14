@@ -283,7 +283,7 @@ Struct and contract names must be unique across loaded files. The compiler loads
 | `int` | CScriptNum integer |
 | `bool` | Boolean |
 | `asset` | Asset identifier |
-| `T[n]` | Fixed-size array of a scalar type, `n` a positive literal |
+| `T[n]` | Fixed-size array of a scalar type, `n` a positive integer literal or `int` constant |
 | `struct` | User-declared, nested structs and scalar arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint` | Native result structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}` |
 
@@ -343,12 +343,14 @@ Literals work in byte expressions, calls, comparisons, arrays, structs, and cons
 
 ```solidity
 const int EXIT_DELAY = 144;
-const bool STRICT = true;
+const int HALF_DELAY = EXIT_DELAY / 2;
+const int KEY_COUNT = 2;
+const bool STRICT = HALF_DELAY > 0;
 ```
 
-Constants are `int`, `bool`, or `bytes` literals declared anywhere in the contract body. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
+Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, unary `-`), comparisons, and boolean negation (`!`); `bytes` constants accept a literal or another `bytes` constant. Integer arithmetic uses checked signed 64-bit values; division truncates toward zero. Cycles, runtime values, type mismatches, division by zero, and overflow are rejected. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
-A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes use positive integer literals.
+A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
 
 Constants are immutable, and their names must be distinct from all other bindings and function names in the contract.
 

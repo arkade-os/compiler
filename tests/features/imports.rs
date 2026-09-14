@@ -411,3 +411,53 @@ fn qualified_constants_in_builtin_operands_and_transaction_indices_match_literal
         arkade_asm_tokens(&literal, "spend")
     );
 }
+
+#[test]
+fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
+    let output = project("main.ark", &[
+        ("base.ark", "contract Base() { const int COUNT = 4; }"),
+        ("config.ark", r#"import "base.ark";
+            struct Limits { int[Config.SIZE] values; }
+            contract Config() {
+                const int SIZE = Base.COUNT / 2;
+                const int DELAY = SIZE * 72;
+                static function check(int[SIZE] values) { int[SIZE] copy = [values[0], values[1]]; require(copy[1] > 0); }
+            }"#),
+        ("main.ark", r#"import "config.ark";
+            contract Vault(pubkey[Config.SIZE] keys) {
+                const int SIZE = 3;
+                const int LOCAL = Config.SIZE + 1;
+                const int WAIT = Config.DELAY / 2;
+                function spend(int[Config.SIZE] values, Limits limits) { Config.check(values); require(limits.values[1] < LOCAL); }
+                function exit(signature sig) tapscript { require(older(WAIT)); require(checkSig(sig, keys[1])); }
+            }"#),
+    ]).unwrap();
+    let literal = compile(r#"
+        struct Limits { int[2] values; }
+        contract Vault(pubkey[2] keys) {
+            static function check(int[2] values) { int[2] copy = [values[0], values[1]]; require(copy[1] > 0); }
+            function spend(int[2] values, Limits limits) { check(values); require(limits.values[1] < 3); }
+            function exit(signature sig) tapscript { require(older(72)); require(checkSig(sig, keys[1])); }
+        }
+    "#).unwrap();
+    assert_eq!(output.parameters[0].param_type, "pubkey[2]");
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+    assert_eq!(
+        leaf_asm_tokens(&output, "exit", "exit"),
+        leaf_asm_tokens(&literal, "exit", "exit")
+    );
+    assert_eq!(
+        serde_json::to_value(&output.structs).unwrap(),
+        serde_json::to_value(&literal.structs).unwrap()
+    );
+    let bundle = output.source.as_ref().unwrap();
+    let mut rebuilt = compile_sources(&bundle.entry, &bundle.files).unwrap();
+    rebuilt.updated_at = output.updated_at.clone();
+    assert_eq!(
+        serde_json::to_value(rebuilt).unwrap(),
+        serde_json::to_value(output).unwrap()
+    );
+}

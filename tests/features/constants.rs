@@ -305,20 +305,177 @@ contract Vault(pubkey owner) {
 }
 
 #[test]
-fn constant_initializer_must_be_a_literal() {
-    for initializer in ["fee", "1 + 1", "-1"] {
-        let source = format!(
-            r#"
-contract Vault(pubkey owner, int fee) {{
-    const int A = {initializer};
-    function spend(int amount) {{ require(amount > A); }}
-}}
-"#
+fn constant_expressions_match_literal_assembly() {
+    for (ty, expression, literal) in [
+        ("int", "Y / 2", "7"),
+        ("int", "Y + 2 * 3", "20"),
+        ("int", "(Y + 2) * 3", "48"),
+        ("int", "Y - 20", "-6"),
+        ("int", "-Y / 3", "-4"),
+        ("int", "Y / -3", "-4"),
+        ("int", "-(-Y)", "14"),
+        ("int", "Vault.Y", "14"),
+        ("int", "-9223372036854775808", "-9223372036854775808"),
+        ("bool", "!(Y < 10)", "true"),
+        ("bool", "Y <= 14", "true"),
+        ("bool", "Y > 14", "false"),
+        ("bool", "Y >= 14", "true"),
+        ("bool", "Y == 14", "true"),
+        ("bool", "Y != 14", "false"),
+        ("bool", "true == !false", "true"),
+        ("bool", "false != true", "true"),
+    ] {
+        let source = |value: &str| {
+            format!(
+            "contract Vault() {{ const {ty} X = {value}; const int Y = 14; function spend({ty} value) {{ require(value == X); }} }}"
+        )
+        };
+        let output = compile(&source(expression)).unwrap_or_else(|e| panic!("{expression}: {e}"));
+        let expected = compile(&source(literal)).unwrap();
+        assert_eq!(
+            arkade_asm_tokens(&output, "spend"),
+            arkade_asm_tokens(&expected, "spend"),
+            "{expression}"
         );
-        assert!(
-            error(&source).contains("constant 'A' must be initialized with a literal"),
-            "{initializer} should be rejected"
+        assert_eq!(arkade_inputs(&output, "spend"), ["value"]);
+        assert!(!arkade_asm(&output, "spend").contains("<X>"));
+    }
+}
+
+#[test]
+fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic() {
+    for (ty, expression, message) in [
+        ("int", "fee", "unknown constant 'fee'"),
+        ("int", "MISSING + 1", "unknown constant 'MISSING'"),
+        ("int", "tx.time", "unknown constant 'tx.time'"),
+        ("int", "helper()", "constant expression"),
+        ("int", "1 / 0", "division by zero"),
+        ("int", "9223372036854775807 + 1", "overflow"),
+        ("int", "-9223372036854775808 - 1", "overflow"),
+        ("int", "9223372036854775807 * 2", "overflow"),
+        ("int", "-9223372036854775808 / -1", "overflow"),
+        ("int", "-(-9223372036854775808)", "overflow"),
+        ("int", "9223372036854775808", "signed 64-bit integer"),
+        ("int", "true + 1", "signed 64-bit integer"),
+        ("int", "-true", "signed 64-bit integer"),
+        ("bool", "!1", "requires a bool"),
+        ("bool", "true == 1", "same type"),
+        ("bool", "true < false", "signed 64-bit integer"),
+        ("bool", "1 + 1", "not a valid 'bool'"),
+        ("int", "1 < 2", "not a valid 'int'"),
+    ] {
+        let source = format!("contract Vault(int fee) {{ const {ty} X = {expression}; static function helper() int {{ return 1; }} function spend() {{ require(true); }} }}");
+        let error = error(&source);
+        assert!(error.contains(message), "{expression}: {error}");
+    }
+    for declarations in [
+        "const int X = X;",
+        "const int X = Vault.X;",
+        "const int X = Y + 1; const int Y = X / 2;",
+    ] {
+        assert!(error(&format!(
+            "contract Vault() {{ {declarations} function spend() {{ require(true); }} }}"
+        ))
+        .contains("cyclic constant reference"));
+    }
+}
+
+#[test]
+fn constant_expressions_resolve_in_multisig_and_timelocks() {
+    let source = r#"contract Vault(pubkey first, pubkey second) {
+        function spend(signature a, signature b) { require(checkMultisig([first, second], [a, b], QUORUM)); require(DELAY > 1); }
+        function exit(signature a, signature b) tapscript { require(older(DELAY)); require(checkMultisig([first, second], [a, b], QUORUM)); }
+        const int QUORUM = KEYS / 2;
+        const int DELAY = QUORUM * 72;
+        const int KEYS = 4;
+    }"#;
+    let output = compile(source).unwrap();
+    let literal = compile(
+        &source
+            .replace(", QUORUM)", ", 2)")
+            .replace("older(DELAY)", "older(144)")
+            .replace("require(DELAY", "require(144"),
+    )
+    .unwrap();
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+    for name in ["spend", "exit"] {
+        assert_eq!(
+            leaf_asm(&output, name, name),
+            leaf_asm(&literal, name, name)
         );
+        assert_eq!(
+            witness_names(&output, name, name),
+            witness_names(&literal, name, name)
+        );
+    }
+    assert!(group(&output, "exit").arkade.is_none());
+    assert_eq!(witness_names(&output, "exit", "exit"), ["a", "b"]);
+    assert_eq!(arkade_inputs(&output, "spend"), ["a", "b"]);
+    assert!(leaf_asm(&output, "exit", "exit").contains("144 OP_CHECKSEQUENCEVERIFY"));
+}
+
+#[test]
+fn constant_array_sizes_match_literal_types_and_assembly() {
+    let source = r#"
+struct State { int[N] limits; }
+contract Vault(pubkey[Vault.N] keys) {
+    const int N = BASE / 2;
+    const int BASE = 4;
+    static function check(int[N] values) { require(values[1] > 0); }
+    private function copy(int[N] values) int[N] { return values; }
+    function spend(signature[N] sigs, State state) {
+        int[N] values = [1, 2];
+        if (true) { int[N] nested = [3, 4]; check(nested); }
+        for (i, value) in values { int[N] inner = [5, 6]; check(inner); require(value > 0); }
+        int[N] copied = copy(values);
+        check(copied);
+        require(state.limits.length == N);
+        require(checkSig(sigs[1], keys[1]));
+    }
+    function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, keys[1])); }
+}"#;
+    let output = compile(source).unwrap();
+    let literal = compile(&source.replace("[N]", "[2]").replace("[Vault.N]", "[2]")).unwrap();
+    assert_eq!(output.parameters[0].param_type, "pubkey[2]");
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+    assert_eq!(arkade_inputs(&output, "spend"), ["sigs", "state"]);
+    assert_eq!(
+        leaf_asm(&output, "exit", "exit"),
+        leaf_asm(&literal, "exit", "exit")
+    );
+    assert_eq!(witness_names(&output, "exit", "exit"), ["sig"]);
+    assert!(group(&output, "exit").arkade.is_none());
+    assert_eq!(
+        serde_json::to_value(&output.structs).unwrap(),
+        serde_json::to_value(&literal.structs).unwrap()
+    );
+}
+
+#[test]
+fn constant_array_sizes_must_be_positive_integers_in_every_declaration() {
+    for declaration in [
+        "",
+        "const int N = 0;",
+        "const int N = -1;",
+        "const bool N = true;",
+    ] {
+        for source in [
+            "contract Vault(int[N] values) { DECL function spend() { require(true); } }",
+            "contract Vault() { DECL function spend(int[N] values) { require(true); } }",
+            "contract Vault() { DECL function exit(signature[N] sigs) tapscript { require(older(10)); require(checkSig(sigs[0], server)); } }",
+            "contract Vault() { DECL function spend() { int[N] values = [1]; require(true); } }",
+            "struct State { int[N] values; } contract Vault() { DECL function spend() { require(true); } }",
+            "contract Vault() { DECL static function helper() int[N] { return [1]; } function spend() { require(true); } }",
+        ] {
+            let error = error(&source.replace("DECL", declaration));
+            assert!(error.contains("array size 'N' must be a positive integer"), "{declaration}: {error}");
+        }
     }
 }
 
@@ -418,4 +575,56 @@ contract Vault(pubkey owner) {
     )
     .expect("constant identifier");
     assert_eq!(arkade_inputs(&output, "spend"), ["sig", "constant"]);
+}
+
+#[test]
+fn negative_constants_preserve_array_index_signs() {
+    for index in ["-NEG", "NEG", "--NEG"] {
+        let source = format!("contract Vault(int[2] values) {{ const int NEG = 1 - 2; function spend() {{ require(values[{index}] > 0); }} }}");
+        if index == "-NEG" {
+            compile(&source).expect("negating a negative constant is a positive index");
+        } else {
+            assert!(error(&source).contains("out of range"));
+        }
+    }
+}
+
+#[test]
+fn long_constant_expressions_fold_and_errors_name_one_constant() {
+    let sum = ["1"; 200].join(" + ");
+    let source = format!(
+        "contract Vault() {{ const int X = {sum}; function spend(int v) {{ require(v > X); }} }}"
+    );
+    let output = compile(&source).expect("long constant expression");
+    assert!(arkade_asm_tokens(&output, "spend").contains(&"200".to_string()));
+
+    let error = error(
+        "contract Vault() { const int A = B; const int B = 1 / 0; function spend() { require(true); } }",
+    );
+    assert_eq!(error.matches("constant '").count(), 1, "{error}");
+    assert!(error.contains("constant 'B': division by zero"), "{error}");
+}
+
+#[test]
+fn bytes_constants_fold_through_references_and_equality() {
+    let source = |tag: &str, same: &str| {
+        format!("contract Vault() {{ const bytes TAG = 0xDEADbeef; const bytes ALIAS = TAG; const bool SAME = TAG == 0xdeadBEEF; function spend(bytes v) {{ require(v == {tag}); require({same}); }} }}")
+    };
+    let output = compile(&source("ALIAS", "SAME")).expect("bytes constants");
+    let literal = compile(&source("0xDEADbeef", "true")).expect("literal");
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+
+    for (declaration, message) in [
+        ("const int N = TAG + 1;", "signed 64-bit integer"),
+        ("const bytes B = 1;", "not a valid 'bytes' literal"),
+        ("const bool E = TAG == 1;", "same type"),
+    ] {
+        let error = error(&format!(
+            "contract Vault() {{ const bytes TAG = 0xdead; {declaration} function spend() {{ require(true); }} }}"
+        ));
+        assert!(error.contains(message), "{declaration}: {error}");
+    }
 }

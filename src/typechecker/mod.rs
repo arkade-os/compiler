@@ -657,7 +657,10 @@ pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)>
         expression = value;
     }
     match expression {
-        Expression::Literal(value) => Some((negative, value)),
+        Expression::Literal(value) => Some(match value.strip_prefix('-') {
+            Some(magnitude) => (!negative, magnitude),
+            None => (negative, value),
+        }),
         _ => None,
     }
 }

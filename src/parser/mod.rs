@@ -144,6 +144,7 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
         .map(parse_const_decl)
         .collect::<Result<Vec<_>, _>>()?;
     contract.constants.extend(constants);
+    crate::compiler::resolve_constants(contract)?;
     let mut parsing_constants = contract.constants.clone();
     parsing_constants.extend(
         contract
@@ -486,6 +487,28 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 mod tests {
     use super::parse;
     use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+
+    #[test]
+    fn parses_constant_array_sizes_without_changing_index_expressions() {
+        let contract = parse(
+            "struct State { int[N] values; } contract C(pubkey[C.N] keys) { const int N = 2; function spend(int[N] values) { int[N] local = [1, 2]; local[N - 1] = values[0]; require(true); } }",
+        ).unwrap();
+        assert_eq!(contract.structs[0].fields[0].param_type, "int[N]");
+        assert_eq!(contract.parameters[0].param_type, "pubkey[C.N]");
+        assert_eq!(contract.functions[0].parameters[0].param_type, "int[N]");
+        assert!(
+            matches!(&contract.functions[0].statements[0], Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
+        );
+        assert!(
+            matches!(&contract.functions[0].statements[1], Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "-"))
+        );
+        for size in ["", "0", "-1", "1 2", "N + 1"] {
+            assert!(
+                parse(&format!("contract C(int[{size}] values) {{}}")).is_err(),
+                "{size}"
+            );
+        }
+    }
 
     #[test]
     fn parses_bytes_literals_before_decimal_and_preserves_utf8() {
