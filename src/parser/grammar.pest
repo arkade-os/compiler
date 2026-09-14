@@ -35,8 +35,8 @@ parameter = { data_type ~ identifier }
 
 // Supported data types - atomic rule to prevent partial matches
 // Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
-// Array types carry a static size (e.g., pubkey[3], signature[5])
-array_size = @{ ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+// Array types carry a positive literal or constant size (e.g., pubkey[3], int[Config.SIZE])
+array_size = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) | qualified_name }
 data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
 
 // Visibility defaults to public. Tapscript declarations have no return type.
