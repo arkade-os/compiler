@@ -776,6 +776,7 @@ mod tests {
     fn contract_with(funcs: &[&str], tapscripts: Vec<NamedTapscript>) -> Contract {
         Contract {
             name: "C".into(),
+            is_library: false,
             structs: vec![],
             parameters: vec![
                 Parameter {
@@ -795,6 +796,7 @@ mod tests {
                     statements: vec![],
                     is_private: false,
                     is_static: false,
+                    is_exported: false,
                     return_type: None,
                 })
                 .collect(),

@@ -39,8 +39,8 @@ for (const [project, file] of selections) {
 context.bundle = {
     entry: 'vault/main.ark',
     files: {
-        'vault/main.ark': 'import "../shared/fees.ark"; contract Vault() { function spend() { require(Fees.VALUE == 7); } }',
-        'shared/fees.ark': 'contract Fees() { const int VALUE = 7; }',
+        'vault/main.ark': 'import "../shared/fees.ark"; contract Vault() { function spend() { require(Fees.value() == 7); } }',
+        'shared/fees.ark': 'library Fees { const int VALUE = 7; function value() int { return hidden(); } private function hidden() int { return VALUE; } }',
     },
 };
 await vm.runInContext(`
@@ -59,7 +59,7 @@ const sharedInput = vm.runInContext(`
 assert.equal(JSON.parse(compile_sources(sharedInput.entry, JSON.stringify(sharedInput.files))).contractName, 'Vault');
 
 // Compilation reads edits in dependencies, including files that are not selected.
-vm.runInContext(`projects.shared.files['shared/fees.ark'] = 'contract Fees() { const int VALUE = 8; }';`, context);
+vm.runInContext(`projects.shared.files['shared/fees.ark'] = projects.shared.files['shared/fees.ark'].replace('VALUE = 7', 'VALUE = 8');`, context);
 const edited = vm.runInContext('compilationSources()', context);
 assert.match(JSON.parse(compile_sources(edited.entry, JSON.stringify(edited.files))).source.files['shared/shared/fees.ark'], /VALUE = 8/);
 

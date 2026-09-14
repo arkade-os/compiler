@@ -228,18 +228,20 @@ The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator
 ### File layout
 
 ```solidity
-import "./other.ark";        // zero or more; imports structs and the contract name
-struct Name { ... }          // zero or more, before the contract
-contract Name(<params>) {    // optional in an imported file; one in the entry file
+import "./other.ark";        // zero or more; imports a file's declarations
+struct Name { ... }          // zero or more, before the contract or library
+contract Name(<params>) {    // entry files require a contract
   function ...
 }
+// Imported files may declare a library instead, or just structs:
+// library Name { ... }
 ```
 
 Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
 
 ### Imports
 
-Imports use explicit `.ark` paths relative to the importing file. Each file may declare structs and one contract. An import exposes those structs, the contract's constants and static functions, and its constructor through `new Contract(...)`. The entry contract defines the artifact's spend groups; imported contracts supply reusable definitions.
+Imports use explicit `.ark` paths relative to the importing file. Each file may declare top-level structs and at most one contract or library. An import exposes those structs, the declaration's constants and exported helpers, and a contract's constructor through `new Contract(...)`. The entry contract defines the artifact's spend groups; imported files supply reusable definitions.
 
 ```solidity
 // types.ark
@@ -248,9 +250,9 @@ struct Policy { int maximum; }
 
 ```solidity
 // fees.ark
-contract Fees() {
+library Fees {
     const int MINIMUM = 10;
-    static function calculate(int amount) int { return amount / 100; }
+    function calculate(int amount) int { return amount / 100; }
 }
 ```
 
@@ -267,11 +269,35 @@ contract Vault(Policy policy) {
 }
 ```
 
-Structs use their declared names; constants and static functions use `Contract.member`. Each file sees its own declarations and its direct imports. Dependencies load recursively, and imported code keeps its defining scope. Static helpers inline into covenants; constants fold into literals, including in tapscript timelocks and multisig thresholds.
+Structs use their declared names; constants and exported helpers use `Name.member`. Each file sees its own declarations and its direct imports. Dependencies load recursively, and imported code keeps its defining scope. Helpers inline into covenants; constants fold into literals, including in tapscript timelocks and multisig thresholds.
 
-Struct and contract names must be unique across loaded files. The compiler loads each normalized path once and reports missing files, unknown members, namespace collisions, and circular imports as errors. Import chains have a maximum depth of 128 files, including the entry file.
+Struct, contract, and library names must be unique across loaded files. The compiler loads each normalized path once and reports missing files, unknown members, namespace collisions, and circular imports as errors. Import chains have a maximum depth of 128 files, including the entry file.
 
 `new Contract(args...)` refers to the current contract or a directly imported contract. The compiler checks constructor argument counts and types and emits a VTXO placeholder for the runtime to resolve.
+
+### Libraries
+
+A `library Name { ... }` groups reusable constants and functions without constructor parameters or spend entrypoints. Import its `.ark` file and call exported functions as `Name.function(...)`. A library cannot be instantiated with `new`, declare tapscripts, or serve as the compilation entry file.
+
+```solidity
+library Fees {
+    const int BASIS = 10000;
+
+    function calculate(int amount, int bps) int {
+        checkRate(bps);
+        return amount * bps / BASIS;
+    }
+
+    private function checkRate(int bps) {
+        require(bps >= 0);
+        require(bps <= BASIS);
+    }
+}
+```
+
+Plain `function` and `public function` are exported; `private function` is callable only within its defining library. `static function` is also accepted as an exported library helper. All library functions are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
+
+Libraries can import other libraries, contracts, and struct files using the same direct-import scope rules. Local helper calls can be unqualified or use the library's own name, including calls to private helpers. Calls inline using the existing helper return and recursion rules; library functions never create ABI entrypoints or witness inputs of their own. Library constants can also be used in tapscripts, but helper calls remain covenant-only.
 
 ### Types
 

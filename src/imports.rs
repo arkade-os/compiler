@@ -216,6 +216,9 @@ fn load(
             }
         }
         let mut contract = parser::parse_with_constants(&source, &constants)?;
+        if path == entry && contract.is_library {
+            return Err("entry file must declare a contract, not a library".to_string());
+        }
         let own_structs: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
         if models::is_builtin_type(&contract.name)
             || models::is_builtin_struct(&contract.name)
@@ -390,12 +393,17 @@ fn validate_scope(
                     let target = contracts.get(owner).ok_or_else(|| {
                         format!("unknown contract '{owner}'; import its defining file")
                     })?;
-                    if !target
+                    let function = target
                         .functions
                         .iter()
-                        .any(|f| f.name == member && f.is_static)
-                    {
+                        .find(|f| f.name == member)
+                        .ok_or_else(|| format!("unknown function '{name}'"))?;
+                    if !function.is_static {
                         return Err(format!("'{name}' is not a static function"));
+                    }
+                    // Static but unexported is reachable only for a library's private helpers.
+                    if !function.is_exported && owner != contract.name {
+                        return Err(format!("library function '{name}' is private"));
                     }
                 }
                 Expression::Property(name) => {
@@ -412,6 +420,9 @@ fn validate_scope(
                     let target = contracts.get(contract_name).ok_or_else(|| {
                         format!("unknown contract '{contract_name}'; import its defining file")
                     })?;
+                    if target.is_library {
+                        return Err(format!("library '{contract_name}' cannot be instantiated"));
+                    }
                     if args.len() != target.parameters.len() {
                         return Err(format!(
                             "constructor '{contract_name}' expects {} arguments, got {}",

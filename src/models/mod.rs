@@ -262,8 +262,10 @@ pub struct CompilerInfo {
 /// Contract AST
 #[derive(Debug, Clone)]
 pub struct Contract {
-    /// Contract name; empty for a source file containing only structs.
+    /// Contract or library name; empty for a source file containing only structs.
     pub name: String,
+    /// Whether this declaration is a library rather than an instantiable contract.
+    pub is_library: bool,
     /// Struct types available to this contract.
     pub structs: Vec<StructDefinition>,
     /// Contract parameters
@@ -272,7 +274,7 @@ pub struct Contract {
     pub functions: Vec<Function>,
     /// Tapscript (L1 leaf) declarations, parsed from `function … tapscript { }`.
     pub tapscripts: Vec<NamedTapscript>,
-    /// Imported contract file paths (declared via `import "path.ark";`)
+    /// Imported source file paths (declared via `import "path.ark";`)
     pub imports: Vec<String>,
     /// Compile-time constants declared in the contract body.
     pub constants: Vec<Constant>,
@@ -297,8 +299,10 @@ pub struct Function {
     pub statements: Vec<Statement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
     pub is_private: bool,
-    /// Whether this helper is a contract member that cannot see constructor state.
+    /// Whether this helper cannot see constructor state.
     pub is_static: bool,
+    /// Whether this helper can be called from a directly importing file.
+    pub is_exported: bool,
     /// Explicit result type; None means the function returns no value.
     pub return_type: Option<String>,
 }

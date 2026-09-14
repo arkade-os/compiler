@@ -6,7 +6,7 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) }
 import_stmt = { "import" ~ string_literal ~ ";" }
 
 // Main entry point - must consume the entire input
-main = { SOI ~ import_stmt* ~ struct_definition* ~ contract? ~ EOI }
+main = { SOI ~ import_stmt* ~ struct_definition* ~ (contract | library)? ~ EOI }
 
 struct_definition = {
     "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
@@ -19,6 +19,10 @@ contract = {
     "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     "{" ~ (const_decl | function)* ~ "}"
+}
+
+library = {
+    "library" ~ identifier ~ "{" ~ (const_decl | function)* ~ "}"
 }
 
 // Compile-time constant: const int NAME = 144;
