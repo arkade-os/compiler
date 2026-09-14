@@ -788,6 +788,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .cloned()
             .unwrap_or(ArkType::Unknown),
         Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
+        Expression::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
         Expression::Literal(_) => ArkType::Int,
         Expression::ArrayLiteral(elements) => ArkType::Array(
             Box::new(

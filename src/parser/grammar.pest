@@ -139,7 +139,7 @@ multiplicative_expr = {
 unary_expr = { (sub_op | not_op)* ~ primary_expr }
 
 // Built-in operands accept prefixes on literals, bindings, and grouped expressions.
-unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | bool_literal | qualified_name | number_literal) }
+unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | qualified_name | number_literal) }
 
 // Primary expressions (atoms)
 primary_expr = {
@@ -184,6 +184,7 @@ primary_expr = {
     array_index_access |
     struct_literal |
     array_literal |
+    byte_literal |
     bool_literal |
     number_literal |
     identifier
@@ -249,6 +250,7 @@ complex_expression = _{
     function_call |
     identifier_property_access |
     array_index_access |
+    byte_literal |
     identifier |
     number_literal |
     array_literal
@@ -374,8 +376,9 @@ hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
 // identifier (legacy fast path, e.g. htlc), or any byte-producing term so
 // that constructions like `sha256(substr(packet, ...)) == substr(other, ...)`
 // — used by the LayerZero scripts — parse natively.
+// The fast path must consume the whole require/constructor argument.
 hash_comparison = {
-    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | named_binding)
+    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | byte_literal | named_binding) ~ &("," | ")")
 }
 
 // Constructor expression: new ContractName(args)
@@ -501,8 +504,8 @@ check_sig_from_stack = {
     "checkSigFromStack" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }
 
-// Signature function argument: identifier or array access
-sig_arg = { named_binding }
+// Signature-check operand: a binding or byte literal (type-checked by position).
+sig_arg = { byte_literal | named_binding }
 
 // CheckMultisig expression
 check_multisig = { check_threshold_multisig }
@@ -543,12 +546,12 @@ sha256_initialize = {
 
 // Streaming SHA256 update: sha256Update(ctx, chunk) → OP_SHA256UPDATE
 sha256_update = {
-    "sha256Update" ~ "(" ~ identifier ~ "," ~ unary_atom ~ ")"
+    "sha256Update" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk) → OP_SHA256FINALIZE
 sha256_finalize = {
-    "sha256Finalize" ~ "(" ~ identifier ~ "," ~ unary_atom ~ ")"
+    "sha256Finalize" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 sighash_func = {
@@ -613,6 +616,7 @@ byte_value = {
     input_introspection |
     output_introspection |
     asset_at |
+    byte_literal |
     named_binding
 }
 
@@ -675,7 +679,11 @@ number_literal = @{
     "0" | ('1'..'9') ~ ASCII_DIGIT*
 }
 
-// String literals are sequences of characters enclosed in double quotes
+// Byte literals contain whole byte pairs; both hex digit cases are accepted.
+byte_literal = _{ hex_literal | string_literal }
+hex_literal = @{ "0x" ~ (ASCII_HEX_DIGIT ~ ASCII_HEX_DIGIT)+ ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// Strings use JSON escapes and UTF-8 encoding.
 string_literal = @{
-    "\"" ~ (!"\"" ~ ANY)* ~ "\""
+    "\"" ~ ("\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "u" ~ ASCII_HEX_DIGIT{4}) | !("\"" | "\\" | '\u{0000}'..'\u{001f}') ~ ANY)* ~ "\""
 }

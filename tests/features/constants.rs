@@ -279,7 +279,7 @@ contract Vault(pubkey owner, int[3] limits) {
 }
 
 #[test]
-fn constant_must_be_int_or_bool() {
+fn constant_must_be_int_bool_or_bytes() {
     assert!(error(
         r#"
 contract Vault(pubkey owner) {
@@ -288,7 +288,7 @@ contract Vault(pubkey owner) {
 }
 "#
     )
-    .contains("constant 'KEY' must be int or bool"));
+    .contains("constant 'KEY' must be int, bool or bytes"));
 }
 
 #[test]

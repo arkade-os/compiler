@@ -4,7 +4,7 @@ use crate::models::*;
 fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
     match lit {
         "true" => asm.push(OP_1.to_string()),
-        "false" => asm.push(OP_0.to_string()),
+        "false" | "0x" => asm.push(OP_0.to_string()),
         _ => asm.push(lit.to_string()),
     }
 }

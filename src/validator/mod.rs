@@ -1226,6 +1226,15 @@ fn validate_named_binding(
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    if name.starts_with("0x") {
+        if expected.as_ref().is_some_and(|ty| *ty != ArkType::Bytes) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{function_name}': {label} literal has type 'bytes', expected '{}'",
+                expected.expect("checked above").as_str()
+            )));
+        }
+        return;
+    }
     if let Some((_, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
         if index.parse::<usize>().is_err() {
             match find_binding(scopes, index) {

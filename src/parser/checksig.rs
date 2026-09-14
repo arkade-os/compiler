@@ -7,33 +7,17 @@ use pest::iterators::Pair;
 /// Parse checkSig(sig, pubkey) → CheckSig requirement
 pub(crate) fn parse_check_sig(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let signature = inner
-        .next()
-        .ok_or("Missing signature")?
-        .as_str()
-        .to_string();
-    let pubkey = inner
-        .next()
-        .ok_or("Missing public key")?
-        .as_str()
-        .to_string();
+    let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
+    let pubkey = parse_named_operand(inner.next().ok_or("Missing public key")?)?;
     Ok(Requirement::CheckSig { signature, pubkey })
 }
 
 /// Parse checkSigFromStack(sig, pubkey, message) → CheckSigFromStack requirement
 pub(crate) fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let signature = inner
-        .next()
-        .ok_or("Missing signature")?
-        .as_str()
-        .to_string();
-    let pubkey = inner
-        .next()
-        .ok_or("Missing public key")?
-        .as_str()
-        .to_string();
-    let message = inner.next().ok_or("Missing message")?.as_str().to_string();
+    let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
+    let pubkey = parse_named_operand(inner.next().ok_or("Missing public key")?)?;
+    let message = parse_named_operand(inner.next().ok_or("Missing message")?)?;
     Ok(Requirement::CheckSigFromStack {
         signature,
         pubkey,
