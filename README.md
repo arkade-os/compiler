@@ -235,7 +235,7 @@ contract Name(<params>) {    // optional in an imported file; one in the entry f
 }
 ```
 
-Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers; string literals appear only in `import` and as `require` messages.
+Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
 
 ### Imports
 
@@ -324,6 +324,21 @@ contract Minimum(int minimum) {
 
 Every spend path must contain at least one `require`, directly or through a helper that enforces a requirement on every path. An `if` without `else`, or an `else` branch without a `require`, is rejected as a bare path.
 
+### Byte literals
+
+Double-quoted strings and `0x` hex literals both have type `bytes`. Strings use UTF-8 and JSON escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, and `\uXXXX`). Hex literals accept either digit case and require at least one complete byte pair. Use `""` for empty bytes.
+
+```ark
+bytes x = "hello";
+bytes y = 0xdeadbeef;
+bytes z = 0xDEADBEEF;
+require(x == 0x68656c6c6f);
+require(size("ž") == 2);
+require(sha256("hello" + 0x00) == expectedHash);
+```
+
+Literals work in byte expressions, calls, comparisons, arrays, structs, and constants. They follow the same type rules as `bytes` variables; they do not implicitly become `int`, `pubkey`, `signature`, `bytes20`, or `bytes32`. Assembly stores byte data as `0x`-prefixed hex tokens and empty bytes as `OP_0`; consumers must decode these tokens as data pushes, preserving leading zeros.
+
 ### Constants
 
 ```solidity
@@ -333,7 +348,7 @@ const int KEY_COUNT = 2;
 const bool STRICT = HALF_DELAY > 0;
 ```
 
-Constants are `int` or `bool` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, unary `-`), comparisons, and boolean negation (`!`). Integer arithmetic uses checked signed 64-bit values; division truncates toward zero. Cycles, runtime values, type mismatches, division by zero, and overflow are rejected. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
+Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, unary `-`), comparisons, and boolean negation (`!`); `bytes` constants accept a literal or another `bytes` constant. Integer arithmetic uses checked signed 64-bit values; division truncates toward zero. Cycles, runtime values, type mismatches, division by zero, and overflow are rejected. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
 A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
 

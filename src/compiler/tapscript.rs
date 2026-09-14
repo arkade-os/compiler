@@ -327,9 +327,8 @@ pub fn validate_arkd_rules(
         }
     }
 
-    // Operand scope: condition preimage/hash and timelock values are emitted as
-    // `<name>` placeholders, so each must resolve to a declared input or
-    // constructor parameter (timelocks may also be numeric literals).
+    // Named condition operands must resolve to inputs or constructor parameters.
+    // Hash values may also be byte literals; timelocks may be numeric literals.
     for item in &ts.items {
         match item {
             TapItem::Hash { preimage, hash, .. } => {
@@ -339,7 +338,7 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
-                if !name_declared(hash) {
+                if !hash.starts_with("0x") && !name_declared(hash) {
                     return Err(format!(
                         "tapscript `{}`: hash value `{hash}` is not a declared input or constructor parameter",
                         ts.name
@@ -432,7 +431,13 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
     // Condition prefix.
     if let Some((hash_fn, hash)) = &c.condition {
         asm.push(hash_fn.opcode().to_string());
-        asm.push(format!("<{hash}>"));
+        asm.push(if hash == "0x" {
+            "OP_0".to_string()
+        } else if hash.starts_with("0x") {
+            hash.clone()
+        } else {
+            format!("<{hash}>")
+        });
         asm.push(OP_EQUAL.to_string());
         asm.push(OP_VERIFY.to_string());
     }

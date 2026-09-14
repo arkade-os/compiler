@@ -520,7 +520,7 @@ pub enum Expression {
     },
     /// Variable reference
     Variable(String),
-    /// Literal value
+    /// Decimal integer, boolean, or 0x-prefixed byte data (including empty 0x).
     Literal(String),
     /// Property access (e.g., tx.time)
     Property(String),

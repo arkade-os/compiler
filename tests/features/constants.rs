@@ -279,7 +279,7 @@ contract Vault(pubkey owner, int[3] limits) {
 }
 
 #[test]
-fn constant_must_be_int_or_bool() {
+fn constant_must_be_int_bool_or_bytes() {
     assert!(error(
         r#"
 contract Vault(pubkey owner) {
@@ -288,7 +288,7 @@ contract Vault(pubkey owner) {
 }
 "#
     )
-    .contains("constant 'KEY' must be int or bool"));
+    .contains("constant 'KEY' must be int, bool or bytes"));
 }
 
 #[test]
@@ -603,4 +603,28 @@ fn long_constant_expressions_fold_and_errors_name_one_constant() {
     );
     assert_eq!(error.matches("constant '").count(), 1, "{error}");
     assert!(error.contains("constant 'B': division by zero"), "{error}");
+}
+
+#[test]
+fn bytes_constants_fold_through_references_and_equality() {
+    let source = |tag: &str, same: &str| {
+        format!("contract Vault() {{ const bytes TAG = 0xDEADbeef; const bytes ALIAS = TAG; const bool SAME = TAG == 0xdeadBEEF; function spend(bytes v) {{ require(v == {tag}); require({same}); }} }}")
+    };
+    let output = compile(&source("ALIAS", "SAME")).expect("bytes constants");
+    let literal = compile(&source("0xDEADbeef", "true")).expect("literal");
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+
+    for (declaration, message) in [
+        ("const int N = TAG + 1;", "signed 64-bit integer"),
+        ("const bytes B = 1;", "not a valid 'bytes' literal"),
+        ("const bool E = TAG == 1;", "same type"),
+    ] {
+        let error = error(&format!(
+            "contract Vault() {{ const bytes TAG = 0xdead; {declaration} function spend() {{ require(true); }} }}"
+        ));
+        assert!(error.contains(message), "{declaration}: {error}");
+    }
 }

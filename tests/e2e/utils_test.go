@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -242,20 +243,34 @@ func assemble(t *testing.T, tokens []string, values map[string][]byte) []byte {
 			builder.AddOp(opcode)
 			continue
 		}
+		var data []byte
 		if strings.HasPrefix(token, "<") && strings.HasSuffix(token, ">") {
 			name := token[1 : len(token)-1]
-			value, ok := values[name]
+			var ok bool
+			data, ok = values[name]
 			if !ok {
 				t.Fatalf("ASM token %d: unresolved placeholder %s", index, token)
 			}
-			builder.AddData(value)
+		} else if strings.HasPrefix(token, "0x") {
+			var err error
+			data, err = hex.DecodeString(token[2:])
+			if err != nil {
+				t.Fatalf("ASM token %d: invalid byte literal %q: %v", index, token, err)
+			}
+		} else {
+			number, err := strconv.ParseInt(token, 10, 64)
+			if err != nil {
+				t.Fatalf("ASM token %d: unsupported token %q", index, token)
+			}
+			builder.AddInt64(number)
 			continue
 		}
-		number, err := strconv.ParseInt(token, 10, 64)
-		if err != nil {
-			t.Fatalf("ASM token %d: unsupported token %q", index, token)
+		// AddData normalizes a single zero byte to empty ScriptNum zero.
+		if len(data) == 1 && data[0] == 0 {
+			builder.AddOps([]byte{txscript.OP_DATA_1, 0})
+		} else {
+			builder.AddData(data)
 		}
-		builder.AddInt64(number)
 	}
 
 	script, err := builder.Script()

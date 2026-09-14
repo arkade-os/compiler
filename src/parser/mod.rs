@@ -36,20 +36,13 @@ pub fn parse(source: &str) -> Result<Contract, String> {
 pub(crate) fn imports(source: &str) -> Result<Vec<String>, String> {
     let mut pairs =
         ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
-    Ok(pairs
+    pairs
         .next()
         .expect("main")
         .into_inner()
         .filter(|p| p.as_rule() == Rule::import_stmt)
-        .map(|p| {
-            p.into_inner()
-                .next()
-                .expect("import path")
-                .as_str()
-                .trim_matches('"')
-                .to_string()
-        })
-        .collect())
+        .map(|p| parse_string_literal(p.into_inner().next().expect("import path").as_str()))
+        .collect()
 }
 
 pub(crate) fn parse_with_constants(
@@ -80,9 +73,7 @@ fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, Str
                         Rule::import_stmt => {
                             // Extract the import path (string literal without quotes)
                             if let Some(path_pair) = inner_pair.into_inner().next() {
-                                let raw = path_pair.as_str();
-                                // Strip surrounding double-quotes
-                                let path = raw.trim_matches('"').to_string();
+                                let path = parse_string_literal(path_pair.as_str())?;
                                 contract.imports.push(path);
                             }
                         }
@@ -269,8 +260,9 @@ fn parse_function_body(
             };
             let requirement = parse_complex_expression(expr, constants)?;
 
-            // Capture optional error message (stored in requirement metadata)
-            let _message = inner.next().map(|p| p.as_str().to_string());
+            if let Some(message) = inner.next() {
+                parse_string_literal(message.as_str())?;
+            }
 
             // Wrap the requirement in a Statement::Require
             func.statements.push(Statement::Require(requirement));
@@ -516,6 +508,28 @@ mod tests {
                 "{size}"
             );
         }
+    }
+
+    #[test]
+    fn parses_bytes_literals_before_decimal_and_preserves_utf8() {
+        let contract = parse(
+            r#"contract C() { function spend() {
+            bytes x = 0xDEADbeef;
+            bytes y = "ž\n";
+            require("hello" == 0x68656c6c6f);
+        } }"#,
+        )
+        .unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(
+            matches!(&statements[0], Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xDEADbeef")
+        );
+        assert!(
+            matches!(&statements[1], Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xc5be0a")
+        );
+        assert!(
+            matches!(&statements[2], Statement::Require(Requirement::Comparison { left: Expression::Literal(left), right: Expression::Literal(right), .. }) if left == "0x68656c6c6f" && left == right)
+        );
     }
 
     #[test]

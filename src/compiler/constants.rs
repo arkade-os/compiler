@@ -79,8 +79,8 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         {
             return Err(format!("constant '{name}' collides with function '{name}'"));
         }
-        if !matches!(const_type.as_str(), "int" | "bool") {
-            return Err(format!("constant '{name}' must be int or bool"));
+        if !matches!(const_type.as_str(), "int" | "bool" | "bytes") {
+            return Err(format!("constant '{name}' must be int, bool or bytes"));
         }
         declarations.insert(name.clone(), constant);
     }
@@ -139,12 +139,7 @@ fn resolve_value(
         false => format!("constant '{name}': {error}"),
     })?;
     active.pop();
-    let matches_type = match constant.const_type.as_str() {
-        "int" => value.parse::<i64>().is_ok(),
-        "bool" => matches!(value.as_str(), "true" | "false"),
-        _ => false,
-    };
-    if !matches_type {
+    if kind(&value) != constant.const_type {
         return Err(format!(
             "constant '{name}' is not a valid '{}' literal",
             constant.const_type
@@ -152,6 +147,15 @@ fn resolve_value(
     }
     values.insert(name.clone(), value.clone());
     Ok(value)
+}
+
+/// The declared type a folded value belongs to.
+fn kind(value: &str) -> &'static str {
+    match value {
+        "true" | "false" => "bool",
+        _ if value.starts_with("0x") => "bytes",
+        _ => "int",
+    }
 }
 
 fn evaluate(
@@ -164,13 +168,10 @@ fn evaluate(
     };
     let overflow = || "integer overflow in constant expression".to_string();
     match expression {
-        Expression::Literal(text) => {
-            if matches!(text.as_str(), "true" | "false") {
-                Ok(text.clone())
-            } else {
-                Ok(integer(text)?.to_string())
-            }
-        }
+        Expression::Literal(text) => match kind(text) {
+            "int" => Ok(integer(text)?.to_string()),
+            _ => Ok(text.clone()),
+        },
         Expression::Variable(name) | Expression::Property(name) => resolve(name),
         Expression::Negate { value } => {
             if let Expression::Literal(text) = value.as_ref() {
@@ -194,12 +195,13 @@ fn evaluate(
             let left = evaluate(left, resolve)?;
             let right = evaluate(right, resolve)?;
             if matches!(op.as_str(), "==" | "!=") {
-                if left.parse::<bool>().is_ok() != right.parse::<bool>().is_ok() {
+                if kind(&left) != kind(&right) {
                     return Err(format!(
                         "operator '{op}' requires constants of the same type"
                     ));
                 }
-                return Ok(((left == right) == (op == "==")).to_string());
+                // Hex literals carry whole byte pairs in either case.
+                return Ok((left.eq_ignore_ascii_case(&right) == (op == "==")).to_string());
             }
             let (left, right) = (integer(&left)?, integer(&right)?);
             let value = match op.as_str() {
@@ -356,6 +358,10 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
 }
 
 fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
+    if let Some(value) = values.get(name).filter(|value| value.starts_with("0x")) {
+        *name = value.clone();
+        return;
+    }
     if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
         if let Some(value) = values.get(index) {
             *name = format!("{array}[{value}]");

@@ -36,11 +36,12 @@ pub(crate) fn parse_named_tapscript(
     let mut items = Vec::new();
     for stmt in block.into_inner() {
         if stmt.as_rule() == Rule::require_stmt {
-            let expr = stmt
-                .into_inner()
-                .next()
-                .ok_or("Empty require() in tapscript")?;
+            let mut inner = stmt.into_inner();
+            let expr = inner.next().ok_or("Empty require() in tapscript")?;
             items.push(parse_tap_item(expr, constants)?);
+            if let Some(message) = inner.next() {
+                parse_string_literal(message.as_str())?;
+            }
         }
     }
     Ok(crate::models::NamedTapscript {
@@ -84,11 +85,7 @@ pub(crate) fn parse_tap_item(
                 .ok_or("Missing hash preimage")?
                 .as_str()
                 .to_string();
-            let hash = inner
-                .next()
-                .ok_or("Missing hash value")?
-                .as_str()
-                .to_string();
+            let hash = parse_named_operand(inner.next().ok_or("Missing hash value")?)?;
             Ok(TapItem::Hash {
                 hash_fn,
                 preimage,

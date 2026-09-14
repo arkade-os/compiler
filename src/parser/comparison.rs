@@ -31,18 +31,20 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     // and literals surface as `Variable` / `Literal`, while byte-producing
     // primitives (substr/cat/…) and arithmetic surface as their own variants.
     let preimage_expr = parse_additive_expr(preimage_pair)?;
-    let rhs_is_binding = matches!(rhs_pair.as_rule(), Rule::named_binding);
+    let rhs_is_simple = matches!(
+        rhs_pair.as_rule(),
+        Rule::named_binding | Rule::hex_literal | Rule::string_literal
+    );
 
-    // Fast path: a bare binding/literal preimage and binding RHS keep the
-    // structured HashEqual emission (`<preimage> OP_<HASH> <hash> OP_EQUAL`).
-    if rhs_is_binding {
+    // Simple operands use structured HashEqual emission.
+    if rhs_is_simple {
         if let Expression::Variable(name) | Expression::Literal(name) | Expression::Property(name) =
             &preimage_expr
         {
             return Ok(Requirement::HashEqual {
                 hash_fn,
                 preimage: name.clone(),
-                hash: rhs_pair.as_str().to_string(),
+                hash: parse_named_operand(rhs_pair)?,
             });
         }
     }
@@ -61,6 +63,7 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
         Rule::num2bin_func => parse_num2bin(rhs_pair)?,
         Rule::identifier => Expression::Variable(rhs_pair.as_str().to_string()),
         Rule::number_literal => Expression::Literal(rhs_pair.as_str().to_string()),
+        Rule::hex_literal | Rule::string_literal => parse_primary_expr(rhs_pair)?,
         _ => Expression::Property(rhs_pair.as_str().to_string()),
     };
 
