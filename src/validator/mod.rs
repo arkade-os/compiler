@@ -1362,9 +1362,32 @@ fn validate_binding_requirement(
             validate_named_binding(preimage, None, "preimage", function_name, scopes, issues);
             validate_named_binding(hash, None, "hash", function_name, scopes, issues);
         }
-        Requirement::Comparison { left, right, .. } => {
-            validate_binding_expression(left, function_name, scopes, issues, true);
-            validate_binding_expression(right, function_name, scopes, issues, true);
+        Requirement::Comparison { left, op, right } => {
+            let left_type = resolved_expression_type(left, scopes);
+            let right_type = resolved_expression_type(right, scopes);
+            let composite = matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
+                || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..));
+            if composite {
+                if !matches!(op.as_str(), "==" | "!=") {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': '{}' is not defined for composite values",
+                        function_name, op
+                    )));
+                } else if left_type != ArkType::Unknown
+                    && right_type != ArkType::Unknown
+                    && left_type != right_type
+                {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': comparison '{}' is not defined between '{}' and '{}'",
+                        function_name,
+                        op,
+                        left_type.as_str(),
+                        right_type.as_str()
+                    )));
+                }
+            }
+            validate_binding_expression(left, function_name, scopes, issues, !composite);
+            validate_binding_expression(right, function_name, scopes, issues, !composite);
         }
     }
 }

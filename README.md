@@ -287,7 +287,7 @@ Struct and contract names must be unique across loaded files. The compiler loads
 | `struct` | User-declared, nested structs and scalar arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint` | Native result structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalar elements; structs contain scalars, arrays, and nested structs. Read, assign, and compare struct fields individually. Tapscript inputs are scalars.
+Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalar elements; structs contain scalars, arrays, and nested structs. Read and assign fields individually; `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
 
 ### Functions
 
