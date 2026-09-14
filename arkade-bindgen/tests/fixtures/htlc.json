@@ -138,7 +138,12 @@
       ]
     }
   ],
-  "source": "contract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes20 preimageHash,\n  int refundTime,\n  int exit\n) {\n  function claim() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n  function refund() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n\n  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n  function refund(signature serverSig, signature emulatorSig) tapscript {\n    require(tx.time >= refundTime);\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n\n  function unilateral(signature senderSig) tapscript {\n    require(older(exit));\n    require(checkSig(senderSig, sender));\n  }\n}",
+  "source": {
+    "entry": "htlc.ark",
+    "files": {
+      "htlc.ark": "contract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes20 preimageHash,\n  int refundTime,\n  int exit\n) {\n  function claim() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n  function refund() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n\n  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n  function refund(signature serverSig, signature emulatorSig) tapscript {\n    require(tx.time >= refundTime);\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n\n  function unilateral(signature senderSig) tapscript {\n    require(older(exit));\n    require(checkSig(senderSig, sender));\n  }\n}"
+    }
+  },
   "compiler": {
     "name": "arkade-compiler",
     "version": "0.1.0"

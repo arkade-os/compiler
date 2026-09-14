@@ -91,11 +91,7 @@ pub(crate) fn parse_asset_lookup_operands(
         .into_inner()
         .next()
         .ok_or("Missing index value")?;
-    let index = match index_pair.as_rule() {
-        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
-        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
-        _ => Expression::Literal(index_pair.as_str().to_string()),
-    };
+    let index = parse_general_expression(index_pair)?;
 
     // Parse the canonical Asset ID operands: txid (bytes32) then gidx (int).
     let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing asset txid")?)?;
@@ -150,11 +146,7 @@ pub(crate) fn parse_asset_count_to_expression(pair: Pair<Rule>) -> Result<Expres
         .into_inner()
         .next()
         .ok_or("Missing index value")?;
-    let index = match index_pair.as_rule() {
-        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
-        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
-        _ => Expression::Literal(index_pair.as_str().to_string()),
-    };
+    let index = parse_general_expression(index_pair)?;
 
     Ok(Expression::AssetCount {
         source,
@@ -181,11 +173,7 @@ pub(crate) fn parse_asset_at_to_expression(pair: Pair<Rule>) -> Result<Expressio
         .into_inner()
         .next()
         .ok_or("Missing io index value")?;
-    let io_index = match io_index_pair.as_rule() {
-        Rule::number_literal => Expression::Literal(io_index_pair.as_str().to_string()),
-        Rule::identifier => Expression::Variable(io_index_pair.as_str().to_string()),
-        _ => Expression::Literal(io_index_pair.as_str().to_string()),
-    };
+    let io_index = parse_general_expression(io_index_pair)?;
 
     // Parse second array access (asset_index)
     let asset_array_access = inner.next().ok_or("Missing asset array index")?;
@@ -193,11 +181,7 @@ pub(crate) fn parse_asset_at_to_expression(pair: Pair<Rule>) -> Result<Expressio
         .into_inner()
         .next()
         .ok_or("Missing asset index value")?;
-    let asset_index = match asset_index_pair.as_rule() {
-        Rule::number_literal => Expression::Literal(asset_index_pair.as_str().to_string()),
-        Rule::identifier => Expression::Variable(asset_index_pair.as_str().to_string()),
-        _ => Expression::Literal(asset_index_pair.as_str().to_string()),
-    };
+    let asset_index = parse_general_expression(asset_index_pair)?;
 
     // Parse property: "assetId" or "amount"
     let property = inner

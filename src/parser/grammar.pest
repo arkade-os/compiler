@@ -1,12 +1,12 @@
 // Whitespace and comments are silently consumed
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
-COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) }
 
 // Import statement: import "path/to/contract.ark";
 import_stmt = { "import" ~ string_literal ~ ";" }
 
 // Main entry point - must consume the entire input
-main = { SOI ~ import_stmt* ~ struct_definition* ~ contract ~ EOI }
+main = { SOI ~ import_stmt* ~ struct_definition* ~ contract? ~ EOI }
 
 struct_definition = {
     "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
@@ -139,7 +139,7 @@ multiplicative_expr = {
 unary_expr = { (sub_op | not_op)* ~ primary_expr }
 
 // Built-in operands accept prefixes on literals, bindings, and grouped expressions.
-unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | bool_literal | identifier | number_literal) }
+unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | bool_literal | qualified_name | number_literal) }
 
 // Primary expressions (atoms)
 primary_expr = {
@@ -178,9 +178,9 @@ primary_expr = {
     array_length_access |
     tx_property_access |
     this_property_access |
+    function_call |
     identifier_property_access |
     constructor |
-    function_call |
     array_index_access |
     struct_literal |
     array_literal |
@@ -442,7 +442,7 @@ tx_special_property = {
 
 // Array access with index - simplified to avoid parsing ambiguity
 array_access = {
-    "[" ~ (number_literal | identifier) ~ "]"
+    "[" ~ (number_literal | qualified_name) ~ "]"
 }
 
 // Method call with optional arguments
@@ -472,8 +472,10 @@ struct_literal = {
 struct_literal_field = { identifier ~ ":" ~ general_expression }
 
 // Function call
+qualified_name = @{ identifier ~ ("." ~ identifier)? }
+
 function_call = {
-    identifier ~ "(" ~ (general_expression ~ ("," ~ general_expression)*)? ~ ")"
+    qualified_name ~ "(" ~ (general_expression ~ ("," ~ general_expression)*)? ~ ")"
 }
 
 // ─── Cryptographic Primitives ──────────────────────────────────────────────────
@@ -508,7 +510,7 @@ check_multisig = { check_threshold_multisig }
 // checkMultisig([keys], [sigs], threshold?) — keys may be tweak()s; the second
 // array carries the aligned signature inputs and the final threshold is optional.
 check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ (number_literal | identifier))? ~ ")"
+    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ (number_literal | qualified_name))? ~ ")"
 }
 
 // Array of identifiers
@@ -520,8 +522,8 @@ array = {
 // to a single binding because these AST nodes store operand names directly.
 named_binding = @{
     identifier ~ (
-        ("." ~ identifier)+ ~ ("[" ~ (identifier | number_literal) ~ "]")? |
-        "[" ~ (identifier | number_literal) ~ "]"
+        ("." ~ identifier)+ ~ ("[" ~ (qualified_name | number_literal) ~ "]")? |
+        "[" ~ (qualified_name | number_literal) ~ "]"
     )?
 }
 

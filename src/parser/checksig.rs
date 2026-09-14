@@ -82,7 +82,7 @@ pub(crate) fn parse_multisig_threshold(
     constants: &[Constant],
 ) -> Result<u16, String> {
     let name = pair.as_str();
-    let text = if pair.as_rule() == Rule::identifier {
+    let text = if pair.as_rule() != Rule::number_literal {
         let constant = constants
             .iter()
             .find(|constant| constant.name == name)

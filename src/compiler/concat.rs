@@ -35,7 +35,7 @@ pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) -> Resu
     };
     let constructor_scope =
         crate::typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
-    for function in &mut contract.functions {
+    for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
         let mut scope = constructor_scope.clone();
         scope.extend(crate::typechecker::build_scope_with_structs(
             &function.parameters,

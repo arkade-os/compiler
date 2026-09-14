@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTLOCKTIME,
     OP_INSPECTOUTASSETLOOKUP,
@@ -6,20 +6,23 @@ use arkade_compiler::opcodes::{
 
 use crate::common::{arkade_asm, arkade_inputs, group};
 
-const PUT_CODE: &str = include_str!("../../examples/options/cash_secured_put.ark");
+const PUT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/options/cash_secured_put.ark"
+);
 
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_compiles_with_5_groups() {
     // 4 covenant functions + 1 standalone unilateral tapscript = 5 groups
-    let out = compile(PUT_CODE).expect("compile");
+    let out = compile_file(PUT_PATH).expect("compile");
     assert_eq!(out.name, "CashSecuredPut");
     assert_eq!(out.functions.len(), 5);
 }
 
 #[test]
 fn test_exercise_takes_only_buyer_signature() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     let names = arkade_inputs(&out, "exercise");
     assert!(
         names.contains(&"buyerSig".to_string()),
@@ -42,7 +45,7 @@ fn test_exercise_takes_only_buyer_signature() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_no_oracle_anywhere() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     for fn_name in ["exercise", "reclaim", "transferSeller", "transferBuyer"] {
         let asm = arkade_asm(&out, fn_name);
         assert!(
@@ -54,7 +57,7 @@ fn test_no_oracle_anywhere() {
 
 #[test]
 fn test_exercise_verifies_btc_delivery_and_stable_payout() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     let asm = arkade_asm(&out, "exercise");
     assert!(
         asm.contains(OP_INSPECTOUTASSETLOOKUP),
@@ -72,7 +75,7 @@ fn test_exercise_verifies_btc_delivery_and_stable_payout() {
 
 #[test]
 fn test_reclaim_is_seller_only_with_timelock() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     let names = arkade_inputs(&out, "reclaim");
     assert!(
         names.contains(&"sellerSig".to_string()),
@@ -95,7 +98,7 @@ fn test_reclaim_is_seller_only_with_timelock() {
 
 #[test]
 fn test_asset_id_is_two_explicit_params() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     let txid = out
         .parameters
         .iter()
@@ -113,7 +116,7 @@ fn test_asset_id_is_two_explicit_params() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_transfers_guarded_by_expiry() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     for name in ["transferSeller", "transferBuyer"] {
         let asm = arkade_asm(&out, name);
         assert!(
@@ -126,7 +129,7 @@ fn test_transfers_guarded_by_expiry() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_transfers_preserve_stablecoin_collateral() {
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     for name in ["transferSeller", "transferBuyer"] {
         let asm = arkade_asm(&out, name);
         assert!(
@@ -144,7 +147,7 @@ fn test_transfers_preserve_stablecoin_collateral() {
 fn test_unilateral_leaf_has_no_introspection() {
     // The unilateral tapscript (CSV exit) is a standalone leaf: older(exit) +
     // checkSig. It must carry no introspection opcodes.
-    let out = compile(PUT_CODE).unwrap();
+    let out = compile_file(PUT_PATH).unwrap();
     let g = group(&out, "unilateral");
     assert_eq!(g.leaves.len(), 1);
     let leaf_asm = g.leaves[0].asm.join(" ");

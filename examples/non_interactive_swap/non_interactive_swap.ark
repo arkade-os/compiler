@@ -6,7 +6,7 @@
 // - cancel cooperative: makerSig + serverSig + after(expiration)
 // - unilateral: makerSig + CSV (maker recovers if no taker)
 
-import "single_sig.ark";
+import "../single_sig/single_sig.ark";
 
 contract NonInteractiveSwap(
   // Maker's public key (creator of the swap offer)

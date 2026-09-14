@@ -226,7 +226,7 @@ pub(crate) fn resolve_group_properties(contract: &mut Contract) {
         .iter()
         .map(|f| (f.name.clone(), f.return_type.clone()))
         .collect();
-    for function in &mut contract.functions {
+    for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
         let mut scope = constructor_scope.clone();
         scope.extend(build_scope_with_structs(
             &function.parameters,
@@ -367,6 +367,7 @@ pub fn check_contract(contract: &Contract) -> Vec<TypeError> {
     contract
         .functions
         .iter()
+        .filter(|f| !f.is_imported())
         .flat_map(|f| check_function(f, &constructor_scope, &contract.structs))
         .collect()
 }

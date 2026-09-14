@@ -4,6 +4,17 @@ use arkade_compiler::opcodes::{
 };
 
 #[test]
+fn fuji_safe_rejects_the_old_constructor_layout() {
+    let source = include_str!("../../examples/fuji_safe/fuji_safe.ark")
+        .replace(",\n        treasuryBurnScript, borrowerBurnScript\n", "\n");
+    let error = compile(&source).unwrap_err().to_string();
+    assert!(
+        error.contains("constructor 'FujiSafe' expects 12 arguments, got 10"),
+        "{error}"
+    );
+}
+
+#[test]
 fn test_fuji_safe_contract() {
     let fuji_code = include_str!("../../examples/fuji_safe/fuji_safe.ark");
 
@@ -16,7 +27,11 @@ fn test_fuji_safe_contract() {
     assert_eq!(output.name, "FujiSafe");
 
     // Verify parameters
-    assert_eq!(output.parameters.len(), 10);
+    assert_eq!(output.parameters.len(), 12);
+    assert_eq!(output.parameters[10].name, "treasuryBurnScript");
+    assert_eq!(output.parameters[10].param_type, "bytes32");
+    assert_eq!(output.parameters[11].name, "borrowerBurnScript");
+    assert_eq!(output.parameters[11].param_type, "bytes32");
     assert_eq!(output.parameters[0].name, "assetCommitmentHash");
     assert_eq!(output.parameters[0].param_type, "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
@@ -47,14 +62,92 @@ fn test_fuji_safe_contract() {
         "missing unilateral group"
     );
 
-    for function in ["claim", "liquidate"] {
-        for opcode in ["OP_INSPECTOUTPUTSCRIPTPUBKEY", "OP_INSPECTOUTPUTVALUE"] {
-            assert_eq!(
-                crate::common::opcode_count_in_arkade(&output, function, opcode),
-                1,
-                "{function} must enforce the private treasury burning helper"
+    for (function, script, script_read, value_read, inputs) in [
+        (
+            "claim",
+            "<treasuryBurnScript>",
+            "OP_5 OP_PICK",
+            "OP_2 OP_PICK",
+            &[("treasurySig", "signature")][..],
+        ),
+        (
+            "liquidate",
+            "<treasuryBurnScript>",
+            "OP_9 OP_PICK",
+            "OP_3 OP_PICK",
+            &[
+                ("currentPrice", "int"),
+                ("oracleSig", "signature"),
+                ("treasurySig", "signature"),
+            ][..],
+        ),
+        (
+            "redeem",
+            "<borrowerBurnScript>",
+            "OP_3 OP_PICK",
+            "OP_1 OP_PICK",
+            &[("borrowerSig", "signature")][..],
+        ),
+        (
+            "renew",
+            "<borrowerBurnScript>",
+            concat!(
+                "<VTXO:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
+                "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,<exit>,",
+                "<treasuryBurnScript>,<borrowerBurnScript>)>"
+            ),
+            "OP_1 OP_PICK",
+            &[("treasurySig", "signature")][..],
+        ),
+    ] {
+        let group = crate::common::group(&output, function);
+        let covenant = group.arkade.as_ref().expect("covenant");
+        assert_eq!(
+            covenant
+                .inputs
+                .iter()
+                .map(|input| (input.name.as_str(), input.param_type.as_str()))
+                .collect::<Vec<_>>(),
+            inputs
+        );
+        let asm = crate::common::arkade_asm_tokens(&output, function);
+        assert_eq!(asm.first().map(String::as_str), Some(script));
+        for (opcode, operand) in [
+            ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP", script_read),
+            ("OP_INSPECTOUTPUTVALUE", value_read),
+        ] {
+            let comparison = format!("0 {opcode} {operand} OP_EQUAL OP_VERIFY");
+            let expected = comparison.split_whitespace().collect::<Vec<_>>();
+            assert!(
+                asm.windows(expected.len()).any(|window| window
+                    .iter()
+                    .map(String::as_str)
+                    .eq(expected.iter().copied())),
+                "{function} must enforce {comparison}"
             );
         }
+        assert_eq!(group.leaves.len(), 1);
+        assert_eq!(group.leaves[0].name, function);
+        assert_eq!(
+            crate::common::leaf_asm(&output, function, function),
+            format!("<SERVER_KEY> {OP_CHECKSIGVERIFY} <EMULATOR_KEY:{function}> {OP_CHECKSIG}")
+        );
+        assert_eq!(
+            group.leaves[0]
+                .witness
+                .iter()
+                .map(|input| (
+                    input.name.as_str(),
+                    input.elem_type.as_str(),
+                    input.encoding.as_str(),
+                    input.injected
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("serverSig", "signature", "schnorr-64", true),
+                ("emulatorSig", "signature", "schnorr-64", true),
+            ]
+        );
     }
 
     // The claim covenant checks expiration through locktime inspection.
@@ -68,19 +161,6 @@ fn test_fuji_safe_contract() {
         claim_asm.contains(OP_CHECKSIG),
         "claim covenant should verify treasury sig: {}",
         claim_asm
-    );
-
-    // claim leaf carries server + emulator cosig
-    let claim_leaf = crate::common::leaf_asm(&output, "claim", "claim");
-    assert!(
-        claim_leaf.contains("<SERVER_KEY>"),
-        "claim leaf should have SERVER_KEY: {}",
-        claim_leaf
-    );
-    assert!(
-        claim_leaf.contains(OP_CHECKSIGVERIFY),
-        "claim leaf should have CHECKSIGVERIFY: {}",
-        claim_leaf
     );
 
     // Verify liquidate function: price comparison + oracle sig + CLTV
@@ -101,14 +181,6 @@ fn test_fuji_safe_contract() {
         liquidate_asm
     );
 
-    // liquidate leaf carries server + emulator cosig
-    let liquidate_leaf = crate::common::leaf_asm(&output, "liquidate", "liquidate");
-    assert!(
-        liquidate_leaf.contains("<SERVER_KEY>"),
-        "liquidate leaf should have SERVER_KEY: {}",
-        liquidate_leaf
-    );
-
     // Verify redeem function: borrower signature
     let redeem_asm = crate::common::arkade_asm(&output, "redeem");
     assert!(
@@ -117,28 +189,12 @@ fn test_fuji_safe_contract() {
         redeem_asm
     );
 
-    // redeem leaf carries server + emulator cosig
-    let redeem_leaf = crate::common::leaf_asm(&output, "redeem", "redeem");
-    assert!(
-        redeem_leaf.contains("<SERVER_KEY>"),
-        "redeem leaf should have SERVER_KEY: {}",
-        redeem_leaf
-    );
-
     // Verify renew function: treasury signature
     let renew_asm = crate::common::arkade_asm(&output, "renew");
     assert!(
         renew_asm.contains(OP_CHECKSIG),
         "renew covenant should verify treasury sig: {}",
         renew_asm
-    );
-
-    // renew leaf carries server + emulator cosig
-    let renew_leaf = crate::common::leaf_asm(&output, "renew", "renew");
-    assert!(
-        renew_leaf.contains("<SERVER_KEY>"),
-        "renew leaf should have SERVER_KEY: {}",
-        renew_leaf
     );
 
     // Unilateral exit: CSV-based, borrower only (no server involvement)

@@ -369,7 +369,7 @@ fn test_threshold_multisig_cli() {
     fs::write(&input_path, THRESHOLD_MULTISIG_CODE).unwrap();
 
     // Compile the contract using the library
-    let result = compile(THRESHOLD_MULTISIG_CODE);
+    let result = arkade_compiler::compile_file(&input_path);
     assert!(result.is_ok());
 
     // Run the CLI command

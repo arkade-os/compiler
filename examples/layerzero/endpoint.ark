@@ -82,6 +82,8 @@
 //     117..149 remoteRecipient
 //     149..181 messageHash
 
+import "receive_marker.ark";
+
 contract Endpoint(
   bytes32 endpointCtrlAssetIdTxid,
   int     endpointCtrlAssetIdGidx,

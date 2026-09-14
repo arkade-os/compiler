@@ -27,7 +27,7 @@
 //   At settlement the caller supplies (oraclePrice, oracleTime, oracleSig).
 //   Freshness: tx.offchainTime - oracleTime <= 600 seconds.
 
-import "single_sig.ark";
+import "../single_sig/single_sig.ark";
 
 contract StabilityVault(
   pubkey  seekerPk,           // current holder of the USD claim

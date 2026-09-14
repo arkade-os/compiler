@@ -1,16 +1,22 @@
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_SHA256};
 
 use crate::common::arkade_asm;
 
-const VAULT_CODE: &str = include_str!("../../examples/stability/stability_vault.ark");
-const OFFER_CODE: &str = include_str!("../../examples/stability/stability_offer.ark");
+const VAULT_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/stability/stability_vault.ark"
+);
+const OFFER_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/stability/stability_offer.ark"
+);
 
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_vault_compiles_with_9_groups() {
     // 8 covenant functions + 1 unilateral tapscript = 9 groups
-    let out = compile(VAULT_CODE).expect("vault compile");
+    let out = compile_file(VAULT_PATH).expect("vault compile");
     assert_eq!(out.name, "StabilityVault");
     assert_eq!(out.functions.len(), 9);
 }
@@ -19,7 +25,7 @@ fn test_vault_compiles_with_9_groups() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_merge_emits_active_input_index_opcode() {
     use arkade_compiler::opcodes::OP_PUSHCURRENTINPUTINDEX;
-    let out = compile(VAULT_CODE).unwrap();
+    let out = compile_file(VAULT_PATH).unwrap();
     let asm = arkade_asm(&out, "merge");
     assert!(
         asm.contains(OP_PUSHCURRENTINPUTINDEX),
@@ -37,7 +43,7 @@ fn test_vault_settlement_verifies_full_oracle_message() {
     // seekerExit and providerExit must reconstruct sha256(ticker || price || time)
     // via OP_CAT + OP_SHA256 and verify the oracle sig against it.
     // Oracle logic lives in the covenant (arkade) ASM.
-    let out = compile(VAULT_CODE).unwrap();
+    let out = compile_file(VAULT_PATH).unwrap();
     for name in &["seekerExit", "providerExit"] {
         let asm_tokens: Vec<String> = crate::common::arkade_asm_tokens(&out, name);
         let asm = asm_tokens.join(" ");
@@ -58,7 +64,7 @@ fn test_vault_settlement_verifies_full_oracle_message() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_vault_transfer_is_pure_keyswap() {
-    let out = compile(VAULT_CODE).unwrap();
+    let out = compile_file(VAULT_PATH).unwrap();
     let asm = arkade_asm(&out, "transfer");
     assert!(
         !asm.contains(OP_CHECKSIGFROMSTACK),
@@ -72,7 +78,7 @@ fn test_vault_transfer_is_pure_keyswap() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_vault_split_is_pure_keyswap() {
-    let out = compile(VAULT_CODE).unwrap();
+    let out = compile_file(VAULT_PATH).unwrap();
     let asm = arkade_asm(&out, "split");
     assert!(
         !asm.contains(OP_CHECKSIGFROMSTACK),
@@ -87,7 +93,7 @@ fn test_vault_split_is_pure_keyswap() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_settle_and_update_funding_does_no_oracle_call() {
     // Funding update is purely time-driven; no oracle witness involved.
-    let out = compile(VAULT_CODE).unwrap();
+    let out = compile_file(VAULT_PATH).unwrap();
     let asm = arkade_asm(&out, "settleAndUpdateFunding");
     assert!(
         !asm.contains(OP_CHECKSIGFROMSTACK),
@@ -102,7 +108,7 @@ fn test_settle_and_update_funding_does_no_oracle_call() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_add_capital_does_no_oracle_call() {
-    let out = compile(VAULT_CODE).unwrap();
+    let out = compile_file(VAULT_PATH).unwrap();
     let asm = arkade_asm(&out, "addCapital");
     assert!(
         !asm.contains(OP_CHECKSIGFROMSTACK),
@@ -113,7 +119,7 @@ fn test_add_capital_does_no_oracle_call() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_remove_capital_verifies_oracle() {
-    let out = compile(VAULT_CODE).unwrap();
+    let out = compile_file(VAULT_PATH).unwrap();
     let asm = arkade_asm(&out, "removeCapital");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
@@ -129,7 +135,7 @@ fn test_remove_capital_verifies_oracle() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_offer_compiles_with_3_groups() {
     // 2 covenant functions + 1 unilateral tapscript = 3 groups
-    let out = compile(OFFER_CODE).expect("offer compile");
+    let out = compile_file(OFFER_PATH).expect("offer compile");
     assert_eq!(out.name, "StabilityOffer");
     assert_eq!(out.functions.len(), 3);
 }
@@ -137,7 +143,7 @@ fn test_offer_compiles_with_3_groups() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_offer_take_verifies_full_oracle_message() {
-    let out = compile(OFFER_CODE).unwrap();
+    let out = compile_file(OFFER_PATH).unwrap();
     let asm_tokens = crate::common::arkade_asm_tokens(&out, "take");
     let asm = asm_tokens.join(" ");
     let cat_count = asm_tokens.iter().filter(|s| s.as_str() == OP_CAT).count();

@@ -404,6 +404,26 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
 
 #[test]
 fn constructor_references_cover_nested_bodies_and_named_operands() {
+    let covenant = |source: &str, name: &str| {
+        let output = arkade_compiler::compile_sources(
+            "main.ark",
+            &[
+                ("main.ark".into(), source.into()),
+                (
+                    "policy.ark".into(),
+                    "struct Policy { pubkey key; int[2] limits; }".into(),
+                ),
+                (
+                    "child.ark".into(),
+                    "import \"policy.ark\"; contract Child(Policy policy) {}".into(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .unwrap();
+        crate::common::group(&output, name).arkade.clone().unwrap()
+    };
     for (parameters, inputs, body, expected) in [
         ("int limit, int alternate, bool choose", "int value",
          "let total = 0; if (choose) { total = limit; } else { total = alternate; } require(total > value);",
@@ -434,7 +454,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          vec!["<policy.limits.1>", "<policy.limits.0>", "<policy.key>"]),
     ] {
         let source = format!(
-            "struct Policy {{ pubkey key; int[2] limits; }} contract C(int unused, Policy unusedPolicy, {parameters}, int unusedTail) {{ function spend({inputs}) {{ {body} }} }}"
+            "import \"policy.ark\"; import \"child.ark\"; contract C(int unused, Policy unusedPolicy, {parameters}, int unusedTail) {{ function spend({inputs}) {{ {body} }} }}"
         );
         let actual = covenant(&source, "spend");
         let prologue = actual.asm.iter().take_while(|token| token.starts_with('<')).map(String::as_str).collect::<Vec<_>>();

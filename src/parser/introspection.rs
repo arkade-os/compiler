@@ -35,11 +35,7 @@ pub(crate) fn parse_input_introspection_to_expression(
         .into_inner()
         .next()
         .ok_or("Missing index value")?;
-    let index = match index_pair.as_rule() {
-        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
-        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
-        _ => Expression::Literal(index_pair.as_str().to_string()),
-    };
+    let index = parse_general_expression(index_pair)?;
 
     // Parse the property
     let property = inner
@@ -67,11 +63,7 @@ pub(crate) fn parse_output_introspection_to_expression(
         .into_inner()
         .next()
         .ok_or("Missing index value")?;
-    let index = match index_pair.as_rule() {
-        Rule::number_literal => Expression::Literal(index_pair.as_str().to_string()),
-        Rule::identifier => Expression::Variable(index_pair.as_str().to_string()),
-        _ => Expression::Literal(index_pair.as_str().to_string()),
-    };
+    let index = parse_general_expression(index_pair)?;
 
     // Parse the property
     let property = inner

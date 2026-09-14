@@ -233,13 +233,20 @@ pub struct ContractJson {
     pub parameters: Vec<Parameter>,
     pub functions: Vec<AbiFunctionGroup>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
+    pub source: Option<SourceBundle>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compiler: Option<CompilerInfo>,
     #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
+}
+
+/// Original files needed to reproduce a compilation without filesystem access.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SourceBundle {
+    pub entry: String,
+    pub files: std::collections::BTreeMap<String, String>,
 }
 
 /// Compiler information
@@ -255,9 +262,9 @@ pub struct CompilerInfo {
 /// Contract AST
 #[derive(Debug, Clone)]
 pub struct Contract {
-    /// Contract name
+    /// Contract name; empty for a source file containing only structs.
     pub name: String,
-    /// Struct types declared before this contract.
+    /// Struct types available to this contract.
     pub structs: Vec<StructDefinition>,
     /// Contract parameters
     pub parameters: Vec<Parameter>,
@@ -294,6 +301,13 @@ pub struct Function {
     pub is_static: bool,
     /// Explicit result type; None means the function returns no value.
     pub return_type: Option<String>,
+}
+
+impl Function {
+    // Qualified helpers have already been checked in their defining file's scope.
+    pub(crate) fn is_imported(&self) -> bool {
+        self.name.contains('.')
+    }
 }
 
 /// Statement AST - represents any executable statement in a function body

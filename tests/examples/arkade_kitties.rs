@@ -1,15 +1,18 @@
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
     OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPSUM, OP_INSPECTOUTASSETLOOKUP,
     OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SUB, OP_TXID,
 };
 
-const ARKADE_KITTIES_CODE: &str = include_str!("../../examples/arkade_kitties/arkade_kitties.ark");
+const ARKADE_KITTIES_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/examples/arkade_kitties/arkade_kitties.ark"
+);
 
 #[test]
 fn test_arkade_kitties_compiles() {
-    let result = compile(ARKADE_KITTIES_CODE);
+    let result = compile_file(ARKADE_KITTIES_PATH);
     assert!(
         result.is_ok(),
         "ArkadeKitties compilation failed: {:?}",
@@ -19,7 +22,7 @@ fn test_arkade_kitties_compiles() {
 
 #[test]
 fn test_arkade_kitties_structure() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     assert_eq!(output.name, "ArkadeKitties");
 
@@ -43,7 +46,7 @@ fn test_arkade_kitties_structure() {
 
 #[test]
 fn test_breed_function_has_is_fresh() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "breed");
 
@@ -62,7 +65,7 @@ fn test_breed_function_has_is_fresh() {
 
 #[test]
 fn test_breed_function_has_metadata_hash() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "breed");
 
@@ -75,7 +78,7 @@ fn test_breed_function_has_metadata_hash() {
 
 #[test]
 fn test_breed_function_has_control_check() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "breed");
 
@@ -88,7 +91,7 @@ fn test_breed_function_has_control_check() {
 
 #[test]
 fn test_breed_function_has_delta_checks() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "breed");
 
@@ -107,7 +110,7 @@ fn test_breed_function_has_delta_checks() {
 
 #[test]
 fn test_transfer_verifies_not_fresh() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "transfer");
 
@@ -126,7 +129,7 @@ fn test_transfer_verifies_not_fresh() {
 
 #[test]
 fn test_transfer_has_control_check() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "transfer");
 
@@ -139,7 +142,7 @@ fn test_transfer_has_control_check() {
 
 #[test]
 fn test_transfer_uses_owner_authorized_destination_script() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
     let transfer = crate::common::group(&output, "transfer")
         .arkade
         .as_ref()
@@ -164,7 +167,7 @@ fn test_transfer_uses_owner_authorized_destination_script() {
 
 #[test]
 fn test_breed_has_asset_lookups() {
-    let output = compile(ARKADE_KITTIES_CODE).unwrap();
+    let output = compile_file(ARKADE_KITTIES_PATH).unwrap();
 
     let asm_str = crate::common::arkade_asm(&output, "breed");
 

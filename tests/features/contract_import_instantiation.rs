@@ -1,4 +1,13 @@
-use arkade_compiler::compile;
+fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Box<dyn std::error::Error>> {
+    arkade_compiler::compile_sources("main.ark", &[
+        ("main.ark", source),
+        ("single_sig.ark", "contract SingleSig(pubkey owner, int exit) {}"),
+        ("htlc.ark", "contract HTLC(pubkey sender, pubkey receiver, bytes hash, int refundTime, int exit) {}"),
+        ("random_num.ark", "contract RandomNum() {}"),
+        ("time_locked.ark", "contract TimeLocked(pubkey owner, int exit) {}"),
+        ("threshold_oracle.ark", "contract ThresholdOracle(pubkey[3] owners) {}"),
+    ].into_iter().map(|(path, code)| (path.to_string(), code.to_string())).collect())
+}
 
 use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm, leaf_asm_tokens};
 
@@ -7,7 +16,7 @@ use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm, leaf_asm_tokens};
 #[test]
 fn test_import_statement_is_parsed() {
     // A contract file that declares an import before the contract keyword.
-    // The import path is captured in the AST (not resolved at compile time).
+    // The imported file is loaded even when no declaration is referenced.
     let code = r#"
 import "single_sig.ark";
 
@@ -684,7 +693,6 @@ fn test_self_referential_contract() {
     // common recursion pattern for VTXOs). SelfRef has 1 param (ownerPk only)
     // as the inline contract defines it; renew passes ownerPk back to itself.
     let code = r#"
-import "self.ark";
 
 contract SelfRef(pubkey ownerPk) {
   function renew() {

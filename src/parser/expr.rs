@@ -33,7 +33,9 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
         Rule::additive_expr => parse_additive_expr(pair),
         Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         Rule::unary_expr | Rule::primary_expr => parse_primary_expr(pair),
-        Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
+        Rule::identifier | Rule::qualified_name => {
+            Ok(Expression::Variable(pair.as_str().to_string()))
+        }
         Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
@@ -195,7 +197,9 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             // Parenthesized expression
             parse_general_expression(pair)
         }
-        Rule::identifier => Ok(Expression::Variable(pair.as_str().to_string())),
+        Rule::identifier | Rule::qualified_name => {
+            Ok(Expression::Variable(pair.as_str().to_string()))
+        }
         Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::array_index_access => {
@@ -462,25 +466,7 @@ pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expres
 /// alternatives matched by the silent `complex_expression` rule — so we
 /// see the raw inner rules (identifier, number_literal, etc.) directly.
 pub(crate) fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
-    let mut args = Vec::new();
-
-    for inner in pair.into_inner() {
-        let expr = match inner.as_rule() {
-            Rule::identifier => Expression::Variable(inner.as_str().to_string()),
-            Rule::number_literal => Expression::Literal(inner.as_str().to_string()),
-            Rule::constructor => parse_constructor_to_expression(inner)?,
-            Rule::input_introspection => parse_input_introspection_to_expression(inner)?,
-            Rule::output_introspection => parse_output_introspection_to_expression(inner)?,
-            Rule::tx_introspection => parse_tx_introspection_to_expression(inner)?,
-            _ => {
-                // Fall back to treating as a variable/property reference
-                Expression::Variable(inner.as_str().to_string())
-            }
-        };
-        args.push(expr);
-    }
-
-    Ok(args)
+    pair.into_inner().map(parse_general_expression).collect()
 }
 
 // ─── Helper Functions ──────────────────────────────────────────────────────────

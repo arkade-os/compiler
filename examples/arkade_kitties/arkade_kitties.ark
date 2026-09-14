@@ -12,7 +12,7 @@
 // - Each kitty is a unique asset controlled by speciesControlId
 // - Breeding creates a new kitty with isFresh=1
 
-import "single_sig.ark";
+import "../single_sig/single_sig.ark";
 
 contract ArkadeKitties(
     bytes32 speciesControlIdTxid,

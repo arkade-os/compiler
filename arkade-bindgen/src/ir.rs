@@ -126,7 +126,7 @@ pub struct ContractIR {
     /// Spend groups in artifact order.
     pub groups: Vec<GroupIR>,
     /// Original .ark source code, if embedded.
-    pub source: Option<String>,
+    pub source: Option<arkade_compiler::models::SourceBundle>,
     /// Compiler version string.
     pub compiler_version: Option<String>,
 }
