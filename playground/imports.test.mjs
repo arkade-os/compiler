@@ -36,6 +36,17 @@ for (const [project, file] of selections) {
     assert.deepEqual(rebuilt, output);
 }
 
+vm.runInContext('delete examples.single_sig; delete examplePaths.single_sig;', context);
+for (const [project, file] of selections.filter(([, file]) => file !== 'single_sig')) {
+    context.selection = [project, file];
+    const input = vm.runInContext(`
+        [currentProject, currentFile] = selection;
+        editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
+        compilationSources();
+    `, context);
+    compile_sources(input.entry, JSON.stringify(input.files));
+}
+
 context.bundle = {
     entry: 'vault/main.ark',
     files: {
@@ -83,4 +94,4 @@ for (const prefix of ['#code=', '#project=']) {
     assert.equal(await vm.runInContext('loadFromUrl()', context), null);
 }
 await assert.rejects(vm.runInContext("compressCode('a'.repeat(MAX_SHARED_DECODED_BYTES + 1))", context), /Shared source exceeds/);
-console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, and dependency edits.`);
+console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, and removed shared examples.`);
