@@ -177,6 +177,10 @@ impl Generator {
     }
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
+        if name.starts_with("0x") {
+            self.push_temporary(if name == "0x" { "OP_0" } else { name });
+            return Ok(());
+        }
         // A field named `length` outranks synthetic array length.
         let is_binding = self
             .binding_index(&Self::internal_binding_name(name))

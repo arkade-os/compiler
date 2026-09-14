@@ -10,6 +10,8 @@ mod asset_introspection;
 mod bare_vtxo;
 #[path = "features/beacon.rs"]
 mod beacon;
+#[path = "features/bytes_literals.rs"]
+mod bytes_literals;
 #[path = "features/concat_op.rs"]
 mod concat_op;
 #[path = "features/constants.rs"]

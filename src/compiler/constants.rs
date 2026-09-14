@@ -76,7 +76,8 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         let matches_type = match const_type.as_str() {
             "int" => text.bytes().all(|b| b.is_ascii_digit()),
             "bool" => text == "true" || text == "false",
-            _ => return Err(format!("constant '{name}' must be int or bool")),
+            "bytes" => text.starts_with("0x"),
+            _ => return Err(format!("constant '{name}' must be int, bool or bytes")),
         };
         if !matches_type {
             return Err(format!(
@@ -198,6 +199,10 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
 }
 
 fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
+    if let Some(value) = values.get(name).filter(|value| value.starts_with("0x")) {
+        *name = value.clone();
+        return;
+    }
     if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
         if let Some(value) = values.get(index) {
             *name = format!("{array}[{value}]");

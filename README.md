@@ -324,6 +324,21 @@ contract Minimum(int minimum) {
 
 Every spend path must contain at least one `require`, directly or through a helper that enforces a requirement on every path. An `if` without `else`, or an `else` branch without a `require`, is rejected as a bare path.
 
+### Byte literals
+
+Double-quoted strings and `0x` hex literals both have type `bytes`. Strings use UTF-8 and JSON escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, and `\uXXXX`). Hex literals accept either digit case and require at least one complete byte pair. Use `""` for empty bytes.
+
+```ark
+bytes x = "hello";
+bytes y = 0xdeadbeef;
+bytes z = 0xDEADBEEF;
+require(x == 0x68656c6c6f);
+require(size("ž") == 2);
+require(sha256("hello" + 0x00) == expectedHash);
+```
+
+Literals work in byte expressions, calls, comparisons, arrays, structs, and constants. They follow the same type rules as `bytes` variables; they do not implicitly become `int`, `pubkey`, `signature`, `bytes20`, or `bytes32`. Assembly stores byte data as `0x`-prefixed hex tokens and empty bytes as `OP_0`; consumers must decode these tokens as data pushes, preserving leading zeros.
+
 ### Constants
 
 ```solidity
@@ -331,7 +346,7 @@ const int EXIT_DELAY = 144;
 const bool STRICT = true;
 ```
 
-Constants are `int` or `bool` literals declared anywhere in the contract body. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
+Constants are `int`, `bool`, or `bytes` literals declared anywhere in the contract body. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
 A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes use positive integer literals.
 

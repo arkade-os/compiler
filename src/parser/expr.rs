@@ -170,6 +170,24 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
     }
 }
 
+pub(crate) fn parse_string_literal(text: &str) -> Result<String, String> {
+    serde_json::from_str(text).map_err(|error| format!("Invalid string literal: {error}"))
+}
+
+pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
+    let text = pair.as_str();
+    if text.starts_with('"') {
+        use std::fmt::Write;
+        let mut hex = String::from("0x");
+        for byte in parse_string_literal(text)?.bytes() {
+            write!(hex, "{byte:02x}").expect("writing to String");
+        }
+        Ok(hex)
+    } else {
+        Ok(text.to_string())
+    }
+}
+
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         Rule::primary_expr => {
@@ -202,6 +220,9 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         }
         Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
+        Rule::hex_literal | Rule::string_literal => {
+            Ok(Expression::Literal(parse_named_operand(pair)?))
+        }
         Rule::array_index_access => {
             let mut inner = pair.into_inner();
             let array = inner
@@ -249,23 +270,15 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
-            let signature = inner
-                .next()
-                .ok_or("Missing signature")?
-                .as_str()
-                .to_string();
-            let pubkey = inner.next().ok_or("Missing pubkey")?.as_str().to_string();
+            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
+            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
             Ok(Expression::CheckSigExpr { signature, pubkey })
         }
         Rule::check_sig_from_stack => {
             let mut inner = pair.into_inner();
-            let signature = inner
-                .next()
-                .ok_or("Missing signature")?
-                .as_str()
-                .to_string();
-            let pubkey = inner.next().ok_or("Missing pubkey")?.as_str().to_string();
-            let message = inner.next().ok_or("Missing message")?.as_str().to_string();
+            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
+            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
+            let message = parse_named_operand(inner.next().ok_or("Missing message")?)?;
             Ok(Expression::CheckSigFromStackExpr {
                 signature,
                 pubkey,
@@ -417,6 +430,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::input_introspection => parse_input_introspection_to_expression(inner),
         Rule::output_introspection => parse_output_introspection_to_expression(inner),
         Rule::asset_at => parse_asset_at_to_expression(inner),
+        Rule::hex_literal | Rule::string_literal => parse_primary_expr(inner),
         Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
         Rule::named_binding => {
             let name = inner.as_str().to_string();

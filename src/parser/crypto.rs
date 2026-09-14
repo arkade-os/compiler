@@ -20,7 +20,7 @@ pub(crate) fn parse_sha256_initialize(pair: Pair<Rule>) -> Result<Expression, St
 pub(crate) fn parse_sha256_update(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let ctx_pair = inner.next().ok_or("Missing context in sha256Update")?;
-    let context = Expression::Variable(ctx_pair.as_str().to_string());
+    let context = parse_general_expression(ctx_pair)?;
 
     let chunk_pair = inner.next().ok_or("Missing chunk in sha256Update")?;
     let chunk = parse_general_expression(chunk_pair)?;
@@ -34,7 +34,7 @@ pub(crate) fn parse_sha256_update(pair: Pair<Rule>) -> Result<Expression, String
 pub(crate) fn parse_sha256_finalize(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let ctx_pair = inner.next().ok_or("Missing context in sha256Finalize")?;
-    let context = Expression::Variable(ctx_pair.as_str().to_string());
+    let context = parse_general_expression(ctx_pair)?;
 
     let chunk_pair = inner.next().ok_or("Missing lastChunk in sha256Finalize")?;
     let last_chunk = parse_general_expression(chunk_pair)?;
@@ -204,21 +204,21 @@ pub(crate) fn parse_check_sig_from_stack_verify_expr(
     pair: Pair<Rule>,
 ) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let signature = inner
-        .next()
-        .ok_or("Missing signature in checkSigFromStackVerify")?
-        .as_str()
-        .to_string();
-    let pubkey = inner
-        .next()
-        .ok_or("Missing pubkey in checkSigFromStackVerify")?
-        .as_str()
-        .to_string();
-    let message = inner
-        .next()
-        .ok_or("Missing message in checkSigFromStackVerify")?
-        .as_str()
-        .to_string();
+    let signature = parse_named_operand(
+        inner
+            .next()
+            .ok_or("Missing signature in checkSigFromStackVerify")?,
+    )?;
+    let pubkey = parse_named_operand(
+        inner
+            .next()
+            .ok_or("Missing pubkey in checkSigFromStackVerify")?,
+    )?;
+    let message = parse_named_operand(
+        inner
+            .next()
+            .ok_or("Missing message in checkSigFromStackVerify")?,
+    )?;
 
     Ok(Expression::CheckSigFromStackVerify {
         signature,
