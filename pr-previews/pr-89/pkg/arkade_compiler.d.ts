@@ -13,6 +13,11 @@
 export function compile(source: string): string;
 
 /**
+ * Compile a virtual project. `files` is a JSON object mapping relative .ark paths to source text.
+ */
+export function compile_sources(entry: string, files: string): string;
+
+/**
  * Initialize panic hook for better error messages in the browser console
  */
 export function init(): void;
@@ -38,6 +43,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly compile: (a: number, b: number) => [number, number, number, number];
+    readonly compile_sources: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init: () => void;
     readonly validate: (a: number, b: number) => [number, number, number];
     readonly version: () => [number, number];
