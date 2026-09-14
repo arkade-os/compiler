@@ -235,7 +235,7 @@ contract Name(<params>) {    // optional in an imported file; one in the entry f
 }
 ```
 
-Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers; string literals appear only in `import` and as `require` messages.
+Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
 
 ### Imports
 
