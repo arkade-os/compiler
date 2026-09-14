@@ -130,12 +130,14 @@ fn resolve_value(
         return Err("constant dependency depth exceeds 128".to_string());
     }
     active.push(name.clone());
-    let value = evaluate(
-        &constant.value,
-        &mut |name| resolve_value(name, declarations, values, active),
-        0,
-    )
-    .map_err(|error| format!("constant '{name}': {error}"))?;
+    // A nested failure already names the constant it came from; keep that one name.
+    let value = evaluate(&constant.value, &mut |name| {
+        resolve_value(name, declarations, values, active)
+    })
+    .map_err(|error| match error.starts_with("constant '") {
+        true => error,
+        false => format!("constant '{name}': {error}"),
+    })?;
     active.pop();
     let matches_type = match constant.const_type.as_str() {
         "int" => value.parse::<i64>().is_ok(),
@@ -155,11 +157,7 @@ fn resolve_value(
 fn evaluate(
     expression: &Expression,
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
-    depth: usize,
 ) -> Result<String, String> {
-    if depth >= 128 {
-        return Err("constant expression depth exceeds 128".to_string());
-    }
     let integer = |text: &str| {
         text.parse::<i64>()
             .map_err(|_| format!("expected a signed 64-bit integer, got '{text}'"))
@@ -178,14 +176,14 @@ fn evaluate(
             if let Expression::Literal(text) = value.as_ref() {
                 return Ok(integer(&format!("-{text}"))?.to_string());
             }
-            let value = evaluate(value, resolve, depth + 1)?;
+            let value = evaluate(value, resolve)?;
             Ok(integer(&value)?
                 .checked_neg()
                 .ok_or_else(overflow)?
                 .to_string())
         }
         Expression::Not { value } => {
-            let value = evaluate(value, resolve, depth + 1)?;
+            let value = evaluate(value, resolve)?;
             match value.as_str() {
                 "true" => Ok("false".to_string()),
                 "false" => Ok("true".to_string()),
@@ -193,8 +191,8 @@ fn evaluate(
             }
         }
         Expression::BinaryOp { left, op, right } => {
-            let left = evaluate(left, resolve, depth + 1)?;
-            let right = evaluate(right, resolve, depth + 1)?;
+            let left = evaluate(left, resolve)?;
+            let right = evaluate(right, resolve)?;
             if matches!(op.as_str(), "==" | "!=") {
                 if left.parse::<bool>().is_ok() != right.parse::<bool>().is_ok() {
                     return Err(format!(

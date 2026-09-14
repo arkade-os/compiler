@@ -588,3 +588,19 @@ fn negative_constants_preserve_array_index_signs() {
         }
     }
 }
+
+#[test]
+fn long_constant_expressions_fold_and_errors_name_one_constant() {
+    let sum = ["1"; 200].join(" + ");
+    let source = format!(
+        "contract Vault() {{ const int X = {sum}; function spend(int v) {{ require(v > X); }} }}"
+    );
+    let output = compile(&source).expect("long constant expression");
+    assert!(arkade_asm_tokens(&output, "spend").contains(&"200".to_string()));
+
+    let error = error(
+        "contract Vault() { const int A = B; const int B = 1 / 0; function spend() { require(true); } }",
+    );
+    assert_eq!(error.matches("constant '").count(), 1, "{error}");
+    assert!(error.contains("constant 'B': division by zero"), "{error}");
+}
