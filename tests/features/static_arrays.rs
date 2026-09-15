@@ -86,6 +86,111 @@ contract Quorum(pubkey[5] oracles) {
 }
 
 #[test]
+fn counted_loops_unroll_the_compile_time_constant_number_of_times() {
+    let output = compile(
+        r#"
+contract Counted(pubkey owner) {
+    const int ROUNDS = 2;
+
+    function spend(signature sig) {
+        for (ROUNDS + 1) {
+            require(checkSig(sig, owner));
+        }
+        for (1 + 2) {
+            require(checkSig(sig, owner));
+        }
+    }
+}
+"#,
+    )
+    .expect("counted loop must compile");
+
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert_eq!(
+        asm.iter()
+            .filter(|token| token.as_str() == arkade_compiler::opcodes::OP_CHECKSIG)
+            .count(),
+        6,
+        "counted loop unrolls its body once per iteration"
+    );
+}
+
+#[test]
+fn zero_counted_loop_emits_no_body() {
+    let counted = compile(
+        r#"
+contract Counted(pubkey owner) {
+    function spend(signature sig) {
+        for (0) {
+            require(false);
+        }
+        require(checkSig(sig, owner));
+    }
+}
+"#,
+    )
+    .expect("zero-count loop must compile");
+    let direct = compile(
+        r#"
+contract Counted(pubkey owner) {
+    function spend(signature sig) {
+        require(checkSig(sig, owner));
+    }
+}
+"#,
+    )
+    .expect("direct body must compile");
+
+    assert_eq!(
+        crate::common::arkade_asm_tokens(&counted, "spend"),
+        crate::common::arkade_asm_tokens(&direct, "spend")
+    );
+
+    let error = compile(
+        r#"
+contract Counted() {
+    function spend() {
+        for (0) {
+            require(true);
+        }
+    }
+}
+"#,
+    )
+    .expect_err("a zero-count loop cannot enforce a spend condition")
+    .to_string();
+    assert!(
+        error.contains("spend path with no require"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn counted_loop_rejects_non_constant_or_negative_counts() {
+    for count in ["rounds", "-1"] {
+        let error = compile(&format!(
+            r#"
+contract Counted() {{
+    function spend(int rounds) {{
+        for ({count}) {{
+            require(true);
+        }}
+        require(true);
+    }}
+}}
+"#
+        ))
+        .expect_err("invalid loop count must be rejected")
+        .to_string();
+
+        assert!(
+            error.contains("loop count must be a non-negative integer compile-time constant"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
 fn runtime_index_bound_check_uses_the_arrays_own_size() {
     let output = compile(
         r#"

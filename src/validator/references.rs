@@ -149,6 +149,10 @@ fn collect_statements<'a>(
                 collect_expression(iterable, names, functions, visited);
                 collect_statements(body, names, functions, visited);
             }
+            Statement::ForCount { count, body } => {
+                collect_expression(count, names, functions, visited);
+                collect_statements(body, names, functions, visited);
+            }
         }
     }
 }

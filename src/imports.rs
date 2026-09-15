@@ -492,6 +492,9 @@ fn validate_local_types(
                 binding(value_var)?;
                 validate_local_types(body, check, binding)?;
             }
+            Statement::ForCount { body, .. } => {
+                validate_local_types(body, check, binding)?;
+            }
             _ => {}
         }
     }
@@ -534,6 +537,10 @@ fn visit_statements(
             }
             Statement::ForIn { iterable, body, .. } => {
                 visit_expression(iterable, visit)?;
+                visit_statements(body, visit)?;
+            }
+            Statement::ForCount { count, body } => {
+                visit_expression(count, visit)?;
                 visit_statements(body, visit)?;
             }
             Statement::Return(None) => {}

@@ -347,6 +347,11 @@ pub enum Statement {
         iterable: Expression,
         body: Vec<Statement>,
     },
+    /// for (count) { body }
+    ForCount {
+        count: Expression,
+        body: Vec<Statement>,
+    },
 }
 
 /// A binding or array element on the left-hand side of an assignment.
