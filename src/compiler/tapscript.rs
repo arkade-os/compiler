@@ -51,7 +51,7 @@ pub struct Closure {
 pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     let mut condition: Option<(HashFn, String)> = None;
     let mut timelock: Option<String> = None;
-    let mut is_csv = false; // older() → CSV; after()/tx.time → CLTV
+    let mut is_csv = false; // older() → CSV; after() → CLTV
     let mut multisig: Option<(Vec<KeyExpr>, Option<u16>)> = None;
 
     for item in &ts.items {

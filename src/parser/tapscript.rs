@@ -92,16 +92,10 @@ pub(crate) fn parse_tap_item(
                 hash,
             })
         }
-        Rule::time_comparison => {
-            // tx.time >= ident  → absolute (CLTV)
-            let mut inner = pair.into_inner();
-            let value = inner
-                .next()
-                .ok_or("Missing tx.time bound")?
-                .as_str()
-                .to_string();
-            Ok(TapItem::After { value })
-        }
+        Rule::time_comparison => Err(
+            "`tx.time` is only available in covenant functions; use `after(...)` in tapscript functions"
+                .to_string(),
+        ),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
             let sig = inner
@@ -345,6 +339,21 @@ contract Demo(pubkey owner) {{
                 "{call} should reject extra arguments"
             );
         }
+    }
+
+    #[test]
+    fn rejects_tx_time_in_tapscript() {
+        let src = r#"
+contract Demo(pubkey owner, int deadline) {
+    function exit(signature ownerSig) tapscript {
+        require(tx.time >= deadline);
+        require(checkSig(ownerSig, owner));
+    }
+}
+"#;
+
+        let err = super::super::parse(src).unwrap_err();
+        assert!(err.contains("use `after(...)`"));
     }
 
     #[test]

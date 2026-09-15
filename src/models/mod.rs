@@ -465,7 +465,7 @@ pub enum TapItem {
     },
     /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal or param name.
     Older { value: String },
-    /// `after(n)` or `tx.time >= n` → CLTV (absolute timelock, forfeit class).
+    /// `after(n)` → CLTV (absolute timelock, forfeit class).
     After { value: String },
     /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
     Sig {

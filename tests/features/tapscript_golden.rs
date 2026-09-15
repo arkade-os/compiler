@@ -23,7 +23,7 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
         require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
     }
     function refund(signature serverSig, signature emulatorSig) tapscript {
-        require(tx.time >= refundTime);
+        require(after(refundTime));
         require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
     }
     function unilateral(signature senderSig) tapscript {
