@@ -5,7 +5,7 @@
 A protocol for giving open-membership pool contracts on Arkade a *standing* unilateral
 exit, enforced by recurrent state updates between the transacting parties. This document
 is a design specification: it defines the protocol lifecycle, the trust model, the
-attack analysis — twenty-four adversarial findings (A1–A24), detailed in §10 — that shaped
+attack analysis — twenty-five adversarial findings (A1–A25), detailed in §10 — that shaped
 it, and the compiler surface that would standardize it. It proposes no code changes; the
 compiler-facing sections are future work.
 
@@ -156,12 +156,36 @@ repository; it is cited here only for provenance of these corrections:
     transaction exists; client non-finality, seal refusal, and bond slashing are
     after-the-fact. Seal refusal is not a consensus veto.
 
-Known gaps in that verification pass, recorded so they are not mistaken for results:
-the ordering invariant for §7.1 steps 3–5 (A4) is enforced by construction in the model
-rather than independently falsified, and the §7.4 timelock inequality is a property of
-the chosen parameters rather than of the protocol. The §13.2 trilemma remains
-unformalized — what was proved there is a restricted game whose theft-authorization is
-an explicit premise, not an impossibility result.
+**Expansion pass** — a second round extended the models and closed the gaps the first
+round left, adding one finding:
+
+20. **A25 — pre-seal eviction window (§7.5).** Modeling the notice-sealing step
+    showed the payout obligation, as revision 2.2 first worded it, began only when
+    the seal set receipted the notice — while the one leg that actually prevents a
+    spend was gated on the same condition. The interval between filing and sealing
+    was therefore unprotected, and an Operator could widen it by stalling the
+    sealers. The obligation now attaches on the validly signed notice presented to
+    the signing threshold; the seal governs third-party adjudication only. The fix
+    was verified: the model that violated the safety property holds once refusal
+    keys on the filed notice.
+21. **A24 and A18 now have executable models.** A nonce-schedule module reproduces
+    the honest-operation self-slash in three states with no adversary and no crash,
+    and four dependency-free Lean theorems state the side condition that separates
+    extraction-as-a-defence from extraction-as-a-liability, showing the per-epoch
+    schedule provably fails it and the per-(epoch, role) schedule provably satisfies
+    it.
+22. **Two first-round gaps closed.** The A4 ordering invariant is now independently
+    falsifiable, via a configuration admitting an implementation that releases a
+    signed transition before the lattice exists; and the §7.4 timelock inequality,
+    which tested the chosen parameters rather than the protocol, was demoted to an
+    assumption, leaving the sweep-versus-exit property as the checked one.
+
+Standing limits after both passes, recorded so they are not mistaken for results: the
+modules share assumptions by documentation rather than by a machine-checked refinement
+relation; trust-layer oracles (threshold refusal, honest sealers, attestation) remain
+assumed, never derived; and the §13.2 trilemma remains unformalized — what was proved
+there is a restricted game whose theft-authorization is an explicit premise, not an
+impossibility result.
 
 ---
 
@@ -619,10 +643,19 @@ Both directions are closed by one normative rule.
 > proven after the fact. The notice exists precisely to make "an exit was in flight"
 > objective.)
 >
-> **Eviction-with-payout.** From the moment `X_k(m)` is sealed, any transition
-> consuming `U_k` — and any subsequent transition, until the notice is discharged — is
-> **conforming only if it pays `m`'s full `S_k` balance to an on-chain output under
-> `m`'s slot key.** A displacing transition without that payout is an **unlawful
+> **Eviction-with-payout.** From the moment `m` presents a validly signed `X_k(m)`
+> to the signing threshold, any transition consuming `U_k` — and any subsequent
+> transition, until the notice is discharged — is **conforming only if it pays `m`'s
+> full `S_k` balance to an on-chain output under `m`'s slot key.**
+>
+> **The obligation attaches on the signed notice, not on its seal (A25).** These are
+> two different instants and the gap between them is exploitable. The signing
+> threshold can verify `m`'s signature on the notice itself, so it needs no receipt
+> from anyone to refuse a short payout; the seal exists to make the case *adjudicable
+> by third parties* — dispute halt, bond slashing, compensation — not to gate the one
+> leg that actually prevents the spend. Keying refusal on the seal would leave the
+> filing-to-sealing interval unprotected, and an Operator who evicts inside that
+> window (or who stalls the seal set to widen it) would owe nothing at all. A displacing transition without that payout is an **unlawful
 > eviction**: non-final under §7.1a-extended client policy, refused by the seal set,
 > unsignable under the primary model's enclave policy (§9), and — where the optional
 > bond exists — slashable on the objective evidence pair (sealed `X_k(m)`, sealed or
@@ -1177,11 +1210,11 @@ and threshold members rotate out without coverage ever dipping.
 
 ## 10. Attack analysis appendix
 
-Twenty-four adversarial findings shaped this spec — A1–A13 from the protocol
+Twenty-five adversarial findings shaped this spec — A1–A13 from the protocol
 red-team, A14–A15 from the recourse analysis (§8a), A16–A17 from the revision-2
 current-state exit analysis (§7.5), A18–A23 from the revision-2.1 red-team of the
 self-enforcing bond and federation-hardening layers (§9.2–§9.4), and A24 from the
-revision-2.2 formal-verification pass (§0). Severity:
+revision-2.2 formal-verification passes (§0). Severity:
 **CRITICAL** (breaks the safety claim), **HIGH** (loses funds or bricks exit under a
 realistic adversary), **MED** (griefing/liveness/cost).
 
@@ -1211,6 +1244,7 @@ realistic adversary), **MED** (griefing/liveness/cost).
 | A22 | **Reshare capture** — permissionless proactive resharing lets one entity accumulate `t` shares across refresh windows behind distinct facades | HIGH | Fidelity-bond-gated admission (§9.1, §9.4); rate-limited membership churn per refresh window (§9.3); Nakamoto-coefficient floor gating the "threshold-secured" label (§13.5) |
 | A23 | **Correlated per-identity bonds** — one identity's fidelity bond, amortized across many pools, under-collateralizes a correlated theft across its whole book | MED→HIGH | The §9.4 aggregation rule: `b_identity ≥ Σ(marginal exposure)` across the identity's book, else the fractional-reserve ratio is computed, displayed, and the identity is excluded from `t`/`k` counts by conforming clients |
 | A24 | **Honest-operation self-slash via per-epoch nonce reuse** — the operator threshold signs both `A_k` and `h_k` in epoch `k`; under a nonce schedule indexed by epoch alone, those two distinct messages share one committed `R_k`, which is exactly the EOTS extraction condition. A fully honest, protocol-following operator leaks its own key and its bond is burned by any observer. Distinct from A18, which is a crash/restart fault: this one fires on the specified happy path | CRITICAL (for any deployment of §9.2 as previously written) | Nonce index is the *(epoch, artifact role)* pair, not the epoch: commit `R_{k,A}`, `R_{k,h}`, `R_{k,σ}` separately, or give each artifact role its own key (§9.2). Message-level role separation is explicitly **not** a fix. Surfaced by the Lean formalization of §9.2, which showed extraction needs distinct challenges rather than distinct messages |
+| A25 | **Pre-seal eviction window** — the payout obligation was keyed to the moment a notice *is sealed*, but the only leg that prevents a spend (threshold refusal, §7.5) was gated on the same condition. Between filing and the seal set's receipt the Operator owes nothing, so it may evict paying zero — with an intact signing policy and a fully healthy seal set — and may widen the window by stalling the sealers | HIGH | The obligation attaches on the **validly signed notice** presented to the signing threshold, which can check that signature without anyone's receipt; the seal governs third-party adjudication only (§7.5). Surfaced and its fix verified by the revision-2.2 expansion pass, which also showed the seal set cannot veto a spend at all |
 
 ## 11. Compiler surface (future work — gated zones)
 
