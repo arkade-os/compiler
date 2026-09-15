@@ -5,7 +5,7 @@ const arkadeMonarch = {
     defaultToken: 'invalid',
 
     keywords: [
-        'contract', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
+        'contract', 'library', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
         'for', 'in', 'let', 'private', 'public', 'static', 'const', 'return', 'new', 'import'
     ],
 
@@ -36,7 +36,7 @@ const arkadeMonarch = {
             [/\s+/, 'white'],
 
             // Keywords
-            [/\b(contract|struct|function|tapscript|require|if|else|for|in|let|private|public|static|const|return|new|import)\b/, 'keyword'],
+            [/\b(contract|library|struct|function|tapscript|require|if|else|for|in|let|private|public|static|const|return|new|import)\b/, 'keyword'],
 
             // Types
             [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
@@ -127,6 +127,7 @@ const arkadeTheme = {
 const arkadeCompletions = [
     // Keywords
     { label: 'contract', kind: 'Keyword', insertText: 'contract ${1:Name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
+    { label: 'library', kind: 'Keyword', insertText: 'library ${1:Name} {\n\t$0\n}', insertTextRules: 4 },
     { label: 'struct', kind: 'Keyword', insertText: 'struct ${1:Name} {\n\t${2:int} ${3:field};\n}', insertTextRules: 4 },
     { label: 'function', kind: 'Keyword', insertText: 'function ${1:name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
     { label: 'require', kind: 'Keyword', insertText: 'require(${1:condition});', insertTextRules: 4 },
@@ -165,7 +166,7 @@ const arkadeCompletions = [
     { label: 'tx.outputs', kind: 'Property', insertText: 'tx.outputs[${1:o}]', insertTextRules: 4, detail: 'Transaction outputs' },
     { label: 'tx.input.current', kind: 'Property', insertText: 'tx.input.current', detail: 'Current input' },
 
-    { label: 'import', kind: 'Keyword', insertText: 'import "${1:./contract.ark}";', insertTextRules: 4, detail: 'Import structs and a contract from a relative file' },
+    { label: 'import', kind: 'Keyword', insertText: 'import "${1:./contract.ark}";', insertTextRules: 4, detail: 'Import structs, a contract, or a library from a relative file' },
 ];
 
 // Export all parts

@@ -57,6 +57,7 @@ pub(crate) fn parse_with_constants(
 fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
+        is_library: false,
         structs: Vec::new(),
         parameters: Vec::new(),
         functions: Vec::new(),
@@ -77,7 +78,7 @@ fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, Str
                                 contract.imports.push(path);
                             }
                         }
-                        Rule::contract => {
+                        Rule::contract | Rule::library => {
                             parse_contract(&mut contract, inner_pair)?;
                         }
                         Rule::struct_definition => {
@@ -87,7 +88,7 @@ fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, Str
                     }
                 }
             }
-            Rule::contract => {
+            Rule::contract | Rule::library => {
                 parse_contract(&mut contract, pair)?;
             }
             _ => {}
@@ -123,8 +124,9 @@ fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String>
     Ok(StructDefinition { name, fields })
 }
 
-/// Parse a contract definition: name, parameters, and functions
+/// Parse a contract or library definition.
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
+    contract.is_library = pair.as_rule() == Rule::library;
     let mut inner_pairs = pair.into_inner().peekable();
 
     // Contract name (required)
@@ -134,8 +136,10 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
     };
 
     // Parameters (optional)
-    if let Some(param_list) = inner_pairs.next() {
-        contract.parameters = parse_parameters(param_list)?;
+    if !contract.is_library {
+        if let Some(param_list) = inner_pairs.next() {
+            contract.parameters = parse_parameters(param_list)?;
+        }
     }
 
     let constants = inner_pairs
@@ -165,10 +169,13 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
             continue;
         }
         if function_pair_is_tapscript(&func_pair) {
+            if contract.is_library {
+                return Err("libraries cannot declare tapscript functions".to_string());
+            }
             let ts = parse_named_tapscript(func_pair, &parsing_constants)?;
             contract.tapscripts.push(ts);
         } else {
-            let func = parse_function(func_pair, &parsing_constants)?;
+            let func = parse_function(func_pair, &parsing_constants, contract.is_library)?;
             contract.functions.push(func);
         }
     }
@@ -194,7 +201,11 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
 }
 
 /// Parse a function definition
-fn parse_function(pair: Pair<Rule>, constants: &[Constant]) -> Result<Function, String> {
+fn parse_function(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+    is_library: bool,
+) -> Result<Function, String> {
     let mut inner = pair.into_inner().peekable();
     let visibility = if inner
         .peek()
@@ -204,8 +215,9 @@ fn parse_function(pair: Pair<Rule>, constants: &[Constant]) -> Result<Function, 
     } else {
         "public"
     };
-    let is_static = visibility == "static";
-    let is_private = visibility != "public";
+    let is_static = is_library || visibility == "static";
+    let is_private = is_library || visibility != "public";
+    let is_exported = is_static && visibility != "private";
     let name = inner
         .next()
         .ok_or("Missing function name")?
@@ -232,6 +244,7 @@ fn parse_function(pair: Pair<Rule>, constants: &[Constant]) -> Result<Function, 
         statements: Vec::new(),
         is_private,
         is_static,
+        is_exported,
         return_type,
     };
     for statement in inner {
@@ -436,6 +449,7 @@ fn parse_block(pair: Pair<Rule>, constants: &[Constant]) -> Result<Vec<Statement
             statements: Vec::new(),
             is_private: false,
             is_static: false,
+            is_exported: false,
             return_type: None,
         };
 

@@ -17,6 +17,162 @@ fn project(
 }
 
 #[test]
+fn libraries_inline_private_helpers_and_preserve_artifacts() {
+    let source = r#"import "fees.ark";
+contract Vault(Policy policy, int amount, pubkey owner) {
+    function spend(int value) {
+        Fees.check(value);
+        require(Fees.calculate(value) <= policy.maximum);
+    }
+    function exit(signature sig) tapscript {
+        require(older(Fees.DELAY));
+        require(checkSig(sig, owner));
+    }
+}"#;
+    let library = r#"// Shared fee policy.
+struct Policy { int maximum; }
+library Fees {
+    const int DELAY = 144;
+    const int SIZE = 2;
+    function calculate(int amount) int { return Fees.twice(amount); }
+    private function twice(int amount) int { return amount * 2; }
+    function check(int amount) {
+        int[SIZE] bounds = [0, amount];
+        require(tx.outputs[0].value >= bounds[1]);
+    }
+}"#;
+    let output = project("vault.ark", &[("vault.ark", source), ("fees.ark", library)])
+        .expect("library compiles");
+    let equivalent = library
+        .replace("library Fees {", "contract Fees() {")
+        .replace("private function", "function")
+        .replace("function ", "static function ");
+    let flat = project(
+        "vault.ark",
+        &[("vault.ark", source), ("fees.ark", &equivalent)],
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&output.functions).unwrap(),
+        serde_json::to_value(&flat.functions).unwrap()
+    );
+    assert_eq!(output.functions.len(), 2);
+    assert_eq!(output.structs.len(), 1);
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    let asm = arkade_asm_tokens(&output, "spend");
+    assert!(asm.contains(&"OP_INSPECTOUTPUTVALUE".to_string()));
+    assert!(!asm.contains(&"<amount>".to_string()));
+    assert!(
+        leaf_asm_tokens(&output, "exit", "exit").contains(&"OP_CHECKSEQUENCEVERIFY".to_string())
+    );
+    let bundle = output.source.as_ref().unwrap();
+    assert_eq!(bundle.files["fees.ark"], library);
+    let dir = tempfile::tempdir().unwrap();
+    for (path, source) in &bundle.files {
+        std::fs::write(dir.path().join(path), source).unwrap();
+    }
+    for mut rebuilt in [
+        compile_sources(&bundle.entry, &bundle.files).unwrap(),
+        compile_file(dir.path().join(&bundle.entry)).unwrap(),
+    ] {
+        rebuilt.updated_at = output.updated_at.clone();
+        assert_eq!(
+            serde_json::to_value(rebuilt).unwrap(),
+            serde_json::to_value(&output).unwrap()
+        );
+    }
+}
+
+#[test]
+fn libraries_keep_private_and_transitive_defining_scope() {
+    let libraries = [
+        (
+            "a.ark",
+            r#"import "b.ark";
+library A {
+    const int VALUE = B.VALUE + 1;
+    function value(int x) int { return hidden(x); }
+    private function hidden(int x) int { return B.value(x) + VALUE; }
+}"#,
+        ),
+        (
+            "b.ark",
+            r#"library B {
+    const int VALUE = 7;
+    public function value(int x) int { return B.hidden(x); }
+    private function hidden(int x) int { return x + VALUE; }
+}"#,
+        ),
+    ];
+    let source = r#"import "a.ark"; import "b.ark";
+contract Main(int x) {
+    const int VALUE = 999;
+    function spend(int value) { require(A.value(value) == B.value(value) + 8); }
+}"#;
+    let output = project(
+        "main.ark",
+        &[[("main.ark", source)].as_slice(), &libraries].concat(),
+    )
+    .unwrap();
+    assert_eq!(output.source.unwrap().files.len(), 3);
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    for (imports, call, expected) in [
+        (
+            r#"import "a.ark";"#,
+            "A.hidden(1)",
+            "library function 'A.hidden' is private",
+        ),
+        (r#"import "a.ark";"#, "B.value(1)", "unknown contract 'B'"),
+        (
+            r#"import "a.ark";"#,
+            "A.nope(1)",
+            "unknown function 'A.nope'",
+        ),
+        (
+            r#"import "a.ark"; import "b.ark";"#,
+            "B.hidden(1)",
+            "library function 'B.hidden' is private",
+        ),
+    ] {
+        let source =
+            format!("{imports} contract Main() {{ function spend() {{ require({call} > 0); }} }}");
+        let error = project(
+            "main.ark",
+            &[[("main.ark", source.as_str())].as_slice(), &libraries].concat(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn libraries_reject_invalid_declarations_and_helpers() {
+    for (library, expected) in [
+        ("library Helper() {}", "Parse error"),
+        ("library Helper {} contract Other() {}", "Parse error"),
+        ("library Helper { function exit() tapscript {} }", "libraries cannot declare tapscript"),
+        ("library Helper { function value() int { return secret; } }", "binding 'secret' is undefined"),
+        ("library Helper { function value(int x) int { if (x > 0) { return x; } } }", "must return a value on every path"),
+        ("library Helper { function sha256(int x) int { return x; } }", "reserved"),
+        ("library Helper { function check() { require(tx.outputs[0].scriptPubKey == new Helper()); } }", "library 'Helper' cannot be instantiated"),
+    ] {
+        let error = project("main.ark", &[
+            ("main.ark", r#"import "helper.ark"; contract Main(int secret) { function spend() { require(true); } }"#),
+            ("helper.ark", library),
+        ]).unwrap_err().to_string();
+        assert!(error.contains(expected), "{library}: {error}");
+    }
+    let error = compile("library Helper { function value() int { return 1; } }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("entry file must declare a contract"),
+        "{error}"
+    );
+}
+
+#[test]
 fn imports_inline_helpers_fold_constants_and_preserve_sources() {
     let source = r#"// Original source and comments are embedded.
 import "../shared/types.ark";

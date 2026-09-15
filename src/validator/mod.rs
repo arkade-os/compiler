@@ -2170,6 +2170,7 @@ contract Demo() {
     fn make_contract(name: &str) -> Contract {
         Contract {
             name: name.to_string(),
+            is_library: false,
             structs: vec![],
             parameters: vec![Parameter {
                 name: "owner".to_string(),
@@ -2193,6 +2194,7 @@ contract Demo() {
                 })],
                 is_private: false,
                 is_static: false,
+                is_exported: false,
                 return_type: None,
             }],
             tapscripts: Vec::new(),
