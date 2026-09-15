@@ -14,6 +14,10 @@ const counterPacketType = 2
 
 func TestCompiledCounterRecursion(t *testing.T) {
 	contract := compileArtifact(t, "contracts/counter.ark")
+
+	if len(contract.Functions) != 1 || contract.Functions[0].Name != "increment" {
+		t.Fatalf("library functions leaked into ABI: %+v", contract.Functions)
+	}
 	serverKey := fixedPrivateKey(1)
 	emulatorKey := fixedPrivateKey(2)
 	counter := instantiateGroup(

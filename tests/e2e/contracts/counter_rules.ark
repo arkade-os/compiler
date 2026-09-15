@@ -1,0 +1,24 @@
+library CounterRules {
+  const int STEP = 1;
+  const int PACKET = STEP + 1;
+
+  function increments() {
+    require(
+      read(tx.inputs[0].packet(PACKET)) + STEP == read(tx.packet(PACKET)),
+      "counter must increment"
+    );
+  }
+
+  function persists() {
+    require(
+      tx.outputs[0].scriptPubKey == tx.inputs[0].scriptPubKey,
+      "counter script must persist"
+    );
+    require(
+      tx.outputs[0].value >= tx.inputs[0].value,
+      "counter value must persist"
+    );
+  }
+
+  private function read(bytes packet) int { return bin2num(packet); }
+}
