@@ -59,6 +59,13 @@ const examplePaths = {
     swap: 'non_interactive_swap/non_interactive_swap.ark',
 };
 
+const bundledExamples = Object.fromEntries(
+    Object.entries(examples).map(([id, example]) => {
+        if (!examplePaths[id]) throw new Error(`Missing path for bundled example '${id}'`);
+        return [examplePaths[id], example.code];
+    })
+);
+
 // Global state
 let editor = null;
 let wasmReady = false;
@@ -1180,6 +1187,9 @@ function compilationSources() {
         const path = examplePaths[id] || `_examples/${id}.ark`;
         if (Object.hasOwn(files, path)) throw new Error(`Duplicate source path: ${path}`);
         files[path] = example.code;
+    }
+    for (const [path, source] of Object.entries(bundledExamples)) {
+        if (!Object.hasOwn(files, path)) files[path] = source;
     }
     const entry = currentProject ? `${currentProject}/${currentFile}`
         : examplePaths[currentFile] || `_examples/${currentFile || 'main'}.ark`;
