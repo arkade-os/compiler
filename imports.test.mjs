@@ -36,11 +36,22 @@ for (const [project, file] of selections) {
     assert.deepEqual(rebuilt, output);
 }
 
+vm.runInContext('delete examples.single_sig; delete examplePaths.single_sig;', context);
+for (const [project, file] of selections.filter(([, file]) => file !== 'single_sig')) {
+    context.selection = [project, file];
+    const input = vm.runInContext(`
+        [currentProject, currentFile] = selection;
+        editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
+        compilationSources();
+    `, context);
+    compile_sources(input.entry, JSON.stringify(input.files));
+}
+
 context.bundle = {
     entry: 'vault/main.ark',
     files: {
-        'vault/main.ark': 'import "../shared/fees.ark"; contract Vault() { function spend() { require(Fees.VALUE == 7); } }',
-        'shared/fees.ark': 'contract Fees() { const int VALUE = 7; }',
+        'vault/main.ark': 'import "../shared/fees.ark"; contract Vault() { function spend() { require(Fees.value() == 7); } }',
+        'shared/fees.ark': 'library Fees { const int VALUE = 7; function value() int { return hidden(); } private function hidden() int { return VALUE; } }',
     },
 };
 await vm.runInContext(`
@@ -59,7 +70,7 @@ const sharedInput = vm.runInContext(`
 assert.equal(JSON.parse(compile_sources(sharedInput.entry, JSON.stringify(sharedInput.files))).contractName, 'Vault');
 
 // Compilation reads edits in dependencies, including files that are not selected.
-vm.runInContext(`projects.shared.files['shared/fees.ark'] = 'contract Fees() { const int VALUE = 8; }';`, context);
+vm.runInContext(`projects.shared.files['shared/fees.ark'] = projects.shared.files['shared/fees.ark'].replace('VALUE = 7', 'VALUE = 8');`, context);
 const edited = vm.runInContext('compilationSources()', context);
 assert.match(JSON.parse(compile_sources(edited.entry, JSON.stringify(edited.files))).source.files['shared/shared/fees.ark'], /VALUE = 8/);
 
@@ -83,4 +94,4 @@ for (const prefix of ['#code=', '#project=']) {
     assert.equal(await vm.runInContext('loadFromUrl()', context), null);
 }
 await assert.rejects(vm.runInContext("compressCode('a'.repeat(MAX_SHARED_DECODED_BYTES + 1))", context), /Shared source exceeds/);
-console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, and dependency edits.`);
+console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, and removed shared examples.`);
