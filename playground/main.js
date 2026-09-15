@@ -60,7 +60,10 @@ const examplePaths = {
 };
 
 const bundledExamples = Object.fromEntries(
-    Object.entries(examples).map(([id, example]) => [examplePaths[id], example.code])
+    Object.entries(examples).map(([id, example]) => {
+        if (!examplePaths[id]) throw new Error(`Missing path for bundled example '${id}'`);
+        return [examplePaths[id], example.code];
+    })
 );
 
 // Global state

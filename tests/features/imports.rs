@@ -45,8 +45,8 @@ library Fees {
         .expect("library compiles");
     let equivalent = library
         .replace("library Fees {", "contract Fees() {")
-        .replace("private function", "function")
-        .replace("function ", "static function ");
+        .replace("\n    private function ", "\n    static function ")
+        .replace("\n    function ", "\n    static function ");
     let flat = project(
         "vault.ark",
         &[("vault.ark", source), ("fees.ark", &equivalent)],

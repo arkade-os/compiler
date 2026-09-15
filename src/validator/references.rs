@@ -29,6 +29,7 @@ fn collect_expression<'a>(
 ) {
     match expression {
         Expression::Call { name, .. } if visited.insert(name) => {
+            // Static helpers cannot capture constructor state and are validated independently.
             if let Some(function) = functions
                 .iter()
                 .find(|f| f.is_private && !f.is_static && f.name == *name)
