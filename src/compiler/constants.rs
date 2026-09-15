@@ -283,6 +283,13 @@ fn fold_statements(
                 fold_expression(iterable, values);
                 fold_statements(body, values)?;
             }
+            Statement::ForCount { count, body } => {
+                fold_expression(count, values);
+                if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
+                    *count = Expression::Literal(value);
+                }
+                fold_statements(body, values)?;
+            }
             Statement::Return(None) => {}
         }
     }

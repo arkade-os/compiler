@@ -894,6 +894,32 @@ fn generate_asm_from_statements_recursive(
                     }
                 }
             }
+            Statement::ForCount { count, body } => {
+                let Expression::Literal(count) = count else {
+                    return Err(
+                        "loop count must be a non-negative integer compile-time constant"
+                            .to_string(),
+                    );
+                };
+                let count = count.parse::<usize>().map_err(|_| {
+                    "loop count must be a non-negative integer compile-time constant".to_string()
+                })?;
+                for k in 0..count {
+                    let baseline = generator.stack.clone();
+                    generator.enter_scope();
+                    if k > 0 && functions::contains_return(body) {
+                        generator.emit_unless_returned(body)?;
+                    } else {
+                        generate_asm_from_statements_recursive(body, generator)?;
+                    }
+                    generator.exit_scope()?;
+                    if generator.stack != baseline {
+                        return Err(format!(
+                            "internal compiler error: loop iteration {k} changed outer stack layout"
+                        ));
+                    }
+                }
+            }
             Statement::LetBinding {
                 name,
                 declared_type,

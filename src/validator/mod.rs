@@ -319,7 +319,7 @@ fn validate_local_types(
                     validate_local_types(else_body, function_name, definitions, issues);
                 }
             }
-            Statement::ForIn { body, .. } => {
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
                 validate_local_types(body, function_name, definitions, issues);
             }
             _ => {}
@@ -510,6 +510,10 @@ fn walk_asset_id_stmts(
                 loop_scope.insert(index_var.clone(), ArkType::Int);
                 loop_scope.insert(value_var.clone(), ArkType::Unknown);
                 walk_asset_id_stmts(body, &mut loop_scope, fname, structs, issues);
+            }
+            Statement::ForCount { count, body } => {
+                check_asset_id_expr(count, scope, fname, issues);
+                walk_asset_id_stmts(body, &mut scope.clone(), fname, structs, issues);
             }
         }
     }
@@ -1095,6 +1099,17 @@ fn validate_binding_statements(
                     );
                 }
                 scopes.push(frame);
+                validate_binding_statements(body, function_name, scopes, structs, issues);
+                scopes.pop();
+            }
+            Statement::ForCount { count, body } => {
+                if !matches!(count, Expression::Literal(value) if value.parse::<usize>().is_ok()) {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': loop count must be a non-negative integer compile-time constant",
+                        function_name
+                    )));
+                }
+                scopes.push(HashMap::new());
                 validate_binding_statements(body, function_name, scopes, structs, issues);
                 scopes.pop();
             }
@@ -1831,7 +1846,7 @@ fn check_ctor_assignment(
                     check_ctor_assignment(eb, fname, ctor_names, const_names, issues);
                 }
             }
-            Statement::ForIn { body, .. } => {
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
                 check_ctor_assignment(body, fname, ctor_names, const_names, issues);
             }
             Statement::LetBinding { .. }
@@ -1905,6 +1920,11 @@ fn walk_scope(
                 frame.insert(index_var.clone());
                 frame.insert(value_var.clone());
                 stack.push(frame);
+                walk_scope(body, fname, stack, issues);
+                stack.pop();
+            }
+            Statement::ForCount { body, .. } => {
+                stack.push(HashSet::new());
                 walk_scope(body, fname, stack, issues);
                 stack.pop();
             }

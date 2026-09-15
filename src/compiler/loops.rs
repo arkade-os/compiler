@@ -84,6 +84,10 @@ pub(crate) fn substitute_statement(
             iterable: substitute_expression(iterable, index_var, value_var, k, array_name),
             body: substitute_loop_body(body, index_var, value_var, k, array_name),
         },
+        Statement::ForCount { count, body } => Statement::ForCount {
+            count: substitute_expression(count, index_var, value_var, k, array_name),
+            body: substitute_loop_body(body, index_var, value_var, k, array_name),
+        },
     }
 }
 

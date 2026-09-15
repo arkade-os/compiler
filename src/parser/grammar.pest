@@ -73,8 +73,12 @@ if_stmt = {
 }
 
 // For loop statement (compile-time unrolled)
-for_stmt = {
+for_stmt = { for_in_stmt | for_count_stmt }
+for_in_stmt = {
     "for" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" ~ "in" ~ general_expression ~ block
+}
+for_count_stmt = {
+    "for" ~ "(" ~ general_expression ~ ")" ~ block
 }
 
 // Block of statements

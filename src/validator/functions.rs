@@ -161,6 +161,9 @@ fn validate_body(
                 scope.insert(value_var.clone(), element);
                 validate_body(body, function, &mut scope, contract, issues);
             }
+            Statement::ForCount { body, .. } => {
+                validate_body(body, function, &mut scope.clone(), contract, issues);
+            }
             Statement::Call(_) | Statement::Require(_) | Statement::VarAssign { .. } => {}
         }
     }
@@ -312,6 +315,7 @@ fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
         Statement::VarAssign { value, .. } => vec![value],
         Statement::IfElse { condition, .. } => vec![condition],
         Statement::ForIn { iterable, .. } => vec![iterable],
+        Statement::ForCount { count, .. } => vec![count],
         Statement::Return(None) | Statement::Require(_) => vec![],
     }
 }
@@ -364,7 +368,9 @@ fn analyze_calls(
                     analyze_calls(body, contract, visiting, guarantees)?;
                 }
             }
-            Statement::ForIn { body, .. } => analyze_calls(body, contract, visiting, guarantees)?,
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                analyze_calls(body, contract, visiting, guarantees)?
+            }
             _ => {}
         }
     }
@@ -443,6 +449,15 @@ fn flow_block(statements: &[Statement], incoming: u8, guarantees: &HashMap<Strin
                 flow.fallthrough = body.fallthrough;
                 flow.returned |= body.returned;
             }
+            Statement::ForCount {
+                count: Expression::Literal(count),
+                body,
+            } if count.parse::<usize>().is_ok_and(|count| count > 0) => {
+                let body = flow_block(body, flow.fallthrough, guarantees);
+                flow.fallthrough = body.fallthrough;
+                flow.returned |= body.returned;
+            }
+            Statement::ForCount { .. } => {}
             Statement::Call(_) | Statement::LetBinding { .. } | Statement::VarAssign { .. } => {}
         }
     }
