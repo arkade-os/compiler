@@ -129,8 +129,11 @@ covenants and today's exit asymmetry).
 
 **Revision 2.2** — corrections arising from an independent formal-verification pass
 over revision 2.1 (TLA+ models of the ceremony and the timed exit race; Lean proofs of
-the §9.2 algebra). The formalization is a separate research artifact, not part of this
-repository; it is cited here only for provenance of these corrections:
+the §9.2 algebra). Those artifacts live alongside this document in
+[`formal/`](./formal/), with their assumptions, bounds and expected results recorded in
+[`formal/VERIFICATION-2.2.md`](./formal/VERIFICATION-2.2.md); `formal/verify.py`
+re-runs them. They are research artifacts and change no compiler behaviour. The
+corrections they produced:
 
 15. **A24 — honest-operation self-slash (§9.2), the substantive fix in this
     revision.** Revision 2.1 specified nonce commitments indexed *per epoch*, while
