@@ -108,10 +108,10 @@ fn covenant_time_comparisons_use_inspection() {
 }
 
 #[test]
-fn tapleaf_time_comparisons_keep_cltv() {
+fn tapleaf_after_uses_cltv() {
     for bound in ["500000", "DEADLINE", "deadline"] {
         let output = compile(&format!(
-            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function exit(signature sig) tapscript {{ require(tx.time >= {bound}); require(checkSig(sig, server)); }} }}"
+            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function exit(signature sig) tapscript {{ require(after({bound})); require(checkSig(sig, server)); }} }}"
         )).unwrap();
         let operand = if bound == "deadline" {
             "<deadline>"
