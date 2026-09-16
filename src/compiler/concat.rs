@@ -139,6 +139,14 @@ impl ConcatPass {
                 loop_scope.insert(value_var.clone(), element_type);
                 self.rewrite_statements_concat(body, &mut loop_scope);
             }
+            Statement::ForCount { count, body } => {
+                let (new_count, _) = self.rewrite_expression_concat(
+                    std::mem::replace(count, Expression::Literal(String::new())),
+                    scope,
+                );
+                *count = new_count;
+                self.rewrite_statements_concat(body, &mut scope.clone());
+            }
         }
     }
 

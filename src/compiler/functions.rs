@@ -24,7 +24,7 @@ pub(super) fn contains_return(statements: &[Statement]) -> bool {
             contains_return(then_body)
                 || else_body.as_ref().is_some_and(|body| contains_return(body))
         }
-        Statement::ForIn { body, .. } => contains_return(body),
+        Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => contains_return(body),
         _ => false,
     })
 }

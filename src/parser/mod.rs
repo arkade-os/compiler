@@ -341,32 +341,60 @@ fn parse_function_body(
             Ok(())
         }
         Rule::for_stmt => {
-            let mut inner = pair.into_inner();
-            let index_var = inner
+            let loop_statement = pair
+                .into_inner()
                 .next()
-                .ok_or_else(|| "Parse error: Missing index variable in for loop".to_string())?
-                .as_str()
-                .to_string();
-            let value_var = inner
-                .next()
-                .ok_or_else(|| "Parse error: Missing value variable in for loop".to_string())?
-                .as_str()
-                .to_string();
-            let iterable_pair = inner
-                .next()
-                .ok_or_else(|| "Parse error: Missing iterable in for loop".to_string())?;
-            let iterable = parse_general_expression(iterable_pair)?;
-            let body_block = inner
-                .next()
-                .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?;
-            let body = parse_block(body_block, constants)?;
-
-            func.statements.push(Statement::ForIn {
-                index_var,
-                value_var,
-                iterable,
-                body,
-            });
+                .ok_or_else(|| "Parse error: Missing for loop".to_string())?;
+            let loop_rule = loop_statement.as_rule();
+            let mut inner = loop_statement.into_inner();
+            match loop_rule {
+                Rule::for_in_stmt => {
+                    let index_var = inner
+                        .next()
+                        .ok_or_else(|| {
+                            "Parse error: Missing index variable in for loop".to_string()
+                        })?
+                        .as_str()
+                        .to_string();
+                    let value_var = inner
+                        .next()
+                        .ok_or_else(|| {
+                            "Parse error: Missing value variable in for loop".to_string()
+                        })?
+                        .as_str()
+                        .to_string();
+                    let iterable =
+                        parse_general_expression(inner.next().ok_or_else(|| {
+                            "Parse error: Missing iterable in for loop".to_string()
+                        })?)?;
+                    let body = parse_block(
+                        inner
+                            .next()
+                            .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
+                        constants,
+                    )?;
+                    func.statements.push(Statement::ForIn {
+                        index_var,
+                        value_var,
+                        iterable,
+                        body,
+                    });
+                }
+                Rule::for_count_stmt => {
+                    let count =
+                        parse_general_expression(inner.next().ok_or_else(|| {
+                            "Parse error: Missing count in for loop".to_string()
+                        })?)?;
+                    let body = parse_block(
+                        inner
+                            .next()
+                            .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
+                        constants,
+                    )?;
+                    func.statements.push(Statement::ForCount { count, body });
+                }
+                _ => return Err("Parse error: Invalid for loop".to_string()),
+            }
             Ok(())
         }
         Rule::function_call_stmt => {

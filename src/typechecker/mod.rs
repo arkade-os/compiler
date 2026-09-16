@@ -308,6 +308,10 @@ fn resolve_statements(
                 loop_scope.insert(value_var.clone(), element_type);
                 resolve_statements(body, &mut loop_scope, structs, returns);
             }
+            Statement::ForCount { count, body } => {
+                resolve_expression(count, scope, returns);
+                resolve_statements(body, &mut scope.clone(), structs, returns);
+            }
         }
     }
 }
@@ -503,6 +507,10 @@ fn check_statement(
             };
             loop_scope.insert(value_var.clone(), element);
             check_statements(body, &mut loop_scope, errors, fn_name, structs);
+        }
+        Statement::ForCount { count, body } => {
+            check_expression(count, scope, errors, fn_name);
+            check_statements(body, &mut scope.clone(), errors, fn_name, structs);
         }
     }
 }
