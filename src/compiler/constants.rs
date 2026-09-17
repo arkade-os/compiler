@@ -131,13 +131,13 @@ fn resolve_value(
     }
     active.push(name.clone());
     // A nested failure already names the constant it came from; keep that one name.
-    let value = evaluate(&constant.value, &mut |name| {
-        resolve_value(name, declarations, values, active)
-    })
-    .map_err(|error| match error.starts_with("constant '") {
-        true => error,
-        false => format!("constant '{name}': {error}"),
-    })?;
+    let mut resolve = |name: &str| resolve_value(name, declarations, values, active);
+    let value = validate_expression(&constant.value, &mut resolve)
+        .and_then(|_| evaluate(&constant.value, &mut resolve))
+        .map_err(|error| match error.starts_with("constant '") {
+            true => error,
+            false => format!("constant '{name}': {error}"),
+        })?;
     active.pop();
     if kind(&value) != constant.const_type {
         return Err(format!(
@@ -158,14 +158,72 @@ fn kind(value: &str) -> &'static str {
     }
 }
 
+fn integer(text: &str) -> Result<i64, String> {
+    text.parse()
+        .map_err(|_| format!("expected a signed 64-bit integer, got '{text}'"))
+}
+
+// Validate skipped operands without evaluating their arithmetic.
+fn validate_expression(
+    expression: &Expression,
+    resolve: &mut impl FnMut(&str) -> Result<String, String>,
+) -> Result<&'static str, String> {
+    match expression {
+        Expression::Literal(text) => {
+            if kind(text) == "int" {
+                integer(text)?;
+            }
+            Ok(kind(text))
+        }
+        Expression::Variable(name) | Expression::Property(name) => Ok(kind(&resolve(name)?)),
+        Expression::Negate { value } | Expression::Not { value } => {
+            let expected = if matches!(expression, Expression::Not { .. }) {
+                "bool"
+            } else {
+                if let Expression::Literal(text) = value.as_ref() {
+                    integer(&format!("-{text}"))?;
+                    return Ok("int");
+                }
+                "int"
+            };
+            if validate_expression(value, resolve)? != expected {
+                return Err(if expected == "bool" {
+                    "operator '!' requires a bool constant".to_string()
+                } else {
+                    "expected a signed 64-bit integer".to_string()
+                });
+            }
+            Ok(expected)
+        }
+        Expression::BinaryOp { left, op, right } => {
+            let left = validate_expression(left, resolve)?;
+            let right = validate_expression(right, resolve)?;
+            let valid = match op.as_str() {
+                "&&" | "||" => left == "bool" && right == "bool",
+                "==" | "!=" => left == right,
+                _ => left == "int" && right == "int",
+            };
+            if !valid {
+                return Err(match op.as_str() {
+                    "&&" | "||" => format!("operator '{op}' requires bool constants"),
+                    "==" | "!=" => format!("operator '{op}' requires constants of the same type"),
+                    _ => "expected a signed 64-bit integer".to_string(),
+                });
+            }
+            Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/") {
+                "int"
+            } else {
+                "bool"
+            })
+        }
+        _ => Err("initializer must be a constant expression".to_string()),
+    }
+}
+
 fn evaluate(
     expression: &Expression,
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<String, String> {
-    let integer = |text: &str| {
-        text.parse::<i64>()
-            .map_err(|_| format!("expected a signed 64-bit integer, got '{text}'"))
-    };
     let overflow = || "integer overflow in constant expression".to_string();
     match expression {
         Expression::Literal(text) => match kind(text) {
@@ -193,6 +251,12 @@ fn evaluate(
         }
         Expression::BinaryOp { left, op, right } => {
             let left = evaluate(left, resolve)?;
+            if matches!(op.as_str(), "&&" | "||") {
+                if (op == "&&" && left == "false") || (op == "||" && left == "true") {
+                    return Ok(left);
+                }
+                return evaluate(right, resolve);
+            }
             let right = evaluate(right, resolve)?;
             if matches!(op.as_str(), "==" | "!=") {
                 if kind(&left) != kind(&right) {

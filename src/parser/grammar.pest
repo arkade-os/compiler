@@ -105,12 +105,7 @@ require_stmt = {
 }
 
 require_expression = _{
-    check_sig_from_stack_verify |
-    (check_sig_from_stack ~ !comparison_operator) |
-    (check_sig ~ !comparison_operator) |
-    check_multisig |
-    time_comparison |
-    hash_comparison |
+    ((check_sig_from_stack_verify | check_sig_from_stack | check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |
     general_expression
 }
 
@@ -126,9 +121,11 @@ variable_declaration = {
 
 // General expression with operator precedence
 // Used in conditions, let bindings, and assignments
-general_expression = { comparison_expr }
+general_expression = { logical_or_expr }
+logical_or_expr = { logical_and_expr ~ (or_op ~ logical_and_expr)* }
+logical_and_expr = { comparison_expr ~ (and_op ~ comparison_expr)* }
 
-// Comparison expressions (lowest precedence)
+// Comparisons bind tighter than logical operators.
 comparison_expr = {
     additive_expr ~ (comparison_operator ~ additive_expr)?
 }
@@ -212,6 +209,8 @@ bool_literal = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
 add_op = { "+" }
 sub_op = { "-" }
 not_op = { "!" ~ !"=" }
+and_op = { "&&" }
+or_op = { "||" }
 mul_op = { "*" }
 div_op = { "/" }
 

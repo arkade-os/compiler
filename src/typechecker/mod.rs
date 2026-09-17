@@ -957,7 +957,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                     }
                 }
                 "-" | "*" | "/" => ArkType::Int,
-                "==" | "!=" | ">=" | "<=" | ">" | "<" => ArkType::Bool,
+                "==" | "!=" | ">=" | "<=" | ">" | "<" | "&&" | "||" => ArkType::Bool,
                 _ => ArkType::Unknown,
             }
         }

@@ -628,3 +628,46 @@ fn bytes_constants_fold_through_references_and_equality() {
         assert!(error.contains(message), "{declaration}: {error}");
     }
 }
+
+#[test]
+fn logical_constants_short_circuit_and_validate_skipped_operands() {
+    for (expression, expected) in [
+        ("true || false && false", "true"),
+        ("(true || false) && false", "false"),
+        ("!(true && false) && 2 > 1", "true"),
+        ("false && 1 / 0 > 0", "false"),
+        ("true || 1 / 0 > 0", "true"),
+        ("FORWARD && !false", "true"),
+        ("false || -9223372036854775808 < 0", "true"),
+    ] {
+        let output = compile(&format!("contract C() {{ const bool VALUE = {expression}; const bool FORWARD = true; function spend() {{ require(VALUE == {expected}); }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        let literal = compile(&format!(
+            "contract C() {{ function spend() {{ require({expected} == {expected}); }} }}"
+        ))
+        .unwrap();
+        assert_eq!(
+            arkade_asm_tokens(&output, "spend"),
+            arkade_asm_tokens(&literal, "spend")
+        );
+    }
+    for expression in [
+        "true || 9223372036854775808 > 0",
+        "false && -9223372036854775809 < 0",
+    ] {
+        let error = error(&format!("contract C() {{ const bool VALUE = {expression}; function spend() {{ require(true); }} }}"));
+        assert!(
+            error.contains("signed 64-bit integer"),
+            "{expression}: {error}"
+        );
+    }
+    for expression in [
+        "false && 1",
+        "true || 0x",
+        "false && missing",
+        "true || helper()",
+        "false && VALUE",
+        "true || (true + 1 > 0)",
+    ] {
+        compile(&format!("contract C() {{ const bool VALUE = {expression}; static function helper() bool {{ return true; }} function spend() {{ require(true); }} }}")).expect_err("invalid skipped constant operand");
+    }
+}

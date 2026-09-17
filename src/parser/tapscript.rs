@@ -59,6 +59,8 @@ pub(crate) fn parse_tap_item(
     use crate::models::{HashFn, TapItem};
     match pair.as_rule() {
         Rule::general_expression
+        | Rule::logical_or_expr
+        | Rule::logical_and_expr
         | Rule::comparison_expr
         | Rule::additive_expr
         | Rule::multiplicative_expr
