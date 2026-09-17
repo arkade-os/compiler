@@ -1519,8 +1519,12 @@ fn validate_binding_expression(
             policy,
             exceptions,
         } => {
-            if resolved_expression_type(output_index, scopes) != ArkType::Int {
-                issues.push(ValidationIssue::error("tunnel output index must be int"));
+            let actual = resolved_expression_type(output_index, scopes);
+            if actual != ArkType::Int {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': tunnel output index must be int, got '{}'",
+                    actual.as_str()
+                )));
             }
             if policy.iter().any(|value| !matches!(value, Expression::Literal(literal) if literal == "true" || literal == "false")) {
                 issues.push(ValidationIssue::error("tunnel policy fields must be compile-time bool constants"));

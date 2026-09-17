@@ -179,6 +179,7 @@ func arrayTypeParts(typeStr string) (string, int) {
 }
 
 func flattenInput(name, typeName string, structs []structDefinition) []string {
+	// Native field order follows src/models/mod.rs::builtin_struct_fields.
 	switch typeName {
 	case "AssetId":
 		return []string{name + ".txid", name + ".gidx"}

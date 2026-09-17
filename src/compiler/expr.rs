@@ -29,6 +29,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             push_literal_asm(path, asm);
             asm.push(OP_INSPECTINTENTMESSAGE.to_string());
+            // The opcode leaves the value below its presence flag.
             asm.push(if *presence_only { OP_NIP } else { OP_VERIFY }.to_string());
         }
         Expression::Tunnel {

@@ -2,6 +2,54 @@ use crate::common::{arkade_asm, arkade_inputs, group, witness_names};
 use arkade_compiler::compile;
 
 #[test]
+fn covenant_opcodes_report_their_context_in_tapscript() {
+    for (expression, name) in [
+        ("this . expiry > 0", "this.expiry"),
+        ("after(this.expiry)", "this.expiry"),
+        ("checkTime(0)", "checkTime(...)"),
+        ("!checkTime(0)", "checkTime(...)"),
+        ("this.tunnel(0)", "this.tunnel(...)"),
+        ("this.tunnel(0) == true", "this.tunnel(...)"),
+        (
+            "tx.intent.field(\"type\") == \"register\"",
+            "tx.intent.field(...)",
+        ),
+        ("tx.intent.has(\"type\")", "tx.intent.has(...)"),
+        ("!tx.intent.has(\"type\")", "tx.intent.has(...)"),
+    ] {
+        let source =
+            format!("contract C() {{ function spend() tapscript {{ require({expression}); }} }}");
+        let error = compile(&source).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!("`{name}` is only available in covenant functions")),
+            "{expression}: {error}"
+        );
+    }
+}
+
+#[test]
+fn tunnel_indexes_require_integer_helper_returns() {
+    let output = compile(
+        "contract C() { private function index() int { return 0; } function spend() { require(this.tunnel(index())); } }",
+    )
+    .unwrap();
+    assert!(arkade_asm(&output, "spend").contains("OP_TUNNEL"));
+    for helper in [
+        "private function index() { require(true); }",
+        "private function index() bool { return true; }",
+    ] {
+        let source = format!(
+            "contract C() {{ {helper} function spend() {{ require(this.tunnel(index())); }} }}"
+        );
+        let error = compile(&source).unwrap_err().to_string();
+        assert!(
+            error.contains("function 'spend': tunnel output index must be int, got"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn expiry_is_an_integer_in_the_covenant_only() {
     let output = compile(
         r#"
