@@ -170,7 +170,7 @@ fn test_asset_count_with_variable_index() {
 
     let asm_str = crate::common::arkade_asm(&output, "checkAssets");
     assert!(
-        asm_str.contains("OP_PICK OP_INSPECTOUTASSETCOUNT"),
+        asm_str.contains("OP_ROLL OP_INSPECTOUTASSETCOUNT"),
         "Expected symbolic outputIdx read in ASM: {asm_str}"
     );
     assert!(

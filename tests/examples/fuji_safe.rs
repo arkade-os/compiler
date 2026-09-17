@@ -66,15 +66,15 @@ fn test_fuji_safe_contract() {
         (
             "claim",
             "<treasuryBurnScript>",
-            "OP_5 OP_PICK",
+            "OP_4 OP_PICK",
             "OP_2 OP_PICK",
             &[("treasurySig", "signature")][..],
         ),
         (
             "liquidate",
             "<treasuryBurnScript>",
-            "OP_9 OP_PICK",
-            "OP_3 OP_PICK",
+            "OP_4 OP_PICK",
+            "OP_2 OP_PICK",
             &[
                 ("currentPrice", "int"),
                 ("oracleSig", "signature"),
@@ -84,8 +84,8 @@ fn test_fuji_safe_contract() {
         (
             "redeem",
             "<borrowerBurnScript>",
-            "OP_3 OP_PICK",
-            "OP_1 OP_PICK",
+            "OP_3 OP_ROLL",
+            "OP_1 OP_ROLL",
             &[("borrowerSig", "signature")][..],
         ),
         (
@@ -96,7 +96,7 @@ fn test_fuji_safe_contract() {
                 "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,<exit>,",
                 "<treasuryBurnScript>,<borrowerBurnScript>)>"
             ),
-            "OP_1 OP_PICK",
+            "OP_1 OP_ROLL",
             &[("treasurySig", "signature")][..],
         ),
     ] {

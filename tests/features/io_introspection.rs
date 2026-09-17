@@ -213,7 +213,7 @@ fn test_variable_index_input() {
     let output = result.unwrap();
     let asm_str = crate::common::arkade_asm(&output, "checkInput");
     assert!(
-        asm_str.contains("OP_PICK OP_INSPECTINPUTVALUE"),
+        asm_str.contains("OP_ROLL OP_INSPECTINPUTVALUE"),
         "{asm_str}"
     );
     assert!(
@@ -248,7 +248,7 @@ fn test_variable_index_output() {
     let output = result.unwrap();
     let asm_str = crate::common::arkade_asm(&output, "checkOutput");
     assert!(
-        asm_str.contains("OP_PICK OP_INSPECTOUTPUTVALUE"),
+        asm_str.contains("OP_ROLL OP_INSPECTOUTPUTVALUE"),
         "{asm_str}"
     );
     assert!(

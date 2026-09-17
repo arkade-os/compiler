@@ -22,15 +22,12 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
 #[test]
 fn integer_comparisons_emit_all_boolean_operators() {
     let cases: [(&str, &[&str]); 6] = [
-        ("==", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL]),
-        ("!=", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL, OP_NOT]),
-        (
-            ">=",
-            &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_GREATERTHANOREQUAL],
-        ),
-        (">", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_GREATERTHAN]),
-        ("<=", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_LESSTHANOREQUAL]),
-        ("<", &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_LESSTHAN]),
+        ("==", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_EQUAL]),
+        ("!=", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_EQUAL, OP_NOT]),
+        (">=", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_GREATERTHANOREQUAL]),
+        (">", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_GREATERTHAN]),
+        ("<=", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_LESSTHANOREQUAL]),
+        ("<", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_LESSTHAN]),
     ];
 
     for (operator, expected) in cases {
@@ -77,7 +74,7 @@ fn declared_scalar_types_compare_directly() {
             "{scalar_type} equality must emit OP_EQUAL: {asm:?}"
         );
         assert!(
-            contains_tokens(&asm, &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL, OP_NOT]),
+            contains_tokens(&asm, &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_EQUAL, OP_NOT]),
             "{scalar_type} inequality must emit OP_EQUAL OP_NOT: {asm:?}"
         );
         assert!(
@@ -107,7 +104,7 @@ fn active_input_index_comparison_preserves_operand_order() {
         "reversed comparison must emit the variable first: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &[OP_PUSHCURRENTINPUTINDEX, OP_1, OP_PICK, OP_EQUAL]),
+        contains_tokens(&asm, &[OP_PUSHCURRENTINPUTINDEX, OP_1, OP_ROLL, OP_EQUAL]),
         "property-first comparison must emit the property first: {asm:?}"
     );
     assert!(
@@ -128,13 +125,13 @@ fn require_accepts_direct_boolean_expressions() {
     );
 
     assert!(
-        contains_tokens(&asm, &[OP_1, OP_PICK, OP_VERIFY]),
+        contains_tokens(&asm, &[OP_1, OP_ROLL, OP_VERIFY]),
         "a bool variable must be read from its symbolic stack slot: {asm:?}"
     );
     assert!(
         contains_tokens(
             &asm,
-            &["OP_2", OP_PICK, OP_1, OP_PICK, OP_CHECKSIG, OP_VERIFY]
+            &[OP_1, OP_ROLL, OP_1, OP_ROLL, OP_CHECKSIG, OP_VERIFY]
         ),
         "checkSig must be accepted as a direct boolean requirement: {asm:?}"
     );
@@ -205,7 +202,7 @@ fn boolean_calls_can_be_compared_or_required_directly() {
     assert!(
         contains_tokens(
             &asm,
-            &[OP_CHECKSIGFROMSTACK, "OP_3", OP_PICK, OP_EQUAL, OP_NOT]
+            &[OP_CHECKSIGFROMSTACK, "OP_3", OP_ROLL, OP_EQUAL, OP_NOT]
         ),
         "checkSigFromStack result must support inequality: {asm:?}"
     );
@@ -256,12 +253,12 @@ fn comparison_results_can_be_compared_as_boolean_operands() {
             &asm,
             &[
                 OP_0,
-                OP_PICK,
-                "OP_2",
-                OP_PICK,
+                OP_ROLL,
+                OP_1,
+                OP_ROLL,
                 OP_LESSTHAN,
-                "OP_3",
-                OP_PICK,
+                OP_1,
+                OP_ROLL,
                 OP_EQUAL
             ]
         ),
@@ -299,14 +296,14 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
     assert!(
         asm.windows(4).any(|window| {
             window[0] == OP_1
-                && window[1] == OP_PICK
+                && window[1] == OP_ROLL
                 && window[2].contains("VTXO:SingleSig(")
                 && window[3] == OP_EQUAL
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &["OP_2", OP_PICK, "OP_TXID", OP_EQUAL]),
+        contains_tokens(&asm, &[OP_1, OP_ROLL, "OP_TXID", OP_EQUAL]),
         "introspection comparison must emit its native opcode: {asm:?}"
     );
 }

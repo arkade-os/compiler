@@ -16,9 +16,9 @@ use crate::opcodes::{
     OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
     OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL,
     OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PICK,
-    OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES, OP_SHA256, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP,
-    OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+    OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES, OP_ROLL, OP_SHA256,
+    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB,
+    OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
@@ -76,6 +76,11 @@ struct Generator {
     functions: Vec<Function>,
     // None outside a helper; Some(None) inside a void helper.
     return_type: Option<Option<String>>,
+    // Record reads once, then replay final uses at their new stack depths.
+    final_reads: Vec<bool>,
+    last_reads: std::collections::HashMap<(String, usize), usize>,
+    read_cursor: Option<usize>,
+    preserve_bindings: bool,
 }
 
 impl Generator {
@@ -138,6 +143,10 @@ impl Generator {
             scope,
             functions: Vec::new(),
             return_type: None,
+            final_reads: Vec::new(),
+            last_reads: std::collections::HashMap::new(),
+            read_cursor: None,
+            preserve_bindings: false,
         })
     }
 
@@ -211,8 +220,36 @@ impl Generator {
             .binding_index(name)
             .ok_or_else(|| format!("undefined binding '{name}'"))?;
         let depth = self.stack.len() - 1 - index;
+        let consume = if let Some(cursor) = self.read_cursor.as_mut() {
+            let consume = *self
+                .final_reads
+                .get(*cursor)
+                .ok_or("internal compiler error: final-use analysis diverged from emission")?;
+            *cursor += 1;
+            consume
+        } else {
+            if let Some(previous) = self
+                .last_reads
+                .insert((name.to_string(), index), self.final_reads.len())
+            {
+                self.final_reads[previous] = false;
+            }
+            // Arrays and outer scope slots stay pinned until layouts and joins support released slots.
+            self.final_reads.push(
+                !self.preserve_bindings
+                    && !name.starts_with('$')
+                    && self
+                        .scopes
+                        .last()
+                        .is_none_or(|(baseline, _)| index >= *baseline),
+            );
+            false
+        };
         self.push_integer_temporary(depth);
-        self.apply(OP_PICK, 1, 1)
+        if consume {
+            self.stack.remove(index);
+        }
+        self.apply(if consume { OP_ROLL } else { OP_PICK }, 1, 1)
     }
 
     fn push_integer_temporary(&mut self, value: usize) {
@@ -470,12 +507,19 @@ impl Generator {
         expression: &Expression,
         expected: usize,
     ) -> Result<(), String> {
-        let before = self.stack.len();
+        let before = self
+            .stack
+            .iter()
+            .filter(|item| matches!(item, StackItem::Temporary))
+            .count();
         let mut raw = Vec::new();
         let mut expression = expression.clone();
         let mut calls = Vec::new();
         functions::extract_calls(&mut expression, &mut calls);
         emit_expression_asm(&expression, &mut raw);
+        // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
+        let preserved = self.preserve_bindings;
+        self.preserve_bindings |= raw.iter().any(|token| token == OP_IF);
         let mut branches = Vec::new();
         for token in raw {
             if token == OP_IF {
@@ -501,17 +545,26 @@ impl Generator {
                 self.lower_raw_token(&token)?;
             }
         }
+        self.preserve_bindings = preserved;
         if !branches.is_empty() {
             return Err("unclosed logical branch".to_string());
         }
-        if self.stack.len() != before + expected
-            || self.stack[before..]
+        let after = self
+            .stack
+            .iter()
+            .filter(|item| matches!(item, StackItem::Temporary))
+            .count();
+        if after != before + expected
+            || self
+                .stack
                 .iter()
+                .rev()
+                .take(expected)
                 .any(|item| !matches!(item, StackItem::Temporary))
         {
             return Err(format!(
                 "expression produces {} stack items; exactly {expected} required",
-                self.stack.len().saturating_sub(before),
+                after.saturating_sub(before),
             ));
         }
         Ok(())
@@ -565,6 +618,9 @@ impl Generator {
         if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
             return Err("internal compiler error: assignment has no result value".to_string());
         }
+        if let Some(previous) = self.last_reads.remove(&(name, index)) {
+            self.final_reads[previous] = false;
+        }
         let depth = self.stack.len().checked_sub(index + 2).ok_or_else(|| {
             format!("internal compiler error: invalid assignment target '{display_name}'")
         })?;
@@ -573,6 +629,10 @@ impl Generator {
     }
 
     fn assign_indexed_binding(&mut self, array: &str, index: &Expression) -> Result<(), String> {
+        if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
+            return Err("internal compiler error: assignment has no result value".to_string());
+        }
+        self.emit_expression(index)?;
         let first_element = internal_array_binding_name(array, "0");
         let first_index = self
             .binding_index(&first_element)
@@ -588,11 +648,6 @@ impl Generator {
                 "cannot assign to constructor parameter '{array}'; constructor parameters are immutable"
             ));
         }
-        if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
-            return Err("internal compiler error: assignment has no result value".to_string());
-        }
-
-        self.emit_expression(index)?;
         let first_depth_without_operands =
             self.stack
                 .len()
@@ -623,9 +678,10 @@ impl Generator {
         while self.stack.len() > baseline {
             match self.stack.last() {
                 Some(StackItem::Binding {
+                    name,
                     kind: BindingKind::Local,
-                    ..
                 }) => {
+                    self.last_reads.remove(&(name.clone(), self.stack.len() - 1));
                     self.asm.push(OP_DROP.to_string());
                     self.stack.pop();
                 }
@@ -819,9 +875,19 @@ fn covenant_for(
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
+    let mut analysis = Generator::new(&function.parameters, &retained_parameters, structs)?;
+    analysis.functions = functions.to_vec();
+    generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
     let mut generator = Generator::new(&function.parameters, &retained_parameters, structs)?;
     generator.functions = functions.to_vec();
+    generator.final_reads = analysis.final_reads;
+    generator.read_cursor = Some(0);
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
+    if generator.read_cursor != Some(generator.final_reads.len()) {
+        return Err(
+            "internal compiler error: final-use analysis diverged from emission".to_string(),
+        );
+    }
     let asm = generator.finish()?;
     Ok(ArkadeCovenant { inputs, asm })
 }

@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL,
-    OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP, OP_NEGATE, OP_PICK, OP_SHA256FINALIZE,
+    OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_MODEXP, OP_NEGATE, OP_PICK, OP_ROLL, OP_SHA256FINALIZE,
     OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SUB, OP_SWAP, OP_TWEAKVERIFY,
 };
 
@@ -110,7 +110,7 @@ fn test_digest() {
     let output = compile(code).expect("compile digest");
     let asm = crate::common::arkade_asm_tokens(&output, "hash");
     assert!(
-        contains_tokens(&asm, &[OP_1, OP_PICK, OP_1, OP_PICK, OP_DIGEST]),
+        contains_tokens(&asm, &[OP_1, OP_ROLL, OP_1, OP_ROLL, OP_DIGEST]),
         "Expected ordered {OP_DIGEST} operand reads in ASM: {asm:?}"
     );
 }
@@ -133,7 +133,7 @@ fn test_digest_concatenates_bytes_operands() {
     assert!(
         contains_tokens(
             &asm,
-            &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_CAT, "OP_3", OP_PICK, OP_DIGEST]
+            &[OP_0, OP_PICK, "OP_2", OP_ROLL, OP_CAT, "OP_2", OP_ROLL, OP_DIGEST]
         ),
         "Expected digest operands to be concatenated; asm: {asm:?}"
     );
@@ -159,7 +159,7 @@ fn test_unary_minus_negates() {
     let output = compile(code).expect("compile unary minus");
     let asm = crate::common::arkade_asm_tokens(&output, "negateValue");
     assert!(
-        contains_tokens(&asm, &["OP_2", OP_PICK, OP_NEGATE]),
+        contains_tokens(&asm, &[OP_0, OP_ROLL, OP_NEGATE]),
         "Expected unary `-` to read its operand and emit {OP_NEGATE}; asm: {asm:?}"
     );
 }
@@ -205,7 +205,7 @@ fn test_binary_minus_still_subtracts() {
     let output = compile(code).expect("compile subtraction");
     let asm = crate::common::arkade_asm_tokens(&output, "diff");
     assert!(
-        contains_tokens(&asm, &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_SUB]),
+        contains_tokens(&asm, &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_SUB]),
         "Expected a binary subtraction; asm: {asm:?}"
     );
     assert!(
@@ -230,7 +230,7 @@ fn test_mod_exp() {
     assert!(
         contains_tokens(
             &asm,
-            &[OP_1, OP_PICK, "OP_3", OP_PICK, "OP_2", OP_PICK, OP_MODEXP]
+            &[OP_1, OP_ROLL, "OP_2", OP_ROLL, "OP_2", OP_ROLL, OP_MODEXP]
         ),
         "Expected ordered {OP_MODEXP} operand reads in ASM: {asm:?}"
     );
@@ -253,7 +253,7 @@ fn test_ec_add_returns_typed_point() {
     let output = compile(code).expect("ecAdd returns ECPoint");
     let asm = crate::common::arkade_asm_tokens(&output, "add");
     assert!(
-        contains_tokens(&asm, &[OP_ECADD, OP_SWAP, OP_0, OP_PICK]),
+        contains_tokens(&asm, &[OP_ECADD, OP_SWAP, OP_0, OP_ROLL]),
         "EC point output must be normalized to struct field order: {asm:?}"
     );
 }
@@ -344,20 +344,20 @@ fn test_ec_pairing() {
             &asm,
             &[
                 OP_1,
-                OP_PICK,
+                OP_ROLL,
+                "OP_2",
+                OP_ROLL,
                 "OP_3",
-                OP_PICK,
+                OP_ROLL,
+                "OP_4",
+                OP_ROLL,
                 "OP_5",
-                OP_PICK,
-                "OP_7",
-                OP_PICK,
-                "OP_9",
-                OP_PICK,
-                "OP_11",
-                OP_PICK,
+                OP_ROLL,
+                "OP_6",
+                OP_ROLL,
                 OP_1,
                 "OP_7",
-                OP_PICK,
+                OP_ROLL,
                 OP_ECPAIRING
             ]
         ),
@@ -423,7 +423,7 @@ fn test_sighash() {
     let output = compile(code).expect("compile sighash");
     let asm = crate::common::arkade_asm_tokens(&output, "hashCurrentInput");
     assert!(
-        contains_tokens(&asm, &[OP_0, OP_PICK, OP_SIGHASH]),
+        contains_tokens(&asm, &[OP_0, OP_ROLL, OP_SIGHASH]),
         "Expected ordered {OP_SIGHASH} operand read in ASM: {asm:?}"
     );
 }
@@ -634,11 +634,11 @@ fn unary_negation_in_builtin_atom_arguments() {
         ),
         (
             "let result = num2bin(-value, 4);",
-            "OP_0 OP_PICK OP_NEGATE 4 OP_NUM2BIN",
+            "OP_0 OP_ROLL OP_NEGATE 4 OP_NUM2BIN",
         ),
         (
             "let result = modExp(--value, 2, 3);",
-            "OP_0 OP_PICK OP_NEGATE OP_NEGATE 2 3 OP_MODEXP",
+            "OP_0 OP_ROLL OP_NEGATE OP_NEGATE 2 3 OP_MODEXP",
         ),
         (
             "let result = ecAdd(-1, 2, 3, 4, 0);",

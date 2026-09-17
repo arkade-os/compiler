@@ -1,6 +1,5 @@
 use super::*;
 use crate::models::{child_exprs_mut, flatten_parameter, is_builtin_type, TypeLeaf};
-use crate::opcodes::OP_ROLL;
 
 pub(super) fn extract_calls(expression: &mut Expression, calls: &mut Vec<Expression>) {
     if matches!(expression, Expression::Call { .. }) {
@@ -140,6 +139,8 @@ impl Generator {
         if args.len() != function.parameters.len() {
             return Err(format!("wrong argument count for '{name}'"));
         }
+        // Calls restore caller slots; consuming arguments requires a movable caller frame.
+        let preserved = std::mem::replace(&mut self.preserve_bindings, true);
         let caller = self.stack.clone();
         let caller_scope = self.scope.clone();
         let baseline = caller.len();
@@ -205,6 +206,7 @@ impl Generator {
         self.stack[..baseline].clone_from_slice(&caller);
         self.scope = caller_scope;
         self.return_type = previous_return;
+        self.preserve_bindings = preserved;
         Ok(())
     }
 
