@@ -533,6 +533,8 @@ pub enum Expression {
     Literal(String),
     /// Property access (e.g., tx.time)
     Property(String),
+    /// Whether the emulator's clock has reached a Unix timestamp.
+    CheckTime { timestamp: Box<Expression> },
     /// Array literal; only valid as the initializer of an array declaration.
     ArrayLiteral(Vec<Expression>),
     /// Named struct literal; only valid as the initializer of a typed declaration.
@@ -873,6 +875,7 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Sighash { hash_type } => vec![hash_type],
         Expression::Digest { data, hash_type } => vec![data, hash_type],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
+        Expression::CheckTime { timestamp } => vec![timestamp],
         Expression::ModExp {
             base,
             exponent,

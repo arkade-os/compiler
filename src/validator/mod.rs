@@ -650,6 +650,7 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::Sighash { hash_type } => vec![hash_type],
         Expression::Digest { data, hash_type } => vec![data, hash_type],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
+        Expression::CheckTime { timestamp } => vec![timestamp],
         Expression::ModExp {
             base,
             exponent,
@@ -1492,6 +1493,15 @@ fn validate_binding_expression(
                     operator,
                     actual.as_str(),
                     expected.as_str()
+                )));
+            }
+        }
+        Expression::CheckTime { timestamp } => {
+            let actual = resolved_expression_type(timestamp, scopes);
+            if actual != ArkType::Int && actual != ArkType::Unknown {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': checkTime timestamp must be int, got '{}'",
+                    actual.as_str()
                 )));
             }
         }

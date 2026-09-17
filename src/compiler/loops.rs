@@ -679,7 +679,12 @@ pub(crate) fn substitute_expression(
                 asset_gidx, index_var, value_var, k, array_name,
             )),
         },
-        // All other expressions are returned as-is
-        _ => expr.clone(),
+        _ => {
+            let mut expression = expr.clone();
+            for child in crate::models::child_exprs_mut(&mut expression) {
+                *child = substitute_expression(child, index_var, value_var, k, array_name);
+            }
+            expression
+        }
     }
 }
