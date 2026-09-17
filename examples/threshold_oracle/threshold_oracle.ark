@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // Threshold Oracle Contract
 // Generic threshold signature verifier for multi-oracle attestations.
 //

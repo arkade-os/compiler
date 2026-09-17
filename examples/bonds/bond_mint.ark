@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // BondMint Contract
 //
 // Per-issuance collateral vault holding the borrower's debit tokens. Created

@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // CashSecuredPut Contract
 //
 // Bitcoin-native, single-locked, physically-settled European cash-secured

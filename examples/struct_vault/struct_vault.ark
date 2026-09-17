@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 struct Signer {
   pubkey key;
   int weight;

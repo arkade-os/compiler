@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // Non-Interactive Swap Contract
 // Allows users to exchange assets without requiring both parties to be online simultaneously.
 //

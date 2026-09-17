@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // Payment Authorization Contract
 // Authorization-based escrow with timelocked refunds using transaction introspection
 //

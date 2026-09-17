@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // RepaymentPool Contract
 
 // Per-maturity singleton implementing a fixed-maturity bond market: borrowers

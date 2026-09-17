@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // StabilityOffer Contract
 
 // Provider pre-commits BTC liquidity into a standing offer.

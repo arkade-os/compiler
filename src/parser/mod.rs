@@ -531,6 +531,57 @@ mod tests {
     use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
 
     #[test]
+    fn parses_version_pragmas_without_enforcing_compatibility() {
+        for version in [
+            "0.1.0",
+            "=0.1.0",
+            "^0.1.0",
+            "~0.1.0",
+            ">=0.1.0 <0.2.0",
+            ">0.0.0 <=0.1.0",
+            "^0.1.0 || >=1.0.0 <2.0.0",
+            "99.0.0",
+            "^ // constraint\n 0.1.0",
+        ] {
+            let source = format!("// header\npragma arkade {version}; contract C() {{}}");
+            assert_eq!(parse(&source).unwrap().name, "C", "{version}");
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_or_misplaced_pragmas() {
+        for header in [
+            "pragma arkade;",
+            "pragma other ^0.1.0;",
+            "pragmaarkade ^0.1.0;",
+            "pragma arkade0.1.0;",
+            "pragma arkade ^0.1;",
+            "pragma arkade 0.1.*;",
+            "pragma arkade 0.1.0-beta;",
+            "pragma arkade 0.1.0+build;",
+            "pragma arkade ^0.1.0",
+            "pragma arkade ^01.1.0;",
+            "pragma arkade ^0.01.0;",
+            "pragma arkade ^0.1.00;",
+            "pragma arkade 0.1.00.2.0;",
+            "pragma arkade 0.1.0.0;",
+            "pragma arkade 0 .1.0;",
+            "pragma arkade =>0.1.0;",
+            "pragma arkade ^0.1.0 ||;",
+            "pragma arkade ^0.1.0; pragma arkade ^0.1.0;",
+            "import \"a.ark\"; pragma arkade ^0.1.0;",
+            "struct S { int value; } pragma arkade ^0.1.0;",
+        ] {
+            assert!(
+                parse(&format!("{header} contract C() {{}}")).is_err(),
+                "{header}"
+            );
+        }
+        assert!(parse("contract C() { pragma arkade ^0.1.0; }").is_err());
+        assert!(parse("contract C() {} pragma arkade ^0.1.0;").is_err());
+    }
+
+    #[test]
     fn parses_constant_array_sizes_without_changing_index_expressions() {
         let contract = parse(
             "struct State { int[N] values; } contract C(pubkey[C.N] keys) { const int N = 2; function spend(int[N] values) { int[N] local = [1, 2]; local[N - 1] = values[0]; require(true); } }",

@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // NFT Mint Contract
 // Demonstrates fresh-issuance enforcement and collection control via asset
 // group introspection.

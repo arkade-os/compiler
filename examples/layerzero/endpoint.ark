@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // Endpoint Contract — LayerZero / USDT0 pathway state
 //
 // Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go

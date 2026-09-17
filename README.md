@@ -228,6 +228,7 @@ The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator
 ### File layout
 
 ```solidity
+pragma arkade ^0.1.0;        // optional, before imports and declarations
 import "./other.ark";        // zero or more; imports a file's declarations
 struct Name { ... }          // zero or more, before the contract or library
 contract Name(<params>) {    // entry files require a contract
@@ -238,6 +239,14 @@ contract Name(<params>) {    // entry files require a contract
 ```
 
 Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
+
+### Version pragma
+
+Each source file may start with one `pragma arkade <constraint>;` directive, including imported libraries and struct-only files. It is optional; existing files compile without one. Comments and whitespace may precede it.
+
+Use three-component versions such as `0.1.0`, with optional `=`, `^`, `~`, `>`, `>=`, `<`, or `<=` operators. Multiple constraints form a range (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
+
+`0.1.0` is a placeholder while compiler versioning is being established. For now, pragmas validate syntax only: even a constraint for a future version compiles. Compatibility checks are deferred. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
 
 ### Imports
 

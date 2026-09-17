@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // Fuji Safe Contract
 contract FujiSafe(
   // The asset commitment hash (client-side validated)
