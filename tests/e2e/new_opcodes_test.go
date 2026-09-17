@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
@@ -52,6 +53,42 @@ func TestTunnel(t *testing.T) {
 			ptx := spendingPSBTWithWitness(t, deployment, instance, test.amount, outputScript,
 				covenantWitness(t, contract, group, values), packet)
 			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr)
+		})
+	}
+}
+
+func TestOpcodeExecutionContext(t *testing.T) {
+	contract := compileArtifact(t, "contracts/new_opcodes.ark")
+	serverKey := fixedPrivateKey(1)
+	emulatorKey := fixedPrivateKey(2)
+	message := arkade.WithIntentMessage(`{"type":"register","expire_at":0,"enabled":false,"empty":"","items":[7]}`)
+	for _, test := range []struct {
+		name     string
+		function string
+		inputs   map[string][]byte
+		options  []arkade.ExecuteOption
+		wantErr  string
+	}{
+		{name: "expiry", function: "expiry", inputs: map[string][]byte{"expected": scriptInt(t, 123456)}, options: []arkade.ExecuteOption{arkade.WithExpiry(123456)}},
+		{name: "missing expiry", function: "expiry", inputs: map[string][]byte{"expected": scriptInt(t, 123456)}, wantErr: "expiry not set"},
+		{name: "past clock", function: "clock", inputs: map[string][]byte{"deadline": scriptInt(t, 0)}},
+		{name: "future clock", function: "clock", inputs: map[string][]byte{"deadline": scriptInt(t, 9223372036854775807)}, wantErr: "OP_VERIFY failed"},
+		{name: "negative clock", function: "clock", inputs: map[string][]byte{"deadline": scriptInt(t, -1)}, wantErr: "negative timestamp"},
+		{name: "intent fields including false zero and empty", function: "intent", options: []arkade.ExecuteOption{message}},
+		{name: "missing intent", function: "intent", wantErr: "OP_VERIFY failed"},
+		{name: "missing field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register"}`)}, wantErr: "OP_VERIFY failed"},
+		{name: "fractional field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":0.5}`)}, wantErr: "OP_VERIFY failed"},
+		{name: "null field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":null}`)}, wantErr: "OP_VERIFY failed"},
+		{name: "has without context", function: "noIntent"},
+		{name: "has with context", function: "noIntent", options: []arkade.ExecuteOption{message}, wantErr: "OP_VERIFY failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			group := covenantGroup(t, contract, test.function)
+			instance := instantiateGroup(t, contract, test.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
+			deployment := fundingTx(instance.pkScript, 10000)
+			ptx := spendingPSBTWithWitness(t, deployment, instance, 10000, instance.pkScript,
+				covenantWitness(t, contract, group, test.inputs))
+			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr, test.options...)
 		})
 	}
 }

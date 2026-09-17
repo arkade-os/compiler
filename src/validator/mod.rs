@@ -585,6 +585,7 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         | Expression::Property(_)
         | Expression::CurrentInput(_)
         | Expression::TxIntrospection { .. }
+        | Expression::IntentInspect { .. }
         | Expression::GroupProperty { .. }
         | Expression::AssetGroupsLength
         | Expression::CheckSigExpr { .. }

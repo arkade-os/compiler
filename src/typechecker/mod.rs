@@ -943,6 +943,13 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Packet introspection — returns raw packet bytes.
         Expression::PacketInspect { .. } => ArkType::Bytes,
+        Expression::IntentInspect { presence_only, .. } => {
+            if *presence_only {
+                ArkType::Bool
+            } else {
+                ArkType::Bytes
+            }
+        }
         Expression::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.

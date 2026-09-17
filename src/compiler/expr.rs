@@ -23,6 +23,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(timestamp, asm);
             asm.push(OP_CHECKTIME.to_string());
         }
+        Expression::IntentInspect {
+            path,
+            presence_only,
+        } => {
+            push_literal_asm(path, asm);
+            asm.push(OP_INSPECTINTENTMESSAGE.to_string());
+            asm.push(if *presence_only { OP_NIP } else { OP_VERIFY }.to_string());
+        }
         Expression::Tunnel {
             output_index,
             policy,

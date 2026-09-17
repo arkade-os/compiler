@@ -535,6 +535,8 @@ pub enum Expression {
     Property(String),
     /// Whether the emulator's clock has reached a Unix timestamp.
     CheckTime { timestamp: Box<Expression> },
+    /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
+    IntentInspect { path: String, presence_only: bool },
     /// Continue the current input at an output; policy order is script, value, assets.
     Tunnel {
         output_index: Box<Expression>,
@@ -816,6 +818,7 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         | Expression::Property(_)
         | Expression::CurrentInput(_)
         | Expression::TxIntrospection { .. }
+        | Expression::IntentInspect { .. }
         | Expression::GroupProperty { .. }
         | Expression::AssetGroupsLength
         | Expression::CheckSigExpr { .. }

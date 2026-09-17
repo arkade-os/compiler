@@ -157,6 +157,8 @@ primary_expr = {
     check_sig |
     check_time |
     tunnel |
+    intent_field |
+    intent_has |
     sha256_initialize |
     sha256_update |
     sha256_finalize |
@@ -222,6 +224,8 @@ div_op = { "/" }
 complex_expression = _{
     check_time |
     tunnel |
+    intent_field |
+    intent_has |
     check_sig_from_stack_verify |
     check_sig_from_stack |
     check_sig |
@@ -314,6 +318,9 @@ tx_introspection = {
 // Note: "id" is the introspector OP_TXID; do not rename to "txid" (matches
 // the SDK convention used in docs/arkade-script-with-assets.md).
 tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" | "id" }
+
+intent_field = { "tx" ~ "." ~ "intent" ~ "." ~ "field" ~ "(" ~ string_literal ~ ")" }
+intent_has = { "tx" ~ "." ~ "intent" ~ "." ~ "has" ~ "(" ~ string_literal ~ ")" }
 
 // ─── Indexed Input/Output Introspection ─────────────────────────────────────────
 
@@ -626,6 +633,7 @@ check_sig_from_stack_verify = {
 //   substr(tx.packet(EndpointState), 1, 32)
 //   sha256(substr(tx.inputs[1].packet(LzReceive), 1, 140))
 byte_value = {
+    intent_field |
     substr_func |
     cat_func |
     num2bin_func |

@@ -281,6 +281,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             )?),
         }),
         Rule::tunnel => parse_tunnel(pair),
+        Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
             let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
@@ -435,6 +436,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
     let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
     match inner.as_rule() {
         Rule::substr_func => parse_substr(inner),
+        Rule::intent_field => parse_intent_inspect(inner),
         Rule::cat_func => parse_cat(inner),
         Rule::num2bin_func => parse_num2bin(inner),
         Rule::reverse_bytes_func => parse_reverse_bytes(inner),

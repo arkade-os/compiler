@@ -4,6 +4,34 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
+pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let presence_only = pair.as_rule() == Rule::intent_has;
+    let literal = pair.into_inner().next().ok_or("Missing intent path")?;
+    let path = parse_string_literal(literal.as_str())?;
+    if path.len() > 520
+        || !path
+            .split('.')
+            .all(|segment| match segment.as_bytes().first() {
+                Some(b'0'..=b'9') => {
+                    !(segment.len() > 1 && segment.starts_with('0'))
+                        && segment
+                            .parse::<u64>()
+                            .is_ok_and(|index| index < 1024 * 1024)
+                }
+                Some(b'a'..=b'z' | b'_') => segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
+                _ => false,
+            })
+    {
+        return Err(format!("invalid intent message path '{path}'"));
+    }
+    Ok(Expression::IntentInspect {
+        path: parse_named_operand(literal)?,
+        presence_only,
+    })
+}
+
 pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let output_index =
