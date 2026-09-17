@@ -41,6 +41,109 @@ fn expiry_is_an_integer_in_the_covenant_only() {
 }
 
 #[test]
+fn tunnel_defaults_and_constant_policies() {
+    let output = compile(
+        r#"
+        contract Continuation() {
+            const bool PRESERVE = 1 == 1;
+            function spend() {
+                require(this.tunnel(0));
+                bool continued = this . tunnel(1, {
+                    assets: false,
+                    scriptPubKey: PRESERVE,
+                    value: !false
+                }, []);
+                require(continued);
+            }
+        }
+    "#,
+    )
+    .unwrap();
+    let asm = arkade_asm(&output, "spend");
+    assert!(asm.contains("0 7 0 OP_TUNNEL OP_VERIFY"), "{asm}");
+    assert!(asm.contains("1 3 0 OP_TUNNEL"), "{asm}");
+    assert!(arkade_inputs(&output, "spend").is_empty());
+    assert!(!group(&output, "spend").leaves[0]
+        .asm
+        .iter()
+        .any(|op| op == "OP_TUNNEL"));
+}
+
+#[test]
+fn tunnel_exceptions_accept_bound_native_and_helper_asset_ids() {
+    let output = compile(
+        r#"
+        contract Continuation() {
+            private function identity(AssetId id) AssetId { return id; }
+            function spend(int outputIndex, AssetId feeAsset) {
+                require(this.tunnel(outputIndex, {
+                    scriptPubKey: true, value: true, assets: true
+                }, [feeAsset, identity(feeAsset), tx.inputs[0].assets[0].assetId]));
+                require(outputIndex >= 0);
+            }
+        }
+    "#,
+    )
+    .unwrap();
+    let asm = arkade_asm(&output, "spend");
+    assert!(
+        asm.contains("OP_INSPECTINASSETAT OP_DROP 3 OP_TUNNEL OP_VERIFY"),
+        "{asm}"
+    );
+    assert!(asm.contains("OP_SWAP"), "{asm}");
+    assert_eq!(arkade_inputs(&output, "spend"), ["outputIndex", "feeAsset"]);
+    assert!(!asm.contains("$call"), "{asm}");
+}
+
+#[test]
+fn tunnel_validates_policy_shape_types_and_exceptions() {
+    for call in [
+        "this.tunnel()",
+        "this.tunnel(true)",
+        "this.tunnel(0, {value: true, assets: true})",
+        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true, other: true})",
+        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true, value: false})",
+        "this.tunnel(0, {scriptPubKey: false, value: false, assets: false})",
+        "this.tunnel(0, {scriptPubKey: 1, value: true, assets: true})",
+        "this.tunnel(0, {scriptPubKey: runtime, value: true, assets: true})",
+        "this.tunnel(0, {scriptPubKey: true, value: true, assets: false}, [assetId])",
+        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true}, [1])",
+        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true}, [unknown])",
+    ] {
+        let source = format!("contract Bad(AssetId assetId, bool runtime) {{ function spend() {{ require({call}); }} }}");
+        assert!(compile(&source).is_err(), "{source}");
+    }
+    assert!(
+        compile("contract Bad() { function spend() tapscript { require(this.tunnel(0)); } }")
+            .is_err()
+    );
+}
+
+#[test]
+fn tunnel_substitutes_loop_output_indexes() {
+    let output = compile(
+        r#"
+        contract Continuation(int[2] indexes) {
+            function spend() {
+                for (i, outputIndex) in indexes {
+                    require(this.tunnel(outputIndex + i));
+                }
+            }
+        }
+    "#,
+    )
+    .unwrap();
+    let asm = arkade_asm(&output, "spend");
+    assert_eq!(
+        asm.split_whitespace()
+            .filter(|op| *op == "OP_TUNNEL")
+            .count(),
+        2
+    );
+    assert!(!asm.contains("<outputIndex>"), "{asm}");
+}
+
+#[test]
 fn check_time_uses_the_emulator_clock_and_preserves_operand_order() {
     let output = compile(
         r#"

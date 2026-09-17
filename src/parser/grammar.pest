@@ -156,6 +156,7 @@ primary_expr = {
     check_sig_from_stack |
     check_sig |
     check_time |
+    tunnel |
     sha256_initialize |
     sha256_update |
     sha256_finalize |
@@ -220,6 +221,7 @@ div_op = { "/" }
 // PEG ordered choice: first matching alternative wins
 complex_expression = _{
     check_time |
+    tunnel |
     check_sig_from_stack_verify |
     check_sig_from_stack |
     check_sig |
@@ -372,6 +374,11 @@ identifier_property_access = {
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
 
 check_time = { "checkTime" ~ "(" ~ general_expression ~ ")" }
+tunnel = {
+    "this" ~ "." ~ "tunnel" ~ "(" ~ general_expression
+    ~ ("," ~ struct_literal ~ ("," ~ tunnel_exceptions)?)? ~ ")"
+}
+tunnel_exceptions = { "[" ~ (general_expression ~ ("," ~ general_expression)*)? ~ "]" }
 
 // Time comparison (tx.time >= timelock)
 time_comparison = {

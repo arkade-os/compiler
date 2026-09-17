@@ -535,6 +535,12 @@ pub enum Expression {
     Property(String),
     /// Whether the emulator's clock has reached a Unix timestamp.
     CheckTime { timestamp: Box<Expression> },
+    /// Continue the current input at an output; policy order is script, value, assets.
+    Tunnel {
+        output_index: Box<Expression>,
+        policy: Box<[Expression; 3]>,
+        exceptions: Vec<Expression>,
+    },
     /// Array literal; only valid as the initializer of an array declaration.
     ArrayLiteral(Vec<Expression>),
     /// Named struct literal; only valid as the initializer of a typed declaration.
@@ -876,6 +882,14 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Digest { data, hash_type } => vec![data, hash_type],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
         Expression::CheckTime { timestamp } => vec![timestamp],
+        Expression::Tunnel {
+            output_index,
+            policy,
+            exceptions,
+        } => std::iter::once(output_index.as_mut())
+            .chain(policy.iter_mut())
+            .chain(exceptions.iter_mut())
+            .collect(),
         Expression::ModExp {
             base,
             exponent,

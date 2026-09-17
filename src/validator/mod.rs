@@ -651,6 +651,14 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::Digest { data, hash_type } => vec![data, hash_type],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
         Expression::CheckTime { timestamp } => vec![timestamp],
+        Expression::Tunnel {
+            output_index,
+            policy,
+            exceptions,
+        } => std::iter::once(output_index.as_ref())
+            .chain(policy.iter())
+            .chain(exceptions.iter())
+            .collect(),
         Expression::ModExp {
             base,
             exponent,
@@ -1505,6 +1513,42 @@ fn validate_binding_expression(
                 )));
             }
         }
+        Expression::Tunnel {
+            output_index,
+            policy,
+            exceptions,
+        } => {
+            if resolved_expression_type(output_index, scopes) != ArkType::Int {
+                issues.push(ValidationIssue::error("tunnel output index must be int"));
+            }
+            if policy.iter().any(|value| !matches!(value, Expression::Literal(literal) if literal == "true" || literal == "false")) {
+                issues.push(ValidationIssue::error("tunnel policy fields must be compile-time bool constants"));
+            }
+            if !policy
+                .iter()
+                .any(|value| matches!(value, Expression::Literal(literal) if literal == "true"))
+            {
+                issues.push(ValidationIssue::error(
+                    "tunnel policy must preserve at least one property",
+                ));
+            }
+            if !exceptions.is_empty()
+                && !matches!(&policy[2], Expression::Literal(literal) if literal == "true")
+            {
+                issues.push(ValidationIssue::error(
+                    "tunnel exceptions require asset preservation",
+                ));
+            }
+            for exception in exceptions {
+                if resolved_expression_type(exception, scopes)
+                    != ArkType::Struct("AssetId".to_string())
+                {
+                    issues.push(ValidationIssue::error(
+                        "tunnel exceptions must be AssetId values",
+                    ));
+                }
+            }
+        }
 
         Expression::StructLiteral(_) if value_position => {
             issues.push(ValidationIssue::error(format!(
@@ -1626,7 +1670,10 @@ fn validate_binding_expression(
     for child in child_exprs(expression) {
         if matches!(
             expression,
-            Expression::Call { .. } | Expression::StructLiteral(_) | Expression::ArrayLiteral(_)
+            Expression::Call { .. }
+                | Expression::StructLiteral(_)
+                | Expression::ArrayLiteral(_)
+                | Expression::Tunnel { .. }
         ) {
             validate_value_expression(child, function_name, scopes, issues);
         } else {

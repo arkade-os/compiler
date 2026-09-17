@@ -1,0 +1,20 @@
+contract Continuation() {
+    private function identity(AssetId id) AssetId { return id; }
+
+    function all(int outputIndex) {
+        require(this.tunnel(outputIndex));
+    }
+
+    function except(int outputIndex, AssetId exception) {
+        require(this.tunnel(outputIndex, {
+            scriptPubKey: true, value: true, assets: true
+        }, [exception, identity(exception)]));
+        require(outputIndex == 0);
+    }
+
+    function native(int outputIndex) {
+        require(this.tunnel(outputIndex, {
+            scriptPubKey: true, value: true, assets: true
+        }, [tx.inputs[0].assets[0].assetId]));
+    }
+}

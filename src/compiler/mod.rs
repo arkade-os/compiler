@@ -17,8 +17,8 @@ use crate::opcodes::{
     OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MODEXP, OP_MUL,
     OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX,
     OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES, OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE,
-    OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TWEAKVERIFY, OP_TXID,
-    OP_TXWEIGHT, OP_VERIFY,
+    OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY,
+    OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
@@ -388,6 +388,16 @@ impl Generator {
             OP_INSPECTASSETGROUPASSETID => self.apply(opcode, 1, 2),
             OP_INSPECTPACKET => self.apply(opcode, 1, 2),
             OP_INSPECTINPUTPACKET => self.apply(opcode, 2, 2),
+            OP_TUNNEL => {
+                // Fixed exception counts are emitted immediately before the opcode.
+                let inputs = self
+                    .asm
+                    .last()
+                    .and_then(|count| count.parse::<usize>().ok())
+                    .and_then(|count| count.checked_mul(2)?.checked_add(3))
+                    .ok_or("invalid tunnel exception count")?;
+                self.apply(opcode, inputs, 1)
+            }
             OP_SIZE => self.apply(opcode, 1, 2),
             OP_ECADD => self.apply(opcode, 5, 2),
             OP_ECMUL => self.apply(opcode, 4, 2),

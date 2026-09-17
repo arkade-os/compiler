@@ -179,6 +179,14 @@ func arrayTypeParts(typeStr string) (string, int) {
 }
 
 func flattenInput(name, typeName string, structs []structDefinition) []string {
+	switch typeName {
+	case "AssetId":
+		return []string{name + ".txid", name + ".gidx"}
+	case "Outpoint":
+		return []string{name + ".txid", name + ".vout"}
+	case "ECPoint":
+		return []string{name + ".x", name + ".y"}
+	}
 	for _, definition := range structs {
 		if definition.Name != typeName {
 			continue

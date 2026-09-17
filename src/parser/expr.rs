@@ -167,6 +167,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "older" => Some("older(value)"),
         "after" => Some("after(value)"),
         "checkTime" => Some("checkTime(timestamp)"),
+        "this.tunnel" => Some("this.tunnel(outputIndex, policy?, exceptions?)"),
         _ => None,
     }
 }
@@ -279,6 +280,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                     .ok_or("Missing checkTime timestamp")?,
             )?),
         }),
+        Rule::tunnel => parse_tunnel(pair),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
             let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
