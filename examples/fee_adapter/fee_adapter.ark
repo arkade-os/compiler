@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // Fee Adapter Contract
 // Demonstrates arithmetic expressions with tx input/output verification
 //

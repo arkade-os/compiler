@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // OApp Contract — USDT0 mint / burn application
 //
 // Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go

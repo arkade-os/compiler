@@ -17,6 +17,60 @@ fn project(
 }
 
 #[test]
+fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
+    let contract = "contract C(pubkey owner, int delay) { function spend(signature sig) { require(checkSig(sig, owner)); } function exit(signature sig) tapscript { require(older(delay)); require(checkSig(sig, owner)); } }";
+    let source = format!("pragma arkade ^0.1.0;\n{contract}");
+    let standalone = compile(&source).unwrap();
+    assert_eq!(
+        standalone.source.as_ref().unwrap().files["main.ark"],
+        source
+    );
+
+    let entry = format!("pragma arkade >=0.1.0 <0.2.0;\nimport \"helper.ark\";\n{contract}");
+    let helper =
+        "pragma arkade 99.0.0; import \"types.ark\"; library Helper { const int VALUE = 1; }";
+    let types = "pragma arkade ~0.1.0; struct Policy { int maximum; }";
+    let output = project(
+        "main.ark",
+        &[
+            ("main.ark", &entry),
+            ("helper.ark", helper),
+            ("types.ark", types),
+        ],
+    )
+    .unwrap();
+    let expected = serde_json::to_value(compile(contract).unwrap().functions).unwrap();
+    for compiled in [&standalone, &output] {
+        assert_eq!(serde_json::to_value(&compiled.functions).unwrap(), expected);
+    }
+    let bundle = output.source.as_ref().unwrap();
+    assert_eq!(bundle.files["main.ark"], entry);
+    assert_eq!(bundle.files["helper.ark"], helper);
+    assert_eq!(bundle.files["types.ark"], types);
+    let dir = tempfile::tempdir().unwrap();
+    for (path, source) in &bundle.files {
+        std::fs::write(dir.path().join(path), source).unwrap();
+    }
+    let mut rebuilt = compile_file(dir.path().join("main.ark")).unwrap();
+    rebuilt.updated_at = output.updated_at.clone();
+    assert_eq!(
+        serde_json::to_value(rebuilt).unwrap(),
+        serde_json::to_value(&output).unwrap()
+    );
+    let error = project(
+        "main.ark",
+        &[
+            ("main.ark", &entry),
+            ("helper.ark", "pragma arkade ^0.1; library Helper {}"),
+        ],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("Parse error"), "{error}");
+    assert!(error.contains("helper.ark"), "{error}");
+}
+
+#[test]
 fn libraries_inline_private_helpers_and_preserve_artifacts() {
     let source = r#"import "fees.ark";
 contract Vault(Policy policy, int amount, pubkey owner) {

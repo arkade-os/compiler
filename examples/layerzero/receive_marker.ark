@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // ReceiveMarker — receive-invocation marker output
 //
 // Spec: layerzero-usdt0-arkade-demo/internal/scripts/builders.go

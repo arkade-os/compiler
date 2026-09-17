@@ -1,3 +1,5 @@
+pragma arkade ^0.1.0;
+
 // Token Vault Contract
 // Demonstrates asset lookup primitives for Arkades Assets
 //

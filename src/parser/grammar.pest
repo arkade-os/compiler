@@ -5,8 +5,16 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) }
 // Import statement: import "path/to/contract.ark";
 import_stmt = { "import" ~ string_literal ~ ";" }
 
+// Version constraints are syntax-only until compiler versioning is established.
+pragma_keyword = @{ "pragma" ~ !(ASCII_ALPHANUMERIC | "_") }
+pragma_language = @{ "arkade" ~ !(ASCII_ALPHANUMERIC | "_") }
+pragma_version_part = _{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
+pragma_version = @{ pragma_version_part ~ "." ~ pragma_version_part ~ "." ~ pragma_version_part ~ !(ASCII_ALPHANUMERIC | "_" | ".") }
+pragma_constraint = { (">=" | "<=" | ">" | "<" | "=" | "^" | "~")? ~ pragma_version }
+pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_constraint+ ~ ("||" ~ pragma_constraint+)* ~ ";" }
+
 // Main entry point - must consume the entire input
-main = { SOI ~ import_stmt* ~ struct_definition* ~ (contract | library)? ~ EOI }
+main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (contract | library)? ~ EOI }
 
 struct_definition = {
     "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
