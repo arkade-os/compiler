@@ -19,6 +19,53 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", var));
         }
         Expression::Literal(lit) => push_literal_asm(lit, asm),
+        Expression::CheckTime { timestamp } => {
+            emit_expression_asm(timestamp, asm);
+            asm.push(OP_CHECKTIME.to_string());
+        }
+        Expression::IntentInspect {
+            path,
+            presence_only,
+        } => {
+            push_literal_asm(path, asm);
+            asm.push(OP_INSPECTINTENTMESSAGE.to_string());
+            // The opcode leaves the value below its presence flag.
+            asm.push(if *presence_only { OP_NIP } else { OP_VERIFY }.to_string());
+        }
+        Expression::Tunnel {
+            output_index,
+            policy,
+            exceptions,
+        } => {
+            emit_expression_asm(output_index, asm);
+            let mut flags = 0;
+            for (index, value) in policy.iter().enumerate() {
+                if matches!(value, Expression::Literal(literal) if literal == "true") {
+                    flags |= 1 << index;
+                }
+            }
+            asm.push(flags.to_string());
+            for exception in exceptions {
+                match exception {
+                    Expression::Variable(name) | Expression::Property(name)
+                        if !name.starts_with("$call:") =>
+                    {
+                        asm.push(format!("<{name}.txid>"));
+                        asm.push(format!("<{name}.gidx>"));
+                    }
+                    _ => {
+                        emit_expression_asm(exception, asm);
+                        // Helpers return structs first-field-on-top; native opcodes push it deepest.
+                        if matches!(exception, Expression::Variable(name) if name.starts_with("$call:"))
+                        {
+                            asm.push(OP_SWAP.to_string());
+                        }
+                    }
+                }
+            }
+            asm.push(exceptions.len().to_string());
+            asm.push(OP_TUNNEL.to_string());
+        }
         // Rejected before emission; array declarations emit their elements directly.
         Expression::ArrayLiteral(_) => {}
         // Rejected before emission; typed struct declarations emit scalar leaves directly.
@@ -37,6 +84,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // keeps the placeholder pipeline untouched for everything else).
             match prop.trim() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.expiry" => asm.push(OP_PUSHEXPIRY.to_string()),
                 "this.activeBytecode" => emit_current_input_asm(Some("scriptPubKey"), asm),
                 "tx.time" => asm.push(OP_INSPECTLOCKTIME.to_string()),
                 property => asm.push(format!("<{}>", property)),

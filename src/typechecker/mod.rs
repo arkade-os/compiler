@@ -833,7 +833,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                 }
             })
             .unwrap_or(match property.trim() {
-                "tx.time" | "this.activeInputIndex" => ArkType::Int,
+                "tx.time" | "this.activeInputIndex" | "this.expiry" => ArkType::Int,
                 "this.activeBytecode" => ArkType::Bytes,
                 _ => ArkType::Unknown,
             }),
@@ -915,7 +915,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Arithmetic
         Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,
-        Expression::Not { .. } => ArkType::Bool,
+        Expression::Not { .. } | Expression::CheckTime { .. } | Expression::Tunnel { .. } => {
+            ArkType::Bool
+        }
 
         // Crypto expressions
         Expression::CheckSigExpr { .. }
@@ -941,6 +943,13 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Packet introspection — returns raw packet bytes.
         Expression::PacketInspect { .. } => ArkType::Bytes,
+        Expression::IntentInspect { presence_only, .. } => {
+            if *presence_only {
+                ArkType::Bool
+            } else {
+                ArkType::Bytes
+            }
+        }
         Expression::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.

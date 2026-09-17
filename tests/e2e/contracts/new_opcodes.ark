@@ -1,0 +1,44 @@
+contract Continuation() {
+    private function identity(AssetId id) AssetId { return id; }
+
+    function expiry(int expected) {
+        require(this.expiry == expected);
+    }
+
+    function clock(int deadline) {
+        require(checkTime(deadline));
+        require(!checkTime(9223372036854775807));
+    }
+
+    function intent() {
+        require(tx.intent.field("type") == "register");
+        require(bin2num(tx.intent.field("expire_at")) == 0);
+        require(tx.intent.has("enabled"));
+        require(tx.intent.field("enabled") == "");
+        require(tx.intent.has("empty"));
+        require(tx.intent.field("empty") == "");
+        require(!tx.intent.has("missing"));
+        require(bin2num(tx.intent.field("items.0")) == 7);
+    }
+
+    function noIntent() {
+        require(!tx.intent.has("type"));
+    }
+
+    function all(int outputIndex) {
+        require(this.tunnel(outputIndex));
+    }
+
+    function except(int outputIndex, AssetId exception) {
+        require(this.tunnel(outputIndex, {
+            scriptPubKey: true, value: true, assets: true
+        }, [exception, identity(exception)]));
+        require(outputIndex == 0);
+    }
+
+    function native(int outputIndex) {
+        require(this.tunnel(outputIndex, {
+            scriptPubKey: true, value: true, assets: true
+        }, [tx.inputs[0].assets[0].assetId]));
+    }
+}

@@ -32,7 +32,7 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
         Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
-        Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::this_property_access => parse_primary_expr(pair),
         _ => {
             // Try to parse as a primary expression
             parse_primary_expr(pair)
@@ -99,6 +99,8 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
         "after" => Some("after(value)"),
+        "checkTime" => Some("checkTime(timestamp)"),
+        "this.tunnel" => Some("this.tunnel(outputIndex, policy?, exceptions?)"),
         _ => None,
     }
 }
@@ -205,7 +207,19 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             Ok(Expression::Property(format!("{array}.length")))
         }
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
-        Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::this_property_access => {
+            let property = pair.into_inner().next().ok_or("Missing this property")?;
+            Ok(Expression::Property(format!("this.{}", property.as_str())))
+        }
+        Rule::check_time => Ok(Expression::CheckTime {
+            timestamp: Box::new(parse_general_expression(
+                pair.into_inner()
+                    .next()
+                    .ok_or("Missing checkTime timestamp")?,
+            )?),
+        }),
+        Rule::tunnel => parse_tunnel(pair),
+        Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
             let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
@@ -358,6 +372,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
     let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
     match inner.as_rule() {
         Rule::substr_func => parse_substr(inner),
+        Rule::intent_field => parse_intent_inspect(inner),
         Rule::cat_func => parse_cat(inner),
         Rule::num2bin_func => parse_num2bin(inner),
         Rule::reverse_bytes_func => parse_reverse_bytes(inner),

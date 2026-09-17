@@ -179,6 +179,15 @@ func arrayTypeParts(typeStr string) (string, int) {
 }
 
 func flattenInput(name, typeName string, structs []structDefinition) []string {
+	// Native field order follows src/models/mod.rs::builtin_struct_fields.
+	switch typeName {
+	case "AssetId":
+		return []string{name + ".txid", name + ".gidx"}
+	case "Outpoint":
+		return []string{name + ".txid", name + ".vout"}
+	case "ECPoint":
+		return []string{name + ".x", name + ".y"}
+	}
 	for _, definition := range structs {
 		if definition.Name != typeName {
 			continue
@@ -382,10 +391,11 @@ func requireVMResult(
 	ptx *psbt.Packet,
 	emulatorKey *btcec.PublicKey,
 	wantErr string,
+	options ...arkade.ExecuteOption,
 ) {
 	t.Helper()
 
-	err := executeArkadeScripts(ptx, emulatorKey)
+	err := executeArkadeScripts(ptx, emulatorKey, options...)
 	if wantErr == "" {
 		if err != nil {
 			t.Fatalf("VM rejected compiled script: %v", err)
@@ -495,7 +505,7 @@ func executeTapscript(
 	return nil
 }
 
-func executeArkadeScripts(ptx *psbt.Packet, emulatorKey *btcec.PublicKey) error {
+func executeArkadeScripts(ptx *psbt.Packet, emulatorKey *btcec.PublicKey, options ...arkade.ExecuteOption) error {
 	fetcher, err := arkPrevOutFetcher(ptx)
 	if err != nil {
 		return err
@@ -513,7 +523,7 @@ func executeArkadeScripts(ptx *psbt.Packet, emulatorKey *btcec.PublicKey) error 
 		if err != nil {
 			return fmt.Errorf("read input %d script: %w", entry.Vin, err)
 		}
-		if err := script.Execute(ptx.UnsignedTx, fetcher, int(entry.Vin)); err != nil {
+		if err := script.Execute(ptx.UnsignedTx, fetcher, int(entry.Vin), options...); err != nil {
 			return fmt.Errorf("execute input %d script: %w", entry.Vin, err)
 		}
 	}

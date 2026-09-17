@@ -38,6 +38,17 @@ pub(crate) fn parse_named_tapscript(
         if stmt.as_rule() == Rule::require_stmt {
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
+            for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
+                let name = match part.as_rule() {
+                    Rule::check_time => "checkTime(...)",
+                    Rule::tunnel => "this.tunnel(...)",
+                    Rule::intent_field => "tx.intent.field(...)",
+                    Rule::intent_has => "tx.intent.has(...)",
+                    Rule::this_property if part.as_str() == "expiry" => "this.expiry",
+                    _ => continue,
+                };
+                return Err(format!("`{name}` is only available in covenant functions"));
+            }
             items.push(parse_tap_item(expr, constants)?);
             if let Some(message) = inner.next() {
                 parse_string_literal(message.as_str())?;

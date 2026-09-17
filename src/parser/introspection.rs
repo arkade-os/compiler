@@ -4,6 +4,79 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
+pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
+    let presence_only = pair.as_rule() == Rule::intent_has;
+    let literal = pair.into_inner().next().ok_or("Missing intent path")?;
+    let path = parse_string_literal(literal.as_str())?;
+    if path.len() > 520
+        || !path
+            .split('.')
+            .all(|segment| match segment.as_bytes().first() {
+                Some(b'0'..=b'9') => {
+                    !(segment.len() > 1 && segment.starts_with('0'))
+                        && segment
+                            .parse::<u64>()
+                            .is_ok_and(|index| index < 1024 * 1024)
+                }
+                Some(b'a'..=b'z' | b'_') => segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
+                _ => false,
+            })
+    {
+        return Err(format!("invalid intent message path '{path}'"));
+    }
+    Ok(Expression::IntentInspect {
+        path: parse_named_operand(literal)?,
+        presence_only,
+    })
+}
+
+pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let output_index =
+        parse_general_expression(inner.next().ok_or("Missing tunnel output index")?)?;
+    let policy = if let Some(policy) = inner.next() {
+        let Expression::StructLiteral(fields) = parse_primary_expr(policy)? else {
+            return Err("tunnel policy must be a struct literal".to_string());
+        };
+        let mut values = [None, None, None];
+        for (name, value) in fields {
+            let index = match name.as_str() {
+                "scriptPubKey" => 0,
+                "value" => 1,
+                "assets" => 2,
+                _ => return Err(format!("unknown tunnel policy field '{name}'")),
+            };
+            if values[index].replace(value).is_some() {
+                return Err(format!("duplicate tunnel policy field '{name}'"));
+            }
+        }
+        let [script, value, assets] = values;
+        [
+            script.ok_or("missing tunnel policy field 'scriptPubKey'")?,
+            value.ok_or("missing tunnel policy field 'value'")?,
+            assets.ok_or("missing tunnel policy field 'assets'")?,
+        ]
+    } else {
+        std::array::from_fn(|_| Expression::Literal("true".to_string()))
+    };
+    let exceptions = inner
+        .next()
+        .map(|list| {
+            list.into_inner()
+                .map(parse_general_expression)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Expression::Tunnel {
+        output_index: Box::new(output_index),
+        policy: Box::new(policy),
+        exceptions,
+    })
+}
+
 // ─── Transaction Introspection Parsing ─────────────────────────────────────────
 
 /// Parse tx_introspection pair into an Expression::TxIntrospection

@@ -403,6 +403,18 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
             return;
         }
         Expression::Property(name) => fold_named_index(name, values),
+        Expression::Tunnel { policy, .. } => {
+            for value in policy.iter_mut() {
+                if let Ok(literal) = evaluate(value, &mut |name| {
+                    values
+                        .get(name)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown constant '{name}'"))
+                }) {
+                    *value = Expression::Literal(literal);
+                }
+            }
+        }
         Expression::CheckSigExpr { signature, pubkey } => {
             fold_named_index(signature, values);
             fold_named_index(pubkey, values);
