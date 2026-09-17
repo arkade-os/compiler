@@ -438,7 +438,7 @@ this_property_access = {
 
 // This properties
 this_property = {
-    "activeInputIndex" | "activeBytecode"
+    "activeInputIndex" | "activeBytecode" | "expiry"
 }
 
 // Property part with various access types

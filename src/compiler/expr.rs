@@ -37,6 +37,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // keeps the placeholder pipeline untouched for everything else).
             match prop.trim() {
                 "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
+                "this.expiry" => asm.push(OP_PUSHEXPIRY.to_string()),
                 "this.activeBytecode" => emit_current_input_asm(Some("scriptPubKey"), asm),
                 "tx.time" => asm.push(OP_INSPECTLOCKTIME.to_string()),
                 property => asm.push(format!("<{}>", property)),

@@ -431,7 +431,7 @@ Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. `+` o
 
 **Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts.
 
-**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`, `this.activeBytecode`.
+**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`, `this.activeBytecode`. In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
 
 **Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey`, and `tx.input.current.value | scriptPubKey | sequence | outpoint` for the input being spent.
 

@@ -833,7 +833,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                 }
             })
             .unwrap_or(match property.trim() {
-                "tx.time" | "this.activeInputIndex" => ArkType::Int,
+                "tx.time" | "this.activeInputIndex" | "this.expiry" => ArkType::Int,
                 "this.activeBytecode" => ArkType::Bytes,
                 _ => ArkType::Unknown,
             }),

@@ -39,7 +39,7 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
         Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
-        Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::this_property_access => parse_primary_expr(pair),
         _ => {
             // Try to parse as a primary expression
             parse_primary_expr(pair)
@@ -267,7 +267,10 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             Ok(Expression::Property(format!("{array}.length")))
         }
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
-        Rule::this_property_access => Ok(Expression::Property(pair.as_str().to_string())),
+        Rule::this_property_access => {
+            let property = pair.into_inner().next().ok_or("Missing this property")?;
+            Ok(Expression::Property(format!("this.{}", property.as_str())))
+        }
         Rule::check_sig => {
             let mut inner = pair.into_inner();
             let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
