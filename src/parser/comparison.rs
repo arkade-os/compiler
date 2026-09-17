@@ -9,7 +9,7 @@ pub(crate) fn parse_time_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     Ok(Requirement::Comparison {
         left: Expression::Property("tx.time".to_string()),
         op: ">=".to_string(),
-        right: parse_additive_expr(inner.next().ok_or("Missing timelock")?)?,
+        right: parse_general_expression(inner.next().ok_or("Missing timelock")?)?,
     })
 }
 
@@ -30,7 +30,7 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     // The grammar wraps the hash argument in `additive_expr`, so identifiers
     // and literals surface as `Variable` / `Literal`, while byte-producing
     // primitives (substr/cat/…) and arithmetic surface as their own variants.
-    let preimage_expr = parse_additive_expr(preimage_pair)?;
+    let preimage_expr = parse_general_expression(preimage_pair)?;
     let rhs_is_simple = matches!(
         rhs_pair.as_rule(),
         Rule::named_binding | Rule::hex_literal | Rule::string_literal

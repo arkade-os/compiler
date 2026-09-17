@@ -464,8 +464,22 @@ impl Generator {
         let mut calls = Vec::new();
         functions::extract_calls(&mut expression, &mut calls);
         emit_expression_asm(&expression, &mut raw);
+        let mut branches = Vec::new();
         for token in raw {
-            if let Some(index) = token
+            if token == OP_IF {
+                self.apply(OP_IF, 1, 0)?;
+                branches.push(self.stack.clone());
+            } else if token == OP_ELSE || token == OP_ENDIF {
+                self.pop_temporaries(1, &token)?;
+                if branches.last() != Some(&self.stack) {
+                    return Err("logical branch must produce exactly one stack item".to_string());
+                }
+                if token == OP_ENDIF {
+                    branches.pop();
+                    self.stack.push(StackItem::Temporary);
+                }
+                self.asm.push(token);
+            } else if let Some(index) = token
                 .strip_prefix("<$call:")
                 .and_then(|s| s.strip_suffix('>'))
             {
@@ -474,6 +488,9 @@ impl Generator {
             } else {
                 self.lower_raw_token(&token)?;
             }
+        }
+        if !branches.is_empty() {
+            return Err("unclosed logical branch".to_string());
         }
         if self.stack.len() != before + expected
             || self.stack[before..]

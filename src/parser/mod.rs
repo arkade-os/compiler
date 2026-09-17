@@ -619,6 +619,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_logical_precedence_and_grouping() {
+        let contract = parse("contract C() { function spend() { let value = !a == b || c && d && e; require((a || b) && !(c < d)); } }").unwrap();
+        let Statement::LetBinding {
+            value: Expression::BinaryOp { left, op, right },
+            ..
+        } = &contract.functions[0].statements[0]
+        else {
+            panic!("expected logical expression");
+        };
+        assert_eq!(op, "||");
+        assert!(
+            matches!(left.as_ref(), Expression::BinaryOp { left, op, .. }
+            if op == "==" && matches!(left.as_ref(), Expression::Not { .. }))
+        );
+        assert!(
+            matches!(right.as_ref(), Expression::BinaryOp { left, op, .. }
+            if op == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "&&"))
+        );
+        assert!(matches!(&contract.functions[0].statements[1],
+            Statement::Require(Requirement::Expression(Expression::BinaryOp { left, op, right }))
+            if op == "&&"
+                && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "||")
+                && matches!(right.as_ref(), Expression::Not { value }
+                    if matches!(value.as_ref(), Expression::BinaryOp { op, .. } if op == "<"))));
+    }
+
+    #[test]
     fn parses_unary_prefix_order_and_boolean_boundaries() {
         let contract = parse("contract Unary() { function spend() { let result = -!true != false; let truth = !trueValue; } }").unwrap();
         let Statement::LetBinding {

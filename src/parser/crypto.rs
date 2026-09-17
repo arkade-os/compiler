@@ -56,7 +56,7 @@ pub(crate) fn parse_sighash(pair: Pair<Rule>) -> Result<Expression, String> {
 
 pub(crate) fn parse_digest(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let data = parse_additive_expr(inner.next().ok_or("Missing data in digest")?)?;
+    let data = parse_general_expression(inner.next().ok_or("Missing data in digest")?)?;
     let hash_type = parse_general_expression(inner.next().ok_or("Missing hash type in digest")?)?;
     Ok(Expression::Digest {
         data: Box::new(data),

@@ -427,7 +427,7 @@ pub(crate) fn emit_contract_instance_asm(
     asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
 }
 
-/// Emit assembly for a binary BigNum operation.
+/// Emit assembly for arithmetic or a short-circuit logical operation.
 pub(crate) fn emit_binary_op_asm(
     left: &Expression,
     op: &str,
@@ -435,6 +435,22 @@ pub(crate) fn emit_binary_op_asm(
     asm: &mut Vec<String>,
 ) {
     emit_expression_asm(left, asm);
+    if matches!(op, "&&" | "||") {
+        asm.push(OP_IF.to_string());
+        if op == "&&" {
+            emit_expression_asm(right, asm);
+        } else {
+            asm.push(OP_1.to_string());
+        }
+        asm.push(OP_ELSE.to_string());
+        if op == "||" {
+            emit_expression_asm(right, asm);
+        } else {
+            asm.push(OP_0.to_string());
+        }
+        asm.push(OP_ENDIF.to_string());
+        return;
+    }
     emit_expression_asm(right, asm);
 
     match op {

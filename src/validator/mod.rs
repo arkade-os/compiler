@@ -1478,6 +1478,19 @@ fn validate_binding_expression(
     }
 
     match expression {
+        Expression::BinaryOp { left, op, right } if matches!(op.as_str(), "&&" | "||") => {
+            for operand in [left, right] {
+                let actual = resolved_expression_type(operand, scopes);
+                if actual != ArkType::Bool && actual != ArkType::Unknown {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{}': logical '{}' operand has type '{}', expected 'bool'",
+                        function_name,
+                        op,
+                        actual.as_str()
+                    )));
+                }
+            }
+        }
         Expression::Negate { value } | Expression::Not { value } => {
             let (operator, expected) = if matches!(expression, Expression::Negate { .. }) {
                 ("-", ArkType::Int)

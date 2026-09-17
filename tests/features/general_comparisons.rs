@@ -461,3 +461,182 @@ fn composite_comparisons_resolve_inferred_locals() {
     );
     assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 2);
 }
+
+#[test]
+fn logical_expressions_short_circuit_and_match_truth_tables() {
+    // Only the opcodes used by these literal expressions need execution here.
+    fn execute(asm: &[String]) -> Vec<i64> {
+        let mut stack = Vec::new();
+        let mut branches = Vec::new();
+        let mut active = true;
+        for token in asm {
+            match token.as_str() {
+                "OP_IF" => {
+                    let condition = active && stack.pop().unwrap() != 0;
+                    branches.push((active, condition));
+                    active = condition;
+                }
+                "OP_ELSE" => {
+                    let (parent, condition) = branches.last().unwrap();
+                    active = *parent && !condition;
+                }
+                "OP_ENDIF" => active = branches.pop().unwrap().0,
+                _ if !active => {}
+                "OP_0" => stack.push(0),
+                "OP_1" => stack.push(1),
+                "OP_NOT" => {
+                    let value = stack.pop().unwrap();
+                    stack.push(i64::from(value == 0));
+                }
+                "OP_VERIFY" => assert_ne!(stack.pop().unwrap(), 0, "{asm:?}"),
+                "OP_NIP" => {
+                    stack.remove(stack.len() - 2);
+                }
+                "OP_EQUAL" | "OP_GREATERTHAN" | "OP_LESSTHAN" | "OP_DIV" => {
+                    let right = stack.pop().unwrap();
+                    let left = stack.pop().unwrap();
+                    stack.push(match token.as_str() {
+                        "OP_EQUAL" => i64::from(left == right),
+                        "OP_GREATERTHAN" => i64::from(left > right),
+                        "OP_LESSTHAN" => i64::from(left < right),
+                        _ => left / right,
+                    });
+                }
+                _ => stack.push(
+                    token
+                        .parse()
+                        .unwrap_or_else(|_| panic!("unexpected token: {token}")),
+                ),
+            }
+        }
+        assert!(branches.is_empty());
+        stack
+    }
+    for a in [false, true] {
+        for b in [false, true] {
+            for c in [false, true] {
+                for (expression, expected) in [
+                    (format!("{a} && {b}"), a && b),
+                    (format!("{a} || {b}"), a || b),
+                    (format!("{a} || {b} && !{c}"), a || b && !c),
+                    (format!("({a} || {b}) && !{c}"), (a || b) && !c),
+                    (format!("!({a} && {b}) || {c}"), !(a && b) || c),
+                ] {
+                    let asm = compile_asm(&format!("contract C() {{ function compare() {{ require(({expression}) == {expected}); }} }}"));
+                    assert_eq!(execute(&asm), [1], "{expression}: {asm:?}");
+                }
+            }
+        }
+    }
+    for expression in [
+        "!(false && 1 / 0 > 0)",
+        "true || 1 / 0 > 0",
+        "!(false && (true || 1 / 0 > 0))",
+        "true || (false && 1 / 0 > 0)",
+        "(1 < 2 && 3 > 2) || false",
+        "true || guarded()",
+        "!(false && guarded())",
+    ] {
+        let asm = compile_asm(&format!(
+            "contract C() {{ function compare() {{ require({expression}); }} private function guarded() bool {{ require(false); return true; }} }}"
+        ));
+        assert_eq!(execute(&asm), [1], "{expression}: {asm:?}");
+    }
+}
+
+#[test]
+fn logical_expressions_preserve_calls_bindings_and_spend_abi() {
+    let output = compile(
+        r#"
+contract C(pubkey owner, bytes32 hash) {
+    function compare(signature sig, bytes preimage, bool enabled, int amount) {
+        bool valid = checkSig(sig, owner) || !enabled && amount > 0;
+        valid = valid && (sha256(preimage) == hash || sufficient(amount));
+        if (valid && sufficient(amount)) { require(valid); } else { require(!valid); }
+        require(checkSigFromStack(sig, owner, hash) || !enabled);
+        require(tx.time >= 0 && (amount > 0 || enabled));
+        require(sha256(preimage) == hash || checkSig(sig, owner));
+        require(sufficient(amount) == (enabled || amount > 0));
+    }
+    private function sufficient(int amount) bool { return amount > 0 && (amount < 100 || !false); }
+}
+"#,
+    )
+    .expect("logical calls and bindings");
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert_eq!(output.functions.len(), 1);
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "compare"),
+        ["sig", "preimage", "enabled", "amount"]
+    );
+    assert_eq!(crate::common::group(&output, "compare").leaves.len(), 1);
+    assert_eq!(
+        crate::common::witness_names(&output, "compare", "compare"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert_eq!(
+        crate::common::leaf_asm(&output, "compare", "compare"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:compare> OP_CHECKSIG"
+    );
+    let asm = crate::common::arkade_asm_tokens(&output, "compare");
+    assert!(asm.iter().any(|token| token == "OP_IF"));
+    assert!(asm.iter().any(|token| token == "OP_INSPECTLOCKTIME"));
+    assert!(asm.iter().any(|token| token == OP_CHECKSIGFROMSTACK));
+    assert!(asm.iter().all(|token| !token.contains('$')));
+    assert!(!asm
+        .iter()
+        .any(|token| token == "OP_BOOLAND" || token == "OP_BOOLOR"));
+}
+
+#[test]
+fn logical_operands_require_booleans_even_when_skipped() {
+    for expression in [
+        "true && 1",
+        "0 || false",
+        "false && 0x00",
+        "true || \"\"",
+        "false && number()",
+    ] {
+        let error = compile(&format!("contract C() {{ function compare() {{ require({expression}); }} private function number() int {{ return 1; }} }}")).expect_err("invalid logical operand").to_string();
+        assert!(
+            error.contains("logical") && error.contains("expected 'bool'"),
+            "{expression}: {error}"
+        );
+    }
+    for expression in [
+        "false && missing",
+        "true || absent()",
+        "false && checkSigFromStackVerify(sig, key, message)",
+    ] {
+        let error = compile(&format!("contract C(pubkey key, bytes32 message) {{ function compare(signature sig) {{ require({expression}); }} }}")).expect_err("invalid skipped expression").to_string();
+        assert!(
+            error.contains("undefined")
+                || error.contains("unknown private")
+                || error.contains("does not produce one stack item"),
+            "{expression}: {error}"
+        );
+    }
+    let error = compile("contract C(pubkey owner) { function exit(signature sig) tapscript { require(checkSig(sig, owner) || true); } }").expect_err("compound tapscript expression").to_string();
+    assert!(
+        error.contains("unsupported compound expression in tapscript"),
+        "{error}"
+    );
+}
+
+#[test]
+fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
+    for expression in [
+        "skip && guarded()",
+        "skip || guarded()",
+        "skip || (skip && guarded())",
+    ] {
+        let error = compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; }} private function guarded() bool {{ require(true); return true; }} }}")).expect_err("skippable requirement").to_string();
+        assert!(
+            error.contains("spend path with no require"),
+            "{expression}: {error}"
+        );
+    }
+    for expression in ["guarded() && skip", "guarded() || skip"] {
+        compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
+    }
+}

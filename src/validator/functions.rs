@@ -402,6 +402,12 @@ struct Flow {
 }
 
 fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, bool>) -> bool {
+    // Conservatively count only the always-evaluated left operand, even for literal conditions.
+    if let Expression::BinaryOp { left, op, .. } = expression {
+        if matches!(op.as_str(), "&&" | "||") {
+            return expression_enforces(left, guarantees);
+        }
+    }
     matches!(expression, Expression::Call { name, .. } if guarantees.get(name) == Some(&true))
         || child_exprs(expression)
             .into_iter()

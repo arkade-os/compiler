@@ -7,31 +7,24 @@ use pest::iterators::Pair;
 // Parse general expression (with operator precedence)
 pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
-        Rule::general_expression | Rule::comparison_expr => {
-            // Unwrap and parse the inner expression
+        Rule::general_expression
+        | Rule::logical_or_expr
+        | Rule::logical_and_expr
+        | Rule::comparison_expr
+        | Rule::additive_expr
+        | Rule::multiplicative_expr => {
             let mut inner = pair.into_inner();
-            if let Some(first) = inner.next() {
-                let left = parse_additive_expr(first)?;
-
-                // Check for comparison operator
-                if let Some(op_pair) = inner.next() {
-                    let op = op_pair.as_str().to_string();
-                    let right_pair = inner.next().ok_or("Missing right side of comparison")?;
-                    let right = parse_additive_expr(right_pair)?;
-                    Ok(Expression::BinaryOp {
-                        left: Box::new(left),
-                        op,
-                        right: Box::new(right),
-                    })
-                } else {
-                    Ok(left)
-                }
-            } else {
-                Err("Empty expression".to_string())
+            let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
+            while let Some(op) = inner.next() {
+                let right = parse_general_expression(inner.next().ok_or("Missing right operand")?)?;
+                result = Expression::BinaryOp {
+                    left: Box::new(result),
+                    op: op.as_str().to_string(),
+                    right: Box::new(right),
+                };
             }
+            Ok(result)
         }
-        Rule::additive_expr => parse_additive_expr(pair),
-        Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         Rule::unary_expr | Rule::primary_expr => parse_primary_expr(pair),
         Rule::identifier | Rule::qualified_name => {
             Ok(Expression::Variable(pair.as_str().to_string()))
@@ -44,66 +37,6 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
             // Try to parse as a primary expression
             parse_primary_expr(pair)
         }
-    }
-}
-
-// Parse additive expression (+ and -)
-pub(crate) fn parse_additive_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    match pair.as_rule() {
-        Rule::additive_expr => {
-            let mut inner = pair.into_inner();
-            let first = inner
-                .next()
-                .ok_or("Missing first operand in additive expression")?;
-            let mut result = parse_multiplicative_expr(first)?;
-
-            // Process remaining operands
-            while let Some(op_pair) = inner.next() {
-                let op = op_pair.as_str().to_string();
-                let right_pair = inner
-                    .next()
-                    .ok_or("Missing right operand in additive expression")?;
-                let right = parse_multiplicative_expr(right_pair)?;
-                result = Expression::BinaryOp {
-                    left: Box::new(result),
-                    op,
-                    right: Box::new(right),
-                };
-            }
-
-            Ok(result)
-        }
-        _ => parse_multiplicative_expr(pair),
-    }
-}
-
-// Parse multiplicative expression (* and /)
-pub(crate) fn parse_multiplicative_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    match pair.as_rule() {
-        Rule::multiplicative_expr => {
-            let mut inner = pair.into_inner();
-            let first = inner
-                .next()
-                .ok_or("Missing first operand in multiplicative expression")?;
-            let mut result = parse_primary_expr(first)?;
-
-            // Process remaining operands
-            while let Some(op_pair) = inner.next() {
-                let op = op_pair.as_str().to_string();
-                let right_pair = inner
-                    .next()
-                    .ok_or("Missing right operand in multiplicative expression")?;
-                let right = parse_primary_expr(right_pair)?;
-                result = Expression::BinaryOp {
-                    left: Box::new(result),
-                    op,
-                    right: Box::new(right),
-                };
-            }
-
-            Ok(result)
-        }
-        _ => parse_primary_expr(pair),
     }
 }
 
@@ -211,7 +144,12 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             }
             Ok(value)
         }
-        Rule::general_expression | Rule::comparison_expr => {
+        Rule::general_expression
+        | Rule::logical_or_expr
+        | Rule::logical_and_expr
+        | Rule::comparison_expr
+        | Rule::additive_expr
+        | Rule::multiplicative_expr => {
             // Parenthesized expression
             parse_general_expression(pair)
         }
@@ -288,7 +226,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::sha256_func => {
             // sha256(data) → one-shot OP_SHA256 over the inner expression.
             let inner = pair.into_inner().next().ok_or("Missing sha256 argument")?;
-            let data = parse_additive_expr(inner)?;
+            let data = parse_general_expression(inner)?;
             Ok(Expression::Sha256 {
                 data: Box::new(data),
             })
@@ -345,8 +283,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 return_type: None,
             })
         }
-        Rule::additive_expr => parse_additive_expr(pair),
-        Rule::multiplicative_expr => parse_multiplicative_expr(pair),
         _ => {
             // Default to treating as a property string
             Ok(Expression::Property(pair.as_str().to_string()))
