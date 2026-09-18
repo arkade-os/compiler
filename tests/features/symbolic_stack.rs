@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_DROP, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
-    OP_LESSTHAN, OP_MUL, OP_PICK, OP_PUT,
+    OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
+    OP_MUL, OP_PICK, OP_PUT, OP_ROLL,
 };
 
 fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
@@ -44,7 +44,7 @@ contract Frame(int left, int right) {
     );
     assert_eq!(&covenant.asm[..2], ["<right>", "<left>"]);
     assert!(
-        contains_tokens(&covenant.asm, &["OP_0", OP_PICK, "OP_3", OP_PICK, OP_ADD]),
+        contains_tokens(&covenant.asm, &["OP_0", OP_ROLL, "OP_2", OP_ROLL, OP_ADD]),
         "constructor and function inputs must be read by depth: {:?}",
         covenant.asm
     );
@@ -72,8 +72,8 @@ contract Nested() {
             .iter()
             .filter(|token| token.as_str() == OP_PICK)
             .count()
-            >= 4,
-        "nested reads and the later x reuse must use OP_PICK: {:?}",
+            == 1,
+        "only the first x read must use OP_PICK: {:?}",
         covenant.asm
     );
 }
@@ -149,10 +149,10 @@ contract Mutate() {
         .expect("endif");
     assert!(covenant.asm[if_index..else_index]
         .iter()
-        .any(|token| token == OP_DROP));
+        .any(|token| token == OP_ROLL));
     assert!(covenant.asm[else_index..end_index]
         .iter()
-        .any(|token| token == OP_DROP));
+        .any(|token| token == OP_ROLL));
 }
 
 #[test]
@@ -233,7 +233,7 @@ contract RuntimeIndex() {
         &covenant.asm,
         &[
             "OP_3",
-            OP_PICK,
+            OP_ROLL,
             OP_DUP,
             "OP_0",
             OP_GREATERTHANOREQUAL,
@@ -369,12 +369,10 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
         let covenant = group.arkade.as_ref().unwrap();
         assert_eq!(
             covenant.asm,
-            format!(
-                "<{parameter}> OP_1 OP_PICK OP_1 OP_PICK OP_EQUAL OP_VERIFY OP_1 OP_NIP OP_NIP"
-            )
-            .split_whitespace()
-            .map(String::from)
-            .collect::<Vec<_>>()
+            format!("<{parameter}> OP_1 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1")
+                .split_whitespace()
+                .map(String::from)
+                .collect::<Vec<_>>()
         );
         assert_eq!(crate::common::arkade_inputs(&output, name), ["value"]);
         assert_eq!(group.leaves.len(), 1);
@@ -465,4 +463,57 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
             assert!(actual.asm.contains(&"<VTXO:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
         }
     }
+}
+
+#[test]
+fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
+    for (body, expected) in [
+        (
+            "require(x + x == y);",
+            "OP_0 OP_PICK OP_1 OP_ROLL OP_ADD OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
+        ),
+        (
+            "require(x == y); x = 7; require(true);",
+            "OP_0 OP_PICK OP_2 OP_ROLL OP_EQUAL OP_VERIFY 7 OP_0 OP_PUT OP_1 OP_VERIFY OP_1 OP_NIP",
+        ),
+        (
+            "x = x + 1; require(x == y);",
+            "OP_0 OP_PICK 1 OP_ADD OP_0 OP_PUT OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
+        ),
+    ] {
+        let source = format!("contract FinalUse() {{ function spend(int x, int y) {{ {body} }} }}");
+        assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
+    }
+}
+
+#[test]
+fn final_use_after_a_private_call_consumes_the_caller_binding() {
+    let covenant = covenant(
+        r#"
+contract Framed() {
+    public function spend(int x, int y) {
+        require(double(x) == y);
+        require(x >= 1);
+    }
+    private function double(int v) int {
+        return v * 2;
+    }
+}
+"#,
+        "spend",
+    );
+
+    assert!(
+        contains_tokens(&covenant.asm, &["OP_2", OP_PICK, "2", OP_MUL]),
+        "argument reads stay pinned inside a call frame: {:?}",
+        covenant.asm
+    );
+    assert!(
+        contains_tokens(
+            &covenant.asm,
+            &["OP_0", OP_ROLL, "1", OP_GREATERTHANOREQUAL]
+        ),
+        "the caller's final read after a call must consume the slot: {:?}",
+        covenant.asm
+    );
 }

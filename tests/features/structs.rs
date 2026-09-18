@@ -2,7 +2,7 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL,
     OP_EQUALVERIFY, OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT,
-    OP_LESSTHAN, OP_NOT, OP_PICK, OP_PUT, OP_SWAP, OP_VERIFY,
+    OP_LESSTHAN, OP_NOT, OP_PICK, OP_PUT, OP_ROLL, OP_SWAP, OP_VERIFY,
 };
 
 #[test]
@@ -481,7 +481,7 @@ contract C(Token token) {
 
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
     assert!(asm.iter().all(|token| token != OP_INSPECTASSETGROUPASSETID));
-    assert!(asm.iter().any(|token| token == OP_PICK));
+    assert!(asm.iter().any(|token| token == OP_ROLL));
 }
 
 #[test]
@@ -540,7 +540,7 @@ contract C(Snapshot expected) {
     );
     assert!(asm.iter().any(|token| token == OP_INSPECTINPUTOUTPOINT));
     assert!(asm.iter().any(|token| token == OP_SWAP));
-    assert!(asm.iter().filter(|token| *token == OP_PICK).count() >= 2);
+    assert!(asm.iter().filter(|token| *token == OP_ROLL).count() >= 2);
 }
 
 #[test]
