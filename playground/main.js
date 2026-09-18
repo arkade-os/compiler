@@ -32,6 +32,14 @@ const projects = {
             'cash_secured_put.ark': contracts.cash_secured_put,
         }
     },
+    hashprice: {
+        name: 'Hashprice',
+        description: 'Miner hashprice options: two-token range vaults whose UP (call-spread) and DOWN (put-spread) legs are fungible Arkade Assets priced via intents; long put = buy DOWN, capped short call = mint pairs and sell UP, revenue lock = both; BTC-quoted vault settles a single oracle fixing exactly, USD-quoted vault adds a BTC/USD fixing with an escrow-capped payout',
+        files: {
+            'hashprice_btc_vault.ark': contracts.hashprice_btc_vault,
+            'hashprice_usd_vault.ark': contracts.hashprice_usd_vault,
+        }
+    },
     bonds: {
         name: 'Bonds',
         description: "Fixed-maturity bond market with a phased lifecycle: borrowers self-issue 1:1 credit + debit tokens against collateral and sell credit on the order book for USDT (no interest rate); permissionless oracle-priced margin call (pre-maturity, fires when collateralValue < liqThresholdBps × mintedAmount / 10000) keeps every vault thresholded healthy so credit tokens are genuinely fungible; post-maturity auction window settles defaulted collateral; credit holders redeem pro-rata into single-sig wallets",
