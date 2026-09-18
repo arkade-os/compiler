@@ -507,6 +507,9 @@ impl Generator {
         expression: &Expression,
         expected: usize,
     ) -> Result<(), String> {
+        // Counts temporaries instead of a stack watermark: a consuming read can
+        // remove a binding below the watermark, so only the top `expected` items
+        // are checked for being temporaries.
         let before = self
             .stack
             .iter()
@@ -632,6 +635,7 @@ impl Generator {
         if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
             return Err("internal compiler error: assignment has no result value".to_string());
         }
+        // The index expression may consume a binding, so resolve the array slot after it.
         self.emit_expression(index)?;
         let first_element = internal_array_binding_name(array, "0");
         let first_index = self
@@ -681,6 +685,8 @@ impl Generator {
                     name,
                     kind: BindingKind::Local,
                 }) => {
+                    // Analysis-pass stack positions are stable (nothing is consumed
+                    // there), so the drop position equals the recorded read position.
                     self.last_reads.remove(&(name.clone(), self.stack.len() - 1));
                     self.asm.push(OP_DROP.to_string());
                     self.stack.pop();

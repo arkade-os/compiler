@@ -485,3 +485,35 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
         assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
     }
 }
+
+#[test]
+fn final_use_after_a_private_call_consumes_the_caller_binding() {
+    let covenant = covenant(
+        r#"
+contract Framed() {
+    public function spend(int x, int y) {
+        require(double(x) == y);
+        require(x >= 1);
+    }
+    private function double(int v) int {
+        return v * 2;
+    }
+}
+"#,
+        "spend",
+    );
+
+    assert!(
+        contains_tokens(&covenant.asm, &["OP_2", OP_PICK, "2", OP_MUL]),
+        "argument reads stay pinned inside a call frame: {:?}",
+        covenant.asm
+    );
+    assert!(
+        contains_tokens(
+            &covenant.asm,
+            &["OP_0", OP_ROLL, "1", OP_GREATERTHANOREQUAL]
+        ),
+        "the caller's final read after a call must consume the slot: {:?}",
+        covenant.asm
+    );
+}
