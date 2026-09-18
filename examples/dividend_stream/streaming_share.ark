@@ -1,0 +1,161 @@
+// StreamingShare Contract
+//
+// A per-holder dividend entitlement position in a streaming-dividend program
+// (see dividend_stream.md and dividend_treasury.ark). The position carries
+// (units, lastClaim): `units` preferred-share units whose fixed USD-cent
+// dividend has been accruing continuously — at one-second granularity —
+// since `lastClaim`.
+//
+//   accrued(t) = units × annualDividendCents × (t − lastClaim) / 31536000
+//
+// Accrual is linear in both units and time, which buys three properties:
+//   - claim any time: the holder settles accrued dividends whenever the sat
+//     value exceeds dust; lastClaim advances to now and the stream continues;
+//   - transfer without record dates: a key swap carries (units, lastClaim)
+//     unchanged, so accrued-but-unclaimed dividends travel with the position
+//     and are priced into the sale — there is no ex-dividend cliff;
+//   - exact splits: two children with the same lastClaim and units summing to
+//     the parent accrue exactly what the parent would have.
+//
+// A claim co-spends the DividendTreasury (which independently recomputes the
+// accrual and re-creates this position with lastClaim = now). This covenant
+// protects the holder's side: only the holder can authorize, the co-spent
+// input must be the genuine treasury, and the payout output must pay the
+// holder. Reserve accounting is the treasury covenant's job.
+//
+// Oracle model, accrual bounds and the claim tx layout are documented in
+// dividend_treasury.ark; both covenants enforce the same math.
+
+import "single_sig.ark";
+import "dividend_treasury.ark";
+
+contract StreamingShare(
+  pubkey  holderPk,            // beneficial owner; mutates on transfer
+  pubkey  issuerPk,            // issuer treasury key (binds position to program)
+  pubkey  oraclePk,            // BTC/USD signed price feed
+  bytes32 ticker,              // feed id, e.g. sha256("BTC/USD")
+  int     annualDividendCents, // fixed dividend per unit per year, USD cents
+  int     units,               // units in this position; mutates on split
+  int     lastClaim,           // unix seconds; accrual basis, mutates on claim
+  int     exit                 // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // CLAIM — holder settles the dividend accrued since lastClaim. The treasury
+  // input is located via `treasuryIdx` and its mutable state is declared as
+  // witness; the scriptPubKey equality binds the declaration.
+  //   input[treasuryIdx]: DividendTreasury (function: service)
+  //   output[1]: this position re-created with lastClaim = tx.offchainTime
+  //   output[2]: payoutSats → holder
+  // -------------------------------------------------------------------------
+  function claim(
+    signature holderSig,
+    int       treasuryIdx,
+    int       treasuryTotalUnits,
+    int       treasuryReserve,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(holderSig, holderPk), "invalid holder sig");
+    require(this.activeInputIndex != treasuryIdx, "self-claim disallowed");
+    require(units > 0, "empty position");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    require(
+      tx.inputs[treasuryIdx].scriptPubKey == new DividendTreasury(
+        issuerPk, oraclePk, ticker, annualDividendCents,
+        treasuryTotalUnits, treasuryReserve, exit
+      ),
+      "input not matching treasury"
+    );
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int elapsed = tx.offchainTime - lastClaim;
+    require(elapsed >= 0, "clock regression");
+    int annualCents  = units * annualDividendCents;
+    int accruedCents = annualCents * elapsed / 31536000;
+    require(accruedCents > 0, "nothing accrued");
+    int payoutSats = accruedCents * 100000000 / oraclePrice;
+    require(payoutSats > 330, "dust claim; accrue longer");
+
+    require(
+      tx.outputs[1].scriptPubKey == new StreamingShare(
+        holderPk, issuerPk, oraclePk, ticker,
+        annualDividendCents, units, tx.offchainTime, exit
+      ),
+      "invalid position recreation"
+    );
+    require(tx.outputs[1].value >= 330, "position output dust");
+
+    require(tx.outputs[2].scriptPubKey == new SingleSig(holderPk, exit), "output 2 not holder");
+    require(tx.outputs[2].value >= payoutSats, "holder underpaid");
+  }
+
+  // -------------------------------------------------------------------------
+  // TRANSFER — pure key swap, no oracle. (units, lastClaim) carry over, so
+  // accrued-but-unclaimed dividends travel with the position: the stream
+  // never stops and no record date exists to snapshot.
+  // -------------------------------------------------------------------------
+  function transfer(signature holderSig, pubkey newHolderPk) {
+    require(checkSig(holderSig, holderPk), "invalid holder sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new StreamingShare(
+        newHolderPk, issuerPk, oraclePk, ticker,
+        annualDividendCents, units, lastClaim, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= 330, "position output dust");
+  }
+
+  // -------------------------------------------------------------------------
+  // SPLIT — divide the position into two. Both children keep lastClaim, so
+  // the split is exactly accrual-fair: accrual is linear in units, and the
+  // children's future (and pending) accrual sums to the parent's.
+  //   output[0]: splitUnits → newHolderPk
+  //   output[1]: units − splitUnits → holder
+  // -------------------------------------------------------------------------
+  function split(signature holderSig, int splitUnits, pubkey newHolderPk) {
+    require(checkSig(holderSig, holderPk), "invalid holder sig");
+    require(splitUnits > 0, "zero amount");
+    require(splitUnits < units, "amount exceeds units");
+
+    int remainingUnits = units - splitUnits;
+
+    require(
+      tx.outputs[0].scriptPubKey == new StreamingShare(
+        newHolderPk, issuerPk, oraclePk, ticker,
+        annualDividendCents, splitUnits, lastClaim, exit
+      ),
+      "invalid split output 0"
+    );
+    require(tx.outputs[0].value >= 330, "split output 0 dust");
+
+    require(
+      tx.outputs[1].scriptPubKey == new StreamingShare(
+        holderPk, issuerPk, oraclePk, ticker,
+        annualDividendCents, remainingUnits, lastClaim, exit
+      ),
+      "invalid split output 1"
+    );
+    require(tx.outputs[1].value >= 330, "split output 1 dust");
+  }
+
+  // -------------------------------------------------------------------------
+  // UNILATERAL EXIT (CSV) — holder recovers the position UTXO after the exit
+  // delay (Arkade operator offline). The position's sat value is dust-sized;
+  // the entitlement it represents is enforced against the issuer per the
+  // program terms documented in dividend_stream.md.
+  // -------------------------------------------------------------------------
+  function unilateral(signature holderSig) tapscript {
+    require(older(exit));
+    require(checkSig(holderSig, holderPk));
+  }
+}
