@@ -26,9 +26,13 @@ mod htlc;
 mod layerzero;
 #[path = "examples/repayment_pool.rs"]
 mod repayment_pool;
+#[path = "examples/stability_lvga_payout.rs"]
+mod stability_lvga_payout;
 #[path = "examples/stability_vault.rs"]
 mod stability_vault;
 #[path = "examples/threshold_oracle.rs"]
 mod threshold_oracle;
 #[path = "examples/token_vault.rs"]
 mod token_vault;
+#[path = "examples/wlvga_payout.rs"]
+mod wlvga_payout;
