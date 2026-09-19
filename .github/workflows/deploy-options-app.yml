@@ -1,0 +1,64 @@
+name: Deploy Covered-Call App to GitHub Pages
+
+# Builds the standalone covered-call options dApp (examples/options/web) and
+# publishes it to the gh-pages branch under /options, alongside the playground
+# (served at the root) and PR previews (under /pr-previews). Each target is an
+# independent subtree of gh-pages; clean is scoped to this app's folder, and the
+# playground deploy excludes /options so the two never clobber each other.
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "examples/options/web/**"
+      - ".github/workflows/deploy-options-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-options-app
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/options/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: examples/options/web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lifecycle smoke test
+        run: pnpm smoke
+
+      - name: Build
+        run: pnpm build
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: examples/options/web/dist
+          target-folder: options
+          clean: true
