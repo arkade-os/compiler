@@ -13,6 +13,8 @@ use targets::{CodegenOptions, CodegenTarget};
 pub enum Target {
     TypeScript,
     Go,
+    /// The TypeScript SDK's Program JSON, consumed by `parseArtifact`.
+    SdkProgram,
 }
 
 impl Target {
@@ -21,6 +23,7 @@ impl Target {
         match s {
             "typescript" | "ts" => Some(Target::TypeScript),
             "go" => Some(Target::Go),
+            "sdk-program" => Some(Target::SdkProgram),
             _ => None,
         }
     }
@@ -29,6 +32,7 @@ impl Target {
         match self {
             Target::TypeScript => Box::new(targets::typescript::TypeScriptTarget),
             Target::Go => Box::new(targets::go::GoTarget),
+            Target::SdkProgram => Box::new(targets::sdk_program::SdkProgramTarget),
         }
     }
 }
