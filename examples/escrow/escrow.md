@@ -2,7 +2,17 @@
 
 Party A locks coins. An oracle releases `amount` to party B, or the timeout returns the coins to party A.
 
-[Explore the interactive Escrow flow](https://arkade-os.github.io/compiler/?example=escrow&view=flow) to see the outcomes first and expand their technical details on demand.
+```mermaid
+flowchart TD
+  complete["complete<br/>server + emulator<br/>oracle attestation"]
+  cancel["cancel<br/>server + emulator<br/>tx.time ≥ timeoutHeight"]
+  unilateral["unilateral<br/>party A and party B<br/>older(exit)"]
+
+  complete --> b0["0 · partyBScript · raw script parameter · ≥ amount"]
+  complete --> a1["1 · partyAScript · raw script parameter · surplus above 330"]
+  cancel --> a0["0 · partyAScript · raw script parameter · ≥ input"]
+  unilateral --> free["outputs unconstrained"]
+```
 
 `partyAScript` and `partyBScript` are the 32-byte witness program an output reports.
 

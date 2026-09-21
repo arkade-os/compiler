@@ -16,7 +16,7 @@ const context = vm.createContext({
     console: { warn() {} },
 });
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
-vm.runInContext(source.replace(/^import[\s\S]*?;\s*$/gm, ''), context);
+vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 
 const selections = vm.runInContext(`[
     ...Object.entries(projects).flatMap(([id, project]) => Object.keys(project.files).map(file => [id, file])),
