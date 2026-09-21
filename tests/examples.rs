@@ -28,6 +28,8 @@ mod htlc;
 mod layerzero;
 #[path = "examples/repayment_pool.rs"]
 mod repayment_pool;
+#[path = "examples/settlement.rs"]
+mod settlement;
 #[path = "examples/stability_vault.rs"]
 mod stability_vault;
 #[path = "examples/threshold_oracle.rs"]

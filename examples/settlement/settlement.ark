@@ -1,0 +1,112 @@
+pragma arkade ^0.1.0;
+
+// Bilateral Settlement Contract
+//
+// An Arkade port of a real Liquid/SimplicityHL contract: a two-party
+// settlement where an oracle attests that a real-world event occurred, and a
+// timeout returns the funds if it never does. See settlement.md for the
+// line-by-line mapping.
+//
+//   Path       Authorization                        Payout enforced by
+//   complete   oracle attestation, no key           covenant → party B, surplus to A
+//   cancel     absolute locktime, no key            covenant → party A
+//
+// The oracle does not attest a value. It signs one pre-agreed message whose
+// hash is committed in `oracleMessageHash`, so the only thing an oracle key
+// can do is assert that this one event happened. It cannot name a different
+// outcome, a different amount, or a different payee — which keeps a
+// compromised oracle key from being a way to move money. Contrast
+// examples/escrow, where the oracle signs a settlement *share* and therefore
+// has to be trusted with the split.
+//
+// The attestation is a commitment, not a public constant: only
+// sha256(oracleMsg) is committed, so the message itself stays private until
+// the settlement is claimed.
+//
+//   oracleMsg         = sha256(<agreed settlement statement>)
+//   oracleMessageHash = sha256(oracleMsg)      // committed in the contract
+//   oracleSig         = schnorr_sign(oracleKey, oracleMsg)
+//
+// Neither path takes a party signature. The Liquid original needs party B to
+// co-sign `complete`, because there the covenant fixes only the destination
+// scripts and B's signature is what pins the split between them; here the
+// covenant fixes the amounts too, so nobody has to be online. An agent, a
+// keeper, or either party can broadcast, and the funds still can only reach
+// the committed destinations.
+//
+// Output layout, chosen by the funded amount so a client can build the
+// transaction without reading the contract:
+//
+//   complete, exact funding    output[0] party B (settlementAmount)
+//   complete, with surplus     output[0] party B (settlementAmount)
+//                              output[1] party A (the surplus)
+//   cancel                     output[0] party A (everything)
+
+contract Settlement(
+  // Buyer side. Funds the settlement and is refunded on timeout. Used only by
+  // the unilateral exit; no covenant path asks either party to sign.
+  pubkey  partyAPk,
+  // Seller side. Paid when the oracle attests.
+  pubkey  partyBPk,
+  // The oracle's attestation key. Verified against a message, never a
+  // transaction.
+  pubkey  oraclePk,
+  // sha256 of the single attestation this settlement will accept.
+  bytes32 oracleMessageHash,
+  // Committed payout destinations, as the 32-byte witness programs
+  // OP_INSPECTOUTPUTSCRIPTPUBKEY reports. Arbitrary Taproot destinations, so a
+  // party can be paid to a wallet it already has.
+  bytes32 partyAScript,
+  bytes32 partyBScript,
+  // What party B is owed, in sats. Anything above it returns to party A.
+  int     settlementAmount,
+  // Absolute locktime after which the settlement unwinds.
+  int     timeoutHeight,
+  // Unilateral exit delay in blocks.
+  int     exit
+) {
+  // Smallest viable Taproot output.
+  const int DUST = 330;
+
+  // -------------------------------------------------------------------------
+  // COMPLETE — the attested event happened, so party B is paid.
+  // -------------------------------------------------------------------------
+  function complete(bytes32 oracleMsg, signature oracleSig) {
+    require(sha256(oracleMsg) == oracleMessageHash, "unexpected attestation");
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int locked = tx.input.current.value;
+    require(locked >= settlementAmount, "settlement underfunded");
+    int surplus = locked - settlementAmount;
+
+    require(tx.outputs[0].value >= settlementAmount, "party B underpaid");
+    require(tx.outputs[0].scriptPubKey == partyBScript, "output 0 not party B");
+
+    if (surplus > 0) {
+      // A surplus too small to pay out cannot be folded into party B's
+      // output: it is party A's money. Fund exactly, or fund above dust.
+      require(surplus > DUST, "surplus below dust");
+      require(tx.outputs[1].value >= surplus, "party A surplus underpaid");
+      require(tx.outputs[1].scriptPubKey == partyAScript, "output 1 not party A");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // CANCEL — the event never happened, so the funds go back.
+  // -------------------------------------------------------------------------
+  function cancel() {
+    require(tx.time >= timeoutHeight, "timeout not reached");
+
+    require(tx.outputs[0].value >= tx.input.current.value, "party A underpaid");
+    require(tx.outputs[0].scriptPubKey == partyAScript, "output 0 not party A");
+  }
+
+  // -------------------------------------------------------------------------
+  // UNILATERAL EXIT (CSV) — both parties together, never either alone.
+  // The Liquid original has no counterpart: its UTXO is already on chain.
+  // -------------------------------------------------------------------------
+  function unilateral(signature partyASig, signature partyBSig) tapscript {
+    require(older(exit));
+    require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig], 2));
+  }
+}
