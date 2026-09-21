@@ -205,7 +205,7 @@ export function escrowFlowMarkup({ modified = false } = {}) {
                 </div>
             </div>
 
-            <main class="escrow-flow-journey">
+            <div class="escrow-flow-journey">
                 <div class="escrow-vault">
                     <div class="escrow-vault-rings" aria-hidden="true">
                         <span></span><span></span><span></span>
@@ -239,7 +239,7 @@ export function escrowFlowMarkup({ modified = false } = {}) {
                 <div class="escrow-outcomes">
                     ${ROUTES.map(routeCard).join('')}
                 </div>
-            </main>
+            </div>
 
             <footer class="escrow-trust-note">
                 <span class="escrow-trust-icon"><i class="fas fa-shield-halved" aria-hidden="true"></i></span>
