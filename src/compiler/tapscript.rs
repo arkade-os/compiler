@@ -200,7 +200,9 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
             for k in keys {
                 match k {
                     KeyExpr::Ident(id) if id == "emulator" => uses_bare_emulator = true,
-                    KeyExpr::Tweak { func } => tweak_targets.push(func.clone()),
+                    KeyExpr::Tweak { base, func } if base == "emulator" => {
+                        tweak_targets.push(func.clone())
+                    }
                     _ => {}
                 }
             }
@@ -280,10 +282,37 @@ pub fn validate_arkd_rules(
 
     // Key resolution.
     for k in &c.keys {
-        if let KeyExpr::Ident(id) = k {
-            if !in_scope(id) {
+        match k {
+            KeyExpr::Ident(id) if !in_scope(id) => {
                 return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
             }
+            KeyExpr::Tweak { base, func } if base != "emulator" => {
+                if constructor_scope.get(base) != Some(&ArkType::Pubkey) {
+                    return Err(format!(
+                        "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
+                        ts.name
+                    ));
+                }
+                if !contract
+                    .functions
+                    .iter()
+                    .any(|f| !f.is_private && &f.name == func)
+                {
+                    return Err(format!(
+                        "tweak({base}, {func}) in tapscript `{}`: no function named `{func}`",
+                        ts.name
+                    ));
+                }
+                // The Arkade emulator can sign `func` immediately. A second
+                // enclave on the same covenant without a CSV delay races it.
+                if !c.class.is_exit() {
+                    return Err(format!(
+                        "tweak({base}, {func}) in tapscript `{}`: a second emulator must be CSV-gated",
+                        ts.name
+                    ));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -394,7 +423,8 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
         KeyExpr::Ident(id) if id == "server" => "<SERVER_KEY>".to_string(),
         KeyExpr::Ident(id) if id == "emulator" => format!("<EMULATOR_KEY:{leaf_func}>"),
         KeyExpr::Ident(id) => format!("<{id}>"),
-        KeyExpr::Tweak { func } => format!("<EMULATOR_KEY:{func}>"),
+        KeyExpr::Tweak { base, func } if base == "emulator" => format!("<EMULATOR_KEY:{func}>"),
+        KeyExpr::Tweak { base, func } => format!("<TWEAK:{base}:{func}>"),
     }
 }
 
@@ -589,7 +619,10 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
         timelock: None,
         keys: vec![
             KeyExpr::Ident("server".into()),
-            KeyExpr::Tweak { func: func.into() },
+            KeyExpr::Tweak {
+                base: "emulator".into(),
+                func: func.into(),
+            },
         ],
         threshold: Some(2),
     };
@@ -871,6 +904,7 @@ mod tests {
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "claim".into(),
             }])],
         };
@@ -887,6 +921,7 @@ mod tests {
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "claim".into(),
             }])],
         };
@@ -901,6 +936,7 @@ mod tests {
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "nope".into(),
             }])],
         };
@@ -915,9 +951,11 @@ mod tests {
             inputs: vec![],
             items: vec![sig(vec![
                 KeyExpr::Tweak {
+                    base: "emulator".into(),
                     func: "claim".into(),
                 },
                 KeyExpr::Tweak {
+                    base: "emulator".into(),
                     func: "refund".into(),
                 },
             ])],
@@ -1245,6 +1283,53 @@ mod tests {
                 "<sender>".to_string(),
                 OP_CHECKSIG.to_string(),
             ]
+        );
+    }
+
+    /// A constructor pubkey tweaked by a covenant is a second emulator. It has
+    /// to wait out a CSV or it can spend at the same time as the Arkade one.
+    #[test]
+    fn second_emulator_requires_csv() {
+        let src = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() {
+    require(tx.input.current.value >= 1, "funded");
+  }
+  function late(signature insurerSig) tapscript {
+    require(older(10));
+    require(checkSig(insurerSig, tweak(insurer, claim)));
+  }
+  function race(signature insurerSig) tapscript {
+    require(checkSig(insurerSig, tweak(insurer, claim)));
+  }
+}
+"#;
+        let err = super::super::compile(src).unwrap_err();
+        assert!(err.contains("a second emulator must be CSV-gated"), "{err}");
+
+        let gated = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() {
+    require(tx.input.current.value >= 1, "funded");
+  }
+  function late(signature insurerSig) tapscript {
+    require(older(10));
+    require(checkSig(insurerSig, tweak(insurer, claim)));
+  }
+}
+"#;
+        let output = super::super::compile(gated).expect("csv-gated second emulator");
+        let leaf = output
+            .functions
+            .iter()
+            .find(|g| g.name == "late")
+            .expect("late");
+        let asm = leaf.leaves[0].asm.join(" ");
+        assert!(
+            asm.contains("<TWEAK:insurer:claim>"),
+            "the leaf binds the insurer key to claim: {asm}"
         );
     }
 }
