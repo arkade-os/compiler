@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	settlementAmount = int64(500_000)
-	settlementExit   = int64(144)
-	settlementExpiry = uint32(900_000)
+	settlementAmount    = int64(500_000)
+	settlementAgentExit = int64(144)
+	settlementExit      = int64(1008)
+	settlementExpiry    = uint32(900_000)
 )
 
 // p2trTo builds the scriptPubKey paying a 32-byte Taproot witness program —
@@ -39,6 +40,7 @@ func TestCompiledSettlement(t *testing.T) {
 	partyAKey := fixedPrivateKey(4)
 	partyBKey := fixedPrivateKey(5)
 	oracleKey := fixedPrivateKey(6)
+	agentKey := fixedPrivateKey(7)
 
 	// The oracle signs sha256(statement); the contract commits to sha256 of
 	// that, so the statement stays private until the settlement is claimed.
@@ -53,11 +55,13 @@ func TestCompiledSettlement(t *testing.T) {
 		"partyAPk":          schnorr.SerializePubKey(partyAKey.PubKey()),
 		"partyBPk":          schnorr.SerializePubKey(partyBKey.PubKey()),
 		"oraclePk":          schnorr.SerializePubKey(oracleKey.PubKey()),
+		"agentPk":           schnorr.SerializePubKey(agentKey.PubKey()),
 		"oracleMessageHash": oracleMessageHash[:],
 		"partyAScript":      partyAProgram,
 		"partyBScript":      partyBProgram,
 		"settlementAmount":  scriptInt(t, settlementAmount),
 		"timeoutHeight":     scriptInt(t, int64(settlementExpiry)),
+		"agentExit":         scriptInt(t, settlementAgentExit),
 		"exit":              scriptInt(t, settlementExit),
 	}
 
@@ -203,14 +207,47 @@ func TestCompiledSettlement(t *testing.T) {
 		})
 	})
 
+	t.Run("fallback tapscript", func(t *testing.T) {
+		fallback := instantiateLeaf(t, contract, "fallback", values, serverKey.PubKey())
+		deployment := fundingTx(fallback.pkScript, settlementAmount)
+
+		t.Run("the agent spends after the first delay", func(t *testing.T) {
+			requireTapscriptResult(
+				t, deployment, fallback, 0, uint32(settlementAgentExit),
+				[]*btcec.PrivateKey{agentKey}, nil, "",
+			)
+		})
+
+		t.Run("the agent cannot spend before the first delay", func(t *testing.T) {
+			requireTapscriptResult(
+				t, deployment, fallback, 0, uint32(settlementAgentExit-1),
+				[]*btcec.PrivateKey{agentKey}, nil, "locktime requirement not satisfied",
+			)
+		})
+
+		t.Run("a party cannot spend the agent leaf", func(t *testing.T) {
+			requireTapscriptResult(
+				t, deployment, fallback, 0, uint32(settlementAgentExit),
+				[]*btcec.PrivateKey{partyAKey}, nil, "signature",
+			)
+		})
+	})
+
 	t.Run("unilateral tapscript", func(t *testing.T) {
 		unilateral := instantiateLeaf(t, contract, "unilateral", values, serverKey.PubKey())
 		deployment := fundingTx(unilateral.pkScript, settlementAmount)
 
-		t.Run("both parties together after the delay", func(t *testing.T) {
+		t.Run("both parties together after the second delay", func(t *testing.T) {
 			requireTapscriptResult(
 				t, deployment, unilateral, 0, uint32(settlementExit),
 				[]*btcec.PrivateKey{partyAKey, partyBKey}, nil, "",
+			)
+		})
+
+		t.Run("the parties cannot spend at the agent's delay", func(t *testing.T) {
+			requireTapscriptResult(
+				t, deployment, unilateral, 0, uint32(settlementAgentExit),
+				[]*btcec.PrivateKey{partyAKey, partyBKey}, nil, "locktime requirement not satisfied",
 			)
 		})
 

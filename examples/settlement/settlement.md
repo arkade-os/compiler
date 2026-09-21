@@ -110,34 +110,30 @@ oracle key is not a way to move money — only a way to trigger, or withhold, th
 one settlement the parties already agreed to. Committing the hash rather than
 the message also keeps the statement private until the settlement is claimed.
 
-`examples/escrow` makes the opposite trade: its oracle signs a settlement
-*share*, which buys partial and disputed outcomes at the cost of having to
-trust the oracle with the split. Neither is strictly better. Pick the one whose
-failure mode you can live with.
+The failure mode that follows from this shape: a compromised oracle can trigger
+or withhold the one agreed settlement, and nothing else.
 
 ---
 
-## The exit set, and why it differs from `escrow`
+## The exit
 
-`escrow` widens its emulator-down fallback to a 2-of-3 so a disputed deal is
-never frozen. This contract stays 2-of-2 on purpose, because there is no third
-key to add that does not cost something:
+An Arkade VTXO needs a way out when the operator stops co-signing. Two
+standalone leaves, in declaration order:
 
-- **The oracle.** Putting it in the exit set means a stolen oracle key plus one
-  party can move the funds. "A compromised oracle key cannot move money" is
-  this contract's best property; it is not worth trading for liveness.
-- **The agent.** The original already treats agent-key compromise as a live
-  threat and answers it by binding destinations. An exit leaf enforces no
-  destinations — tapscript bodies are hash, timelock and signature only — so
-  an agent in the exit set reintroduces exactly the risk the original spends
-  its `check_output` whitelist defending against.
+| Leaf | Delay | Who signs |
+|---|---|---|
+| `fallback` | `agentExit` | the agent's key alone |
+| `unilateral` | `exit`, longer | party A and party B together |
 
-The residual risk is real: if the emulator stops co-signing and the two parties
-will not cooperate, the funds sit until they do. It is smaller here than in a
-marketplace escrow, because the correct outcome is binary and pre-agreed rather
-than contested — both parties know at any moment whether the oracle attested.
-A deployment that would rather have liveness can add an agent key and a second
-pair of exit leaves; that is a threat-model decision, not a technical one.
+The first leaf is a fallback emulator the agent runs. If that agent is offline
+too, the parties wait out the second delay and spend 2-of-2. Neither party can
+exit alone.
+
+The agent key is a constructor pubkey. A standalone leaf cannot carry the bare
+emulator role, and an exit leaf enforces no destinations — tapscript bodies are
+a hash, a timelock, and signatures — so once `agentExit` elapses a stolen
+agent key can sweep the funds. That is the liveness trade. The oracle stays
+out of both leaves, so a stolen oracle key still cannot move the money.
 
 ---
 
@@ -147,9 +143,7 @@ pair of exit leaves; that is a threat-model decision, not a technical one.
 `tx.outputs[i].scriptPubKey`, which `OP_INSPECTOUTPUTSCRIPTPUBKEY` reports as
 the 32-byte witness program with the witness version dropped. For a Taproot
 destination, commit the output key. This lets a party be paid to a wallet it
-already has, rather than to a contract-shaped VTXO — `examples/escrow` takes
-the other route and pins payouts to `new SingleSig(pk, exit)`, which produces
-an Arkade VTXO carrying its own unilateral exit.
+already has.
 
 ---
 
@@ -158,7 +152,7 @@ an Arkade VTXO carrying its own unilateral exit.
 The TypeScript SDK reads the compiled artifact directly —
 `programFromArtifact(artifact)` — so there is nothing to generate. This
 contract instantiates no child contracts, so the only values a client binds are
-the nine constructor parameters plus `server`.
+the eleven constructor parameters plus `server`.
 
 ---
 
@@ -169,4 +163,5 @@ and the Bitcoin script engine. Both paths settle, and the VM rejects a
 settlement attested by the wrong key, an attestation of a different message, a
 redirected payout, a shorted party B, a surplus folded into party B's output, a
 sub-dust surplus, a refund before the timeout, a refund sent to party B, a
-refund skimmed into a third output, and a unilateral exit by one party alone.
+refund skimmed into a third output, an agent exit before `agentExit`, a
+party spending the agent leaf, and a unilateral exit by one party alone.

@@ -14,10 +14,8 @@ pragma arkade ^0.1.0;
 // The oracle does not attest a value. It signs one pre-agreed message whose
 // hash is committed in `oracleMessageHash`, so the only thing an oracle key
 // can do is assert that this one event happened. It cannot name a different
-// outcome, a different amount, or a different payee — which keeps a
-// compromised oracle key from being a way to move money. Contrast
-// examples/escrow, where the oracle signs a settlement *share* and therefore
-// has to be trusted with the split.
+// outcome, a different amount, or a different payee, so a compromised oracle
+// key can only trigger or withhold the one settlement already agreed.
 //
 // The attestation is a commitment, not a public constant: only
 // sha256(oracleMsg) is committed, so the message itself stays private until
@@ -48,8 +46,12 @@ contract Settlement(
   pubkey  partyAPk,
   // Seller side. Paid when the oracle attests.
   pubkey  partyBPk,
+  // Fallback operator run by the agent. Spends alone after `agentExit`. A
+  // stolen agent key can sweep the funds once that delay elapses; that is the
+  // liveness trade for an emulator that has stopped co-signing.
+  pubkey  agentPk,
   // The oracle's attestation key. Verified against a message, never a
-  // transaction.
+  // transaction, and kept out of the exit set.
   pubkey  oraclePk,
   // sha256 of the single attestation this settlement will accept.
   bytes32 oracleMessageHash,
@@ -62,7 +64,10 @@ contract Settlement(
   int     settlementAmount,
   // Absolute locktime after which the settlement unwinds.
   int     timeoutHeight,
-  // Unilateral exit delay in blocks.
+  // First exit delay, in blocks. The agent's fallback key spends after this.
+  int     agentExit,
+  // Second exit delay, in blocks, longer than `agentExit`. The two parties
+  // spend together after this, if the agent is also offline.
   int     exit
 ) {
   // Smallest viable Taproot output.
@@ -102,26 +107,26 @@ contract Settlement(
   }
 
   // -------------------------------------------------------------------------
-  // UNILATERAL EXIT (CSV) — both parties together, never either alone.
-  // The Liquid original has no counterpart: its UTXO is already on chain.
+  // EXIT — two CSV leaves, layered. The Liquid original has no counterpart:
+  // its UTXO is already on chain. An Arkade VTXO needs a way out when the
+  // operator stops co-signing.
   //
-  // Deliberately 2-of-2, unlike examples/escrow, which widens its exit to a
-  // 2-of-3 so a disputed deal is never frozen. There is no third key here that
-  // can be added without giving something up:
+  //   fallback    after `agentExit`, the agent's key alone
+  //   unilateral  after `exit`, party A and party B together
   //
-  //   the oracle  — adding it would mean a stolen oracle key plus one party
-  //                 can move the funds, and "a compromised oracle key cannot
-  //                 move money" is this contract's best property.
-  //   the agent   — the original already treats agent-key compromise as a live
-  //                 threat and answers it by binding destinations. An exit leaf
-  //                 enforces no destinations, so an agent in the exit set
-  //                 reintroduces exactly that risk once the delay runs.
+  // The agent key is a constructor pubkey, not the reserved emulator role: a
+  // standalone leaf cannot carry the bare emulator key. The oracle stays out
+  // of both leaves, so a stolen oracle key still cannot move the funds.
   //
-  // The residual risk is real and worth naming: if the emulator stops
-  // co-signing and the two parties will not cooperate, the funds sit until
-  // they do. A deployment that prefers liveness over the property above can
-  // add an agent key and a second pair of exit leaves.
+  // A stolen agent key can, once `agentExit` elapses. The second leaf is what
+  // remains when that agent is offline too: the parties wait out the longer
+  // delay and spend 2-of-2. Neither party can exit alone.
   // -------------------------------------------------------------------------
+  function fallback(signature agentSig) tapscript {
+    require(older(agentExit));
+    require(checkSig(agentSig, agentPk));
+  }
+
   function unilateral(signature partyASig, signature partyBSig) tapscript {
     require(older(exit));
     require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig], 2));
