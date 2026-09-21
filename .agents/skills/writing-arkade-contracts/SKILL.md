@@ -91,7 +91,7 @@ Check the current grammar rather than preserving workarounds from old examples.
 | Need | Start with |
 |---|---|
 | Basic covenant plus unilateral exit | `examples/htlc/htlc.ark` |
-| Oracle attestation, introspection-pinned payouts, branching output layouts | `examples/settlement/settlement.ark` |
+| Oracle attestation, introspection-pinned payouts, branching output layouts | `examples/escrow/escrow.ark` |
 | Recursive state and cross-input validation | `examples/stability/stability_vault.ark` |
 | Conditional output and dust routing | `examples/stability/stability_offer.ark` |
 | Asset introspection | `examples/token_vault/token_vault.ark` |

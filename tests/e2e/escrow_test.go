@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	settlementAmount = int64(500_000)
-	settlementExit   = int64(144)
-	settlementExpiry = uint32(900_000)
+	amount    = int64(500_000)
+	exitDelay = int64(144)
+	timeout   = uint32(900_000)
 )
 
 // p2trTo builds the scriptPubKey paying a 32-byte Taproot witness program —
@@ -24,14 +24,9 @@ func p2trTo(program []byte) []byte {
 	return append([]byte{0x51, 0x20}, program...)
 }
 
-// TestCompiledSettlement covers the Arkade port of a Liquid/SimplicityHL
-// bilateral settlement. The properties under test are the ones the port
-// changes: neither path takes a party signature, the oracle can only assert
-// one pre-committed message, and both payouts are pinned to committed
-// destination scripts.
-func TestCompiledSettlement(t *testing.T) {
+func TestCompiledEscrow(t *testing.T) {
 	contract := compileArtifact(
-		t, filepath.Join("..", "..", "examples", "settlement", "settlement.ark"),
+		t, filepath.Join("..", "..", "examples", "escrow", "escrow.ark"),
 	)
 
 	serverKey := fixedPrivateKey(1)
@@ -40,8 +35,7 @@ func TestCompiledSettlement(t *testing.T) {
 	partyBKey := fixedPrivateKey(5)
 	oracleKey := fixedPrivateKey(6)
 
-	// The oracle signs sha256(statement); the contract commits to sha256 of
-	// that, so the statement stays private until the settlement is claimed.
+	// The oracle signs sha256(statement). The contract commits sha256 of that.
 	statement := []byte("deed transferred, lot 42")
 	oracleMsg := sha256.Sum256(statement)
 	oracleMessageHash := sha256.Sum256(oracleMsg[:])
@@ -56,9 +50,9 @@ func TestCompiledSettlement(t *testing.T) {
 		"oracleMessageHash": oracleMessageHash[:],
 		"partyAScript":      partyAProgram,
 		"partyBScript":      partyBProgram,
-		"settlementAmount":  scriptInt(t, settlementAmount),
-		"timeoutHeight":     scriptInt(t, int64(settlementExpiry)),
-		"exit":              scriptInt(t, settlementExit),
+		"amount":            scriptInt(t, amount),
+		"timeoutHeight":     scriptInt(t, int64(timeout)),
+		"exit":              scriptInt(t, exitDelay),
 	}
 
 	complete := instantiateGroup(
@@ -83,12 +77,12 @@ func TestCompiledSettlement(t *testing.T) {
 			)
 		}
 		toPartyB := []*wire.TxOut{
-			{Value: settlementAmount, PkScript: p2trTo(partyBProgram)},
+			{Value: amount, PkScript: p2trTo(partyBProgram)},
 		}
 
-		t.Run("oracle attestation alone settles, exactly funded", func(t *testing.T) {
+		t.Run("oracle attestation releases the committed amount", func(t *testing.T) {
 			requireVMResult(
-				t, attested(settlementAmount, oracleMsg[:], oracleKey, toPartyB),
+				t, attested(amount, oracleMsg[:], oracleKey, toPartyB),
 				emulatorKey.PubKey(), "",
 			)
 		})
@@ -96,8 +90,8 @@ func TestCompiledSettlement(t *testing.T) {
 		t.Run("surplus returns to party A", func(t *testing.T) {
 			const surplus = int64(20_000)
 			requireVMResult(
-				t, attested(settlementAmount+surplus, oracleMsg[:], oracleKey, []*wire.TxOut{
-					{Value: settlementAmount, PkScript: p2trTo(partyBProgram)},
+				t, attested(amount+surplus, oracleMsg[:], oracleKey, []*wire.TxOut{
+					{Value: amount, PkScript: p2trTo(partyBProgram)},
 					{Value: surplus, PkScript: p2trTo(partyAProgram)},
 				}),
 				emulatorKey.PubKey(), "",
@@ -107,8 +101,8 @@ func TestCompiledSettlement(t *testing.T) {
 		t.Run("surplus cannot be folded into party B's payout", func(t *testing.T) {
 			const surplus = int64(20_000)
 			requireVMResult(
-				t, attested(settlementAmount+surplus, oracleMsg[:], oracleKey, []*wire.TxOut{
-					{Value: settlementAmount + surplus, PkScript: p2trTo(partyBProgram)},
+				t, attested(amount+surplus, oracleMsg[:], oracleKey, []*wire.TxOut{
+					{Value: amount + surplus, PkScript: p2trTo(partyBProgram)},
 				}),
 				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
@@ -116,8 +110,8 @@ func TestCompiledSettlement(t *testing.T) {
 
 		t.Run("a sub-dust surplus is refused rather than absorbed", func(t *testing.T) {
 			requireVMResult(
-				t, attested(settlementAmount+100, oracleMsg[:], oracleKey, []*wire.TxOut{
-					{Value: settlementAmount, PkScript: p2trTo(partyBProgram)},
+				t, attested(amount+100, oracleMsg[:], oracleKey, []*wire.TxOut{
+					{Value: amount, PkScript: p2trTo(partyBProgram)},
 					{Value: 100, PkScript: p2trTo(partyAProgram)},
 				}),
 				emulatorKey.PubKey(), "OP_VERIFY failed",
@@ -127,14 +121,14 @@ func TestCompiledSettlement(t *testing.T) {
 		t.Run("a different message is not the attested event", func(t *testing.T) {
 			other := sha256.Sum256([]byte("deed transferred, lot 43"))
 			requireVMResult(
-				t, attested(settlementAmount, other[:], oracleKey, toPartyB),
+				t, attested(amount, other[:], oracleKey, toPartyB),
 				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 
 		t.Run("the right message signed by the wrong key", func(t *testing.T) {
 			requireVMResult(
-				t, attested(settlementAmount, oracleMsg[:], partyBKey, toPartyB),
+				t, attested(amount, oracleMsg[:], partyBKey, toPartyB),
 				emulatorKey.PubKey(), "signature verification failed",
 			)
 		})
@@ -142,8 +136,8 @@ func TestCompiledSettlement(t *testing.T) {
 		t.Run("the payout cannot be redirected", func(t *testing.T) {
 			thief := bytes.Repeat([]byte{0xcc}, 32)
 			requireVMResult(
-				t, attested(settlementAmount, oracleMsg[:], oracleKey, []*wire.TxOut{
-					{Value: settlementAmount, PkScript: p2trTo(thief)},
+				t, attested(amount, oracleMsg[:], oracleKey, []*wire.TxOut{
+					{Value: amount, PkScript: p2trTo(thief)},
 				}),
 				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
@@ -151,8 +145,8 @@ func TestCompiledSettlement(t *testing.T) {
 
 		t.Run("party B cannot be shorted", func(t *testing.T) {
 			requireVMResult(
-				t, attested(settlementAmount, oracleMsg[:], oracleKey, []*wire.TxOut{
-					{Value: settlementAmount - 1, PkScript: p2trTo(partyBProgram)},
+				t, attested(amount, oracleMsg[:], oracleKey, []*wire.TxOut{
+					{Value: amount - 1, PkScript: p2trTo(partyBProgram)},
 				}),
 				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
@@ -160,63 +154,59 @@ func TestCompiledSettlement(t *testing.T) {
 	})
 
 	t.Run("cancel", func(t *testing.T) {
-		deployment := fundingTx(cancel.pkScript, settlementAmount)
+		deployment := fundingTx(cancel.pkScript, amount)
 		// No witness: the timeout refund carries no signature at all.
 		refund := func(lockTime uint32, outputs []*wire.TxOut) *psbt.Packet {
 			return spendingPSBTOutputs(t, deployment, cancel, lockTime, outputs, nil)
 		}
 		toPartyA := []*wire.TxOut{
-			{Value: settlementAmount, PkScript: p2trTo(partyAProgram)},
+			{Value: amount, PkScript: p2trTo(partyAProgram)},
 		}
 
 		t.Run("anyone may refund party A after the timeout", func(t *testing.T) {
-			requireVMResult(t, refund(settlementExpiry, toPartyA), emulatorKey.PubKey(), "")
+			requireVMResult(t, refund(timeout, toPartyA), emulatorKey.PubKey(), "")
 		})
 
 		t.Run("before the timeout", func(t *testing.T) {
 			requireVMResult(
-				t, refund(settlementExpiry-1, toPartyA), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(timeout-1, toPartyA), emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 
 		t.Run("the refund cannot be sent to party B", func(t *testing.T) {
 			toPartyB := []*wire.TxOut{
-				{Value: settlementAmount, PkScript: p2trTo(partyBProgram)},
+				{Value: amount, PkScript: p2trTo(partyBProgram)},
 			}
 			requireVMResult(
-				t, refund(settlementExpiry, toPartyB), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(timeout, toPartyB), emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 
-		// The Liquid original caps the explicit fee so a permissionless cancel
-		// cannot dump the balance into it. An ark transaction has no
-		// value-bearing fee output, and the payout amount is pinned, so the
-		// same griefing attempt has nowhere to put the money.
 		t.Run("the refund cannot be skimmed", func(t *testing.T) {
 			skimmed := []*wire.TxOut{
-				{Value: settlementAmount - 50_000, PkScript: p2trTo(partyAProgram)},
+				{Value: amount - 50_000, PkScript: p2trTo(partyAProgram)},
 				{Value: 50_000, PkScript: p2trTo(bytes.Repeat([]byte{0xcc}, 32))},
 			}
 			requireVMResult(
-				t, refund(settlementExpiry, skimmed), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(timeout, skimmed), emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 	})
 
 	t.Run("unilateral tapscript", func(t *testing.T) {
 		unilateral := instantiateLeaf(t, contract, "unilateral", values, serverKey.PubKey())
-		deployment := fundingTx(unilateral.pkScript, settlementAmount)
+		deployment := fundingTx(unilateral.pkScript, amount)
 
 		t.Run("both parties together after the delay", func(t *testing.T) {
 			requireTapscriptResult(
-				t, deployment, unilateral, 0, uint32(settlementExit),
+				t, deployment, unilateral, 0, uint32(exitDelay),
 				[]*btcec.PrivateKey{partyAKey, partyBKey}, nil, "",
 			)
 		})
 
 		t.Run("party A alone cannot exit", func(t *testing.T) {
 			requireTapscriptResult(
-				t, deployment, unilateral, 0, uint32(settlementExit),
+				t, deployment, unilateral, 0, uint32(exitDelay),
 				[]*btcec.PrivateKey{partyAKey, partyAKey}, nil, "signature not empty",
 			)
 		})

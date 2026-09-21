@@ -8,28 +8,23 @@ use std::path::Path;
 
 use crate::common::{arkade_asm, arkade_inputs, group, leaf_asm, opcode_count_in_arkade};
 
-/// Arkade port of a Liquid/SimplicityHL bilateral settlement. See
-/// `examples/settlement/settlement.md` for the construct-by-construct mapping.
-fn settlement() -> ContractJson {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/settlement/settlement.ark");
-    compile_file(&path).expect("settlement.ark should compile")
+fn escrow() -> ContractJson {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/escrow/escrow.ark");
+    compile_file(&path).expect("escrow.ark should compile")
 }
 
 #[test]
-fn test_settlement_spend_groups() {
-    let output = settlement();
+fn test_escrow_spend_groups() {
+    let output = escrow();
 
-    assert_eq!(output.name, "Settlement");
+    assert_eq!(output.name, "Escrow");
     let names: Vec<&str> = output.functions.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, ["complete", "cancel", "unilateral"]);
 }
 
-/// The port's headline change: the original needs party B to co-sign the
-/// settlement, because there only the destinations are fixed. Pinning the
-/// amounts removes that signature, so no covenant path checks one.
 #[test]
 fn test_no_path_requires_a_party_signature() {
-    let output = settlement();
+    let output = escrow();
 
     for name in ["complete", "cancel"] {
         assert_eq!(
@@ -49,12 +44,9 @@ fn test_no_path_requires_a_party_signature() {
     );
 }
 
-/// The oracle asserts one pre-committed message, so a compromised oracle key
-/// cannot name a different outcome: the covenant hashes what it is given and
-/// compares it against committed state before verifying the signature.
 #[test]
 fn test_attestation_is_committed_and_verified() {
-    let output = settlement();
+    let output = escrow();
     let asm = arkade_asm(&output, "complete");
 
     assert!(
@@ -76,11 +68,9 @@ fn test_attestation_is_committed_and_verified() {
     );
 }
 
-/// Both payouts go to destinations committed at construction, never to a
-/// script the spender supplies.
 #[test]
 fn test_payouts_are_pinned_to_committed_destinations() {
-    let output = settlement();
+    let output = escrow();
 
     let complete = arkade_asm(&output, "complete");
     for destination in ["<partyBScript>", "<partyAScript>"] {
@@ -105,11 +95,9 @@ fn test_payouts_are_pinned_to_committed_destinations() {
     );
 }
 
-/// The Liquid original has no unilateral exit. This one needs both parties
-/// after the CSV delay, and it does not carry the oracle key.
 #[test]
 fn test_unilateral_exit_is_two_of_two() {
-    let output = settlement();
+    let output = escrow();
 
     assert!(
         group(&output, "unilateral").arkade.is_none(),

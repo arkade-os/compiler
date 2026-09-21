@@ -1,0 +1,47 @@
+pragma arkade ^0.1.0;
+
+// Spend paths and outputs are drawn in escrow.md.
+
+contract Escrow(
+  pubkey  partyAPk,
+  pubkey  partyBPk,
+  pubkey  oraclePk,
+  bytes32 oracleMessageHash,
+  // 32-byte witness programs OP_INSPECTOUTPUTSCRIPTPUBKEY reports.
+  bytes32 partyAScript,
+  bytes32 partyBScript,
+  int     amount,
+  int     timeoutHeight,
+  int     exit
+) {
+  const int DUST = 330;
+
+  function complete(bytes32 oracleMsg, signature oracleSig) {
+    require(sha256(oracleMsg) == oracleMessageHash, "unexpected attestation");
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int locked = tx.input.current.value;
+    require(locked >= amount, "escrow underfunded");
+    int surplus = locked - amount;
+
+    require(tx.outputs[0].value >= amount, "party B underpaid");
+    require(tx.outputs[0].scriptPubKey == partyBScript, "output 0 not party B");
+
+    if (surplus > 0) {
+      require(surplus > DUST, "surplus below dust");
+      require(tx.outputs[1].value >= surplus, "party A surplus underpaid");
+      require(tx.outputs[1].scriptPubKey == partyAScript, "output 1 not party A");
+    }
+  }
+
+  function cancel() {
+    require(tx.time >= timeoutHeight, "timeout not reached");
+    require(tx.outputs[0].value >= tx.input.current.value, "party A underpaid");
+    require(tx.outputs[0].scriptPubKey == partyAScript, "output 0 not party A");
+  }
+
+  function unilateral(signature partyASig, signature partyBSig) tapscript {
+    require(older(exit));
+    require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig], 2));
+  }
+}
