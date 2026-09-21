@@ -88,7 +88,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 }
 ```
 
-`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's Taproot scriptPubKey at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's 32-byte Taproot witness program — the output key, not the 34-byte P2TR script — because that is what `OP_INSPECTOUTPUTSCRIPTPUBKEY` leaves on the stack, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -167,6 +167,7 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | Directory | Shows |
 |---|---|
 | `single_sig`, `htlc` | Minimum viable VTXO and hash/time locks |
+| `escrow` | Three-path escrow: introspection-pinned payouts and an oracle verdict in place of counterparty signatures |
 | `non_interactive_swap` | Atomic asset swap with `new SingleSig(...)` payout and locktime-gated cancel |
 | `payment_auth` | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
 | `token_vault`, `controlled_mint`, `nft_mint` | Asset lookups, asset groups, control assets |
