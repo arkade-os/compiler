@@ -200,13 +200,7 @@ cargo run -p arkade-bindgen -- --list-targets
 
 `--embed` inlines the artifact JSON into the generated file; `--package` sets the module or namespace name.
 
-The `sdk-program` target emits `<contract>.program.json`, the Program artifact the TypeScript SDK's `parseArtifact` consumes:
-
-```bash
-cargo run -p arkade-bindgen -- contract.json --lang sdk-program -o ./generated/
-```
-
-That format is not this artifact. Functions are keyed by name instead of listed as spend groups, placeholders are `$param` instead of `<param>`, opcodes drop the `OP_` prefix except on `OP_0` and `OP_1`..`OP_16`, and each tapleaf is described structurally — `signers` plus an optional hash condition and `csv`/`cltv` timelock — rather than as assembly. The target also resolves three conventions on the client's behalf: covenant inputs are emitted in the reverse order the stack wants, the function-tweaked emulator key is left off `signers` because the SDK appends it, and every `new Contract(...)` instantiation becomes a declared parameter the caller binds to the child's witness program. Spend groups keep artifact order, since the SDK derives its taproot tree from that order.
+Bindings are a convenience, not the integration path. The artifact is the interface: the TypeScript SDK reads it directly with `programFromArtifact`, so nothing has to be generated or kept in sync to spend a compiled contract.
 
 Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `validate`, and `version`; the WASM `compile_sources(entry, files)` accepts the file map as a JSON string and returns the artifact as a JSON string.
 

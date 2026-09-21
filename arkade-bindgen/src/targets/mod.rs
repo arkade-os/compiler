@@ -1,5 +1,4 @@
 pub mod go;
-pub mod sdk_program;
 pub mod typescript;
 
 use crate::ir::ContractIR;
@@ -37,14 +36,13 @@ pub trait CodegenTarget {
 }
 
 /// All available codegen targets.
-pub const AVAILABLE_TARGETS: &[&str] = &["typescript", "go", "sdk-program"];
+pub const AVAILABLE_TARGETS: &[&str] = &["typescript", "go"];
 
 /// Get a codegen target by name.
 pub fn get_target(name: &str) -> Option<Box<dyn CodegenTarget>> {
     match name {
         "typescript" | "ts" => Some(Box::new(typescript::TypeScriptTarget)),
         "go" => Some(Box::new(go::GoTarget)),
-        "sdk-program" => Some(Box::new(sdk_program::SdkProgramTarget)),
         _ => None,
     }
 }
