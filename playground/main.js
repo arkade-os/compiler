@@ -3,6 +3,11 @@
 import initWasm, { compile_sources, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
+import {
+    markEscrowFlowStale,
+    mountEscrowFlow,
+    supportsEscrowFlow,
+} from './escrow-flow.js';
 
 // Projects: collections of related contracts
 const projects = {
@@ -67,6 +72,11 @@ const bundledExamples = Object.fromEntries(
         return [examplePaths[id], example.code];
     })
 );
+
+function requestedExample() {
+    const requested = new URLSearchParams(location.search).get('example');
+    return requested && Object.hasOwn(examples, requested) ? requested : 'single_sig';
+}
 
 // Global state
 let editor = null;
@@ -681,6 +691,9 @@ async function initCompiler() {
 
         // Show button as ready to compile
         markDirty();
+        if (currentFile === 'escrow' && new URLSearchParams(location.search).get('view') === 'flow') {
+            doCompile();
+        }
     } catch (err) {
         console.error('Failed to initialize WASM:', err);
         showError('Failed to load compiler. Make sure the WASM module is built.');
@@ -1113,7 +1126,7 @@ function initMonaco() {
 
         // Create editor
         editor = monaco.editor.create(document.getElementById('editor'), {
-            value: examples.single_sig.code,
+            value: examples[currentFile].code,
             language: 'arkade',
             theme: 'arkade-dark',
             automaticLayout: true,
@@ -1168,6 +1181,7 @@ function markDirty() {
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';
+    markEscrowFlowStale(document.getElementById('flow-output'));
 }
 
 // Mark the editor as up-to-date with compiled output
@@ -1209,15 +1223,51 @@ function doCompile() {
     try {
         const { entry, files } = compilationSources();
         const result = compile_sources(entry, JSON.stringify(files));
+        const activeOutput = document.querySelector('.output-tabs .tab.active')?.dataset.tab;
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
         displayBindings(result);
+        const hasFlow = displayEscrowFlow(result, source);
         showSuccess(result);
         markCompiled();
+        if (hasFlow && ['json', 'flow', 'errors'].includes(activeOutput)) {
+            switchTab('flow');
+        }
     } catch (err) {
         showError(err.toString());
     }
+}
+
+function displayEscrowFlow(jsonStr, source) {
+    const container = document.getElementById('flow-output');
+    const tab = document.querySelector('.tab[data-tab="flow"]');
+    let artifact;
+    try {
+        artifact = JSON.parse(jsonStr);
+    } catch {
+        artifact = null;
+    }
+
+    if (!supportsEscrowFlow(artifact)) {
+        container._escrowFlowCleanup?.();
+        container.replaceChildren();
+        tab.hidden = true;
+        if (tab.classList.contains('active')) switchTab('json');
+        return false;
+    }
+
+    tab.hidden = false;
+    mountEscrowFlow(container, {
+        modified: source.trim() !== contracts.escrow.trim(),
+        onViewAssembly: groupName => {
+            switchTab('asm');
+            const heading = [...document.querySelectorAll('#asm-output .asm-function')]
+                .find(candidate => candidate.textContent.trim().startsWith(`${groupName} `));
+            heading?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        },
+    });
+    return true;
 }
 
 // Display JSON output
@@ -1514,13 +1564,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Expand Examples folder by default
     expandedFolders.add('_examples');
 
+    // Set initial file state
+    currentFile = requestedExample();
+    openTabs.push({
+        id: currentFile,
+        project: null,
+        file: currentFile,
+        name: `${examples[currentFile].name}.ark`,
+    });
+    fileContents[currentFile] = examples[currentFile].code;
+
     // Render file tree
     renderFileTree();
-
-    // Set initial file state
-    currentFile = 'single_sig';
-    openTabs.push({ id: 'single_sig', project: null, file: 'single_sig', name: 'SingleSig.ark' });
-    fileContents['single_sig'] = examples.single_sig.code;
     updateFileTabs();
 
     // Initialize Monaco

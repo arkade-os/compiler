@@ -1,0 +1,762 @@
+#flow-output {
+    container: escrow-flow / inline-size;
+    padding: 0;
+    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #edf7f5;
+}
+
+.escrow-flow-shell {
+    --flow-panel: rgba(14, 30, 36, 0.82);
+    --flow-panel-strong: rgba(12, 25, 31, 0.96);
+    --flow-border: rgba(203, 242, 232, 0.13);
+    --flow-muted: #99aca9;
+    position: relative;
+    min-height: 100%;
+    padding: clamp(1.1rem, 3.5cqi, 2.5rem);
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 50% -10%, rgba(65, 177, 154, 0.2), transparent 38%),
+        radial-gradient(circle at 100% 65%, rgba(110, 73, 181, 0.14), transparent 35%),
+        linear-gradient(145deg, #071116 0%, #0b1b21 56%, #09151b 100%);
+    color: #edf7f5;
+    font-family: inherit;
+    line-height: 1.5;
+}
+
+.escrow-flow-shell:fullscreen,
+.escrow-flow-shell.escrow-flow-expanded {
+    position: fixed;
+    inset: 0;
+    z-index: 1800;
+    height: 100vh;
+    overflow: auto;
+}
+
+.escrow-flow-glow {
+    position: absolute;
+    width: 16rem;
+    height: 16rem;
+    border-radius: 50%;
+    filter: blur(90px);
+    opacity: 0.13;
+    pointer-events: none;
+}
+
+.escrow-flow-glow-one {
+    top: 25%;
+    left: -8rem;
+    background: #45c99a;
+}
+
+.escrow-flow-glow-two {
+    right: -8rem;
+    bottom: 8%;
+    background: #9d67e8;
+}
+
+.escrow-flow-header {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-width: 74rem;
+    margin: 0 auto 1.5rem;
+}
+
+.escrow-flow-kicker {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-bottom: 0.55rem;
+    color: #92e3ca;
+    font-size: 0.7rem;
+    font-weight: 750;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+}
+
+.escrow-flow-kicker span {
+    width: 1.5rem;
+    height: 1px;
+    background: currentColor;
+}
+
+.escrow-flow-header h2 {
+    max-width: 38rem;
+    margin: 0;
+    color: #f7fcfb;
+    font-size: clamp(1.65rem, 6cqi, 3rem);
+    font-weight: 680;
+    letter-spacing: -0.045em;
+    line-height: 1.05;
+}
+
+.escrow-flow-header p {
+    max-width: 38rem;
+    margin-top: 0.65rem;
+    color: var(--flow-muted);
+    font-size: clamp(0.9rem, 2.2cqi, 1.05rem);
+}
+
+.escrow-flow-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.escrow-flow-status,
+.escrow-fullscreen-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.15rem;
+    border: 1px solid var(--flow-border);
+    border-radius: 999px;
+    background: rgba(178, 240, 223, 0.07);
+    color: #a8d9cd;
+    font-size: 0.72rem;
+    font-weight: 650;
+}
+
+.escrow-flow-status {
+    padding: 0.45rem 0.75rem;
+}
+
+.escrow-flow-status-warning {
+    border-color: rgba(244, 192, 112, 0.28);
+    background: rgba(244, 192, 112, 0.08);
+    color: #f4c070;
+}
+
+.escrow-fullscreen-button {
+    padding: 0.45rem 0.8rem;
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.escrow-fullscreen-button:hover {
+    border-color: rgba(143, 229, 206, 0.5);
+    background: rgba(178, 240, 223, 0.13);
+    color: #e5faf4;
+}
+
+.escrow-actors {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+    max-width: 74rem;
+    margin: 0 auto 1.6rem;
+}
+
+.escrow-actor {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-width: 0;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--flow-border);
+    border-radius: 0.9rem;
+    background: rgba(238, 251, 247, 0.035);
+}
+
+.escrow-actor > span:last-child {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.escrow-actor strong {
+    color: #eaf6f3;
+    font-size: 0.8rem;
+    font-weight: 650;
+}
+
+.escrow-actor small {
+    overflow: hidden;
+    color: var(--flow-muted);
+    font-size: 0.67rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.escrow-avatar {
+    display: inline-flex;
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.65rem;
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 750;
+}
+
+.escrow-avatar-a {
+    background: linear-gradient(145deg, #34776b, #25554e);
+}
+
+.escrow-avatar-oracle {
+    background: linear-gradient(145deg, #8961b0, #553878);
+}
+
+.escrow-avatar-b {
+    background: linear-gradient(145deg, #407aa5, #285472);
+}
+
+.escrow-flow-journey {
+    position: relative;
+    z-index: 1;
+    max-width: 74rem;
+    margin: 0 auto;
+}
+
+.escrow-vault {
+    position: relative;
+    width: min(100%, 15rem);
+    margin: 0 auto;
+    padding: 1.15rem;
+    border: 1px solid rgba(149, 232, 210, 0.23);
+    border-radius: 1.25rem;
+    background:
+        linear-gradient(145deg, rgba(25, 57, 61, 0.94), rgba(12, 31, 37, 0.97)),
+        var(--flow-panel-strong);
+    box-shadow: 0 1.3rem 3rem rgba(0, 0, 0, 0.26), inset 0 1px rgba(255, 255, 255, 0.06);
+    text-align: center;
+}
+
+.escrow-vault-rings {
+    position: relative;
+    display: flex;
+    width: 4.15rem;
+    height: 4.15rem;
+    margin: 0 auto 0.75rem;
+    align-items: center;
+    justify-content: center;
+}
+
+.escrow-vault-rings span {
+    position: absolute;
+    inset: 0;
+    border: 1px solid rgba(137, 230, 205, 0.23);
+    border-radius: 50%;
+}
+
+.escrow-vault-rings span:nth-child(2) {
+    inset: 0.45rem;
+    border-color: rgba(137, 230, 205, 0.35);
+}
+
+.escrow-vault-rings span:nth-child(3) {
+    inset: 0.9rem;
+    border-color: rgba(137, 230, 205, 0.5);
+    background: rgba(87, 203, 171, 0.1);
+}
+
+.escrow-vault-rings i {
+    position: relative;
+    z-index: 1;
+    color: #9be8d3;
+    font-size: 1rem;
+}
+
+.escrow-vault p,
+.escrow-vault > span {
+    color: var(--flow-muted);
+    font-size: 0.7rem;
+}
+
+.escrow-vault p {
+    margin-bottom: 0.1rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.escrow-vault h3 {
+    margin: 0 0 0.2rem;
+    color: #f4fbf9;
+    font-size: 1.35rem;
+    font-weight: 680;
+}
+
+.escrow-flow-lines {
+    display: none;
+    width: 100%;
+    height: 7rem;
+    overflow: visible;
+}
+
+.escrow-line {
+    fill: none;
+    stroke-width: 2;
+    stroke-dasharray: 5 6;
+    vector-effect: non-scaling-stroke;
+    animation: escrow-line-flow 16s linear infinite;
+}
+
+.escrow-line-release {
+    stroke: url("#escrow-release-line");
+}
+
+.escrow-line-refund {
+    stroke: url("#escrow-refund-line");
+}
+
+.escrow-line-recovery {
+    stroke: url("#escrow-recovery-line");
+}
+
+@keyframes escrow-line-flow {
+    to { stroke-dashoffset: -120; }
+}
+
+.escrow-outcomes {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.8rem;
+    margin-top: 1.15rem;
+}
+
+.escrow-route {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 1rem;
+    border: 1px solid var(--flow-border);
+    border-radius: 1.1rem;
+    background: linear-gradient(145deg, rgba(18, 38, 45, 0.9), rgba(11, 25, 31, 0.95));
+    box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.15);
+}
+
+.escrow-route::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    opacity: 0.9;
+}
+
+.escrow-route-release::before {
+    background: linear-gradient(#79e2bd, #32ad82);
+}
+
+.escrow-route-refund::before {
+    background: linear-gradient(#87c6ff, #428bce);
+}
+
+.escrow-route-recovery::before {
+    background: linear-gradient(#caa4fb, #8854cf);
+}
+
+.escrow-route-number {
+    position: absolute;
+    top: 0.8rem;
+    right: 0.9rem;
+    color: rgba(219, 238, 233, 0.24);
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
+
+.escrow-route-icon {
+    display: flex;
+    width: 2.3rem;
+    height: 2.3rem;
+    margin-bottom: 1.35rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    font-size: 0.9rem;
+}
+
+.escrow-route-release .escrow-route-icon {
+    background: rgba(72, 200, 155, 0.12);
+    color: #84e3bf;
+}
+
+.escrow-route-refund .escrow-route-icon {
+    background: rgba(74, 154, 232, 0.12);
+    color: #8bc7ff;
+}
+
+.escrow-route-recovery .escrow-route-icon {
+    background: rgba(157, 103, 232, 0.13);
+    color: #d0adff;
+}
+
+.escrow-route-trigger,
+.escrow-section-label {
+    color: var(--flow-muted);
+    font-size: 0.65rem;
+    font-weight: 750;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.escrow-route h3 {
+    margin: 0.3rem 0 0.45rem;
+    color: #f3faf8;
+    font-size: 1.08rem;
+    font-weight: 670;
+    letter-spacing: -0.02em;
+    line-height: 1.18;
+}
+
+.escrow-route-summary {
+    flex: 1;
+    color: var(--flow-muted);
+    font-size: 0.78rem;
+    line-height: 1.55;
+}
+
+.escrow-route-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.7rem;
+    margin-top: 1.2rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid rgba(218, 244, 237, 0.08);
+}
+
+.escrow-route-footer > span {
+    color: #afc1bd;
+    font-size: 0.65rem;
+}
+
+.escrow-detail-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #d8ebe6;
+    font: inherit;
+    font-size: 0.7rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.escrow-detail-button i {
+    font-size: 0.58rem;
+    transition: transform 160ms ease;
+}
+
+.escrow-detail-button:hover i {
+    transform: translateX(0.2rem);
+}
+
+.escrow-trust-note {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    max-width: 74rem;
+    margin: 1rem auto 0;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.8rem 0.95rem;
+    border: 1px solid rgba(142, 226, 204, 0.12);
+    border-radius: 0.9rem;
+    background: rgba(138, 222, 200, 0.045);
+    color: var(--flow-muted);
+    font-size: 0.72rem;
+}
+
+.escrow-trust-note > span:last-child {
+    display: flex;
+    flex-direction: column;
+}
+
+.escrow-trust-note strong {
+    color: #dcece8;
+    font-size: 0.74rem;
+}
+
+.escrow-trust-icon {
+    display: inline-flex;
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(112, 219, 190, 0.1);
+    color: #8ce0c8;
+}
+
+.escrow-drawer-backdrop {
+    position: fixed;
+    z-index: 2100;
+    inset: 0;
+    border: 0;
+    background: rgba(2, 8, 11, 0.7);
+    backdrop-filter: blur(3px);
+}
+
+.escrow-drawer-backdrop[hidden] {
+    display: none;
+}
+
+.escrow-detail-drawer {
+    position: fixed;
+    z-index: 2200;
+    top: 0;
+    right: 0;
+    width: min(28rem, 92vw);
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.2rem 1.35rem 1.5rem;
+    border-left: 1px solid rgba(210, 242, 234, 0.13);
+    background:
+        radial-gradient(circle at 100% 0, rgba(84, 182, 156, 0.15), transparent 32%),
+        #0b191f;
+    box-shadow: -1.5rem 0 4rem rgba(0, 0, 0, 0.38);
+    color: #edf7f5;
+    transform: translateX(105%);
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.escrow-details-open .escrow-detail-drawer {
+    transform: translateX(0);
+}
+
+.escrow-drawer-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: inline-flex;
+    width: 2rem;
+    height: 2rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--flow-border);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.04);
+    color: #b9cbc7;
+    cursor: pointer;
+}
+
+.escrow-drawer-close:hover {
+    background: rgba(255, 255, 255, 0.09);
+    color: #fff;
+}
+
+.escrow-drawer-heading {
+    padding: 1rem 0 1.3rem;
+    border-bottom: 1px solid rgba(224, 245, 239, 0.1);
+}
+
+.escrow-drawer-route {
+    color: #8edfc7;
+    font-size: 0.67rem;
+    font-weight: 750;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.escrow-drawer-heading h2 {
+    margin: 0.45rem 0 0.55rem;
+    color: #f5fbfa;
+    font-size: 1.55rem;
+    font-weight: 680;
+    letter-spacing: -0.035em;
+}
+
+.escrow-drawer-heading p {
+    color: var(--flow-muted);
+    font-size: 0.82rem;
+    line-height: 1.6;
+}
+
+.escrow-facts {
+    margin: 0;
+}
+
+.escrow-facts > div {
+    padding: 0.95rem 0;
+    border-bottom: 1px solid rgba(224, 245, 239, 0.08);
+}
+
+.escrow-facts dt {
+    margin-bottom: 0.25rem;
+    color: #8fa39f;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.escrow-facts dd {
+    margin: 0;
+    color: #d9e8e5;
+    font-size: 0.79rem;
+    line-height: 1.55;
+}
+
+.escrow-output-details {
+    padding: 1.2rem 0;
+}
+
+.escrow-output-details .escrow-section-label {
+    margin-bottom: 0.65rem;
+}
+
+.escrow-technical-output {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.2rem 0.65rem;
+    margin-bottom: 0.55rem;
+    padding: 0.8rem;
+    border: 1px solid rgba(219, 244, 237, 0.1);
+    border-radius: 0.75rem;
+    background: rgba(231, 249, 244, 0.035);
+}
+
+.escrow-output-index {
+    grid-row: 1 / 4;
+    min-width: 3.8rem;
+    color: #8edfc7;
+    font-size: 0.66rem;
+    font-weight: 700;
+}
+
+.escrow-technical-output strong {
+    color: #edf6f4;
+    font-size: 0.8rem;
+}
+
+.escrow-technical-output > span:not(.escrow-output-index) {
+    color: var(--flow-muted);
+    font-size: 0.7rem;
+}
+
+.escrow-technical-output code {
+    color: #b6d4cc;
+    font-family: "Fira Code", Consolas, monospace;
+    font-size: 0.65rem;
+    white-space: normal;
+}
+
+.escrow-assembly-button {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid rgba(135, 221, 198, 0.23);
+    border-radius: 0.7rem;
+    background: rgba(115, 215, 188, 0.08);
+    color: #c9eee4;
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.escrow-assembly-button:hover {
+    background: rgba(115, 215, 188, 0.14);
+}
+
+.tab[hidden] {
+    display: none;
+}
+
+@container escrow-flow (min-width: 32rem) {
+    .escrow-flow-header {
+        flex-direction: row;
+        align-items: flex-start;
+        justify-content: space-between;
+    }
+
+    .escrow-flow-actions {
+        justify-content: flex-end;
+    }
+
+    .escrow-actors {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .escrow-route-footer {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+}
+
+@container escrow-flow (min-width: 58rem) {
+    .escrow-flow-lines {
+        display: block;
+    }
+
+    .escrow-outcomes {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin-top: 0;
+    }
+
+    .escrow-route {
+        min-height: 17rem;
+        padding: 1.2rem;
+    }
+
+    .escrow-route::before {
+        inset: 0 0 auto;
+        width: auto;
+        height: 3px;
+    }
+}
+
+.escrow-flow-shell:fullscreen .escrow-flow-header,
+.escrow-flow-shell:fullscreen .escrow-actors,
+.escrow-flow-shell:fullscreen .escrow-flow-journey,
+.escrow-flow-shell:fullscreen .escrow-trust-note,
+.escrow-flow-shell.escrow-flow-expanded .escrow-flow-header,
+.escrow-flow-shell.escrow-flow-expanded .escrow-actors,
+.escrow-flow-shell.escrow-flow-expanded .escrow-flow-journey,
+.escrow-flow-shell.escrow-flow-expanded .escrow-trust-note {
+    max-width: 74rem;
+}
+
+.escrow-flow-shell:fullscreen .escrow-flow-lines,
+.escrow-flow-shell.escrow-flow-expanded .escrow-flow-lines {
+    display: block;
+}
+
+.escrow-flow-shell:fullscreen .escrow-outcomes,
+.escrow-flow-shell.escrow-flow-expanded .escrow-outcomes {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 0;
+}
+
+.escrow-flow-shell:fullscreen .escrow-route,
+.escrow-flow-shell.escrow-flow-expanded .escrow-route {
+    min-height: 17rem;
+    padding: 1.2rem;
+}
+
+.escrow-flow-shell:fullscreen .escrow-route::before,
+.escrow-flow-shell.escrow-flow-expanded .escrow-route::before {
+    inset: 0 0 auto;
+    width: auto;
+    height: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .escrow-line {
+        animation: none;
+    }
+
+    .escrow-detail-drawer,
+    .escrow-detail-button i {
+        transition: none;
+    }
+}
