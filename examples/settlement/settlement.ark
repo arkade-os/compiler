@@ -46,10 +46,6 @@ contract Settlement(
   pubkey  partyAPk,
   // Seller side. Paid when the oracle attests.
   pubkey  partyBPk,
-  // A second emulator, held in an enclave and run by an insurer. Same role as
-  // the Arkade server's emulator: it co-signs a covenant only when that
-  // covenant passes. It spends `complete` and `cancel` after `agentExit`.
-  pubkey  agentPk,
   // The oracle's attestation key. Verified against a message, never a
   // transaction, and kept out of the exit set.
   pubkey  oraclePk,
@@ -64,10 +60,7 @@ contract Settlement(
   int     settlementAmount,
   // Absolute locktime after which the settlement unwinds.
   int     timeoutHeight,
-  // First exit delay, in blocks. The agent's fallback key spends after this.
-  int     agentExit,
-  // Second exit delay, in blocks, longer than `agentExit`. The two parties
-  // spend together after this, if the agent is also offline.
+  // Unilateral exit delay in blocks. Both parties together, after this.
   int     exit
 ) {
   // Smallest viable Taproot output.
@@ -107,33 +100,11 @@ contract Settlement(
   }
 
   // -------------------------------------------------------------------------
-  // EXIT — the insurer's emulator, then the two parties.
+  // UNILATERAL EXIT — both parties together after `exit`, never either alone.
   // The Liquid original has no counterpart: its UTXO is already on chain.
-  //
-  //   fallbackComplete / fallbackCancel
-  //       after `agentExit`, the insurer's enclave key tweaked by that covenant
-  //   unilateral
-  //       after `exit`, party A and party B together
-  //
-  // The insurer runs the same emulator the Arkade server runs, in its own
-  // enclave. `tweak(agentPk, complete)` puts that key, bound to the `complete`
-  // covenant, into the leaf — the same binding the server's leaf uses for its
-  // own emulator. The insurer can broadcast a settlement or a refund only when
-  // the covenant accepts it. The oracle stays out of every leaf.
-  //
-  // If the insurer is offline too, the parties wait out the longer delay and
-  // spend 2-of-2. Neither party can exit alone.
+  // A second emulator, run by someone else and CSV-gated so it cannot race
+  // the Arkade emulator, is a compiler feature of its own.
   // -------------------------------------------------------------------------
-  function fallbackComplete(signature agentSig) tapscript {
-    require(older(agentExit));
-    require(checkSig(agentSig, tweak(agentPk, complete)));
-  }
-
-  function fallbackCancel(signature agentSig) tapscript {
-    require(older(agentExit));
-    require(checkSig(agentSig, tweak(agentPk, cancel)));
-  }
-
   function unilateral(signature partyASig, signature partyBSig) tapscript {
     require(older(exit));
     require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig], 2));

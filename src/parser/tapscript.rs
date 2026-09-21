@@ -212,12 +212,15 @@ pub(crate) fn parse_key_expr(pair: Pair<Rule>) -> Result<crate::models::KeyExpr,
                 .ok_or("Missing tweak base")?
                 .as_str()
                 .to_string();
+            if base != "emulator" {
+                return Err(format!("tweak() base must be `emulator`, got `{base}`"));
+            }
             let func = inner
                 .next()
                 .ok_or("Missing tweak func name")?
                 .as_str()
                 .to_string();
-            Ok(KeyExpr::Tweak { base, func })
+            Ok(KeyExpr::Tweak { func })
         }
         other => Err(format!("unexpected key expression: {other:?}")),
     }
@@ -317,7 +320,6 @@ contract Demo(pubkey owner) {
             TapItem::Sig { keys, .. } => assert_eq!(
                 keys,
                 &vec![KeyExpr::Tweak {
-                    base: "emulator".into(),
                     func: "exit".into()
                 }]
             ),

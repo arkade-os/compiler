@@ -167,7 +167,7 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | Directory | Shows |
 |---|---|
 | `single_sig`, `htlc` | Minimum viable VTXO and hash/time locks |
-| `settlement` | Oracle-attested bilateral settlement with a layered CSV exit (agent key, then the two parties); `settlement.md` maps the Liquid original |
+| `settlement` | Oracle-attested bilateral settlement, ported from a Liquid/SimplicityHL contract; `settlement.md` maps the constructs |
 | `non_interactive_swap` | Atomic asset swap with `new SingleSig(...)` payout and locktime-gated cancel |
 | `payment_auth` | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
 | `token_vault`, `controlled_mint`, `nft_mint` | Asset lookups, asset groups, control assets |
