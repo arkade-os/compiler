@@ -285,29 +285,49 @@ func TestCompiledEscrow(t *testing.T) {
 		})
 	})
 
-	t.Run("unilateral tapscript", func(t *testing.T) {
-		unilateral := instantiateLeaf(t, contract, "unilateral", values, serverKey.PubKey())
-		deployment := fundingTx(unilateral.pkScript, escrowValue)
+	// The emulator-down fallback: a 2-of-3 enumerated as pairs, since arkd
+	// recognizes only N-of-N closures. Buyer and seller alone would strand a
+	// disputed escrow, so the mediator completes the set.
+	t.Run("exit tapscripts", func(t *testing.T) {
 		sequence := uint32(escrowExit)
+		pairs := []struct {
+			leaf  string
+			first *btcec.PrivateKey
+			other *btcec.PrivateKey
+		}{
+			{"exitBuyerSeller", buyerKey, sellerKey},
+			{"exitBuyerMediator", buyerKey, mediatorKey},
+			{"exitSellerMediator", sellerKey, mediatorKey},
+		}
 
-		t.Run("buyer and seller together after the delay", func(t *testing.T) {
-			requireTapscriptResult(
-				t, deployment, unilateral, 0, sequence,
-				[]*btcec.PrivateKey{buyerKey, sellerKey}, nil, "",
-			)
-		})
+		for _, pair := range pairs {
+			t.Run(pair.leaf, func(t *testing.T) {
+				exit := instantiateLeaf(t, contract, pair.leaf, values, serverKey.PubKey())
+				deployment := fundingTx(exit.pkScript, escrowValue)
 
-		t.Run("buyer alone cannot exit", func(t *testing.T) {
-			requireTapscriptResult(
-				t, deployment, unilateral, 0, sequence,
-				[]*btcec.PrivateKey{buyerKey, buyerKey}, nil, "signature not empty",
-			)
-		})
+				requireTapscriptResult(
+					t, deployment, exit, 0, sequence,
+					[]*btcec.PrivateKey{pair.first, pair.other}, nil, "",
+				)
+				// One of the pair is not enough.
+				requireTapscriptResult(
+					t, deployment, exit, 0, sequence,
+					[]*btcec.PrivateKey{pair.first, pair.first}, nil, "signature not empty",
+				)
+				requireTapscriptResult(
+					t, deployment, exit, 0, sequence-1,
+					[]*btcec.PrivateKey{pair.first, pair.other}, nil,
+					"locktime requirement not satisfied",
+				)
+			})
+		}
 
-		t.Run("before the delay", func(t *testing.T) {
+		t.Run("the oracle key is not an exit signer", func(t *testing.T) {
+			exit := instantiateLeaf(t, contract, "exitBuyerSeller", values, serverKey.PubKey())
+			deployment := fundingTx(exit.pkScript, escrowValue)
 			requireTapscriptResult(
-				t, deployment, unilateral, 0, sequence-1,
-				[]*btcec.PrivateKey{buyerKey, sellerKey}, nil, "locktime requirement not satisfied",
+				t, deployment, exit, 0, sequence,
+				[]*btcec.PrivateKey{buyerKey, oracleKey}, nil, "signature not empty",
 			)
 		})
 	})

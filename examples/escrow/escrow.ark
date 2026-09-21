@@ -196,12 +196,35 @@ contract Escrow(
   }
 
   // -------------------------------------------------------------------------
-  // UNILATERAL EXIT (CSV) — buyer and seller together, never either alone.
-  // A single-key exit leaf would hand that party the escrow outright after the
-  // delay, which is the thing this contract exists to prevent.
+  // UNILATERAL EXIT (CSV) — any two of buyer, seller, mediator.
+  //
+  // This is the 2-of-3 the escrow always was, kept as the fallback for one
+  // case: the emulator stops co-signing. Every covenant above is then
+  // unreachable, and an exit needing buyer and seller together would strand
+  // the funds precisely when they disagree — which is when an escrow matters.
+  // Adding the mediator gives a disputed deal a way out.
+  //
+  // The trade is explicit: while the emulator is alive nothing can move except
+  // as the covenants allow, and no two parties can collude. Once these leaves
+  // mature, any two of the three can move the funds anywhere. That is a
+  // liveness requirement and a trust assumption, taken deliberately in
+  // exchange for never freezing the escrow.
+  //
+  // Three leaves rather than one: arkd recognizes only N-of-N closures, so a
+  // 2-of-3 is enumerated as its pairs.
   // -------------------------------------------------------------------------
-  function unilateral(signature buyerSig, signature sellerSig) tapscript {
+  function exitBuyerSeller(signature buyerSig, signature sellerSig) tapscript {
     require(older(exit));
     require(checkMultisig([buyerPk, sellerPk], [buyerSig, sellerSig], 2));
+  }
+
+  function exitBuyerMediator(signature buyerSig, signature mediatorSig) tapscript {
+    require(older(exit));
+    require(checkMultisig([buyerPk, mediatorPk], [buyerSig, mediatorSig], 2));
+  }
+
+  function exitSellerMediator(signature sellerSig, signature mediatorSig) tapscript {
+    require(older(exit));
+    require(checkMultisig([sellerPk, mediatorPk], [sellerSig, mediatorSig], 2));
   }
 }

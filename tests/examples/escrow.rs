@@ -24,7 +24,17 @@ fn test_escrow_spend_groups() {
 
     assert_eq!(output.name, "Escrow");
     let names: Vec<&str> = output.functions.iter().map(|g| g.name.as_str()).collect();
-    assert_eq!(names, ["release", "refund", "resolve", "unilateral"]);
+    assert_eq!(
+        names,
+        [
+            "release",
+            "refund",
+            "resolve",
+            "exitBuyerSeller",
+            "exitBuyerMediator",
+            "exitSellerMediator"
+        ]
+    );
 
     let params: Vec<(&str, &str)> = output
         .parameters
@@ -186,27 +196,51 @@ fn test_resolve_pins_every_payout() {
     );
 }
 
-/// A single-key exit leaf would let that party take the escrow outright once
-/// the delay elapsed, so the exit is buyer and seller together.
+/// The emulator-down fallback is the 2-of-3 the escrow always was, enumerated
+/// as pairs because arkd recognizes only N-of-N closures. A single-key leaf
+/// would hand that party the escrow outright; buyer-and-seller alone would
+/// strand a disputed deal, which is the case that matters.
 #[test]
-fn test_unilateral_exit_is_two_of_two() {
+fn test_exit_is_a_two_of_three_over_csv() {
     let output = escrow();
 
-    assert!(
-        group(&output, "unilateral").arkade.is_none(),
-        "unilateral is a standalone L1 leaf"
-    );
-    assert_eq!(
-        witness_names(&output, "unilateral", "unilateral"),
-        ["buyerSig", "sellerSig"]
-    );
-
-    let leaf = leaf_asm(&output, "unilateral", "unilateral");
-    assert_eq!(
-        leaf,
-        format!(
-            "<exit> {OP_CHECKSEQUENCEVERIFY} OP_DROP <buyerPk> {OP_CHECKSIGVERIFY} <sellerPk> {OP_CHECKSIG}"
+    let pairs = [
+        (
+            "exitBuyerSeller",
+            "buyerPk",
+            "sellerPk",
+            ["buyerSig", "sellerSig"],
         ),
-        "the exit must require both parties after the CSV delay"
-    );
+        (
+            "exitBuyerMediator",
+            "buyerPk",
+            "mediatorPk",
+            ["buyerSig", "mediatorSig"],
+        ),
+        (
+            "exitSellerMediator",
+            "sellerPk",
+            "mediatorPk",
+            ["sellerSig", "mediatorSig"],
+        ),
+    ];
+
+    for (name, first, second, witness) in pairs {
+        assert!(
+            group(&output, name).arkade.is_none(),
+            "{name} is a standalone L1 leaf"
+        );
+        assert_eq!(
+            witness_names(&output, name, name),
+            witness,
+            "{name} witness"
+        );
+        assert_eq!(
+            leaf_asm(&output, name, name),
+            format!(
+                "<exit> {OP_CHECKSEQUENCEVERIFY} OP_DROP <{first}> {OP_CHECKSIGVERIFY} <{second}> {OP_CHECKSIG}"
+            ),
+            "{name} must require both keys after the CSV delay"
+        );
+    }
 }

@@ -125,18 +125,37 @@ be paid a sub-dust output.
 
 ## Unilateral exit
 
+Any two of buyer, seller and mediator, after the CSV delay:
+
 ```ark
-function unilateral(signature buyerSig, signature sellerSig) tapscript {
+function exitBuyerSeller(signature buyerSig, signature sellerSig) tapscript {
   require(older(exit));
   require(checkMultisig([buyerPk, sellerPk], [buyerSig, sellerSig], 2));
 }
+// ...and exitBuyerMediator, exitSellerMediator
 ```
 
-Buyer and seller together, never either alone. Most examples in this repository
-give the unilateral exit to the party who funded the contract; for an escrow
-that would be a gift, because after `exit` blocks that party could take the
-money on L1 and skip the escrow entirely. A 2-of-2 keeps the operator-offline
-escape hatch without handing either side a way out.
+Three leaves rather than one, because arkd recognizes only N-of-N closures, so
+a 2-of-3 is enumerated as its pairs. Clients build the taproot tree from
+artifact order, which is the order these are declared.
+
+This is the same 2-of-3 the escrow always was, kept for exactly one case: the
+emulator stops co-signing. Every covenant path is then unreachable, and the
+contract needs some way out that does not depend on it.
+
+The obvious choice — buyer and seller together — is wrong here. It strands the
+funds precisely when the two disagree, which is when an escrow matters.
+Including the mediator gives a disputed deal a way out. A single-key exit is
+wrong for the opposite reason: it hands that party the escrow outright once the
+delay elapses.
+
+State the trade plainly rather than claiming the contract is trustless. While
+the emulator is alive, nothing moves except as the covenants allow and no two
+parties can collude. Once these leaves mature, any two of the three can move
+the funds anywhere. That is a liveness requirement and a trust assumption,
+accepted in exchange for never freezing the escrow. The mediator is already
+trusted to arbitrate; this widens that to "can move funds with one party's
+help, but only after the operator has gone away and the delay has run".
 
 The covenant paths get the synthesized collaborative leaf — `server` plus the
 emulator key tweaked by that covenant's hash — so the introspection rules above

@@ -104,6 +104,23 @@ contract Settlement(
   // -------------------------------------------------------------------------
   // UNILATERAL EXIT (CSV) — both parties together, never either alone.
   // The Liquid original has no counterpart: its UTXO is already on chain.
+  //
+  // Deliberately 2-of-2, unlike examples/escrow, which widens its exit to a
+  // 2-of-3 so a disputed deal is never frozen. There is no third key here that
+  // can be added without giving something up:
+  //
+  //   the oracle  — adding it would mean a stolen oracle key plus one party
+  //                 can move the funds, and "a compromised oracle key cannot
+  //                 move money" is this contract's best property.
+  //   the agent   — the original already treats agent-key compromise as a live
+  //                 threat and answers it by binding destinations. An exit leaf
+  //                 enforces no destinations, so an agent in the exit set
+  //                 reintroduces exactly that risk once the delay runs.
+  //
+  // The residual risk is real and worth naming: if the emulator stops
+  // co-signing and the two parties will not cooperate, the funds sit until
+  // they do. A deployment that prefers liveness over the property above can
+  // add an agent key and a second pair of exit leaves.
   // -------------------------------------------------------------------------
   function unilateral(signature partyASig, signature partyBSig) tapscript {
     require(older(exit));
