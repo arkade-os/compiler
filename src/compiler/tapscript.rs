@@ -200,7 +200,9 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
             for k in keys {
                 match k {
                     KeyExpr::Ident(id) if id == "emulator" => uses_bare_emulator = true,
-                    KeyExpr::Tweak { func } => tweak_targets.push(func.clone()),
+                    KeyExpr::Tweak { base, func } if base == "emulator" => {
+                        tweak_targets.push(func.clone())
+                    }
                     _ => {}
                 }
             }
@@ -280,10 +282,29 @@ pub fn validate_arkd_rules(
 
     // Key resolution.
     for k in &c.keys {
-        if let KeyExpr::Ident(id) = k {
-            if !in_scope(id) {
+        match k {
+            KeyExpr::Ident(id) if !in_scope(id) => {
                 return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
             }
+            KeyExpr::Tweak { base, func } if base != "emulator" => {
+                if constructor_scope.get(base) != Some(&ArkType::Pubkey) {
+                    return Err(format!(
+                        "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
+                        ts.name
+                    ));
+                }
+                if !contract
+                    .functions
+                    .iter()
+                    .any(|f| !f.is_private && &f.name == func)
+                {
+                    return Err(format!(
+                        "tweak({base}, {func}) in tapscript `{}`: no function named `{func}`",
+                        ts.name
+                    ));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -394,7 +415,8 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
         KeyExpr::Ident(id) if id == "server" => "<SERVER_KEY>".to_string(),
         KeyExpr::Ident(id) if id == "emulator" => format!("<EMULATOR_KEY:{leaf_func}>"),
         KeyExpr::Ident(id) => format!("<{id}>"),
-        KeyExpr::Tweak { func } => format!("<EMULATOR_KEY:{func}>"),
+        KeyExpr::Tweak { base, func } if base == "emulator" => format!("<EMULATOR_KEY:{func}>"),
+        KeyExpr::Tweak { base, func } => format!("<TWEAK:{base}:{func}>"),
     }
 }
 
@@ -605,7 +627,10 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
         timelock: None,
         keys: vec![
             KeyExpr::Ident("server".into()),
-            KeyExpr::Tweak { func: func.into() },
+            KeyExpr::Tweak {
+                base: "emulator".into(),
+                func: func.into(),
+            },
         ],
         threshold: Some(2),
     };
@@ -887,6 +912,7 @@ mod tests {
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "claim".into(),
             }])],
         };
@@ -903,6 +929,7 @@ mod tests {
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "claim".into(),
             }])],
         };
@@ -917,6 +944,7 @@ mod tests {
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "nope".into(),
             }])],
         };
@@ -931,9 +959,11 @@ mod tests {
             inputs: vec![],
             items: vec![sig(vec![
                 KeyExpr::Tweak {
+                    base: "emulator".into(),
                     func: "claim".into(),
                 },
                 KeyExpr::Tweak {
+                    base: "emulator".into(),
                     func: "refund".into(),
                 },
             ])],

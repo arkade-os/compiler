@@ -436,8 +436,9 @@ pub enum KeyExpr {
     /// A bare pubkey identifier: a reserved role (`server`, `emulator`) or any
     /// pubkey in scope (constructor pubkey, etc.).
     Ident(String),
-    /// `tweak(emulator, func)`: the emulator key tweaked by `func`'s covenant hash.
-    Tweak { func: String },
+    /// `tweak(base, func)`: `base` tweaked by `func`'s covenant hash.
+    /// `base` is `emulator` or a constructor pubkey (a second enclave).
+    Tweak { base: String, func: String },
 }
 
 impl KeyExpr {
@@ -453,8 +454,11 @@ impl KeyExpr {
 
     /// An infra-injected co-signer whose signature is generated, not user pubkey:
     /// `server`, bare `emulator`, or an explicit `tweak(emulator, …)`.
+    /// `tweak` of a constructor pubkey is that key's own signature.
     pub fn is_cosigner(&self) -> bool {
-        self.is_server() || self.is_emulator() || matches!(self, KeyExpr::Tweak { .. })
+        self.is_server()
+            || self.is_emulator()
+            || matches!(self, KeyExpr::Tweak { base, .. } if base == "emulator")
     }
 }
 

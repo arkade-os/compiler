@@ -46,9 +46,9 @@ contract Settlement(
   pubkey  partyAPk,
   // Seller side. Paid when the oracle attests.
   pubkey  partyBPk,
-  // Fallback operator run by the agent. Spends alone after `agentExit`. A
-  // stolen agent key can sweep the funds once that delay elapses; that is the
-  // liveness trade for an emulator that has stopped co-signing.
+  // A second emulator, held in an enclave and run by an insurer. Same role as
+  // the Arkade server's emulator: it co-signs a covenant only when that
+  // covenant passes. It spends `complete` and `cancel` after `agentExit`.
   pubkey  agentPk,
   // The oracle's attestation key. Verified against a message, never a
   // transaction, and kept out of the exit set.
@@ -107,24 +107,31 @@ contract Settlement(
   }
 
   // -------------------------------------------------------------------------
-  // EXIT — two CSV leaves, layered. The Liquid original has no counterpart:
-  // its UTXO is already on chain. An Arkade VTXO needs a way out when the
-  // operator stops co-signing.
+  // EXIT — the insurer's emulator, then the two parties.
+  // The Liquid original has no counterpart: its UTXO is already on chain.
   //
-  //   fallback    after `agentExit`, the agent's key alone
-  //   unilateral  after `exit`, party A and party B together
+  //   fallbackComplete / fallbackCancel
+  //       after `agentExit`, the insurer's enclave key tweaked by that covenant
+  //   unilateral
+  //       after `exit`, party A and party B together
   //
-  // The agent key is a constructor pubkey, not the reserved emulator role: a
-  // standalone leaf cannot carry the bare emulator key. The oracle stays out
-  // of both leaves, so a stolen oracle key still cannot move the funds.
+  // The insurer runs the same emulator the Arkade server runs, in its own
+  // enclave. `tweak(agentPk, complete)` puts that key, bound to the `complete`
+  // covenant, into the leaf — the same binding the server's leaf uses for its
+  // own emulator. The insurer can broadcast a settlement or a refund only when
+  // the covenant accepts it. The oracle stays out of every leaf.
   //
-  // A stolen agent key can, once `agentExit` elapses. The second leaf is what
-  // remains when that agent is offline too: the parties wait out the longer
-  // delay and spend 2-of-2. Neither party can exit alone.
+  // If the insurer is offline too, the parties wait out the longer delay and
+  // spend 2-of-2. Neither party can exit alone.
   // -------------------------------------------------------------------------
-  function fallback(signature agentSig) tapscript {
+  function fallbackComplete(signature agentSig) tapscript {
     require(older(agentExit));
-    require(checkSig(agentSig, agentPk));
+    require(checkSig(agentSig, tweak(agentPk, complete)));
+  }
+
+  function fallbackCancel(signature agentSig) tapscript {
+    require(older(agentExit));
+    require(checkSig(agentSig, tweak(agentPk, cancel)));
   }
 
   function unilateral(signature partyASig, signature partyBSig) tapscript {

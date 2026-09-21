@@ -520,7 +520,7 @@ function_call = {
 // explicit emulator tweak. Used only inside checkSig/checkMultisig.
 key_expr = { tweak_key | named_binding }
 
-// Explicit emulator tweak: tweak(emulator, funcName)
+// tweak(base, funcName): base is `emulator` or a constructor pubkey.
 tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" }
 
 // Array of key expressions (widens `array`, which is identifier-only).

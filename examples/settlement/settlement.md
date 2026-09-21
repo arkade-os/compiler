@@ -117,23 +117,22 @@ or withhold the one agreed settlement, and nothing else.
 
 ## The exit
 
-An Arkade VTXO needs a way out when the operator stops co-signing. Two
-standalone leaves, in declaration order:
+An Arkade VTXO needs a way out when its operator stops co-signing. The first
+operator is the Arkade server's emulator. The second is the same kind of
+emulator, held in an enclave and run by an insurer.
 
 | Leaf | Delay | Who signs |
 |---|---|---|
-| `fallback` | `agentExit` | the agent's key alone |
+| `fallbackComplete` | `agentExit` | insurer key, tweaked by the `complete` covenant |
+| `fallbackCancel` | `agentExit` | insurer key, tweaked by the `cancel` covenant |
 | `unilateral` | `exit`, longer | party A and party B together |
 
-The first leaf is a fallback emulator the agent runs. If that agent is offline
-too, the parties wait out the second delay and spend 2-of-2. Neither party can
-exit alone.
-
-The agent key is a constructor pubkey. A standalone leaf cannot carry the bare
-emulator role, and an exit leaf enforces no destinations — tapscript bodies are
-a hash, a timelock, and signatures — so once `agentExit` elapses a stolen
-agent key can sweep the funds. That is the liveness trade. The oracle stays
-out of both leaves, so a stolen oracle key still cannot move the money.
+`tweak(agentPk, complete)` is the same binding the server's leaf uses: the key
+in the script is the enclave key plus the covenant hash, so a signature from it
+commits to running that covenant. The insurer can settle or refund only when
+the covenant accepts the transaction. If the insurer is offline too, the
+parties wait out the longer delay and spend 2-of-2. Neither party can exit
+alone. The oracle stays out of every leaf.
 
 ---
 
@@ -163,5 +162,6 @@ and the Bitcoin script engine. Both paths settle, and the VM rejects a
 settlement attested by the wrong key, an attestation of a different message, a
 redirected payout, a shorted party B, a surplus folded into party B's output, a
 sub-dust surplus, a refund before the timeout, a refund sent to party B, a
-refund skimmed into a third output, an agent exit before `agentExit`, a
-party spending the agent leaf, and a unilateral exit by one party alone.
+refund skimmed into a third output, an insurer signature from the untweaked
+key, an insurer signature tweaked by the other covenant, and a unilateral exit
+by one party alone.

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -207,28 +208,39 @@ func TestCompiledSettlement(t *testing.T) {
 		})
 	})
 
-	t.Run("fallback tapscript", func(t *testing.T) {
-		fallback := instantiateLeaf(t, contract, "fallback", values, serverKey.PubKey())
+	t.Run("insurer emulator", func(t *testing.T) {
+		// The leaf checks the insurer key tweaked by the complete covenant,
+		// the same binding the server's emulator uses for its own key.
+		completeCovenant := assemble(t, covenantGroup(t, contract, "complete").Arkade.ASM, values)
+		scriptHash := arkade.ArkadeScriptHash(completeCovenant)
+		insurer := arkade.ComputeArkadeScriptPrivateKey(agentKey, scriptHash)
+
+		bound := make(map[string][]byte, len(values)+1)
+		for key, value := range values {
+			bound[key] = value
+		}
+		bound["TWEAK:agentPk:complete"] = schnorr.SerializePubKey(insurer.PubKey())
+		fallback := instantiateLeaf(t, contract, "fallbackComplete", bound, serverKey.PubKey())
 		deployment := fundingTx(fallback.pkScript, settlementAmount)
 
-		t.Run("the agent spends after the first delay", func(t *testing.T) {
+		t.Run("the insurer spends after the first delay", func(t *testing.T) {
 			requireTapscriptResult(
 				t, deployment, fallback, 0, uint32(settlementAgentExit),
-				[]*btcec.PrivateKey{agentKey}, nil, "",
+				[]*btcec.PrivateKey{insurer}, nil, "",
 			)
 		})
 
-		t.Run("the agent cannot spend before the first delay", func(t *testing.T) {
+		t.Run("the untweaked insurer key does not spend", func(t *testing.T) {
+			requireTapscriptResult(
+				t, deployment, fallback, 0, uint32(settlementAgentExit),
+				[]*btcec.PrivateKey{agentKey}, nil, "signature",
+			)
+		})
+
+		t.Run("the insurer cannot spend before the first delay", func(t *testing.T) {
 			requireTapscriptResult(
 				t, deployment, fallback, 0, uint32(settlementAgentExit-1),
-				[]*btcec.PrivateKey{agentKey}, nil, "locktime requirement not satisfied",
-			)
-		})
-
-		t.Run("a party cannot spend the agent leaf", func(t *testing.T) {
-			requireTapscriptResult(
-				t, deployment, fallback, 0, uint32(settlementAgentExit),
-				[]*btcec.PrivateKey{partyAKey}, nil, "signature",
+				[]*btcec.PrivateKey{insurer}, nil, "locktime requirement not satisfied",
 			)
 		})
 	})

@@ -21,7 +21,16 @@ fn test_settlement_spend_groups() {
 
     assert_eq!(output.name, "Settlement");
     let names: Vec<&str> = output.functions.iter().map(|g| g.name.as_str()).collect();
-    assert_eq!(names, ["complete", "cancel", "fallback", "unilateral"]);
+    assert_eq!(
+        names,
+        [
+            "complete",
+            "cancel",
+            "fallbackComplete",
+            "fallbackCancel",
+            "unilateral"
+        ]
+    );
 }
 
 /// The port's headline change: the original needs party B to co-sign the
@@ -105,27 +114,29 @@ fn test_payouts_are_pinned_to_committed_destinations() {
     );
 }
 
-/// Two CSV leaves. The agent spends alone after the shorter delay; the parties
-/// spend 2-of-2 after the longer one. The oracle key is in neither leaf.
+/// The insurer's emulator co-signs each covenant after the shorter delay, with
+/// its key tweaked by that covenant. The parties spend 2-of-2 after the longer
+/// delay. The oracle key is in no exit leaf.
 #[test]
 fn test_layered_csv_exit() {
     let output = settlement();
 
-    for name in ["fallback", "unilateral"] {
+    for name in ["fallbackComplete", "fallbackCancel", "unilateral"] {
         assert!(
             group(&output, name).arkade.is_none(),
             "{name} is a standalone L1 leaf"
         );
     }
 
-    let fallback = leaf_asm(&output, "fallback", "fallback");
+    let complete = leaf_asm(&output, "fallbackComplete", "fallbackComplete");
     assert!(
-        fallback.contains(OP_CHECKSEQUENCEVERIFY) && fallback.contains("<agentPk>"),
-        "the first exit is the agent key after agentExit: {fallback}"
+        complete.contains(OP_CHECKSEQUENCEVERIFY) && complete.contains("<TWEAK:agentPk:complete>"),
+        "the insurer leaf binds agentPk to the complete covenant: {complete}"
     );
+    let cancel = leaf_asm(&output, "fallbackCancel", "fallbackCancel");
     assert!(
-        !fallback.contains("<partyAPk>") && !fallback.contains("<oraclePk>"),
-        "the agent leaf carries neither a party nor the oracle: {fallback}"
+        cancel.contains("<TWEAK:agentPk:cancel>"),
+        "the refund leaf binds agentPk to the cancel covenant: {cancel}"
     );
 
     let unilateral = leaf_asm(&output, "unilateral", "unilateral");
@@ -133,10 +144,10 @@ fn test_layered_csv_exit() {
         unilateral.contains(OP_CHECKSEQUENCEVERIFY)
             && unilateral.contains("<partyAPk>")
             && unilateral.contains("<partyBPk>"),
-        "the second exit requires both parties after the longer CSV: {unilateral}"
+        "the last exit requires both parties after the longer CSV: {unilateral}"
     );
     assert!(
-        !unilateral.contains("<agentPk>") && !unilateral.contains("<oraclePk>"),
-        "the party leaf carries neither the agent nor the oracle: {unilateral}"
+        !unilateral.contains("agentPk") && !unilateral.contains("<oraclePk>"),
+        "the party leaf carries neither the insurer nor the oracle: {unilateral}"
     );
 }
