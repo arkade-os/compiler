@@ -23,13 +23,6 @@ export function compile_sources(entry: string, files: string): string;
 export function init(): void;
 
 /**
- * Read an arkadec artifact JSON string into a program JSON string.
- *
- * The result is the Rust [`crate::Program`], not a second schema.
- */
-export function program_from_artifact(json: string): string;
-
-/**
  * Validate Arkade Script source code without generating output
  *
  * # Arguments
@@ -52,7 +45,6 @@ export interface InitOutput {
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init: () => void;
-    readonly program_from_artifact: (a: number, b: number) => [number, number, number, number];
     readonly validate: (a: number, b: number) => [number, number, number];
     readonly version: () => [number, number];
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

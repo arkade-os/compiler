@@ -69,34 +69,6 @@ export function init() {
 }
 
 /**
- * Read an arkadec artifact JSON string into a program JSON string.
- *
- * The result is the Rust [`crate::Program`], not a second schema.
- * @param {string} json
- * @returns {string}
- */
-export function program_from_artifact(json) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.program_from_artifact(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
-    }
-}
-
-/**
  * Validate Arkade Script source code without generating output
  *
  * # Arguments
