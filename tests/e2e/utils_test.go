@@ -450,6 +450,19 @@ func spendingPSBTOutputs(
 	return ptx
 }
 
+// withExtraInput appends a second prevout so the covenant sees tx.numInputs == 2.
+func withExtraInput(t *testing.T, ptx *psbt.Packet, extra *wire.MsgTx) *psbt.Packet {
+	t.Helper()
+
+	outpoint := wire.OutPoint{Hash: extra.TxHash(), Index: 0}
+	ptx.UnsignedTx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
+	ptx.Inputs = append(ptx.Inputs, psbt.PInput{WitnessUtxo: extra.TxOut[0]})
+	if err := txutils.SetArkPsbtField(ptx, len(ptx.Inputs)-1, arkade.PrevArkTxField, *extra); err != nil {
+		t.Fatalf("previous Ark transaction: %v", err)
+	}
+	return ptx
+}
+
 func requireVMResult(
 	t *testing.T,
 	ptx *psbt.Packet,

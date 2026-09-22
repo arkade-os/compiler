@@ -160,6 +160,14 @@ func TestCompiledEscrow(t *testing.T) {
 				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
+
+		t.Run("a second input cannot share the payout", func(t *testing.T) {
+			extra := fundingTx(complete.pkScript, amount)
+			requireVMResult(
+				t, withExtraInput(t, attested(amount, oracleMsg[:], oracleKey, toPartyB), extra),
+				emulatorKey.PubKey(), "OP_VERIFY failed",
+			)
+		})
 	})
 
 	t.Run("cancel", func(t *testing.T) {
@@ -208,6 +216,14 @@ func TestCompiledEscrow(t *testing.T) {
 			}
 			requireVMResult(
 				t, refund(cancel, 0, skimmed), emulatorKey.PubKey(), "OP_VERIFY failed",
+			)
+		})
+
+		t.Run("a second input cannot share the refund", func(t *testing.T) {
+			extra := fundingTx(cancel.pkScript, amount)
+			requireVMResult(
+				t, withExtraInput(t, refund(cancel, 0, toPartyA), extra),
+				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 	})
