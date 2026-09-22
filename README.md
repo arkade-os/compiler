@@ -88,7 +88,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 }
 ```
 
-`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's 32-byte Taproot witness program — the output key, not the 34-byte P2TR script — because that is what `OP_INSPECTOUTPUTSCRIPTPUBKEY` leaves on the stack, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<VTXO:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's Taproot scriptPubKey at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -198,8 +198,6 @@ cargo run -p arkade-bindgen -- --list-targets
 ```
 
 `--embed` inlines the artifact JSON into the generated file; `--package` sets the module or namespace name.
-
-Bindings are a convenience, not the integration path. The artifact is the interface: the TypeScript SDK reads it directly with `programFromArtifact`, so nothing has to be generated or kept in sync to spend a compiled contract.
 
 Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `validate`, and `version`; the WASM `compile_sources(entry, files)` accepts the file map as a JSON string and returns the artifact as a JSON string.
 

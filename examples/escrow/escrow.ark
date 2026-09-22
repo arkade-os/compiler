@@ -3,15 +3,23 @@ pragma arkade ^0.1.0;
 // Spend paths and outputs are drawn in escrow.md.
 
 contract Escrow(
+  // 32-byte x-only key. Party A funds the coins and co-signs the unilateral exit.
   pubkey  partyAPk,
+  // 32-byte x-only key. Party B receives `amount` and co-signs the unilateral exit.
   pubkey  partyBPk,
+  // 32-byte x-only key. Signs the one attestation message.
   pubkey  oraclePk,
+  // 32 bytes. sha256 of that message. The message itself is also bytes32.
   bytes32 oracleMessageHash,
-  // 32-byte witness programs OP_INSPECTOUTPUTSCRIPTPUBKEY reports.
+  // 32-byte witness program OP_INSPECTOUTPUTSCRIPTPUBKEY reports. Refund and surplus pay this.
   bytes32 partyAScript,
+  // 32-byte witness program OP_INSPECTOUTPUTSCRIPTPUBKEY reports. The release pays this.
   bytes32 partyBScript,
+  // Sats. `complete` pays at least this to party B on output 0.
   int     amount,
+  // Block height. `cancel` requires tx.time >= this absolute locktime.
   int     timeoutHeight,
+  // Blocks. `unilateral` requires older(exit), a relative locktime.
   int     exit
 ) {
   const int DUST = 330;

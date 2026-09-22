@@ -58,12 +58,14 @@ Reconstruct oracle messages with the exact field order and encoding used by the 
 Do not mix time domains:
 
 - Use `tx.time` for Bitcoin nLockTime/CLTV values used by the contract.
-- Use `checkTime(timestamp)` for the introspector's wall clock. It returns whether that Unix timestamp has been reached, so it bounds a value from below rather than yielding a readable clock.
+- Use `tx.offchainTime` for introspector wall-clock seconds.
 
-`tx.offchainTime` no longer exists; the commented-out bodies in `examples/stability/` still reference it and do not compile. Reject a post-dated stamp with the clock check, and take an elapsed-time bound from a value the spender must also justify:
+Guard subtraction before applying a freshness or elapsed-time upper bound:
 
 ```ark
-require(checkTime(oracleTime), "future-dated oracle");
+int age = tx.offchainTime - oracleTime;
+require(age >= 0, "future-dated oracle");
+require(age <= maxAge, "stale oracle");
 ```
 
 For multi-input covenant checks, compare `this.activeInputIndex` with the witness-selected sibling index and verify the sibling input script before using its values.
@@ -79,7 +81,7 @@ Assume signed 64-bit intermediates and truncating integer division.
 
 ## Respect grammar limits
 
-- `&&` and `||` are available in covenant bodies and short-circuit; ternary expressions are not.
+- Use nested `if` statements or separate requirements instead of `&&`, `||`, or ternary expressions.
 - Bind a computed array index to an identifier before indexing; array indices accept identifiers or number literals.
 - Use assignments as statements, not expressions.
 - Keep `require` messages short and descriptive.
@@ -96,8 +98,6 @@ Check the current grammar rather than preserving workarounds from old examples.
 | Conditional output and dust routing | `examples/stability/stability_offer.ark` |
 | Asset introspection | `examples/token_vault/token_vault.ark` |
 | Threshold signatures | `examples/threshold_oracle/threshold_oracle.ark` |
-
-Most of `examples/stability/` is commented out and predates the current grammar. Read it for shape, not syntax.
 
 ## Validate the contract
 
