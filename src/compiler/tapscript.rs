@@ -1311,4 +1311,30 @@ contract Demo(pubkey insurer) {
             );
         }
     }
+
+    #[test]
+    fn constructor_tweak_rejects_an_unknown_base_or_function() {
+        let unknown_base = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function race(pubkey owner, signature ownerSig, signature insurerSig) tapscript {
+    require(checkMultisig([server, tweak(owner, claim)], [ownerSig, insurerSig], 2));
+  }
+}
+"#;
+        let missing_fn = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function race(signature serverSig, signature insurerSig) tapscript {
+    require(checkMultisig([server, tweak(insurer, missing)], [serverSig, insurerSig], 2));
+  }
+}
+"#;
+        let err = super::super::compile(unknown_base).unwrap_err();
+        assert!(err.contains("not a constructor pubkey"), "{err}");
+        let err = super::super::compile(missing_fn).unwrap_err();
+        assert!(err.contains("no function named `missing`"), "{err}");
+    }
 }
