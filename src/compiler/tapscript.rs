@@ -281,6 +281,10 @@ pub fn validate_arkd_rules(
     };
 
     // Key resolution.
+    let mut constructor_tweak_funcs: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<String>,
+    > = std::collections::BTreeMap::new();
     for k in &c.keys {
         match k {
             KeyExpr::Ident(id) if !in_scope(id) => {
@@ -303,8 +307,20 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
+                constructor_tweak_funcs
+                    .entry(base.clone())
+                    .or_default()
+                    .insert(func.clone());
             }
             _ => {}
+        }
+    }
+    for (base, funcs) in &constructor_tweak_funcs {
+        if funcs.len() > 1 {
+            return Err(format!(
+                "ambiguous constructor tweak targets for `{base}` in tapscript `{}`",
+                ts.name
+            ));
         }
     }
 
@@ -1309,6 +1325,13 @@ contract Demo(pubkey insurer) {
                 asm.contains("<TWEAK:insurer:claim>"),
                 "{name} binds the insurer key to claim: {asm}"
             );
+            assert!(
+                leaf.leaves[0]
+                    .witness
+                    .iter()
+                    .any(|w| w.name == "insurerSig" && !w.injected),
+                "{name}: insurerSig must not be injected"
+            );
         }
     }
 
@@ -1332,9 +1355,34 @@ contract Demo(pubkey insurer) {
   }
 }
 "#;
+        let tapscript_fn = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function late(signature insurerSig) tapscript {
+    require(older(10));
+    require(checkSig(insurerSig, tweak(insurer, late)));
+  }
+}
+"#;
+        let two_funcs = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function refund() { require(tx.input.current.value >= 1, "funded"); }
+  function race(signature aSig, signature bSig) tapscript {
+    require(older(10));
+    require(checkMultisig([tweak(insurer, claim), tweak(insurer, refund)], [aSig, bSig], 2));
+  }
+}
+"#;
         let err = super::super::compile(unknown_base).unwrap_err();
         assert!(err.contains("not a constructor pubkey"), "{err}");
         let err = super::super::compile(missing_fn).unwrap_err();
         assert!(err.contains("no function named `missing`"), "{err}");
+        let err = super::super::compile(tapscript_fn).unwrap_err();
+        assert!(err.contains("no function named `late`"), "{err}");
+        let err = super::super::compile(two_funcs).unwrap_err();
+        assert!(err.contains("ambiguous constructor tweak"), "{err}");
     }
 }
