@@ -114,3 +114,36 @@ contract Demo(pubkey owner) {
     assert_eq!(injected, vec!["serverSig", "emulatorSig"]);
     assert_eq!(user_supplied, vec!["ownerSig"]);
 }
+
+/// Clients build the taproot tree from artifact order, so several standalone
+/// leaves must arrive in the order they were declared — not sorted. A 2-of-3
+/// exit is written as its pairs, because arkd recognizes only N-of-N closures.
+#[test]
+fn standalone_leaves_keep_declaration_order() {
+    let src = r#"
+contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
+    function spend(signature aSig) {
+        require(checkSig(aSig, a));
+    }
+    function exitZulu(signature bSig, signature cSig) tapscript {
+        require(older(exit));
+        require(checkMultisig([b, c], [bSig, cSig], 2));
+    }
+    function exitAlpha(signature aSig, signature bSig) tapscript {
+        require(older(exit));
+        require(checkMultisig([a, b], [aSig, bSig], 2));
+    }
+    function exitMike(signature aSig, signature cSig) tapscript {
+        require(older(exit));
+        require(checkMultisig([a, c], [aSig, cSig], 2));
+    }
+}
+"#;
+    let out = compile(src).expect("compile");
+    let names: Vec<_> = out.functions.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["spend", "exitZulu", "exitAlpha", "exitMike"],
+        "covenant groups first, then standalone leaves as written"
+    );
+}
