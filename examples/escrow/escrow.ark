@@ -37,7 +37,7 @@ contract Escrow(
     require(tx.outputs[0].scriptPubKey == partyBScript, "output 0 not party B");
 
     if (surplus > 0) {
-      require(surplus > DUST, "surplus below dust");
+      require(surplus > DUST, "surplus at or below dust");
       require(tx.outputs[1].value >= surplus, "party A surplus underpaid");
       require(tx.outputs[1].scriptPubKey == partyAScript, "output 1 not party A");
     }

@@ -16,4 +16,4 @@ flowchart TD
 
 `partyAScript` and `partyBScript` are the 32-byte witness program an output reports.
 
-The contract commits `sha256` of the one message the oracle signs. A surplus of 330 sats or less fails `complete`. `complete` and `cancel` require a single input so two escrow coins cannot share one payout.
+The contract commits `sha256` of the one message the oracle signs. A surplus of 330 sats or less fails `complete`, so a slight overfund waits on `cancel` or both parties on `unilateral`. Outputs take the whole VTXO; miner fees come from a server input. `complete` and `cancel` require a single input so two escrow coins cannot share one payout.

@@ -174,8 +174,10 @@ func instantiateLeaf(
 		for j := range contract.Functions[i].Leaves {
 			if contract.Functions[i].Leaves[j].Name == name {
 				leaf = &contract.Functions[i].Leaves[j]
+				break
 			}
 		}
+		break
 	}
 	if leaf == nil {
 		t.Fatalf("%s.%s standalone leaf not found", contract.Name, name)
