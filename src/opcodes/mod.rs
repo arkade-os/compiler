@@ -189,7 +189,7 @@ pub const OP_INSPECTINASSETAT: &str = "OP_INSPECTINASSETAT";
 pub const OP_INSPECTOUTASSETAT: &str = "OP_INSPECTOUTASSETAT";
 
 /// `Some` when `name` is an opcode this compiler emits, with the canonical spelling.
-pub fn opcode(name: &str) -> Option<&'static str> {
+pub(crate) fn opcode(name: &str) -> Option<&'static str> {
     const OPCODES: &[&str] = &[
         OP_0,
         OP_1,
