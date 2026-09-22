@@ -81,6 +81,8 @@ struct Generator {
     last_reads: std::collections::HashMap<(String, usize), usize>,
     read_cursor: Option<usize>,
     preserve_bindings: bool,
+    // Rebinding the top slot can consume its old value without changing a branch join.
+    replacement: Option<(String, BindingKind, usize)>,
 }
 
 impl Generator {
@@ -147,6 +149,7 @@ impl Generator {
             last_reads: std::collections::HashMap::new(),
             read_cursor: None,
             preserve_bindings: false,
+            replacement: None,
         })
     }
 
@@ -234,14 +237,18 @@ impl Generator {
             {
                 self.final_reads[previous] = false;
             }
-            // Arrays and outer scope slots stay pinned until layouts and joins support released slots.
+            // Arrays and outer scope slots stay pinned unless reassignment restores the slot.
             self.final_reads.push(
                 !self.preserve_bindings
                     && !name.starts_with('$')
-                    && self
+                    && (self
                         .scopes
                         .last()
-                        .is_none_or(|(baseline, _)| index >= *baseline),
+                        .is_none_or(|(baseline, _)| index >= *baseline)
+                        || self
+                            .replacement
+                            .as_ref()
+                            .is_some_and(|(target, _, _)| target == name)),
             );
             false
         };
@@ -604,6 +611,37 @@ impl Generator {
 
     fn assign_static_binding(&mut self, name: &str, display_name: &str) -> Result<(), String> {
         let name = Self::internal_binding_name(name);
+        if let Some((target, kind, start)) = self.replacement.clone() {
+            if target == name && !self.preserve_bindings {
+                if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
+                    return Err(
+                        "internal compiler error: assignment has no result value".to_string()
+                    );
+                }
+                if let Some(index) = self.stack.len().checked_sub(2) {
+                    if let Some(previous) = self.last_reads.remove(&(name.clone(), index)) {
+                        if previous < start {
+                            self.final_reads[previous] = false;
+                        }
+                    }
+                }
+                if let Some(index) = self.binding_index(&name) {
+                    if index + 2 != self.stack.len() {
+                        return Err(
+                            "internal compiler error: assignment target moved below the top slot"
+                                .to_string(),
+                        );
+                    }
+                    self.nip()?;
+                }
+                *self
+                    .stack
+                    .last_mut()
+                    .ok_or("internal compiler error: assignment has no result value")? =
+                    StackItem::Binding { name, kind };
+                return Ok(());
+            }
+        }
         let index = self
             .binding_index(&name)
             .ok_or_else(|| format!("assignment to undeclared binding '{display_name}'"))?;
@@ -1042,8 +1080,27 @@ fn generate_asm_from_statements_recursive(
                 }
             }
             Statement::VarAssign { target, value } => {
+                let previous_replacement = generator.replacement.take();
+                // Deeper targets use OP_PUT; moving them needs scope and branch layout repair.
+                generator.replacement = match (target, generator.stack.last()) {
+                    (
+                        AssignmentTarget::Binding(name),
+                        Some(StackItem::Binding { name: top, kind }),
+                    ) if name == top
+                        && *kind != BindingKind::Constructor
+                        && !generator.preserve_bindings =>
+                    {
+                        Some((
+                            name.clone(),
+                            kind.clone(),
+                            generator.read_cursor.unwrap_or(generator.final_reads.len()),
+                        ))
+                    }
+                    _ => None,
+                };
                 generator.emit_expression(value)?;
                 generator.assign(target)?;
+                generator.replacement = previous_replacement;
             }
         }
         generator.assert_statement_boundary()?;
