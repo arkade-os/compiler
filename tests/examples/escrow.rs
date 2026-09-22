@@ -1,7 +1,7 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTLOCKTIME,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_INSPECTLOCKTIME,
     OP_INSPECTNUMINPUTS, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SHA256,
 };
 use std::path::Path;
@@ -94,8 +94,12 @@ fn test_payouts_are_pinned_to_committed_destinations() {
         "cancel must refuse a multi-input drain: {cancel}"
     );
     assert!(
-        cancel.contains(OP_INSPECTLOCKTIME) && cancel.contains("<timeoutHeight>"),
+        cancel.contains(OP_CHECKTIME) && cancel.contains("<timeoutAt>"),
         "cancel must gate on the committed timeout: {cancel}"
+    );
+    assert!(
+        !cancel.contains(OP_INSPECTLOCKTIME),
+        "arkd rebuilds this spend with nLockTime 0, so tx.time cannot gate cancel: {cancel}"
     );
     assert!(
         cancel.contains("<partyAScript>") && !cancel.contains("<partyBScript>"),
