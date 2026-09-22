@@ -8,6 +8,7 @@ pub mod models;
 pub mod opcodes;
 pub mod operators;
 mod parser;
+pub mod program;
 pub mod properties;
 mod types;
 mod validator;
@@ -20,6 +21,7 @@ pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
     WitnessElement,
 };
+pub use program::{program_from_artifact, program_from_json, Program};
 pub use types::ArkType;
 
 /// Per-call compiler settings. Optimizations are enabled by default.
