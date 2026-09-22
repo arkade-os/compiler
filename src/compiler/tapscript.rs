@@ -303,14 +303,6 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
-                // The Arkade emulator can sign `func` immediately. A second
-                // enclave on the same covenant without a CSV delay races it.
-                if !c.class.is_exit() {
-                    return Err(format!(
-                        "tweak({base}, {func}) in tapscript `{}`: a second emulator must be CSV-gated",
-                        ts.name
-                    ));
-                }
             }
             _ => {}
         }
@@ -1286,10 +1278,10 @@ mod tests {
         );
     }
 
-    /// A constructor pubkey tweaked by a covenant is a second emulator. It has
-    /// to wait out a CSV or it can spend at the same time as the Arkade one.
+    /// `tweak(constructorPubkey, func)` binds that key to the covenant on any leaf.
+    /// A forfeit leaf includes `server` as well.
     #[test]
-    fn second_emulator_requires_csv() {
+    fn second_emulator_tweak_binds_the_constructor_key() {
         let src = r#"
 pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
@@ -1300,36 +1292,23 @@ contract Demo(pubkey insurer) {
     require(older(10));
     require(checkSig(insurerSig, tweak(insurer, claim)));
   }
-  function race(signature insurerSig) tapscript {
-    require(checkSig(insurerSig, tweak(insurer, claim)));
+  function race(signature serverSig, signature insurerSig) tapscript {
+    require(checkMultisig([server, tweak(insurer, claim)], [serverSig, insurerSig], 2));
   }
 }
 "#;
-        let err = super::super::compile(src).unwrap_err();
-        assert!(err.contains("a second emulator must be CSV-gated"), "{err}");
-
-        let gated = r#"
-pragma arkade ^0.1.0;
-contract Demo(pubkey insurer) {
-  function claim() {
-    require(tx.input.current.value >= 1, "funded");
-  }
-  function late(signature insurerSig) tapscript {
-    require(older(10));
-    require(checkSig(insurerSig, tweak(insurer, claim)));
-  }
-}
-"#;
-        let output = super::super::compile(gated).expect("csv-gated second emulator");
-        let leaf = output
-            .functions
-            .iter()
-            .find(|g| g.name == "late")
-            .expect("late");
-        let asm = leaf.leaves[0].asm.join(" ");
-        assert!(
-            asm.contains("<TWEAK:insurer:claim>"),
-            "the leaf binds the insurer key to claim: {asm}"
-        );
+        let output = super::super::compile(src).expect("second emulator");
+        for name in ["late", "race"] {
+            let leaf = output
+                .functions
+                .iter()
+                .find(|g| g.name == name)
+                .expect(name);
+            let asm = leaf.leaves[0].asm.join(" ");
+            assert!(
+                asm.contains("<TWEAK:insurer:claim>"),
+                "{name} binds the insurer key to claim: {asm}"
+            );
+        }
     }
 }

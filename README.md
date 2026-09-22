@@ -434,7 +434,7 @@ Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. Boole
 
 ### Built-ins
 
-**Signatures.** `checkSig(sig, key)`, `checkMultisig([keys], [sigs], threshold?)` with N-of-N when the threshold is omitted (covenants accept any threshold, via `OP_CHECKSIGADD`), `checkSigFromStack(sig, key, message)` and its `Verify` form. `tweak(emulator, fn)` is a key expression usable only inside tapscripts.
+**Signatures.** `checkSig(sig, key)`, `checkMultisig([keys], [sigs], threshold?)` with N-of-N when the threshold is omitted (covenants accept any threshold, via `OP_CHECKSIGADD`), `checkSigFromStack(sig, key, message)` and its `Verify` form. `tweak(base, fn)` is a tapscript-only key expression. `base` is `emulator` or a constructor pubkey, and the key is tweaked by `fn`'s covenant.
 
 **Hashes.** `sha256`, `hash160`, `hash256`, `ripemd160` as `require(hashFn(preimage) == hash)`. `sha256(expr)` also works as a value, including over concatenations and `substr` results. Streaming: `sha256Initialize`, `sha256Update`, `sha256Finalize`. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
@@ -464,7 +464,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a `checkMultisig` threshold, if written, must equal the key count, and each signature must be a declared `signature` input aligned 1:1 with its key.
 
-Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)`. Inputs named `server` or `emulator` are rejected.
+Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Inputs named `server` or `emulator` are rejected.
 
 ## Artifact format
 
