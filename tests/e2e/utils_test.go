@@ -353,20 +353,6 @@ func taprootLeaf(t *testing.T, script []byte) ([]byte, *psbt.TaprootTapLeafScrip
 	}
 }
 
-// witnessProgram extracts what OP_INSPECTOUTPUTSCRIPTPUBKEY actually pushes.
-// A `new Contract(...)` comparison reads that opcode, so a <VTXO:...>
-// placeholder resolves to the child's witness program, not to the 34-byte
-// scriptPubKey the output carries.
-func witnessProgram(t *testing.T, pkScript []byte) []byte {
-	t.Helper()
-
-	_, program, err := txscript.ExtractWitnessProgramInfo(pkScript)
-	if err != nil {
-		t.Fatalf("extract witness program: %v", err)
-	}
-	return program
-}
-
 func p2trScript(t *testing.T, script []byte) []byte {
 	t.Helper()
 	pkScript, _ := taprootLeaf(t, script)
