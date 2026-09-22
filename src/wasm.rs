@@ -49,15 +49,6 @@ pub fn validate(source: &str) -> Result<bool, String> {
     }
 }
 
-/// Read an arkadec artifact JSON string into a program JSON string.
-///
-/// The result is the Rust [`crate::Program`], not a second schema.
-#[wasm_bindgen]
-pub fn program_from_artifact(json: &str) -> Result<String, String> {
-    let program = crate::program_from_json(json)?;
-    serde_json::to_string(&program).map_err(|e| format!("program_from_artifact: {e}"))
-}
-
 /// Compile a virtual project. `files` is a JSON object mapping relative .ark paths to source text.
 #[wasm_bindgen]
 pub fn compile_sources(entry: &str, files: &str) -> Result<String, String> {

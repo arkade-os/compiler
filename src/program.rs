@@ -22,7 +22,7 @@ use crate::models::{
 };
 use crate::opcodes::{self, opcode};
 
-/// Program shape produced by [`program_from_artifact`]. There is no older shape.
+/// Program shape produced by [`program_from_artifact`].
 pub const PROGRAM_VERSION: u32 = 0;
 
 /// A compiled contract, ready for a caller to bind constructor arguments.
@@ -35,7 +35,7 @@ pub struct Program {
 }
 
 impl Program {
-    /// The spend path named `name`, in artifact order.
+    /// The spend path named `name`.
     pub fn function(&self, name: &str) -> Option<&Function> {
         self.functions.iter().find(|function| function.name == name)
     }
@@ -185,30 +185,29 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
             return Err(err(format!("spend group '{}' has no leaves", group.name)));
         }
 
-        let covenant_inputs = match &group.arkade {
-            Some(covenant) => flatten_all(
+        let (covenant_inputs, arkade) = if let Some(covenant) = &group.arkade {
+            let inputs = flatten_all(
                 covenant
                     .inputs
                     .iter()
                     .map(|input| (input.name.as_str(), input.param_type.as_str())),
                 &artifact.structs,
-            )?,
-            None => Vec::new(),
-        };
-        let arkade = match &group.arkade {
-            Some(covenant) => Some(ArkadeScript {
+            )?;
+            let script = ArkadeScript {
                 asm: covenant
                     .asm
                     .iter()
                     .map(|token| asm_token(token, &mut instantiations))
                     .collect::<Result<Vec<_>, _>>()?,
-                witness: covenant_inputs
+                witness: inputs
                     .iter()
                     .rev()
                     .map(|param| param.name.clone())
                     .collect(),
-            }),
-            None => None,
+            };
+            (inputs, Some(script))
+        } else {
+            (Vec::new(), None)
         };
 
         for (index, leaf) in group.leaves.iter().enumerate() {
