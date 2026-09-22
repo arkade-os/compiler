@@ -2,7 +2,7 @@ use arkade_compiler::compile_file;
 use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
     OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_INSPECTLOCKTIME,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SHA256,
+    OP_INSPECTNUMINPUTS, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SHA256,
 };
 use std::path::Path;
 
@@ -73,6 +73,10 @@ fn test_payouts_are_pinned_to_committed_destinations() {
     let output = escrow();
 
     let complete = arkade_asm(&output, "complete");
+    assert!(
+        complete.contains(OP_INSPECTNUMINPUTS),
+        "complete must refuse a multi-input drain: {complete}"
+    );
     for destination in ["<partyBScript>", "<partyAScript>"] {
         assert!(
             complete.contains(destination),
@@ -85,6 +89,10 @@ fn test_payouts_are_pinned_to_committed_destinations() {
     );
 
     let cancel = arkade_asm(&output, "cancel");
+    assert!(
+        cancel.contains(OP_INSPECTNUMINPUTS),
+        "cancel must refuse a multi-input drain: {cancel}"
+    );
     assert!(
         cancel.contains(OP_INSPECTLOCKTIME) && cancel.contains("<timeoutHeight>"),
         "cancel must gate on the committed timeout: {cancel}"

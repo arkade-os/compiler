@@ -25,6 +25,7 @@ contract Escrow(
   const int DUST = 330;
 
   function complete(bytes32 oracleMsg, signature oracleSig) {
+    require(tx.numInputs == 1, "single-input spend required");
     require(sha256(oracleMsg) == oracleMessageHash, "unexpected attestation");
     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
@@ -43,6 +44,7 @@ contract Escrow(
   }
 
   function cancel() {
+    require(tx.numInputs == 1, "single-input spend required");
     require(tx.time >= timeoutHeight, "timeout not reached");
     require(tx.outputs[0].value >= tx.input.current.value, "party A underpaid");
     require(tx.outputs[0].scriptPubKey == partyAScript, "output 0 not party A");
