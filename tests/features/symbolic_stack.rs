@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
-    OP_MUL, OP_PICK, OP_PUT, OP_ROLL,
+    OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
 };
 
 fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
@@ -540,6 +540,7 @@ fn final_use_after_a_private_call_consumes_the_caller_binding() {
         r#"
 contract Framed() {
     public function spend(int x, int y) {
+        require(double(x) > 0);
         require(double(x) == y);
         require(x >= 1);
     }
@@ -551,11 +552,20 @@ contract Framed() {
         "spend",
     );
 
-    assert!(
-        contains_tokens(&covenant.asm, &["OP_2", OP_PICK, "2", OP_MUL]),
-        "argument reads stay pinned inside a call frame: {:?}",
-        covenant.asm
+    assert_eq!(
+        covenant
+            .asm
+            .windows(4)
+            .filter(|tokens| *tokens == ["OP_0", OP_PICK, "2", OP_MUL])
+            .count(),
+        2,
+        "each helper invocation should read the caller slot directly: {:?}",
+        covenant.asm,
     );
+    assert!(covenant
+        .asm
+        .iter()
+        .all(|token| token != OP_PUT && token != "OP_NIP"));
     assert!(
         contains_tokens(
             &covenant.asm,
@@ -563,5 +573,107 @@ contract Framed() {
         ),
         "the caller's final read after a call must consume the slot: {:?}",
         covenant.asm
+    );
+}
+
+#[test]
+fn readonly_private_arguments_alias_caller_slots_but_mutated_arguments_copy() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(int x) {
+        let earlier = x + 1;
+        require(outer(x) == earlier + x - 1);
+        require(bump(x) == x + 1);
+    }
+    private function outer(int v) int { return inner(v); }
+    private function inner(int w) int { return w * 2; }
+    private function bump(int v) int { if (v > 0) { v = v + 1; } return v; }
+}
+"#,
+        "spend",
+    );
+
+    assert_eq!(&covenant.asm[..4], ["OP_0", OP_PICK, "1", OP_ADD]);
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_1", OP_PICK, "2", OP_MUL]
+    ));
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_0", OP_PICK, "OP_0", OP_PICK, "0", OP_GREATERTHAN, OP_IF]
+    ));
+}
+
+#[test]
+fn readonly_constructor_argument_preserves_constructor_access() {
+    let covenant = covenant(
+        r#"
+contract C(int base) {
+    function spend() { require(sum(base) == base * 2); }
+    private function sum(int value) int { return value + base; }
+}
+"#,
+        "spend",
+    );
+
+    assert_eq!(
+        &covenant.asm[..6],
+        ["<base>", "OP_0", OP_PICK, "OP_1", OP_PICK, OP_ADD]
+    );
+}
+
+#[test]
+fn caller_top_slot_rebinding_ignores_same_named_helper_locals() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(int y, bool c) {
+        let x = y;
+        x = helper(y, c);
+        require(x > 0);
+    }
+    private function helper(int y, bool c) int {
+        let x = y + 1;
+        if (c) { require(x > 0); }
+        return 5;
+    }
+}
+"#,
+        "spend",
+    );
+
+    assert!(contains_tokens(
+        &covenant.asm,
+        &[
+            OP_IF,
+            "OP_0",
+            OP_PICK,
+            "0",
+            OP_GREATERTHAN,
+            OP_VERIFY,
+            OP_ENDIF
+        ]
+    ));
+    let end = covenant
+        .asm
+        .iter()
+        .rposition(|token| token == OP_ENDIF)
+        .unwrap();
+    assert_eq!(
+        &covenant.asm[end + 1..],
+        [
+            "5",
+            "OP_NIP",
+            "OP_NIP",
+            "OP_0",
+            OP_ROLL,
+            "0",
+            OP_GREATERTHAN,
+            OP_VERIFY,
+            "OP_1",
+            "OP_NIP",
+            "OP_NIP"
+        ]
     );
 }

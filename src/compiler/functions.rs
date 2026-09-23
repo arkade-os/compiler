@@ -28,6 +28,30 @@ pub(super) fn contains_return(statements: &[Statement]) -> bool {
     })
 }
 
+// This scans each helper body per argument; cache assigned names if call counts grow.
+fn assigns_parameter(statements: &[Statement], name: &str) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::VarAssign {
+            target: AssignmentTarget::Binding(target),
+            ..
+        } => target == name,
+        Statement::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            assigns_parameter(then_body, name)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|body| assigns_parameter(body, name))
+        }
+        Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+            assigns_parameter(body, name)
+        }
+        _ => false,
+    })
+}
+
 impl Generator {
     pub(super) fn value_leaves(&self, name: &str, ty: &str) -> Result<Vec<TypeLeaf>, String> {
         flatten_parameter(
@@ -139,13 +163,33 @@ impl Generator {
         if args.len() != function.parameters.len() {
             return Err(format!("wrong argument count for '{name}'"));
         }
-        // Calls restore caller slots; consuming arguments requires a movable caller frame.
-        let preserved = std::mem::replace(&mut self.preserve_bindings, true);
         let caller = self.stack.clone();
         let caller_scope = self.scope.clone();
         let baseline = caller.len();
+        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        // A caller's top-slot rebinding must not match helper bindings with the same name.
+        let replacement = self.replacement.take();
         let mut arguments = Vec::new();
+        let mut aliases = std::collections::HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
+            if is_builtin_type(&parameter.param_type)
+                && !assigns_parameter(&function.statements, &parameter.name)
+            {
+                if let Expression::Variable(source) = argument {
+                    if let Some(source_index) = self.binding_index(source).filter(|&i| i < baseline)
+                    {
+                        if self.read_cursor.is_none() {
+                            if let Some(previous) =
+                                self.last_reads.get(&(source.clone(), source_index))
+                            {
+                                self.final_reads[*previous] = false;
+                            }
+                        }
+                        aliases.insert(parameter.name.clone(), source_index);
+                        continue;
+                    }
+                }
+            }
             let start = self.stack.len();
             self.emit_typed_value(argument, &parameter.param_type)?;
             self.bind_value(&format!("$argument:{index}"), &parameter.param_type)?;
@@ -182,31 +226,46 @@ impl Generator {
                 };
             }
         }
+        let previous_aliases = std::mem::replace(&mut self.aliases, aliases);
         for parameter in &function.parameters {
             self.bind_type(&parameter.name, &parameter.param_type);
         }
         let previous_return = self.return_type.replace(function.return_type.clone());
-        self.push_temporary(OP_0);
-        self.bind_local("$returned")?;
+        // Nested returns need shared slots until their control flow can be lowered directly.
+        let direct_return = !function.statements.iter().any(|statement| {
+            !matches!(statement, Statement::Return(_))
+                && contains_return(std::slice::from_ref(statement))
+        });
+        let previous_direct_return = std::mem::replace(&mut self.direct_return, direct_return);
         let results = function
             .return_type
             .as_deref()
             .map(|ty| self.value_leaves("$result", ty))
             .transpose()?
             .unwrap_or_default();
-        for leaf in results.iter().rev() {
+        if !direct_return {
             self.push_temporary(OP_0);
-            self.bind_local(&Self::internal_binding_name(&leaf.access_name))?;
+            self.bind_local("$returned")?;
+            for leaf in results.iter().rev() {
+                self.push_temporary(OP_0);
+                self.bind_local(&Self::internal_binding_name(&leaf.access_name))?;
+            }
         }
         generate_asm_from_statements_recursive(&function.statements, self)?;
-        for leaf in results.iter().rev() {
-            self.read_binding(&leaf.access_name)?;
+        if !direct_return {
+            for leaf in results.iter().rev() {
+                self.read_static_binding(&Self::internal_binding_name(&leaf.access_name), true)?;
+            }
         }
         self.discard_call_frame(baseline, results.len())?;
+        self.last_reads.retain(|(_, index), _| *index < baseline);
         self.stack[..baseline].clone_from_slice(&caller);
         self.scope = caller_scope;
+        self.aliases = previous_aliases;
         self.return_type = previous_return;
-        self.preserve_bindings = preserved;
+        self.direct_return = previous_direct_return;
+        self.pinned_stack_len = pinned;
+        self.replacement = replacement;
         Ok(())
     }
 
@@ -238,15 +297,21 @@ impl Generator {
         match (ty.as_deref(), value) {
             (Some(ty), Some(value)) => {
                 self.emit_typed_value(value, ty)?;
-                for leaf in self.value_leaves("$result", ty)? {
-                    self.assign_static_binding(&leaf.access_name, &leaf.access_name)?;
+                if !self.direct_return {
+                    for leaf in self.value_leaves("$result", ty)? {
+                        self.assign_static_binding(&leaf.access_name, &leaf.access_name)?;
+                    }
                 }
             }
             (None, None) => {}
             _ => return Err("return value does not match function signature".to_string()),
         }
-        self.push_temporary(OP_1);
-        self.assign_static_binding("$returned", "$returned")
+        if self.direct_return {
+            Ok(())
+        } else {
+            self.push_temporary(OP_1);
+            self.assign_static_binding("$returned", "$returned")
+        }
     }
 
     pub(super) fn emit_unless_returned(&mut self, statements: &[Statement]) -> Result<(), String> {

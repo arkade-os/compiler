@@ -74,13 +74,17 @@ struct Generator {
     structs: Vec<crate::models::StructDefinition>,
     scope: typechecker::Scope,
     functions: Vec<Function>,
+    // Read-only scalar parameters can name slots in the pinned caller frame.
+    aliases: std::collections::HashMap<String, usize>,
     // None outside a helper; Some(None) inside a void helper.
     return_type: Option<Option<String>>,
+    direct_return: bool,
     // Record reads once, then replay final uses at their new stack depths.
     final_reads: Vec<bool>,
     last_reads: std::collections::HashMap<(String, usize), usize>,
     read_cursor: Option<usize>,
     preserve_bindings: bool,
+    pinned_stack_len: usize,
     // Rebinding the top slot can consume its old value without changing a branch join.
     replacement: Option<(String, BindingKind, usize)>,
 }
@@ -144,11 +148,14 @@ impl Generator {
             structs: structs.to_vec(),
             scope,
             functions: Vec::new(),
+            aliases: std::collections::HashMap::new(),
             return_type: None,
+            direct_return: false,
             final_reads: Vec::new(),
             last_reads: std::collections::HashMap::new(),
             read_cursor: None,
             preserve_bindings: false,
+            pinned_stack_len: 0,
             replacement: None,
         })
     }
@@ -159,9 +166,11 @@ impl Generator {
     }
 
     fn binding_index(&self, name: &str) -> Option<usize> {
-        self.stack.iter().position(
-            |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
-        )
+        self.aliases.get(name).copied().or_else(|| {
+            self.stack.iter().position(
+                |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
+            )
+        })
     }
 
     /// Element count of an array binding, read off the symbolic stack: its
@@ -215,10 +224,10 @@ impl Generator {
             }
         }
         let name = Self::internal_binding_name(name);
-        self.read_static_binding(&name)
+        self.read_static_binding(&name, false)
     }
 
-    fn read_static_binding(&mut self, name: &str) -> Result<(), String> {
+    fn read_static_binding(&mut self, name: &str, take: bool) -> Result<(), String> {
         let index = self
             .binding_index(name)
             .ok_or_else(|| format!("undefined binding '{name}'"))?;
@@ -239,7 +248,8 @@ impl Generator {
             }
             // Arrays and outer scope slots stay pinned unless reassignment restores the slot.
             self.final_reads.push(
-                !self.preserve_bindings
+                take || (!self.preserve_bindings
+                    && index >= self.pinned_stack_len
                     && !name.starts_with('$')
                     && (self
                         .scopes
@@ -248,7 +258,7 @@ impl Generator {
                         || self
                             .replacement
                             .as_ref()
-                            .is_some_and(|(target, _, _)| target == name)),
+                            .is_some_and(|(target, _, _)| target == name))),
             );
             false
         };
@@ -611,6 +621,11 @@ impl Generator {
 
     fn assign_static_binding(&mut self, name: &str, display_name: &str) -> Result<(), String> {
         let name = Self::internal_binding_name(name);
+        if self.aliases.contains_key(&name) {
+            return Err(format!(
+                "internal compiler error: aliased parameter '{display_name}' is assigned"
+            ));
+        }
         if let Some((target, kind, start)) = self.replacement.clone() {
             if target == name && !self.preserve_bindings {
                 if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
