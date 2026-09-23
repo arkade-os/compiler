@@ -94,4 +94,74 @@ for (const prefix of ['#code=', '#project=']) {
     assert.equal(await vm.runInContext('loadFromUrl()', context), null);
 }
 await assert.rejects(vm.runInContext("compressCode('a'.repeat(MAX_SHARED_DECODED_BYTES + 1))", context), /Shared source exceeds/);
-console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, and removed shared examples.`);
+
+const sharedFolderCount = () => vm.runInContext(
+    `Object.keys(projects).filter(id => id === 'shared' || id.startsWith('shared_')).length`,
+    context);
+const foldersBefore = sharedFolderCount();
+
+context.bundle = { entry: 'escrow/escrow.ark', files: { 'escrow/escrow.ark': contracts.escrow } };
+let opened = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(opened.example, 'escrow');
+assert.equal(opened.created, undefined);
+opened = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(opened.example, 'escrow');
+assert.equal(sharedFolderCount(), foldersBefore);
+
+context.bundle = {
+    entry: 'shared/escrow/escrow.ark',
+    files: { 'shared/escrow/escrow.ark': contracts.escrow },
+};
+opened = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(opened.example, 'escrow');
+assert.equal(vm.runInContext('canonicalShareBundle(bundle).entry', context), 'escrow/escrow.ark');
+assert.equal(sharedFolderCount(), foldersBefore);
+
+context.bundle = {
+    entry: 'escrow/escrow.ark',
+    files: { 'escrow/escrow.ark': `${contracts.escrow}\n// edited\n` },
+};
+const imported = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(imported.created, true);
+assert.equal(sharedFolderCount(), foldersBefore + 1);
+const reopened = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(reopened.project, imported.project);
+assert.equal(reopened.file, imported.file);
+assert.equal(reopened.created, undefined);
+assert.equal(sharedFolderCount(), foldersBefore + 1);
+
+context.selection = [imported.project, imported.file];
+const resharedInput = vm.runInContext(`
+    [currentProject, currentFile] = selection;
+    editor = { getValue: () => projects[currentProject].files[currentFile] };
+    compilationSources();
+`, context);
+context.bundle = JSON.parse(compile_sources(resharedInput.entry, JSON.stringify(resharedInput.files))).source;
+assert.equal(context.bundle.entry, `${imported.project}/escrow/escrow.ark`);
+assert.equal(vm.runInContext('canonicalShareBundle(bundle).entry', context), 'escrow/escrow.ark');
+const fromReshare = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(fromReshare.project, imported.project);
+assert.equal(fromReshare.created, undefined);
+assert.equal(sharedFolderCount(), foldersBefore + 1);
+
+const nestedAgain = {
+    entry: `${imported.project}/escrow/escrow.ark`,
+    files: { [`${imported.project}/escrow/escrow.ark`]: `${contracts.escrow}\n// edited\n` },
+};
+context.bundle = {
+    entry: `shared_9/${nestedAgain.entry}`,
+    files: { [`shared_9/${nestedAgain.entry}`]: nestedAgain.files[nestedAgain.entry] },
+};
+const unwrappedTwice = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(unwrappedTwice.project, imported.project);
+assert.equal(sharedFolderCount(), foldersBefore + 1);
+
+context.bundle = vm.runInContext(`({ entry: 'vault/main.ark', files: { ...projects.shared.files } })`, context);
+assert.equal(vm.runInContext('canonicalShareBundle(bundle).entry', context), 'vault/main.ark');
+assert.equal(vm.runInContext("'shared/fees.ark' in canonicalShareBundle(bundle).files", context), true);
+const vaultAgain = vm.runInContext('resolveSharedBundle(bundle)', context);
+assert.equal(vaultAgain.project, 'shared');
+assert.equal(vaultAgain.file, 'vault/main.ark');
+assert.equal(sharedFolderCount(), foldersBefore + 1);
+
+console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);
