@@ -655,4 +655,25 @@ contract C() {
             OP_ENDIF
         ]
     ));
+    let end = covenant
+        .asm
+        .iter()
+        .rposition(|token| token == OP_ENDIF)
+        .unwrap();
+    assert_eq!(
+        &covenant.asm[end + 1..],
+        [
+            "5",
+            "OP_NIP",
+            "OP_NIP",
+            "OP_0",
+            OP_ROLL,
+            "0",
+            OP_GREATERTHAN,
+            OP_VERIFY,
+            "OP_1",
+            "OP_NIP",
+            "OP_NIP"
+        ]
+    );
 }
