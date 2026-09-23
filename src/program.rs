@@ -124,7 +124,8 @@ pub struct Tapscript {
     /// Non-signature witness values the caller supplies (a preimage, for example).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub witness: Vec<String>,
-    /// Function name from `<EMULATOR_KEY:fn>` when this leaf has a covenant.
+    /// Function name from `<EMULATOR_KEY:fn>`. Absent when the leaf signs with a
+    /// constructor-key tweak instead of the emulator.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emulator: Option<String>,
 }
@@ -533,9 +534,14 @@ fn parse_leaf(
         index += 2;
     }
 
-    if has_covenant && emulator.is_none() {
+    if has_covenant
+        && emulator.is_none()
+        && !signers
+            .iter()
+            .any(|signer| matches!(signer, Signer::Tweaked { .. }))
+    {
         return Err(err(format!(
-            "leaf '{}': covenant leaf must end with the tweaked co-signer",
+            "leaf '{}': covenant leaf must sign with the emulator or a tweaked constructor key",
             leaf.name
         )));
     }
@@ -818,6 +824,47 @@ mod tests {
     }
 
     #[test]
+    fn constructor_tweak_stays_on_the_covenant() {
+        let json = r#"{
+            "contractName": "Demo",
+            "constructorInputs": [{"name": "insurer", "type": "pubkey"}],
+            "functions": [{
+                "name": "claim",
+                "arkade": {"inputs": [], "asm": ["OP_1"]},
+                "leaves": [
+                    {
+                        "name": "claim",
+                        "witness": [],
+                        "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:claim>", "OP_CHECKSIG"]
+                    },
+                    {
+                        "name": "race",
+                        "witness": [],
+                        "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<TWEAK:insurer:claim>", "OP_CHECKSIG"]
+                    }
+                ]
+            }]
+        }"#;
+        let program = program_from_json(json).unwrap();
+        let claim = program.function("claim").unwrap();
+        assert_eq!(claim.tapscript.emulator.as_deref(), Some("claim"));
+        assert!(claim.arkade.is_some());
+        let race = program.function("claim/1:race").unwrap();
+        assert_eq!(
+            race.tapscript.signers,
+            vec![
+                Signer::Param("server".into()),
+                Signer::Tweaked {
+                    base: "insurer".into(),
+                    func: "claim".into(),
+                },
+            ]
+        );
+        assert!(race.tapscript.emulator.is_none());
+        assert_eq!(race.arkade, claim.arkade);
+    }
+
+    #[test]
     fn rejects_a_malformed_tweak_duplicate_server_and_unknown_opcode() {
         let tweak = program_from_json(&leaf(&["<TWEAK:insurer:late:extra>", "OP_CHECKSIG"]));
         assert_eq!(
@@ -893,7 +940,7 @@ mod tests {
         }"#;
         assert_eq!(
             program_from_json(missing_emulator).unwrap_err(),
-            "program_from_artifact: leaf 'spend': covenant leaf must end with the tweaked co-signer"
+            "program_from_artifact: leaf 'spend': covenant leaf must sign with the emulator or a tweaked constructor key"
         );
 
         let collision = r#"{
