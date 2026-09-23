@@ -152,6 +152,47 @@ func instantiateGroup(
 	}
 }
 
+// instantiateLeaf builds a spend group that is only an L1 leaf, with no
+// covenant to tweak the emulator key against — the shape unilateral exits use.
+func instantiateLeaf(
+	t *testing.T,
+	contract artifact,
+	name string,
+	values map[string][]byte,
+	serverKey *btcec.PublicKey,
+) instantiatedGroup {
+	t.Helper()
+
+	var leaf *leafArtifact
+	for i := range contract.Functions {
+		if contract.Functions[i].Name != name {
+			continue
+		}
+		if contract.Functions[i].Arkade != nil {
+			t.Fatalf("%s.%s has a covenant; use instantiateGroup", contract.Name, name)
+		}
+		for j := range contract.Functions[i].Leaves {
+			if contract.Functions[i].Leaves[j].Name == name {
+				leaf = &contract.Functions[i].Leaves[j]
+				break
+			}
+		}
+		break
+	}
+	if leaf == nil {
+		t.Fatalf("%s.%s standalone leaf not found", contract.Name, name)
+	}
+
+	leafValues := make(map[string][]byte, len(values)+1)
+	for key, value := range values {
+		leafValues[key] = value
+	}
+	leafValues["SERVER_KEY"] = schnorr.SerializePubKey(serverKey)
+	pkScript, tapLeafScript := taprootLeaf(t, assemble(t, leaf.ASM, leafValues))
+
+	return instantiatedGroup{pkScript: pkScript, tapLeafScript: tapLeafScript}
+}
+
 func covenantGroup(t *testing.T, contract artifact, name string) *functionGroup {
 	t.Helper()
 
@@ -353,10 +394,33 @@ func spendingPSBTWithWitness(
 ) *psbt.Packet {
 	t.Helper()
 
+	return spendingPSBTOutputs(
+		t, prevTx, group, 0,
+		[]*wire.TxOut{{Value: amount, PkScript: outputScript}},
+		witness, packets...,
+	)
+}
+
+// spendingPSBTOutputs is the general form: an explicit output list and
+// locktime, for covenants that pin several payouts or read tx.time.
+func spendingPSBTOutputs(
+	t *testing.T,
+	prevTx *wire.MsgTx,
+	group instantiatedGroup,
+	lockTime uint32,
+	outputs []*wire.TxOut,
+	witness wire.TxWitness,
+	packets ...extension.Packet,
+) *psbt.Packet {
+	t.Helper()
+
 	outpoint := wire.OutPoint{Hash: prevTx.TxHash(), Index: 0}
 	tx := wire.NewMsgTx(2)
+	tx.LockTime = lockTime
 	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
-	tx.AddTxOut(&wire.TxOut{Value: amount, PkScript: outputScript})
+	for _, output := range outputs {
+		tx.AddTxOut(output)
+	}
 
 	emulatorPacket, err := arkade.NewPacket(arkade.EmulatorEntry{
 		Vin:     0,
@@ -381,6 +445,19 @@ func spendingPSBTWithWitness(
 	ptx.Inputs[0].WitnessUtxo = prevTx.TxOut[0]
 	ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{group.tapLeafScript}
 	if err := txutils.SetArkPsbtField(ptx, 0, arkade.PrevArkTxField, *prevTx); err != nil {
+		t.Fatalf("previous Ark transaction: %v", err)
+	}
+	return ptx
+}
+
+// withExtraInput appends a second prevout so the covenant sees tx.numInputs == 2.
+func withExtraInput(t *testing.T, ptx *psbt.Packet, extra *wire.MsgTx) *psbt.Packet {
+	t.Helper()
+
+	outpoint := wire.OutPoint{Hash: extra.TxHash(), Index: 0}
+	ptx.UnsignedTx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
+	ptx.Inputs = append(ptx.Inputs, psbt.PInput{WitnessUtxo: extra.TxOut[0]})
+	if err := txutils.SetArkPsbtField(ptx, len(ptx.Inputs)-1, arkade.PrevArkTxField, *extra); err != nil {
 		t.Fatalf("previous Ark transaction: %v", err)
 	}
 	return ptx
