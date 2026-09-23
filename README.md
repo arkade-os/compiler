@@ -336,7 +336,7 @@ static function name(<params>) int { ... }     // Helper without access to const
 function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Script
 ```
 
-A covenant with no tapscript of the same name gets a synthesized `server` + `tweak(emulator, name)` leaf. A covenant and a tapscript that share a name form one spend group. A tapscript with no matching covenant is a standalone leaf, which is how unilateral exits are written.
+A covenant and its tapscripts form one spend group: a tapscript whose name matches the covenant, and a tapscript that tweaks a key to that covenant. The group keeps a synthesized `server` + `tweak(emulator, name)` leaf unless one of those tapscripts already signs with `emulator`. A constructor-pubkey tweak is an extra leaf; it does not replace that emulator leaf. A tapscript that tweaks nothing is a standalone leaf, which is how unilateral exits are written.
 
 Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Public functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
 
@@ -435,7 +435,7 @@ Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. Boole
 
 ### Built-ins
 
-**Signatures.** `checkSig(sig, key)`, `checkMultisig([keys], [sigs], threshold?)` with N-of-N when the threshold is omitted (covenants accept any threshold, via `OP_CHECKSIGADD`), `checkSigFromStack(sig, key, message)` and its `Verify` form. `tweak(emulator, fn)` is a key expression usable only inside tapscripts.
+**Signatures.** `checkSig(sig, key)`, `checkMultisig([keys], [sigs], threshold?)` with N-of-N when the threshold is omitted (covenants accept any threshold, via `OP_CHECKSIGADD`), `checkSigFromStack(sig, key, message)` and its `Verify` form. `tweak(base, fn)` is a tapscript-only key expression. `base` is `emulator` or a constructor pubkey, and the key is tweaked by `fn`'s covenant.
 
 **Hashes.** `sha256`, `hash160`, `hash256`, `ripemd160` as `require(hashFn(preimage) == hash)`. `sha256(expr)` also works as a value, including over concatenations and `substr` results. Streaming: `sha256Initialize`, `sha256Update`, `sha256Finalize`. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
@@ -465,7 +465,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a `checkMultisig` threshold, if written, must equal the key count, and each signature must be a declared `signature` input aligned 1:1 with its key.
 
-Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)`. Inputs named `server` or `emulator` are rejected.
+Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. Inputs named `server` or `emulator` are rejected.
 
 ## Artifact format
 
