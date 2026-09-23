@@ -46,6 +46,7 @@ const projects = {
 const examples = {
     single_sig: { name: 'SingleSig', code: contracts.single_sig },
     htlc: { name: 'HTLC', code: contracts.htlc },
+    escrow: { name: 'Escrow', code: contracts.escrow },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
     struct_vault: { name: 'StructVault', code: contracts.struct_vault },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
@@ -54,6 +55,7 @@ const examples = {
 const examplePaths = {
     single_sig: 'single_sig/single_sig.ark',
     htlc: 'htlc/htlc.ark',
+    escrow: 'escrow/escrow.ark',
     fuji_safe: 'fuji_safe/fuji_safe.ark',
     struct_vault: 'struct_vault/struct_vault.ark',
     swap: 'non_interactive_swap/non_interactive_swap.ark',
