@@ -20,7 +20,7 @@ use crate::models::{
     flatten_parameter, is_builtin_struct, is_builtin_type, AbiLeaf, ContractJson, Parameter,
     StructDefinition, WitnessElement,
 };
-use crate::opcodes::{self, opcode};
+use crate::opcodes;
 
 /// Program shape produced by [`program_from_artifact`].
 pub const PROGRAM_VERSION: u32 = 0;
@@ -101,7 +101,7 @@ pub enum LockValue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AsmToken {
-    Opcode(&'static str),
+    Opcode(String),
     Number(i64),
     Bytes(Vec<u8>),
     /// Flattened placeholder name, including a `<VTXO:...>` parameter.
@@ -377,8 +377,8 @@ impl Instantiations {
 }
 
 fn asm_token(token: &str, instantiations: &mut Instantiations) -> Result<AsmToken, String> {
-    if let Some(op) = opcode(token) {
-        return Ok(AsmToken::Opcode(op));
+    if token.starts_with("OP_") {
+        return Ok(AsmToken::Opcode(token.to_string()));
     }
     if let Some(inner) = placeholder(token) {
         if inner.is_empty() {
@@ -649,9 +649,9 @@ mod tests {
         assert_eq!(
             claim.tapscript.condition,
             vec![
-                AsmToken::Opcode(OP_HASH160),
+                AsmToken::Opcode(OP_HASH160.to_string()),
                 AsmToken::Param("preimageHash".into()),
-                AsmToken::Opcode(OP_EQUAL),
+                AsmToken::Opcode(OP_EQUAL.to_string()),
             ]
         );
         assert_eq!(
@@ -865,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_malformed_tweak_duplicate_server_and_unknown_opcode() {
+    fn rejects_a_malformed_tweak_and_duplicate_server() {
         let tweak = program_from_json(&leaf(&["<TWEAK:insurer:late:extra>", "OP_CHECKSIG"]));
         assert_eq!(
             tweak.unwrap_err(),
@@ -887,24 +887,6 @@ mod tests {
         assert_eq!(
             program_from_json(server).unwrap_err(),
             "program_from_artifact: duplicate program parameter 'server'"
-        );
-
-        let opcode = r#"{
-            "contractName": "Demo",
-            "constructorInputs": [],
-            "functions": [{
-                "name": "spend",
-                "arkade": {"inputs": [], "asm": ["OP_NOT_REAL"]},
-                "leaves": [{
-                    "name": "spend",
-                    "witness": [],
-                    "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:spend>", "OP_CHECKSIG"]
-                }]
-            }]
-        }"#;
-        assert_eq!(
-            program_from_json(opcode).unwrap_err(),
-            "program_from_artifact: unrecognized assembly token 'OP_NOT_REAL'"
         );
 
         let shadow = r#"{
@@ -987,7 +969,7 @@ mod tests {
             .tapscript
             .condition
             .iter()
-            .all(|token| !matches!(token, AsmToken::Opcode(op) if *op == "OP_VERIFY")));
+            .all(|token| !matches!(token, AsmToken::Opcode(op) if op == "OP_VERIFY")));
         assert_eq!(
             program
                 .params
