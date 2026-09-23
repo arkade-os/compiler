@@ -53,14 +53,12 @@ Use `>=` for minimum funding assertions unless exact value is a genuine invarian
 
 Keep function parameters in the order the spender must provide them.
 
-Reconstruct oracle messages with the exact field order and encoding used by the signer. Follow an existing oracle contract such as `examples/stability/stability_vault.ark` or `examples/threshold_oracle/threshold_oracle.ark`.
+Reconstruct oracle messages with the exact field order and encoding used by the signer. Follow `examples/escrow/escrow.ark` or `examples/threshold_oracle/threshold_oracle.ark`.
 
 Do not mix time domains:
 
-- Use `tx.time` for Bitcoin nLockTime/CLTV values used by the contract.
-- Use `checkTime(timestamp)` for the introspector's wall clock. It returns whether that Unix timestamp has been reached, so it bounds a value from below rather than yielding a readable clock.
-
-`tx.offchainTime` no longer exists; the commented-out bodies in `examples/stability/` still reference it and do not compile. Reject a post-dated stamp with the clock check, and take an elapsed-time bound from a value the spender must also justify:
+- Use `tx.time` for Bitcoin nLockTime/CLTV.
+- Use `checkTime(timestamp)` for the introspector wall clock. `tx.offchainTime` is gone.
 
 ```ark
 require(checkTime(oracleTime), "future-dated oracle");
