@@ -540,6 +540,7 @@ fn final_use_after_a_private_call_consumes_the_caller_binding() {
         r#"
 contract Framed() {
     public function spend(int x, int y) {
+        require(double(x) > 0);
         require(double(x) == y);
         require(x >= 1);
     }
@@ -551,11 +552,20 @@ contract Framed() {
         "spend",
     );
 
-    assert!(
-        contains_tokens(&covenant.asm, &["OP_2", OP_PICK, "2", OP_MUL]),
-        "argument reads stay pinned inside a call frame: {:?}",
-        covenant.asm
+    assert_eq!(
+        covenant
+            .asm
+            .windows(4)
+            .filter(|tokens| *tokens == ["OP_0", OP_ROLL, "2", OP_MUL])
+            .count(),
+        2,
+        "each helper invocation should consume its parameter slot: {:?}",
+        covenant.asm,
     );
+    assert!(covenant
+        .asm
+        .iter()
+        .all(|token| token != OP_PUT && token != "OP_NIP"));
     assert!(
         contains_tokens(
             &covenant.asm,

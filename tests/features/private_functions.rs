@@ -118,6 +118,32 @@ contract Composite(Pair initial) {
 }
 
 #[test]
+fn branched_composite_return_moves_result_slots() {
+    let output = compile(
+        r#"
+struct Pair { int left; int right; }
+contract C() {
+    function spend(bool choose, Pair a, Pair b) {
+        Pair result = select(choose, a, b);
+        require(result.left >= 0);
+    }
+    private function select(bool choose, Pair a, Pair b) Pair {
+        if (choose) { return a; }
+        return b;
+    }
+}
+"#,
+    )
+    .expect("branched composite return");
+    let asm = arkade_asm_tokens(&output, "spend");
+    let end = asm.iter().rposition(|token| token == "OP_ENDIF").unwrap();
+    assert_eq!(
+        &asm[end + 1..end + 5],
+        ["OP_1", "OP_ROLL", "OP_1", "OP_ROLL"]
+    );
+}
+
+#[test]
 fn helper_requirements_count_on_all_paths_including_expression_calls() {
     for body in [
         "checked();",
