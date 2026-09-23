@@ -122,14 +122,14 @@ contract Mutate() {
         ["value", "choose"]
     );
 
-    assert!(
+    assert_eq!(
         covenant
             .asm
             .iter()
             .filter(|token| token.as_str() == OP_PUT)
-            .count()
-            >= 3,
-        "each scalar reassignment must replace its existing slot with {OP_PUT}: {:?}",
+            .count(),
+        2,
+        "deep branch assignments still need {OP_PUT}: {:?}",
         covenant.asm
     );
     let if_index = covenant
@@ -474,16 +474,64 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
         ),
         (
             "require(x == y); x = 7; require(true);",
-            "OP_0 OP_PICK OP_2 OP_ROLL OP_EQUAL OP_VERIFY 7 OP_0 OP_PUT OP_1 OP_VERIFY OP_1 OP_NIP",
+            "OP_0 OP_PICK OP_2 OP_ROLL OP_EQUAL OP_VERIFY 7 OP_NIP OP_1 OP_VERIFY OP_1 OP_NIP",
         ),
         (
             "x = x + 1; require(x == y);",
-            "OP_0 OP_PICK 1 OP_ADD OP_0 OP_PUT OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
+            "OP_0 OP_ROLL 1 OP_ADD OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
         ),
     ] {
         let source = format!("contract FinalUse() {{ function spend(int x, int y) {{ {body} }} }}");
         assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
     }
+}
+
+#[test]
+fn top_binding_reassignment_keeps_branch_layouts() {
+    let covenant = covenant(
+        r#"
+contract BranchReplace() {
+    function spend(int x, bool choose) {
+        if (choose) {
+            x = x + 1;
+        } else {
+            x = 7;
+        }
+        require(x > 0);
+    }
+}
+"#,
+        "spend",
+    );
+
+    let if_index = covenant
+        .asm
+        .iter()
+        .position(|token| token == OP_IF)
+        .unwrap();
+    let else_index = covenant
+        .asm
+        .iter()
+        .position(|token| token == OP_ELSE)
+        .unwrap();
+    let end_index = covenant
+        .asm
+        .iter()
+        .position(|token| token == OP_ENDIF)
+        .unwrap();
+    assert!(contains_tokens(
+        &covenant.asm[if_index..else_index],
+        &["OP_0", OP_ROLL, "1", OP_ADD]
+    ));
+    assert!(contains_tokens(
+        &covenant.asm[else_index..end_index],
+        &["7", "OP_NIP"]
+    ));
+    assert!(!covenant.asm.iter().any(|token| token == OP_PUT));
+    assert!(contains_tokens(
+        &covenant.asm[end_index..],
+        &["OP_0", OP_ROLL, "0", OP_GREATERTHAN]
+    ));
 }
 
 #[test]
