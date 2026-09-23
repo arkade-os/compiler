@@ -53,19 +53,15 @@ Use `>=` for minimum funding assertions unless exact value is a genuine invarian
 
 Keep function parameters in the order the spender must provide them.
 
-Reconstruct oracle messages with the exact field order and encoding used by the signer. Follow an existing oracle contract such as `examples/stability/stability_vault.ark` or `examples/threshold_oracle/threshold_oracle.ark`.
+Reconstruct oracle messages with the exact field order and encoding used by the signer. Follow `examples/escrow/escrow.ark` or `examples/threshold_oracle/threshold_oracle.ark`.
 
 Do not mix time domains:
 
-- Use `tx.time` for Bitcoin nLockTime/CLTV values used by the contract.
-- Use `tx.offchainTime` for introspector wall-clock seconds.
-
-Guard subtraction before applying a freshness or elapsed-time upper bound:
+- Use `tx.time` for Bitcoin nLockTime/CLTV.
+- Use `checkTime(timestamp)` for the introspector wall clock. `tx.offchainTime` is gone.
 
 ```ark
-int age = tx.offchainTime - oracleTime;
-require(age >= 0, "future-dated oracle");
-require(age <= maxAge, "stale oracle");
+require(checkTime(oracleTime), "future-dated oracle");
 ```
 
 For multi-input covenant checks, compare `this.activeInputIndex` with the witness-selected sibling index and verify the sibling input script before using its values.
@@ -81,7 +77,7 @@ Assume signed 64-bit intermediates and truncating integer division.
 
 ## Respect grammar limits
 
-- Use nested `if` statements or separate requirements instead of `&&`, `||`, or ternary expressions.
+- `&&` and `||` are available in covenant bodies and short-circuit; ternary expressions are not.
 - Bind a computed array index to an identifier before indexing; array indices accept identifiers or number literals.
 - Use assignments as statements, not expressions.
 - Keep `require` messages short and descriptive.
@@ -93,10 +89,13 @@ Check the current grammar rather than preserving workarounds from old examples.
 | Need | Start with |
 |---|---|
 | Basic covenant plus unilateral exit | `examples/htlc/htlc.ark` |
-| Recursive state, oracle checks, and cross-input validation | `examples/stability/stability_vault.ark` |
+| Oracle attestation, introspection-pinned payouts, branching output layouts | `examples/escrow/escrow.ark` |
+| Recursive state and cross-input validation | `examples/stability/stability_vault.ark` |
 | Conditional output and dust routing | `examples/stability/stability_offer.ark` |
 | Asset introspection | `examples/token_vault/token_vault.ark` |
 | Threshold signatures | `examples/threshold_oracle/threshold_oracle.ark` |
+
+Most of `examples/stability/` is commented out and predates the current grammar. Read it for shape, not syntax.
 
 ## Validate the contract
 
