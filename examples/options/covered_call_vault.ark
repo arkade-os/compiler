@@ -1,0 +1,310 @@
+// CoveredCallVault Contract
+//
+// A pooled, fully-collateralized BTC covered call — the two-token design.
+// One vault per (oracle/underlying, strike, maturity, option type); change any
+// one parameter and it is a different vault. This is the canonical form of a
+// covered-call vault and is strictly cleaner than the single-token
+// `options_vault.ark`: it removes that contract's NAV/price-per-share
+// mispricing and its one-option-per-epoch state, because the long and short
+// legs are separate, tradeable Arkade Assets whose market price IS the premium.
+//
+// ── Two tokens, always fully collateralized ─────────────────────────────────
+//   Issuance (before maturity): deposit `amount` sats → mint `amount` LONG
+//     shares AND `amount` SHORT shares to the depositor (1 : 1 : 1). The pool
+//     holds exactly `amount` sats of backing per pair, so long supply == short
+//     supply == pooled sats at all times pre-settlement.
+//   Burn (before maturity): return `amount` LONG + `amount` SHORT (a matched
+//     pair) → get `amount` sats back. A single-sided holder cannot burn; their
+//     only pre-maturity exit is selling shares on the order book (plain asset
+//     transfers, no vault interaction).
+//   The "premium" is never paid in-contract: a writer keeps SHORT and sells
+//   LONG (or vice-versa) on the secondary market; the price spread is the
+//   premium. So deposit/burn are pure 1:1 collateral and can't be mispriced.
+//
+// ── Settlement (once, at maturity) ──────────────────────────────────────────
+//   Any user settles by submitting an oracle price attestation whose timestamp
+//   is within ±60s of `maturity`. The pot splits, BTC-margined:
+//     ITM (spot > strike): longPot = totalBTC × (spot − strike) / spot
+//                          shortPot = totalBTC − longPot
+//     OTM (spot ≤ strike): longPot = 0 ; shortPot = totalBTC
+//   Per pair this pays LONG the call's intrinsic value ((spot−strike) in BTC)
+//   and SHORT the strike value — a covered call. `shortPot = totalBTC − longPot`
+//   guarantees exact on-chain conservation (no second division).
+//
+//   PRICE SCALE — deliberate: `strikePrice`/`oraclePrice` are WHOLE USD, not
+//   8-decimal. `totalBTC × (spot − strike)` is emitted as OP_MUL64 (int64); an
+//   8-decimal price overflows int64 at ~1 BTC (see the bug on options_vault),
+//   so keeping price in whole USD holds the product inside int64 for any
+//   realistic pool. When arbitrary-precision opcodes land (emulator BigNum) the
+//   scale can be tightened.
+//
+// ── Redemption (after settlement) ───────────────────────────────────────────
+//   Burn `amount` LONG → receive `amount × longPot / longShares` sats, then
+//   both `longPot` and `longShares` drain by the redeemed amounts (SHORT side
+//   symmetric). Because numerator and denominator drain together, the per-share
+//   rate is invariant under redemption — every holder gets the same fair
+//   pro-rata regardless of order (the `bonds/repayment_pool.ark` redeem shape).
+//   This resolves the "denominator changes after each redemption" question
+//   without a settlement snapshot or a burn-to-unspendable trick.
+//
+// ── Mint control ────────────────────────────────────────────────────────────
+//   Both share assets are controlled by the vault's contract-identity singleton
+//   (`contractId`, genesis-issued, non-reissuable, retained on output[0] every
+//   function). Minting is `controlIs(contractId)`, so long/short supply can only
+//   rise inside a genuine `issue` spend, and only ever in equal amounts.
+//
+// ── EXIT MODEL — short-side recurrent exit (PULSE), not a single leaf ────────
+//   Unilateral exit covers emulator/operator non-liveness and belongs to the
+//   SHORT side only: absent settlement the call cannot be exercised, so the
+//   collateral defaults back to the writers (short), and long/call-buyers bear
+//   the liveness risk (make this explicit to users — a deep-ITM long loses its
+//   claim if the operator vanishes at maturity).
+//
+//   That exit is NOT a single tapscript leaf: it is one pre-signed splitting
+//   tree (one slot per short holder, summing to the pooled BTC) refreshed on
+//   every issuance/burn — i.e. the PULSE lattice (`docs/recurrent-exit-pulse.md`).
+//   A plain transfer of SHORT shares (no vault interaction) cannot update a
+//   holder's slot; a buyer re-anchors via a cooperative `updateExit`-style pulse
+//   (operator co-signed), leaving a trust window between buy and re-anchor.
+//   PULSE is SDK/ceremony surface, so this reference contract carries the
+//   on-chain settlement logic and no compiler exit leaf (like the bonds pool).
+
+contract CoveredCallVault(
+  pubkey  oraclePk,          // oracle-signed BTC/USD price feed
+  bytes32 ticker,            // feed id, e.g. sha256("BTC/USD")
+  int     strikePrice,       // strike, WHOLE USD (see PRICE SCALE note)
+  int     maturity,          // maturity, unix seconds (oracle-timestamp domain)
+  bytes32 longIdTxid,        // LONG share asset id — issuance txid
+  int     longIdGidx,        // LONG share asset id — issuance group index
+  bytes32 shortIdTxid,       // SHORT share asset id — issuance txid
+  int     shortIdGidx,       // SHORT share asset id — issuance group index
+  bytes32 contractIdTxid,    // vault identity singleton — genesis txid (mint control)
+  int     contractIdGidx,    // vault identity singleton — genesis group index
+  int     settled,           // 0 = open (pre-maturity), 1 = settled
+  int     longShares,        // pre: long supply (== shortShares == pooled sats). post: remaining long supply
+  int     shortShares,       // pre: short supply (== longShares). post: remaining short supply
+  int     longPot,           // pre: 0. post: BTC remaining for the long side
+  int     shortPot,          // pre: 0. post: BTC remaining for the short side
+  int     exit               // exit timelock in blocks (short-side PULSE lattice)
+) {
+
+  // -------------------------------------------------------------------------
+  // ISSUE — permissionless, before maturity. Deposit `amount` sats; mint
+  // `amount` LONG + `amount` SHORT to the depositor. Long/short supply rise
+  // together, so the pool stays exactly collateralized.
+  //   input[0]:  this vault's Bitcoin output (holds the identity singleton)
+  //   input[1+]: depositor's sats (>= amount + fee)
+  //   output[0]: vault re-created (longShares+amount, shortShares+amount)
+  //   output[1]: amount LONG + amount SHORT → depositor
+  // -------------------------------------------------------------------------
+  function issue(int amount) {
+    require(settled == 0, "already settled");
+    require(amount > 0, "zero amount");
+    int untilMaturity = maturity - tx.offchainTime;
+    require(untilMaturity > 0, "matured");
+
+    int newLong  = longShares + amount;
+    int newShort = shortShares + amount;
+
+    // Identity-gated paired mint: long and short supply each rise by exactly
+    // `amount`, both controlled by the vault identity; identity unchanged.
+    let longGroup = tx.assetGroups.find(longIdTxid, longIdGidx);
+    require(longGroup.delta == amount, "long supply != amount");
+    require(longGroup.controlIs(contractIdTxid, contractIdGidx), "wrong long control");
+    let shortGroup = tx.assetGroups.find(shortIdTxid, shortIdGidx);
+    require(shortGroup.delta == amount, "short supply != amount");
+    require(shortGroup.controlIs(contractIdTxid, contractIdGidx), "wrong short control");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    // Both freshly minted legs go to the depositor.
+    require(tx.outputs[1].assets.lookup(longIdTxid, longIdGidx) == amount, "long not delivered");
+    require(tx.outputs[1].assets.lookup(shortIdTxid, shortIdGidx) == amount, "short not delivered");
+
+    require(
+      tx.outputs[0].scriptPubKey == new CoveredCallVault(
+        oraclePk, ticker, strikePrice, maturity,
+        longIdTxid, longIdGidx, shortIdTxid, shortIdGidx, contractIdTxid, contractIdGidx,
+        settled, newLong, newShort, longPot, shortPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= newLong, "collateral not deposited");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+  }
+
+  // -------------------------------------------------------------------------
+  // BURN PAIR — permissionless, before maturity. Return `amount` LONG + SHORT
+  // (a matched pair) and take `amount` sats back. The share burn authenticates
+  // (the holder must spend both legs as inputs).
+  //   output[0]: vault re-created (longShares-amount, shortShares-amount)
+  //   output[1]: amount sats → burner
+  // -------------------------------------------------------------------------
+  function burnPair(int amount) {
+    require(settled == 0, "already settled");
+    require(amount > 0, "zero amount");
+    int untilMaturity = maturity - tx.offchainTime;
+    require(untilMaturity > 0, "matured");
+
+    int newLong  = longShares - amount;
+    int newShort = shortShares - amount;
+
+    // Burn exactly `amount` of BOTH legs; identity unchanged.
+    let longGroup = tx.assetGroups.find(longIdTxid, longIdGidx);
+    require(longGroup.sumInputs == longGroup.sumOutputs + amount, "long not burned exactly");
+    let shortGroup = tx.assetGroups.find(shortIdTxid, shortIdGidx);
+    require(shortGroup.sumInputs == shortGroup.sumOutputs + amount, "short not burned exactly");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    require(
+      tx.outputs[0].scriptPubKey == new CoveredCallVault(
+        oraclePk, ticker, strikePrice, maturity,
+        longIdTxid, longIdGidx, shortIdTxid, shortIdGidx, contractIdTxid, contractIdGidx,
+        settled, newLong, newShort, longPot, shortPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= newLong, "collateral not preserved");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+
+    require(tx.outputs[1].value >= amount, "burner underpaid");
+  }
+
+  // -------------------------------------------------------------------------
+  // SETTLE — permissionless, once, at maturity. Split the pot between the two
+  // sides using an oracle price attested within ±60s of maturity. No BTC leaves
+  // the vault; this only records the split and flips `settled`.
+  //   output[0]: vault re-created (settled=1, longPot/shortPot set)
+  // -------------------------------------------------------------------------
+  function settle(int oraclePrice, int oracleTime, signature oracleSig) {
+    require(settled == 0, "already settled");
+    require(longShares == shortShares, "supply invariant broken");
+    require(oraclePrice > 0, "invalid oracle price");
+
+    // Price must be attested within one minute of maturity (binds the fixing to
+    // the maturity moment, not just "any fresh price after expiry").
+    int windowStart = maturity - 60;
+    int windowEnd   = maturity + 60;
+    require(oracleTime >= windowStart, "before settlement window");
+    require(oracleTime <= windowEnd, "after settlement window");
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    // totalBTC == longShares == shortShares pre-settlement.
+    int totalBTC = longShares;
+
+    if (oraclePrice > strikePrice) {
+      // ITM: long gets the intrinsic value, short gets the rest.
+      // FOLLOW-UP: totalBTC × (oraclePrice − strikePrice) is OP_MUL64; whole-USD
+      // price keeps it inside int64 for realistic pools (see PRICE SCALE note).
+      int longSide  = totalBTC * (oraclePrice - strikePrice) / oraclePrice;
+      int shortSide = totalBTC - longSide;
+      require(
+        tx.outputs[0].scriptPubKey == new CoveredCallVault(
+          oraclePk, ticker, strikePrice, maturity,
+          longIdTxid, longIdGidx, shortIdTxid, shortIdGidx, contractIdTxid, contractIdGidx,
+          1, longShares, shortShares, longSide, shortSide, exit
+        ),
+        "invalid settle output"
+      );
+      require(tx.outputs[0].value >= totalBTC, "collateral not preserved");
+      require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+    } else {
+      // OTM: call expires worthless; short takes the whole pot.
+      require(
+        tx.outputs[0].scriptPubKey == new CoveredCallVault(
+          oraclePk, ticker, strikePrice, maturity,
+          longIdTxid, longIdGidx, shortIdTxid, shortIdGidx, contractIdTxid, contractIdGidx,
+          1, longShares, shortShares, 0, totalBTC, exit
+        ),
+        "invalid settle output"
+      );
+      require(tx.outputs[0].value >= totalBTC, "collateral not preserved");
+      require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // REDEEM LONG — after settlement. Burn `amount` LONG for a pro-rata slice of
+  // the long pot; numerator and denominator drain together so the rate is
+  // order-invariant. SHORT supply must not move.
+  //   output[0]: vault re-created (longShares-amount, longPot-payout)
+  //   output[1]: payout sats → redeemer (when above dust)
+  // -------------------------------------------------------------------------
+  function redeemLong(int amount) {
+    require(settled == 1, "not settled");
+    require(amount > 0, "zero amount");
+    require(amount <= longShares, "exceeds long supply");
+    require(longShares > 0, "no long supply");
+
+    // FOLLOW-UP: amount × longPot is OP_MUL64; same overflow envelope as the
+    // bonds redeem — chunk redemptions for very large pools.
+    int payout       = amount * longPot / longShares;
+    int newLongPot   = longPot - payout;
+    int newLong      = longShares - amount;
+    int remaining    = newLongPot + shortPot;
+
+    let longGroup = tx.assetGroups.find(longIdTxid, longIdGidx);
+    require(longGroup.sumInputs == longGroup.sumOutputs + amount, "long not burned exactly");
+    let shortGroup = tx.assetGroups.find(shortIdTxid, shortIdGidx);
+    require(shortGroup.delta == 0, "short must not move");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    require(
+      tx.outputs[0].scriptPubKey == new CoveredCallVault(
+        oraclePk, ticker, strikePrice, maturity,
+        longIdTxid, longIdGidx, shortIdTxid, shortIdGidx, contractIdTxid, contractIdGidx,
+        1, newLong, shortShares, newLongPot, shortPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= remaining, "pot not preserved");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+
+    if (payout > 330) {
+      require(tx.outputs[1].value >= payout, "redeemer underpaid");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // REDEEM SHORT — after settlement. Mirror of redeemLong on the short pot.
+  //   output[0]: vault re-created (shortShares-amount, shortPot-payout)
+  //   output[1]: payout sats → redeemer (when above dust)
+  // -------------------------------------------------------------------------
+  function redeemShort(int amount) {
+    require(settled == 1, "not settled");
+    require(amount > 0, "zero amount");
+    require(amount <= shortShares, "exceeds short supply");
+    require(shortShares > 0, "no short supply");
+
+    // FOLLOW-UP: amount × shortPot is OP_MUL64; same overflow envelope as above.
+    int payout       = amount * shortPot / shortShares;
+    int newShortPot  = shortPot - payout;
+    int newShort     = shortShares - amount;
+    int remaining    = longPot + newShortPot;
+
+    let shortGroup = tx.assetGroups.find(shortIdTxid, shortIdGidx);
+    require(shortGroup.sumInputs == shortGroup.sumOutputs + amount, "short not burned exactly");
+    let longGroup = tx.assetGroups.find(longIdTxid, longIdGidx);
+    require(longGroup.delta == 0, "long must not move");
+    let idGroup = tx.assetGroups.find(contractIdTxid, contractIdGidx);
+    require(idGroup.delta == 0, "identity supply changed");
+
+    require(
+      tx.outputs[0].scriptPubKey == new CoveredCallVault(
+        oraclePk, ticker, strikePrice, maturity,
+        longIdTxid, longIdGidx, shortIdTxid, shortIdGidx, contractIdTxid, contractIdGidx,
+        1, longShares, newShort, longPot, newShortPot, exit
+      ),
+      "invalid vault recreation"
+    );
+    require(tx.outputs[0].value >= remaining, "pot not preserved");
+    require(tx.outputs[0].assets.lookup(contractIdTxid, contractIdGidx) >= 1, "identity not retained");
+
+    if (payout > 330) {
+      require(tx.outputs[1].value >= payout, "redeemer underpaid");
+    }
+  }
+}
