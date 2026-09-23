@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
-    OP_MUL, OP_PICK, OP_PUT, OP_ROLL,
+    OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
 };
 
 fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
@@ -621,4 +621,38 @@ contract C(int base) {
         &covenant.asm[..6],
         ["<base>", "OP_0", OP_PICK, "OP_1", OP_PICK, OP_ADD]
     );
+}
+
+#[test]
+fn caller_top_slot_rebinding_ignores_same_named_helper_locals() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(int y, bool c) {
+        let x = y;
+        x = helper(y, c);
+        require(x > 0);
+    }
+    private function helper(int y, bool c) int {
+        let x = y + 1;
+        if (c) { require(x > 0); }
+        return 5;
+    }
+}
+"#,
+        "spend",
+    );
+
+    assert!(contains_tokens(
+        &covenant.asm,
+        &[
+            OP_IF,
+            "OP_0",
+            OP_PICK,
+            "0",
+            OP_GREATERTHAN,
+            OP_VERIFY,
+            OP_ENDIF
+        ]
+    ));
 }

@@ -167,6 +167,8 @@ impl Generator {
         let caller_scope = self.scope.clone();
         let baseline = caller.len();
         let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        // A caller's top-slot rebinding must not match helper bindings with the same name.
+        let replacement = self.replacement.take();
         let mut arguments = Vec::new();
         let mut aliases = std::collections::HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
@@ -263,6 +265,7 @@ impl Generator {
         self.return_type = previous_return;
         self.direct_return = previous_direct_return;
         self.pinned_stack_len = pinned;
+        self.replacement = replacement;
         Ok(())
     }
 
