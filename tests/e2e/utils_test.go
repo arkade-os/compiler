@@ -174,8 +174,10 @@ func instantiateLeaf(
 		for j := range contract.Functions[i].Leaves {
 			if contract.Functions[i].Leaves[j].Name == name {
 				leaf = &contract.Functions[i].Leaves[j]
+				break
 			}
 		}
+		break
 	}
 	if leaf == nil {
 		t.Fatalf("%s.%s standalone leaf not found", contract.Name, name)
@@ -443,6 +445,19 @@ func spendingPSBTOutputs(
 	ptx.Inputs[0].WitnessUtxo = prevTx.TxOut[0]
 	ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{group.tapLeafScript}
 	if err := txutils.SetArkPsbtField(ptx, 0, arkade.PrevArkTxField, *prevTx); err != nil {
+		t.Fatalf("previous Ark transaction: %v", err)
+	}
+	return ptx
+}
+
+// withExtraInput appends a second prevout so the covenant sees tx.numInputs == 2.
+func withExtraInput(t *testing.T, ptx *psbt.Packet, extra *wire.MsgTx) *psbt.Packet {
+	t.Helper()
+
+	outpoint := wire.OutPoint{Hash: extra.TxHash(), Index: 0}
+	ptx.UnsignedTx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
+	ptx.Inputs = append(ptx.Inputs, psbt.PInput{WitnessUtxo: extra.TxOut[0]})
+	if err := txutils.SetArkPsbtField(ptx, len(ptx.Inputs)-1, arkade.PrevArkTxField, *extra); err != nil {
 		t.Fatalf("previous Ark transaction: %v", err)
 	}
 	return ptx

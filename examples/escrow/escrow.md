@@ -5,7 +5,7 @@ Party A locks coins. An oracle releases `amount` to party B, or the timeout retu
 ```mermaid
 flowchart TD
   complete["complete<br/>server + emulator<br/>oracle attestation"]
-  cancel["cancel<br/>server + emulator<br/>tx.time ≥ timeoutHeight"]
+  cancel["cancel<br/>server + emulator<br/>checkTime(timeoutAt)"]
   unilateral["unilateral<br/>party A and party B<br/>older(exit)"]
 
   complete --> b0["0 · partyBScript · raw script parameter · ≥ amount"]
@@ -16,4 +16,6 @@ flowchart TD
 
 `partyAScript` and `partyBScript` are the 32-byte witness program an output reports.
 
-The contract commits `sha256` of the one message the oracle signs. A surplus of 330 sats or less fails `complete`. `complete` and `cancel` require a single input so two escrow coins cannot share one payout.
+The contract commits `sha256` of the one message the oracle signs. A surplus of 330 sats or less is unconstrained, so a slight overfund cannot block the release. Outputs take the whole VTXO; miner fees come from a server input. `complete` and `cancel` require a single input so two escrow coins cannot share one payout.
+
+`cancel` reads the emulator clock in Unix seconds through `checkTime`. arkd rebuilds an offchain spend of this leaf with nLockTime 0, so the check is the emulator's clock. The ASP runs that clock and can accept a cancel before `timeoutAt`.

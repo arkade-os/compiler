@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"crypto/sha256"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -12,10 +13,13 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
+// The emulator compares checkTime against its wall clock, so the timeouts
+// are fixed Unix times safely in the past (2023) and future (2100).
 const (
-	amount    = int64(500_000)
-	exitDelay = int64(144)
-	timeout   = uint32(900_000)
+	amount        = int64(500_000)
+	exitDelay     = int64(144)
+	pastTimeout   = int64(1_700_000_000)
+	futureTimeout = int64(4_102_444_800)
 )
 
 // p2trTo builds the scriptPubKey paying a 32-byte Taproot witness program —
@@ -51,15 +55,23 @@ func TestCompiledEscrow(t *testing.T) {
 		"partyAScript":      partyAProgram,
 		"partyBScript":      partyBProgram,
 		"amount":            scriptInt(t, amount),
-		"timeoutHeight":     scriptInt(t, int64(timeout)),
+		"timeoutAt":         scriptInt(t, pastTimeout),
 		"exit":              scriptInt(t, exitDelay),
 	}
+	pendingValues := make(map[string][]byte, len(values))
+	for key, value := range values {
+		pendingValues[key] = value
+	}
+	pendingValues["timeoutAt"] = scriptInt(t, futureTimeout)
 
 	complete := instantiateGroup(
 		t, contract, "complete", values, serverKey.PubKey(), emulatorKey.PubKey(),
 	)
 	cancel := instantiateGroup(
 		t, contract, "cancel", values, serverKey.PubKey(), emulatorKey.PubKey(),
+	)
+	pending := instantiateGroup(
+		t, contract, "cancel", pendingValues, serverKey.PubKey(), emulatorKey.PubKey(),
 	)
 
 	t.Run("complete", func(t *testing.T) {
@@ -108,13 +120,10 @@ func TestCompiledEscrow(t *testing.T) {
 			)
 		})
 
-		t.Run("a sub-dust surplus is refused rather than absorbed", func(t *testing.T) {
+		t.Run("a sub-dust surplus does not block the release", func(t *testing.T) {
 			requireVMResult(
-				t, attested(amount+100, oracleMsg[:], oracleKey, []*wire.TxOut{
-					{Value: amount, PkScript: p2trTo(partyBProgram)},
-					{Value: 100, PkScript: p2trTo(partyAProgram)},
-				}),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, attested(amount+100, oracleMsg[:], oracleKey, toPartyB),
+				emulatorKey.PubKey(), "",
 			)
 		})
 
@@ -151,25 +160,43 @@ func TestCompiledEscrow(t *testing.T) {
 				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
+
+		t.Run("a second input cannot share the payout", func(t *testing.T) {
+			extra := fundingTx(complete.pkScript, amount)
+			requireVMResult(
+				t, withExtraInput(t, attested(amount, oracleMsg[:], oracleKey, toPartyB), extra),
+				emulatorKey.PubKey(), "OP_VERIFY failed",
+			)
+		})
 	})
 
 	t.Run("cancel", func(t *testing.T) {
-		deployment := fundingTx(cancel.pkScript, amount)
 		// No witness: the timeout refund carries no signature at all.
-		refund := func(lockTime uint32, outputs []*wire.TxOut) *psbt.Packet {
-			return spendingPSBTOutputs(t, deployment, cancel, lockTime, outputs, nil)
+		refund := func(
+			group instantiatedGroup, lockTime uint32, outputs []*wire.TxOut,
+		) *psbt.Packet {
+			deployment := fundingTx(group.pkScript, amount)
+			return spendingPSBTOutputs(t, deployment, group, lockTime, outputs, nil)
 		}
 		toPartyA := []*wire.TxOut{
 			{Value: amount, PkScript: p2trTo(partyAProgram)},
 		}
 
 		t.Run("anyone may refund party A after the timeout", func(t *testing.T) {
-			requireVMResult(t, refund(timeout, toPartyA), emulatorKey.PubKey(), "")
+			// arkd rebuilds this spend with nLockTime 0.
+			requireVMResult(t, refund(cancel, 0, toPartyA), emulatorKey.PubKey(), "")
 		})
 
 		t.Run("before the timeout", func(t *testing.T) {
 			requireVMResult(
-				t, refund(timeout-1, toPartyA), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(pending, 0, toPartyA), emulatorKey.PubKey(), "OP_VERIFY failed",
+			)
+		})
+
+		t.Run("a forged locktime does not open the refund early", func(t *testing.T) {
+			requireVMResult(
+				t, refund(pending, math.MaxUint32, toPartyA),
+				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 
@@ -178,7 +205,7 @@ func TestCompiledEscrow(t *testing.T) {
 				{Value: amount, PkScript: p2trTo(partyBProgram)},
 			}
 			requireVMResult(
-				t, refund(timeout, toPartyB), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(cancel, 0, toPartyB), emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 
@@ -188,7 +215,15 @@ func TestCompiledEscrow(t *testing.T) {
 				{Value: 50_000, PkScript: p2trTo(bytes.Repeat([]byte{0xcc}, 32))},
 			}
 			requireVMResult(
-				t, refund(timeout, skimmed), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(cancel, 0, skimmed), emulatorKey.PubKey(), "OP_VERIFY failed",
+			)
+		})
+
+		t.Run("a second input cannot share the refund", func(t *testing.T) {
+			extra := fundingTx(cancel.pkScript, amount)
+			requireVMResult(
+				t, withExtraInput(t, refund(cancel, 0, toPartyA), extra),
+				emulatorKey.PubKey(), "OP_VERIFY failed",
 			)
 		})
 	})

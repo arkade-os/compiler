@@ -17,8 +17,9 @@ contract Escrow(
   bytes32 partyBScript,
   // Sats. `complete` pays at least this to party B on output 0.
   int     amount,
-  // Block height. `cancel` requires tx.time >= this absolute locktime.
-  int     timeoutHeight,
+  // Unix seconds. `cancel` requires the emulator clock to reach this. tx.time cannot
+  // gate it: arkd rebuilds offchain spends of this leaf with nLockTime 0.
+  int     timeoutAt,
   // Blocks. `unilateral` requires older(exit), a relative locktime.
   int     exit
 ) {
@@ -36,8 +37,8 @@ contract Escrow(
     require(tx.outputs[0].value >= amount, "party B underpaid");
     require(tx.outputs[0].scriptPubKey == partyBScript, "output 0 not party B");
 
-    if (surplus > 0) {
-      require(surplus > DUST, "surplus below dust");
+    // A surplus at or below dust is left unconstrained so it cannot block the release.
+    if (surplus > DUST) {
       require(tx.outputs[1].value >= surplus, "party A surplus underpaid");
       require(tx.outputs[1].scriptPubKey == partyAScript, "output 1 not party A");
     }
@@ -45,7 +46,7 @@ contract Escrow(
 
   function cancel() {
     require(tx.numInputs == 1, "single-input spend required");
-    require(tx.time >= timeoutHeight, "timeout not reached");
+    require(checkTime(timeoutAt), "timeout not reached");
     require(tx.outputs[0].value >= tx.input.current.value, "party A underpaid");
     require(tx.outputs[0].scriptPubKey == partyAScript, "output 0 not party A");
   }
