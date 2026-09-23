@@ -556,10 +556,10 @@ contract Framed() {
         covenant
             .asm
             .windows(4)
-            .filter(|tokens| *tokens == ["OP_0", OP_ROLL, "2", OP_MUL])
+            .filter(|tokens| *tokens == ["OP_0", OP_PICK, "2", OP_MUL])
             .count(),
         2,
-        "each helper invocation should consume its parameter slot: {:?}",
+        "each helper invocation should read the caller slot directly: {:?}",
         covenant.asm,
     );
     assert!(covenant
@@ -573,5 +573,52 @@ contract Framed() {
         ),
         "the caller's final read after a call must consume the slot: {:?}",
         covenant.asm
+    );
+}
+
+#[test]
+fn readonly_private_arguments_alias_caller_slots_but_mutated_arguments_copy() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(int x) {
+        let earlier = x + 1;
+        require(outer(x) == earlier + x - 1);
+        require(bump(x) == x + 1);
+    }
+    private function outer(int v) int { return inner(v); }
+    private function inner(int w) int { return w * 2; }
+    private function bump(int v) int { if (v > 0) { v = v + 1; } return v; }
+}
+"#,
+        "spend",
+    );
+
+    assert_eq!(&covenant.asm[..4], ["OP_0", OP_PICK, "1", OP_ADD]);
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_1", OP_PICK, "2", OP_MUL]
+    ));
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_0", OP_PICK, "OP_0", OP_PICK, "0", OP_GREATERTHAN, OP_IF]
+    ));
+}
+
+#[test]
+fn readonly_constructor_argument_preserves_constructor_access() {
+    let covenant = covenant(
+        r#"
+contract C(int base) {
+    function spend() { require(sum(base) == base * 2); }
+    private function sum(int value) int { return value + base; }
+}
+"#,
+        "spend",
+    );
+
+    assert_eq!(
+        &covenant.asm[..6],
+        ["<base>", "OP_0", OP_PICK, "OP_1", OP_PICK, OP_ADD]
     );
 }

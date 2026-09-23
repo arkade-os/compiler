@@ -74,6 +74,8 @@ struct Generator {
     structs: Vec<crate::models::StructDefinition>,
     scope: typechecker::Scope,
     functions: Vec<Function>,
+    // Read-only scalar parameters can name slots in the pinned caller frame.
+    aliases: std::collections::HashMap<String, usize>,
     // None outside a helper; Some(None) inside a void helper.
     return_type: Option<Option<String>>,
     direct_return: bool,
@@ -146,6 +148,7 @@ impl Generator {
             structs: structs.to_vec(),
             scope,
             functions: Vec::new(),
+            aliases: std::collections::HashMap::new(),
             return_type: None,
             direct_return: false,
             final_reads: Vec::new(),
@@ -163,9 +166,11 @@ impl Generator {
     }
 
     fn binding_index(&self, name: &str) -> Option<usize> {
-        self.stack.iter().position(
-            |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
-        )
+        self.aliases.get(name).copied().or_else(|| {
+            self.stack.iter().position(
+                |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
+            )
+        })
     }
 
     /// Element count of an array binding, read off the symbolic stack: its
@@ -616,6 +621,11 @@ impl Generator {
 
     fn assign_static_binding(&mut self, name: &str, display_name: &str) -> Result<(), String> {
         let name = Self::internal_binding_name(name);
+        if self.aliases.contains_key(&name) {
+            return Err(format!(
+                "internal compiler error: aliased parameter '{display_name}' is assigned"
+            ));
+        }
         if let Some((target, kind, start)) = self.replacement.clone() {
             if target == name && !self.preserve_bindings {
                 if !matches!(self.stack.last(), Some(StackItem::Temporary)) {

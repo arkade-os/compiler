@@ -28,6 +28,30 @@ pub(super) fn contains_return(statements: &[Statement]) -> bool {
     })
 }
 
+// This scans each helper body per argument; cache assigned names if call counts grow.
+fn assigns_parameter(statements: &[Statement], name: &str) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::VarAssign {
+            target: AssignmentTarget::Binding(target),
+            ..
+        } => target == name,
+        Statement::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            assigns_parameter(then_body, name)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|body| assigns_parameter(body, name))
+        }
+        Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+            assigns_parameter(body, name)
+        }
+        _ => false,
+    })
+}
+
 impl Generator {
     pub(super) fn value_leaves(&self, name: &str, ty: &str) -> Result<Vec<TypeLeaf>, String> {
         flatten_parameter(
@@ -144,7 +168,26 @@ impl Generator {
         let baseline = caller.len();
         let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
         let mut arguments = Vec::new();
+        let mut aliases = std::collections::HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
+            if is_builtin_type(&parameter.param_type)
+                && !assigns_parameter(&function.statements, &parameter.name)
+            {
+                if let Expression::Variable(source) = argument {
+                    if let Some(source_index) = self.binding_index(source).filter(|&i| i < baseline)
+                    {
+                        if self.read_cursor.is_none() {
+                            if let Some(previous) =
+                                self.last_reads.get(&(source.clone(), source_index))
+                            {
+                                self.final_reads[*previous] = false;
+                            }
+                        }
+                        aliases.insert(parameter.name.clone(), source_index);
+                        continue;
+                    }
+                }
+            }
             let start = self.stack.len();
             self.emit_typed_value(argument, &parameter.param_type)?;
             self.bind_value(&format!("$argument:{index}"), &parameter.param_type)?;
@@ -181,6 +224,7 @@ impl Generator {
                 };
             }
         }
+        let previous_aliases = std::mem::replace(&mut self.aliases, aliases);
         for parameter in &function.parameters {
             self.bind_type(&parameter.name, &parameter.param_type);
         }
@@ -215,6 +259,7 @@ impl Generator {
         self.last_reads.retain(|(_, index), _| *index < baseline);
         self.stack[..baseline].clone_from_slice(&caller);
         self.scope = caller_scope;
+        self.aliases = previous_aliases;
         self.return_type = previous_return;
         self.direct_return = previous_direct_return;
         self.pinned_stack_len = pinned;
