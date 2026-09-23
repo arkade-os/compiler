@@ -1,0 +1,229 @@
+// StabilityPool Contract (Phase 2 skeleton — provider-only flows)
+//
+// Pooled-model replacement for the isolated StabilityVault + StabilityOffer.
+// Variant B (perpetual-bond):
+//   - Seekers can transfer / split their claim, never redeem on-chain to BTC.
+//   - Providers can deposit any time; withdraw only when leverage <= 1.50.
+//   - Funding rate is common to all users, published by FundingBeacon as a
+//     monotone cumulative yield index.
+//
+// State carried in the script (mutable across recursive recreations):
+//   aggregateSeekerUSD — Σ targetUSD of all live SeekerShares (USD cents)
+//   poolYieldIndex     — last snapshotted FundingBeacon index value
+//
+// Immutable script parameters:
+//   priceTicker, priceClock — PriceBeacon asset IDs
+//   yieldTicker, yieldClock — FundingBeacon asset IDs
+//   exit                    — exit timelock blocks
+//
+// Tx layout convention (all functions):
+//   input[0]:  StabilityPool
+//   input[1]:  PriceBeacon (passthrough)
+//   input[2]:  FundingBeacon (passthrough)
+//   input[3+]: caller-side UTXOs (deposit funds, ProviderShare being burned, ...)
+//
+//   output[0]: new StabilityPool
+//   output[1]: PriceBeacon (passthrough)
+//   output[2]: FundingBeacon (passthrough)
+//   output[3+]: caller-side outputs (new ProviderShare, SingleSig payout, ...)
+//
+// What this skeleton implements:
+//   - providerDeposit: extends pool, mints a ProviderShare
+//   - providerWithdraw: gates by post-withdraw leverage; pays sats to provider
+//
+// What this skeleton intentionally does NOT yet implement (future phases):
+//   - seekerEntry / seekerExit (no on-chain Seeker→BTC in Variant B; entry
+//     gated by 1.67× and routed via swap services — Phase 3)
+//   - accrue() to refresh poolYieldIndex without a flow event (Phase 4)
+//   - forceUnwind() insolvency path (Phase 5)
+//   - 0.1% entry/exit fee + 1-block price-snapshot delay (Phase 6)
+//   - Detailed ProviderShare equity math (per-share dilution) — owned by the
+//     ProviderShare contract; v0 placeholder there.
+//
+// Leverage math (Variant B):
+//   seekerCapitalNominal = aggregateSeekerUSD × 1e8 / currentPrice
+//   fundingAccrued       = aggregateSeekerUSD × (currentIndex - poolYieldIndex) / INDEX_SCALE
+//   seekerCapital        = seekerCapitalNominal + fundingAccrued
+//   totalAfter           = pool.input.value ± delta
+//   providerCapitalAfter = totalAfter - seekerCapital
+//   leverage_after       = totalAfter / providerCapitalAfter
+//
+// For PROVIDER_WITHDRAW_LEVERAGE_X100 = 150:
+//   require leverage_after <= 1.5
+//   == totalAfter * 100 <= 150 × (totalAfter - seekerCapital)
+//   == 3 × seekerCapital <= totalAfter   (clean integer form)
+//
+// INDEX_SCALE = 100_000_000 (1e8). See docs/stability-pool-prd.md §3.
+
+import "provider_share.ark";
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract StabilityPool(
+  bytes32 priceTicker,
+  bytes32 priceClock,
+  bytes32 yieldTicker,
+  bytes32 yieldClock,
+  int     aggregateSeekerUSD,  // STATE
+  int     poolYieldIndex,      // STATE
+  int     exit
+) {
+
+  // -------------------------------------------------------------------------
+  // PROVIDER DEPOSIT
+  // Provider adds sats to the pool, receives a ProviderShare UTXO.
+  // No leverage gate — deposits only reduce leverage.
+  // poolYieldIndex is refreshed to the FundingBeacon's current value, locking
+  // in accrued funding for already-live SeekerShares.
+  // -------------------------------------------------------------------------
+  function providerDeposit(int depositSats, pubkey providerPk) {
+    require(depositSats >= 330, "deposit below dust");
+
+    // PriceBeacon passthrough (read but not used for the deposit gate)
+    int currentPrice = tx.inputs[1].assets.lookup(priceTicker);
+    require(currentPrice > 0, "invalid price beacon");
+    int priceHeight = tx.inputs[1].assets.lookup(priceClock);
+    int priceAge = tx.time - priceHeight;
+    require(priceAge <= 144, "stale price oracle");
+
+    // FundingBeacon — read the current cumulative yield index
+    int currentIndex = tx.inputs[2].assets.lookup(yieldTicker);
+    int yieldHeight  = tx.inputs[2].assets.lookup(yieldClock);
+    int yieldAge     = tx.time - yieldHeight;
+    require(yieldAge <= 144, "stale funding oracle");
+    require(currentIndex >= poolYieldIndex, "yield index regressed");
+
+    // Pool output: same immutables, unchanged aggregateSeekerUSD,
+    // refreshed yield index (so accrual baseline moves forward).
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityPool(
+        priceTicker, priceClock, yieldTicker, yieldClock,
+        aggregateSeekerUSD, currentIndex, exit
+      ),
+      "invalid pool output"
+    );
+    int poolValueAfter = tx.inputs[0].value + depositSats;
+    require(
+      tx.outputs[0].value >= poolValueAfter,
+      "pool deposit not credited"
+    );
+
+    // PriceBeacon passthrough
+    require(
+      tx.outputs[1].assets.lookup(priceTicker) >= currentPrice,
+      "price beacon must survive"
+    );
+    require(
+      tx.outputs[1].assets.lookup(priceClock) >= priceHeight,
+      "price clock must survive"
+    );
+
+    // FundingBeacon passthrough
+    require(
+      tx.outputs[2].assets.lookup(yieldTicker) >= currentIndex,
+      "funding beacon must survive"
+    );
+    require(
+      tx.outputs[2].assets.lookup(yieldClock) >= yieldHeight,
+      "funding clock must survive"
+    );
+
+    // ProviderShare output for the depositor
+    require(
+      tx.outputs[3].scriptPubKey == new ProviderShare(
+        providerPk, depositSats, currentIndex, exit
+      ),
+      "invalid provider share output"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // PROVIDER WITHDRAW
+  // Provider burns a ProviderShare (passed as input[3]) and reclaims sats.
+  // Gated by leverage_after <= 1.50 (PROVIDER_WITHDRAW_LEVERAGE_X100 = 150).
+  //
+  // The pool covenant verifies:
+  //   - The post-withdraw leverage gate holds
+  //   - The pool output value is correctly decremented
+  //   - The provider receives a SingleSig output for withdrawSats
+  //
+  // ProviderShare equity math (how much a given share is actually entitled
+  // to vs depositedSats) is enforced in the ProviderShare contract's own
+  // redeem function. This skeleton trusts that contract; v0 enforcement is
+  // a TODO there.
+  // -------------------------------------------------------------------------
+  function providerWithdraw(int withdrawSats, pubkey providerPk) {
+    require(withdrawSats >= 330, "withdraw below dust");
+
+    int currentPrice = tx.inputs[1].assets.lookup(priceTicker);
+    require(currentPrice > 0, "invalid price beacon");
+    int priceHeight = tx.inputs[1].assets.lookup(priceClock);
+    int priceAge = tx.time - priceHeight;
+    require(priceAge <= 144, "stale price oracle");
+
+    int currentIndex = tx.inputs[2].assets.lookup(yieldTicker);
+    int yieldHeight  = tx.inputs[2].assets.lookup(yieldClock);
+    int yieldAge     = tx.time - yieldHeight;
+    require(yieldAge <= 144, "stale funding oracle");
+    require(currentIndex >= poolYieldIndex, "yield index regressed");
+
+    // Compute current seeker capital claim including accrued funding.
+    int seekerCapitalNominal = aggregateSeekerUSD * 100000000 / currentPrice;
+    int deltaIndex           = currentIndex - poolYieldIndex;
+    int fundingAccrued       = aggregateSeekerUSD * deltaIndex / 100000000;
+    int seekerCapital        = seekerCapitalNominal + fundingAccrued;
+
+    int totalAfter = tx.inputs[0].value - withdrawSats;
+    require(totalAfter > seekerCapital, "withdraw would undercollateralise");
+
+    // Leverage gate: 3 × seekerCapital <= totalAfter ⇔ leverage_after <= 1.5
+    int leverageBound = seekerCapital * 3;
+    require(leverageBound <= totalAfter, "leverage gate: provider withdraw blocked");
+
+    // The ProviderShare being burned is at input[3]; the share contract
+    // enforces its own redemption rules (signature check, equity math).
+    // The pool covenant here only enforces pool-level invariants.
+
+    // Pool output: refreshed yield index, unchanged aggregateSeekerUSD,
+    // value reduced by withdrawSats.
+    require(
+      tx.outputs[0].scriptPubKey == new StabilityPool(
+        priceTicker, priceClock, yieldTicker, yieldClock,
+        aggregateSeekerUSD, currentIndex, exit
+      ),
+      "invalid pool output"
+    );
+    require(tx.outputs[0].value >= totalAfter, "pool value mismatch");
+
+    // PriceBeacon passthrough
+    require(
+      tx.outputs[1].assets.lookup(priceTicker) >= currentPrice,
+      "price beacon must survive"
+    );
+    require(
+      tx.outputs[1].assets.lookup(priceClock) >= priceHeight,
+      "price clock must survive"
+    );
+
+    // FundingBeacon passthrough
+    require(
+      tx.outputs[2].assets.lookup(yieldTicker) >= currentIndex,
+      "funding beacon must survive"
+    );
+    require(
+      tx.outputs[2].assets.lookup(yieldClock) >= yieldHeight,
+      "funding clock must survive"
+    );
+
+    // Provider payout
+    require(
+      tx.outputs[3].scriptPubKey == new SingleSig(providerPk),
+      "output 3 not provider"
+    );
+    require(tx.outputs[3].value >= withdrawSats, "provider underpaid");
+  }
+}
