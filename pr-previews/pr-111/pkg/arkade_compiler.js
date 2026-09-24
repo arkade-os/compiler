@@ -34,11 +34,13 @@ export function compile(source) {
 
 /**
  * Compile a virtual project. `files` is a JSON object mapping relative .ark paths to source text.
+ * `optimize` defaults to true when omitted.
  * @param {string} entry
  * @param {string} files
+ * @param {boolean | null} [optimize]
  * @returns {string}
  */
-export function compile_sources(entry, files) {
+export function compile_sources(entry, files, optimize) {
     let deferred4_0;
     let deferred4_1;
     try {
@@ -46,7 +48,7 @@ export function compile_sources(entry, files) {
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.compile_sources(ptr0, len0, ptr1, len1);
+        const ret = wasm.compile_sources(ptr0, len0, ptr1, len1, isLikeNone(optimize) ? 0xFFFFFF : optimize ? 1 : 0);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
@@ -180,6 +182,10 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function isLikeNone(x) {
+    return x === undefined || x === null;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
