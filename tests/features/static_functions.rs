@@ -189,7 +189,7 @@ fn tapscript_declarations_cannot_be_static() {
 contract Vault(pubkey owner) {
     function spend(signature sig) { require(checkSig(sig, owner)); }
     static function exit(signature sig) tapscript {
-        require(older(10));
+        require(older(512));
         require(checkSig(sig, owner));
     }
 }

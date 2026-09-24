@@ -129,7 +129,7 @@ Every function compiles to two tapleaves:
 | Path | How it unlocks | What it enforces |
 |---|---|---|
 | Cooperative | party-sig + Arkade Operator co-sig | Full `require()` chain including time guards and asset lookups |
-| Exit | N-of-N party-sigs + CSV after `exit` blocks | Signatures + relative timelock only — **no introspection** |
+| Exit | N-of-N party-sigs + CSV after `exit` seconds | Signatures + relative timelock only — **no introspection** |
 
 For `exercise` the exit-leaf N is **seller + buyer**. For `reclaim` it's **seller**. For transfers it's **seller + buyer + new party**. The compiler also emits CLTV (`OP_CHECKLOCKTIMEVERIFY`) in the exit variant of `reclaim` because that's pure Bitcoin script — `expiryHeight + graceBlocks` is checked on the exit path too.
 

@@ -58,6 +58,6 @@ fn unilateral_matches_csv_multisig_closure() {
     let out = compile(HTLC).unwrap();
     assert_eq!(
         crate::common::leaf_asm(&out, "unilateral", "unilateral"),
-        "<exit> OP_CHECKSEQUENCEVERIFY OP_DROP <sender> OP_CHECKSIG"
+        "<seconds:exit> OP_CHECKSEQUENCEVERIFY OP_DROP <sender> OP_CHECKSIG"
     );
 }

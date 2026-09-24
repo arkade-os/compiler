@@ -146,7 +146,7 @@ fn test_htlc_contract() {
 
     let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
-        unilateral_leaf.contains("<exit>"),
+        unilateral_leaf.contains("<seconds:exit>"),
         "unilateral leaf should push exit timelock: {}",
         unilateral_leaf
     );

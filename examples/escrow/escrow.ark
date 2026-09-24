@@ -20,7 +20,7 @@ contract Escrow(
   // Unix seconds. `cancel` requires the emulator clock to reach this. tx.time cannot
   // gate it: arkd rebuilds offchain spends of this leaf with nLockTime 0.
   int     timeoutAt,
-  // Blocks. `unilateral` requires older(exit), a relative locktime.
+  // Seconds, a positive multiple of 512. `unilateral` requires older(exit).
   int     exit
 ) {
   const int DUST = 330;

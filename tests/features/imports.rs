@@ -86,7 +86,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     let library = r#"// Shared fee policy.
 struct Policy { int maximum; }
 library Fees {
-    const int DELAY = 144;
+    const int DELAY = 512;
     const int SIZE = 2;
     function calculate(int amount) int { return Fees.twice(amount); }
     private function twice(int amount) int { return amount * 2; }
@@ -242,7 +242,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     let types = "struct Policy { int maximum; } // end of file comment";
     let fees = r#"contract Fees() {
         const int MINIMUM = 10;
-        const int DELAY = 144;
+        const int DELAY = 512;
         static function twice(int amount) int { return amount * 2; }
         static function calculate(int amount) int { return twice(amount) + MINIMUM; }
     }"#;
@@ -266,7 +266,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     }
     static function twice(int n) int { return n * 2; }
     static function calculate(int n) int { return twice(n) + 10; }
-    function exit(signature sig) tapscript { require(older(144)); require(checkSig(sig, owner)); }
+    function exit(signature sig) tapscript { require(older(512)); require(checkSig(sig, owner)); }
 }"#,
     )
     .unwrap();
@@ -526,7 +526,7 @@ contract Main(pubkey[2] keys, pubkey owner) {
         require(checkMultisig([owner], [sig], Limits.THRESHOLD));
     }
 }"#),
-        ("limits.ark", "contract Limits() { const int INDEX = 1; const int THRESHOLD = 1; const int DELAY = 144; }"),
+        ("limits.ark", "contract Limits() { const int INDEX = 1; const int THRESHOLD = 1; const int DELAY = 512; }"),
     ]).unwrap();
     assert!(arkade_asm_tokens(&output, "spend").contains(&"<keys.1>".to_string()));
     assert!(
@@ -630,7 +630,7 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
             struct Limits { int[Config.SIZE] values; }
             contract Config() {
                 const int SIZE = Base.COUNT / 2;
-                const int DELAY = SIZE * 72;
+                const int DELAY = SIZE * 512;
                 static function check(int[SIZE] values) { int[SIZE] copy = [values[0], values[1]]; require(copy[1] > 0); }
             }"#),
         ("main.ark", r#"import "config.ark";
@@ -647,7 +647,7 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
         contract Vault(pubkey[2] keys) {
             static function check(int[2] values) { int[2] copy = [values[0], values[1]]; require(copy[1] > 0); }
             function spend(int[2] values, Limits limits) { check(values); require(limits.values[1] < 3); }
-            function exit(signature sig) tapscript { require(older(72)); require(checkSig(sig, keys[1])); }
+            function exit(signature sig) tapscript { require(older(512)); require(checkSig(sig, keys[1])); }
         }
     "#).unwrap();
     assert_eq!(output.parameters[0].param_type, "pubkey[2]");
