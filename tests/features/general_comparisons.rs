@@ -278,7 +278,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
     }
 }
 "#;
-    let output = arkade_compiler::compile_sources(
+    let output = arkade_compiler::compile_sources_with_options(
         "main.ark",
         &[
             ("main.ark".into(), source.into()),
@@ -289,6 +289,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
         ]
         .into_iter()
         .collect(),
+        arkade_compiler::CompileOptions { optimize: false },
     )
     .unwrap();
     let asm = crate::common::arkade_asm_tokens(&output, "compare");

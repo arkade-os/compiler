@@ -97,11 +97,11 @@ func TestStructs(t *testing.T) {
 		wantErr string
 	}{
 		{name: "valid"},
-		{name: "underscore field is distinct from nested path", key: "supplied.a_b", value: 37, wantErr: "OP_VERIFY failed"},
-		{name: "nested field is distinct from underscore path", key: "supplied.a.b", value: 29, wantErr: "OP_VERIFY failed"},
-		{name: "nested array field", key: "supplied.weights.1", value: 44, wantErr: "OP_VERIFY failed"},
+		{name: "underscore field is distinct from nested path", key: "supplied.a_b", value: 37, wantErr: "OP_EQUALVERIFY failed"},
+		{name: "nested field is distinct from underscore path", key: "supplied.a.b", value: 29, wantErr: "OP_EQUALVERIFY failed"},
+		{name: "nested array field", key: "supplied.weights.1", value: 44, wantErr: "OP_EQUALVERIFY failed"},
 		{name: "runtime array bound", key: "index", value: 3, wantErr: "OP_VERIFY failed"},
-		{name: "local struct mutation result", key: "expected", value: 394, wantErr: "OP_VERIFY failed"},
+		{name: "local struct mutation result", key: "expected", value: 394, wantErr: "OP_EQUALVERIFY failed"},
 	}
 
 	for _, testCase := range testCases {

@@ -67,14 +67,14 @@ fn test_fuji_safe_contract() {
             "claim",
             "<treasuryBurnScript>",
             "OP_3 OP_PICK",
-            "OP_1 OP_PICK",
+            "OP_OVER",
             &[("treasurySig", "signature")][..],
         ),
         (
             "liquidate",
             "<treasuryBurnScript>",
             "OP_3 OP_PICK",
-            "OP_1 OP_PICK",
+            "OP_OVER",
             &[
                 ("currentPrice", "int"),
                 ("oracleSig", "signature"),
@@ -85,7 +85,7 @@ fn test_fuji_safe_contract() {
             "redeem",
             "<borrowerBurnScript>",
             "OP_3 OP_ROLL",
-            "OP_1 OP_ROLL",
+            "OP_SWAP",
             &[("borrowerSig", "signature")][..],
         ),
         (
@@ -96,7 +96,7 @@ fn test_fuji_safe_contract() {
                 "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,<exit>,",
                 "<treasuryBurnScript>,<borrowerBurnScript>)>"
             ),
-            "OP_1 OP_ROLL",
+            "OP_SWAP",
             &[("treasurySig", "signature")][..],
         ),
     ] {
@@ -116,7 +116,7 @@ fn test_fuji_safe_contract() {
             ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP", script_read),
             ("OP_INSPECTOUTPUTVALUE", value_read),
         ] {
-            let comparison = format!("0 {opcode} {operand} OP_EQUAL OP_VERIFY");
+            let comparison = format!("0 {opcode} {operand} OP_EQUALVERIFY");
             let expected = comparison.split_whitespace().collect::<Vec<_>>();
             assert!(
                 asm.windows(expected.len()).any(|window| window

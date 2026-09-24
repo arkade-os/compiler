@@ -131,7 +131,7 @@ func TestCompiledEscrow(t *testing.T) {
 			other := sha256.Sum256([]byte("deed transferred, lot 43"))
 			requireVMResult(
 				t, attested(amount, other[:], oracleKey, toPartyB),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 
@@ -148,7 +148,7 @@ func TestCompiledEscrow(t *testing.T) {
 				t, attested(amount, oracleMsg[:], oracleKey, []*wire.TxOut{
 					{Value: amount, PkScript: p2trTo(thief)},
 				}),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 
@@ -165,7 +165,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(complete.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, attested(amount, oracleMsg[:], oracleKey, toPartyB), extra),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 	})
@@ -223,7 +223,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(cancel.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, refund(cancel, 0, toPartyA), extra),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 	})

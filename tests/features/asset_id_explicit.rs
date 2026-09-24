@@ -3,7 +3,7 @@
 //! `(result, success_flag)` opcode ABI handling, fatal operand validation, and
 //! parser rejection of the legacy single-argument forms.
 
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 
 /// Return the covenant ASM for `func` in the compiled output of `src`.
 fn arkade_asm(src: &str, func: &str) -> String {

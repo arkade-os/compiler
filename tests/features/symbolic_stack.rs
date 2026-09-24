@@ -45,11 +45,11 @@ contract Shape(int limit) {
     let optimized = arkade_compiler::compile(source).unwrap();
     assert_eq!(
         crate::common::arkade_asm(&optimized, "read"),
-        "<limit> OP_DUP OP_1 OP_ROLL OP_EQUAL"
+        "<limit> OP_DUP OP_SWAP OP_EQUAL"
     );
     assert_eq!(
         crate::common::arkade_asm(&optimized, "write"),
-        "2 1 4 OP_NIP OP_2 OP_ROLL OP_1 OP_PICK OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
+        "2 1 4 OP_NIP OP_ROT OP_OVER OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
     );
 }
 
