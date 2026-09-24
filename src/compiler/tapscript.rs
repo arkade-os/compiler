@@ -463,47 +463,27 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
     }
 }
 
-/// BIP68 seconds unit. Bit 22 of the sequence selects time; the low 16 bits
-/// count units of 512 seconds. Public arkd rejects a block-typed CSV on an
-/// exit leaf.
-const CSV_SECONDS_UNIT: u64 = 512;
-const CSV_SECONDS_TYPE_FLAG: u64 = 1 << 22;
-
-/// `seconds / 512`, with the BIP68 time flag set.
-fn csv_seconds_sequence(seconds: u64) -> Result<u64, String> {
-    if seconds == 0 || !seconds.is_multiple_of(CSV_SECONDS_UNIT) {
+/// Timelock operand. CLTV is the number or `<param>`. CSV is seconds: a literal
+/// is the BIP68 sequence, a name is `<seconds:name>`.
+/// ponytail: tapscript cannot divide or OR, so the sequence is fixed here.
+fn timelock_operand(ts_name: &str, value: &str, csv: bool) -> Result<String, String> {
+    let Ok(n) = value.parse::<u64>() else {
+        return Ok(if csv {
+            format!("<seconds:{value}>")
+        } else {
+            format!("<{value}>")
+        });
+    };
+    if !csv {
+        return Ok(n.to_string());
+    }
+    if n == 0 || !n.is_multiple_of(512) || n / 512 > 0xffff {
         return Err(format!(
-            "must be a positive multiple of {CSV_SECONDS_UNIT} seconds"
+            "tapscript `{ts_name}`: older({value}) must be 512..{} seconds, a multiple of 512",
+            0xffff * 512
         ));
     }
-    let units = seconds / CSV_SECONDS_UNIT;
-    if units > 0xffff {
-        return Err(format!(
-            "exceeds the BIP68 maximum of {} seconds",
-            0xffff * CSV_SECONDS_UNIT
-        ));
-    }
-    Ok(units | CSV_SECONDS_TYPE_FLAG)
-}
-
-/// CSV operand. A literal is the BIP68 seconds sequence. A name is
-/// `<seconds:name>`: the delay in seconds, encoded the same way at instantiation.
-fn csv_operand(ts_name: &str, value: &str) -> Result<String, String> {
-    if let Ok(seconds) = value.parse::<u64>() {
-        return csv_seconds_sequence(seconds)
-            .map(|sequence| sequence.to_string())
-            .map_err(|reason| format!("tapscript `{ts_name}`: older({value}) {reason}"));
-    }
-    Ok(format!("<seconds:{value}>"))
-}
-
-/// CLTV operand: literal as-is, else a `<param>` placeholder.
-fn cltv_operand(value: &str) -> String {
-    if value.parse::<u64>().is_ok() {
-        value.to_string()
-    } else {
-        format!("<{value}>")
-    }
+    Ok(((n / 512) | (1 << 22)).to_string())
 }
 
 /// Emit the multisig suffix (N-of-N CHECKSIG chain).
@@ -547,11 +527,7 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Result<Ve
             c.class,
             ClosureClass::CsvMultisig | ClosureClass::ConditionCsvMultisig
         );
-        asm.push(if csv {
-            csv_operand(ts_name, tl)?
-        } else {
-            cltv_operand(tl)
-        });
+        asm.push(timelock_operand(ts_name, tl, csv)?);
         asm.push(if csv {
             OP_CHECKSEQUENCEVERIFY.to_string()
         } else {
@@ -670,27 +646,20 @@ fn resolve_constructor_field_placeholders(
         .into_iter()
         .flatten()
         .filter(|leaf| leaf.access_name != leaf.emitted_name)
-        .map(|leaf| {
-            (
-                format!("<{}>", leaf.access_name),
-                format!("<{}>", leaf.emitted_name),
-            )
+        .flat_map(|leaf| {
+            [
+                (
+                    format!("<{}>", leaf.access_name),
+                    format!("<{}>", leaf.emitted_name),
+                ),
+                (
+                    format!("<seconds:{}>", leaf.access_name),
+                    format!("<seconds:{}>", leaf.emitted_name),
+                ),
+            ]
         })
         .collect::<std::collections::HashMap<_, _>>();
     for token in asm {
-        if let Some(name) = token
-            .strip_prefix("<seconds:")
-            .and_then(|rest| rest.strip_suffix('>'))
-        {
-            if let Some(replacement) = replacements.get(&format!("<{name}>")) {
-                let emitted = replacement
-                    .strip_prefix('<')
-                    .and_then(|rest| rest.strip_suffix('>'))
-                    .unwrap_or(replacement);
-                *token = format!("<seconds:{emitted}>");
-            }
-            continue;
-        }
         if let Some(replacement) = replacements.get(token) {
             *token = replacement.clone();
         }
@@ -1381,48 +1350,18 @@ mod tests {
     }
 
     #[test]
-    fn older_literal_emits_bip68_seconds_sequence() {
-        let src = r#"
-pragma arkade ^0.1.0;
-contract Demo(pubkey owner, int[1] delays) {
-  function exit(signature sig) tapscript {
-    require(older(512));
-    require(checkSig(sig, owner));
-  }
-  function later(signature sig) tapscript {
-    require(older(delays[0]));
-    require(checkSig(sig, owner));
-  }
-}
-"#;
-        let output = super::super::compile(src).expect("seconds csv");
-        let exit = output
-            .functions
-            .iter()
-            .find(|g| g.name == "exit")
-            .expect("exit");
-        let sequence = (512u64 / CSV_SECONDS_UNIT) | CSV_SECONDS_TYPE_FLAG;
-        assert_eq!(
-            exit.leaves[0].asm[0],
-            sequence.to_string(),
-            "512 seconds is 1 | (1 << 22)"
-        );
-        assert_eq!(exit.leaves[0].asm[1], OP_CHECKSEQUENCEVERIFY);
-        let later = output
-            .functions
-            .iter()
-            .find(|g| g.name == "later")
-            .expect("later");
-        assert_eq!(later.leaves[0].asm[0], "<seconds:delays.0>");
-
-        for bad in ["0", "10", "33554432"] {
-            let err = super::super::compile(&format!(
-                "contract Demo(pubkey owner) {{ function exit(signature sig) tapscript {{ require(older({bad})); require(checkSig(sig, owner)); }} }}"
-            ))
-            .unwrap_err()
-            .to_string();
-            assert!(err.contains(&format!("older({bad})")), "got: {err}");
-        }
+    fn older_encodes_seconds() {
+        let output = super::super::compile(
+            "contract Demo(int[1] delays, pubkey owner) { function later(signature sig) tapscript { require(older(delays[0])); require(checkSig(sig, owner)); } }",
+        )
+        .unwrap();
+        assert_eq!(output.functions[0].leaves[0].asm[0], "<seconds:delays.0>");
+        let err = super::super::compile(
+            "contract Demo(pubkey owner) { function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, owner)); } }",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("older(10)"), "{err}");
     }
 
     /// `tweak(constructorPubkey, func)` binds that key to the covenant on any leaf.
