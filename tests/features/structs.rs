@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL,
     OP_EQUALVERIFY, OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT,

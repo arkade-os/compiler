@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_EQUALVERIFY, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
     OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_SWAP,

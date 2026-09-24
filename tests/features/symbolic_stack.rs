@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
     OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
@@ -19,6 +19,38 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
             .map(String::as_str)
             .eq(expected.iter().copied())
     })
+}
+
+#[test]
+fn optimization_can_be_disabled_for_assembly_checks() {
+    let source = r#"
+contract Shape(int limit) {
+    function read() { require(limit == limit); }
+    function write(int amount) {
+        int[2] weights = [1, 2];
+        weights[0] = 4;
+        require(amount >= weights[0]);
+    }
+}
+"#;
+    let raw = compile(source).unwrap();
+    let raw_read = crate::common::arkade_asm_tokens(&raw, "read");
+    assert!(contains_tokens(&raw_read, &["OP_0", OP_PICK]));
+    assert!(raw_read.ends_with(&[OP_VERIFY.to_string(), "OP_1".to_string()]));
+    assert!(contains_tokens(
+        &crate::common::arkade_asm_tokens(&raw, "write"),
+        &["4", "OP_0", OP_PUT]
+    ));
+
+    let optimized = arkade_compiler::compile(source).unwrap();
+    assert_eq!(
+        crate::common::arkade_asm(&optimized, "read"),
+        "<limit> OP_DUP OP_EQUAL"
+    );
+    assert_eq!(
+        crate::common::arkade_asm(&optimized, "write"),
+        "2 1 4 OP_NIP OP_ROT OP_OVER OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
+    );
 }
 
 #[test]

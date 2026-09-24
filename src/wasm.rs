@@ -50,9 +50,13 @@ pub fn validate(source: &str) -> Result<bool, String> {
 }
 
 /// Compile a virtual project. `files` is a JSON object mapping relative .ark paths to source text.
+/// `optimize` defaults to true when omitted.
 #[wasm_bindgen]
-pub fn compile_sources(entry: &str, files: &str) -> Result<String, String> {
+pub fn compile_sources(entry: &str, files: &str, optimize: Option<bool>) -> Result<String, String> {
     let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
-    let output = crate::imports::compile_sources(entry, &files)?;
+    let options = crate::CompileOptions {
+        optimize: optimize.unwrap_or(true),
+    };
+    let output = crate::imports::compile_sources(entry, &files, options)?;
     serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))
 }

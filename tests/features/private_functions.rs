@@ -1,5 +1,5 @@
+use crate::common::compile_unoptimized as compile;
 use crate::common::*;
-use arkade_compiler::compile;
 
 #[test]
 fn nested_private_calls_preserve_constructor_scope_and_public_abi() {
