@@ -1307,7 +1307,8 @@ function doCompile() {
 
     try {
         const { entry, files } = compilationSources();
-        const result = compile_sources(entry, JSON.stringify(files));
+        const optimize = document.getElementById('optimize-toggle').checked;
+        const result = compile_sources(entry, JSON.stringify(files), optimize);
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
@@ -1441,12 +1442,13 @@ function highlightAsm(asm) {
     const tokens = Array.isArray(asm) ? asm : asm.split(' ');
     return tokens
         .map(token => {
+            const text = escapeHtml(token);
             if (token.startsWith('OP_')) {
-                return `<span class="asm-opcode">${token}</span>`;
+                return `<span class="asm-opcode">${text}</span>`;
             } else if (token.startsWith('<') && token.endsWith('>')) {
-                return `<span class="asm-placeholder">${token}</span>`;
+                return `<span class="asm-placeholder">${text}</span>`;
             }
-            return token;
+            return text;
         })
         .join(' ');
 }
@@ -1636,6 +1638,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Compile button
     document.getElementById('compile-btn').addEventListener('click', doCompile);
+    document.getElementById('optimize-toggle').addEventListener('change', doCompile);
 
     // Cmd/Ctrl+S → compile (prevent browser save dialog)
     document.addEventListener('keydown', (e) => {
