@@ -17,7 +17,7 @@ import (
 // are fixed Unix times safely in the past (2023) and future (2100).
 const (
 	amount        = int64(500_000)
-	exitDelay     = int64(144)
+	exitDelay     = int64(512)
 	pastTimeout   = int64(1_700_000_000)
 	futureTimeout = int64(4_102_444_800)
 )
@@ -231,17 +231,21 @@ func TestCompiledEscrow(t *testing.T) {
 	t.Run("unilateral tapscript", func(t *testing.T) {
 		unilateral := instantiateLeaf(t, contract, "unilateral", values, serverKey.PubKey())
 		deployment := fundingTx(unilateral.pkScript, amount)
+		sequence, err := csvSecondsSequence(scriptInt(t, exitDelay))
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		t.Run("both parties together after the delay", func(t *testing.T) {
 			requireTapscriptResult(
-				t, deployment, unilateral, 0, uint32(exitDelay),
+				t, deployment, unilateral, 0, uint32(sequence),
 				[]*btcec.PrivateKey{partyAKey, partyBKey}, nil, "",
 			)
 		})
 
 		t.Run("party A alone cannot exit", func(t *testing.T) {
 			requireTapscriptResult(
-				t, deployment, unilateral, 0, uint32(exitDelay),
+				t, deployment, unilateral, 0, uint32(sequence),
 				[]*btcec.PrivateKey{partyAKey, partyAKey}, nil, "signature not empty",
 			)
 		})
