@@ -4,6 +4,8 @@ mod common;
 
 #[path = "examples/arkade_kitties.rs"]
 mod arkade_kitties;
+#[path = "examples/arkade_options.rs"]
+mod arkade_options;
 #[path = "examples/asm_structural.rs"]
 mod asm_structural;
 #[path = "examples/bond_mint.rs"]
