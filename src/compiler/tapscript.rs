@@ -605,7 +605,23 @@ pub fn build_function_groups(
         });
     }
 
-    // Remaining groups are pure-standalone leaves (no covenant). Stable order.
+    // Remaining groups are pure-standalone leaves (no covenant), in the order
+    // their tapscripts are declared. Clients build the taproot tree from this
+    // order, so a contract with several exit leaves chooses its own tree shape
+    // the same way its covenant functions do.
+    for ts in &contract.tapscripts {
+        if let Some(leaves) = grouped.remove(&ts.name) {
+            groups.push(AbiFunctionGroup {
+                name: ts.name.clone(),
+                arkade: None,
+                leaves,
+            });
+        }
+    }
+
+    // Anything still grouped is keyed by something other than a tapscript name
+    // (a leaf tweaked to a function that produced no group). Emit it rather
+    // than drop it; BTreeMap keeps that deterministic.
     for (name, leaves) in grouped {
         groups.push(AbiFunctionGroup {
             name,
