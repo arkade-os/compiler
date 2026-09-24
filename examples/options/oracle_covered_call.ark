@@ -1,0 +1,202 @@
+// OracleCoveredCall Contract
+//
+// Bitcoin-native, fully collateralized, cash-settled (in BTC) European
+// covered call, settled against a designated oracle set. Implements the
+// "Covered Call (CC)" contract type of the Arkade Options functional
+// specification:
+//
+//   - Writer (W) locks `notional` sats of BTC. The pledged collateral
+//     fully covers the writer's maximum delivery obligation; there is
+//     no margin call.
+//   - Holder (H) locks nothing in this contract. The premium flows
+//     holder->writer off-contract during the RFQ/issuance flow.
+//   - At settlement, with ST the oracle median reference price:
+//       ST <= K:  PH = 0,                    PW = Q
+//       ST  > K:  PH = Q * (1 - K / ST),     PW = Q - PH
+//     (Q = notional in sats, K = strike, both prices in USD cents.)
+//
+// Settlement reference price (ST):
+//   Five oracles are designated at inception. Anyone (holder, writer,
+//   operator, or an unrelated third party) may settle after expiry by
+//   supplying 3 prices signed by 3 DISTINCT oracles, each timestamped
+//   within [expiry - priceWindow, expiry]. ST is the median of the 3.
+//   The narrow pre-expiry window keeps ST pinned to the expiry spot;
+//   residual intra-window cherry-picking is bounded by `priceWindow`
+//   (a TWAP-based ST would remove it and would justify replacing this).
+//
+// Oracle attestation encoding (no strings-as-values in this language,
+// so numeric fields are binary, not ASCII decimals):
+//   msg = sha256(tickerHash || num2bin(priceCents, 8) || num2bin(unixTs, 8))
+//   sig = BIP-340 Schnorr over msg with the oracle key
+//   where tickerHash = sha256("BTCUSD") and both ints are 8-byte
+//   little-endian. Displayed off-chain as "BTCUSD|PRICE_IN_CENTS|UNIXTS".
+//
+// Transaction layout for settle (single input enforced):
+//   input[0]:  this OracleCoveredCall vault   (exactly notional sats)
+//   ST > K:    output[0] holder PH, output[1] writer PW
+//              (a sub-330-sat leg is routed into the other party's
+//               output instead of creating a non-viable output)
+//   ST <= K:   output[0] writer Q
+//
+// Payout destinations are fixed at inception as 32-byte taproot witness
+// programs (`holderScript`, `writerScript`), not rebuilt dynamically.
+//
+// Overflow ceiling: the only product is notional * strike, which must
+// stay below 2^63 (e.g. strike $10M in cents caps notional at ~92 BTC).
+// Enforce Qmax at inception accordingly.
+
+contract OracleCoveredCall(
+  pubkey    writerPk,     // W: authorizes refund / coop / unilateral exit
+  pubkey    holderPk,     // H: authorizes the coop path
+  bytes     writerScript, // W settlement payout: 32-byte witness program
+  bytes     holderScript, // H settlement payout: 32-byte witness program
+  pubkey[5] oracles,      // designated oracle set, fixed at inception
+  bytes32   tickerHash,   // sha256("BTCUSD")
+  int       strike,       // K: USD cents per BTC, > 0
+  int       expiry,       // T: unix seconds; settlement opens here
+  int       priceWindow,  // seconds: oracle ts in [T - priceWindow, T]
+  int       refundAt,     // unix seconds > T: writer+server reclaim opens
+  int       notional,     // Q: sats locked (notional * strike < 2^63)
+  int       coopExit,     // CSV blocks: holder+writer cooperative L1 path
+  int       exit          // CSV blocks: writer unilateral L1 exit
+) {
+
+  // -------------------------------------------------------------------------
+  // SETTLE (permissionless crank)
+  // Anyone provides 3 prices signed by 3 distinct designated oracles with
+  // timestamps in the pre-expiry window. The covenant computes ST as their
+  // median and enforces the CC payoff split to the fixed payout scripts.
+  // -------------------------------------------------------------------------
+  function settle(
+    int[3]       oracleIdx,   // indices into `oracles`, pairwise distinct
+    int[3]       prices,      // USD cents, one per attestation
+    int[3]       timestamps,  // unix seconds, one per attestation
+    signature[3] oracleSigs   // BIP-340 sigs over the attestation digests
+  ) {
+    // Fixed output indices below make multi-vault spends unsafe
+    // (one payout pair could satisfy several vault covenants at once).
+    require(tx.numInputs == 1, "single vault only");
+    // Settlement is permissionless and only outputs 0/1 are inspected, so any
+    // input surplus would be claimable by whoever cranks. Pin the vault to
+    // exactly the notional: a mis-funded vault is refund-only by design.
+    require(tx.inputs[0].value == notional, "vault must hold the notional");
+    require(tx.time >= expiry, "before expiry");
+    require(strike > 0, "zero strike");
+
+    int i0 = oracleIdx[0];
+    int i1 = oracleIdx[1];
+    int i2 = oracleIdx[2];
+    require(i0 != i1, "duplicate oracle");
+    require(i0 != i2, "duplicate oracle");
+    require(i1 != i2, "duplicate oracle");
+
+    int windowStart = expiry - priceWindow;
+
+    int p0 = prices[0];
+    int t0 = timestamps[0];
+    require(t0 >= windowStart, "price 0 too old");
+    require(t0 <= expiry, "price 0 after expiry");
+    let m0 = sha256(tickerHash + num2bin(p0, 8) + num2bin(t0, 8));
+    require(checkSigFromStack(oracleSigs[0], oracles[i0], m0), "bad sig 0");
+
+    int p1 = prices[1];
+    int t1 = timestamps[1];
+    require(t1 >= windowStart, "price 1 too old");
+    require(t1 <= expiry, "price 1 after expiry");
+    let m1 = sha256(tickerHash + num2bin(p1, 8) + num2bin(t1, 8));
+    require(checkSigFromStack(oracleSigs[1], oracles[i1], m1), "bad sig 1");
+
+    int p2 = prices[2];
+    int t2 = timestamps[2];
+    require(t2 >= windowStart, "price 2 too old");
+    require(t2 <= expiry, "price 2 after expiry");
+    let m2 = sha256(tickerHash + num2bin(p2, 8) + num2bin(t2, 8));
+    require(checkSigFromStack(oracleSigs[2], oracles[i2], m2), "bad sig 2");
+
+    // ST = median of the three signed prices.
+    int st = 0;
+    if (p0 > p1) {
+      if (p1 > p2) {
+        st = p1;
+      } else {
+        if (p0 > p2) {
+          st = p2;
+        } else {
+          st = p0;
+        }
+      }
+    } else {
+      if (p0 > p2) {
+        st = p0;
+      } else {
+        if (p1 > p2) {
+          st = p2;
+        } else {
+          st = p1;
+        }
+      }
+    }
+
+    if (st > strike) {
+      // In the money: PW = floor(Q * K / ST), PH = Q - PW.
+      int writerSats = notional * strike / st;
+      int holderSats = notional - writerSats;
+      if (holderSats < 330) {
+        // Holder leg below the 330-sat output floor: route it to the writer.
+        require(tx.outputs[0].value >= notional, "writer underpaid");
+        require(tx.outputs[0].scriptPubKey == writerScript, "output 0 not writer");
+      } else {
+        if (writerSats < 330) {
+          // Writer residual below the output floor: route it to the holder.
+          require(tx.outputs[0].value >= notional, "holder underpaid");
+          require(tx.outputs[0].scriptPubKey == holderScript, "output 0 not holder");
+        } else {
+          require(tx.outputs[0].value >= holderSats, "holder underpaid");
+          require(tx.outputs[0].scriptPubKey == holderScript, "output 0 not holder");
+          require(tx.outputs[1].value >= writerSats, "writer underpaid");
+          require(tx.outputs[1].scriptPubKey == writerScript, "output 1 not writer");
+        }
+      }
+    } else {
+      // Out of the money: the whole notional returns to the writer.
+      require(tx.outputs[0].value >= notional, "writer underpaid");
+      require(tx.outputs[0].scriptPubKey == writerScript, "output 0 not writer");
+    }
+  }
+
+  // Settlement leaf: operator + covenant-tweaked emulator, gated by CLTV so
+  // spenders carry nLockTime >= expiry (which the covenant reads as tx.time).
+  function settle(signature serverSig, signature emulatorSig) tapscript {
+    require(after(expiry));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+  }
+
+  // -------------------------------------------------------------------------
+  // REFUND
+  // Writer reclaims the notional once the settlement grace window is over
+  // (nobody settled: oracle outage, or an abandoned OTM position).
+  // -------------------------------------------------------------------------
+  function refund(signature writerSig, signature serverSig) tapscript {
+    require(after(refundAt));
+    require(checkMultisig([writerPk, server], [writerSig, serverSig]));
+  }
+
+  // -------------------------------------------------------------------------
+  // COOP (early unwind)
+  // Holder and writer jointly release the vault after the CSV delay,
+  // without oracles or operator.
+  // -------------------------------------------------------------------------
+  function coop(signature holderSig, signature writerSig) tapscript {
+    require(older(coopExit));
+    require(checkMultisig([holderPk, writerPk], [holderSig, writerSig]));
+  }
+
+  // -------------------------------------------------------------------------
+  // UNILATERAL EXIT (CSV)
+  // Writer recovers the notional after the exit delay (operator offline).
+  // -------------------------------------------------------------------------
+  function unilateral(signature writerSig) tapscript {
+    require(older(exit));
+    require(checkSig(writerSig, writerPk));
+  }
+}
