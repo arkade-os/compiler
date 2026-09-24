@@ -19,6 +19,7 @@ pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
             let len = optimized.len();
             let replacement = match (optimized[len - 2].as_str(), optimized[len - 1].as_str()) {
                 (OP_0, OP_PICK) => Some(Some(OP_DUP)),
+                (OP_DUP, OP_SWAP) => Some(Some(OP_DUP)),
                 (OP_0, OP_PUT) => Some(Some(OP_NIP)),
                 (OP_1, OP_PICK) => Some(Some(OP_OVER)),
                 (OP_0, OP_ROLL) | (OP_SWAP, OP_SWAP) => Some(None),
@@ -29,6 +30,7 @@ pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
                 (OP_1 | "1", OP_ADD) => Some(Some(OP_1ADD)),
                 (OP_1 | "1", OP_1ADD) => Some(Some(OP_2)),
                 (OP_EQUAL, OP_VERIFY) => Some(Some(OP_EQUALVERIFY)),
+                (OP_DUP, OP_EQUALVERIFY) => Some(Some(OP_DROP)),
                 (OP_CHECKSIG, OP_VERIFY) => Some(Some(OP_CHECKSIGVERIFY)),
                 _ => None,
             };
@@ -62,6 +64,10 @@ mod tests {
         assert_eq!(
             optimize([OP_VERIFY, OP_1, OP_NIP, OP_1].map(String::from).to_vec()),
             [OP_VERIFY, OP_1, OP_NIP, OP_1]
+        );
+        assert_eq!(
+            optimize(["<x>", OP_0, OP_PICK, OP_SWAP].map(String::from).to_vec()),
+            ["<x>", OP_DUP]
         );
     }
 
@@ -100,6 +106,18 @@ mod tests {
                     .to_vec()
             ),
             [OP_EQUAL, OP_NIP]
+        );
+        assert_eq!(
+            optimize(
+                [OP_DUP, OP_EQUAL, OP_VERIFY, "<next>"]
+                    .map(String::from)
+                    .to_vec()
+            ),
+            [OP_DROP, "<next>"]
+        );
+        assert_eq!(
+            optimize([OP_DUP, OP_EQUAL].map(String::from).to_vec()),
+            [OP_DUP, OP_EQUAL]
         );
     }
 
