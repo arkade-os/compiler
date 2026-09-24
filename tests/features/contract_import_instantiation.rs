@@ -1,12 +1,20 @@
 fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Box<dyn std::error::Error>> {
-    arkade_compiler::compile_sources("main.ark", &[
+    let files = [
         ("main.ark", source),
         ("single_sig.ark", "contract SingleSig(pubkey owner, int exit) {}"),
         ("htlc.ark", "contract HTLC(pubkey sender, pubkey receiver, bytes hash, int refundTime, int exit) {}"),
         ("random_num.ark", "contract RandomNum() {}"),
         ("time_locked.ark", "contract TimeLocked(pubkey owner, int exit) {}"),
         ("threshold_oracle.ark", "contract ThresholdOracle(pubkey[3] owners) {}"),
-    ].into_iter().map(|(path, code)| (path.to_string(), code.to_string())).collect())
+    ]
+    .into_iter()
+    .map(|(path, code)| (path.to_string(), code.to_string()))
+    .collect();
+    arkade_compiler::compile_sources_with_options(
+        "main.ark",
+        &files,
+        arkade_compiler::CompileOptions { optimize: false },
+    )
 }
 
 use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm, leaf_asm_tokens};

@@ -37,6 +37,7 @@ mod expr;
 mod functions;
 mod introspection;
 mod loops;
+mod optimization;
 
 pub(crate) use asset::*;
 pub(crate) use comparison::*;
@@ -801,6 +802,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     crate::imports::compile_sources(
         "main.ark",
         &std::collections::BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
+        crate::CompileOptions::default(),
     )
 }
 
@@ -849,6 +851,7 @@ pub(crate) fn emit(
     contract: &Contract,
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
+    options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let parameters = contract.parameters.clone();
 
@@ -882,6 +885,14 @@ pub(crate) fn emit(
     }
 
     json.functions = tapscript::build_function_groups(contract, covenants)?;
+
+    if options.optimize {
+        for group in &mut json.functions {
+            if let Some(covenant) = &mut group.arkade {
+                covenant.asm = optimization::optimize(std::mem::take(&mut covenant.asm));
+            }
+        }
+    }
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.

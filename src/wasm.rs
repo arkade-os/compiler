@@ -53,6 +53,6 @@ pub fn validate(source: &str) -> Result<bool, String> {
 #[wasm_bindgen]
 pub fn compile_sources(entry: &str, files: &str) -> Result<String, String> {
     let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
-    let output = crate::imports::compile_sources(entry, &files)?;
+    let output = crate::imports::compile_sources(entry, &files, Default::default())?;
     serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))
 }

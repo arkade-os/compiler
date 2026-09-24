@@ -14,6 +14,7 @@ struct Module {
 pub(crate) fn compile_sources(
     entry: &str,
     files: &BTreeMap<String, String>,
+    options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let entry = relative_path(entry)?;
     let mut normalized = BTreeMap::new();
@@ -31,6 +32,7 @@ pub(crate) fn compile_sources(
             ))
         },
         false,
+        options,
     )
 }
 
@@ -41,6 +43,7 @@ pub(crate) fn compile_file(path: &Path) -> Result<ContractJson, String> {
         &entry,
         |path| std::fs::read_to_string(path).map_err(|e| format!("cannot read '{path}': {e}")),
         true,
+        crate::CompileOptions::default(),
     )
 }
 
@@ -99,6 +102,7 @@ fn compile_with_loader(
     entry: &str,
     mut read: impl FnMut(&str) -> Result<String, String>,
     filesystem: bool,
+    options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let mut modules = BTreeMap::new();
     let mut files = BTreeMap::new();
@@ -161,7 +165,7 @@ fn compile_with_loader(
                 .map(move |warning| format!("{warning} ({path})"))
         })
         .collect();
-    compiler::emit(&root.contract, bundle, warnings)
+    compiler::emit(&root.contract, bundle, warnings, options)
 }
 
 fn load(

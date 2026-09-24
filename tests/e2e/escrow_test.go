@@ -205,7 +205,7 @@ func TestCompiledEscrow(t *testing.T) {
 				{Value: amount, PkScript: p2trTo(partyBProgram)},
 			}
 			requireVMResult(
-				t, refund(cancel, 0, toPartyB), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(cancel, 0, toPartyB), emulatorKey.PubKey(), "false stack entry",
 			)
 		})
 

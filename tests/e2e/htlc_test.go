@@ -51,7 +51,7 @@ func TestCompiledHTLC(t *testing.T) {
 				requireVMResult(t, valid, emulatorKey.PubKey(), "")
 
 				underfunded := spendingPSBT(t, prevTx, group, 9_999, group.pkScript)
-				requireVMResult(t, underfunded, emulatorKey.PubKey(), "OP_VERIFY failed")
+				requireVMResult(t, underfunded, emulatorKey.PubKey(), "false stack entry")
 			})
 		}
 	})

@@ -47,7 +47,7 @@ func TestCompiledCounterRecursion(t *testing.T) {
 		underfunded := spendingPSBT(
 			t, first.UnsignedTx, counter, 19_999, counter.pkScript, counterPacket(t, 3),
 		)
-		requireVMResult(t, underfunded, emulatorKey.PubKey(), "OP_VERIFY failed")
+		requireVMResult(t, underfunded, emulatorKey.PubKey(), "false stack entry")
 	})
 
 	t.Run("tapscript", func(t *testing.T) {
