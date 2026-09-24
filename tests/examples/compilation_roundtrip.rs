@@ -134,7 +134,7 @@ fn roundtrip_nft_mint() {
             .inputs
             .iter()
             .any(|input| input.name == destination && input.param_type == "bytes"));
-        assert!(!arkade.asm.iter().any(|op| op.contains("VTXO:SingleSig")));
+        assert!(!arkade.asm.iter().any(|op| op.contains("CONTRACT:SingleSig")));
     }
 }
 

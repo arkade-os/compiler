@@ -161,7 +161,7 @@ fn test_endpoint_receive_emits_receive_marker_output() {
     let output = compile(&code).unwrap();
     let receive = covenant(&output, "receive");
 
-    let has_receive_marker = receive.iter().any(|s| s.contains("VTXO:ReceiveMarker("));
+    let has_receive_marker = receive.iter().any(|s| s.contains("CONTRACT:ReceiveMarker("));
     assert!(
         has_receive_marker,
         "endpoint.receive() must pin output[1] to the canonical ReceiveMarker pkScript: {:?}",
@@ -294,7 +294,7 @@ fn test_oapp_send_emits_send_marker() {
         .expect("missing send spend group");
     let send = send_group.arkade.as_ref().unwrap().asm.as_slice();
 
-    let has_send_marker = send.iter().any(|s| s.contains("VTXO:SendMarker("));
+    let has_send_marker = send.iter().any(|s| s.contains("CONTRACT:SendMarker("));
     assert!(
         has_send_marker,
         "oapp.send() must pin output[1] to the canonical SendMarker pkScript"

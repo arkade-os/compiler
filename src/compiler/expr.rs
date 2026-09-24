@@ -434,7 +434,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
 
 /// Emit assembly for a contract instantiation: `new ContractName(arg1, arg2, ...)`
 ///
-/// Produces a single placeholder token `<VTXO:ContractName(<arg1>,<arg2>)>` that
+/// Produces a single placeholder token `<CONTRACT:ContractName(<arg1>,<arg2>)>` that
 /// the runtime resolves to the 32-byte Taproot witness program (the output key)
 /// of the named contract instantiated with the given constructor arguments.
 /// It is compared against a witness program, not a serialized 34-byte P2TR
@@ -450,7 +450,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
 /// ```
 /// compiles to:
 /// ```text
-/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <CONTRACT:SingleSig(<ownerPk>)> OP_EQUAL
 /// ```
 pub(crate) fn emit_contract_instance_asm(
     contract_name: &str,
@@ -472,7 +472,7 @@ pub(crate) fn emit_contract_instance_asm(
         .collect::<Vec<_>>()
         .join(",");
 
-    asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
+    asm.push(format!("<CONTRACT:{}({})>", contract_name, args_str));
 }
 
 /// Emit assembly for arithmetic or a short-circuit logical operation.

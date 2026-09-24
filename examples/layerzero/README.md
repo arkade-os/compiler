@@ -80,7 +80,7 @@ expressed in Arkade:
 |---|---|---|
 | DVN 2-of-2 signature over the canonical receive hash | `require(checkSigFromStack(dvn*Sig, dvn*Pk, attestedHash))` | `OP_CHECKSIGFROMSTACK` |
 | Endpoint/OApp state continuation | `tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + `OP_PUSHCURRENTINPUTINDEX` + `OP_INSPECTINPUTSCRIPTPUBKEY` |
-| Marker output pinning | `tx.outputs[1].scriptPubKey == new ReceiveMarker(…)` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + VTXO placeholder |
+| Marker output pinning | `tx.outputs[1].scriptPubKey == new ReceiveMarker(…)` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + contract placeholder |
 | Marker mint (1 unit) | `tx.outputs[i].assets.lookup(marker) == 1` + `group.sumOutputs == 1` | `OP_INSPECTOUTASSETLOOKUP`, `OP_INSPECTASSETGROUPSUM` |
 | Marker burn | `group.sumOutputs == 0` | same |
 | USDT0 delta == credited amount | `usdt0Group.delta == bin2num(substr(packet, off, 8))` | `OP_INSPECTASSETGROUPSUM`, `OP_SUBSTR`, `OP_BIN2NUM` |

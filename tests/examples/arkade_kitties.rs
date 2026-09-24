@@ -160,7 +160,7 @@ fn test_transfer_uses_owner_authorized_destination_script() {
         .any(|token| token == OP_INSPECTOUTPUTSCRIPTPUBKEY));
     assert!(transfer.asm.iter().any(|token| token == OP_CHECKSIG));
     assert!(
-        !transfer.asm.iter().any(|token| token.starts_with("<VTXO:")),
+        !transfer.asm.iter().any(|token| token.starts_with("<CONTRACT:")),
         "transfer destination must be read from the owner-authorized function input"
     );
 }
