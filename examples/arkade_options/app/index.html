@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arkade Options</title>
+  <meta name="theme-color" content="#12140f">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="desk.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Arkade Options</h1>
+      <p class="sub">Cash-settled covered calls and limited puts. Settlement price is a three-median TWAP.</p>
+    </div>
+    <p class="spot"><span id="spot-source">BTC/USD</span> <strong id="spot-px">Loading</strong></p>
+  </header>
+
+  <main>
+    <section class="book" aria-label="Build an option">
+      <div class="control-row">
+        <div class="seg" role="group" aria-label="Your side">
+          <button type="button" id="side-sell" aria-pressed="true">Sell</button>
+          <button type="button" id="side-buy" aria-pressed="false">Buy</button>
+        </div>
+        <div class="seg" role="group" aria-label="Contract">
+          <button type="button" id="kind-call" aria-pressed="true">Covered call</button>
+          <button type="button" id="kind-put" aria-pressed="false">Limited put</button>
+        </div>
+      </div>
+      <p id="kind-copy" class="copy"></p>
+
+      <div class="field">
+        <div class="field-label">
+          <span>Expiry</span>
+          <span id="expiry-when"></span>
+        </div>
+        <div class="seg" role="group" aria-label="Expiry">
+          <button type="button" data-days="7">7 days</button>
+          <button type="button" data-days="30" aria-pressed="true">30 days</button>
+          <button type="button" data-days="90">90 days</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">
+          <span>Strike</span>
+          <span>Five listed strikes</span>
+        </div>
+        <div id="strikes" class="strikes" role="radiogroup" aria-label="Strike"></div>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="size">Notional</label>
+        <div class="size-row">
+          <input id="size" inputmode="decimal" autocomplete="off" spellcheck="false" value="0.10" aria-describedby="size-error">
+          <span>BTC</span>
+        </div>
+        <p id="size-error" class="error" role="status"></p>
+      </div>
+
+      <figure class="payoff">
+        <figcaption>Holder payoff in BTC, if this strike settled along the curve</figcaption>
+        <div id="payoff"></div>
+      </figure>
+    </section>
+
+    <aside class="ticket" aria-live="polite">
+      <p class="ticket-kicker" id="ticket-kicker">Quote</p>
+      <p class="premium" id="premium">—</p>
+      <p class="premium-meta" id="premium-meta"></p>
+      <div id="quotes" class="quotes"></div>
+      <p class="lock-note" id="lock-note"></p>
+      <label class="miss">
+        <input id="miss" type="checkbox">
+        Desk does not fill
+      </label>
+      <button type="button" class="lock" id="lock" disabled>Lock collateral</button>
+      <p class="status" id="status"></p>
+    </aside>
+
+    <section class="blotter" aria-label="Positions">
+      <div class="field-label">
+        <h2>Positions</h2>
+        <span id="blotter-count"></span>
+      </div>
+      <div id="blotter"></div>
+      <p id="artifact" class="artifact"></p>
+    </section>
+  </main>
+  <script type="module" src="desk.js"></script>
+</body>
+</html>
