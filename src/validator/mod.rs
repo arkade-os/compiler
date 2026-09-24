@@ -2058,7 +2058,9 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 .asm
                 .iter()
                 .take_while(|token| {
-                    token.starts_with('<') && token.ends_with('>') && !token.starts_with("<CONTRACT:")
+                    token.starts_with('<')
+                        && token.ends_with('>')
+                        && !token.starts_with("<CONTRACT:")
                 })
                 .collect::<Vec<_>>();
             let retained_names = prologue

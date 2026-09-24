@@ -161,7 +161,9 @@ fn test_endpoint_receive_emits_receive_marker_output() {
     let output = compile(&code).unwrap();
     let receive = covenant(&output, "receive");
 
-    let has_receive_marker = receive.iter().any(|s| s.contains("CONTRACT:ReceiveMarker("));
+    let has_receive_marker = receive
+        .iter()
+        .any(|s| s.contains("CONTRACT:ReceiveMarker("));
     assert!(
         has_receive_marker,
         "endpoint.receive() must pin output[1] to the canonical ReceiveMarker pkScript: {:?}",

@@ -530,7 +530,10 @@ fn vtxo_placeholder_is_always_resolved() {
         "OP_EQUAL".to_string(),
     ];
     let warnings = local_check_placeholder_consistency(&asm, &[], &[]);
-    let orphan: Vec<_> = warnings.iter().filter(|w| w.contains("CONTRACT:")).collect();
+    let orphan: Vec<_> = warnings
+        .iter()
+        .filter(|w| w.contains("CONTRACT:"))
+        .collect();
     assert!(
         orphan.is_empty(),
         "<CONTRACT:...> placeholders must never be flagged as unresolvable"
