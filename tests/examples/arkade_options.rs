@@ -15,15 +15,6 @@ fn compile(path: &str) -> arkade_compiler::models::ContractJson {
 #[test]
 fn vault_settles_from_nine_oracle_signatures_and_stack_arithmetic() {
     let out = compile("examples/arkade_options/option_vault.ark");
-    assert_eq!(
-        out.preconditions,
-        [
-            "kind == 0 || kind == 1",
-            "strike > 0 && strike <= PRICE_MAX",
-            "collateral > DUST && collateral <= Q_MAX",
-            "expiry > 1800",
-        ]
-    );
     assert_eq!(out.name, "OptionVault");
     let names: Vec<&str> = out.functions.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, ["settle", "close", "unilateral"]);

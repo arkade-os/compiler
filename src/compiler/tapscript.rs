@@ -875,7 +875,6 @@ mod tests {
             tapscripts,
             imports: vec![],
             constants: vec![],
-            invariants: vec![],
         }
     }
 

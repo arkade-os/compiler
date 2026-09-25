@@ -240,11 +240,6 @@ pub struct ContractJson {
     pub updated_at: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
-    /// Constructor predicates. They are not spend-path script. A fully constant
-    /// predicate is checked while compiling the template; one that names a
-    /// constructor parameter is checked by `check_constructor_args`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preconditions: Vec<String>,
 }
 
 /// Original files needed to reproduce a compilation without filesystem access.
@@ -283,17 +278,6 @@ pub struct Contract {
     pub imports: Vec<String>,
     /// Compile-time constants declared in the contract body.
     pub constants: Vec<Constant>,
-    /// `require` statements on the contract body. They constrain constructor
-    /// parameters and constants, and are not compiled into a spend function.
-    pub invariants: Vec<Invariant>,
-}
-
-/// A constructor `require`. `text` is the source predicate.
-#[derive(Debug, Clone)]
-pub struct Invariant {
-    pub text: String,
-    pub message: String,
-    pub requirement: Requirement,
 }
 
 /// A compile-time constant, folded into every use site before validation.

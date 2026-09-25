@@ -41,12 +41,6 @@ contract OptionVault(
 ) {
   const int DUST = 330;
   const int PRICE_MAX = 1000000000;
-  const int Q_MAX = 1000000000;
-
-  require(kind == 0 || kind == 1, "kind");
-  require(strike > 0 && strike <= PRICE_MAX, "strike");
-  require(collateral > DUST && collateral <= Q_MAX, "collateral");
-  require(expiry > 1800, "expiry");
 
   private function median3(int a, int b, int c) int {
     if (a <= b && b <= c) { return b; }

@@ -26,7 +26,7 @@ struct_field = { data_type ~ identifier ~ ";" }
 contract = {
     "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
-    "{" ~ (const_decl | require_stmt | function)* ~ "}"
+    "{" ~ (const_decl | function)* ~ "}"
 }
 
 library = {

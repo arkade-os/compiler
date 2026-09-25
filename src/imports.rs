@@ -271,7 +271,6 @@ fn load(
             })?;
         }
         compiler::fold_constants(&mut contract)?;
-        compiler::check_invariants(&mut contract)?;
         visible_contracts.insert(contract.name.clone(), &contract);
         validate_scope(&contract, &visible_structs, &visible_contracts)?;
         let mut structs: BTreeMap<_, _> = contract
