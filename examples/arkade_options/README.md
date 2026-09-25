@@ -12,6 +12,23 @@ python3 -m http.server 8765 --directory examples/arkade_options
 
 Open `http://127.0.0.1:8765/app/`.
 
+## Deploy
+
+The page, the quotes, and the settlement math are static. Cloudflare Pages or GitHub Pages can host this folder. There is no oracle service to run.
+
+For Cloudflare Pages, leave the build command empty and set the build output directory to `examples/arkade_options`. Open `/app/`. `desk.js` loads `../artifacts/`, so the publish root is this folder.
+
+The playground workflow already publishes `playground/` to `gh-pages` and cleans that branch. Publish this folder as its own Pages site, or use the container below.
+
+From the repo root:
+
+```bash
+docker build -t arkade-options examples/arkade_options
+docker run --rm -p 8080:80 arkade-options
+```
+
+Open `http://127.0.0.1:8080/app/`. `/` redirects there. The image is nginx plus this folder, including the committed artifacts. It does not include the compiler.
+
 Sell or buy, pick a covered call or a limited put, choose one of five strikes and an expiry, enter a BTC notional, and take the best of three simulated desk quotes. Locking starts a 30-second intent. If the desk funds, the position opens. If it does not, the lock refunds when the clock passes. An open position settles from three oracle slices. "Pyth spikes the midpoint" shows the median dropping the bad print.
 
 The page keeps positions in `localStorage`. It does not broadcast to an operator. The numbers it shows are the same integer arithmetic as `option_vault.ark`. The script commitment is a SHA-256 of the terms, standing in for the vault's 32-byte witness program until an SDK session builds the real output script.
