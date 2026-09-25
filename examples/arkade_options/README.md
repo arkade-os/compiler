@@ -16,4 +16,4 @@ A covered call pays the holder `Q * (ST - K) / ST` when `ST > K`, and 0 otherwis
 
 `settle`, `close`, and `unilateral` are on the vault. `close` needs the writer and the holder. `unilateral` is the writer's CSV.
 
-The desk that quotes these contracts is [arkade-os/arkade-options](https://github.com/arkade-os/arkade-options).
+The desk that quotes these contracts belongs in the `arkade-options` repository, outside this tree.
