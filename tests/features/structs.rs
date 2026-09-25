@@ -327,7 +327,7 @@ contract C(Point point) {
         .as_ref()
         .expect("covenant")
         .asm
-        .contains(&"<VTXO:C(<point.x>,<point.y>)>".to_string()));
+        .contains(&"<CONTRACT:C(<point.x>,<point.y>)>".to_string()));
 }
 
 #[test]

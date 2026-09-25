@@ -298,7 +298,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
         asm.windows(4).any(|window| {
             window[0] == OP_1
                 && window[1] == OP_ROLL
-                && window[2].contains("VTXO:SingleSig(")
+                && window[2].contains("CONTRACT:SingleSig(")
                 && window[3] == OP_EQUAL
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"

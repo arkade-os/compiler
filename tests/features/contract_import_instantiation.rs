@@ -94,7 +94,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_new_expression_asm_output() {
-    // Verify the covenant ASM contains the scriptPubKey check and VTXO placeholder.
+    // Verify the covenant ASM contains the scriptPubKey check and contract placeholder.
     let code = r#"
 import "single_sig.ark";
 
@@ -115,10 +115,10 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         send_asm
     );
 
-    // Must contain the VTXO placeholder with the correct contract name and args
+    // Must contain the contract placeholder with the correct contract name and args
     assert!(
-        send_asm.contains("VTXO:SingleSig") && send_asm.contains("<ownerPk>"),
-        "Missing VTXO:SingleSig(<ownerPk>,...) placeholder in {:?}",
+        send_asm.contains("CONTRACT:SingleSig") && send_asm.contains("<ownerPk>"),
+        "Missing CONTRACT:SingleSig(<ownerPk>,...) placeholder in {:?}",
         send_asm
     );
 
@@ -149,8 +149,8 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
     let forward_asm = arkade_asm(&result, "forward");
     let vtxo_op = arkade_asm_tokens(&result, "forward")
         .into_iter()
-        .find(|op| op.contains("VTXO:HTLC"))
-        .expect("No VTXO:HTLC placeholder in ASM");
+        .find(|op| op.contains("CONTRACT:HTLC"))
+        .expect("No CONTRACT:HTLC placeholder in ASM");
 
     assert!(
         vtxo_op.contains("<sender>"),
@@ -205,8 +205,8 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         send_leaf
     );
     assert!(
-        !send_leaf.contains("VTXO:"),
-        "Default leaf must NOT contain VTXO placeholder, got {:?}",
+        !send_leaf.contains("CONTRACT:"),
+        "Default leaf must NOT contain contract placeholder, got {:?}",
         send_leaf
     );
     // Explicit CSV exits require a named tapscript leaf.
@@ -216,7 +216,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 fn test_cooperative_path_asm_order() {
     // Verify exact covenant ASM (arkade) for 'send'. The OP_DROP discards the
     // witness version that OP_INSPECTOUTPUTSCRIPTPUBKEY pushes above the program:
-    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <VTXO:SingleSig(<ownerPk>,<exit>)> OP_EQUAL
+    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <CONTRACT:SingleSig(<ownerPk>,<exit>)> OP_EQUAL
     // And verify exact default-leaf ASM:
     //   <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:send> OP_CHECKSIG
     let code = r#"
@@ -238,7 +238,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
         "OP_DROP",
-        "<VTXO:SingleSig(<ownerPk>,<exit>)>",
+        "<CONTRACT:SingleSig(<ownerPk>,<exit>)>",
         "OP_EQUAL",
         "OP_VERIFY",
         "OP_1",
@@ -280,7 +280,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // Default leaf: server+emulator cosig guard — no introspection, no VTXO, no CSV
+    // Default leaf: server+emulator cosig guard — no introspection, no contract placeholder, no CSV
     let expected_leaf: Vec<&str> = vec![
         "<SERVER_KEY>",
         "OP_CHECKSIGVERIFY",
@@ -299,7 +299,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_placeholder_format() {
-    // The VTXO placeholder format is `<VTXO:ContractName(<arg1>,<arg2>)>`.
+    // The contract placeholder format is `<CONTRACT:ContractName(<arg1>,<arg2>)>`.
     // Variable args are wrapped in `<>`; literals are not.
     let code = r#"
 import "single_sig.ark";
@@ -315,11 +315,11 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     let vtxo_op = arkade_asm_tokens(&result, "send")
         .into_iter()
-        .find(|op| op.contains("VTXO:"))
-        .expect("No VTXO placeholder in arkade ASM");
+        .find(|op| op.contains("CONTRACT:"))
+        .expect("No contract placeholder in arkade ASM");
 
     assert_eq!(
-        vtxo_op, "<VTXO:SingleSig(<ownerPk>,<exit>)>",
+        vtxo_op, "<CONTRACT:SingleSig(<ownerPk>,<exit>)>",
         "Unexpected placeholder format: {}",
         vtxo_op
     );
@@ -351,8 +351,8 @@ contract SpendChecker(pubkey ownerPk, int exit) {
     );
 
     assert!(
-        check_asm.contains("VTXO:SingleSig"),
-        "Missing VTXO:SingleSig placeholder in {:?}",
+        check_asm.contains("CONTRACT:SingleSig"),
+        "Missing CONTRACT:SingleSig placeholder in {:?}",
         check_asm
     );
 }
@@ -362,7 +362,7 @@ contract SpendChecker(pubkey ownerPk, int exit) {
 #[test]
 fn test_zero_arg_constructor_compiles() {
     // Grammar marks constructor_args as optional, so new ContractName() with no
-    // arguments must be accepted and produce an empty-arg VTXO placeholder.
+    // arguments must be accepted and produce an empty-arg contract placeholder.
     let code = r#"
 import "random_num.ark";
 
@@ -378,8 +378,8 @@ contract ZeroArgUser(pubkey ownerPk) {
     let spend_asm = arkade_asm(&result, "spend");
     // Zero-arg placeholder must use empty parens, not omit them.
     assert!(
-        spend_asm.contains("<VTXO:RandomNum()>"),
-        "Expected <VTXO:RandomNum()> placeholder in {:?}",
+        spend_asm.contains("<CONTRACT:RandomNum()>"),
+        "Expected <CONTRACT:RandomNum()> placeholder in {:?}",
         spend_asm
     );
 }
@@ -404,8 +404,8 @@ contract TimedForwarder(pubkey ownerPk) {
 
     let vtxo_op = arkade_asm_tokens(&result, "forward")
         .into_iter()
-        .find(|op| op.contains("VTXO:TimeLocked"))
-        .expect("No VTXO:TimeLocked placeholder in ASM");
+        .find(|op| op.contains("CONTRACT:TimeLocked"))
+        .expect("No CONTRACT:TimeLocked placeholder in ASM");
 
     // Variable arg is wrapped in angle brackets; literal is not.
     assert!(
@@ -461,11 +461,11 @@ contract Forwarder(pubkey[3] owners) {
     let output = compile(code).expect("array constructor argument");
     let placeholder = arkade_asm_tokens(&output, "forward")
         .into_iter()
-        .find(|token| token.starts_with("<VTXO:"))
-        .expect("VTXO placeholder");
+        .find(|token| token.starts_with("<CONTRACT:"))
+        .expect("contract placeholder");
     assert_eq!(
         placeholder,
-        "<VTXO:ThresholdOracle(<owners.0>,<owners.1>,<owners.2>)>"
+        "<CONTRACT:ThresholdOracle(<owners.0>,<owners.1>,<owners.2>)>"
     );
 }
 
@@ -493,17 +493,17 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 
     // Both placeholders must appear in the covenant ASM.
     assert!(
-        split_asm.contains("VTXO:SingleSig") && split_asm.contains("<alicePk>"),
-        "Missing VTXO:SingleSig(<alicePk>,...) in {:?}",
+        split_asm.contains("CONTRACT:SingleSig") && split_asm.contains("<alicePk>"),
+        "Missing CONTRACT:SingleSig(<alicePk>,...) in {:?}",
         split_asm
     );
     assert!(
-        split_asm.contains("VTXO:SingleSig") && split_asm.contains("<bobPk>"),
-        "Missing VTXO:SingleSig(<bobPk>,...) in {:?}",
+        split_asm.contains("CONTRACT:SingleSig") && split_asm.contains("<bobPk>"),
+        "Missing CONTRACT:SingleSig(<bobPk>,...) in {:?}",
         split_asm
     );
 
-    // The synthesized default leaf has no introspection opcodes and no VTXO placeholders.
+    // The synthesized default leaf has no introspection opcodes and no contract placeholders.
     let split_leaf = leaf_asm(&result, "split", "split");
     assert!(
         split_leaf.contains("OP_CHECKSIG") || split_leaf.contains("OP_CHECKSIGVERIFY"),
@@ -511,8 +511,8 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
         split_leaf
     );
     assert!(
-        !split_leaf.contains("VTXO:"),
-        "Default leaf must not contain VTXO placeholders, got {:?}",
+        !split_leaf.contains("CONTRACT:"),
+        "Default leaf must not contain contract placeholders, got {:?}",
         split_leaf
     );
 }
@@ -540,8 +540,8 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
 
     // Both checks present in covenant ASM.
     assert!(
-        send_asm.contains("VTXO:SingleSig"),
-        "Covenant ASM missing VTXO placeholder in {:?}",
+        send_asm.contains("CONTRACT:SingleSig"),
+        "Covenant ASM missing contract placeholder in {:?}",
         send_asm
     );
     assert!(
@@ -581,8 +581,8 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
         send_leaf
     );
     assert!(
-        !send_leaf.contains("VTXO:"),
-        "Default leaf must not contain VTXO placeholders, got {:?}",
+        !send_leaf.contains("CONTRACT:"),
+        "Default leaf must not contain contract placeholders, got {:?}",
         send_leaf
     );
     // Explicit CSV exits require a named tapscript leaf.
@@ -626,8 +626,8 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
         forward_leaf
     );
     assert!(
-        !forward_leaf.contains("VTXO:"),
-        "forward() default leaf must not contain VTXO placeholders, got {:?}",
+        !forward_leaf.contains("CONTRACT:"),
+        "forward() default leaf must not contain contract placeholders, got {:?}",
         forward_leaf
     );
 
@@ -639,8 +639,8 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
         spend_asm
     );
     assert!(
-        !spend_asm.contains("VTXO:"),
-        "spend() covenant must not have VTXO placeholders, got {:?}",
+        !spend_asm.contains("CONTRACT:"),
+        "spend() covenant must not have contract placeholders, got {:?}",
         spend_asm
     );
 
@@ -674,8 +674,8 @@ contract SelfEnforcing(pubkey ownerPk, int exit) {
 
     let renew_asm = arkade_asm(&result, "renew");
     assert!(
-        renew_asm.contains("VTXO:SingleSig"),
-        "Missing VTXO:SingleSig placeholder in {:?}",
+        renew_asm.contains("CONTRACT:SingleSig"),
+        "Missing CONTRACT:SingleSig placeholder in {:?}",
         renew_asm
     );
 
@@ -687,8 +687,8 @@ contract SelfEnforcing(pubkey ownerPk, int exit) {
         renew_leaf
     );
     assert!(
-        !renew_leaf.contains("VTXO:"),
-        "Default leaf must not contain VTXO, got {:?}",
+        !renew_leaf.contains("CONTRACT:"),
+        "Default leaf must not contain a contract placeholder, got {:?}",
         renew_leaf
     );
 }
@@ -713,8 +713,8 @@ contract SelfRef(pubkey ownerPk) {
 
     let renew_asm = arkade_asm(&result, "renew");
     assert!(
-        renew_asm.contains("VTXO:SelfRef(<ownerPk>)"),
-        "Missing VTXO:SelfRef(<ownerPk>) in {:?}",
+        renew_asm.contains("CONTRACT:SelfRef(<ownerPk>)"),
+        "Missing CONTRACT:SelfRef(<ownerPk>) in {:?}",
         renew_asm
     );
 }

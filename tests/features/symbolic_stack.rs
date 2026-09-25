@@ -492,7 +492,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
         let baseline = covenant(&source.replace("int unused, Policy unusedPolicy, ", "").replace(", int unusedTail", ""), "spend");
         assert_eq!(actual.asm, baseline.asm, "{body}");
         if body.contains("new Child") {
-            assert!(actual.asm.contains(&"<VTXO:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
+            assert!(actual.asm.contains(&"<CONTRACT:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
         }
     }
 }

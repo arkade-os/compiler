@@ -469,7 +469,7 @@ impl Generator {
         if let Some(array) = token.strip_prefix(INTERNAL_ARRAY_INDEX_PREFIX) {
             return self.select_indexed_value(array);
         }
-        if token.starts_with("<VTXO:") {
+        if token.starts_with("<CONTRACT:") {
             let mut token = token.to_string();
             for (array, elements) in &self.constructor_array_expansions {
                 token = token.replace(array, elements);

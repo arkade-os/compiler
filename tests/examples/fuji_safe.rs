@@ -92,7 +92,7 @@ fn test_fuji_safe_contract() {
             "renew",
             "<borrowerBurnScript>",
             concat!(
-                "<VTXO:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
+                "<CONTRACT:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
                 "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,<exit>,",
                 "<treasuryBurnScript>,<borrowerBurnScript>)>"
             ),
