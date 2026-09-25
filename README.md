@@ -88,7 +88,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 }
 ```
 
-`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<CONTRACT:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's Taproot scriptPubKey at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<CONTRACT:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's 32-byte Taproot output key (witness program) at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -518,7 +518,7 @@ Type-check and validation warnings identify their source file relative to the bu
 
 `constructorInputs`, `arkade.inputs`, and `witness` describe the source ABI, not the physical stack. Clients expand an array entry `oracles` of type `pubkey[3]` into `oracles.0`, `oracles.1`, `oracles.2`, and a struct entry into its scalar leaves in field order, recursively, using dotted paths such as `policy.primary.key`.
 
-Clients serialize covenant inputs in reverse `arkade.inputs` order. Every covenant `asm` opens with one `<name>` placeholder per expanded constructor input, also reversed, which instantiation replaces with data pushes before the covenant hash is computed. The VM installs the function witness first, so constructor values sit above function inputs; the body reaches everything through `OP_PICK` and friends and never emits function inputs as placeholders. After instantiation the only remaining placeholders are `<CONTRACT:Contract(<a>,<b>)>` tokens, which the runtime resolves to the child contract's scriptPubKey.
+Clients serialize covenant inputs in reverse `arkade.inputs` order. Every covenant `asm` opens with one `<name>` placeholder per expanded constructor input, also reversed, which instantiation replaces with data pushes before the covenant hash is computed. The VM installs the function witness first, so constructor values sit above function inputs; the body reaches everything through `OP_PICK` and friends and never emits function inputs as placeholders. After instantiation the only remaining placeholders are `<CONTRACT:Contract(<a>,<b>)>` tokens, which the runtime resolves to the child contract's 32-byte Taproot output key (witness program).
 
 ## Security
 
