@@ -32,6 +32,14 @@ const projects = {
             'cash_secured_put.ark': contracts.cash_secured_put,
         }
     },
+    arkade_options: {
+        name: 'Cash-settled options',
+        description: 'Covered call and limited put settled from a three-median oracle TWAP',
+        files: {
+            'option_vault.ark': contracts.option_vault,
+            'option_intent.ark': contracts.option_intent,
+        }
+    },
     bonds: {
         name: 'Bonds',
         description: "Fixed-maturity bond market with a phased lifecycle: borrowers self-issue 1:1 credit + debit tokens against collateral and sell credit on the order book for USDT (no interest rate); permissionless oracle-priced margin call (pre-maturity, fires when collateralValue < liqThresholdBps × mintedAmount / 10000) keeps every vault thresholded healthy so credit tokens are genuinely fungible; post-maturity auction window settles defaulted collateral; credit holders redeem pro-rata into single-sig wallets",

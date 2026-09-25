@@ -36,8 +36,6 @@ Cargo.lock
 # Canonical skills are stored in `.agents/skills`.
 # Track compatibility symlinks separately (`.claude/skills`, `.codex/skills`).
 
-# Generated compiler artifacts — never commit ABI/bytecode outputs.
-# The options desk is the exception: the page loads these two files.
+# Generated compiler artifacts — never commit ABI/bytecode outputs
 examples/**/*.json
-!examples/arkade_options/artifacts/*.json
 examples/**/*.hack
