@@ -176,9 +176,7 @@ const arkadeCompletions = [
     S('checkMultisig', 'Function', 'checkMultisig([${1:keys}], [${2:sigs}], ${3:threshold})', 'Verify multiple signatures'),
     S('checkSigFromStack', 'Function', 'checkSigFromStack(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message'),
     S('checkSigFromStackVerify', 'Function', 'checkSigFromStackVerify(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message or fail'),
-    S('checkTime', 'Function', 'checkTime(${1:time})', 'Require the transaction time to have reached a value'),
-    S('older', 'Function', 'older(${1:delay})', 'Relative CSV timelock'),
-    S('after', 'Function', 'after(${1:locktime})', 'Absolute CLTV timelock'),
+    S('checkTime', 'Function', 'checkTime(${1:timestamp})', 'Require the transaction time to have reached a timestamp'),
     S('tweak', 'Function', 'tweak(${1:emulator}, ${2:functionName})', 'Tweaked emulator key'),
     S('sha256', 'Function', 'sha256(${1:data})', 'SHA256 hash'),
     S('hash256', 'Function', 'hash256(${1:data}) == ${2:hash}', 'Double SHA256 comparison'),
@@ -187,12 +185,12 @@ const arkadeCompletions = [
     S('sha256Initialize', 'Function', 'sha256Initialize(${1:data})', 'Start a streaming SHA256'),
     S('sha256Update', 'Function', 'sha256Update(${1:ctx}, ${2:chunk})', 'Update a streaming SHA256'),
     S('sha256Finalize', 'Function', 'sha256Finalize(${1:ctx}, ${2:lastChunk})', 'Finish a streaming SHA256'),
-    S('digest', 'Function', 'digest(${1:data}, ${2:ctx})', 'Digest'),
-    S('sighash', 'Function', 'sighash(${1:type})', 'Transaction sighash'),
+    S('digest', 'Function', 'digest(${1:data}, ${2:hashType})', 'Hash selected by hash type (20 or 32 bytes)'),
+    S('sighash', 'Function', 'sighash(${1:hashType})', 'Transaction sighash'),
     S('modExp', 'Function', 'modExp(${1:base}, ${2:exponent}, ${3:modulus})', 'Modular exponentiation'),
-    S('ecAdd', 'Function', 'ecAdd(${1:a}, ${2:b}, ${3:c}, ${4:d}, ${5:e})', 'EC point addition'),
-    S('ecMul', 'Function', 'ecMul(${1:a}, ${2:b}, ${3:c}, ${4:d})', 'EC scalar multiplication'),
-    S('ecPairing', 'Function', 'ecPairing(${1:a}, ${2:b}, ${3:c}, ${4:d}, ${5:e}, ${6:f}, ${7:g})', 'EC pairing check'),
+    S('ecAdd', 'Function', 'ecAdd(${1:x1}, ${2:y1}, ${3:x2}, ${4:y2}, ${5:curveId})', 'EC point addition'),
+    S('ecMul', 'Function', 'ecMul(${1:x}, ${2:y}, ${3:scalar}, ${4:curveId})', 'EC scalar multiplication'),
+    S('ecPairing', 'Function', 'ecPairing(${1:g1X}, ${2:g1Y}, ${3:g2Xc1}, ${4:g2Xc0}, ${5:g2Yc1}, ${6:g2Yc0}, ${7:curveId})', 'EC pairing check'),
     S('ecMulScalarVerify', 'Function', 'ecMulScalarVerify(${1:k}, ${2:P}, ${3:Q})', 'Verify Q = k·P'),
     S('tweakVerify', 'Function', 'tweakVerify(${1:P}, ${2:k}, ${3:Q})', 'Verify Q = P + k·G'),
     S('substr', 'Function', 'substr(${1:data}, ${2:offset}, ${3:size})', 'Byte slice'),
@@ -233,53 +231,39 @@ const arkadeMembers = {
         prop('activeInputIndex', 'Index of the input being spent'),
         prop('activeBytecode', 'Script being executed'),
         prop('expiry', 'Contract expiry'),
-        method('tunnel', '${1:contract}', 'Carry the contract into an output'),
+        method('tunnel', '${1:outputIndex}', 'Carry the contract into an output'),
     ],
 };
 arkadeMembers['tx.outputs[].assets'] = arkadeMembers['tx.inputs[].assets'];
 arkadeMembers['tx.outputs[].assets[]'] = arkadeMembers['tx.inputs[].assets[]'];
 
-const notTypes = new Set(['return', 'else', 'new', 'in', 'let', 'const', 'import', 'function', 'contract', 'library', 'struct', 'tapscript']);
+const symbolKinds = { struct: 'Struct', contract: 'Class', library: 'Module', function: 'Function', constant: 'Constant', parameter: 'Variable', variable: 'Variable' };
+const symbolItem = s => S(s.name, symbolKinds[s.kind], s.kind === 'function' ? `${s.name}($1)` : s.name, s.type ? `${s.kind}: ${s.type}` : s.kind);
 
-// ponytail: regex scan of the whole file, not a parse — ignores scopes and imported files; switch to the WASM parser if that becomes misleading.
-function arkadeDocumentSymbols(text) {
-    const code = text.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-    const structs = {}, vars = {}, items = [];
-    for (const [, name, body] of code.matchAll(/\bstruct\s+([A-Za-z]\w*)\s*\{([^}]*)\}/g)) {
-        structs[name] = [...body.matchAll(/([A-Za-z]\w*(?:\[[^\]]*\])?)\s+([A-Za-z]\w*)\s*;/g)].map(([, type, field]) => prop(field, type));
-        items.push(S(name, 'Struct', name, 'struct'));
+// Completions for the cursor: `before` is the line up to the word being typed, `table` the
+// compiler's symbol table (or null before it is available) and `line` the 1-based cursor line.
+function arkadeComplete(before, table, line) {
+    const { symbols = [], structs = [], members = {} } = table || {};
+    const visible = new Map();
+    for (const symbol of symbols) {
+        if (!symbol.scope || (symbol.scope[0] <= line && line <= symbol.scope[1])) visible.set(symbol.name, symbol);
     }
-    for (const [, kind, name] of code.matchAll(/\b(contract|library)\s+([A-Za-z]\w*)/g)) items.push(S(name, 'Class', name, kind));
-    for (const [, name] of code.matchAll(/\bfunction\s+([A-Za-z]\w*)/g)) items.push(S(name, 'Function', `${name}($1)`, 'function'));
-    for (const [, type, dims, name] of code.matchAll(/\b([A-Za-z]\w*)(\[[^\]]*\])?\s+([A-Za-z]\w*)\s*(?=[,);=])/g)) {
-        if (!notTypes.has(type)) vars[name] = type + (dims || '');
-    }
-    for (const [, name, value] of code.matchAll(/\blet\s+([A-Za-z]\w*)\s*=\s*([^;]*)/g)) {
-        vars[name] = /^tx\s*\.\s*assetGroups\s*(\.\s*find|\[)/.test(value) ? 'assetGroup' : 'let';
-    }
-    for (const [, index, item] of code.matchAll(/\bfor\s*\(\s*([A-Za-z]\w*)\s*,\s*([A-Za-z]\w*)\s*\)/g)) {
-        vars[index] = 'int';
-        vars[item] = 'item';
-    }
-    for (const [name, type] of Object.entries(vars)) items.push(S(name, 'Variable', name, type));
-    return { items, structs, vars };
-}
-
-// Completions for the cursor position: `before` is the line up to the start of the word being typed.
-function arkadeComplete(before, text) {
-    const chain = before.replace(/\[[^\][]*\]/g, '[]').match(/([A-Za-z]\w*(?:\[\])*(?:\s*\.\s*[A-Za-z]\w*(?:\[\])*)*)\s*\.\s*$/);
-    const symbols = arkadeDocumentSymbols(text);
+    let flat = before;
+    while (flat !== (flat = flat.replace(/\[[^\][]*\]/g, '<>')));
+    const chain = flat.replaceAll('<>', '[]').match(/([A-Za-z]\w*(?:\[\])*(?:\s*\.\s*[A-Za-z]\w*(?:\[\])*)*)\s*\.\s*$/);
     if (!chain) {
-        const seen = new Set(arkadeCompletions.map(item => item.label));
-        return [...arkadeCompletions, ...symbols.items.filter(item => !seen.has(item.label) && seen.add(item.label))];
+        const builtins = new Set(arkadeCompletions.map(item => item.label));
+        return [...arkadeCompletions, ...[...visible.values()].filter(s => !builtins.has(s.name)).map(symbolItem)];
     }
     const path = chain[1].replace(/\s+/g, '');
     if (arkadeMembers[path]) return arkadeMembers[path];
+    if (members[path]) return members[path].map(symbolItem);
     const [, name, indexed] = path.match(/^(\w+)(\[\])?$/) || [];
-    const type = symbols.vars[name] || '';
+    const type = visible.get(name)?.type || '';
     if (type === 'assetGroup' && !indexed) return [...groupProps, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
     if (type.endsWith(']') && !indexed) return [prop('length', 'Array length')];
-    return symbols.structs[type.replace(/\[.*$/, '')] || [];
+    const struct = structs.find(s => s.name === type.replace(/\[.*$/, ''));
+    return struct ? struct.fields.map(field => prop(field.name, field.type)) : [];
 }
 
 // Export all parts

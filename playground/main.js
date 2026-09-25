@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { compile_sources, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1202,7 +1202,8 @@ function initMonaco() {
                     endColumn: position.column
                 };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
-                const suggestions = window.arkadeComplete(before, model.getValue()).map(item => ({
+                const table = symbolTable(position.lineNumber);
+                const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
@@ -1282,6 +1283,11 @@ function markCompiled() {
 
 function compilationSources() {
     saveCurrentFile();
+    return sourceFiles();
+}
+
+// Every playground source, with the editor's text as the current entry.
+function sourceFiles() {
     const files = {};
     for (const [id, project] of Object.entries(projects)) {
         for (const [name, source] of Object.entries(project.files)) {
@@ -1300,6 +1306,24 @@ function compilationSources() {
         : examplePaths[currentFile] || `_examples/${currentFile || 'main'}.ark`;
     files[entry] = editor.getValue();
     return { entry, files };
+}
+
+// Symbols of the current file per entry path, from the last source that parsed.
+const lastSymbols = {};
+
+// The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
+function symbolTable(lineNumber) {
+    if (!wasmReady) return null;
+    let entry;
+    try {
+        const sources = sourceFiles();
+        entry = sources.entry;
+        const lines = sources.files[entry].split('\n');
+        lines[lineNumber - 1] = '';
+        sources.files[entry] = lines.join('\n');
+        lastSymbols[entry] = JSON.parse(symbols(entry, JSON.stringify(sources.files)));
+    } catch {}
+    return lastSymbols[entry] || null;
 }
 
 // Compile the source code

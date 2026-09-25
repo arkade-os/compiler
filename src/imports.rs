@@ -17,13 +17,7 @@ pub(crate) fn compile_sources(
     options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let entry = relative_path(entry)?;
-    let mut normalized = BTreeMap::new();
-    for (path, source) in files {
-        let path = relative_path(path)?;
-        if normalized.insert(path.clone(), source.clone()).is_some() {
-            return Err(format!("duplicate source path '{path}'"));
-        }
-    }
+    let normalized = normalize_files(files)?;
     compile_with_loader(
         &entry,
         |path| {
@@ -34,6 +28,58 @@ pub(crate) fn compile_sources(
         false,
         options,
     )
+}
+
+#[cfg(any(feature = "wasm", test))]
+/// Completion symbols for `entry`: its own declarations, plus the structs,
+/// contracts, libraries, constants and exported functions of its direct imports.
+pub(crate) fn source_symbols(
+    entry: &str,
+    files: &BTreeMap<String, String>,
+) -> Result<serde_json::Value, String> {
+    let entry = relative_path(entry)?;
+    let files = normalize_files(files)?;
+    let source = files
+        .get(&entry)
+        .ok_or_else(|| format!("source file '{entry}' not found"))?;
+    let (mut symbols, mut structs) = parser::symbols(source)?;
+    let mut members: BTreeMap<String, Vec<parser::Symbol>> = BTreeMap::new();
+    for import in parser::imports(source)? {
+        // Imports that are missing or do not parse contribute nothing.
+        let path = import_path(&entry, &import)?;
+        let Some(Ok((imported, imported_structs))) = files.get(&path).map(|s| parser::symbols(s))
+        else {
+            continue;
+        };
+        structs.extend(imported_structs);
+        let owner = imported
+            .iter()
+            .find(|s| matches!(s.kind, "contract" | "library"))
+            .map(|s| s.name.clone());
+        for mut symbol in imported {
+            symbol.file = Some(path.clone());
+            match (symbol.kind, &owner) {
+                ("struct" | "contract" | "library", _) => symbols.push(symbol),
+                ("constant", Some(owner)) => members.entry(owner.clone()).or_default().push(symbol),
+                ("function", Some(owner)) if symbol.exported => {
+                    members.entry(owner.clone()).or_default().push(symbol)
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(serde_json::json!({ "symbols": symbols, "structs": structs, "members": members }))
+}
+
+fn normalize_files(files: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    let mut normalized = BTreeMap::new();
+    for (path, source) in files {
+        let path = relative_path(path)?;
+        if normalized.insert(path.clone(), source.clone()).is_some() {
+            return Err(format!("duplicate source path '{path}'"));
+        }
+    }
+    Ok(normalized)
 }
 
 pub(crate) fn compile_file(path: &Path) -> Result<ContractJson, String> {
@@ -561,4 +607,78 @@ fn visit_expression(
         visit_expression(child, visit)?;
     }
     visit(expr)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn source_symbols_scope_locals_and_expose_direct_imports() {
+        let main = r#"import "fees.ark";
+struct Point { int x; }
+contract Vault(Point[2] points, pubkey owner) {
+    function spend(signature sig, bytes32 txid) {
+        let group = tx.assetGroups.find(txid, 0);
+        for (i, point) in points {
+            int total = point.x;
+        }
+        require(checkSig(sig, owner));
+    }
+    function exit() {
+        require(tx.time >= Fees.DELAY);
+    }
+}"#;
+        let fees = r#"import "deep.ark";
+struct Policy { int maximum; }
+library Fees {
+    const int DELAY = 144;
+    function calculate(int amount) int { return amount * 2; }
+    private function hidden(int amount) int { return amount; }
+}"#;
+        let files = [
+            ("./main.ark", main),
+            ("fees.ark", fees),
+            ("deep.ark", "struct Hidden { int x; }"),
+        ]
+        .into_iter()
+        .map(|(path, source)| (path.to_string(), source.to_string()))
+        .collect();
+        let output = super::source_symbols("main.ark", &files).unwrap();
+        assert_eq!(
+            output["symbols"],
+            json!([
+                { "name": "Point", "kind": "struct", "position": [2, 8] },
+                { "name": "Vault", "kind": "contract", "position": [3, 10] },
+                { "name": "points", "kind": "parameter", "type": "Point[2]", "position": [3, 25] },
+                { "name": "owner", "kind": "parameter", "type": "pubkey", "position": [3, 40] },
+                { "name": "spend", "kind": "function", "position": [4, 14] },
+                { "name": "sig", "kind": "parameter", "type": "signature", "position": [4, 30], "scope": [4, 10] },
+                { "name": "txid", "kind": "parameter", "type": "bytes32", "position": [4, 43], "scope": [4, 10] },
+                { "name": "group", "kind": "variable", "type": "assetGroup", "position": [5, 13], "scope": [4, 10] },
+                { "name": "i", "kind": "variable", "type": "int", "position": [6, 14], "scope": [4, 10] },
+                { "name": "point", "kind": "variable", "type": "Point", "position": [6, 17], "scope": [4, 10] },
+                { "name": "total", "kind": "variable", "type": "int", "position": [7, 17], "scope": [4, 10] },
+                { "name": "exit", "kind": "function", "position": [11, 14] },
+                { "name": "Policy", "kind": "struct", "position": [2, 8], "file": "fees.ark" },
+                { "name": "Fees", "kind": "library", "position": [3, 9], "file": "fees.ark" },
+            ])
+        );
+        assert_eq!(
+            output["members"],
+            json!({ "Fees": [
+                { "name": "DELAY", "kind": "constant", "type": "int", "position": [4, 15], "file": "fees.ark" },
+                { "name": "calculate", "kind": "function", "type": "int", "position": [5, 14], "file": "fees.ark" },
+            ] })
+        );
+        assert_eq!(
+            output["structs"],
+            json!([
+                { "name": "Point", "fields": [{ "name": "x", "type": "int" }] },
+                { "name": "Policy", "fields": [{ "name": "maximum", "type": "int" }] },
+            ])
+        );
+        let broken = [("main.ark".to_string(), "contract A( {".to_string())].into();
+        assert!(super::source_symbols("main.ark", &broken).is_err());
+    }
 }
