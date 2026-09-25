@@ -72,6 +72,16 @@ impl Default for CompileOptions {
 /// let json = serde_json::to_string_pretty(&result.unwrap()).unwrap();
 /// println!("{}", json);
 /// ```
+/// Evaluate contract-body `require` predicates against concrete constructor
+/// integers. Constant predicates are checked while compiling; predicates that
+/// name constructor parameters are checked here, where the values exist.
+///
+/// Spend scripts do not repeat these checks. A coin locked to the resulting
+/// script already carries the agreed parameters.
+pub fn check_constructor_args(source_code: &str, args: &[(&str, i64)]) -> Result<(), String> {
+    compiler::check_constructor_args(source_code, args)
+}
+
 pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Error>> {
     compiler::compile(source_code).map_err(Into::into)
 }

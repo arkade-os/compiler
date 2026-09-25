@@ -368,12 +368,24 @@ fn resolve_expression(
 /// Currently non-fatal — the compiler emits these as warnings.
 pub fn check_contract(contract: &Contract) -> Vec<TypeError> {
     let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
-    contract
-        .functions
-        .iter()
-        .filter(|f| !f.is_imported())
-        .flat_map(|f| check_function(f, &constructor_scope, &contract.structs))
-        .collect()
+    let mut errors = constructor_require_errors(contract);
+    errors.extend(
+        contract
+            .functions
+            .iter()
+            .filter(|f| !f.is_imported())
+            .flat_map(|f| check_function(f, &constructor_scope, &contract.structs)),
+    );
+    errors
+}
+
+pub(crate) fn constructor_require_errors(contract: &Contract) -> Vec<TypeError> {
+    let scope = build_scope_with_structs(&contract.parameters, &contract.structs);
+    let mut errors = Vec::new();
+    for invariant in &contract.invariants {
+        check_requirement(&invariant.requirement, &scope, &mut errors, "constructor");
+    }
+    errors
 }
 
 fn check_function(

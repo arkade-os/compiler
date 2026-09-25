@@ -64,6 +64,7 @@ fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, Str
         tapscripts: Vec::new(),
         imports: Vec::new(),
         constants: constants.to_vec(),
+        invariants: Vec::new(),
     };
 
     for pair in pairs {
@@ -162,6 +163,14 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
             }),
     );
 
+    if !contract.is_library {
+        contract.invariants = inner_pairs
+            .clone()
+            .filter(|pair| pair.as_rule() == Rule::require_stmt)
+            .map(|pair| parse_invariant(pair, &parsing_constants))
+            .collect::<Result<Vec<_>, _>>()?;
+    }
+
     // Functions (covenant) and tapscript declarations share the `function` rule;
     // a tapscript carries a `tapscript_block` body.
     for func_pair in inner_pairs {
@@ -180,6 +189,44 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
         }
     }
     Ok(())
+}
+
+fn parse_invariant(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<crate::models::Invariant, String> {
+    let mut inner = pair.into_inner();
+    let expr = inner
+        .next()
+        .ok_or("constructor require is missing a condition")?;
+    let text = expr.as_str().to_string();
+    let requirement = match parse_complex_expression(expr, constants)? {
+        crate::models::Requirement::Expression(expression) => {
+            crate::models::Requirement::Expression(expression)
+        }
+        crate::models::Requirement::Comparison { left, op, right } => {
+            crate::models::Requirement::Expression(crate::models::Expression::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            })
+        }
+        _ => {
+            return Err(
+                "constructor require must be a predicate over constants and constructor parameters"
+                    .to_string(),
+            );
+        }
+    };
+    let message = match inner.next() {
+        Some(message) => parse_string_literal(message.as_str())?,
+        None => text.clone(),
+    };
+    Ok(crate::models::Invariant {
+        text,
+        message,
+        requirement,
+    })
 }
 
 fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {

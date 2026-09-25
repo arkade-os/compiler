@@ -2295,6 +2295,7 @@ contract Demo() {
             tapscripts: Vec::new(),
             imports: vec![],
             constants: vec![],
+            invariants: vec![],
         }
     }
 
@@ -2408,6 +2409,7 @@ contract Demo() {
             compiler: None,
             updated_at: None,
             warnings: vec![],
+            preconditions: vec![],
         }
     }
 

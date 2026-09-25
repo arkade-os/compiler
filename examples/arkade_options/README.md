@@ -12,6 +12,8 @@ Each print is the median of three distinct oracle signatures over `sha256("BTCUS
 
 A covered call pays the holder `Q * (ST - K) / ST` when `ST > K`, and 0 otherwise. A limited put pays `min(Q, Q * (K - ST) / ST)` when `ST < K`. Prices are USD cents. `Q` and payoffs are sats. A leg of 330 sats or less is folded into the other output.
 
+`kind`, `strike`, `collateral`, and `expiry` are constructor parameters, so they are fixed in the script that locks the coins. Contract-body `require` checks them when those values are supplied to `check_constructor_args`. Spend paths do not repeat them.
+
 `option_intent.ark` is the RFQ lock, in the shape of `examples/non_interactive_swap/`. The user locks coins, `finalize` pays the other side before the deadline, and `cancel` refunds the user once `checkTime(deadline)` is true.
 
 `settle`, `close`, and `unilateral` are on the vault. `close` needs the writer and the holder. `unilateral` is the writer's CSV.

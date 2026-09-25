@@ -7,6 +7,9 @@ use std::collections::HashMap;
 /// Runs before validation so no later stage ever observes a constant identifier.
 pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
     let values = collect(contract)?;
+    for invariant in &mut contract.invariants {
+        fold_requirement(&mut invariant.requirement, &values);
+    }
     for parameter in contract
         .parameters
         .iter_mut()
@@ -440,6 +443,108 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
     }
 }
 
+const SYMBOLIC: &str = "symbolic constructor parameter";
+
+enum Judgement {
+    True,
+    False,
+    Symbolic,
+}
+
+pub(crate) fn check_invariants(contract: &mut Contract) -> Result<(), String> {
+    let errors = crate::typechecker::constructor_require_errors(contract);
+    if !errors.is_empty() {
+        return Err(errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+    let parameters = contract.parameters.clone();
+    let mut kept = Vec::new();
+    for invariant in contract.invariants.drain(..) {
+        match judge(&invariant.requirement, &|name| {
+            symbolic_resolve(&parameters, name)
+        })? {
+            Judgement::True => {}
+            Judgement::False => {
+                return Err(format!("constructor require failed: {}", invariant.message));
+            }
+            Judgement::Symbolic => kept.push(invariant),
+        }
+    }
+    contract.invariants = kept;
+    Ok(())
+}
+
+pub(crate) fn check_constructor_args(source: &str, args: &[(&str, i64)]) -> Result<(), String> {
+    let mut contract = crate::parser::parse_with_constants(source, &[])?;
+    fold(&mut contract)?;
+    check_invariants(&mut contract)?;
+    let parameters = contract.parameters.clone();
+    for invariant in &contract.invariants {
+        match judge(&invariant.requirement, &|name| {
+            concrete_resolve(&parameters, args, name)
+        })? {
+            Judgement::True => {}
+            Judgement::False => {
+                return Err(format!("constructor require failed: {}", invariant.message));
+            }
+            Judgement::Symbolic => {
+                return Err(format!(
+                    "constructor require '{}' depends on an unknown value",
+                    invariant.text
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn judge(
+    requirement: &Requirement,
+    resolve: &impl Fn(&str) -> Result<String, String>,
+) -> Result<Judgement, String> {
+    let Requirement::Expression(expression) = requirement else {
+        return Err(
+            "constructor require must be a predicate over constants and constructor parameters"
+                .to_string(),
+        );
+    };
+    match evaluate(expression, &mut |name| resolve(name)) {
+        Ok(value) if value == "true" => Ok(Judgement::True),
+        Ok(value) if value == "false" => Ok(Judgement::False),
+        Ok(value) => Err(format!("constructor require must be bool, got '{value}'")),
+        Err(err) if err == SYMBOLIC => Ok(Judgement::Symbolic),
+        Err(err) => Err(err),
+    }
+}
+
+fn symbolic_resolve(parameters: &[crate::models::Parameter], name: &str) -> Result<String, String> {
+    match parameters.iter().find(|parameter| parameter.name == name) {
+        Some(parameter) if parameter.param_type == "int" => Err(SYMBOLIC.to_string()),
+        Some(parameter) => Err(format!(
+            "constructor require cannot use {} parameter '{}'",
+            parameter.param_type, parameter.name
+        )),
+        None => Err(format!("constructor require references unknown '{name}'")),
+    }
+}
+
+fn concrete_resolve(
+    parameters: &[crate::models::Parameter],
+    args: &[(&str, i64)],
+    name: &str,
+) -> Result<String, String> {
+    if let Some((_, value)) = args.iter().find(|(parameter, _)| *parameter == name) {
+        return Ok(value.to_string());
+    }
+    if parameters.iter().any(|parameter| parameter.name == name) {
+        return Err(format!("missing constructor argument '{name}'"));
+    }
+    Err(format!("constructor require references unknown '{name}'"))
+}
+
 fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
     if let Some(value) = values.get(name).filter(|value| value.starts_with("0x")) {
         *name = value.clone();
@@ -449,5 +554,30 @@ fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
         if let Some(value) = values.get(index) {
             *name = format!("{array}[{value}]");
         }
+    }
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use crate::{check_constructor_args, compile};
+
+    #[test]
+    fn constant_constructor_require_rejects_a_false_predicate() {
+        let err = compile(
+            "contract T(int n) { require(1 == 0, \"no\"); function spend() { require(n > 0); } }",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("constructor require failed: no"), "{err}");
+    }
+
+    #[test]
+    fn constructor_args_check_the_parameter_predicate() {
+        let source = "contract T(int kind) { require(kind == 0 || kind == 1, \"kind\"); function spend() { require(true); } }";
+        let json = compile(source).unwrap();
+        assert_eq!(json.preconditions, ["kind == 0 || kind == 1"]);
+        assert!(check_constructor_args(source, &[("kind", 0)]).is_ok());
+        let err = check_constructor_args(source, &[("kind", 2)]).unwrap_err();
+        assert!(err.contains("constructor require failed: kind"), "{err}");
     }
 }

@@ -32,7 +32,9 @@ mod asset;
 mod comparison;
 mod concat;
 mod constants;
-pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
+pub(crate) use constants::{
+    check_constructor_args, check_invariants, fold as fold_constants, resolve as resolve_constants,
+};
 mod expr;
 mod functions;
 mod introspection;
@@ -867,6 +869,11 @@ pub(crate) fn emit(
         }),
         updated_at: Some(Utc::now().to_rfc3339()),
         warnings,
+        preconditions: contract
+            .invariants
+            .iter()
+            .map(|invariant| invariant.text.clone())
+            .collect(),
     };
 
     // Build covenant objects for public functions.
