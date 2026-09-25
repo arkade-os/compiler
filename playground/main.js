@@ -1192,19 +1192,23 @@ function initMonaco() {
 
         // Register completions
         monaco.languages.registerCompletionItemProvider('arkade', {
+            triggerCharacters: ['.'],
             provideCompletionItems: (model, position) => {
-                const suggestions = window.arkadeCompletions.map(item => ({
+                const word = model.getWordUntilPosition(position);
+                const range = {
+                    startLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                };
+                const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
+                const suggestions = window.arkadeComplete(before, model.getValue()).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
-                    insertTextRules: item.insertTextRules ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                    insertTextRules: item.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
                     detail: item.detail || '',
-                    range: {
-                        startLineNumber: position.lineNumber,
-                        startColumn: position.column,
-                        endLineNumber: position.lineNumber,
-                        endColumn: position.column
-                    }
+                    range
                 }));
                 return { suggestions };
             }
