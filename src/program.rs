@@ -2,9 +2,9 @@
 //!
 //! [`program_from_artifact`] walks the same leaves as the TypeScript SDK's
 //! `programFromArtifact`: one spend path per compiler leaf, constructor
-//! parameters flattened through structs, and `<VTXO:...>` placeholders turned
-//! into parameters the caller binds to a child program. Call this instead of
-//! parsing the artifact again.
+//! parameters flattened through structs, and `<VTXO:...>` / `<CONTRACT:...>`
+//! placeholders turned into parameters the caller binds to a child program.
+//! Call this instead of parsing the artifact again.
 //!
 //! The value keeps the compiler's own types ([`ValueType::Bytes32`] stays
 //! distinct from a 20-byte hash) and canonical `OP_` names. The emulator
@@ -104,7 +104,7 @@ pub enum AsmToken {
     Opcode(String),
     Number(i64),
     Bytes(Vec<u8>),
-    /// Flattened placeholder name, including a `<VTXO:...>` parameter.
+    /// Flattened placeholder name, including a child-output parameter.
     Param(String),
 }
 
@@ -152,8 +152,10 @@ pub struct Function {
 
 /// Parse a compiled artifact into a [`Program`].
 ///
-/// Always appends a `server` pubkey parameter. `<VTXO:...>` placeholders become
-/// extra `bytes32` parameters in the order they appear.
+/// Always appends a `server` pubkey parameter. `<VTXO:...>` and `<CONTRACT:...>`
+/// are the same child-output placeholder and become extra `bytes32` parameters
+/// in the order they appear. The name keeps the `vtxo_` prefix so either
+/// spelling binds the same argument.
 pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String> {
     if artifact.functions.is_empty() {
         return Err(err(
@@ -329,12 +331,16 @@ fn witness_extras(
     Ok(extras)
 }
 
-/// `<VTXO:SingleSig(<sellerPk>,<exit>)>` → `vtxo_SingleSig_sellerPk_exit`.
-fn instantiation_param(token: &str) -> String {
-    let body = token
-        .strip_prefix("<VTXO:")
-        .and_then(|rest| rest.strip_suffix('>'))
-        .unwrap_or("");
+/// Body of `<VTXO:...>` or `<CONTRACT:...>`. Both tags are the child-output placeholder.
+fn instantiation_body(token: &str) -> Option<&str> {
+    let inner = placeholder(token)?;
+    inner
+        .strip_prefix("VTXO:")
+        .or_else(|| inner.strip_prefix("CONTRACT:"))
+}
+
+/// `SingleSig(<sellerPk>,<exit>)` → `vtxo_SingleSig_sellerPk_exit`.
+fn instantiation_param(body: &str) -> String {
     let mut collapsed = String::new();
     let mut pending_separator = false;
     for ch in body.chars() {
@@ -361,16 +367,16 @@ struct Instantiations {
 }
 
 impl Instantiations {
-    fn remember(&mut self, token: &str) -> Result<String, String> {
-        let name = instantiation_param(token);
+    fn remember(&mut self, body: &str) -> Result<String, String> {
+        let name = instantiation_param(body);
         if let Some((_, seen)) = self.entries.iter().find(|(existing, _)| existing == &name) {
-            if seen != token {
+            if seen != body {
                 return Err(err(format!(
-                    "instantiations '{seen}' and '{token}' both map to parameter '{name}'"
+                    "instantiations '{seen}' and '{body}' both map to parameter '{name}'"
                 )));
             }
         } else {
-            self.entries.push((name.clone(), token.to_string()));
+            self.entries.push((name.clone(), body.to_string()));
         }
         Ok(name)
     }
@@ -384,8 +390,8 @@ fn asm_token(token: &str, instantiations: &mut Instantiations) -> Result<AsmToke
         if inner.is_empty() {
             return Err(err(format!("unrecognized assembly token '{token}'")));
         }
-        if inner.starts_with("VTXO:") {
-            return Ok(AsmToken::Param(instantiations.remember(token)?));
+        if let Some(body) = instantiation_body(token) {
+            return Ok(AsmToken::Param(instantiations.remember(body)?));
         }
         if inner == "SERVER_KEY" || inner.starts_with("EMULATOR_KEY:") {
             return Err(err(format!(
@@ -745,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn vtxo_placeholder_becomes_a_bytes32_parameter() {
+    fn child_output_placeholder_becomes_a_bytes32_parameter() {
         let files = [
             (
                 "single_sig.ark",
@@ -767,6 +773,11 @@ mod tests {
         .map(|(path, source)| (path.to_string(), source.to_string()))
         .collect();
         let artifact = crate::compile_sources("main.ark", &files).unwrap();
+        let emitted = &artifact.functions[0].arkade.as_ref().unwrap().asm;
+        assert!(
+            emitted.iter().any(|token| token.starts_with("<CONTRACT:")),
+            "compiler emits <CONTRACT:...>, got {emitted:?}"
+        );
         let program = program_from_artifact(&artifact).unwrap();
         let send = program.function("send").unwrap();
         let vtxo = "vtxo_SingleSig_ownerPk_exit";
@@ -930,7 +941,7 @@ mod tests {
             "constructorInputs": [],
             "functions": [{
                 "name": "spend",
-                "arkade": {"inputs": [], "asm": ["<VTXO:A-B>", "<VTXO:A_B>"]},
+                "arkade": {"inputs": [], "asm": ["<CONTRACT:A-B>", "<VTXO:A_B>"]},
                 "leaves": [{
                     "name": "spend",
                     "witness": [],
@@ -940,7 +951,7 @@ mod tests {
         }"#;
         assert_eq!(
             program_from_json(collision).unwrap_err(),
-            "program_from_artifact: instantiations '<VTXO:A-B>' and '<VTXO:A_B>' both map to parameter 'vtxo_A_B'"
+            "program_from_artifact: instantiations 'A-B' and 'A_B' both map to parameter 'vtxo_A_B'"
         );
     }
 
@@ -1008,10 +1019,42 @@ mod tests {
     #[test]
     fn instantiation_param_collapses_like_the_sdk() {
         assert_eq!(
-            instantiation_param("<VTXO:SingleSig(<sellerPk>,<exit>)>"),
+            instantiation_param("SingleSig(<sellerPk>,<exit>)"),
             "vtxo_SingleSig_sellerPk_exit"
         );
-        assert_eq!(instantiation_param("<VTXO:A-B>"), "vtxo_A_B");
-        assert_eq!(instantiation_param("<VTXO:___>"), "vtxo");
+        assert_eq!(instantiation_param("A-B"), "vtxo_A_B");
+        assert_eq!(instantiation_param("___"), "vtxo");
+        assert_eq!(
+            instantiation_body("<CONTRACT:SingleSig(<owner>)>"),
+            instantiation_body("<VTXO:SingleSig(<owner>)>")
+        );
+    }
+
+    #[test]
+    fn contract_and_vtxo_spellings_share_one_parameter() {
+        let json = r#"{
+            "contractName": "Demo",
+            "constructorInputs": [{"name": "owner", "type": "pubkey"}],
+            "functions": [{
+                "name": "spend",
+                "arkade": {
+                    "inputs": [],
+                    "asm": ["<CONTRACT:SingleSig(<owner>)>", "<VTXO:SingleSig(<owner>)>", "OP_DROP"]
+                },
+                "leaves": [{
+                    "name": "spend",
+                    "witness": [],
+                    "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:spend>", "OP_CHECKSIG"]
+                }]
+            }]
+        }"#;
+        let program = program_from_json(json).unwrap();
+        let child: Vec<_> = program
+            .params
+            .iter()
+            .filter(|param| param.name.starts_with("vtxo_"))
+            .collect();
+        assert_eq!(child.len(), 1);
+        assert_eq!(child[0], &param("vtxo_SingleSig_owner", ValueType::Bytes32));
     }
 }
