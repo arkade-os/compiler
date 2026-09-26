@@ -1,7 +1,8 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CAT, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIV,
-    OP_MUL, OP_NOT, OP_NUM2BIN, OP_SHA256,
+    OP_DROP, OP_EQUAL, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTNUMINPUTS, OP_MUL, OP_NOT,
+    OP_NUM2BIN, OP_PUSHCURRENTINPUTINDEX, OP_SHA256,
 };
 use std::path::Path;
 
@@ -75,6 +76,24 @@ fn intent_finalize_and_cancel_are_opposite_clock_checks() {
     let cancel = arkade_asm_tokens(&out, "cancel").join(" ");
     assert!(
         finalize.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "{finalize}"
+    );
+    assert!(
+        finalize.contains(&format!("{OP_PUSHCURRENTINPUTINDEX} 0 OP_EQUALVERIFY")),
+        "{finalize}"
+    );
+    assert_eq!(
+        opcode_count_in_arkade(&out, "finalize", OP_INSPECTNUMINPUTS),
+        1
+    );
+    assert!(
+        finalize.contains(&format!("{OP_INSPECTNUMINPUTS} 2 OP_EQUALVERIFY")),
+        "{finalize}"
+    );
+    assert!(
+        finalize.contains(&format!(
+            "1 {OP_INSPECTINPUTSCRIPTPUBKEY} {OP_DROP} {OP_PUSHCURRENTINPUTINDEX} {OP_INSPECTINPUTSCRIPTPUBKEY} {OP_DROP} {OP_EQUAL} {OP_NOT} OP_VERIFY"
+        )),
         "{finalize}"
     );
     assert!(

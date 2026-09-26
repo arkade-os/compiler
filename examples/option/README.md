@@ -14,7 +14,7 @@ A covered call pays the holder `Q * (ST - K) / ST` when `ST > K`, and 0 otherwis
 
 `kind`, `strike`, `collateral`, and `expiry` are constructor parameters. Once coins are locked to the script those values are already agreed, so the spend paths do not check them again.
 
-`option_intent.ark` is the RFQ lock, in the shape of `examples/non_interactive_swap/`. The user locks coins, `finalize` pays the other side before the deadline, and `cancel` refunds the user once `checkTime(deadline)` is true.
+`option_intent.ark` is the RFQ lock, in the shape of `examples/non_interactive_swap/`. The user locks coins. `finalize` spends that coin as input 0 together with one funding input whose script is not this intent, and pays the other side before the deadline. `cancel` refunds the user once `checkTime(deadline)` is true, and that path allows only the intent input.
 
 `settle`, `close`, and `unilateral` are on the vault. `close` needs the writer and the holder. `unilateral` is the writer's CSV.
 
