@@ -65,3 +65,5 @@ jobs:
           clean: true
           clean-exclude: |
             pr-previews/
+            options/
+            options-previews/
