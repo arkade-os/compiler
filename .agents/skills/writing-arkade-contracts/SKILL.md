@@ -17,13 +17,15 @@ cargo run -- path/to/contract.ark -o /tmp/contract.json
 
 ## Model state and spend paths
 
-- Put committed state in constructor parameters and per-spend data in function parameters.
+- Put committed state in constructor parameters and per-spend data in function parameters. Declare those parameters in source order. A covenant witness is that list reversed; a tapscript witness follows the tapscript parameter list.
 - Propagate immutable constructor fields unchanged when recreating a state-bearing contract.
-- Construct the next state explicitly with `new ContractName(...)` and assert its output script and minimum value.
+- Construct the next state with `new ContractName(...)` and assert its output script and minimum value. `tx.outputs[i].scriptPubKey` is the 32-byte Taproot witness program, not the `5120…` script. `new` compiles to that same output key.
 - Use covenant `function name(...) { ... }` bodies for introspection and state-transition rules.
 - Use `function name(...) tapscript { ... }` only for L1 authorization, hashes, and timelocks supported by `src/compiler/tapscript.rs`.
 
-A covenant function with no matching tapscript gets a synthesized collaborative leaf using `server` and the function-tweaked `emulator` key. Add an explicit matching tapscript only when that authorization is insufficient.
+A covenant function with no matching tapscript gets a synthesized collaborative leaf using `server` and the function-tweaked `emulator` key. Add an explicit matching tapscript only when that authorization is insufficient. A tapscript that matches a function by name must sign bare `emulator` and must not call `tweak(emulator, ...)`.
+
+A leaf may sign `tweak(constructorPubkey, func)` so that key is bound to `func`'s covenant. Every tweaked key in one tapscript must name the same function.
 
 Add unilateral exit as a separate CSV tapscript when required:
 
@@ -51,14 +53,14 @@ Use `>=` for minimum funding assertions unless exact value is a genuine invarian
 
 ## Handle witnesses and time safely
 
-Keep function parameters in the order the spender must provide them.
-
 Reconstruct oracle messages with the exact field order and encoding used by the signer. Follow `examples/escrow/escrow.ark` or `examples/threshold_oracle/threshold_oracle.ark`.
 
 Do not mix time domains:
 
+- `checkTime(timestamp)` reads the emulator clock in Unix seconds and compiles to `OP_CHECKTIME`. Put it in `require`. The operator runs that clock and can accept the spend early. Offchain spends of the leaf are rebuilt with nLockTime 0, so `tx.time` does not enforce the same deadline.
 - Use `tx.time` for Bitcoin nLockTime/CLTV.
-- Use `checkTime(timestamp)` for the introspector wall clock. `tx.offchainTime` is gone.
+- `older(n)` pushes `n` as a CSV value. The compiler does not set the BIP68 seconds bit. Public arkd rejects a block-type sequence on an exit leaf, so an offchain exit passes `n` as that BIP68 seconds sequence. The counter starts when the output is mined, not when the virtual coin is created.
+- `tx.offchainTime` is gone.
 
 ```ark
 require(checkTime(oracleTime), "future-dated oracle");
