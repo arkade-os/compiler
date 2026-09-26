@@ -60,3 +60,11 @@ pub fn compile_sources(entry: &str, files: &str, optimize: Option<bool>) -> Resu
     let output = crate::imports::compile_sources(entry, &files, options)?;
     serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))
 }
+
+/// Completion symbols for `entry` in a virtual project. `files` is a JSON object
+/// mapping relative .ark paths to source text.
+#[wasm_bindgen]
+pub fn symbols(entry: &str, files: &str) -> Result<String, String> {
+    let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    Ok(crate::imports::source_symbols(entry, &files)?.to_string())
+}
