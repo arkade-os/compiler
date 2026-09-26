@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { compile_sources, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -24,12 +24,12 @@ const projects = {
             'send_marker.ark': contracts.send_marker,
         }
     },
-    options: {
-        name: 'Options',
-        description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
+    option: {
+        name: 'Option',
+        description: 'Cash-settled covered call and limited put. Settlement price is a three-median oracle TWAP',
         files: {
-            'covered_call.ark': contracts.covered_call,
-            'cash_secured_put.ark': contracts.cash_secured_put,
+            'option_vault.ark': contracts.option_vault,
+            'option_intent.ark': contracts.option_intent,
         }
     },
     bonds: {
@@ -1192,19 +1192,26 @@ function initMonaco() {
 
         // Register completions
         monaco.languages.registerCompletionItemProvider('arkade', {
+            triggerCharacters: ['.'],
             provideCompletionItems: (model, position) => {
-                const suggestions = window.arkadeCompletions.map(item => ({
+                const word = model.getWordUntilPosition(position);
+                const insert = {
+                    startLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                };
+                // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
+                const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
+                const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
+                const table = symbolTable(position.lineNumber);
+                const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
-                    insertTextRules: item.insertTextRules ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                    insertTextRules: item.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
                     detail: item.detail || '',
-                    range: {
-                        startLineNumber: position.lineNumber,
-                        startColumn: position.column,
-                        endLineNumber: position.lineNumber,
-                        endColumn: position.column
-                    }
+                    range
                 }));
                 return { suggestions };
             }
@@ -1228,7 +1235,8 @@ function initMonaco() {
             tabSize: 2,
             insertSpaces: true,
             folding: true,
-            bracketPairColorization: { enabled: true }
+            bracketPairColorization: { enabled: true },
+            suggest: { insertMode: 'replace' }
         });
 
         // Keyboard shortcut: Ctrl+Enter to compile
@@ -1278,6 +1286,11 @@ function markCompiled() {
 
 function compilationSources() {
     saveCurrentFile();
+    return sourceFiles();
+}
+
+// Every playground source, with the editor's text as the current entry.
+function sourceFiles() {
     const files = {};
     for (const [id, project] of Object.entries(projects)) {
         for (const [name, source] of Object.entries(project.files)) {
@@ -1296,6 +1309,24 @@ function compilationSources() {
         : examplePaths[currentFile] || `_examples/${currentFile || 'main'}.ark`;
     files[entry] = editor.getValue();
     return { entry, files };
+}
+
+// Symbols of the current file per entry path, from the last source that parsed.
+const lastSymbols = {};
+
+// The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
+function symbolTable(lineNumber) {
+    if (!wasmReady) return null;
+    let entry;
+    try {
+        const sources = sourceFiles();
+        entry = sources.entry;
+        const lines = sources.files[entry].split('\n');
+        lines[lineNumber - 1] = '';
+        sources.files[entry] = lines.join('\n');
+        lastSymbols[entry] = JSON.parse(symbols(entry, JSON.stringify(sources.files)));
+    } catch {}
+    return lastSymbols[entry] || null;
 }
 
 // Compile the source code
