@@ -134,7 +134,8 @@ const arkadeMonarch = {
     defaultToken: 'invalid',
     keywords: [...completionLabels('Keyword'), 'in'],
     typeKeywords: completionLabels('TypeParameter'),
-    builtinFunctions: completionLabels('Function'),
+    // Tapscript-only timelocks are highlighted but not offered as completions.
+    builtinFunctions: [...completionLabels('Function'), 'older', 'after'],
     implicitBindings: completionLabels('Variable'),
 
     tokenizer: {
@@ -146,7 +147,7 @@ const arkadeMonarch = {
             [/0x[0-9a-fA-F]*/, 'number.hex'],
             [/\d+/, 'number'],
             [/"(?:[^"\\]|\\.)*"/, 'string'],
-            [/[a-zA-Z_]\w*/, {
+            [/[a-zA-Z]\w*/, {
                 cases: {
                     '@keywords': 'keyword',
                     '@typeKeywords': 'type',
@@ -157,7 +158,7 @@ const arkadeMonarch = {
             }],
             [/[{}()\[\]]/, '@brackets'],
             [/[;,.:]/, 'delimiter'],
-            [/[=<>!&|^~+\-*\/%]+/, 'operator'],
+            [/[=<>!&|^~+\-*\/]+/, 'operator'],
         ]
     }
 };
