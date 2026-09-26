@@ -50,7 +50,14 @@ fn vault_settles_from_nine_oracle_signatures_and_stack_arithmetic() {
 fn vault_close_needs_both_parties_and_exit_is_the_writer_csv() {
     let out = compile("examples/option/option_vault.ark");
     assert_eq!(arkade_inputs(&out, "close"), ["writerSig", "holderSig"]);
-    assert!(opcode_count_in_arkade(&out, "close", OP_CHECKSIG) >= 1);
+    let close = arkade_asm_tokens(&out, "close");
+    let sigs = close
+        .iter()
+        .filter(|tok| tok.as_str() == OP_CHECKSIG || tok.as_str() == "OP_CHECKSIGVERIFY")
+        .count();
+    assert_eq!(sigs, 2, "{close:?}");
+    assert!(close.iter().any(|tok| tok == "<writerPk>"), "{close:?}");
+    assert!(close.iter().any(|tok| tok == "<holderPk>"), "{close:?}");
     let exit = leaf_asm(&out, "unilateral", "unilateral");
     assert!(exit.contains(OP_CHECKSEQUENCEVERIFY), "{exit}");
     assert!(exit.contains("<writerPk>"), "{exit}");

@@ -6,10 +6,13 @@ pragma arkade ^0.1.0;
 //
 // side 0, user is the writer: the coin is the notional Q. Finalize pays the
 // premium plus any sats above Q back to `userScript`, and at least Q to the
-// committed option script.
+// committed option script. The premium arrives on a second input.
 // side 1, user is the holder: the coin is the premium. Finalize pays that
 // premium to `solverScript`, at least Q to the option script, and any change
-// above dust back to `userScript`.
+// above dust back to `userScript`. The notional arrives on a second input.
+//
+// That funding input is input 1, and its script is not this intent. A second
+// copy of this script cannot reuse the same outputs.
 //
 // Finalize and cancel are mutually exclusive: finalize requires the deadline
 // has not been reached, cancel requires `checkTime(deadline)`.
@@ -29,6 +32,9 @@ contract OptionIntent(
 
   function finalize() {
     require(!checkTime(deadline), "expired");
+    require(this.activeInputIndex == 0, "intent input");
+    require(tx.numInputs == 2, "funding input");
+    require(tx.inputs[1].scriptPubKey != tx.input.current.scriptPubKey, "one intent");
     int locked = tx.input.current.value;
     if (side == 0) {
       require(locked >= collateral, "short collateral");
