@@ -1,0 +1,72 @@
+pragma arkade ^0.1.0;
+
+// 30-second RFQ lock. Same shape as NonInteractiveSwap: the maker locks coins,
+// a taker finalizes by funding the named outputs, and the maker cancels once
+// the emulator clock passes `deadline`. `older(exit)` is the operator-down path.
+//
+// side 0, user is the writer: the coin is the notional Q. Finalize pays the
+// premium plus any sats above Q back to `userScript`, and at least Q to the
+// committed option script. The premium arrives on a second input.
+// side 1, user is the holder: the coin is the premium. Finalize pays that
+// premium to `solverScript`, at least Q to the option script, and any change
+// above dust back to `userScript`. The notional arrives on a second input.
+//
+// That funding input is input 1, and its script is not this intent. A second
+// copy of this script cannot reuse the same outputs.
+//
+// Finalize and cancel are mutually exclusive: finalize requires the deadline
+// has not been reached, cancel requires `checkTime(deadline)`.
+
+contract OptionIntent(
+  pubkey userPk,
+  bytes32 userScript,
+  bytes32 solverScript,
+  bytes32 optionScript,
+  int side,
+  int collateral,
+  int premium,
+  int deadline,
+  int exit
+) {
+  const int DUST = 330;
+
+  function finalize() {
+    require(!checkTime(deadline), "expired");
+    require(this.activeInputIndex == 0, "intent input");
+    require(tx.numInputs == 2, "funding input");
+    require(tx.inputs[1].scriptPubKey != tx.input.current.scriptPubKey, "one intent");
+    int locked = tx.input.current.value;
+    if (side == 0) {
+      require(locked >= collateral, "short collateral");
+      int change = locked - collateral;
+      require(tx.outputs[0].value >= premium + change, "premium");
+      require(tx.outputs[0].scriptPubKey == userScript, "user");
+      require(tx.outputs[1].value >= collateral, "option size");
+      require(tx.outputs[1].scriptPubKey == optionScript, "option");
+    }
+    if (side == 1) {
+      require(locked >= premium, "short premium");
+      require(tx.outputs[0].value >= premium, "premium");
+      require(tx.outputs[0].scriptPubKey == solverScript, "solver");
+      require(tx.outputs[1].value >= collateral, "option size");
+      require(tx.outputs[1].scriptPubKey == optionScript, "option");
+      int change = locked - premium;
+      if (change > DUST) {
+        require(tx.outputs[2].value >= change, "change");
+        require(tx.outputs[2].scriptPubKey == userScript, "change");
+      }
+    }
+  }
+
+  function cancel() {
+    require(tx.numInputs == 1, "one input");
+    require(checkTime(deadline), "open");
+    require(tx.outputs[0].value >= tx.input.current.value, "refund");
+    require(tx.outputs[0].scriptPubKey == userScript, "user");
+  }
+
+  function unilateral(signature userSig) tapscript {
+    require(older(exit));
+    require(checkSig(userSig, userPk));
+  }
+}

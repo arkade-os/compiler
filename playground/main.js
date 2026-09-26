@@ -24,12 +24,12 @@ const projects = {
             'send_marker.ark': contracts.send_marker,
         }
     },
-    options: {
-        name: 'Options',
-        description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
+    option: {
+        name: 'Option',
+        description: 'Cash-settled covered call and limited put. Settlement price is a three-median oracle TWAP',
         files: {
-            'covered_call.ark': contracts.covered_call,
-            'cash_secured_put.ark': contracts.cash_secured_put,
+            'option_vault.ark': contracts.option_vault,
+            'option_intent.ark': contracts.option_intent,
         }
     },
     bonds: {

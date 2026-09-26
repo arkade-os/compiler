@@ -1,0 +1,174 @@
+pragma arkade ^0.1.0;
+
+// Cash-settled covered call (kind 0) and limited put (kind 1).
+//
+// Collateral is the BTC notional Q. Settlement price ST is a step-function
+// TWAP of three median prints. Each print is the median of three prices from
+// distinct oracles, and each oracle signs sha256("BTCUSD" || price_le64 || time_le64).
+// The bucket timestamp is the max observation time (oracle doc §4).
+//
+// Slices, relative to expiry (unix seconds):
+//   open   [expiry-1800, expiry-1740]
+//   mid    [expiry-960,  expiry-900]
+//   close  [expiry,      expiry+60]
+// Observations in a slice sit within 60 seconds of that slice's max.
+//
+//   ST = (mOpen*900 + mMid*900 + mClose*60) / 1860
+// The 900/900/60 weights are the bucket durations (15 min, 15 min, the
+// settlement minute). They are not the picked timestamps, so a print on
+// either edge of a slice cannot change its weight.
+//
+// Prices are USD cents. Q and payoffs are sats. Division truncates.
+//   covered call: ST <= K → holder 0, else Q*(ST-K)/ST
+//   limited put:  ST >= K → holder 0, else min(Q, Q*(K-ST)/ST)
+// A sub-330-sat leg is folded into the other output.
+//
+// Spend paths: settle (anyone, after the oracle window), close (writer and
+// holder together), unilateral (writer, after CSV). Follows the vault note
+// in the options spec. Output scripts are 32-byte witness programs.
+
+contract OptionVault(
+  int kind,
+  pubkey writerPk,
+  pubkey holderPk,
+  bytes32 writerScript,
+  bytes32 holderScript,
+  int strike,
+  int collateral,
+  int expiry,
+  pubkey[5] oracles,
+  int exit
+) {
+  const int DUST = 330;
+  const int PRICE_MAX = 1000000000;
+
+  private function median3(int a, int b, int c) int {
+    if (a <= b && b <= c) { return b; }
+    if (a <= c && c <= b) { return c; }
+    if (b <= a && a <= c) { return a; }
+    if (b <= c && c <= a) { return c; }
+    if (c <= a && a <= b) { return a; }
+    return b;
+  }
+
+  private function max3(int a, int b, int c) int {
+    if (a >= b && a >= c) { return a; }
+    if (b >= a && b >= c) { return b; }
+    return c;
+  }
+
+  private function min3(int a, int b, int c) int {
+    if (a <= b && a <= c) { return a; }
+    if (b <= a && b <= c) { return b; }
+    return c;
+  }
+
+  private function attest(int price, int time, int index, signature sig) {
+    require(price > 0, "nonpositive price");
+    require(price <= PRICE_MAX, "price cap");
+    require(time > 0, "nonpositive time");
+    let ticker = 0x425443555344;
+    let msg = sha256(ticker + num2bin(price, 8) + num2bin(time, 8));
+    require(checkSigFromStack(sig, oracles[index], msg), "bad oracle sig");
+  }
+
+  private function slice(int a, int b, int c, int lo, int hi) {
+    int top = max3(a, b, c);
+    int bot = min3(a, b, c);
+    require(top - bot <= 60, "oracle spread");
+    require(top >= lo, "slice early");
+    require(top <= hi, "slice late");
+  }
+
+  function settle(
+    int[3] price0,
+    int[3] time0,
+    int[3] who0,
+    signature[3] sig0,
+    int[3] price1,
+    int[3] time1,
+    int[3] who1,
+    signature[3] sig1,
+    int[3] price2,
+    int[3] time2,
+    int[3] who2,
+    signature[3] sig2
+  ) {
+    require(tx.numInputs == 1, "one input");
+
+    require(who0[0] != who0[1], "same oracle");
+    require(who0[0] != who0[2], "same oracle");
+    require(who0[1] != who0[2], "same oracle");
+    require(who1[0] != who1[1], "same oracle");
+    require(who1[0] != who1[2], "same oracle");
+    require(who1[1] != who1[2], "same oracle");
+    require(who2[0] != who2[1], "same oracle");
+    require(who2[0] != who2[2], "same oracle");
+    require(who2[1] != who2[2], "same oracle");
+
+    for (i, px) in price0 {
+      attest(px, time0[i], who0[i], sig0[i]);
+    }
+    for (i, px) in price1 {
+      attest(px, time1[i], who1[i], sig1[i]);
+    }
+    for (i, px) in price2 {
+      attest(px, time2[i], who2[i], sig2[i]);
+    }
+
+    int m0 = median3(price0[0], price0[1], price0[2]);
+    int m1 = median3(price1[0], price1[1], price1[2]);
+    int m2 = median3(price2[0], price2[1], price2[2]);
+    slice(time0[0], time0[1], time0[2], expiry - 1800, expiry - 1740);
+    slice(time1[0], time1[1], time1[2], expiry - 960, expiry - 900);
+    slice(time2[0], time2[1], time2[2], expiry, expiry + 60);
+
+    int twap = (m0 * 900 + m1 * 900 + m2 * 60) / 1860;
+    require(twap > 0, "zero twap");
+
+    int ph = 0;
+    if (kind == 0) {
+      if (twap > strike) {
+        ph = collateral * (twap - strike) / twap;
+      }
+    }
+    if (kind == 1) {
+      if (twap < strike) {
+        ph = collateral * (strike - twap) / twap;
+        if (ph > collateral) {
+          ph = collateral;
+        }
+      }
+    }
+    require(ph <= collateral, "holder overpaid");
+
+    int locked = tx.input.current.value;
+    require(locked >= collateral, "underfunded");
+    int writerAmt = locked - ph;
+
+    if (ph > DUST && writerAmt > DUST) {
+      require(tx.outputs[0].value >= ph, "holder short");
+      require(tx.outputs[0].scriptPubKey == holderScript, "holder script");
+      require(tx.outputs[1].value >= writerAmt, "writer short");
+      require(tx.outputs[1].scriptPubKey == writerScript, "writer script");
+    }
+    if (ph <= DUST) {
+      require(tx.outputs[0].value >= locked, "writer short");
+      require(tx.outputs[0].scriptPubKey == writerScript, "writer script");
+    }
+    if (writerAmt <= DUST && ph > DUST) {
+      require(tx.outputs[0].value >= locked, "holder short");
+      require(tx.outputs[0].scriptPubKey == holderScript, "holder script");
+    }
+  }
+
+  function close(signature writerSig, signature holderSig) {
+    require(checkSig(writerSig, writerPk), "writer");
+    require(checkSig(holderSig, holderPk), "holder");
+  }
+
+  function unilateral(signature writerSig) tapscript {
+    require(older(exit));
+    require(checkSig(writerSig, writerPk));
+  }
+}
