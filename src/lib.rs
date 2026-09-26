@@ -5,6 +5,7 @@ mod imports;
 pub mod models;
 pub mod opcodes;
 mod parser;
+pub mod program;
 mod typechecker;
 mod validator;
 
@@ -15,6 +16,7 @@ pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
     WitnessElement,
 };
+pub use program::{program_from_artifact, program_from_json, Program};
 pub use typechecker::{ArkType, TypeError};
 
 /// Per-call compiler settings. Optimizations are enabled by default.
