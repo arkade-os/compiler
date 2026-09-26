@@ -24,6 +24,12 @@ export function compile_sources(entry: string, files: string, optimize?: boolean
 export function init(): void;
 
 /**
+ * Completion symbols for `entry` in a virtual project. `files` is a JSON object
+ * mapping relative .ark paths to source text.
+ */
+export function symbols(entry: string, files: string): string;
+
+/**
  * Validate Arkade Script source code without generating output
  *
  * # Arguments
@@ -46,6 +52,7 @@ export interface InitOutput {
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly init: () => void;
+    readonly symbols: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate: (a: number, b: number) => [number, number, number];
     readonly version: () => [number, number];
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
