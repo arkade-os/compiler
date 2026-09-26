@@ -153,8 +153,8 @@ pub struct Function {
 /// Parse a compiled artifact into a [`Program`].
 ///
 /// Always appends a `server` pubkey parameter. `<CONTRACT:...>` placeholders
-/// become extra `bytes32` parameters in the order they appear. The name keeps
-/// the `vtxo_` prefix.
+/// become extra `bytes32` parameters in the order they appear. The name is
+/// `contract_` plus the sanitized body.
 pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String> {
     if artifact.functions.is_empty() {
         return Err(err(
@@ -335,7 +335,7 @@ fn instantiation_body(token: &str) -> Option<&str> {
     placeholder(token)?.strip_prefix("CONTRACT:")
 }
 
-/// `SingleSig(<sellerPk>,<exit>)` → `vtxo_SingleSig_sellerPk_exit`.
+/// `SingleSig(<sellerPk>,<exit>)` → `contract_SingleSig_sellerPk_exit`.
 fn instantiation_param(body: &str) -> String {
     let mut collapsed = String::new();
     let mut pending_separator = false;
@@ -350,7 +350,7 @@ fn instantiation_param(body: &str) -> String {
             pending_separator = true;
         }
     }
-    let mut name = format!("vtxo_{collapsed}");
+    let mut name = format!("contract_{collapsed}");
     while name.ends_with('_') {
         name.pop();
     }
@@ -781,17 +781,17 @@ mod tests {
         );
         let program = program_from_artifact(&artifact).unwrap();
         let send = program.function("send").unwrap();
-        let vtxo = "vtxo_SingleSig_ownerPk_exit";
+        let child = "contract_SingleSig_ownerPk_exit";
         assert!(send
             .arkade
             .as_ref()
             .unwrap()
             .asm
             .iter()
-            .any(|token| { matches!(token, AsmToken::Param(name) if name == vtxo) }));
+            .any(|token| { matches!(token, AsmToken::Param(name) if name == child) }));
         assert_eq!(
             program.params.last().unwrap(),
-            &param(vtxo, ValueType::Bytes32)
+            &param(child, ValueType::Bytes32)
         );
     }
 
@@ -952,7 +952,7 @@ mod tests {
         }"#;
         assert_eq!(
             program_from_json(collision).unwrap_err(),
-            "program_from_artifact: instantiations 'A-B' and 'A_B' both map to parameter 'vtxo_A_B'"
+            "program_from_artifact: instantiations 'A-B' and 'A_B' both map to parameter 'contract_A_B'"
         );
     }
 
@@ -1021,10 +1021,10 @@ mod tests {
     fn instantiation_param_collapses_like_the_sdk() {
         assert_eq!(
             instantiation_param("SingleSig(<sellerPk>,<exit>)"),
-            "vtxo_SingleSig_sellerPk_exit"
+            "contract_SingleSig_sellerPk_exit"
         );
-        assert_eq!(instantiation_param("A-B"), "vtxo_A_B");
-        assert_eq!(instantiation_param("___"), "vtxo");
+        assert_eq!(instantiation_param("A-B"), "contract_A_B");
+        assert_eq!(instantiation_param("___"), "contract");
         assert_eq!(
             instantiation_body("<CONTRACT:SingleSig(<owner>)>"),
             Some("SingleSig(<owner>)")
@@ -1075,9 +1075,9 @@ mod tests {
         let child: Vec<_> = program
             .params
             .iter()
-            .filter(|param| param.name.starts_with("vtxo_"))
+            .filter(|param| param.name.starts_with("contract_"))
             .collect();
         assert_eq!(child.len(), 1);
-        assert_eq!(child[0], &param("vtxo_SingleSig_owner", ValueType::Bytes32));
+        assert_eq!(child[0], &param("contract_SingleSig_owner", ValueType::Bytes32));
     }
 }
