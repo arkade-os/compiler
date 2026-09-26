@@ -147,7 +147,7 @@ const arkadeMonarch = {
             [/0x[0-9a-fA-F]*/, 'number.hex'],
             [/\d+/, 'number'],
             [/"(?:[^"\\]|\\.)*"/, 'string'],
-            [/[a-zA-Z_]\w*/, {
+            [/[a-zA-Z]\w*/, {
                 cases: {
                     '@keywords': 'keyword',
                     '@typeKeywords': 'type',
@@ -158,7 +158,7 @@ const arkadeMonarch = {
             }],
             [/[{}()\[\]]/, '@brackets'],
             [/[;,.:]/, 'delimiter'],
-            [/[=<>!&|^~+\-*\/%]+/, 'operator'],
+            [/[=<>!&|^~+\-*\/]+/, 'operator'],
         ]
     }
 };
