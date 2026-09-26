@@ -28,9 +28,6 @@ contract OptionIntent(
   const int DUST = 330;
 
   function finalize() {
-    require(side == 0 || side == 1, "side");
-    require(collateral > DUST, "collateral");
-    require(premium > DUST, "premium");
     require(!checkTime(deadline), "expired");
     int locked = tx.input.current.value;
     if (side == 0) {

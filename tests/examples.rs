@@ -4,20 +4,14 @@ mod common;
 
 #[path = "examples/arkade_kitties.rs"]
 mod arkade_kitties;
-#[path = "examples/arkade_options.rs"]
-mod arkade_options;
 #[path = "examples/asm_structural.rs"]
 mod asm_structural;
 #[path = "examples/bond_mint.rs"]
 mod bond_mint;
-#[path = "examples/cash_secured_put.rs"]
-mod cash_secured_put;
 #[path = "examples/compilation_roundtrip.rs"]
 mod compilation_roundtrip;
 #[path = "examples/controlled_mint.rs"]
 mod controlled_mint;
-#[path = "examples/covered_call.rs"]
-mod covered_call;
 #[path = "examples/escrow.rs"]
 mod escrow;
 #[path = "examples/fee_adapter.rs"]
@@ -28,6 +22,8 @@ mod fuji_safe;
 mod htlc;
 #[path = "examples/layerzero.rs"]
 mod layerzero;
+#[path = "examples/option.rs"]
+mod option;
 #[path = "examples/repayment_pool.rs"]
 mod repayment_pool;
 #[path = "examples/stability_vault.rs"]

@@ -172,7 +172,8 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | `payment_auth` | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
 | `token_vault`, `controlled_mint`, `nft_mint` | Asset lookups, asset groups, control assets |
 | `struct_vault`, `threshold_oracle` | Structs, arrays, loops, oracle quorum |
-| `fuji_safe`, `stability`, `bonds`, `options` | Stateful contracts that recreate themselves with `new` |
+| `fuji_safe`, `stability`, `bonds` | Stateful contracts that recreate themselves with `new` |
+| `option` | Cash-settled covered call and limited put with an on-stack oracle TWAP |
 | `layerzero` | Packet introspection, `substr`/`cat`/`bin2num`, cross-input binding via `arkadeScriptHash` |
 | `arkade_kitties` | NFT breeding with asset-group introspection |
 

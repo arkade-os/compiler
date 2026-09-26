@@ -14,7 +14,7 @@ fn compile(path: &str) -> arkade_compiler::models::ContractJson {
 
 #[test]
 fn vault_settles_from_nine_oracle_signatures_and_stack_arithmetic() {
-    let out = compile("examples/arkade_options/option_vault.ark");
+    let out = compile("examples/option/option_vault.ark");
     assert_eq!(out.name, "OptionVault");
     let names: Vec<&str> = out.functions.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, ["settle", "close", "unilateral"]);
@@ -48,7 +48,7 @@ fn vault_settles_from_nine_oracle_signatures_and_stack_arithmetic() {
 
 #[test]
 fn vault_close_needs_both_parties_and_exit_is_the_writer_csv() {
-    let out = compile("examples/arkade_options/option_vault.ark");
+    let out = compile("examples/option/option_vault.ark");
     assert_eq!(arkade_inputs(&out, "close"), ["writerSig", "holderSig"]);
     assert!(opcode_count_in_arkade(&out, "close", OP_CHECKSIG) >= 1);
     let exit = leaf_asm(&out, "unilateral", "unilateral");
@@ -59,7 +59,7 @@ fn vault_close_needs_both_parties_and_exit_is_the_writer_csv() {
 
 #[test]
 fn intent_finalize_and_cancel_are_opposite_clock_checks() {
-    let out = compile("examples/arkade_options/option_intent.ark");
+    let out = compile("examples/option/option_intent.ark");
     assert_eq!(out.name, "OptionIntent");
     let names: Vec<&str> = out.functions.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, ["finalize", "cancel", "unilateral"]);

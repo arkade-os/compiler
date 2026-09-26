@@ -41,7 +41,6 @@ contract OptionVault(
 ) {
   const int DUST = 330;
   const int PRICE_MAX = 1000000000;
-  const int Q_MAX = 1000000000;
 
   private function median3(int a, int b, int c) int {
     if (a <= b && b <= c) { return b; }
@@ -95,12 +94,6 @@ contract OptionVault(
     int[3] who2,
     signature[3] sig2
   ) {
-    require(kind == 0 || kind == 1, "kind");
-    require(strike > 0, "strike");
-    require(strike <= PRICE_MAX, "strike cap");
-    require(collateral > DUST, "collateral");
-    require(collateral <= Q_MAX, "collateral cap");
-    require(expiry > 1800, "expiry");
     require(tx.numInputs == 1, "one input");
 
     require(who0[0] != who0[1], "same oracle");
