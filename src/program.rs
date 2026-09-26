@@ -2,9 +2,9 @@
 //!
 //! [`program_from_artifact`] walks the same leaves as the TypeScript SDK's
 //! `programFromArtifact`: one spend path per compiler leaf, constructor
-//! parameters flattened through structs, and `<VTXO:...>` / `<CONTRACT:...>`
-//! placeholders turned into parameters the caller binds to a child program.
-//! Call this instead of parsing the artifact again.
+//! parameters flattened through structs, and `<CONTRACT:...>` placeholders
+//! turned into parameters the caller binds to a child program. Call this
+//! instead of parsing the artifact again.
 //!
 //! The value keeps the compiler's own types ([`ValueType::Bytes32`] stays
 //! distinct from a 20-byte hash) and canonical `OP_` names. The emulator
@@ -152,10 +152,9 @@ pub struct Function {
 
 /// Parse a compiled artifact into a [`Program`].
 ///
-/// Always appends a `server` pubkey parameter. `<VTXO:...>` and `<CONTRACT:...>`
-/// are the same child-output placeholder and become extra `bytes32` parameters
-/// in the order they appear. The name keeps the `vtxo_` prefix so either
-/// spelling binds the same argument.
+/// Always appends a `server` pubkey parameter. `<CONTRACT:...>` placeholders
+/// become extra `bytes32` parameters in the order they appear. The name keeps
+/// the `vtxo_` prefix.
 pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String> {
     if artifact.functions.is_empty() {
         return Err(err(
@@ -331,12 +330,9 @@ fn witness_extras(
     Ok(extras)
 }
 
-/// Body of `<VTXO:...>` or `<CONTRACT:...>`. Both tags are the child-output placeholder.
+/// Body of `<CONTRACT:...>`, the child-output placeholder.
 fn instantiation_body(token: &str) -> Option<&str> {
-    let inner = placeholder(token)?;
-    inner
-        .strip_prefix("VTXO:")
-        .or_else(|| inner.strip_prefix("CONTRACT:"))
+    placeholder(token)?.strip_prefix("CONTRACT:")
 }
 
 /// `SingleSig(<sellerPk>,<exit>)` → `vtxo_SingleSig_sellerPk_exit`.
@@ -389,6 +385,11 @@ fn asm_token(token: &str, instantiations: &mut Instantiations) -> Result<AsmToke
     if let Some(inner) = placeholder(token) {
         if inner.is_empty() {
             return Err(err(format!("unrecognized assembly token '{token}'")));
+        }
+        if inner.starts_with("VTXO:") {
+            return Err(err(format!(
+                "'{token}' is not a placeholder; the compiler emits <CONTRACT:...>"
+            )));
         }
         if let Some(body) = instantiation_body(token) {
             return Ok(AsmToken::Param(instantiations.remember(body)?));
@@ -941,7 +942,7 @@ mod tests {
             "constructorInputs": [],
             "functions": [{
                 "name": "spend",
-                "arkade": {"inputs": [], "asm": ["<CONTRACT:A-B>", "<VTXO:A_B>"]},
+                "arkade": {"inputs": [], "asm": ["<CONTRACT:A-B>", "<CONTRACT:A_B>"]},
                 "leaves": [{
                     "name": "spend",
                     "witness": [],
@@ -1026,12 +1027,34 @@ mod tests {
         assert_eq!(instantiation_param("___"), "vtxo");
         assert_eq!(
             instantiation_body("<CONTRACT:SingleSig(<owner>)>"),
-            instantiation_body("<VTXO:SingleSig(<owner>)>")
+            Some("SingleSig(<owner>)")
+        );
+        assert_eq!(instantiation_body("<VTXO:SingleSig(<owner>)>"), None);
+    }
+
+    #[test]
+    fn old_vtxo_placeholder_is_rejected() {
+        let json = r#"{
+            "contractName": "Demo",
+            "constructorInputs": [{"name": "owner", "type": "pubkey"}],
+            "functions": [{
+                "name": "spend",
+                "arkade": {"inputs": [], "asm": ["<VTXO:SingleSig(<owner>)>", "OP_DROP"]},
+                "leaves": [{
+                    "name": "spend",
+                    "witness": [],
+                    "asm": ["<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:spend>", "OP_CHECKSIG"]
+                }]
+            }]
+        }"#;
+        assert_eq!(
+            program_from_json(json).unwrap_err(),
+            "program_from_artifact: '<VTXO:SingleSig(<owner>)>' is not a placeholder; the compiler emits <CONTRACT:...>"
         );
     }
 
     #[test]
-    fn contract_and_vtxo_spellings_share_one_parameter() {
+    fn contract_placeholder_is_one_bytes32_parameter() {
         let json = r#"{
             "contractName": "Demo",
             "constructorInputs": [{"name": "owner", "type": "pubkey"}],
@@ -1039,7 +1062,7 @@ mod tests {
                 "name": "spend",
                 "arkade": {
                     "inputs": [],
-                    "asm": ["<CONTRACT:SingleSig(<owner>)>", "<VTXO:SingleSig(<owner>)>", "OP_DROP"]
+                    "asm": ["<CONTRACT:SingleSig(<owner>)>", "OP_DROP"]
                 },
                 "leaves": [{
                     "name": "spend",
