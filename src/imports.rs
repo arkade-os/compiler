@@ -45,8 +45,10 @@ pub(crate) fn source_symbols(
     let (mut symbols, mut structs) = parser::symbols(source)?;
     let mut members: BTreeMap<String, Vec<parser::Symbol>> = BTreeMap::new();
     for import in parser::imports(source)? {
-        // Imports that are missing or do not parse contribute nothing.
-        let path = import_path(&entry, &import)?;
+        // Imports that are rejected, missing or do not parse contribute nothing.
+        let Ok(path) = import_path(&entry, &import) else {
+            continue;
+        };
         let Some(Ok((imported, imported_structs))) = files.get(&path).map(|s| parser::symbols(s))
         else {
             continue;
@@ -615,7 +617,7 @@ mod tests {
 
     #[test]
     fn source_symbols_scope_locals_and_expose_direct_imports() {
-        let main = r#"import "fees.ark";
+        let main = r#"import "fees.ark"; import "/absolute.ark";
 struct Point { int x; }
 contract Vault(Point[2] points, pubkey owner) {
     function spend(signature sig, bytes32 txid) {

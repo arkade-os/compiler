@@ -246,7 +246,8 @@ function arkadeComplete(before, table, line) {
     const { symbols = [], structs = [], members = {} } = table || {};
     const visible = new Map();
     for (const symbol of symbols) {
-        if (!symbol.scope || (symbol.scope[0] <= line && line <= symbol.scope[1])) visible.set(symbol.name, symbol);
+        // Locals are visible from their declaration to the end of their function.
+        if (!symbol.scope || (symbol.position[0] <= line && line <= symbol.scope[1])) visible.set(symbol.name, symbol);
     }
     let flat = before;
     while (flat !== (flat = flat.replace(/\[[^\][]*\]/g, '<>')));
@@ -256,8 +257,8 @@ function arkadeComplete(before, table, line) {
         return [...arkadeCompletions, ...[...visible.values()].filter(s => !builtins.has(s.name)).map(symbolItem)];
     }
     const path = chain[1].replace(/\s+/g, '');
-    if (arkadeMembers[path]) return arkadeMembers[path];
-    if (members[path]) return members[path].map(symbolItem);
+    if (Object.hasOwn(arkadeMembers, path)) return arkadeMembers[path];
+    if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
     const [, name, indexed] = path.match(/^(\w+)(\[\])?$/) || [];
     const type = visible.get(name)?.type || '';
     if (type === 'assetGroup' && !indexed) return [...groupProps, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
