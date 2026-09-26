@@ -134,7 +134,8 @@ const arkadeMonarch = {
     defaultToken: 'invalid',
     keywords: [...completionLabels('Keyword'), 'in'],
     typeKeywords: completionLabels('TypeParameter'),
-    builtinFunctions: completionLabels('Function'),
+    // Tapscript-only timelocks are highlighted but not offered as completions.
+    builtinFunctions: [...completionLabels('Function'), 'older', 'after'],
     implicitBindings: completionLabels('Variable'),
 
     tokenizer: {
