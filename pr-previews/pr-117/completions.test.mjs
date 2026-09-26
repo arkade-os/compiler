@@ -17,10 +17,11 @@ const table = {
         { name: 'points', kind: 'parameter', type: 'Point[2]' },
         { name: 'amounts', kind: 'parameter', type: 'int[3]' },
         { name: 'spend', kind: 'function' },
-        { name: 'sig', kind: 'parameter', type: 'signature', scope: [4, 9] },
-        { name: 'group', kind: 'variable', type: 'assetGroup', scope: [4, 9] },
-        { name: 'point', kind: 'variable', type: 'Point', scope: [4, 9] },
-        { name: 'other', kind: 'variable', scope: [10, 12] },
+        { name: 'sig', kind: 'parameter', type: 'signature', position: [4, 20], scope: [4, 9] },
+        { name: 'group', kind: 'variable', type: 'assetGroup', position: [5, 9], scope: [4, 9] },
+        { name: 'point', kind: 'variable', type: 'Point', position: [5, 20], scope: [4, 9] },
+        { name: 'later', kind: 'variable', position: [7, 9], scope: [4, 9] },
+        { name: 'other', kind: 'variable', position: [11, 9], scope: [10, 12] },
         { name: 'Fees', kind: 'library' },
     ],
     structs: [{ name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] }],
@@ -30,6 +31,10 @@ const table = {
 const top = labels('    require(', table, 5);
 for (const label of ['checkSig', 'substr', 'tx', 'owner', 'sig', 'group', 'spend', 'Point', 'Demo', 'Fees']) assert(top.includes(label), label);
 assert(!top.includes('other'));
+assert(!top.includes('later'));
+assert(labels('', table, 8).includes('later'));
+assert.deepEqual(labels('constructor.', table, 5), []);
+assert.deepEqual(labels('toString.', { members: {} }, 5), []);
 assert(labels('', table, 11).includes('other'));
 assert(!labels('', table, 11).includes('sig'));
 assert(!top.some(label => label.includes('.')));

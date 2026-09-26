@@ -1195,12 +1195,14 @@ function initMonaco() {
             triggerCharacters: ['.'],
             provideCompletionItems: (model, position) => {
                 const word = model.getWordUntilPosition(position);
-                const range = {
+                const insert = {
                     startLineNumber: position.lineNumber,
                     startColumn: word.startColumn,
                     endLineNumber: position.lineNumber,
                     endColumn: position.column
                 };
+                // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
+                const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
                 const table = symbolTable(position.lineNumber);
                 const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
@@ -1233,7 +1235,8 @@ function initMonaco() {
             tabSize: 2,
             insertSpaces: true,
             folding: true,
-            bracketPairColorization: { enabled: true }
+            bracketPairColorization: { enabled: true },
+            suggest: { insertMode: 'replace' }
         });
 
         // Keyboard shortcut: Ctrl+Enter to compile
