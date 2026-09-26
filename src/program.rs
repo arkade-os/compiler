@@ -1,15 +1,7 @@
 //! Read an `arkadec` artifact into a [`Program`].
 //!
-//! [`program_from_artifact`] walks the same leaves as the TypeScript SDK's
-//! `programFromArtifact`: one spend path per compiler leaf, constructor
-//! parameters flattened through structs, and `<CONTRACT:...>` placeholders
-//! turned into parameters the caller binds to a child program. Call this
-//! instead of parsing the artifact again.
-//!
-//! The value keeps the compiler's own types ([`ValueType::Bytes32`] stays
-//! distinct from a 20-byte hash) and canonical `OP_` names. The emulator
-//! co-signer is [`Tapscript::emulator`], not another signer. Placeholder names
-//! have no `$` prefix.
+//! [`program_from_artifact`] walks the compiler leaves the same way the
+//! TypeScript SDK does. Types and `OP_` names stay as the compiler wrote them.
 
 use std::collections::HashSet;
 use std::fmt::Display;
@@ -176,7 +168,7 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
         claim(&mut struct_names, &definition.name, "struct")?;
     }
 
-    let mut instantiations = Instantiations::default();
+    let mut instantiations = Vec::new();
     let mut functions = Vec::new();
     let mut groups = HashSet::new();
     let mut leaf_names = HashSet::new();
@@ -243,7 +235,7 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
         name: "server".to_string(),
         value_type: ValueType::Pubkey,
     });
-    for (name, _) in &instantiations.entries {
+    for (name, _) in &instantiations {
         params.push(Param {
             name: name.clone(),
             value_type: ValueType::Bytes32,
@@ -330,11 +322,6 @@ fn witness_extras(
     Ok(extras)
 }
 
-/// Body of `<CONTRACT:...>`, the child-output placeholder.
-fn instantiation_body(token: &str) -> Option<&str> {
-    placeholder(token)?.strip_prefix("CONTRACT:")
-}
-
 /// `SingleSig(<sellerPk>,<exit>)` → `contract_SingleSig_sellerPk_exit`.
 fn instantiation_param(body: &str) -> String {
     let mut collapsed = String::new();
@@ -350,35 +337,29 @@ fn instantiation_param(body: &str) -> String {
             pending_separator = true;
         }
     }
-    let mut name = format!("contract_{collapsed}");
-    while name.ends_with('_') {
-        name.pop();
-    }
-    name
+    format!("contract_{collapsed}")
+        .trim_end_matches('_')
+        .to_string()
 }
 
-#[derive(Default)]
-struct Instantiations {
-    entries: Vec<(String, String)>,
-}
-
-impl Instantiations {
-    fn remember(&mut self, body: &str) -> Result<String, String> {
-        let name = instantiation_param(body);
-        if let Some((_, seen)) = self.entries.iter().find(|(existing, _)| existing == &name) {
-            if seen != body {
-                return Err(err(format!(
-                    "instantiations '{seen}' and '{body}' both map to parameter '{name}'"
-                )));
-            }
-        } else {
-            self.entries.push((name.clone(), body.to_string()));
+fn remember_instantiation(
+    entries: &mut Vec<(String, String)>,
+    body: &str,
+) -> Result<String, String> {
+    let name = instantiation_param(body);
+    if let Some((_, seen)) = entries.iter().find(|(existing, _)| existing == &name) {
+        if seen != body {
+            return Err(err(format!(
+                "instantiations '{seen}' and '{body}' both map to parameter '{name}'"
+            )));
         }
-        Ok(name)
+    } else {
+        entries.push((name.clone(), body.to_string()));
     }
+    Ok(name)
 }
 
-fn asm_token(token: &str, instantiations: &mut Instantiations) -> Result<AsmToken, String> {
+fn asm_token(token: &str, instantiations: &mut Vec<(String, String)>) -> Result<AsmToken, String> {
     if token.starts_with("OP_") {
         return Ok(AsmToken::Opcode(token.to_string()));
     }
@@ -386,13 +367,16 @@ fn asm_token(token: &str, instantiations: &mut Instantiations) -> Result<AsmToke
         if inner.is_empty() {
             return Err(err(format!("unrecognized assembly token '{token}'")));
         }
+        if let Some(body) = inner.strip_prefix("CONTRACT:") {
+            return Ok(AsmToken::Param(remember_instantiation(
+                instantiations,
+                body,
+            )?));
+        }
         if inner.starts_with("VTXO:") {
             return Err(err(format!(
                 "'{token}' is not a placeholder; the compiler emits <CONTRACT:...>"
             )));
-        }
-        if let Some(body) = instantiation_body(token) {
-            return Ok(AsmToken::Param(instantiations.remember(body)?));
         }
         if inner == "SERVER_KEY" || inner.starts_with("EMULATOR_KEY:") {
             return Err(err(format!(
@@ -452,7 +436,7 @@ fn parse_tweak(rest: &str) -> Option<(String, String)> {
 fn parse_leaf(
     leaf: &AbiLeaf,
     has_covenant: bool,
-    instantiations: &mut Instantiations,
+    instantiations: &mut Vec<(String, String)>,
     extras: &[Param],
 ) -> Result<Tapscript, String> {
     let asm = &leaf.asm;
@@ -1025,11 +1009,6 @@ mod tests {
         );
         assert_eq!(instantiation_param("A-B"), "contract_A_B");
         assert_eq!(instantiation_param("___"), "contract");
-        assert_eq!(
-            instantiation_body("<CONTRACT:SingleSig(<owner>)>"),
-            Some("SingleSig(<owner>)")
-        );
-        assert_eq!(instantiation_body("<VTXO:SingleSig(<owner>)>"), None);
     }
 
     #[test]
@@ -1078,6 +1057,9 @@ mod tests {
             .filter(|param| param.name.starts_with("contract_"))
             .collect();
         assert_eq!(child.len(), 1);
-        assert_eq!(child[0], &param("contract_SingleSig_owner", ValueType::Bytes32));
+        assert_eq!(
+            child[0],
+            &param("contract_SingleSig_owner", ValueType::Bytes32)
+        );
     }
 }
