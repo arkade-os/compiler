@@ -346,7 +346,7 @@ contract C(Owner owner) {
     .expect("scalar constructor fields in tapscript");
 
     let asm = &output.functions[0].leaves[0].asm;
-    assert!(asm.contains(&"<owner.exit>".to_string()));
+    assert!(asm.contains(&"<seconds:owner.exit>".to_string()));
     assert!(asm.contains(&"<owner.key>".to_string()));
     assert!(asm.contains(&OP_CHECKSIG.to_string()));
 }

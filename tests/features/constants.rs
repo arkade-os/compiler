@@ -28,17 +28,18 @@ contract Vault(pubkey owner) {{
         )
     };
     let output = compile(&source(
-        "const int EXIT_DELAY = 144; const bool STRICT = true;",
+        "const int EXIT_DELAY = 512; const bool STRICT = true;",
         "EXIT_DELAY",
         "STRICT",
     ))
     .expect("constants");
-    let literal = compile(&source("", "144", "true")).expect("literal");
+    let literal = compile(&source("", "512", "true")).expect("literal");
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);
 
+    // 512 seconds is the BIP68 sequence 1 | (1 << 22).
     assert_eq!(
         leaf_asm(&output, "exit", "exit"),
-        "144 OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
+        "4194305 OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
     );
     assert_eq!(witness_names(&output, "exit", "exit"), ["sig"]);
     assert!(group(&output, "exit").arkade.is_none());
@@ -153,7 +154,7 @@ fn constant_indices_fold_in_named_operands() {
             arkade_inputs(&literal, "spend")
         );
     }
-    let source = "contract Vault(pubkey[2] keys, bytes32[2] hashes) { const int FIRST = 0; function exit(signature sig, bytes preimage) tapscript { require(sha256(preimage) == hashes[FIRST]); require(older(10)); require(checkSig(sig, keys[FIRST])); } }";
+    let source = "contract Vault(pubkey[2] keys, bytes32[2] hashes) { const int FIRST = 0; function exit(signature sig, bytes preimage) tapscript { require(sha256(preimage) == hashes[FIRST]); require(older(512)); require(checkSig(sig, keys[FIRST])); } }";
     let output = compile(source).unwrap();
     let literal = compile(&source.replace("[FIRST]", "[0]")).unwrap();
     assert_eq!(
@@ -177,7 +178,7 @@ fn multisig_threshold_constants_resolve_before_and_after_functions() {
             let timelock = if modifier.is_empty() {
                 ""
             } else {
-                "require(older(10));"
+                "require(older(512));"
             };
             let function = format!("function spend(signature firstSig, signature secondSig){modifier} {{ {timelock} require(checkMultisig([owner, backup], [firstSig, secondSig], QUORUM)); }}");
             let members = if declaration_first {
@@ -223,7 +224,7 @@ fn multisig_threshold_rejects_non_constants_and_invalid_values() {
             let timelock = if modifier.is_empty() {
                 ""
             } else {
-                "require(older(10));"
+                "require(older(512));"
             };
             let source = format!("contract Vault(pubkey owner, int QUORUM_INPUT) {{ {declaration} function spend(signature sig){modifier} {{ {timelock} require(checkMultisig([owner], [sig], QUORUM)); }} }}");
             compile(&source.replace(", QUORUM)", ", 1)")).expect("literal threshold");
@@ -386,15 +387,15 @@ fn constant_expressions_resolve_in_multisig_and_timelocks() {
         function spend(signature a, signature b) { require(checkMultisig([first, second], [a, b], QUORUM)); require(DELAY > 1); }
         function exit(signature a, signature b) tapscript { require(older(DELAY)); require(checkMultisig([first, second], [a, b], QUORUM)); }
         const int QUORUM = KEYS / 2;
-        const int DELAY = QUORUM * 72;
+        const int DELAY = QUORUM * 256;
         const int KEYS = 4;
     }"#;
     let output = compile(source).unwrap();
     let literal = compile(
         &source
             .replace(", QUORUM)", ", 2)")
-            .replace("older(DELAY)", "older(144)")
-            .replace("require(DELAY", "require(144"),
+            .replace("older(DELAY)", "older(512)")
+            .replace("require(DELAY", "require(512"),
     )
     .unwrap();
     assert_eq!(
@@ -414,7 +415,8 @@ fn constant_expressions_resolve_in_multisig_and_timelocks() {
     assert!(group(&output, "exit").arkade.is_none());
     assert_eq!(witness_names(&output, "exit", "exit"), ["a", "b"]);
     assert_eq!(arkade_inputs(&output, "spend"), ["a", "b"]);
-    assert!(leaf_asm(&output, "exit", "exit").contains("144 OP_CHECKSEQUENCEVERIFY"));
+    // QUORUM * 256 = 512 seconds → 1 | (1 << 22).
+    assert!(leaf_asm(&output, "exit", "exit").contains("4194305 OP_CHECKSEQUENCEVERIFY"));
 }
 
 #[test]
@@ -435,7 +437,7 @@ contract Vault(pubkey[Vault.N] keys) {
         require(state.limits.length == N);
         require(checkSig(sigs[1], keys[1]));
     }
-    function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, keys[1])); }
+    function exit(signature sig) tapscript { require(older(512)); require(checkSig(sig, keys[1])); }
 }"#;
     let output = compile(source).unwrap();
     let literal = compile(&source.replace("[N]", "[2]").replace("[Vault.N]", "[2]")).unwrap();
@@ -468,7 +470,7 @@ fn constant_array_sizes_must_be_positive_integers_in_every_declaration() {
         for source in [
             "contract Vault(int[N] values) { DECL function spend() { require(true); } }",
             "contract Vault() { DECL function spend(int[N] values) { require(true); } }",
-            "contract Vault() { DECL function exit(signature[N] sigs) tapscript { require(older(10)); require(checkSig(sigs[0], server)); } }",
+            "contract Vault() { DECL function exit(signature[N] sigs) tapscript { require(older(512)); require(checkSig(sigs[0], server)); } }",
             "contract Vault() { DECL function spend() { int[N] values = [1]; require(true); } }",
             "struct State { int[N] values; } contract Vault() { DECL function spend() { require(true); } }",
             "contract Vault() { DECL static function helper() int[N] { return [1]; } function spend() { require(true); } }",
@@ -539,7 +541,7 @@ contract Vault(pubkey owner) {
         require(checkSig(sig, owner));
     }
     function exit(signature A) tapscript {
-        require(older(10));
+        require(older(512));
         require(checkSig(A, owner));
     }
 }

@@ -439,7 +439,7 @@ Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. Boole
 
 **Hashes.** `sha256`, `hash160`, `hash256`, `ripemd160` as `require(hashFn(preimage) == hash)`. `sha256(expr)` also works as a value, including over concatenations and `substr` results. Streaming: `sha256Initialize`, `sha256Update`, `sha256Finalize`. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
-**Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts.
+**Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits a seconds CSV (`n` a positive multiple of 512: a literal becomes the BIP68 sequence, a parameter `<seconds:name>`) and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts.
 
 In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
 

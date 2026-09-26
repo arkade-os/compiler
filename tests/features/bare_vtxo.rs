@@ -76,8 +76,8 @@ contract SingleSig(
 
     let uni_leaf = leaf_asm(&output, "unilateral", "unilateral");
     assert!(
-        uni_leaf.contains("<exitDelay>"),
-        "unilateral: missing <exitDelay> CSV operand: {uni_leaf}"
+        uni_leaf.contains("<seconds:exitDelay>"),
+        "unilateral: missing <seconds:exitDelay> CSV operand: {uni_leaf}"
     );
     assert!(
         uni_leaf.contains(OP_CHECKSEQUENCEVERIFY),

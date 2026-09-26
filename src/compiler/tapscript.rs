@@ -463,13 +463,27 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
     }
 }
 
-/// Emit a timelock operand: literal as-is, else a `<param>` placeholder.
-fn timelock_operand(value: &str) -> String {
-    if value.parse::<u64>().is_ok() {
-        value.to_string()
-    } else {
-        format!("<{value}>")
+/// Timelock operand. CLTV is the number or `<param>`. CSV is seconds: a literal
+/// is the BIP68 sequence, a name is `<seconds:name>`.
+/// ponytail: tapscript cannot divide or OR, so the sequence is fixed here.
+fn timelock_operand(ts_name: &str, value: &str, csv: bool) -> Result<String, String> {
+    let Ok(n) = value.parse::<u64>() else {
+        return Ok(if csv {
+            format!("<seconds:{value}>")
+        } else {
+            format!("<{value}>")
+        });
+    };
+    if !csv {
+        return Ok(n.to_string());
     }
+    if n == 0 || !n.is_multiple_of(512) || n / 512 > 0xffff {
+        return Err(format!(
+            "tapscript `{ts_name}`: older({value}) must be 512..{} seconds, a multiple of 512",
+            0xffff * 512
+        ));
+    }
+    Ok(((n / 512) | (1 << 22)).to_string())
 }
 
 /// Emit the multisig suffix (N-of-N CHECKSIG chain).
@@ -485,7 +499,7 @@ fn emit_multisig(keys: &[KeyExpr], leaf_func: &str, asm: &mut Vec<String>) {
 }
 
 /// Assemble the full leaf ASM in arkd's closure byte order: condition? · timelock? · multisig.
-pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<String> {
+pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Result<Vec<String>, String> {
     let mut asm = Vec::new();
     // The function name used for a bare `emulator` placeholder.
     let leaf_func = match binding {
@@ -509,18 +523,21 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
 
     // Timelock prefix.
     if let Some(tl) = &c.timelock {
-        asm.push(timelock_operand(tl));
-        match c.class {
-            ClosureClass::CsvMultisig | ClosureClass::ConditionCsvMultisig => {
-                asm.push(OP_CHECKSEQUENCEVERIFY.to_string());
-            }
-            _ => asm.push(OP_CHECKLOCKTIMEVERIFY.to_string()),
-        }
+        let csv = matches!(
+            c.class,
+            ClosureClass::CsvMultisig | ClosureClass::ConditionCsvMultisig
+        );
+        asm.push(timelock_operand(ts_name, tl, csv)?);
+        asm.push(if csv {
+            OP_CHECKSEQUENCEVERIFY.to_string()
+        } else {
+            OP_CHECKLOCKTIMEVERIFY.to_string()
+        });
         asm.push(OP_DROP.to_string());
     }
 
     emit_multisig(&c.keys, leaf_func, &mut asm);
-    asm
+    Ok(asm)
 }
 
 /// Derive the leaf witness from the tapscript inputs, one entry per input.
@@ -579,7 +596,7 @@ pub fn build_function_groups(
         let group_key =
             shared_tweak_func(&ts.name, &closure.keys)?.unwrap_or_else(|| ts.name.clone());
 
-        let mut asm = emit_leaf_asm(&closure, &ts.name, &binding);
+        let mut asm = emit_leaf_asm(&closure, &ts.name, &binding)?;
         resolve_constructor_field_placeholders(&mut asm, contract)?;
         grouped.entry(group_key).or_default().push(AbiLeaf {
             name: ts.name.clone(),
@@ -629,11 +646,17 @@ fn resolve_constructor_field_placeholders(
         .into_iter()
         .flatten()
         .filter(|leaf| leaf.access_name != leaf.emitted_name)
-        .map(|leaf| {
-            (
-                format!("<{}>", leaf.access_name),
-                format!("<{}>", leaf.emitted_name),
-            )
+        .flat_map(|leaf| {
+            [
+                (
+                    format!("<{}>", leaf.access_name),
+                    format!("<{}>", leaf.emitted_name),
+                ),
+                (
+                    format!("<seconds:{}>", leaf.access_name),
+                    format!("<seconds:{}>", leaf.emitted_name),
+                ),
+            ]
         })
         .collect::<std::collections::HashMap<_, _>>();
     for token in asm {
@@ -682,7 +705,8 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
                 injected: true,
             },
         ],
-        asm: emit_leaf_asm(&closure, func, &Binding::NameMatched),
+        asm: emit_leaf_asm(&closure, func, &Binding::NameMatched)
+            .expect("synthesized leaf has no timelock"),
     }
 }
 
@@ -1243,7 +1267,7 @@ mod tests {
             ],
         };
         let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "claim", &Binding::NameMatched);
+        let asm = emit_leaf_asm(&c, "claim", &Binding::NameMatched).unwrap();
         assert_eq!(
             asm,
             vec![
@@ -1277,7 +1301,7 @@ mod tests {
             ],
         };
         let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "refund", &Binding::NameMatched);
+        let asm = emit_leaf_asm(&c, "refund", &Binding::NameMatched).unwrap();
         assert_eq!(
             asm,
             vec![
@@ -1312,17 +1336,32 @@ mod tests {
             ],
         };
         let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "unilateral", &Binding::Standalone);
+        let asm = emit_leaf_asm(&c, "unilateral", &Binding::Standalone).unwrap();
         assert_eq!(
             asm,
             vec![
-                "<exit>".to_string(),
+                "<seconds:exit>".to_string(),
                 OP_CHECKSEQUENCEVERIFY.to_string(),
                 OP_DROP.to_string(),
                 "<sender>".to_string(),
                 OP_CHECKSIG.to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn older_encodes_seconds() {
+        let output = super::super::compile(
+            "contract Demo(int[1] delays, pubkey owner) { function later(signature sig) tapscript { require(older(delays[0])); require(checkSig(sig, owner)); } }",
+        )
+        .unwrap();
+        assert_eq!(output.functions[0].leaves[0].asm[0], "<seconds:delays.0>");
+        let err = super::super::compile(
+            "contract Demo(pubkey owner) { function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, owner)); } }",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("older(10)"), "{err}");
     }
 
     /// `tweak(constructorPubkey, func)` binds that key to the covenant on any leaf.
@@ -1336,7 +1375,7 @@ contract Demo(pubkey insurer) {
     require(tx.input.current.value >= 1, "funded");
   }
   function late(signature insurerSig) tapscript {
-    require(older(10));
+    require(older(512));
     require(checkSig(insurerSig, tweak(insurer, claim)));
   }
   function race(signature serverSig, signature insurerSig) tapscript {
@@ -1410,7 +1449,7 @@ contract Demo(pubkey insurer) {
     require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
   }
   function late(signature insurerSig) tapscript {
-    require(older(10));
+    require(older(512));
     require(checkSig(insurerSig, tweak(insurer, claim)));
   }
 }
@@ -1458,7 +1497,7 @@ pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function late(signature insurerSig) tapscript {
-    require(older(10));
+    require(older(512));
     require(checkSig(insurerSig, tweak(insurer, late)));
   }
 }
@@ -1469,7 +1508,7 @@ contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function refund() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature aSig, signature bSig) tapscript {
-    require(older(10));
+    require(older(512));
     require(checkMultisig([tweak(insurer, claim), tweak(insurer, refund)], [aSig, bSig], 2));
   }
 }
@@ -1492,7 +1531,7 @@ contract Demo(pubkey insurer, pubkey backup) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function refund() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature aSig, signature bSig) tapscript {
-    require(older(10));
+    require(older(512));
     require(checkMultisig([tweak(insurer, claim), tweak(backup, refund)], [aSig, bSig], 2));
   }
 }
@@ -1503,7 +1542,7 @@ contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function refund() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature emulatorSig, signature insurerSig) tapscript {
-    require(older(10));
+    require(older(512));
     require(checkMultisig([tweak(emulator, claim), tweak(insurer, refund)], [emulatorSig, insurerSig], 2));
   }
 }

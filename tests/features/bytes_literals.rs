@@ -153,7 +153,7 @@ fn bytes_literals_in_tapscript_hash_keep_witness_shape() {
         contract Demo(pubkey owner) {
             function claim(bytes preimage, signature sig) tapscript {
                 require(hash160(preimage) == 0x0000000000000000000000000000000000000000);
-                require(older(144));
+                require(older(512));
                 require(checkSig(sig, owner));
             }
         }

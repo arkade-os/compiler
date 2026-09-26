@@ -84,7 +84,8 @@ fn local_check_placeholder_consistency(
         if !(tok.starts_with('<') && tok.ends_with('>') && tok.len() > 2) {
             continue;
         }
-        let inner = &tok[1..tok.len() - 1];
+        let raw = &tok[1..tok.len() - 1];
+        let inner = raw.strip_prefix("seconds:").unwrap_or(raw);
         // Built-in / runtime-injected names that are always resolved.
         if inner == "SERVER_KEY"
             || inner == "serverSig"

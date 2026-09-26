@@ -472,7 +472,7 @@ pub enum TapItem {
         preimage: String,
         hash: String,
     },
-    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal or param name.
+    /// `older(n)` → seconds CSV (relative timelock, exit class). `value` is a literal or param name.
     Older { value: String },
     /// `after(n)` → CLTV (absolute timelock, forfeit class).
     After { value: String },

@@ -20,7 +20,7 @@ contract Vault(Policy policy, pubkey owner) {
     private function authorize(signature sig) {
         require(checkSig(sig, owner));
     }
-    public function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, owner)); }
+    public function exit(signature sig) tapscript { require(older(512)); require(checkSig(sig, owner)); }
 }
 "#).expect("nested calls");
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);

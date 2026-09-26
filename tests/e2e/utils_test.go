@@ -296,6 +296,18 @@ func assemble(t *testing.T, tokens []string, values map[string][]byte) []byte {
 		var data []byte
 		if strings.HasPrefix(token, "<") && strings.HasSuffix(token, ">") {
 			name := token[1 : len(token)-1]
+			if secondsName, ok := strings.CutPrefix(name, "seconds:"); ok {
+				seconds, ok := values[secondsName]
+				if !ok {
+					t.Fatalf("ASM token %d: unresolved placeholder %s", index, token)
+				}
+				sequence, err := csvSecondsSequence(seconds)
+				if err != nil {
+					t.Fatalf("ASM token %d: %s: %v", index, token, err)
+				}
+				builder.AddInt64(sequence)
+				continue
+			}
 			var ok bool
 			data, ok = values[name]
 			if !ok {
@@ -676,6 +688,20 @@ func signBIP340(t *testing.T, privateKey *btcec.PrivateKey, digest []byte) []byt
 		t.Fatalf("sign BIP340 digest: %v", err)
 	}
 	return signature.Serialize()
+}
+
+// csvSecondsSequence encodes a <seconds:name> value. The artifact stores the
+// delay in seconds; the script pushes the BIP68 sequence.
+func csvSecondsSequence(encoded []byte) (int64, error) {
+	seconds, err := arkade.BigNumFromBytes(encoded)
+	if err != nil {
+		return 0, err
+	}
+	n := seconds.BigInt().Int64()
+	if n <= 0 || n%512 != 0 || n/512 > 0xffff {
+		return 0, fmt.Errorf("%d is not a positive multiple of 512 seconds within BIP68", n)
+	}
+	return (n / 512) | (1 << 22), nil
 }
 
 func scriptInt(t *testing.T, value int64) []byte {

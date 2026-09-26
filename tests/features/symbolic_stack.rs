@@ -428,7 +428,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
     );
     assert_eq!(
         crate::common::leaf_asm(&output, "exit", "exit"),
-        "<delay> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
+        "<seconds:delay> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
     );
 }
 
