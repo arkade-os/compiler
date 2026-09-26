@@ -80,7 +80,7 @@ func TestOpcodeExecutionContext(t *testing.T) {
 		{name: "fractional field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":0.5}`)}, wantErr: "OP_VERIFY failed"},
 		{name: "null field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":null}`)}, wantErr: "OP_VERIFY failed"},
 		{name: "has without context", function: "noIntent"},
-		{name: "has with context", function: "noIntent", options: []arkade.ExecuteOption{message}, wantErr: "OP_VERIFY failed"},
+		{name: "has with context", function: "noIntent", options: []arkade.ExecuteOption{message}, wantErr: "false stack entry"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			group := covenantGroup(t, contract, test.function)

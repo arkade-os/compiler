@@ -1,7 +1,7 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
-    OP_MUL, OP_PICK, OP_PUT, OP_ROLL,
+    OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
 };
 
 fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
@@ -19,6 +19,38 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
             .map(String::as_str)
             .eq(expected.iter().copied())
     })
+}
+
+#[test]
+fn optimization_can_be_disabled_for_assembly_checks() {
+    let source = r#"
+contract Shape(int limit) {
+    function read() { require(limit == limit); }
+    function write(int amount) {
+        int[2] weights = [1, 2];
+        weights[0] = 4;
+        require(amount >= weights[0]);
+    }
+}
+"#;
+    let raw = compile(source).unwrap();
+    let raw_read = crate::common::arkade_asm_tokens(&raw, "read");
+    assert!(contains_tokens(&raw_read, &["OP_0", OP_PICK]));
+    assert!(raw_read.ends_with(&[OP_VERIFY.to_string(), "OP_1".to_string()]));
+    assert!(contains_tokens(
+        &crate::common::arkade_asm_tokens(&raw, "write"),
+        &["4", "OP_0", OP_PUT]
+    ));
+
+    let optimized = arkade_compiler::compile(source).unwrap();
+    assert_eq!(
+        crate::common::arkade_asm(&optimized, "read"),
+        "<limit> OP_DUP OP_EQUAL"
+    );
+    assert_eq!(
+        crate::common::arkade_asm(&optimized, "write"),
+        "2 1 4 OP_NIP OP_ROT OP_OVER OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
+    );
 }
 
 #[test]
@@ -122,14 +154,14 @@ contract Mutate() {
         ["value", "choose"]
     );
 
-    assert!(
+    assert_eq!(
         covenant
             .asm
             .iter()
             .filter(|token| token.as_str() == OP_PUT)
-            .count()
-            >= 3,
-        "each scalar reassignment must replace its existing slot with {OP_PUT}: {:?}",
+            .count(),
+        2,
+        "deep branch assignments still need {OP_PUT}: {:?}",
         covenant.asm
     );
     let if_index = covenant
@@ -460,7 +492,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
         let baseline = covenant(&source.replace("int unused, Policy unusedPolicy, ", "").replace(", int unusedTail", ""), "spend");
         assert_eq!(actual.asm, baseline.asm, "{body}");
         if body.contains("new Child") {
-            assert!(actual.asm.contains(&"<VTXO:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
+            assert!(actual.asm.contains(&"<CONTRACT:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
         }
     }
 }
@@ -474,11 +506,11 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
         ),
         (
             "require(x == y); x = 7; require(true);",
-            "OP_0 OP_PICK OP_2 OP_ROLL OP_EQUAL OP_VERIFY 7 OP_0 OP_PUT OP_1 OP_VERIFY OP_1 OP_NIP",
+            "OP_0 OP_PICK OP_2 OP_ROLL OP_EQUAL OP_VERIFY 7 OP_NIP OP_1 OP_VERIFY OP_1 OP_NIP",
         ),
         (
             "x = x + 1; require(x == y);",
-            "OP_0 OP_PICK 1 OP_ADD OP_0 OP_PUT OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
+            "OP_0 OP_ROLL 1 OP_ADD OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
         ),
     ] {
         let source = format!("contract FinalUse() {{ function spend(int x, int y) {{ {body} }} }}");
@@ -487,11 +519,60 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
 }
 
 #[test]
+fn top_binding_reassignment_keeps_branch_layouts() {
+    let covenant = covenant(
+        r#"
+contract BranchReplace() {
+    function spend(int x, bool choose) {
+        if (choose) {
+            x = x + 1;
+        } else {
+            x = 7;
+        }
+        require(x > 0);
+    }
+}
+"#,
+        "spend",
+    );
+
+    let if_index = covenant
+        .asm
+        .iter()
+        .position(|token| token == OP_IF)
+        .unwrap();
+    let else_index = covenant
+        .asm
+        .iter()
+        .position(|token| token == OP_ELSE)
+        .unwrap();
+    let end_index = covenant
+        .asm
+        .iter()
+        .position(|token| token == OP_ENDIF)
+        .unwrap();
+    assert!(contains_tokens(
+        &covenant.asm[if_index..else_index],
+        &["OP_0", OP_ROLL, "1", OP_ADD]
+    ));
+    assert!(contains_tokens(
+        &covenant.asm[else_index..end_index],
+        &["7", "OP_NIP"]
+    ));
+    assert!(!covenant.asm.iter().any(|token| token == OP_PUT));
+    assert!(contains_tokens(
+        &covenant.asm[end_index..],
+        &["OP_0", OP_ROLL, "0", OP_GREATERTHAN]
+    ));
+}
+
+#[test]
 fn final_use_after_a_private_call_consumes_the_caller_binding() {
     let covenant = covenant(
         r#"
 contract Framed() {
     public function spend(int x, int y) {
+        require(double(x) > 0);
         require(double(x) == y);
         require(x >= 1);
     }
@@ -503,11 +584,20 @@ contract Framed() {
         "spend",
     );
 
-    assert!(
-        contains_tokens(&covenant.asm, &["OP_2", OP_PICK, "2", OP_MUL]),
-        "argument reads stay pinned inside a call frame: {:?}",
-        covenant.asm
+    assert_eq!(
+        covenant
+            .asm
+            .windows(4)
+            .filter(|tokens| *tokens == ["OP_0", OP_PICK, "2", OP_MUL])
+            .count(),
+        2,
+        "each helper invocation should read the caller slot directly: {:?}",
+        covenant.asm,
     );
+    assert!(covenant
+        .asm
+        .iter()
+        .all(|token| token != OP_PUT && token != "OP_NIP"));
     assert!(
         contains_tokens(
             &covenant.asm,
@@ -515,5 +605,107 @@ contract Framed() {
         ),
         "the caller's final read after a call must consume the slot: {:?}",
         covenant.asm
+    );
+}
+
+#[test]
+fn readonly_private_arguments_alias_caller_slots_but_mutated_arguments_copy() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(int x) {
+        let earlier = x + 1;
+        require(outer(x) == earlier + x - 1);
+        require(bump(x) == x + 1);
+    }
+    private function outer(int v) int { return inner(v); }
+    private function inner(int w) int { return w * 2; }
+    private function bump(int v) int { if (v > 0) { v = v + 1; } return v; }
+}
+"#,
+        "spend",
+    );
+
+    assert_eq!(&covenant.asm[..4], ["OP_0", OP_PICK, "1", OP_ADD]);
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_1", OP_PICK, "2", OP_MUL]
+    ));
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_0", OP_PICK, "OP_0", OP_PICK, "0", OP_GREATERTHAN, OP_IF]
+    ));
+}
+
+#[test]
+fn readonly_constructor_argument_preserves_constructor_access() {
+    let covenant = covenant(
+        r#"
+contract C(int base) {
+    function spend() { require(sum(base) == base * 2); }
+    private function sum(int value) int { return value + base; }
+}
+"#,
+        "spend",
+    );
+
+    assert_eq!(
+        &covenant.asm[..6],
+        ["<base>", "OP_0", OP_PICK, "OP_1", OP_PICK, OP_ADD]
+    );
+}
+
+#[test]
+fn caller_top_slot_rebinding_ignores_same_named_helper_locals() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(int y, bool c) {
+        let x = y;
+        x = helper(y, c);
+        require(x > 0);
+    }
+    private function helper(int y, bool c) int {
+        let x = y + 1;
+        if (c) { require(x > 0); }
+        return 5;
+    }
+}
+"#,
+        "spend",
+    );
+
+    assert!(contains_tokens(
+        &covenant.asm,
+        &[
+            OP_IF,
+            "OP_0",
+            OP_PICK,
+            "0",
+            OP_GREATERTHAN,
+            OP_VERIFY,
+            OP_ENDIF
+        ]
+    ));
+    let end = covenant
+        .asm
+        .iter()
+        .rposition(|token| token == OP_ENDIF)
+        .unwrap();
+    assert_eq!(
+        &covenant.asm[end + 1..],
+        [
+            "5",
+            "OP_NIP",
+            "OP_NIP",
+            "OP_0",
+            OP_ROLL,
+            "0",
+            OP_GREATERTHAN,
+            OP_VERIFY,
+            "OP_1",
+            "OP_NIP",
+            "OP_NIP"
+        ]
     );
 }

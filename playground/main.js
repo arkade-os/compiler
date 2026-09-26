@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { compile_sources, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -46,6 +46,7 @@ const projects = {
 const examples = {
     single_sig: { name: 'SingleSig', code: contracts.single_sig },
     htlc: { name: 'HTLC', code: contracts.htlc },
+    escrow: { name: 'Escrow', code: contracts.escrow },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
     struct_vault: { name: 'StructVault', code: contracts.struct_vault },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
@@ -54,6 +55,7 @@ const examples = {
 const examplePaths = {
     single_sig: 'single_sig/single_sig.ark',
     htlc: 'htlc/htlc.ark',
+    escrow: 'escrow/escrow.ark',
     fuji_safe: 'fuji_safe/fuji_safe.ark',
     struct_vault: 'struct_vault/struct_vault.ark',
     swap: 'non_interactive_swap/non_interactive_swap.ark',
@@ -167,12 +169,114 @@ async function decompressCode(b64url) {
     return new TextDecoder().decode(out);
 }
 
+// A Shared folder is compiled under its id (`shared`, `shared_1`, …). Sharing
+// that folder again prefixes every path with that id. Peel those prefixes so
+// the same link keeps resolving to the original files.
+function unwrapSharedPrefix(bundle) {
+    const paths = Object.keys(bundle.files);
+    if (paths.length === 0) return null;
+    const prefix = paths[0].split('/')[0];
+    if (!/^shared(?:_\d+)?$/.test(prefix)) return null;
+    const root = `${prefix}/`;
+    if (!bundle.entry.startsWith(root) || paths.some(path => !path.startsWith(root))) return null;
+    const files = {};
+    for (const [path, text] of Object.entries(bundle.files)) files[path.slice(root.length)] = text;
+    const entry = bundle.entry.slice(root.length);
+    if (!Object.hasOwn(files, entry) || !entry.endsWith('.ark')
+        || entry.split('/').some(part => !part || part === '.' || part === '..')) return null;
+    return { entry, files };
+}
+
+function sharedBundleCandidates(bundle) {
+    const candidates = [];
+    const seen = new Set();
+    let current = bundle;
+    while (current) {
+        const mark = `${current.entry}\0${Object.keys(current.files).sort().join('\0')}`;
+        if (seen.has(mark)) break;
+        seen.add(mark);
+        candidates.push(current);
+        current = unwrapSharedPrefix(current);
+    }
+    return candidates;
+}
+
+function canonicalShareBundle(bundle) {
+    const candidates = sharedBundleCandidates(bundle);
+    return candidates[candidates.length - 1];
+}
+
+function workspaceIndex() {
+    const files = {};
+    const locations = {};
+    for (const [id, project] of Object.entries(projects)) {
+        for (const [name, source] of Object.entries(project.files)) {
+            const path = `${id}/${name}`;
+            files[path] = source;
+            locations[path] = { project: id, file: name };
+        }
+    }
+    for (const [id, example] of Object.entries(examples)) {
+        const path = examplePaths[id] || `_examples/${id}.ark`;
+        if (Object.hasOwn(files, path)) continue;
+        files[path] = example.code;
+        locations[path] = { example: id };
+    }
+    return { files, locations };
+}
+
+function workspaceLocation(bundle, index) {
+    if (!index.locations[bundle.entry]) return null;
+    for (const [path, text] of Object.entries(bundle.files)) {
+        if (index.files[path] !== text) return null;
+    }
+    const loc = index.locations[bundle.entry];
+    if (loc.example) return { example: loc.example };
+    return { project: loc.project, file: loc.file };
+}
+
+function projectMatchingBundle(bundle) {
+    const paths = Object.keys(bundle.files);
+    for (const [id, project] of Object.entries(projects)) {
+        const names = Object.keys(project.files);
+        if (names.length !== paths.length || !Object.hasOwn(project.files, bundle.entry)) continue;
+        if (paths.every(path => project.files[path] === bundle.files[path])) {
+            return { project: id, file: bundle.entry };
+        }
+    }
+    return null;
+}
+
+function resolveSharedBundle(bundle) {
+    const candidates = sharedBundleCandidates(bundle);
+    const index = workspaceIndex();
+    for (let i = candidates.length - 1; i >= 0; i--) {
+        const loc = workspaceLocation(candidates[i], index);
+        if (loc) return loc;
+    }
+    for (let i = candidates.length - 1; i >= 0; i--) {
+        const existing = projectMatchingBundle(candidates[i]);
+        if (existing) return existing;
+    }
+    const installed = candidates[candidates.length - 1];
+    const id = uniqueId('shared', projects);
+    projects[id] = { name: 'Shared', description: '', files: { ...installed.files } };
+    return { project: id, file: installed.entry, created: true };
+}
+
+function openSharedBundle(bundle) {
+    const target = resolveSharedBundle(bundle);
+    if (target.created) saveToStorage();
+    if (target.example) selectExample(target.example);
+    else selectProjectFile(target.project, target.file);
+}
+
 async function shareContract() {
     if (!editor) return;
     let encoded;
     try {
         const { entry, files } = compilationSources();
-        const bundle = JSON.parse(compile_sources(entry, JSON.stringify(files))).source;
+        const bundle = canonicalShareBundle(JSON.parse(compile_sources(entry, JSON.stringify(files))).source);
         encoded = await compressCode(JSON.stringify(bundle));
     } catch (error) {
         showError(error.toString());
@@ -1088,19 +1192,26 @@ function initMonaco() {
 
         // Register completions
         monaco.languages.registerCompletionItemProvider('arkade', {
+            triggerCharacters: ['.'],
             provideCompletionItems: (model, position) => {
-                const suggestions = window.arkadeCompletions.map(item => ({
+                const word = model.getWordUntilPosition(position);
+                const insert = {
+                    startLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                };
+                // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
+                const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
+                const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
+                const table = symbolTable(position.lineNumber);
+                const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
-                    insertTextRules: item.insertTextRules ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                    insertTextRules: item.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
                     detail: item.detail || '',
-                    range: {
-                        startLineNumber: position.lineNumber,
-                        startColumn: position.column,
-                        endLineNumber: position.lineNumber,
-                        endColumn: position.column
-                    }
+                    range
                 }));
                 return { suggestions };
             }
@@ -1124,7 +1235,8 @@ function initMonaco() {
             tabSize: 2,
             insertSpaces: true,
             folding: true,
-            bracketPairColorization: { enabled: true }
+            bracketPairColorization: { enabled: true },
+            suggest: { insertMode: 'replace' }
         });
 
         // Keyboard shortcut: Ctrl+Enter to compile
@@ -1142,10 +1254,7 @@ function initMonaco() {
         // Load shared contract from URL hash if present
         window._urlCodePromise.then(bundle => {
             if (bundle) {
-                const id = uniqueId('shared', projects);
-                projects[id] = { name: 'Shared', description: '', files: bundle.files };
-                saveToStorage();
-                selectProjectFile(id, bundle.entry);
+                openSharedBundle(bundle);
                 history.replaceState(null, '', location.pathname + location.search);
             }
         });
@@ -1177,6 +1286,11 @@ function markCompiled() {
 
 function compilationSources() {
     saveCurrentFile();
+    return sourceFiles();
+}
+
+// Every playground source, with the editor's text as the current entry.
+function sourceFiles() {
     const files = {};
     for (const [id, project] of Object.entries(projects)) {
         for (const [name, source] of Object.entries(project.files)) {
@@ -1197,6 +1311,24 @@ function compilationSources() {
     return { entry, files };
 }
 
+// Symbols of the current file per entry path, from the last source that parsed.
+const lastSymbols = {};
+
+// The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
+function symbolTable(lineNumber) {
+    if (!wasmReady) return null;
+    let entry;
+    try {
+        const sources = sourceFiles();
+        entry = sources.entry;
+        const lines = sources.files[entry].split('\n');
+        lines[lineNumber - 1] = '';
+        sources.files[entry] = lines.join('\n');
+        lastSymbols[entry] = JSON.parse(symbols(entry, JSON.stringify(sources.files)));
+    } catch {}
+    return lastSymbols[entry] || null;
+}
+
 // Compile the source code
 function doCompile() {
     if (!wasmReady || !editor) return;
@@ -1206,7 +1338,8 @@ function doCompile() {
 
     try {
         const { entry, files } = compilationSources();
-        const result = compile_sources(entry, JSON.stringify(files));
+        const optimize = document.getElementById('optimize-toggle').checked;
+        const result = compile_sources(entry, JSON.stringify(files), optimize);
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
@@ -1340,12 +1473,13 @@ function highlightAsm(asm) {
     const tokens = Array.isArray(asm) ? asm : asm.split(' ');
     return tokens
         .map(token => {
+            const text = escapeHtml(token);
             if (token.startsWith('OP_')) {
-                return `<span class="asm-opcode">${token}</span>`;
+                return `<span class="asm-opcode">${text}</span>`;
             } else if (token.startsWith('<') && token.endsWith('>')) {
-                return `<span class="asm-placeholder">${token}</span>`;
+                return `<span class="asm-placeholder">${text}</span>`;
             }
-            return token;
+            return text;
         })
         .join(' ');
 }
@@ -1535,6 +1669,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Compile button
     document.getElementById('compile-btn').addEventListener('click', doCompile);
+    document.getElementById('optimize-toggle').addEventListener('change', doCompile);
 
     // Cmd/Ctrl+S → compile (prevent browser save dialog)
     document.addEventListener('keydown', (e) => {

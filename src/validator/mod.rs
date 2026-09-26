@@ -2058,7 +2058,9 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 .asm
                 .iter()
                 .take_while(|token| {
-                    token.starts_with('<') && token.ends_with('>') && !token.starts_with("<VTXO:")
+                    token.starts_with('<')
+                        && token.ends_with('>')
+                        && !token.starts_with("<CONTRACT:")
                 })
                 .collect::<Vec<_>>();
             let retained_names = prologue
@@ -2096,7 +2098,7 @@ pub fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 )));
             }
             if arkade.asm[prologue.len()..].iter().any(|token| {
-                token.starts_with('<') && token.ends_with('>') && !token.starts_with("<VTXO:")
+                token.starts_with('<') && token.ends_with('>') && !token.starts_with("<CONTRACT:")
             }) {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' arkade covenant has a placeholder outside its constructor prologue",

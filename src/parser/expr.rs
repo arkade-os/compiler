@@ -401,7 +401,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
 ///
 /// Handles `new ContractName(arg1, arg2, ...)` and produces
 /// `ContractInstance { contract_name, args }` which the compiler lowers to
-/// a `<VTXO:ContractName(...)>` scriptPubKey placeholder.
+/// a `<CONTRACT:ContractName(...)>` 32-byte Taproot output-key placeholder.
 pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
 

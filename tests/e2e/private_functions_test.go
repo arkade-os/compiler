@@ -44,10 +44,11 @@ func TestPrivateFunctions(t *testing.T) {
 			}
 			expected := 100 + (selected+5)*2 + selected + nested
 			wantErr := ""
-			if !tc.pass || tc.wrongResult {
+			if !tc.pass {
 				wantErr = "OP_VERIFY failed"
 			}
 			if tc.wrongResult {
+				wantErr = "OP_EQUALVERIFY failed"
 				expected++
 			}
 			pass := int64(0)

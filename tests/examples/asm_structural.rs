@@ -90,7 +90,7 @@ fn local_check_placeholder_consistency(
             || inner == "serverSig"
             || inner == "emulatorSig"
             || inner.starts_with("EMULATOR_KEY:")
-            || inner.starts_with("VTXO:")
+            || inner.starts_with("CONTRACT:")
             || inner.starts_with("checkMultisig(")
         {
             continue;
@@ -526,14 +526,17 @@ fn server_key_placeholder_is_always_resolved() {
 #[test]
 fn vtxo_placeholder_is_always_resolved() {
     let asm = vec![
-        "<VTXO:SomeContract(x,y)>".to_string(),
+        "<CONTRACT:SomeContract(x,y)>".to_string(),
         "OP_EQUAL".to_string(),
     ];
     let warnings = local_check_placeholder_consistency(&asm, &[], &[]);
-    let orphan: Vec<_> = warnings.iter().filter(|w| w.contains("VTXO:")).collect();
+    let orphan: Vec<_> = warnings
+        .iter()
+        .filter(|w| w.contains("CONTRACT:"))
+        .collect();
     assert!(
         orphan.is_empty(),
-        "<VTXO:...> placeholders must never be flagged as unresolvable"
+        "<CONTRACT:...> placeholders must never be flagged as unresolvable"
     );
 }
 

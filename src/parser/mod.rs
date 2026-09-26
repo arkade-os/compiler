@@ -18,6 +18,8 @@ mod comparison;
 mod crypto;
 mod expr;
 mod introspection;
+#[cfg(any(feature = "wasm", test))]
+mod symbols;
 mod tapscript;
 
 pub(crate) use asset::*;
@@ -26,6 +28,8 @@ pub(crate) use comparison::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
+#[cfg(any(feature = "wasm", test))]
+pub(crate) use symbols::{symbols, Symbol};
 pub(crate) use tapscript::*;
 
 #[cfg(test)]

@@ -53,7 +53,7 @@ fn test_controlled_mint_contract() {
     assert!(mint_inputs
         .iter()
         .any(|input| input.name == "recipientScriptPubKey" && input.param_type == "bytes"));
-    assert!(!mint_asm.contains("VTXO:SingleSig"));
+    assert!(!mint_asm.contains("CONTRACT:SingleSig"));
 
     // Should have asset group find opcode
     assert!(

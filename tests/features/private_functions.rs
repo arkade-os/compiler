@@ -1,5 +1,5 @@
+use crate::common::compile_unoptimized as compile;
 use crate::common::*;
-use arkade_compiler::compile;
 
 #[test]
 fn nested_private_calls_preserve_constructor_scope_and_public_abi() {
@@ -115,6 +115,32 @@ contract Composite(Pair initial) {
     assert!(arkade_asm_tokens(&output, "spend")
         .iter()
         .any(|s| s == "OP_ECMUL"));
+}
+
+#[test]
+fn branched_composite_return_moves_result_slots() {
+    let output = compile(
+        r#"
+struct Pair { int left; int right; }
+contract C() {
+    function spend(bool choose, Pair a, Pair b) {
+        Pair result = select(choose, a, b);
+        require(result.left >= 0);
+    }
+    private function select(bool choose, Pair a, Pair b) Pair {
+        if (choose) { return a; }
+        return b;
+    }
+}
+"#,
+    )
+    .expect("branched composite return");
+    let asm = arkade_asm_tokens(&output, "spend");
+    let end = asm.iter().rposition(|token| token == "OP_ENDIF").unwrap();
+    assert_eq!(
+        &asm[end + 1..end + 5],
+        ["OP_1", "OP_ROLL", "OP_1", "OP_ROLL"]
+    );
 }
 
 #[test]

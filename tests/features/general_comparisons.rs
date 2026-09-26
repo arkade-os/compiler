@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_EQUALVERIFY,
     OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PICK,
@@ -278,7 +278,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
     }
 }
 "#;
-    let output = arkade_compiler::compile_sources(
+    let output = arkade_compiler::compile_sources_with_options(
         "main.ark",
         &[
             ("main.ark".into(), source.into()),
@@ -289,6 +289,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
         ]
         .into_iter()
         .collect(),
+        arkade_compiler::CompileOptions { optimize: false },
     )
     .unwrap();
     let asm = crate::common::arkade_asm_tokens(&output, "compare");
@@ -297,7 +298,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
         asm.windows(4).any(|window| {
             window[0] == OP_1
                 && window[1] == OP_ROLL
-                && window[2].contains("VTXO:SingleSig(")
+                && window[2].contains("CONTRACT:SingleSig(")
                 && window[3] == OP_EQUAL
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"

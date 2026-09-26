@@ -19,6 +19,19 @@ pub use models::{
 pub use program::{program_from_artifact, program_from_json, Program};
 pub use typechecker::{ArkType, TypeError};
 
+/// Per-call compiler settings. Optimizations are enabled by default.
+#[derive(Clone, Copy, Debug)]
+pub struct CompileOptions {
+    /// Apply assembly optimizations to Arkade covenants.
+    pub optimize: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self { optimize: true }
+    }
+}
+
 /// Compile Arkade Script source code to a JSON-serializable structure
 ///
 /// This function takes Arkade Script source code as input, parses it into an AST,
@@ -62,10 +75,7 @@ pub use typechecker::{ArkType, TypeError};
 /// println!("{}", json);
 /// ```
 pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    match compiler::compile(source_code) {
-        Ok(output) => Ok(output),
-        Err(err) => Err(err.into()),
-    }
+    compiler::compile(source_code).map_err(Into::into)
 }
 
 /// Compile an entry file and its relative imports from the filesystem.
@@ -80,5 +90,14 @@ pub fn compile_sources(
     entry: &str,
     files: &std::collections::BTreeMap<String, String>,
 ) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    imports::compile_sources(entry, files).map_err(Into::into)
+    imports::compile_sources(entry, files, CompileOptions::default()).map_err(Into::into)
+}
+
+/// Compile in-memory sources with per-call options.
+pub fn compile_sources_with_options(
+    entry: &str,
+    files: &std::collections::BTreeMap<String, String>,
+    options: CompileOptions,
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    imports::compile_sources(entry, files, options).map_err(Into::into)
 }

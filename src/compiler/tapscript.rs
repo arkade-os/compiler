@@ -200,7 +200,9 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
             for k in keys {
                 match k {
                     KeyExpr::Ident(id) if id == "emulator" => uses_bare_emulator = true,
-                    KeyExpr::Tweak { func } => tweak_targets.push(func.clone()),
+                    KeyExpr::Tweak { base, func } if base == "emulator" => {
+                        tweak_targets.push(func.clone())
+                    }
                     _ => {}
                 }
             }
@@ -257,6 +259,31 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
     }
 }
 
+/// The one arkade function this leaf tweaks a key to.
+///
+/// Bare `emulator` names the tapscript itself. `tweak(base, func)` names `func`.
+/// A leaf can name only one function, so it has one `leaves` array to join.
+fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
+    let mut target: Option<String> = None;
+    for key in keys {
+        let func = match key {
+            KeyExpr::Ident(id) if id == "emulator" => ts_name,
+            KeyExpr::Tweak { func, .. } => func.as_str(),
+            _ => continue,
+        };
+        if let Some(prev) = &target {
+            if prev != func {
+                return Err(format!(
+                    "tapscript `{ts_name}`: keys may be tweaked to only one arkade function"
+                ));
+            }
+        } else {
+            target = Some(func.to_string());
+        }
+    }
+    Ok(target)
+}
+
 /// arkd structural rules F2/F3/E1/E3 + key resolution (§5.3). `min_exit_delay`
 /// enables literal-only E3 magnitude checks.
 pub fn validate_arkd_rules(
@@ -279,13 +306,50 @@ pub fn validate_arkd_rules(
     };
 
     // Key resolution.
+    let mut constructor_tweak_funcs: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeSet<String>,
+    > = std::collections::BTreeMap::new();
     for k in &c.keys {
-        if let KeyExpr::Ident(id) = k {
-            if !in_scope(id) {
+        match k {
+            KeyExpr::Ident(id) if !in_scope(id) => {
                 return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
             }
+            KeyExpr::Tweak { base, func } if base != "emulator" => {
+                if constructor_scope.get(base) != Some(&ArkType::Pubkey) {
+                    return Err(format!(
+                        "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
+                        ts.name
+                    ));
+                }
+                if !contract
+                    .functions
+                    .iter()
+                    .any(|f| !f.is_private && &f.name == func)
+                {
+                    return Err(format!(
+                        "tweak({base}, {func}) in tapscript `{}`: no function named `{func}`",
+                        ts.name
+                    ));
+                }
+                constructor_tweak_funcs
+                    .entry(base.clone())
+                    .or_default()
+                    .insert(func.clone());
+            }
+            _ => {}
         }
     }
+    for (base, funcs) in &constructor_tweak_funcs {
+        if funcs.len() > 1 {
+            return Err(format!(
+                "ambiguous constructor tweak targets for `{base}` in tapscript `{}`",
+                ts.name
+            ));
+        }
+    }
+    // Bare `emulator` names this tapscript. Every tweak must name that same function.
+    shared_tweak_func(&ts.name, &c.keys)?;
 
     // Any scalar constructor binding or tapscript input.
     let name_declared = |name: &str| -> bool {
@@ -394,7 +458,8 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
         KeyExpr::Ident(id) if id == "server" => "<SERVER_KEY>".to_string(),
         KeyExpr::Ident(id) if id == "emulator" => format!("<EMULATOR_KEY:{leaf_func}>"),
         KeyExpr::Ident(id) => format!("<{id}>"),
-        KeyExpr::Tweak { func } => format!("<EMULATOR_KEY:{func}>"),
+        KeyExpr::Tweak { base, func } if base == "emulator" => format!("<EMULATOR_KEY:{func}>"),
+        KeyExpr::Tweak { base, func } => format!("<TWEAK:{base}:{func}>"),
     }
 }
 
@@ -501,7 +566,7 @@ pub fn build_function_groups(
     mut covenants: std::collections::HashMap<String, ArkadeCovenant>,
 ) -> Result<Vec<AbiFunctionGroup>, String> {
     // Resolve + validate every author-written tapscript; bucket by group key.
-    // group key = function name for NameMatched / Tweaked(func); leaf's own name for Standalone.
+    // A tweak joins that covenant. A leaf that tweaks nothing keeps its own name.
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
 
@@ -511,11 +576,8 @@ pub fn build_function_groups(
         let binding = resolve_binding(contract, ts)?;
         validate_arkd_rules(contract, ts, &closure, None)?;
 
-        let group_key = match &binding {
-            Binding::NameMatched => ts.name.clone(),
-            Binding::Tweaked(func) => func.clone(),
-            Binding::Standalone => ts.name.clone(),
-        };
+        let group_key =
+            shared_tweak_func(&ts.name, &closure.keys)?.unwrap_or_else(|| ts.name.clone());
 
         let mut asm = emit_leaf_asm(&closure, &ts.name, &binding);
         resolve_constructor_field_placeholders(&mut asm, contract)?;
@@ -532,8 +594,9 @@ pub fn build_function_groups(
     for f in contract.functions.iter().filter(|f| !f.is_private) {
         let arkade = covenants.remove(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
-        if leaves.is_empty() {
-            leaves.push(synthesize_default_leaf(&f.name));
+        // A constructor-pubkey tweak is an extra leaf. It does not replace the emulator path.
+        if !leaves.iter().any(leaf_signs_emulator) {
+            leaves.insert(0, synthesize_default_leaf(&f.name));
         }
         groups.push(AbiFunctionGroup {
             name: f.name.clone(),
@@ -581,6 +644,12 @@ fn resolve_constructor_field_placeholders(
     Ok(())
 }
 
+fn leaf_signs_emulator(leaf: &AbiLeaf) -> bool {
+    leaf.asm
+        .iter()
+        .any(|token| token.starts_with("<EMULATOR_KEY:"))
+}
+
 /// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], …, 2).
 fn synthesize_default_leaf(func: &str) -> AbiLeaf {
     let closure = Closure {
@@ -589,7 +658,10 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
         timelock: None,
         keys: vec![
             KeyExpr::Ident("server".into()),
-            KeyExpr::Tweak { func: func.into() },
+            KeyExpr::Tweak {
+                base: "emulator".into(),
+                func: func.into(),
+            },
         ],
         threshold: Some(2),
     };
@@ -871,6 +943,7 @@ mod tests {
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "claim".into(),
             }])],
         };
@@ -887,6 +960,7 @@ mod tests {
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "claim".into(),
             }])],
         };
@@ -901,6 +975,7 @@ mod tests {
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
+                base: "emulator".into(),
                 func: "nope".into(),
             }])],
         };
@@ -915,9 +990,11 @@ mod tests {
             inputs: vec![],
             items: vec![sig(vec![
                 KeyExpr::Tweak {
+                    base: "emulator".into(),
                     func: "claim".into(),
                 },
                 KeyExpr::Tweak {
+                    base: "emulator".into(),
                     func: "refund".into(),
                 },
             ])],
@@ -1246,5 +1323,211 @@ mod tests {
                 OP_CHECKSIG.to_string(),
             ]
         );
+    }
+
+    /// `tweak(constructorPubkey, func)` binds that key to the covenant on any leaf.
+    /// A forfeit leaf includes `server` as well.
+    #[test]
+    fn second_emulator_tweak_binds_the_constructor_key() {
+        let src = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() {
+    require(tx.input.current.value >= 1, "funded");
+  }
+  function late(signature insurerSig) tapscript {
+    require(older(10));
+    require(checkSig(insurerSig, tweak(insurer, claim)));
+  }
+  function race(signature serverSig, signature insurerSig) tapscript {
+    require(checkMultisig([server, tweak(insurer, claim)], [serverSig, insurerSig], 2));
+  }
+}
+"#;
+        let output = super::super::compile(src).expect("second emulator");
+        assert!(
+            output.functions.iter().all(|g| g.name == "claim"),
+            "constructor tweaks are leaves of claim, not their own groups"
+        );
+        let claim = output
+            .functions
+            .iter()
+            .find(|g| g.name == "claim")
+            .expect("claim");
+        assert!(claim.arkade.is_some());
+        assert_eq!(
+            claim
+                .leaves
+                .iter()
+                .map(|leaf| leaf.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["claim", "late", "race"]
+        );
+        let emulator = claim.leaves[0].asm.join(" ");
+        assert!(
+            emulator.contains("<SERVER_KEY>") && emulator.contains("<EMULATOR_KEY:claim>"),
+            "the default emulator leaf stays: {emulator}"
+        );
+        assert!(
+            !emulator.contains("TWEAK:insurer"),
+            "the emulator leaf is not the constructor tweak: {emulator}"
+        );
+        for name in ["late", "race"] {
+            let leaf = claim
+                .leaves
+                .iter()
+                .find(|leaf| leaf.name == name)
+                .expect(name);
+            let asm = leaf.asm.join(" ");
+            assert!(
+                asm.contains("<TWEAK:insurer:claim>"),
+                "{name} binds the insurer key to claim: {asm}"
+            );
+            assert!(
+                !asm.contains("EMULATOR_KEY"),
+                "{name} is not an emulator leaf: {asm}"
+            );
+            assert!(
+                leaf.witness
+                    .iter()
+                    .any(|w| w.name == "insurerSig" && !w.injected),
+                "{name}: insurerSig must not be injected"
+            );
+        }
+    }
+
+    /// An author-written emulator leaf stays the emulator path. The constructor
+    /// tweak is another leaf of the same function, and no second default is added.
+    #[test]
+    fn constructor_tweak_keeps_an_author_emulator_leaf() {
+        let src = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() {
+    require(tx.input.current.value >= 1, "funded");
+  }
+  function claim(signature serverSig, signature emulatorSig) tapscript {
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+  }
+  function late(signature insurerSig) tapscript {
+    require(older(10));
+    require(checkSig(insurerSig, tweak(insurer, claim)));
+  }
+}
+"#;
+        let output = super::super::compile(src).expect("author emulator leaf");
+        let claim = output
+            .functions
+            .iter()
+            .find(|g| g.name == "claim")
+            .expect("claim");
+        assert_eq!(claim.leaves.len(), 2);
+        assert!(claim.leaves[0]
+            .asm
+            .iter()
+            .any(|t| t == "<EMULATOR_KEY:claim>"));
+        assert_eq!(claim.leaves[1].name, "late");
+        assert!(claim.leaves[1]
+            .asm
+            .iter()
+            .any(|t| t == "<TWEAK:insurer:claim>"));
+    }
+
+    #[test]
+    fn constructor_tweak_rejects_an_unknown_base_or_function() {
+        let unknown_base = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function race(pubkey owner, signature ownerSig, signature insurerSig) tapscript {
+    require(checkMultisig([server, tweak(owner, claim)], [ownerSig, insurerSig], 2));
+  }
+}
+"#;
+        let missing_fn = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function race(signature serverSig, signature insurerSig) tapscript {
+    require(checkMultisig([server, tweak(insurer, missing)], [serverSig, insurerSig], 2));
+  }
+}
+"#;
+        let tapscript_fn = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function late(signature insurerSig) tapscript {
+    require(older(10));
+    require(checkSig(insurerSig, tweak(insurer, late)));
+  }
+}
+"#;
+        let two_funcs = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function refund() { require(tx.input.current.value >= 1, "funded"); }
+  function race(signature aSig, signature bSig) tapscript {
+    require(older(10));
+    require(checkMultisig([tweak(insurer, claim), tweak(insurer, refund)], [aSig, bSig], 2));
+  }
+}
+"#;
+        let err = super::super::compile(unknown_base).unwrap_err();
+        assert!(err.contains("not a constructor pubkey"), "{err}");
+        let err = super::super::compile(missing_fn).unwrap_err();
+        assert!(err.contains("no function named `missing`"), "{err}");
+        let err = super::super::compile(tapscript_fn).unwrap_err();
+        assert!(err.contains("no function named `late`"), "{err}");
+        let err = super::super::compile(two_funcs).unwrap_err();
+        assert!(err.contains("ambiguous constructor tweak"), "{err}");
+    }
+
+    #[test]
+    fn a_tapscript_may_tweak_keys_to_only_one_function() {
+        let two_keys = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer, pubkey backup) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function refund() { require(tx.input.current.value >= 1, "funded"); }
+  function race(signature aSig, signature bSig) tapscript {
+    require(older(10));
+    require(checkMultisig([tweak(insurer, claim), tweak(backup, refund)], [aSig, bSig], 2));
+  }
+}
+"#;
+        let emulator_and_constructor = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function refund() { require(tx.input.current.value >= 1, "funded"); }
+  function race(signature emulatorSig, signature insurerSig) tapscript {
+    require(older(10));
+    require(checkMultisig([tweak(emulator, claim), tweak(insurer, refund)], [emulatorSig, insurerSig], 2));
+  }
+}
+"#;
+        let name_matched = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function refund() { require(tx.input.current.value >= 1, "funded"); }
+  function claim(signature serverSig, signature emulatorSig, signature insurerSig) tapscript {
+    require(checkMultisig(
+      [server, emulator, tweak(insurer, refund)],
+      [serverSig, emulatorSig, insurerSig],
+      3
+    ));
+  }
+}
+"#;
+        for src in [two_keys, emulator_and_constructor, name_matched] {
+            let err = super::super::compile(src).unwrap_err();
+            assert!(
+                err.contains("keys may be tweaked to only one arkade function"),
+                "{err}"
+            );
+        }
     }
 }

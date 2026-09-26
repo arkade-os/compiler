@@ -37,6 +37,7 @@ mod expr;
 mod functions;
 mod introspection;
 mod loops;
+mod optimization;
 
 pub(crate) use asset::*;
 pub(crate) use comparison::*;
@@ -74,13 +75,19 @@ struct Generator {
     structs: Vec<crate::models::StructDefinition>,
     scope: typechecker::Scope,
     functions: Vec<Function>,
+    // Read-only scalar parameters can name slots in the pinned caller frame.
+    aliases: std::collections::HashMap<String, usize>,
     // None outside a helper; Some(None) inside a void helper.
     return_type: Option<Option<String>>,
+    direct_return: bool,
     // Record reads once, then replay final uses at their new stack depths.
     final_reads: Vec<bool>,
     last_reads: std::collections::HashMap<(String, usize), usize>,
     read_cursor: Option<usize>,
     preserve_bindings: bool,
+    pinned_stack_len: usize,
+    // Rebinding the top slot can consume its old value without changing a branch join.
+    replacement: Option<(String, BindingKind, usize)>,
 }
 
 impl Generator {
@@ -142,11 +149,15 @@ impl Generator {
             structs: structs.to_vec(),
             scope,
             functions: Vec::new(),
+            aliases: std::collections::HashMap::new(),
             return_type: None,
+            direct_return: false,
             final_reads: Vec::new(),
             last_reads: std::collections::HashMap::new(),
             read_cursor: None,
             preserve_bindings: false,
+            pinned_stack_len: 0,
+            replacement: None,
         })
     }
 
@@ -156,9 +167,11 @@ impl Generator {
     }
 
     fn binding_index(&self, name: &str) -> Option<usize> {
-        self.stack.iter().position(
-            |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
-        )
+        self.aliases.get(name).copied().or_else(|| {
+            self.stack.iter().position(
+                |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
+            )
+        })
     }
 
     /// Element count of an array binding, read off the symbolic stack: its
@@ -212,10 +225,10 @@ impl Generator {
             }
         }
         let name = Self::internal_binding_name(name);
-        self.read_static_binding(&name)
+        self.read_static_binding(&name, false)
     }
 
-    fn read_static_binding(&mut self, name: &str) -> Result<(), String> {
+    fn read_static_binding(&mut self, name: &str, take: bool) -> Result<(), String> {
         let index = self
             .binding_index(name)
             .ok_or_else(|| format!("undefined binding '{name}'"))?;
@@ -234,14 +247,19 @@ impl Generator {
             {
                 self.final_reads[previous] = false;
             }
-            // Arrays and outer scope slots stay pinned until layouts and joins support released slots.
+            // Arrays and outer scope slots stay pinned unless reassignment restores the slot.
             self.final_reads.push(
-                !self.preserve_bindings
+                take || (!self.preserve_bindings
+                    && index >= self.pinned_stack_len
                     && !name.starts_with('$')
-                    && self
+                    && (self
                         .scopes
                         .last()
-                        .is_none_or(|(baseline, _)| index >= *baseline),
+                        .is_none_or(|(baseline, _)| index >= *baseline)
+                        || self
+                            .replacement
+                            .as_ref()
+                            .is_some_and(|(target, _, _)| target == name))),
             );
             false
         };
@@ -451,7 +469,7 @@ impl Generator {
         if let Some(array) = token.strip_prefix(INTERNAL_ARRAY_INDEX_PREFIX) {
             return self.select_indexed_value(array);
         }
-        if token.starts_with("<VTXO:") {
+        if token.starts_with("<CONTRACT:") {
             let mut token = token.to_string();
             for (array, elements) in &self.constructor_array_expansions {
                 token = token.replace(array, elements);
@@ -604,6 +622,42 @@ impl Generator {
 
     fn assign_static_binding(&mut self, name: &str, display_name: &str) -> Result<(), String> {
         let name = Self::internal_binding_name(name);
+        if self.aliases.contains_key(&name) {
+            return Err(format!(
+                "internal compiler error: aliased parameter '{display_name}' is assigned"
+            ));
+        }
+        if let Some((target, kind, start)) = self.replacement.clone() {
+            if target == name && !self.preserve_bindings {
+                if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
+                    return Err(
+                        "internal compiler error: assignment has no result value".to_string()
+                    );
+                }
+                if let Some(index) = self.stack.len().checked_sub(2) {
+                    if let Some(previous) = self.last_reads.remove(&(name.clone(), index)) {
+                        if previous < start {
+                            self.final_reads[previous] = false;
+                        }
+                    }
+                }
+                if let Some(index) = self.binding_index(&name) {
+                    if index + 2 != self.stack.len() {
+                        return Err(
+                            "internal compiler error: assignment target moved below the top slot"
+                                .to_string(),
+                        );
+                    }
+                    self.nip()?;
+                }
+                *self
+                    .stack
+                    .last_mut()
+                    .ok_or("internal compiler error: assignment has no result value")? =
+                    StackItem::Binding { name, kind };
+                return Ok(());
+            }
+        }
         let index = self
             .binding_index(&name)
             .ok_or_else(|| format!("assignment to undeclared binding '{display_name}'"))?;
@@ -748,6 +802,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     crate::imports::compile_sources(
         "main.ark",
         &std::collections::BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
+        crate::CompileOptions::default(),
     )
 }
 
@@ -796,6 +851,7 @@ pub(crate) fn emit(
     contract: &Contract,
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
+    options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let parameters = contract.parameters.clone();
 
@@ -829,6 +885,14 @@ pub(crate) fn emit(
     }
 
     json.functions = tapscript::build_function_groups(contract, covenants)?;
+
+    if options.optimize {
+        for group in &mut json.functions {
+            if let Some(covenant) = &mut group.arkade {
+                covenant.asm = optimization::optimize(std::mem::take(&mut covenant.asm));
+            }
+        }
+    }
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
@@ -1042,8 +1106,27 @@ fn generate_asm_from_statements_recursive(
                 }
             }
             Statement::VarAssign { target, value } => {
+                let previous_replacement = generator.replacement.take();
+                // Deeper targets use OP_PUT; moving them needs scope and branch layout repair.
+                generator.replacement = match (target, generator.stack.last()) {
+                    (
+                        AssignmentTarget::Binding(name),
+                        Some(StackItem::Binding { name: top, kind }),
+                    ) if name == top
+                        && *kind != BindingKind::Constructor
+                        && !generator.preserve_bindings =>
+                    {
+                        Some((
+                            name.clone(),
+                            kind.clone(),
+                            generator.read_cursor.unwrap_or(generator.final_reads.len()),
+                        ))
+                    }
+                    _ => None,
+                };
                 generator.emit_expression(value)?;
                 generator.assign(target)?;
+                generator.replacement = previous_replacement;
             }
         }
         generator.assert_statement_boundary()?;
