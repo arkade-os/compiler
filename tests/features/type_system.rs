@@ -373,3 +373,53 @@ fn cashscript_parity_acceptances() {
         ["warning[validation]: constructor parameter 'unused' is never used (main.ark)"]
     );
 }
+
+// ─── Casts ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn casts_narrow_bytes_and_check_sized_lengths() {
+    let output = compile_ok(
+        r#"
+contract Casts(pubkey owner, int gidx) {
+    function spend(signature sig, bytes data) {
+        bytes32 id = bytes32(substr(data, 0, 32));
+        bytes20 short = bytes20(substr(data, 32, 20));
+        pubkey key = pubkey(substr(data, 52, 32));
+        require(tx.outputs[0].assets.lookup(id, gidx) > 0);
+        require(short != 0x00);
+        require(checkSig(sig, key));
+        require(bytes32Of(data) == id);
+    }
+    private function bytes32Of(bytes value) bytes32 { return sha256(value); }
+}"#,
+    );
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert!(asm.contains("OP_SUBSTR OP_SIZE 32 OP_EQUALVERIFY"), "{asm}");
+    assert!(asm.contains("OP_SUBSTR OP_SIZE 20 OP_EQUALVERIFY"), "{asm}");
+    assert_eq!(
+        asm.matches("OP_SIZE").count(),
+        2,
+        "pubkey casts are unchecked: {asm}"
+    );
+
+    for (cast, source_type) in [
+        ("bytes32(n)", "int"),
+        ("bytes20(h)", "bytes32"),
+        ("pubkey(owner)", "pubkey"),
+    ] {
+        let error = compile_error(&format!(
+            "contract Casts(pubkey owner, bytes32 h) {{ function spend(int n) {{ let x = {cast}; require(x == x && n == n && h == h); require(checkSig(owner, owner)); }} }}"
+        ));
+        assert!(
+            error.contains(&format!("cannot cast '{source_type}'")),
+            "{cast}: {error}"
+        );
+    }
+}
+
+#[test]
+fn pubkeys_and_signatures_widen_to_bytes_in_bindings_and_arguments() {
+    compile_ok(
+        "contract Widen(pubkey owner) { function spend(signature sig, bytes data) { bytes key = owner; require(same(sig, data) || key == data); require(checkSig(sig, owner)); } private function same(bytes a, bytes b) bool { return a == b; } }",
+    );
+}

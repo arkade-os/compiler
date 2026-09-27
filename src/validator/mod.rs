@@ -816,7 +816,8 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::Cat { left, right } => vec![left, right],
         Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data } => vec![data],
+        | Expression::SizeOf { data }
+        | Expression::Cast { data, .. } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
@@ -895,7 +896,10 @@ pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> 
     expected == actual
         || matches!(
             (expected, actual),
-            (ArkType::Bytes, ArkType::Bytes20 | ArkType::Bytes32)
+            (
+                ArkType::Bytes,
+                ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Pubkey | ArkType::Signature
+            )
         )
         || matches!(
             (expected, actual),
@@ -1644,6 +1648,15 @@ fn validate_binding_expression(
                     operator,
                     actual.as_str(),
                     expected.as_str()
+                )));
+            }
+        }
+        Expression::Cast { target, data } => {
+            let actual = resolved_expression_type(data, scopes);
+            if actual != ArkType::Bytes && actual != ArkType::Unknown {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': cannot cast '{}' to '{target}'; only bytes can be cast",
+                    actual.as_str()
                 )));
             }
         }

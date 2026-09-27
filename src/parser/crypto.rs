@@ -283,6 +283,21 @@ pub(crate) fn parse_reverse_bytes(pair: Pair<Rule>) -> Result<Expression, String
     })
 }
 
+/// Parse pubkey(x) / signature(x) / bytes20(x) / bytes32(x) → Expression::Cast
+pub(crate) fn parse_cast(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let target = inner
+        .next()
+        .ok_or("Missing cast type")?
+        .as_str()
+        .to_string();
+    let data = parse_byte_value(inner.next().ok_or("Missing data in cast")?)?;
+    Ok(Expression::Cast {
+        target,
+        data: Box::new(data),
+    })
+}
+
 /// Parse size(data) → Expression::SizeOf
 pub(crate) fn parse_size(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();

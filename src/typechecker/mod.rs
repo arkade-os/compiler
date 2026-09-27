@@ -946,6 +946,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::Bin2Num { .. } => ArkType::Int,
         Expression::Num2Bin { .. } => ArkType::Bytes,
         Expression::ReverseBytes { .. } => ArkType::Bytes,
+        Expression::Cast { target, .. } => ArkType::parse(target),
         Expression::SizeOf { .. } => ArkType::Int,
 
         // Packet introspection — returns raw packet bytes.

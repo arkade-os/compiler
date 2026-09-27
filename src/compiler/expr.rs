@@ -389,6 +389,17 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_SIZE.to_string());
             asm.push(OP_NIP.to_string());
         }
+        Expression::Cast { target, data } => {
+            emit_expression_asm(data, asm);
+            let size = match target.as_str() {
+                "bytes20" => Some("20"),
+                "bytes32" => Some("32"),
+                _ => None,
+            };
+            if let Some(size) = size {
+                asm.extend([OP_SIZE, size, OP_EQUALVERIFY].map(String::from));
+            }
+        }
         // Packet introspection
         Expression::PacketInspect { packet_type } => {
             emit_expression_asm(packet_type, asm);

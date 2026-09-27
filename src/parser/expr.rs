@@ -267,6 +267,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::num2bin_func => parse_num2bin(pair),
         Rule::reverse_bytes_func => parse_reverse_bytes(pair),
         Rule::size_func => parse_size(pair),
+        Rule::cast_func => parse_cast(pair),
         // Packet introspection
         Rule::packet_inspect => parse_packet_inspect(pair),
         Rule::input_packet_inspect => parse_input_packet_inspect(pair),

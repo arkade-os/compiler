@@ -782,6 +782,11 @@ pub enum Expression {
     ReverseBytes { data: Box<Expression> },
     /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
     SizeOf { data: Box<Expression> },
+    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x)
+    Cast {
+        target: String,
+        data: Box<Expression>,
+    },
     // ─── Packet Introspection ──────────────────────────────────────────
     /// Current-tx packet content: tx.packet(packetType)
     /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
@@ -939,7 +944,8 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Cat { left, right } => vec![left, right],
         Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data } => vec![data],
+        | Expression::SizeOf { data }
+        | Expression::Cast { data, .. } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
