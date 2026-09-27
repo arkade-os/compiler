@@ -254,6 +254,8 @@ pub struct SourceBundle {
 pub struct CompilerInfo {
     pub name: String,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<crate::CompileOptions>,
 }
 
 // AST structures.

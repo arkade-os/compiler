@@ -34,6 +34,10 @@ contract Shape(int limit) {
 }
 "#;
     let raw = compile(source).unwrap();
+    assert_eq!(
+        serde_json::to_value(&raw).unwrap()["compiler"]["options"]["optimize"],
+        false
+    );
     let raw_read = crate::common::arkade_asm_tokens(&raw, "read");
     assert!(contains_tokens(&raw_read, &["OP_0", OP_PICK]));
     assert!(raw_read.ends_with(&[OP_VERIFY.to_string(), "OP_1".to_string()]));
@@ -43,6 +47,10 @@ contract Shape(int limit) {
     ));
 
     let optimized = arkade_compiler::compile(source).unwrap();
+    assert_eq!(
+        serde_json::to_value(&optimized).unwrap()["compiler"]["options"]["optimize"],
+        true
+    );
     assert_eq!(
         crate::common::arkade_asm(&optimized, "read"),
         "<limit> OP_DUP OP_EQUAL"

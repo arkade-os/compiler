@@ -864,6 +864,7 @@ pub(crate) fn emit(
         compiler: Some(CompilerInfo {
             name: "arkade-compiler".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            options: Some(options),
         }),
         updated_at: Some(Utc::now().to_rfc3339()),
         warnings,
