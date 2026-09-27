@@ -5,8 +5,7 @@
 ///   including wire-encoding metadata used by client stub generators
 /// - `infer_type`: expression-level type inference
 /// - `check_contract` / `check_function`: requirement-level type checking
-///   that returns a list of `TypeError`s (currently non-fatal — the caller
-///   decides how to surface them)
+///   that returns a list of `TypeError`s; the compiler rejects any of them
 use std::collections::HashMap;
 
 use crate::models::{AssignmentTarget, Contract, Expression, Function, Requirement, Statement};
@@ -365,7 +364,6 @@ fn resolve_expression(
 /// Type-check an entire contract.
 ///
 /// Returns all type errors found across all functions.
-/// Currently non-fatal — the compiler emits these as warnings.
 pub fn check_contract(contract: &Contract) -> Vec<TypeError> {
     let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     contract
@@ -520,7 +518,11 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
         Requirement::Expression(expr) => {
             check_expression(expr, scope, errors, fn_name);
             let condition_type = infer_type(expr, scope);
-            if condition_type != ArkType::Bool && condition_type != ArkType::Unknown {
+            // A bare find verifies the asset group exists; its index is dropped.
+            if !matches!(expr, Expression::GroupFind { .. })
+                && condition_type != ArkType::Bool
+                && condition_type != ArkType::Unknown
+            {
                 errors.push(TypeError::new(format!(
                     "fn {}: require condition has type '{}', expected bool",
                     fn_name,
@@ -739,8 +741,8 @@ fn check_comparison(
     let compatible = match op {
         "==" | "!=" => {
             left_type == right_type
-                || (is_bytes_like(&left_type) && is_bytes_like(&right_type))
-                || (is_numeric(&left_type) && is_numeric(&right_type))
+                || castable_to_bytes(&left_type) && right_type == ArkType::Bytes
+                || castable_to_bytes(&right_type) && left_type == ArkType::Bytes
         }
         ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
         _ => true,
@@ -755,6 +757,11 @@ fn check_comparison(
             right_type.as_str()
         )));
     }
+}
+
+// Sized byte types widen only to unbounded bytes, so bytes20 == bytes32 is rejected.
+fn castable_to_bytes(t: &ArkType) -> bool {
+    is_bytes_like(t) || matches!(t, ArkType::Pubkey | ArkType::Signature)
 }
 
 fn is_numeric(t: &ArkType) -> bool {

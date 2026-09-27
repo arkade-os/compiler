@@ -19,7 +19,9 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
-use crate::models::{AssignmentTarget, Contract, ContractJson, Expression, Requirement, Statement};
+use crate::models::{
+    AssignmentTarget, Contract, ContractJson, Expression, KeyExpr, Requirement, Statement, TapItem,
+};
 use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
@@ -216,6 +218,7 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
     }
 
     check_shadowing(contract, &mut issues);
+    check_unused(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
 
@@ -404,6 +407,117 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         issues.push(ValidationIssue::error(format!(
             "{context} '{name}' uses a compiler-reserved placeholder name"
         )));
+    }
+    const RESERVED: &[&str] = &[
+        "int",
+        "bool",
+        "bytes",
+        "bytes20",
+        "bytes32",
+        "pubkey",
+        "signature",
+        "asset",
+        "contract",
+        "library",
+        "function",
+        "struct",
+        "require",
+        "if",
+        "else",
+        "for",
+        "in",
+        "return",
+        "const",
+        "import",
+        "pragma",
+        "true",
+        "false",
+        "tapscript",
+        "private",
+        "public",
+        "static",
+        "tx",
+        "this",
+    ];
+    if RESERVED.contains(&name) {
+        issues.push(ValidationIssue::error(format!(
+            "{context} '{name}' uses a reserved keyword or type name"
+        )));
+    }
+}
+
+/// Reject parameters, locals, and tapscript inputs that are never read: an
+/// unread witness element is unchecked, so anyone relaying the spend could
+/// replace it. An unread constructor parameter is only a warning because it is
+/// pruned from the script and cannot be malleated.
+fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let mut contract_used: HashSet<&str> = HashSet::new();
+    for tapscript in &contract.tapscripts {
+        let mut used = HashSet::new();
+        for item in &tapscript.items {
+            match item {
+                TapItem::Hash { preimage, hash, .. } => used.extend([preimage, hash]),
+                TapItem::Older { value } | TapItem::After { value } => {
+                    used.insert(value);
+                }
+                TapItem::Sig { keys, sigs, .. } => {
+                    used.extend(keys.iter().map(|key| match key {
+                        KeyExpr::Ident(name) | KeyExpr::Tweak { base: name, .. } => name,
+                    }));
+                    used.extend(sigs);
+                }
+            }
+        }
+        for input in tapscript.inputs.iter().filter(|i| !used.contains(&i.name)) {
+            issues.push(ValidationIssue::error(format!(
+                "input '{}' in tapscript '{}' is never used",
+                input.name, tapscript.name
+            )));
+        }
+        contract_used.extend(used.into_iter().map(String::as_str));
+    }
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let used = references::referenced_parameters(&function.statements, &[]);
+        let mut locals = Vec::new();
+        collect_let_bindings(&function.statements, &mut locals);
+        let names = function.parameters.iter().map(|p| p.name.as_str());
+        for name in names.chain(locals).filter(|name| !used.contains(name)) {
+            issues.push(ValidationIssue::error(format!(
+                "variable '{name}' in function '{}' is never used",
+                function.name
+            )));
+        }
+        contract_used.extend(used);
+    }
+    for parameter in contract
+        .parameters
+        .iter()
+        .filter(|p| !contract_used.contains(p.name.as_str()))
+    {
+        issues.push(ValidationIssue::warning(format!(
+            "constructor parameter '{}' is never used",
+            parameter.name
+        )));
+    }
+}
+
+fn collect_let_bindings<'a>(statements: &'a [Statement], names: &mut Vec<&'a str>) {
+    for statement in statements {
+        match statement {
+            Statement::LetBinding { name, .. } => names.push(name),
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_let_bindings(then_body, names);
+                collect_let_bindings(else_body.as_deref().unwrap_or_default(), names);
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                collect_let_bindings(body, names)
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1488,17 +1602,32 @@ fn validate_binding_expression(
     }
 
     match expression {
-        Expression::BinaryOp { left, op, right } if matches!(op.as_str(), "&&" | "||") => {
-            for operand in [left, right] {
-                let actual = resolved_expression_type(operand, scopes);
-                if actual != ArkType::Bool && actual != ArkType::Unknown {
+        Expression::BinaryOp { left, op, right }
+            if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
+        {
+            let (kind, expected) = if matches!(op.as_str(), "&&" | "||") {
+                ("logical", ArkType::Bool)
+            } else {
+                ("arithmetic", ArkType::Int)
+            };
+            let types = [left, right].map(|operand| resolved_expression_type(operand, scopes));
+            // Bytes-like `+` is concatenation, checked when it is rewritten to OP_CAT.
+            let concat = op == "+" && types.iter().any(crate::typechecker::is_bytes_like);
+            for actual in types.iter().filter(|_| !concat) {
+                if *actual != expected && *actual != ArkType::Unknown {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': logical '{}' operand has type '{}', expected 'bool'",
+                        "function '{}': {kind} '{}' operand has type '{}', expected '{}'",
                         function_name,
                         op,
-                        actual.as_str()
+                        actual.as_str(),
+                        expected.as_str()
                     )));
                 }
+            }
+            if op == "/" && literal_index(right).is_some_and(|(_, value)| value == "0") {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': division by zero"
+                )));
             }
         }
         Expression::Negate { value } | Expression::Not { value } => {
@@ -2302,7 +2431,9 @@ contract Demo() {
 
     #[test]
     fn valid_contract_has_no_issues() {
-        let contract = make_contract("Simple");
+        let mut contract = make_contract("Simple");
+        // `flag` is only read by the branch tests.
+        contract.functions[0].parameters.pop();
         let issues = validate_ast(&contract, true);
         assert!(!has_errors(&issues));
     }

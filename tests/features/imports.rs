@@ -112,7 +112,10 @@ library Fees {
     );
     assert_eq!(output.functions.len(), 2);
     assert_eq!(output.structs.len(), 1);
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert_eq!(
+        output.warnings,
+        ["warning[validation]: constructor parameter 'amount' is never used (vault.ark)"]
+    );
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.contains(&"OP_INSPECTOUTPUTVALUE".to_string()));
     assert!(!asm.contains(&"<amount>".to_string()));
@@ -159,7 +162,7 @@ library A {
         ),
     ];
     let source = r#"import "a.ark"; import "b.ark";
-contract Main(int x) {
+contract Main() {
     const int VALUE = 999;
     function spend(int value) { require(A.value(value) == B.value(value) + 8); }
 }"#;
@@ -478,8 +481,9 @@ fn constructors_require_visible_contracts_and_matching_signatures() {
 fn native_and_virtual_compilation_match_and_bundle_is_portable() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("contracts")).unwrap();
-    let source = r#"import "../helper.ark"; contract Main() { function spend() { require(Helper.VALUE == 1); require(1); } }"#;
-    let helper = "contract Helper() { const int VALUE = 1; function spend() { require(2); } }";
+    let source = r#"import "../helper.ark"; contract Main(int unused) { function spend() { require(Helper.VALUE == 1); } }"#;
+    let helper =
+        "contract Helper(int unused) { const int VALUE = 1; function spend() { require(true); } }";
     std::fs::write(dir.path().join("contracts/main.ark"), source).unwrap();
     std::fs::write(dir.path().join("helper.ark"), helper).unwrap();
     let output = compile_file(dir.path().join("contracts/main.ark")).unwrap();
@@ -487,7 +491,8 @@ fn native_and_virtual_compilation_match_and_bundle_is_portable() {
     for path in ["contracts/main.ark", "helper.ark"] {
         assert!(
             output.warnings.iter().any(|warning| {
-                warning.starts_with("warning[type]:") && warning.ends_with(&format!(" ({path})"))
+                warning.starts_with("warning[validation]:")
+                    && warning.ends_with(&format!(" ({path})"))
             }),
             "{:?}",
             output.warnings
@@ -584,7 +589,7 @@ fn imported_helpers_check_returns_recursion_and_namespace_shadowing() {
 fn qualified_static_calls_are_distinct_from_group_methods() {
     project("main.ark", &[
         ("main.ark", r#"import "helper.ark"; contract Main(bytes32 txid) { function spend(int index) { require(Helper.controlIs(txid, index)); } }"#),
-        ("helper.ark", "contract Helper() { static function controlIs(bytes32 txid, int index) bool { return index == 0; } }"),
+        ("helper.ark", "contract Helper() { static function controlIs(bytes32 txid, int index) bool { return index == size(txid) - 32; } }"),
     ]).unwrap();
 }
 

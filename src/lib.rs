@@ -80,7 +80,15 @@ pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Er
 pub fn compile_file(
     path: impl AsRef<std::path::Path>,
 ) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    imports::compile_file(path.as_ref()).map_err(Into::into)
+    compile_file_with_options(path, CompileOptions::default())
+}
+
+/// Compile an entry file and its relative imports with per-call options.
+pub fn compile_file_with_options(
+    path: impl AsRef<std::path::Path>,
+    options: CompileOptions,
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    imports::compile_file(path.as_ref(), options).map_err(Into::into)
 }
 
 /// Compile an entry file from an in-memory map of relative paths to source text.

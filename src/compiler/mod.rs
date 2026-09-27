@@ -829,13 +829,15 @@ pub(crate) fn prepare(
     rewrite_concat_ops(contract)?;
 
     // ── Type checking ──────────────────────────────────────────────────────
-    // Run the type checker. Errors are non-fatal and returned as warnings on
-    // ContractJson so callers (CLI, WASM, tests) can surface them as they see fit.
     let type_errors = typechecker::check_contract(contract);
-    let mut warnings: Vec<String> = type_errors
-        .iter()
-        .map(|e| format!("warning[type]: {}", e.message))
-        .collect();
+    if !type_errors.is_empty() {
+        return Err(type_errors
+            .iter()
+            .map(|e| format!("type error: {}", e.message))
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+    let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {

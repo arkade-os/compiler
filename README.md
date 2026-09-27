@@ -187,9 +187,10 @@ Requires a Rust toolchain ([rustup.rs](https://rustup.rs/)).
 cargo install --path .              # installs arkadec
 arkadec contract.ark                # writes contract.json in the current directory
 arkadec contract.ark -o out.json
+arkadec contract.ark --no-optimize  # skips peephole optimization of Arkade covenants
 ```
 
-Type-check warnings go to stderr; errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
+Warnings go to stderr; type and validation errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
 
 Generate client bindings from one artifact or a directory of them:
 

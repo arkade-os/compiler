@@ -2,7 +2,7 @@ use clap::Parser as ClapParser;
 use std::fs;
 use std::path::Path;
 
-use arkade_compiler::compile_file;
+use arkade_compiler::{compile_file_with_options, CompileOptions};
 
 /// Arkade Compiler CLI
 ///
@@ -28,6 +28,10 @@ struct Args {
     /// Output file path (defaults to source filename with .json extension)
     #[arg(short, long)]
     output: Option<String>,
+
+    /// Emit Arkade covenant assembly without peephole optimizations
+    #[arg(long)]
+    no_optimize: bool,
 }
 
 /// Main function for the Arkade Compiler CLI
@@ -49,7 +53,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Compile source code to JSON
-    let output = match compile_file(file_path) {
+    let output = match compile_file_with_options(
+        file_path,
+        CompileOptions {
+            optimize: !args.no_optimize,
+        },
+    ) {
         Ok(json) => json,
         Err(err) => {
             eprintln!("Compilation error: {}", err);

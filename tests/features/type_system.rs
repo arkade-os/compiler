@@ -10,8 +10,7 @@
 //! - **Wrong hash type** — passing an `int` where `bytes32` is expected.
 //! - **Non-boolean if condition** — using an integer expression as a branch condition.
 //!
-//! Type errors that make stack behavior ambiguous are fatal. Other compatibility
-//! issues remain warnings in `ContractJson.warnings`.
+//! Type errors are fatal; `ContractJson.warnings` carries only non-type issues.
 
 use arkade_compiler::compile;
 
@@ -96,6 +95,7 @@ contract DeclaredAssign(pubkey owner) {
     function spend(signature ownerSig) {
         let x = 1;
         x = 2;
+        require(x == 2);
         require(checkSig(ownerSig, owner));
     }
 }"#;
@@ -174,20 +174,18 @@ contract SameTypes(pubkey owner) {
 // ─── Wrong hash type ─────────────────────────────────────────────────────────
 
 #[test]
-fn non_bytes32_hash_param_produces_warning() {
-    // sha256(preimage) == hashVal where hashVal is declared as `int`
-    // The typechecker should flag that the hash comparison target is not bytes32.
+fn non_bytes32_hash_param_is_rejected() {
+    // sha256(preimage) == hashVal where hashVal is declared as `int`.
     let source = r#"
 contract BadHashType(pubkey owner, int hashVal) {
     function claim(bytes32 preimage) {
         require(sha256(preimage) == hashVal);
     }
 }"#;
-    let output = compile_ok(source);
+    let error = compile_error(source);
     assert!(
-        has_type_warning(&output, "bytes32") || has_type_warning(&output, "hash"),
-        "wrong hash type must produce a type warning; got: {:?}",
-        output.warnings
+        error.contains("'hashVal' has type 'int', expected bytes32"),
+        "wrong hash type must be rejected: {error}"
     );
 }
 
@@ -291,11 +289,11 @@ contract SwappedCsfs(pubkey owner) {
 // ─── Warnings are surfaced in the ContractJson output ────────────────────────
 
 #[test]
-fn type_warnings_appear_in_contract_json_warnings_field() {
+fn warnings_appear_in_contract_json_warnings_field() {
+    // `minVal` is never read, which warns without failing compilation.
     let source = r#"
 contract HasWarnings(pubkey owner, int minVal) {
     function spend(signature ownerSig) {
-        require(minVal);
         require(checkSig(ownerSig, owner));
     }
 }"#;
@@ -311,5 +309,67 @@ contract HasWarnings(pubkey owner, int minVal) {
     assert!(
         json.contains("warning"),
         "warnings must appear in serialized JSON"
+    );
+}
+
+// ─── CashScript-parity strictness ────────────────────────────────────────────
+
+#[test]
+fn cashscript_parity_rejections() {
+    for (body, expected) in [
+        (
+            "require(true + 1 == a);",
+            "arithmetic '+' operand has type 'bool'",
+        ),
+        ("require(a / 0 == 1);", "division by zero"),
+        (
+            "require(a == b);",
+            "comparison '==' is not defined between 'int' and 'bytes'",
+        ),
+        (
+            "require(h20 == h32);",
+            "comparison '==' is not defined between 'bytes20' and 'bytes32'",
+        ),
+        (
+            "require(flag == 1);",
+            "comparison '==' is not defined between 'bool' and 'int'",
+        ),
+        (
+            "int unread = a; require(a == 1);",
+            "variable 'unread' in function 'spend' is never used",
+        ),
+        (
+            "int bytes = a; require(bytes == 1);",
+            "'bytes' uses a reserved keyword or type name",
+        ),
+    ] {
+        let source = format!("contract Strict(bytes20 h20, bytes32 h32, bool flag) {{ function spend(int a, bytes b) {{ require(h20 == b && h32 == b && flag && a == a && b == b); {body} }} }}");
+        let error = compile_error(&source);
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+    let error = compile_error(
+        "contract Strict(pubkey owner) { function spend() { require(true); } function spend(signature sig, bytes extra) tapscript { require(checkSig(sig, owner)); } }",
+    );
+    assert!(
+        error.contains("input 'extra' in tapscript 'spend' is never used"),
+        "{error}"
+    );
+    let unused_param = compile_error(
+        "contract Strict(pubkey owner) { function spend(signature sig, int amount) { require(checkSig(sig, owner)); } }",
+    );
+    assert!(
+        unused_param.contains("variable 'amount' in function 'spend' is never used"),
+        "{unused_param}"
+    );
+}
+
+#[test]
+fn cashscript_parity_acceptances() {
+    let output = compile_ok(
+        "contract Strict(pubkey owner, bytes key, int unused) { function spend(signature sig) { require(owner == key); require(checkSig(sig, owner)); } }",
+    );
+    assert_eq!(
+        output.warnings,
+        ["warning[validation]: constructor parameter 'unused' is never used (main.ark)"]
     );
 }
