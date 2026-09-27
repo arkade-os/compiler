@@ -53,12 +53,37 @@ pub fn validate(source: &str) -> Result<bool, String> {
 /// `optimize` defaults to true when omitted.
 #[wasm_bindgen]
 pub fn compile_sources(entry: &str, files: &str, optimize: Option<bool>) -> Result<String, String> {
+    let output = compile_project(entry, files, optimize)?;
+    serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))
+}
+
+/// Compile a virtual project with warnings alongside the artifact.
+#[wasm_bindgen]
+pub fn compile_sources_with_diagnostics(
+    entry: &str,
+    files: &str,
+    optimize: Option<bool>,
+) -> Result<String, String> {
+    let output = compile_project(entry, files, optimize)?;
+    let artifact =
+        serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))?;
+    serde_json::to_string(&serde_json::json!({
+        "artifact": artifact,
+        "warnings": output.warnings,
+    }))
+    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+fn compile_project(
+    entry: &str,
+    files: &str,
+    optimize: Option<bool>,
+) -> Result<crate::ContractJson, String> {
     let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
     let options = crate::CompileOptions {
         optimize: optimize.unwrap_or(true),
     };
-    let output = crate::imports::compile_sources(entry, &files, options)?;
-    serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))
+    crate::imports::compile_sources(entry, &files, options)
 }
 
 /// Completion symbols for `entry` in a virtual project. `files` is a JSON object

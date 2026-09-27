@@ -15,7 +15,7 @@ The playground runs the real compiler as WebAssembly. Nothing is installed and n
 | JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
 | Assembly | Every spend group: the Arkade covenant ASM and each tapscript leaf, opcodes and `<placeholders>` highlighted |
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
-| Errors | Parse, type, and validation errors; the offending line is selected in the editor |
+| Diagnostics | Compiler warnings and errors; an offending line is selected in the editor when available |
 
 The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 
@@ -200,7 +200,7 @@ cargo run -p arkade-bindgen -- --list-targets
 
 `--embed` inlines the artifact JSON into the generated file; `--package` sets the module or namespace name.
 
-Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `validate`, and `version`; the WASM `compile_sources(entry, files)` accepts the file map as a JSON string and returns the artifact as a JSON string.
+Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `validate`, and `version`; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string, warnings: string[] }` for the playground.
 
 ### Run the playground locally
 
@@ -517,7 +517,7 @@ Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
 
-Type-check and validation warnings remain available on the Rust compilation result and are printed by the CLI, but are not serialized into artifacts. They identify their source file relative to the bundle root, including warnings from dependencies.
+Type-check and validation warnings remain available on the Rust compilation result, are printed by the CLI, and appear in the playground's Diagnostics tab, but are not serialized into artifacts. They identify their source file relative to the bundle root, including warnings from dependencies.
 
 ### Covenant stack ABI
 
