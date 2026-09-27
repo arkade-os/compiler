@@ -23,6 +23,7 @@ use crate::opcodes::{
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 pub mod tapscript;
 
@@ -867,7 +868,8 @@ pub(crate) fn emit(
             version: env!("CARGO_PKG_VERSION").to_string(),
             options: Some(options),
         }),
-        updated_at: Some(Utc::now().to_rfc3339()),
+        updated_at: None,
+        fingerprint: None,
         warnings,
     };
 
@@ -911,6 +913,10 @@ pub(crate) fn emit(
         json.warnings
             .push(format!("warning[output-invariant]: {}", issue.message));
     }
+
+    let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
+    json.fingerprint = Some(format!("sha256:{:x}", Sha256::digest(bytes)));
+    json.updated_at = Some(Utc::now().to_rfc3339());
 
     Ok(json)
 }

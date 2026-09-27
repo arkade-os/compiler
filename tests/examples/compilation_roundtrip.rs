@@ -89,6 +89,33 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
     );
 }
 
+#[test]
+fn fingerprint_identifies_artifact_content() {
+    let source = "contract Ident(int x) { function spend() { require(x == 1); } }";
+    let first = arkade_compiler::compile(source).unwrap();
+    let second = arkade_compiler::compile(source).unwrap();
+    let fingerprint = first.fingerprint.as_deref().unwrap();
+    assert!(fingerprint.starts_with("sha256:") && fingerprint.len() == 71);
+    assert_eq!(
+        fingerprint,
+        "sha256:a2b8b1d70032a1f61e2ede1c2dd140a8d0a7f6cbf6de114f1d8ed021432af1de"
+    );
+    assert_eq!(first.fingerprint, second.fingerprint);
+    assert_ne!(
+        first.fingerprint,
+        arkade_compiler::compile(&format!("{source}\n"))
+            .unwrap()
+            .fingerprint
+    );
+    let unoptimized = arkade_compiler::compile_sources_with_options(
+        "main.ark",
+        &[("main.ark".to_string(), source.to_string())].into(),
+        arkade_compiler::CompileOptions { optimize: false },
+    )
+    .unwrap();
+    assert_ne!(first.fingerprint, unoptimized.fingerprint);
+}
+
 // ─── One test per example contract ───────────────────────────────────────────
 
 #[test]

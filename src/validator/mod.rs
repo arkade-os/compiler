@@ -2410,6 +2410,7 @@ contract Demo() {
             source: None,
             compiler: None,
             updated_at: None,
+            fingerprint: None,
             warnings: vec![],
         }
     }

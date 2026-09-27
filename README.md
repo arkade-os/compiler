@@ -496,6 +496,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
   ],
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkade-compiler", "version": "0.1.0", "options": { "optimize": true } },
+  "fingerprint": "sha256:...",
   "updatedAt": "2026-01-01T00:00:00Z"
 }
 ```
@@ -510,6 +511,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 | `compiler.options` | Effective compilation settings; `optimize` applies to Arkade covenant assembly |
+| `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, and unresolved script templates |
 
 Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
