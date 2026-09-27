@@ -513,6 +513,8 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `compiler.options` | Effective compilation settings; `optimize` applies to Arkade covenant assembly |
 | `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, and unresolved script templates |
 
+The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
+
 Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.

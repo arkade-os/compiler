@@ -97,6 +97,7 @@ fn fingerprint_identifies_artifact_content() {
     assert_eq!(first.compiler.as_ref().unwrap().name, "arkadec");
     let fingerprint = first.fingerprint.as_deref().unwrap();
     assert!(fingerprint.starts_with("sha256:") && fingerprint.len() == 71);
+    // This value pins the artifact's exact serialization, including field order.
     assert_eq!(
         fingerprint,
         "sha256:64fc308645fcfd1da22b7f8930a509c0f1d30785e82969459e1d81826c07ce2b"
