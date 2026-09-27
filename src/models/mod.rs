@@ -39,6 +39,8 @@ pub fn is_builtin_struct(declared_type: &str) -> bool {
 
 // JSON output structures.
 // These represent the compiled contract in a serializable format.
+pub const ARTIFACT_FORMAT_VERSION: u32 = 1;
+
 /// Parameter in a contract or function
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Parameter {
@@ -225,6 +227,8 @@ pub struct AbiFunctionGroup {
 /// JSON output for a contract
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContractJson {
+    #[serde(rename = "formatVersion", skip_serializing_if = "Option::is_none")]
+    pub format_version: Option<u32>,
     #[serde(rename = "contractName")]
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

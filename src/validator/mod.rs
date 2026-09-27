@@ -2394,6 +2394,7 @@ contract Demo() {
             injected: false,
         }];
         ContractJson {
+            format_version: None,
             name: name.to_string(),
             structs: vec![],
             parameters: vec![],

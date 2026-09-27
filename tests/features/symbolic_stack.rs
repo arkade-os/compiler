@@ -34,6 +34,7 @@ contract Shape(int limit) {
 }
 "#;
     let raw = compile(source).unwrap();
+    assert_eq!(raw.format_version, Some(1));
     assert_eq!(
         serde_json::to_value(&raw).unwrap()["compiler"]["options"]["optimize"],
         false

@@ -856,6 +856,7 @@ pub(crate) fn emit(
     let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
+        format_version: Some(crate::models::ARTIFACT_FORMAT_VERSION),
         name: contract.name.clone(),
         structs: contract.structs.clone(),
         parameters,

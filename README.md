@@ -472,6 +472,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 
 ```json
 {
+  "formatVersion": 1,
   "contractName": "HTLC",
   "constructorInputs": [{ "name": "sender", "type": "pubkey" }, ...],
   "structs": [],
@@ -501,6 +502,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 
 | Field | Meaning |
 |---|---|
+| `formatVersion` | Artifact schema version; absent on legacy artifacts |
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
