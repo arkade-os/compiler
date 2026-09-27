@@ -506,14 +506,13 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
-| `warnings` | Type-check and validation warnings include their source file path; omitted when empty |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 
 Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
 
-Type-check and validation warnings identify their source file relative to the bundle root, including warnings from dependencies.
+Type-check and validation warnings remain available on the Rust compilation result and are printed by the CLI, but are not serialized into artifacts. They identify their source file relative to the bundle root, including warnings from dependencies.
 
 ### Covenant stack ABI
 
