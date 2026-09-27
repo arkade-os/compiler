@@ -1,82 +1,9 @@
 // Arkade Language Definition for Monaco Editor
 
-// Monarch tokenizer definition (for setMonarchTokensProvider)
-const arkadeMonarch = {
-    defaultToken: 'invalid',
-
-    keywords: [
-        'contract', 'library', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
-        'for', 'in', 'let', 'private', 'public', 'static', 'const', 'return', 'new', 'import'
-    ],
-
-    typeKeywords: [
-        'pubkey', 'signature', 'bytes32', 'bytes20', 'bytes',
-        'asset', 'int', 'bool'
-    ],
-
-    builtinFunctions: [
-        'checkSig', 'checkMultisig', 'checkSigFromStack', 'checkSigFromStackVerify',
-        'sha256', 'sha256Initialize', 'sha256Update', 'sha256Finalize',
-        'digest', 'sighash', 'modExp', 'reverseBytes',
-        'ecAdd', 'ecMul', 'ecPairing', 'ecMulScalarVerify', 'tweakVerify',
-        'older', 'after', 'tweak'
-    ],
-
-    operators: [
-        '>=', '<=', '==', '!=', '>', '<', '+', '-', '*', '/', '='
-    ],
-
-    tokenizer: {
-        root: [
-            // Comments
-            [/\/\/.*$/, 'comment'],
-            [/\/\*/, 'comment', '@comment'],
-
-            // Whitespace
-            [/\s+/, 'white'],
-
-            // Keywords
-            [/\b(contract|library|struct|function|tapscript|require|if|else|for|in|let|private|public|static|const|return|new|import)\b/, 'keyword'],
-
-            // Types
-            [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
-
-            // Built-in functions
-            [/\b(checkSig|checkMultisig|checkSigFromStack|checkSigFromStackVerify|sha256|sha256Initialize|sha256Update|sha256Finalize|digest|sighash|modExp|reverseBytes|ecAdd|ecMul|ecPairing|ecMulScalarVerify|tweakVerify|older|after|tweak)\b/, 'predefined'],
-
-            // Transaction/this keywords
-            [/\b(tx|this)\b/, 'variable.predefined'],
-
-            // Numbers
-            [/\b\d+\b/, 'number'],
-
-            // Strings
-            [/"[^"]*"/, 'string'],
-
-            // Operators
-            [/[>=<!=]+/, 'operator'],
-            [/[+\-*/]/, 'operator'],
-
-            // Delimiters
-            [/[{}()\[\];,.]/, 'delimiter'],
-
-            // Identifiers
-            [/[a-zA-Z_]\w*/, 'identifier'],
-        ],
-
-        comment: [
-            [/[^/*]+/, 'comment'],
-            [/\*\//, 'comment', '@pop'],
-            [/[/*]/, 'comment']
-        ]
-    }
-};
-
 // Language configuration (for setLanguageConfiguration)
 const arkadeLanguageConfig = {
     comments: {
-        lineComment: '//',
-        blockComment: ['/*', '*/']
+        lineComment: '//'
     },
     brackets: [
         ['{', '}'],
@@ -200,6 +127,41 @@ const arkadeCompletions = [
     S('reverseBytes', 'Function', 'reverseBytes(${1:bytes})', 'Reverse byte order'),
     S('size', 'Function', 'size(${1:bytes})', 'Byte length'),
 ];
+
+// Monarch tokenizer definition (for setMonarchTokensProvider); word lists come from the completions.
+const completionLabels = kind => arkadeCompletions.filter(item => item.kind === kind).map(item => item.label);
+const arkadeMonarch = {
+    defaultToken: 'invalid',
+    keywords: [...completionLabels('Keyword'), 'in'],
+    typeKeywords: completionLabels('TypeParameter'),
+    // Tapscript-only timelocks are highlighted but not offered as completions.
+    builtinFunctions: [...completionLabels('Function'), 'older', 'after'],
+    implicitBindings: completionLabels('Variable'),
+
+    tokenizer: {
+        root: [
+            [/\/\/.*$/, 'comment'],
+            [/\s+/, 'white'],
+            [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
+            [/\d+\.\d+\.\d+/, 'number'],
+            [/0x[0-9a-fA-F]*/, 'number.hex'],
+            [/\d+/, 'number'],
+            [/"(?:[^"\\]|\\.)*"/, 'string'],
+            [/[a-zA-Z]\w*/, {
+                cases: {
+                    '@keywords': 'keyword',
+                    '@typeKeywords': 'type',
+                    '@builtinFunctions': 'predefined',
+                    '@implicitBindings': 'variable.predefined',
+                    '@default': 'identifier'
+                }
+            }],
+            [/[{}()\[\]]/, '@brackets'],
+            [/[;,.:]/, 'delimiter'],
+            [/[=<>!&|^~+\-*\/]+/, 'operator'],
+        ]
+    }
+};
 
 // Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
 const arkadeMembers = {
