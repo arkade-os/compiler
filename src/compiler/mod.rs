@@ -864,7 +864,7 @@ pub(crate) fn emit(
         functions: Vec::new(),
         source: Some(source),
         compiler: Some(CompilerInfo {
-            name: "arkade-compiler".to_string(),
+            name: "arkadec".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             options: Some(options),
         }),

@@ -94,11 +94,12 @@ fn fingerprint_identifies_artifact_content() {
     let source = "contract Ident(int x) { function spend() { require(x == 1); } }";
     let first = arkade_compiler::compile(source).unwrap();
     let second = arkade_compiler::compile(source).unwrap();
+    assert_eq!(first.compiler.as_ref().unwrap().name, "arkadec");
     let fingerprint = first.fingerprint.as_deref().unwrap();
     assert!(fingerprint.starts_with("sha256:") && fingerprint.len() == 71);
     assert_eq!(
         fingerprint,
-        "sha256:a2b8b1d70032a1f61e2ede1c2dd140a8d0a7f6cbf6de114f1d8ed021432af1de"
+        "sha256:64fc308645fcfd1da22b7f8930a509c0f1d30785e82969459e1d81826c07ce2b"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
     assert_ne!(

@@ -495,7 +495,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
     { "name": "unilateral", "leaves": [ ... ] }
   ],
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
-  "compiler": { "name": "arkade-compiler", "version": "0.1.0", "options": { "optimize": true } },
+  "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },
   "fingerprint": "sha256:...",
   "updatedAt": "2026-01-01T00:00:00Z"
 }
