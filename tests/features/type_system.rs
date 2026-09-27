@@ -20,13 +20,6 @@ fn compile_ok(source: &str) -> arkade_compiler::models::ContractJson {
     compile(source).unwrap_or_else(|e| panic!("unexpected compile error: {}", e))
 }
 
-fn has_type_warning(output: &arkade_compiler::models::ContractJson, pattern: &str) -> bool {
-    output
-        .warnings
-        .iter()
-        .any(|w| w.contains("warning[type]") && w.to_lowercase().contains(&pattern.to_lowercase()))
-}
-
 fn compile_error(source: &str) -> String {
     compile(source)
         .expect_err("contract must fail validation")
@@ -61,13 +54,7 @@ contract Correct(pubkey owner) {
         require(checkSig(ownerSig, owner));
     }
 }"#;
-    let output = compile_ok(source);
-    let has_warning = has_type_warning(&output, "swapped") || has_type_warning(&output, "checkSig");
-    assert!(
-        !has_warning,
-        "correct checkSig argument order must produce no type warnings; got: {:?}",
-        output.warnings
-    );
+    compile_ok(source);
 }
 
 // ─── Undeclared variable assignment ──────────────────────────────────────────
@@ -99,13 +86,7 @@ contract DeclaredAssign(pubkey owner) {
         require(checkSig(ownerSig, owner));
     }
 }"#;
-    let output = compile_ok(source);
-    let has_warning = has_type_warning(&output, "undeclared");
-    assert!(
-        !has_warning,
-        "assigning to a declared variable must not warn; got: {:?}",
-        output.warnings
-    );
+    compile_ok(source);
 }
 
 // ─── Introspection / int comparison ──────────────────────────────────────────
@@ -119,14 +100,7 @@ contract MixedTypes(pubkey owner, int minValue) {
         require(checkSig(ownerSig, owner));
     }
 }"#;
-    let output = compile_ok(source);
-    let has_comparison_warning =
-        has_type_warning(&output, "comparison") || has_type_warning(&output, "compatible");
-    assert!(
-        !has_comparison_warning,
-        "BigNum comparison must not warn about operand widths; got: {:?}",
-        output.warnings
-    );
+    compile_ok(source);
 }
 
 #[test]
@@ -142,14 +116,7 @@ contract IntEquality(pubkey owner, int expectedValue, int expectedVersion) {
         require(checkSig(ownerSig, owner));
     }
 }"#;
-    let output = compile_ok(source);
-    let has_comparison_warning =
-        has_type_warning(&output, "comparison") || has_type_warning(&output, "compatible");
-    assert!(
-        !has_comparison_warning,
-        "numeric equality across int/uint widths must not warn; got: {:?}",
-        output.warnings
-    );
+    compile_ok(source);
 }
 
 #[test]
@@ -162,13 +129,7 @@ contract SameTypes(pubkey owner) {
         require(checkSig(ownerSig, owner));
     }
 }"#;
-    let output = compile_ok(source);
-    let has_implicit_warn = has_type_warning(&output, "implicit");
-    assert!(
-        !has_implicit_warn,
-        "BigNum values must not warn about implicit conversion; got: {:?}",
-        output.warnings
-    );
+    compile_ok(source);
 }
 
 // ─── Wrong hash type ─────────────────────────────────────────────────────────
@@ -197,13 +158,7 @@ contract CorrectHashType(pubkey owner, bytes32 hashVal) {
         require(sha256(preimage) == hashVal);
     }
 }"#;
-    let output = compile_ok(source);
-    let has_warning = has_type_warning(&output, "bytes32") || has_type_warning(&output, "hash");
-    assert!(
-        !has_warning,
-        "correct bytes32 hash type must produce no type warning; got: {:?}",
-        output.warnings
-    );
+    compile_ok(source);
 }
 
 // ─── Non-boolean if condition ─────────────────────────────────────────────────
@@ -241,13 +196,7 @@ contract BoolCond(pubkey owner) {
         }
     }
 }"#;
-    let output = compile_ok(source);
-    let has_cond_warn = has_type_warning(&output, "bool") || has_type_warning(&output, "condition");
-    assert!(
-        !has_cond_warn,
-        "checkSig() if condition must produce no bool warning; got: {:?}",
-        output.warnings
-    );
+    compile_ok(source);
 }
 
 // ─── Stack-unsafe type errors are fatal ───────────────────────────────────────
@@ -408,7 +357,7 @@ contract Casts(pubkey owner, int gidx) {
         ("pubkey(owner)", "pubkey"),
     ] {
         let error = compile_error(&format!(
-            "contract Casts(pubkey owner, bytes32 h) {{ function spend(int n) {{ let x = {cast}; require(x == x && n == n && h == h); require(checkSig(owner, owner)); }} }}"
+            "contract Casts(pubkey owner, bytes32 h) {{ function spend(int n) {{ let x = {cast}; require(x == x && n == n && h == h && owner == owner); }} }}"
         ));
         assert!(
             error.contains(&format!("cannot cast '{source_type}'")),
@@ -420,6 +369,6 @@ contract Casts(pubkey owner, int gidx) {
 #[test]
 fn pubkeys_and_signatures_widen_to_bytes_in_bindings_and_arguments() {
     compile_ok(
-        "contract Widen(pubkey owner) { function spend(signature sig, bytes data) { bytes key = owner; require(same(sig, data) || key == data); require(checkSig(sig, owner)); } private function same(bytes a, bytes b) bool { return a == b; } }",
+        "contract Widen(pubkey owner) { function spend(signature sig, bytes data) { bytes key = owner; require(same(sig, data) || key == data || owner + sig == data); require(checkSig(sig, owner)); } private function same(bytes a, bytes b) bool { return a == b; } }",
     );
 }

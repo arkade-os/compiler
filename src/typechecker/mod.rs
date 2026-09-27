@@ -741,8 +741,8 @@ fn check_comparison(
     let compatible = match op {
         "==" | "!=" => {
             left_type == right_type
-                || castable_to_bytes(&left_type) && right_type == ArkType::Bytes
-                || castable_to_bytes(&right_type) && left_type == ArkType::Bytes
+                || is_bytes_like(&left_type) && right_type == ArkType::Bytes
+                || is_bytes_like(&right_type) && left_type == ArkType::Bytes
         }
         ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
         _ => true,
@@ -757,11 +757,6 @@ fn check_comparison(
             right_type.as_str()
         )));
     }
-}
-
-// Sized byte types widen only to unbounded bytes, so bytes20 == bytes32 is rejected.
-fn castable_to_bytes(t: &ArkType) -> bool {
-    is_bytes_like(t) || matches!(t, ArkType::Pubkey | ArkType::Signature)
 }
 
 fn is_numeric(t: &ArkType) -> bool {
@@ -981,8 +976,11 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     }
 }
 
-/// Returns true when the type is a raw byte string (eligible as a `+`
-/// operand for concatenation via OP_CAT).
+/// Returns true when the type widens to `bytes`: it can be concatenated with
+/// `+` and compared or bound to `bytes`, but never to another sized type.
 pub fn is_bytes_like(t: &ArkType) -> bool {
-    matches!(t, ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32)
+    matches!(
+        t,
+        ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Pubkey | ArkType::Signature
+    )
 }

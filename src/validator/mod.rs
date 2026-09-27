@@ -894,13 +894,7 @@ fn resolved_expression_type(expression: &Expression, scopes: &BindingScopes) -> 
 
 pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
     expected == actual
-        || matches!(
-            (expected, actual),
-            (
-                ArkType::Bytes,
-                ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Pubkey | ArkType::Signature
-            )
-        )
+        || *expected == ArkType::Bytes && crate::typechecker::is_bytes_like(actual)
         || matches!(
             (expected, actual),
             (ArkType::Array(expected, expected_len), ArkType::Array(actual, actual_len))
