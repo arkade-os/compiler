@@ -14,6 +14,11 @@ pub fn load_artifact_str(json: &str) -> Result<ContractJson, String> {
     let artifact: ContractJson =
         serde_json::from_str(json).map_err(|e| format!("Failed to parse artifact JSON: {}", e))?;
 
+    if let Some(version) = artifact.format_version {
+        if version != arkade_compiler::models::ARTIFACT_FORMAT_VERSION {
+            return Err(format!("Unsupported artifact format version: {version}"));
+        }
+    }
     if artifact.name.is_empty() {
         return Err("Artifact missing 'contractName' field".to_string());
     }

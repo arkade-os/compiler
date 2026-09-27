@@ -12,6 +12,17 @@ fn load_fixture(name: &str) -> String {
 }
 
 #[test]
+fn artifact_format_version_is_checked() {
+    let legacy = load_fixture("single_sig");
+    assert!(load_artifact_str(&legacy).is_ok());
+    let mut future: serde_json::Value = serde_json::from_str(&legacy).unwrap();
+    future["formatVersion"] = 2.into();
+    assert!(load_artifact_str(&future.to_string())
+        .unwrap_err()
+        .contains("Unsupported artifact format version: 2"));
+}
+
+#[test]
 fn test_ir_htlc_groups_and_order() {
     let ir = build_ir(&load_artifact_str(&load_fixture("htlc")).unwrap()).unwrap();
 

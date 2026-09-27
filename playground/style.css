@@ -510,6 +510,11 @@ main {
     display: inline;
 }
 
+.error-count.warning {
+    background: var(--warning);
+    color: var(--bg-primary);
+}
+
 .compile-status {
     font-size: 0.75rem;
     padding: 0.25rem 0.5rem;
@@ -527,6 +532,11 @@ main {
 .compile-status.error {
     display: inline-flex;
     color: var(--error);
+}
+
+.compile-status.warning {
+    display: inline-flex;
+    color: var(--warning);
 }
 
 /* Output Content */
@@ -561,6 +571,10 @@ main {
 
 #errors-output {
     color: var(--error);
+}
+
+#errors-output.warning {
+    color: var(--warning);
 }
 
 /* Bindings output */
