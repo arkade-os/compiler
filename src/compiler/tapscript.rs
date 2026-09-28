@@ -864,6 +864,7 @@ mod tests {
                 .iter()
                 .map(|n| Function {
                     name: (*n).into(),
+                    position: (1, 1),
                     parameters: vec![],
                     statements: vec![],
                     is_private: false,

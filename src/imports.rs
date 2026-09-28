@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use crate::models::{self, Contract, ContractJson, Expression, SourceBundle, Statement};
+use crate::models::{
+    self, Contract, ContractJson, Expression, LocatedStatement, SourceBundle, Statement,
+};
 use crate::{compiler, parser, typechecker};
 
 // Dependency definitions are copied per module; use a shared symbol table if quadratic copying becomes costly.
@@ -508,12 +510,12 @@ fn validate_scope(
 }
 
 fn validate_local_types(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     check: &impl Fn(&str) -> Result<(), String>,
     binding: &impl Fn(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     for statement in statements {
-        match statement {
+        match &statement.statement {
             Statement::LetBinding {
                 name,
                 declared_type,
@@ -554,11 +556,11 @@ fn validate_local_types(
 }
 
 fn visit_statements(
-    statements: &mut [Statement],
+    statements: &mut [LocatedStatement],
     visit: &mut impl FnMut(&mut Expression) -> Result<(), String>,
 ) -> Result<(), String> {
     for statement in statements {
-        match statement {
+        match &mut statement.statement {
             Statement::Call(expr)
             | Statement::Return(Some(expr))
             | Statement::LetBinding { value: expr, .. } => visit_expression(expr, visit)?,

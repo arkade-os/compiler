@@ -1,6 +1,6 @@
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
-    FunctionInput, Parameter, Requirement, Statement,
+    FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
@@ -821,7 +821,7 @@ pub(crate) fn prepare(
         let errors: Vec<String> = ast_issues
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
-            .map(|i| format!("validation error: {}", i.message))
+            .map(|i| format!("validation error: {}", located(&i.message, i.position)))
             .collect();
         return Err(errors.join("; "));
     }
@@ -835,17 +835,27 @@ pub(crate) fn prepare(
     let type_errors = typechecker::check_contract(contract);
     let mut warnings: Vec<String> = type_errors
         .iter()
-        .map(|e| format!("warning[type]: {}", e.message))
+        .map(|e| format!("warning[type]: {}", located(&e.message, e.position)))
         .collect();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
-            warnings.push(format!("warning[validation]: {}", issue.message));
+            warnings.push(format!(
+                "warning[validation]: {}",
+                located(&issue.message, issue.position)
+            ));
         }
     }
 
     Ok(warnings)
+}
+
+fn located(message: &str, position: Option<(usize, usize)>) -> String {
+    match position {
+        Some((line, column)) => format!("line {line}, column {column}: {message}"),
+        None => message.to_string(),
+    }
 }
 
 pub(crate) fn emit(
@@ -995,11 +1005,11 @@ fn for_each_expanded_param(
 
 /// Recursively generate assembly from statements
 fn generate_asm_from_statements_recursive(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     generator: &mut Generator,
 ) -> Result<(), String> {
     for (index, stmt) in statements.iter().enumerate() {
-        match stmt {
+        match &stmt.statement {
             Statement::Call(expression) => generator.emit_call(expression)?,
             Statement::Return(value) => {
                 generator.emit_return(value.as_ref())?;

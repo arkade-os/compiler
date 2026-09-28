@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 
 use super::child_exprs;
-use crate::models::{AssignmentTarget, Expression, Function, Requirement, Statement};
+use crate::models::{
+    AssignmentTarget, Expression, Function, LocatedStatement, Requirement, Statement,
+};
 
 // Parameters are retained whole; pruning individual composite fields needs a sparse stack layout.
 pub(crate) fn referenced_parameters<'a>(
-    statements: &'a [Statement],
+    statements: &'a [LocatedStatement],
     functions: &'a [Function],
 ) -> HashSet<&'a str> {
     let mut names = HashSet::new();
@@ -111,13 +113,13 @@ fn collect_requirement<'a>(
 }
 
 fn collect_statements<'a>(
-    statements: &'a [Statement],
+    statements: &'a [LocatedStatement],
     names: &mut HashSet<&'a str>,
     functions: &'a [Function],
     visited: &mut HashSet<&'a str>,
 ) {
     for statement in statements {
-        match statement {
+        match &statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 collect_expression(expression, names, functions, visited);
             }

@@ -9,7 +9,9 @@
 ///   decides how to surface them)
 use std::collections::HashMap;
 
-use crate::models::{AssignmentTarget, Contract, Expression, Function, Requirement, Statement};
+use crate::models::{
+    AssignmentTarget, Contract, Expression, Function, LocatedStatement, Requirement, Statement,
+};
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
@@ -115,12 +117,15 @@ impl ArkType {
 pub struct TypeError {
     /// Human-readable description of the problem.
     pub message: String,
+    /// 1-based line and column of the statement that caused it.
+    pub position: Option<(usize, usize)>,
 }
 
 impl TypeError {
     fn new(msg: impl Into<String>) -> Self {
         TypeError {
             message: msg.into(),
+            position: None,
         }
     }
 }
@@ -242,13 +247,13 @@ pub(crate) fn resolve_group_properties(contract: &mut Contract) {
 }
 
 fn resolve_statements(
-    statements: &mut [Statement],
+    statements: &mut [LocatedStatement],
     scope: &mut Scope,
     structs: &[crate::models::StructDefinition],
     returns: &HashMap<String, Option<String>>,
 ) {
     for statement in statements {
-        match statement {
+        match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 resolve_expression(expression, scope, returns)
             }
@@ -397,14 +402,19 @@ fn check_function(
 }
 
 fn check_statements(
-    stmts: &[Statement],
+    stmts: &[LocatedStatement],
     scope: &mut Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
     structs: &[crate::models::StructDefinition],
 ) {
     for stmt in stmts {
-        check_statement(stmt, scope, errors, fn_name, structs);
+        let first = errors.len();
+        check_statement(&stmt.statement, scope, errors, fn_name, structs);
+        // Nested statements have already claimed their own errors.
+        for error in &mut errors[first..] {
+            error.position.get_or_insert(stmt.position);
+        }
     }
 }
 

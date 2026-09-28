@@ -8,6 +8,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         .map(|s| (s.name.as_str(), s))
         .collect();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let first = issues.len();
         if let Some(result) = &function.return_type {
             if !function.is_private {
                 issues.push(ValidationIssue::error(format!(
@@ -34,37 +35,43 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
             &contract.structs,
         ));
         validate_body(&function.statements, function, &mut scope, contract, issues);
+        locate(&mut issues[first..], function.position);
     }
 
     let mut guarantees = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         if let Err(error) = analyze_function(function, contract, &mut Vec::new(), &mut guarantees) {
-            issues.push(ValidationIssue::error(error));
+            issues.push(ValidationIssue::error(error).at(function.position));
             return;
         }
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let flow = flow_block(&function.statements, 1, &guarantees);
         if function.is_private && function.return_type.is_some() && flow.fallthrough != 0 {
-            issues.push(ValidationIssue::error(format!(
-                "private function '{}' must return a value on every path",
-                function.name
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "private function '{}' must return a value on every path",
+                    function.name
+                ))
+                .at(function.position),
+            );
         }
         if !function.is_private && (flow.fallthrough | flow.returned) & 1 != 0 {
-            issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)));
+            issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)).at(function.position));
         }
     }
 }
 
 fn validate_body(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     function: &Function,
     scope: &mut Scope,
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    for statement in statements {
+    for located in statements {
+        let first = issues.len();
+        let statement = &located.statement;
         for expression in statement_expressions(statement) {
             validate_calls(
                 expression,
@@ -166,6 +173,7 @@ fn validate_body(
             }
             Statement::Call(_) | Statement::Require(_) | Statement::VarAssign { .. } => {}
         }
+        locate(&mut issues[first..], located.position);
     }
 }
 
@@ -348,12 +356,13 @@ fn analyze_function(
 }
 
 fn analyze_calls(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     contract: &Contract,
     visiting: &mut Vec<String>,
     guarantees: &mut HashMap<String, bool>,
 ) -> Result<(), String> {
     for statement in statements {
+        let statement = &statement.statement;
         for expression in statement_expressions(statement) {
             analyze_expression(expression, contract, visiting, guarantees)?;
         }
@@ -414,7 +423,11 @@ fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, boo
             .any(|child| expression_enforces(child, guarantees))
 }
 
-fn flow_block(statements: &[Statement], incoming: u8, guarantees: &HashMap<String, bool>) -> Flow {
+fn flow_block(
+    statements: &[LocatedStatement],
+    incoming: u8,
+    guarantees: &HashMap<String, bool>,
+) -> Flow {
     let mut flow = Flow {
         fallthrough: incoming,
         returned: 0,
@@ -423,6 +436,7 @@ fn flow_block(statements: &[Statement], incoming: u8, guarantees: &HashMap<Strin
         if flow.fallthrough == 0 {
             break;
         }
+        let statement = &statement.statement;
         if statement_expressions(statement)
             .into_iter()
             .any(|e| expression_enforces(e, guarantees))

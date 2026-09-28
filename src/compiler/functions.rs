@@ -12,44 +12,50 @@ pub(super) fn extract_calls(expression: &mut Expression, calls: &mut Vec<Express
     }
 }
 
-pub(super) fn contains_return(statements: &[Statement]) -> bool {
-    statements.iter().any(|statement| match statement {
-        Statement::Return(_) => true,
-        Statement::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            contains_return(then_body)
-                || else_body.as_ref().is_some_and(|body| contains_return(body))
-        }
-        Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => contains_return(body),
-        _ => false,
-    })
+pub(super) fn contains_return(statements: &[LocatedStatement]) -> bool {
+    statements
+        .iter()
+        .any(|statement| match &statement.statement {
+            Statement::Return(_) => true,
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                contains_return(then_body)
+                    || else_body.as_ref().is_some_and(|body| contains_return(body))
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                contains_return(body)
+            }
+            _ => false,
+        })
 }
 
 // This scans each helper body per argument; cache assigned names if call counts grow.
-fn assigns_parameter(statements: &[Statement], name: &str) -> bool {
-    statements.iter().any(|statement| match statement {
-        Statement::VarAssign {
-            target: AssignmentTarget::Binding(target),
-            ..
-        } => target == name,
-        Statement::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            assigns_parameter(then_body, name)
-                || else_body
-                    .as_ref()
-                    .is_some_and(|body| assigns_parameter(body, name))
-        }
-        Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-            assigns_parameter(body, name)
-        }
-        _ => false,
-    })
+fn assigns_parameter(statements: &[LocatedStatement], name: &str) -> bool {
+    statements
+        .iter()
+        .any(|statement| match &statement.statement {
+            Statement::VarAssign {
+                target: AssignmentTarget::Binding(target),
+                ..
+            } => target == name,
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                assigns_parameter(then_body, name)
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|body| assigns_parameter(body, name))
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                assigns_parameter(body, name)
+            }
+            _ => false,
+        })
 }
 
 impl Generator {
@@ -233,7 +239,7 @@ impl Generator {
         let previous_return = self.return_type.replace(function.return_type.clone());
         // Nested returns need shared slots until their control flow can be lowered directly.
         let direct_return = !function.statements.iter().any(|statement| {
-            !matches!(statement, Statement::Return(_))
+            !matches!(statement.statement, Statement::Return(_))
                 && contains_return(std::slice::from_ref(statement))
         });
         let previous_direct_return = std::mem::replace(&mut self.direct_return, direct_return);
@@ -314,7 +320,10 @@ impl Generator {
         }
     }
 
-    pub(super) fn emit_unless_returned(&mut self, statements: &[Statement]) -> Result<(), String> {
+    pub(super) fn emit_unless_returned(
+        &mut self,
+        statements: &[LocatedStatement],
+    ) -> Result<(), String> {
         self.read_binding("$returned")?;
         self.apply(OP_NOT, 1, 1)?;
         self.apply(OP_IF, 1, 0)?;
