@@ -486,9 +486,15 @@ func requireVMResult(
 	if err == nil {
 		t.Fatal("VM accepted invalid transaction")
 	}
-	// Unoptimized covenants fail at an unfused opcode (OP_EQUAL OP_VERIFY
-	// instead of OP_EQUALVERIFY), so only the rejection itself is compared.
-	if os.Getenv("ARKADEC_NO_OPTIMIZE") == "" && !strings.Contains(err.Error(), wantErr) {
+	if strings.Contains(err.Error(), wantErr) {
+		return
+	}
+	// Unoptimized covenants verify with an unfused OP_VERIFY where the optimizer
+	// emits OP_EQUALVERIFY or leaves the result for the final stack check.
+	unfused := os.Getenv("ARKADEC_NO_OPTIMIZE") != "" &&
+		(strings.HasSuffix(wantErr, "VERIFY failed") || wantErr == "false stack entry") &&
+		strings.Contains(err.Error(), "failed to execute arkade script: OP_VERIFY failed")
+	if !unfused {
 		t.Fatalf("VM error %q does not contain %q", err, wantErr)
 	}
 }

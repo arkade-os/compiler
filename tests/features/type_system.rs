@@ -370,3 +370,151 @@ fn pubkeys_and_signatures_widen_to_bytes_in_bindings_and_arguments() {
         "contract Widen(pubkey owner) { function spend(signature sig, bytes data) { bytes key = owner; require(same(sig, data) || key == data || owner + sig == data); require(checkSig(sig, owner)); } private function same(bytes a, bytes b) bool { return a == b; } }",
     );
 }
+
+// ─── Hash widths, builtin operands, and diagnostics ─────────────────────────
+
+#[test]
+fn hash_comparisons_expect_the_digest_width() {
+    for (hash_fn, digest, wrong) in [
+        ("sha256", "bytes32", "bytes20"),
+        ("hash256", "bytes32", "bytes20"),
+        ("hash160", "bytes20", "bytes32"),
+        ("ripemd160", "bytes20", "bytes32"),
+    ] {
+        let covenant = |ty: &str| {
+            format!("contract H({ty} h, pubkey k) {{ function spend(bytes p, signature s) {{ require({hash_fn}(p) == h); require(checkSig(s, k)); }} }}")
+        };
+        compile_ok(&covenant(digest));
+        compile_ok(&covenant("bytes"));
+        let error = compile_error(&covenant(wrong));
+        assert!(
+            error.contains(&format!(
+                "{hash_fn} comparison: 'h' has type '{wrong}', expected {digest}"
+            )),
+            "{error}"
+        );
+    }
+    let tapscript = |ty: &str| {
+        format!("contract H({ty} h, pubkey k) {{ function spend() {{ require(h == h); }} function claim(bytes p, signature s, signature ss) tapscript {{ require(hash160(p) == h); require(checkMultisig([k, server], [s, ss])); }} }}")
+    };
+    compile_ok(&tapscript("bytes20"));
+    let error = compile_error(&tapscript("bytes32"));
+    assert!(
+        error.contains("hash160 value `h` has type 'bytes32', expected bytes20"),
+        "{error}"
+    );
+}
+
+#[test]
+fn tapscript_timelocks_must_be_int() {
+    for (ty, ok) in [("int", true), ("pubkey", false), ("bytes32", false)] {
+        let source = format!("contract T(pubkey owner, {ty} delay) {{ function spend() {{ require(delay == delay); }} function exit(signature sig) tapscript {{ require(older(delay)); require(checkSig(sig, owner)); }} }}");
+        match compile(&source) {
+            Ok(_) => assert!(ok, "{ty} timelock accepted"),
+            Err(error) => assert!(
+                !ok && error
+                    .to_string()
+                    .contains(&format!("timelock `delay` has type '{ty}', expected 'int'")),
+                "{ty}: {error}"
+            ),
+        }
+    }
+}
+
+#[test]
+fn builtin_operands_are_type_checked() {
+    for (expression, expected) in [
+        (
+            "substr(i, 0, 1) == d",
+            "substr operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "substr(d, k, 1) == d",
+            "substr operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "cat(i, d) == d",
+            "cat operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "bin2num(i) == 1",
+            "bin2num operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "num2bin(d, 4) == d",
+            "num2bin operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "reverseBytes(i) == d",
+            "reverseBytes operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "size(i) == 1",
+            "size operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "sighash(k) == m",
+            "sighash operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "digest(i, 0) == d",
+            "digest operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "size(tx.packet(k)) > 0",
+            "tx.packet operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "tx.inputs[k].value > 0",
+            "tx.inputs[] operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "tx.outputs[d].value > 0",
+            "tx.outputs[] operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "checkSigFromStack(s, k, i)",
+            "message 'i' has type 'int', expected 'bytes'",
+        ),
+    ] {
+        let source = |condition: &str| {
+            format!("contract T(pubkey k) {{ function f(signature s, int i, bytes d, bytes32 m) {{ require(i == i && d == d && m == m); require({condition}); require(checkSig(s, k)); }} }}")
+        };
+        let error = compile_error(&source(expression));
+        assert!(error.contains(expected), "{expression}: {error}");
+    }
+    compile_ok("contract T(pubkey k) { function f(signature s, int i, bytes d, bytes32 m) { require(substr(tx.packet(16), i, 4) == d && cat(d, m) == d && bin2num(d) == i && num2bin(i, 4) == d && reverseBytes(k) == d && size(m) == 32 && sighash(0) == m && digest(d, 1) == d && tx.inputs[i].value > 0); require(checkSigFromStack(s, k, m)); require(checkSig(s, k)); } }");
+}
+
+#[test]
+fn casts_accept_byte_expressions() {
+    let output = compile_ok(
+        "contract T(pubkey k) { function f(signature s, bytes a, bytes b, bytes32 m) { bytes32 x = bytes32(a + b); require(x == m); require(checkSig(s, k)); } }",
+    );
+    let asm = crate::common::arkade_asm(&output, "f");
+    assert!(asm.contains("OP_CAT OP_SIZE 32 OP_EQUALVERIFY"), "{asm}");
+}
+
+#[test]
+fn unused_locals_are_checked_per_declaration() {
+    let source = |else_read: &str| {
+        format!("contract T(pubkey k) {{ function f(signature s, int i) {{ if (i > 0) {{ int x = 1; require(x == 1); }} else {{ int x = 2; require({else_read}); }} require(checkSig(s, k)); }} }}")
+    };
+    compile_ok(&source("x == 2"));
+    let error = compile_error(&source("true"));
+    assert!(
+        error.contains("variable 'x' in function 'f' is never used"),
+        "{error}"
+    );
+}
+
+#[test]
+fn parse_errors_name_tokens_not_grammar_rules() {
+    let error = compile_error(
+        "contract T(pubkey k) { function f(signature s) { require(checkSig(s, k)) } }",
+    );
+    assert!(
+        error.contains("expected a comparison operator, `+`") && !error.contains("_op"),
+        "{error}"
+    );
+}

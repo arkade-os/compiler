@@ -36,9 +36,6 @@ pub enum Severity {
     /// Compilation must halt; the contract cannot be safely emitted.
     Error,
     /// Non-fatal; compilation continues but the caller should surface this.
-    /// Retained for the output-invariant warning path (compiler::compile);
-    /// no validator check currently emits one.
-    #[allow(dead_code)]
     Warning,
 }
 
@@ -57,7 +54,6 @@ impl ValidationIssue {
         }
     }
 
-    #[allow(dead_code)]
     fn warning(message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Warning,
@@ -478,15 +474,17 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let used = references::referenced_parameters(&function.statements, &[]);
-        let mut locals = Vec::new();
-        collect_let_bindings(&function.statements, &mut locals);
-        let names = function.parameters.iter().map(|p| p.name.as_str());
-        for name in names.chain(locals).filter(|name| !used.contains(name)) {
+        for parameter in function
+            .parameters
+            .iter()
+            .filter(|p| !used.contains(p.name.as_str()))
+        {
             issues.push(ValidationIssue::error(format!(
-                "variable '{name}' in function '{}' is never used",
-                function.name
+                "variable '{}' in function '{}' is never used",
+                parameter.name, function.name
             )));
         }
+        check_unused_locals(&function.statements, &function.name, issues);
         contract_used.extend(used);
     }
     for parameter in contract
@@ -501,20 +499,35 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     }
 }
 
-fn collect_let_bindings<'a>(statements: &'a [Statement], names: &mut Vec<&'a str>) {
-    for statement in statements {
+/// A local is read only by later statements in its own block, since shadowing
+/// is rejected; sibling blocks may reuse the name for a separate binding.
+// ponytail: rescans the rest of the block per binding, O(n²) in block length;
+// index reads per binding in one pass if contract bodies ever grow large.
+fn check_unused_locals(
+    statements: &[Statement],
+    function: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for (index, statement) in statements.iter().enumerate() {
         match statement {
-            Statement::LetBinding { name, .. } => names.push(name),
+            Statement::LetBinding { name, .. }
+                if !references::referenced_parameters(&statements[index + 1..], &[])
+                    .contains(name.as_str()) =>
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "variable '{name}' in function '{function}' is never used"
+                )));
+            }
             Statement::IfElse {
                 then_body,
                 else_body,
                 ..
             } => {
-                collect_let_bindings(then_body, names);
-                collect_let_bindings(else_body.as_deref().unwrap_or_default(), names);
+                check_unused_locals(then_body, function, issues);
+                check_unused_locals(else_body.as_deref().unwrap_or_default(), function, issues);
             }
             Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                collect_let_bindings(body, names)
+                check_unused_locals(body, function, issues)
             }
             _ => {}
         }
@@ -1415,6 +1428,24 @@ fn validate_named_binding(
     }
 }
 
+fn validate_message(
+    message: &str,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    validate_named_binding(message, None, "message", function_name, scopes, issues);
+    if let Some(binding) = find_binding(scopes, message).filter(|binding| {
+        binding.binding_type != ArkType::Unknown
+            && !binding_types_compatible(&ArkType::Bytes, &binding.binding_type)
+    }) {
+        issues.push(ValidationIssue::error(format!(
+            "function '{function_name}': message '{message}' has type '{}', expected 'bytes'",
+            binding.binding_type.as_str()
+        )));
+    }
+}
+
 fn validate_binding_requirement(
     requirement: &Requirement,
     function_name: &str,
@@ -1470,7 +1501,7 @@ fn validate_binding_requirement(
                 scopes,
                 issues,
             );
-            validate_named_binding(message, None, "message", function_name, scopes, issues);
+            validate_message(message, function_name, scopes, issues);
         }
         Requirement::CheckMultisig {
             pubkeys,
@@ -1645,6 +1676,60 @@ fn validate_binding_expression(
                 )));
             }
         }
+        Expression::Substr { .. }
+        | Expression::Cat { .. }
+        | Expression::Bin2Num { .. }
+        | Expression::Num2Bin { .. }
+        | Expression::ReverseBytes { .. }
+        | Expression::SizeOf { .. }
+        | Expression::Digest { .. }
+        | Expression::Sighash { .. }
+        | Expression::PacketInspect { .. }
+        | Expression::InputPacketInspect { .. }
+        | Expression::InputIntrospection { .. }
+        | Expression::OutputIntrospection { .. } => {
+            let (bytes, int) = (ArkType::Bytes, ArkType::Int);
+            let (builtin, operands) = match expression {
+                Expression::Substr { data, offset, size } => {
+                    ("substr", vec![(data, &bytes), (offset, &int), (size, &int)])
+                }
+                Expression::Cat { left, right } => ("cat", vec![(left, &bytes), (right, &bytes)]),
+                Expression::Bin2Num { data } => ("bin2num", vec![(data, &bytes)]),
+                Expression::Num2Bin { value, size } => {
+                    ("num2bin", vec![(value, &int), (size, &int)])
+                }
+                Expression::ReverseBytes { data } => ("reverseBytes", vec![(data, &bytes)]),
+                Expression::SizeOf { data } => ("size", vec![(data, &bytes)]),
+                Expression::Digest { data, hash_type } => {
+                    ("digest", vec![(data, &bytes), (hash_type, &int)])
+                }
+                Expression::Sighash { hash_type } => ("sighash", vec![(hash_type, &int)]),
+                Expression::PacketInspect { packet_type } => {
+                    ("tx.packet", vec![(packet_type, &int)])
+                }
+                Expression::InputPacketInspect { index, packet_type } => (
+                    "tx.inputs[].packet",
+                    vec![(index, &int), (packet_type, &int)],
+                ),
+                Expression::InputIntrospection { index, .. } => {
+                    ("tx.inputs[]", vec![(index, &int)])
+                }
+                Expression::OutputIntrospection { index, .. } => {
+                    ("tx.outputs[]", vec![(index, &int)])
+                }
+                _ => unreachable!("matched by the enclosing arm"),
+            };
+            for (operand, expected) in operands {
+                let actual = resolved_expression_type(operand, scopes);
+                if actual != ArkType::Unknown && !binding_types_compatible(expected, &actual) {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': {builtin} operand has type '{}', expected '{}'",
+                        actual.as_str(),
+                        expected.as_str()
+                    )));
+                }
+            }
+        }
         Expression::Cast { target, data } => {
             let actual = resolved_expression_type(data, scopes);
             if actual != ArkType::Bytes && actual != ArkType::Unknown {
@@ -1795,7 +1880,7 @@ fn validate_binding_expression(
                 scopes,
                 issues,
             );
-            validate_named_binding(message, None, "message", function_name, scopes, issues);
+            validate_message(message, function_name, scopes, issues);
         }
         Expression::ContractInstance { args, .. } => {
             for argument in args {

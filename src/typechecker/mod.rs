@@ -571,15 +571,16 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 );
             }
         }
-        Requirement::HashEqual { hash, .. } => {
-            // The hash value should be bytes32.
+        Requirement::HashEqual { hash_fn, hash, .. } => {
             if let Some(t) = scope.get(hash.as_str()) {
-                if *t != ArkType::Bytes32 && *t != ArkType::Bytes && *t != ArkType::Unknown {
+                if !digest_accepts(hash_fn, t) {
                     errors.push(TypeError::new(format!(
-                        "fn {}: sha256 comparison: '{}' has type '{}', expected bytes32",
+                        "fn {}: {} comparison: '{}' has type '{}', expected {}",
                         fn_name,
+                        hash_fn.name(),
                         hash,
-                        t.as_str()
+                        t.as_str(),
+                        hash_fn.digest_type()
                     )));
                 }
             }
@@ -741,8 +742,8 @@ fn check_comparison(
     let compatible = match op {
         "==" | "!=" => {
             left_type == right_type
-                || is_bytes_like(&left_type) && right_type == ArkType::Bytes
-                || is_bytes_like(&right_type) && left_type == ArkType::Bytes
+                || (is_bytes_like(&left_type) && right_type == ArkType::Bytes)
+                || (is_bytes_like(&right_type) && left_type == ArkType::Bytes)
         }
         ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
         _ => true,
@@ -757,6 +758,11 @@ fn check_comparison(
             right_type.as_str()
         )));
     }
+}
+
+/// Whether a value of type `t` can be compared with `hash_fn`'s digest.
+pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bool {
+    matches!(t, ArkType::Bytes | ArkType::Unknown) || *t == ArkType::parse(hash_fn.digest_type())
 }
 
 fn is_numeric(t: &ArkType) -> bool {

@@ -37,9 +37,31 @@ pub fn parse(source: &str) -> Result<Contract, String> {
     parse_with_constants(source, &[])
 }
 
+/// Parse a source file, naming expected tokens in source terms instead of grammar rules.
+pub(crate) fn parse_main(source: &str) -> Result<pest::iterators::Pairs<'_, Rule>, String> {
+    ArkadeParser::parse(Rule::main, source).map_err(|error| {
+        let error = error.renamed_rules(|rule| {
+            match rule {
+                Rule::main => "a contract, library, struct, or import",
+                Rule::EOI => "end of file",
+                Rule::comparison_operator => "a comparison operator",
+                Rule::add_op => "`+`",
+                Rule::sub_op => "`-`",
+                Rule::not_op => "`!`",
+                Rule::and_op => "`&&`",
+                Rule::or_op => "`||`",
+                Rule::mul_op => "`*`",
+                Rule::div_op => "`/`",
+                _ => return format!("{rule:?}").replace('_', " "),
+            }
+            .to_string()
+        });
+        format!("Parse error: {error}")
+    })
+}
+
 pub(crate) fn imports(source: &str) -> Result<Vec<String>, String> {
-    let mut pairs =
-        ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
+    let mut pairs = parse_main(source)?;
     pairs
         .next()
         .expect("main")
@@ -53,7 +75,7 @@ pub(crate) fn parse_with_constants(
     source: &str,
     constants: &[Constant],
 ) -> Result<Contract, String> {
-    let pairs = ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
+    let pairs = parse_main(source)?;
     build_ast(pairs, constants)
 }
 

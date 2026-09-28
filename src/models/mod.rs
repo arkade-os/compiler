@@ -426,6 +426,24 @@ impl HashFn {
         }
     }
 
+    /// Source name of the hash function, e.g. `hash160`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            HashFn::Sha256 => "sha256",
+            HashFn::Hash160 => "hash160",
+            HashFn::Hash256 => "hash256",
+            HashFn::Ripemd160 => "ripemd160",
+        }
+    }
+
+    /// Type name of the digest this hash function produces.
+    pub fn digest_type(&self) -> &'static str {
+        match self {
+            HashFn::Sha256 | HashFn::Hash256 => "bytes32",
+            HashFn::Hash160 | HashFn::Ripemd160 => "bytes20",
+        }
+    }
+
     /// Parse a hash function name; returns None for unknown names.
     pub fn parse(name: &str) -> Option<HashFn> {
         match name {
