@@ -55,7 +55,8 @@ pub(crate) fn parse_with_constants(
     build_ast(parse_main(source)?, constants)
 }
 
-fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
+/// Parse a source file, naming expected tokens in source terms instead of grammar rules.
+pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
     pest::set_error_detail(true);
     ArkadeParser::parse(Rule::main, source)
         .map_err(|e| format!("Parse error: {}", readable_error(e, source)))
@@ -107,10 +108,12 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
 
 fn rule_term(rule: &Rule) -> Option<String> {
     let term = match rule {
-        Rule::main | Rule::EOI => return None,
+        Rule::main => return None,
+        Rule::EOI => "end of file",
         Rule::comparison_operator
         | Rule::add_op
         | Rule::sub_op
+        | Rule::not_op
         | Rule::and_op
         | Rule::or_op
         | Rule::mul_op

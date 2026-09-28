@@ -39,6 +39,8 @@ pub fn is_builtin_struct(declared_type: &str) -> bool {
 
 // JSON output structures.
 // These represent the compiled contract in a serializable format.
+pub const ARTIFACT_FORMAT_VERSION: u32 = 1;
+
 /// Parameter in a contract or function
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Parameter {
@@ -225,6 +227,8 @@ pub struct AbiFunctionGroup {
 /// JSON output for a contract
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContractJson {
+    #[serde(rename = "formatVersion", skip_serializing_if = "Option::is_none")]
+    pub format_version: Option<u32>,
     #[serde(rename = "contractName")]
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -238,7 +242,9 @@ pub struct ContractJson {
     pub compiler: Option<CompilerInfo>,
     #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(skip_serializing, default)]
     pub warnings: Vec<String>,
 }
 
@@ -254,6 +260,8 @@ pub struct SourceBundle {
 pub struct CompilerInfo {
     pub name: String,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<crate::CompileOptions>,
 }
 
 // AST structures.
@@ -415,6 +423,24 @@ impl HashFn {
             HashFn::Hash160 => OP_HASH160,
             HashFn::Hash256 => OP_HASH256,
             HashFn::Ripemd160 => OP_RIPEMD160,
+        }
+    }
+
+    /// Source name of the hash function, e.g. `hash160`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            HashFn::Sha256 => "sha256",
+            HashFn::Hash160 => "hash160",
+            HashFn::Hash256 => "hash256",
+            HashFn::Ripemd160 => "ripemd160",
+        }
+    }
+
+    /// Type name of the digest this hash function produces.
+    pub fn digest_type(&self) -> &'static str {
+        match self {
+            HashFn::Sha256 | HashFn::Hash256 => "bytes32",
+            HashFn::Hash160 | HashFn::Ripemd160 => "bytes20",
         }
     }
 
@@ -782,6 +808,11 @@ pub enum Expression {
     ReverseBytes { data: Box<Expression> },
     /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
     SizeOf { data: Box<Expression> },
+    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x)
+    Cast {
+        target: String,
+        data: Box<Expression>,
+    },
     // ─── Packet Introspection ──────────────────────────────────────────
     /// Current-tx packet content: tx.packet(packetType)
     /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
@@ -939,7 +970,8 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Cat { left, right } => vec![left, right],
         Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data } => vec![data],
+        | Expression::SizeOf { data }
+        | Expression::Cast { data, .. } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],

@@ -182,6 +182,7 @@ primary_expr = {
     num2bin_func |
     reverse_bytes_func |
     size_func |
+    cast_func |
     input_packet_inspect |
     packet_inspect |
     asset_at |
@@ -678,6 +679,11 @@ reverse_bytes_func = {
 size_func = {
     "size" ~ "(" ~ byte_value ~ ")"
 }
+
+// Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
+// pubkey/signature are semantic because the VM validates them when consumed.
+cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32") ~ !(ASCII_ALPHANUMERIC | "_") }
+cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 
 // ─── Packet Introspection ──────────────────────────────────────────────
 // Extension-packet introspection over the current transaction or a previous

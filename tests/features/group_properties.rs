@@ -39,7 +39,7 @@ fn test_group_is_fresh_basic() {
             function verifyFresh(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let group = tx.assetGroups.find(newAssetIdTxid, newAssetIdGidx);
-                require(group.isFresh == 1, "must be fresh");
+                require(group.isFresh == true, "must be fresh");
             }
         }
     "#;
@@ -78,7 +78,7 @@ fn test_is_fresh_with_delta_combo() {
             function mintNFT(signature issuerSig, pubkey issuer) {
                 require(checkSig(issuerSig, issuer));
                 let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
-                require(nftGroup.isFresh == 1, "must be new asset");
+                require(nftGroup.isFresh == true, "must be new asset");
                 require(nftGroup.delta == 1, "must mint exactly 1");
                 require(nftGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
             }
@@ -115,7 +115,7 @@ fn test_is_fresh_with_delta_combo() {
     );
 }
 
-/// Test isFresh == 0 for verifying existing (non-fresh) assets
+/// Test isFresh == false for verifying existing (non-fresh) assets
 #[test]
 fn test_is_fresh_zero_for_existing_asset() {
     let code = r#"
@@ -123,7 +123,7 @@ fn test_is_fresh_zero_for_existing_asset() {
             function transferExisting(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
-                require(group.isFresh == 0, "must be existing asset");
+                require(group.isFresh == false, "must be existing asset");
                 require(group.delta == 0, "must be transfer only");
             }
         }
@@ -184,7 +184,7 @@ fn test_all_group_properties() {
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
 
                 // Test all group properties
-                require(group.isFresh == 1, "not fresh");
+                require(group.isFresh == true, "not fresh");
                 require(group.delta == expectedDelta, "wrong delta");
                 require(group.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
                 require(group.metadataHash == expectedMetadata, "wrong metadata");

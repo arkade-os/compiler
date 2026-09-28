@@ -19,7 +19,9 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
-use crate::models::{AssignmentTarget, Contract, ContractJson, Expression, Requirement, Statement};
+use crate::models::{
+    AssignmentTarget, Contract, ContractJson, Expression, KeyExpr, Requirement, Statement, TapItem,
+};
 use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
@@ -34,9 +36,6 @@ pub enum Severity {
     /// Compilation must halt; the contract cannot be safely emitted.
     Error,
     /// Non-fatal; compilation continues but the caller should surface this.
-    /// Retained for the output-invariant warning path (compiler::compile);
-    /// no validator check currently emits one.
-    #[allow(dead_code)]
     Warning,
 }
 
@@ -55,7 +54,6 @@ impl ValidationIssue {
         }
     }
 
-    #[allow(dead_code)]
     fn warning(message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Warning,
@@ -216,6 +214,7 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
     }
 
     check_shadowing(contract, &mut issues);
+    check_unused(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
 
@@ -404,6 +403,134 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         issues.push(ValidationIssue::error(format!(
             "{context} '{name}' uses a compiler-reserved placeholder name"
         )));
+    }
+    const RESERVED: &[&str] = &[
+        "int",
+        "bool",
+        "bytes",
+        "bytes20",
+        "bytes32",
+        "pubkey",
+        "signature",
+        "asset",
+        "contract",
+        "library",
+        "function",
+        "struct",
+        "require",
+        "if",
+        "else",
+        "for",
+        "in",
+        "return",
+        "const",
+        "import",
+        "pragma",
+        "true",
+        "false",
+        "tapscript",
+        "private",
+        "public",
+        "static",
+        "tx",
+        "this",
+    ];
+    if RESERVED.contains(&name) {
+        issues.push(ValidationIssue::error(format!(
+            "{context} '{name}' uses a reserved keyword or type name"
+        )));
+    }
+}
+
+/// Reject parameters, locals, and tapscript inputs that are never read: an
+/// unread witness element is unchecked, so anyone relaying the spend could
+/// replace it. An unread constructor parameter is only a warning because it is
+/// pruned from the script and cannot be malleated.
+fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    let mut contract_used: HashSet<&str> = HashSet::new();
+    for tapscript in &contract.tapscripts {
+        let mut used = HashSet::new();
+        for item in &tapscript.items {
+            match item {
+                TapItem::Hash { preimage, hash, .. } => used.extend([preimage, hash]),
+                TapItem::Older { value } | TapItem::After { value } => {
+                    used.insert(value);
+                }
+                TapItem::Sig { keys, sigs, .. } => {
+                    used.extend(keys.iter().map(|key| match key {
+                        KeyExpr::Ident(name) | KeyExpr::Tweak { base: name, .. } => name,
+                    }));
+                    used.extend(sigs);
+                }
+            }
+        }
+        for input in tapscript.inputs.iter().filter(|i| !used.contains(&i.name)) {
+            issues.push(ValidationIssue::error(format!(
+                "input '{}' in tapscript '{}' is never used",
+                input.name, tapscript.name
+            )));
+        }
+        contract_used.extend(used.into_iter().map(String::as_str));
+    }
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let used = references::referenced_parameters(&function.statements, &[]);
+        for parameter in function
+            .parameters
+            .iter()
+            .filter(|p| !used.contains(p.name.as_str()))
+        {
+            issues.push(ValidationIssue::error(format!(
+                "variable '{}' in function '{}' is never used",
+                parameter.name, function.name
+            )));
+        }
+        check_unused_locals(&function.statements, &function.name, issues);
+        contract_used.extend(used);
+    }
+    for parameter in contract
+        .parameters
+        .iter()
+        .filter(|p| !contract_used.contains(p.name.as_str()))
+    {
+        issues.push(ValidationIssue::warning(format!(
+            "constructor parameter '{}' is never used",
+            parameter.name
+        )));
+    }
+}
+
+/// A local is read only by later statements in its own block, since shadowing
+/// is rejected; sibling blocks may reuse the name for a separate binding.
+// ponytail: rescans the rest of the block per binding, O(n²) in block length;
+// index reads per binding in one pass if contract bodies ever grow large.
+fn check_unused_locals(
+    statements: &[Statement],
+    function: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for (index, statement) in statements.iter().enumerate() {
+        match statement {
+            Statement::LetBinding { name, .. }
+                if !references::referenced_parameters(&statements[index + 1..], &[])
+                    .contains(name.as_str()) =>
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "variable '{name}' in function '{function}' is never used"
+                )));
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_unused_locals(then_body, function, issues);
+                check_unused_locals(else_body.as_deref().unwrap_or_default(), function, issues);
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                check_unused_locals(body, function, issues)
+            }
+            _ => {}
+        }
     }
 }
 
@@ -702,7 +829,8 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::Cat { left, right } => vec![left, right],
         Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data } => vec![data],
+        | Expression::SizeOf { data }
+        | Expression::Cast { data, .. } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
@@ -779,10 +907,7 @@ fn resolved_expression_type(expression: &Expression, scopes: &BindingScopes) -> 
 
 pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
     expected == actual
-        || matches!(
-            (expected, actual),
-            (ArkType::Bytes, ArkType::Bytes20 | ArkType::Bytes32)
-        )
+        || *expected == ArkType::Bytes && crate::typechecker::is_bytes_like(actual)
         || matches!(
             (expected, actual),
             (ArkType::Array(expected, expected_len), ArkType::Array(actual, actual_len))
@@ -1303,6 +1428,24 @@ fn validate_named_binding(
     }
 }
 
+fn validate_message(
+    message: &str,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    validate_named_binding(message, None, "message", function_name, scopes, issues);
+    if let Some(binding) = find_binding(scopes, message).filter(|binding| {
+        binding.binding_type != ArkType::Unknown
+            && !binding_types_compatible(&ArkType::Bytes, &binding.binding_type)
+    }) {
+        issues.push(ValidationIssue::error(format!(
+            "function '{function_name}': message '{message}' has type '{}', expected 'bytes'",
+            binding.binding_type.as_str()
+        )));
+    }
+}
+
 fn validate_binding_requirement(
     requirement: &Requirement,
     function_name: &str,
@@ -1358,7 +1501,7 @@ fn validate_binding_requirement(
                 scopes,
                 issues,
             );
-            validate_named_binding(message, None, "message", function_name, scopes, issues);
+            validate_message(message, function_name, scopes, issues);
         }
         Requirement::CheckMultisig {
             pubkeys,
@@ -1488,17 +1631,32 @@ fn validate_binding_expression(
     }
 
     match expression {
-        Expression::BinaryOp { left, op, right } if matches!(op.as_str(), "&&" | "||") => {
-            for operand in [left, right] {
-                let actual = resolved_expression_type(operand, scopes);
-                if actual != ArkType::Bool && actual != ArkType::Unknown {
+        Expression::BinaryOp { left, op, right }
+            if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
+        {
+            let (kind, expected) = if matches!(op.as_str(), "&&" | "||") {
+                ("logical", ArkType::Bool)
+            } else {
+                ("arithmetic", ArkType::Int)
+            };
+            let types = [left, right].map(|operand| resolved_expression_type(operand, scopes));
+            // Bytes-like `+` is concatenation, checked when it is rewritten to OP_CAT.
+            let concat = op == "+" && types.iter().any(crate::typechecker::is_bytes_like);
+            for actual in types.iter().filter(|_| !concat) {
+                if *actual != expected && *actual != ArkType::Unknown {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': logical '{}' operand has type '{}', expected 'bool'",
+                        "function '{}': {kind} '{}' operand has type '{}', expected '{}'",
                         function_name,
                         op,
-                        actual.as_str()
+                        actual.as_str(),
+                        expected.as_str()
                     )));
                 }
+            }
+            if op == "/" && literal_index(right).is_some_and(|(_, value)| value == "0") {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': division by zero"
+                )));
             }
         }
         Expression::Negate { value } | Expression::Not { value } => {
@@ -1515,6 +1673,69 @@ fn validate_binding_expression(
                     operator,
                     actual.as_str(),
                     expected.as_str()
+                )));
+            }
+        }
+        Expression::Substr { .. }
+        | Expression::Cat { .. }
+        | Expression::Bin2Num { .. }
+        | Expression::Num2Bin { .. }
+        | Expression::ReverseBytes { .. }
+        | Expression::SizeOf { .. }
+        | Expression::Digest { .. }
+        | Expression::Sighash { .. }
+        | Expression::PacketInspect { .. }
+        | Expression::InputPacketInspect { .. }
+        | Expression::InputIntrospection { .. }
+        | Expression::OutputIntrospection { .. } => {
+            let (bytes, int) = (ArkType::Bytes, ArkType::Int);
+            let (builtin, operands) = match expression {
+                Expression::Substr { data, offset, size } => {
+                    ("substr", vec![(data, &bytes), (offset, &int), (size, &int)])
+                }
+                Expression::Cat { left, right } => ("cat", vec![(left, &bytes), (right, &bytes)]),
+                Expression::Bin2Num { data } => ("bin2num", vec![(data, &bytes)]),
+                Expression::Num2Bin { value, size } => {
+                    ("num2bin", vec![(value, &int), (size, &int)])
+                }
+                Expression::ReverseBytes { data } => ("reverseBytes", vec![(data, &bytes)]),
+                Expression::SizeOf { data } => ("size", vec![(data, &bytes)]),
+                Expression::Digest { data, hash_type } => {
+                    ("digest", vec![(data, &bytes), (hash_type, &int)])
+                }
+                Expression::Sighash { hash_type } => ("sighash", vec![(hash_type, &int)]),
+                Expression::PacketInspect { packet_type } => {
+                    ("tx.packet", vec![(packet_type, &int)])
+                }
+                Expression::InputPacketInspect { index, packet_type } => (
+                    "tx.inputs[].packet",
+                    vec![(index, &int), (packet_type, &int)],
+                ),
+                Expression::InputIntrospection { index, .. } => {
+                    ("tx.inputs[]", vec![(index, &int)])
+                }
+                Expression::OutputIntrospection { index, .. } => {
+                    ("tx.outputs[]", vec![(index, &int)])
+                }
+                _ => unreachable!("matched by the enclosing arm"),
+            };
+            for (operand, expected) in operands {
+                let actual = resolved_expression_type(operand, scopes);
+                if actual != ArkType::Unknown && !binding_types_compatible(expected, &actual) {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': {builtin} operand has type '{}', expected '{}'",
+                        actual.as_str(),
+                        expected.as_str()
+                    )));
+                }
+            }
+        }
+        Expression::Cast { target, data } => {
+            let actual = resolved_expression_type(data, scopes);
+            if actual != ArkType::Bytes && actual != ArkType::Unknown {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': cannot cast '{}' to '{target}'; only bytes can be cast",
+                    actual.as_str()
                 )));
             }
         }
@@ -1659,7 +1880,7 @@ fn validate_binding_expression(
                 scopes,
                 issues,
             );
-            validate_named_binding(message, None, "message", function_name, scopes, issues);
+            validate_message(message, function_name, scopes, issues);
         }
         Expression::ContractInstance { args, .. } => {
             for argument in args {
@@ -2302,7 +2523,9 @@ contract Demo() {
 
     #[test]
     fn valid_contract_has_no_issues() {
-        let contract = make_contract("Simple");
+        let mut contract = make_contract("Simple");
+        // `flag` is only read by the branch tests.
+        contract.functions[0].parameters.pop();
         let issues = validate_ast(&contract, true);
         assert!(!has_errors(&issues));
     }
@@ -2394,6 +2617,7 @@ contract Demo() {
             injected: false,
         }];
         ContractJson {
+            format_version: None,
             name: name.to_string(),
             structs: vec![],
             parameters: vec![],
@@ -2409,6 +2633,7 @@ contract Demo() {
             source: None,
             compiler: None,
             updated_at: None,
+            fingerprint: None,
             warnings: vec![],
         }
     }

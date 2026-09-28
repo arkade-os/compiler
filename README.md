@@ -15,7 +15,7 @@ The playground runs the real compiler as WebAssembly. Nothing is installed and n
 | JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
 | Assembly | Every spend group: the Arkade covenant ASM and each tapscript leaf, opcodes and `<placeholders>` highlighted |
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
-| Errors | Parse, type, and validation errors; the offending line is selected in the editor |
+| Diagnostics | Compiler warnings and errors; an offending line is selected in the editor when available |
 
 The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 
@@ -187,9 +187,10 @@ Requires a Rust toolchain ([rustup.rs](https://rustup.rs/)).
 cargo install --path .              # installs arkadec
 arkadec contract.ark                # writes contract.json in the current directory
 arkadec contract.ark -o out.json
+arkadec contract.ark --no-optimize  # skips peephole optimization of Arkade covenants
 ```
 
-Type-check warnings go to stderr; errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
+Warnings go to stderr; type and validation errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
 
 Generate client bindings from one artifact or a directory of them:
 
@@ -200,7 +201,7 @@ cargo run -p arkade-bindgen -- --list-targets
 
 `--embed` inlines the artifact JSON into the generated file; `--package` sets the module or namespace name.
 
-Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `validate`, and `version`; the WASM `compile_sources(entry, files)` accepts the file map as a JSON string and returns the artifact as a JSON string.
+Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `validate`, and `version`; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string, warnings: string[] }` for the playground.
 
 ### Run the playground locally
 
@@ -456,6 +457,8 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Bytes.** `substr(data, offset, size)`, `cat(a, b)`, `bin2num(bytes)`, `num2bin(value, size)`, `reverseBytes(bytes)`, `size(bytes)`.
 
+**Types and casts.** Type errors are fatal. Equality needs matching types, except that `bytes20`, `bytes32`, `pubkey`, and `signature` widen implicitly to `bytes`, including in bindings, arguments, and `+` concatenation. `bytes20(x)`, `bytes32(x)`, `pubkey(x)`, and `signature(x)` narrow a `bytes` value; the sized casts verify the length at runtime with `OP_SIZE <n> OP_EQUALVERIFY`, while `pubkey` and `signature` add no opcodes because the VM validates keys and signatures when they are consumed. Use `bin2num` and `num2bin` to convert between `int` and `bytes`, and compare `bool` values with `true` or `false`. Byte builtins (`substr`, `cat`, `bin2num`, `reverseBytes`, `size`, `digest`, and the `checkSigFromStack` message) take bytes-like operands; sizes, offsets, indexes, packet types, hash types, and tapscript timelocks take `int`. A hash comparison's expected value matches the digest width: `bytes32` for `sha256` and `hash256`, `bytes20` for `hash160` and `ripemd160`, or unbounded `bytes`.
+
 **Packets.** `tx.packet(type)` and `tx.inputs[i].packet(type)` return the raw extension packet bytes and assert presence.
 
 **Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(x1, y1, x2, y2, curve)` and `ecMul(x, y, k, curve)` returning `ECPoint`, `ecPairing(...)`, `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
@@ -472,6 +475,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 
 ```json
 {
+  "formatVersion": 1,
   "contractName": "HTLC",
   "constructorInputs": [{ "name": "sender", "type": "pubkey" }, ...],
   "structs": [],
@@ -494,26 +498,31 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
     { "name": "unilateral", "leaves": [ ... ] }
   ],
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
-  "compiler": { "name": "arkade-compiler", "version": "0.1.0" },
+  "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },
+  "fingerprint": "sha256:...",
   "updatedAt": "2026-01-01T00:00:00Z"
 }
 ```
 
 | Field | Meaning |
 |---|---|
+| `formatVersion` | Artifact schema version; absent on legacy artifacts |
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
-| `warnings` | Type-check and validation warnings include their source file path; omitted when empty |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
+| `compiler.options` | Effective compilation settings; `optimize` applies to Arkade covenant assembly |
+| `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, and unresolved script templates |
+
+The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
 
 Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
 
-Type-check and validation warnings identify their source file relative to the bundle root, including warnings from dependencies.
+Type-check and validation warnings remain available on the Rust compilation result, are printed by the CLI, and appear in the playground's Diagnostics tab, but are not serialized into artifacts. They identify their source file relative to the bundle root, including warnings from dependencies.
 
 ### Covenant stack ABI
 

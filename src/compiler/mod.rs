@@ -23,6 +23,7 @@ use crate::opcodes::{
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 pub mod tapscript;
 
@@ -829,13 +830,15 @@ pub(crate) fn prepare(
     rewrite_concat_ops(contract)?;
 
     // ── Type checking ──────────────────────────────────────────────────────
-    // Run the type checker. Errors are non-fatal and returned as warnings on
-    // ContractJson so callers (CLI, WASM, tests) can surface them as they see fit.
     let type_errors = typechecker::check_contract(contract);
-    let mut warnings: Vec<String> = type_errors
-        .iter()
-        .map(|e| format!("warning[type]: {}", e.message))
-        .collect();
+    if !type_errors.is_empty() {
+        return Err(type_errors
+            .iter()
+            .map(|e| format!("type error: {}", e.message))
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+    let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
@@ -856,16 +859,19 @@ pub(crate) fn emit(
     let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
+        format_version: Some(crate::models::ARTIFACT_FORMAT_VERSION),
         name: contract.name.clone(),
         structs: contract.structs.clone(),
         parameters,
         functions: Vec::new(),
         source: Some(source),
         compiler: Some(CompilerInfo {
-            name: "arkade-compiler".to_string(),
+            name: "arkadec".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            options: Some(options),
         }),
-        updated_at: Some(Utc::now().to_rfc3339()),
+        updated_at: None,
+        fingerprint: None,
         warnings,
     };
 
@@ -909,6 +915,11 @@ pub(crate) fn emit(
         json.warnings
             .push(format!("warning[output-invariant]: {}", issue.message));
     }
+
+    // Serialized field order is part of the fingerprint; reordering artifact fields changes it.
+    let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
+    json.fingerprint = Some(format!("sha256:{:x}", Sha256::digest(bytes)));
+    json.updated_at = Some(Utc::now().to_rfc3339());
 
     Ok(json)
 }

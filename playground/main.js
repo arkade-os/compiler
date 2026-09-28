@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { compile_sources, compile_sources_with_diagnostics, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1339,12 +1339,13 @@ function doCompile() {
     try {
         const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const result = compile_sources(entry, JSON.stringify(files), optimize);
+        const { artifact: result, warnings } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
         displayBindings(result);
-        showSuccess(result);
+        showSuccess(result, warnings.length);
+        showWarnings(warnings);
         markCompiled();
     } catch (err) {
         showError(err.toString());
@@ -1485,7 +1486,7 @@ function highlightAsm(asm) {
 }
 
 // Show compilation success
-function showSuccess(jsonStr) {
+function showSuccess(jsonStr, warningCount = 0) {
     const statusEl = document.getElementById('compile-status');
     let funcCount = '';
     try {
@@ -1493,8 +1494,19 @@ function showSuccess(jsonStr) {
         const count = data.functions?.length || 0;
         funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
     } catch (e) {}
-    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}`;
-    statusEl.className = 'compile-status success';
+    const warningLabel = warningCount ? ` &mdash; ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : '';
+    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}${warningLabel}`;
+    statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
+}
+
+function showWarnings(warnings) {
+    if (!warnings.length) return;
+    const output = document.getElementById('errors-output');
+    const count = document.getElementById('error-count');
+    output.textContent = warnings.join('\n');
+    output.classList.add('warning');
+    count.textContent = String(warnings.length);
+    count.classList.add('visible', 'warning');
 }
 
 // Show error
@@ -1507,7 +1519,9 @@ function showError(message) {
     const errorCount = document.getElementById('error-count');
 
     errorsTab.textContent = message;
+    errorsTab.classList.remove('warning');
     errorCount.textContent = '1';
+    errorCount.classList.remove('warning');
     errorCount.classList.add('visible');
 
     // Switch to errors tab
@@ -1529,9 +1543,12 @@ function showError(message) {
 
 // Clear errors
 function clearErrors() {
-    document.getElementById('errors-output').textContent = '';
-    document.getElementById('error-count').textContent = '';
-    document.getElementById('error-count').classList.remove('visible');
+    const output = document.getElementById('errors-output');
+    const count = document.getElementById('error-count');
+    output.textContent = '';
+    output.classList.remove('warning');
+    count.textContent = '';
+    count.classList.remove('visible', 'warning');
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';

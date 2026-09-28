@@ -82,7 +82,7 @@ fn asset_has_keeps_flag_drops_amount() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
                 require(tx.outputs[0].assets.has(fooTxid, fooGidx));
-                require(tx.inputs[0].assets.has(fooTxid, fooGidx) == 0);
+                require(tx.inputs[0].assets.has(fooTxid, fooGidx) == false);
                 require(checkSig(sig, pk));
             }
         }";
@@ -151,7 +151,7 @@ fn has_control_is_presence_only() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
                 let g = tx.assetGroups.find(fooTxid, fooGidx);
-                require(g.hasControl == 1);
+                require(g.hasControl == true);
                 require(checkSig(sig, pk));
             }
         }";

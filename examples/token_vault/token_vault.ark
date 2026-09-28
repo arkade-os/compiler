@@ -39,7 +39,7 @@ contract TokenVault(
   }
 
   // Withdraw: owner withdraws tokens cooperatively with server
-  function withdraw(signature ownerSig, int amount) {
+  function withdraw(signature ownerSig) {
     // Control asset must stay in the output
     require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in output");
 
