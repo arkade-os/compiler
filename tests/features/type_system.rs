@@ -235,10 +235,10 @@ contract SwappedCsfs(pubkey owner) {
     );
 }
 
-// ─── Warnings are surfaced in the ContractJson output ────────────────────────
+// ─── Warnings remain available to callers without entering artifacts ─────────
 
 #[test]
-fn warnings_appear_in_contract_json_warnings_field() {
+fn warnings_are_not_serialized_in_artifacts() {
     // `minVal` is never read, which warns without failing compilation.
     let source = r#"
 contract HasWarnings(pubkey owner, int minVal) {
@@ -247,17 +247,15 @@ contract HasWarnings(pubkey owner, int minVal) {
     }
 }"#;
     let output = compile_ok(source);
-    // Warnings should be in the JSON output, not silently dropped
     assert!(
         output.warnings.iter().any(|w| w.starts_with("warning[")),
         "warnings must be tagged with warning[...] prefix; got: {:?}",
         output.warnings
     );
-    // Compile to JSON and back to verify warnings are serialized
     let json = serde_json::to_string(&output).expect("serialize to JSON");
     assert!(
-        json.contains("warning"),
-        "warnings must appear in serialized JSON"
+        !json.contains("\"warnings\""),
+        "warnings must stay out of serialized artifacts"
     );
 }
 
