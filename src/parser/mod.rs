@@ -38,8 +38,7 @@ pub fn parse(source: &str) -> Result<Contract, String> {
 }
 
 pub(crate) fn imports(source: &str) -> Result<Vec<String>, String> {
-    let mut pairs =
-        ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
+    let mut pairs = parse_main(source)?;
     pairs
         .next()
         .expect("main")
@@ -53,8 +52,90 @@ pub(crate) fn parse_with_constants(
     source: &str,
     constants: &[Constant],
 ) -> Result<Contract, String> {
-    let pairs = ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
-    build_ast(pairs, constants)
+    build_ast(parse_main(source)?, constants)
+}
+
+fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
+    pest::set_error_detail(true);
+    ArkadeParser::parse(Rule::main, source)
+        .map_err(|e| format!("Parse error: {}", readable_error(e, source)))
+}
+
+/// Rewrite a pest error in source-language terms: report the farthest position
+/// reached, quote the closing tokens expected there, and name rules in plain words.
+fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error::Error<Rule> {
+    use pest::error::{Error, ErrorVariant, InputLocation};
+    let Some(attempts) = error.parse_attempts() else {
+        return error;
+    };
+    // Literal tokens only; `a..z` style entries are character ranges.
+    let tokens: Vec<String> = attempts
+        .expected_tokens()
+        .iter()
+        .map(ToString::to_string)
+        .filter(|t| !t.trim().is_empty() && t != "//" && !t.contains(".."))
+        .map(|t| format!("'{t}'"))
+        .collect();
+    let mut expected: Vec<String> = tokens
+        .iter()
+        .filter(|t| ["';'", "')'", "'}'", "']'", "','"].contains(&t.as_str()))
+        .cloned()
+        .collect();
+    // Pest's rule positives can point at an earlier position than the attempts.
+    if let ErrorVariant::ParsingError { positives, .. } = &error.variant {
+        if error.location == InputLocation::Pos(attempts.max_position) {
+            for term in positives.iter().filter_map(rule_term) {
+                if !expected.contains(&term) {
+                    expected.push(term);
+                }
+            }
+        }
+    }
+    if expected.is_empty() {
+        expected = tokens;
+    }
+    let message = match expected.split_last() {
+        None => "unexpected input".to_string(),
+        Some((last, [])) => format!("expected {last}"),
+        Some((last, rest)) => format!("expected {} or {last}", rest.join(", ")),
+    };
+    match pest::Position::new(source, attempts.max_position) {
+        Some(pos) => Error::new_from_pos(ErrorVariant::CustomError { message }, pos),
+        None => error,
+    }
+}
+
+fn rule_term(rule: &Rule) -> Option<String> {
+    let term = match rule {
+        Rule::main | Rule::EOI => return None,
+        Rule::comparison_operator
+        | Rule::add_op
+        | Rule::sub_op
+        | Rule::and_op
+        | Rule::or_op
+        | Rule::mul_op
+        | Rule::div_op => "an operator",
+        Rule::asset_lookup_source | Rule::tx_introspection_property | Rule::tx_property_part => {
+            "a transaction property"
+        }
+        Rule::input_introspection_property => "an input property",
+        Rule::output_introspection_property => "an output property",
+        Rule::asset_group_property | Rule::group_property => "an asset group property",
+        Rule::asset_at_property => "an asset property",
+        Rule::this_property => "a contract property",
+        Rule::identifier => "a name",
+        Rule::const_keyword => "a constant",
+        Rule::function_visibility | Rule::function => "a function",
+        Rule::data_type => "a type",
+        Rule::block => "a block",
+        Rule::unary_expr | Rule::primary_expr | Rule::general_expression => "an expression",
+        Rule::number_literal => "a number",
+        Rule::string_literal => "a string",
+        // ponytail: unmapped rules fall back to their grammar name with spaces;
+        // map any that show up confusingly in real errors.
+        other => return Some(format!("{other:?}").replace('_', " ")),
+    };
+    Some(term.to_string())
 }
 
 /// Build a Contract AST from parsed Pest pairs
