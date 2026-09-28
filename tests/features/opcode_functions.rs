@@ -22,6 +22,7 @@ fn test_sha256_initialize() {
             function initHash(signature ownerSig, bytes32 initialData) {
                 require(checkSig(ownerSig, owner));
                 let ctx = sha256Initialize(initialData);
+                require(ctx == ctx);
             }
         }
     "#;
@@ -49,6 +50,7 @@ fn test_sha256_update() {
             function updateHash(signature ownerSig, bytes32 ctx, bytes32 chunk) {
                 require(checkSig(ownerSig, owner));
                 let newCtx = sha256Update(ctx, chunk);
+                require(newCtx == newCtx);
             }
         }
     "#;
@@ -76,6 +78,7 @@ fn test_sha256_finalize() {
             function finalizeHash(signature ownerSig, bytes32 ctx, bytes32 lastChunk) {
                 require(checkSig(ownerSig, owner));
                 let hash = sha256Finalize(ctx, lastChunk);
+                require(hash == hash);
             }
         }
     "#;
@@ -102,7 +105,7 @@ fn test_digest() {
         contract RuntimeDigest(int hashType) {
             function hash(bytes data) {
                 let hash = digest(data, hashType);
-                require(true);
+                require(hash == hash);
             }
         }
     "#;
@@ -152,6 +155,7 @@ fn test_unary_minus_negates() {
             function negateValue(signature ownerSig, int value) {
                 require(checkSig(ownerSig, owner));
                 let negated = -value;
+                require(negated == negated);
             }
         }
     "#;
@@ -415,7 +419,7 @@ fn test_sighash() {
         contract SignatureHash(int hashType) {
             function hashCurrentInput() {
                 let hash = sighash(hashType);
-                require(true);
+                require(hash == hash);
             }
         }
     "#;
@@ -459,6 +463,7 @@ fn test_streaming_hash_full_workflow() {
                 let ctx = sha256Initialize(chunk1);
                 let ctx2 = sha256Update(ctx, chunk2);
                 let hash = sha256Finalize(ctx2, chunk3);
+                require(hash == expectedHash);
             }
         }
     "#;
@@ -541,8 +546,8 @@ fn unary_negation_in_loops_and_conditions() {
             function spend(bool[2] flags) {
                 for (i, flag) in flags {
                     if (!flag) { require(!!flag == false); }
-                    let bytes = num2bin(-(i + 1), 4);
-                    require(size(bytes) == 4);
+                    let encoded = num2bin(-(i + 1), 4);
+                    require(size(encoded) == 4);
                 }
             }
         }
@@ -699,7 +704,19 @@ fn unary_negation_in_builtin_atom_arguments() {
             "1 OP_NEGATE OP_NEGATE 0 OP_INSPECTINPUTPACKET",
         ),
     ] {
-        let source = format!("contract Unary() {{ function spend(int value, bytes data) {{ {statement} require(true); }} }}");
+        let params = [("value", "int value"), ("data", "bytes data")]
+            .iter()
+            .filter(|(name, _)| statement.contains(name))
+            .map(|(_, param)| *param)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let read = if statement.starts_with("let") {
+            "require(result == result);"
+        } else {
+            ""
+        };
+        let source =
+            format!("contract Unary() {{ function spend({params}) {{ {statement} {read} }} }}");
         let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));
         let asm = crate::common::arkade_asm_tokens(&output, "spend");
         assert!(

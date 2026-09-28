@@ -84,14 +84,17 @@ fn normalize_files(files: &BTreeMap<String, String>) -> Result<BTreeMap<String, 
     Ok(normalized)
 }
 
-pub(crate) fn compile_file(path: &Path) -> Result<ContractJson, String> {
+pub(crate) fn compile_file(
+    path: &Path,
+    options: crate::CompileOptions,
+) -> Result<ContractJson, String> {
     let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
     let entry = normalize(&absolute)?;
     compile_with_loader(
         &entry,
         |path| std::fs::read_to_string(path).map_err(|e| format!("cannot read '{path}': {e}")),
         true,
-        crate::CompileOptions::default(),
+        options,
     )
 }
 

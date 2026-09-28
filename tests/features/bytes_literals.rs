@@ -132,16 +132,14 @@ fn bytes_literals_reject_malformed_syntax_and_wrong_types() {
         );
     }
     for condition in ["0x01 == 1", r#""a" < "b""#] {
-        let out = compile(&format!(
+        let error = compile(&format!(
             "contract Demo() {{ function spend() {{ require({condition}); }} }}"
         ))
-        .unwrap();
+        .unwrap_err()
+        .to_string();
         assert!(
-            out.warnings
-                .iter()
-                .any(|warning| warning.contains("comparison") && warning.contains("bytes")),
-            "{:?}",
-            out.warnings
+            error.contains("comparison") && error.contains("bytes"),
+            "{error}"
         );
     }
 }
@@ -185,9 +183,12 @@ fn bytes_literals_in_tapscript_hash_keep_witness_shape() {
 #[test]
 fn bytes_literals_compound_hash_comparisons() {
     for rhs in [r#""he" + 0x6c6c6f"#, "0x6865 + suffix", "sha256(suffix)"] {
-        let out = compile(&format!(
-            "contract Demo() {{ function spend(bytes suffix) {{ require(sha256(\"hello\") == {rhs}); }} }}"
-        )).unwrap_or_else(|error| panic!("{rhs}: {error}"));
+        let out =
+            compile(&format!(
+            "contract Demo() {{ function spend({}) {{ require(sha256(\"hello\") == {rhs}); }} }}",
+            if rhs.contains("suffix") { "bytes suffix" } else { "" }
+        ))
+            .unwrap_or_else(|error| panic!("{rhs}: {error}"));
         assert!(out.warnings.is_empty(), "{:?}", out.warnings);
         assert!(arkade_asm_tokens(&out, "spend")
             .iter()
