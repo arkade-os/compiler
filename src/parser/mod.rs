@@ -410,10 +410,10 @@ fn parse_statement(
             let then_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
-            let then_body = parse_block(then_block, constants)?;
+            let then_body = parse_block(function_name, then_block, constants)?;
 
             let else_body = if let Some(else_block) = inner.next() {
-                Some(parse_block(else_block, constants)?)
+                Some(parse_block(function_name, else_block, constants)?)
             } else {
                 None
             };
@@ -452,6 +452,7 @@ fn parse_statement(
                             "Parse error: Missing iterable in for loop".to_string()
                         })?)?;
                     let body = parse_block(
+                        function_name,
                         inner
                             .next()
                             .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
@@ -470,6 +471,7 @@ fn parse_statement(
                             "Parse error: Missing count in for loop".to_string()
                         })?)?;
                     let body = parse_block(
+                        function_name,
                         inner
                             .next()
                             .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
@@ -549,10 +551,14 @@ fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String>
 // ─── Expression Parsing ────────────────────────────────────────────────────────
 
 // Parse a block of statements
-fn parse_block(pair: Pair<Rule>, constants: &[Constant]) -> Result<Vec<LocatedStatement>, String> {
+fn parse_block(
+    function_name: &str,
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<Vec<LocatedStatement>, String> {
     let mut statements = Vec::new();
     for inner in pair.into_inner() {
-        statements.extend(parse_statement("", inner, constants)?);
+        statements.extend(parse_statement(function_name, inner, constants)?);
     }
     Ok(statements)
 }
