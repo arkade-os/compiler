@@ -435,6 +435,24 @@ impl HashFn {
         }
     }
 
+    /// Source name of the hash function, e.g. `hash160`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            HashFn::Sha256 => "sha256",
+            HashFn::Hash160 => "hash160",
+            HashFn::Hash256 => "hash256",
+            HashFn::Ripemd160 => "ripemd160",
+        }
+    }
+
+    /// Type name of the digest this hash function produces.
+    pub fn digest_type(&self) -> &'static str {
+        match self {
+            HashFn::Sha256 | HashFn::Hash256 => "bytes32",
+            HashFn::Hash160 | HashFn::Ripemd160 => "bytes20",
+        }
+    }
+
     /// Parse a hash function name; returns None for unknown names.
     pub fn parse(name: &str) -> Option<HashFn> {
         match name {
@@ -799,6 +817,11 @@ pub enum Expression {
     ReverseBytes { data: Box<Expression> },
     /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
     SizeOf { data: Box<Expression> },
+    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x)
+    Cast {
+        target: String,
+        data: Box<Expression>,
+    },
     // ─── Packet Introspection ──────────────────────────────────────────
     /// Current-tx packet content: tx.packet(packetType)
     /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
@@ -956,7 +979,8 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Cat { left, right } => vec![left, right],
         Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data } => vec![data],
+        | Expression::SizeOf { data }
+        | Expression::Cast { data, .. } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],

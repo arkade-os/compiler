@@ -147,7 +147,7 @@ contract C() {
 fn helper_requirements_count_on_all_paths_including_expression_calls() {
     for body in [
         "checked();",
-        "let value = checkedValue();",
+        "let value = checkedValue(); value = value + 1;",
         "require(predicate());",
     ] {
         compile(&format!(
@@ -229,8 +229,8 @@ fn tapscript_cannot_call_bind_or_tweak_private_helpers() {
 }
 
 #[test]
-fn calls_and_returns_preserve_nested_expression_type_warnings() {
-    let output = compile(
+fn calls_and_returns_reject_nested_expression_type_errors() {
+    let error = compile(
         r#"
 struct Flag { bool value; }
 contract C() {
@@ -241,14 +241,15 @@ contract C() {
 }
 "#,
     )
-    .expect("type mismatches produce warnings");
+    .expect_err("type mismatches are rejected")
+    .to_string();
     for function in ["spend", "array", "flag"] {
-        assert!(output
-            .warnings
-            .iter()
-            .any(|warning| warning.contains(&format!(
+        assert!(
+            error.contains(&format!(
                 "fn {function}: comparison '==' is not defined between 'int' and 'bool'"
-            ))));
+            )),
+            "{error}"
+        );
     }
 }
 

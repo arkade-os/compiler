@@ -140,7 +140,16 @@ fn constant_indices_fold_in_named_operands() {
         "require(size(messages[FIRST]) == 32);",
         "if (checkSig(sigs[FIRST], keys[FIRST])) { require(true); } else { require(false); }",
     ] {
-        let source = format!("contract Vault(pubkey[2] keys, bytes32[2] messages) {{ const int FIRST = 0; function spend(signature[2] sigs, bytes32 message) {{ {body} }} }}");
+        let params = [
+            ("sigs", "signature[2] sigs"),
+            ("(message)", "bytes32 message"),
+        ]
+        .iter()
+        .filter(|(name, _)| body.contains(name))
+        .map(|(_, param)| *param)
+        .collect::<Vec<_>>()
+        .join(", ");
+        let source = format!("contract Vault(pubkey[2] keys, bytes32[2] messages) {{ const int FIRST = 0; function spend({params}) {{ {body} }} }}");
         let output = compile(&source).unwrap_or_else(|e| panic!("{body}: {e}"));
         let literal = compile(&source.replace("[FIRST]", "[0]")).unwrap();
         assert_eq!(

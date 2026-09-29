@@ -22,10 +22,7 @@ pub(crate) struct Symbol {
 
 /// Declarations and struct definitions of one source file, read from the parse tree.
 pub(crate) fn symbols(source: &str) -> Result<(Vec<Symbol>, Vec<StructDefinition>), String> {
-    let main = ArkadeParser::parse(Rule::main, source)
-        .map_err(|e| format!("Parse error: {e}"))?
-        .next()
-        .expect("main");
+    let main = super::parse_main(source)?.next().expect("main");
     let mut symbols = Vec::new();
     let mut structs = Vec::new();
     for item in main.into_inner() {

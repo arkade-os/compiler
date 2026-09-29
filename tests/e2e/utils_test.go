@@ -91,7 +91,11 @@ func compileArtifact(t *testing.T, source string) artifact {
 		}
 	}
 	output := filepath.Join(t.TempDir(), "artifact.json")
-	cmd := exec.Command(compiler, source, "-o", output)
+	args := []string{source, "-o", output}
+	if os.Getenv("ARKADEC_NO_OPTIMIZE") != "" {
+		args = append(args, "--no-optimize")
+	}
+	cmd := exec.Command(compiler, args...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile %s: %v\n%s", source, err, combined)
 	}
@@ -482,7 +486,15 @@ func requireVMResult(
 	if err == nil {
 		t.Fatal("VM accepted invalid transaction")
 	}
-	if !strings.Contains(err.Error(), wantErr) {
+	if strings.Contains(err.Error(), wantErr) {
+		return
+	}
+	// Unoptimized covenants verify with an unfused OP_VERIFY where the optimizer
+	// emits OP_EQUALVERIFY or leaves the result for the final stack check.
+	unfused := os.Getenv("ARKADEC_NO_OPTIMIZE") != "" &&
+		(strings.HasSuffix(wantErr, "VERIFY failed") || wantErr == "false stack entry") &&
+		strings.Contains(err.Error(), "failed to execute arkade script: OP_VERIFY failed")
+	if !unfused {
 		t.Fatalf("VM error %q does not contain %q", err, wantErr)
 	}
 }

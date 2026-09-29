@@ -5,8 +5,7 @@
 ///   including wire-encoding metadata used by client stub generators
 /// - `infer_type`: expression-level type inference
 /// - `check_contract` / `check_function`: requirement-level type checking
-///   that returns a list of `TypeError`s (currently non-fatal — the caller
-///   decides how to surface them)
+///   that returns a list of `TypeError`s; the compiler rejects any of them
 use std::collections::HashMap;
 
 use crate::models::{
@@ -370,7 +369,6 @@ fn resolve_expression(
 /// Type-check an entire contract.
 ///
 /// Returns all type errors found across all functions.
-/// Currently non-fatal — the compiler emits these as warnings.
 pub fn check_contract(contract: &Contract) -> Vec<TypeError> {
     let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     contract
@@ -530,7 +528,11 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
         Requirement::Expression(expr) => {
             check_expression(expr, scope, errors, fn_name);
             let condition_type = infer_type(expr, scope);
-            if condition_type != ArkType::Bool && condition_type != ArkType::Unknown {
+            // A bare find verifies the asset group exists; its index is dropped.
+            if !matches!(expr, Expression::GroupFind { .. })
+                && condition_type != ArkType::Bool
+                && condition_type != ArkType::Unknown
+            {
                 errors.push(TypeError::new(format!(
                     "fn {}: require condition has type '{}', expected bool",
                     fn_name,
@@ -579,15 +581,16 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 );
             }
         }
-        Requirement::HashEqual { hash, .. } => {
-            // The hash value should be bytes32.
+        Requirement::HashEqual { hash_fn, hash, .. } => {
             if let Some(t) = scope.get(hash.as_str()) {
-                if *t != ArkType::Bytes32 && *t != ArkType::Bytes && *t != ArkType::Unknown {
+                if !digest_accepts(hash_fn, t) {
                     errors.push(TypeError::new(format!(
-                        "fn {}: sha256 comparison: '{}' has type '{}', expected bytes32",
+                        "fn {}: {} comparison: '{}' has type '{}', expected {}",
                         fn_name,
+                        hash_fn.name(),
                         hash,
-                        t.as_str()
+                        t.as_str(),
+                        hash_fn.digest_type()
                     )));
                 }
             }
@@ -749,8 +752,8 @@ fn check_comparison(
     let compatible = match op {
         "==" | "!=" => {
             left_type == right_type
-                || (is_bytes_like(&left_type) && is_bytes_like(&right_type))
-                || (is_numeric(&left_type) && is_numeric(&right_type))
+                || (is_bytes_like(&left_type) && right_type == ArkType::Bytes)
+                || (is_bytes_like(&right_type) && left_type == ArkType::Bytes)
         }
         ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
         _ => true,
@@ -765,6 +768,11 @@ fn check_comparison(
             right_type.as_str()
         )));
     }
+}
+
+/// Whether a value of type `t` can be compared with `hash_fn`'s digest.
+pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bool {
+    matches!(t, ArkType::Bytes | ArkType::Unknown) || *t == ArkType::parse(hash_fn.digest_type())
 }
 
 fn is_numeric(t: &ArkType) -> bool {
@@ -949,6 +957,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::Bin2Num { .. } => ArkType::Int,
         Expression::Num2Bin { .. } => ArkType::Bytes,
         Expression::ReverseBytes { .. } => ArkType::Bytes,
+        Expression::Cast { target, .. } => ArkType::parse(target),
         Expression::SizeOf { .. } => ArkType::Int,
 
         // Packet introspection — returns raw packet bytes.
@@ -983,8 +992,11 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     }
 }
 
-/// Returns true when the type is a raw byte string (eligible as a `+`
-/// operand for concatenation via OP_CAT).
+/// Returns true when the type widens to `bytes`: it can be concatenated with
+/// `+` and compared or bound to `bytes`, but never to another sized type.
 pub fn is_bytes_like(t: &ArkType) -> bool {
-    matches!(t, ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32)
+    matches!(
+        t,
+        ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Pubkey | ArkType::Signature
+    )
 }

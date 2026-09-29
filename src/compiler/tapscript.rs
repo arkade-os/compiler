@@ -9,7 +9,7 @@ use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_VERIFY,
 };
-use crate::typechecker::ArkType;
+use crate::typechecker::{digest_accepts, ArkType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -357,6 +357,14 @@ pub fn validate_arkd_rules(
             !matches!(binding_type, ArkType::Struct(_) | ArkType::Array(..))
         }) || ts.inputs.iter().any(|p| p.name == name)
     };
+    let name_type = |name: &str| -> Option<ArkType> {
+        constructor_scope.get(name).cloned().or_else(|| {
+            ts.inputs
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| ArkType::parse(&p.param_type))
+        })
+    };
     // A declared `signature` input.
     let sig_input = |name: &str| -> bool {
         ts.inputs
@@ -395,7 +403,11 @@ pub fn validate_arkd_rules(
     // Hash values may also be byte literals; timelocks may be numeric literals.
     for item in &ts.items {
         match item {
-            TapItem::Hash { preimage, hash, .. } => {
+            TapItem::Hash {
+                hash_fn,
+                preimage,
+                hash,
+            } => {
                 if !name_declared(preimage) {
                     return Err(format!(
                         "tapscript `{}`: hash preimage `{preimage}` is not a declared input or constructor parameter",
@@ -408,12 +420,28 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
+                if let Some(t) = name_type(hash).filter(|t| !digest_accepts(hash_fn, t)) {
+                    return Err(format!(
+                        "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
+                        ts.name,
+                        hash_fn.name(),
+                        t.as_str(),
+                        hash_fn.digest_type()
+                    ));
+                }
             }
             TapItem::Older { value } | TapItem::After { value } => {
                 if value.parse::<u64>().is_err() && !name_declared(value) {
                     return Err(format!(
                         "tapscript `{}`: timelock `{value}` is not a literal, declared input, or constructor parameter",
                         ts.name
+                    ));
+                }
+                if let Some(t) = name_type(value).filter(|t| *t != ArkType::Int) {
+                    return Err(format!(
+                        "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
+                        ts.name,
+                        t.as_str()
                     ));
                 }
             }

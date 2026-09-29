@@ -24,6 +24,38 @@ fn whitespace_only_source_is_rejected() {
 }
 
 #[test]
+fn parse_errors_use_source_terms() {
+    let cases = [
+        ("require(checkSig(s, pk), \"x\") }", "1:81", "expected ';'"),
+        (
+            "require(checkSig(s, pk), \"x\"; }",
+            "1:79",
+            "expected ')', ',' or an operator",
+        ),
+        (
+            "require(tx.); }",
+            "1:62",
+            "expected a transaction property or a name",
+        ),
+        (
+            "require(checkSig(s, pk), \"x\"); ",
+            "1:84",
+            "expected '}', a constant or a function",
+        ),
+    ];
+    for (body, at, expected) in cases {
+        let source = format!("contract C(pubkey pk) {{ function f(signature s) {{ {body} }}");
+        let msg = compile(&source).unwrap_err().to_string();
+        assert!(msg.contains(&format!("--> {at}")), "{body}: {msg}");
+        assert!(msg.ends_with(&format!("= {expected}")), "{body}: {msg}");
+    }
+
+    let msg = compile("contract C(pubkey pk { }").unwrap_err().to_string();
+    assert!(msg.contains("--> 1:22"), "{msg}");
+    assert!(msg.ends_with("= expected ')' or ','"), "{msg}");
+}
+
+#[test]
 fn syntax_error_produces_parse_error_message() {
     let source = r#"
 contract Broken(pubkey owner) {
@@ -379,20 +411,17 @@ fn semantic_diagnostics_carry_source_positions() {
         "error must point at the faulty call: {error}"
     );
 
-    let output = compile(
+    let error = compile(
         "contract Positions() {
     function spend() {
         require(1);
     }
 }",
     )
-    .expect("type errors remain non-fatal");
+    .expect_err("non-boolean require must fail")
+    .to_string();
     assert!(
-        output
-            .warnings
-            .iter()
-            .any(|warning| warning.starts_with("warning[type]: line 3, column 9: ")),
-        "warning must point at its statement: {:?}",
-        output.warnings
+        error.contains("type error: line 3, column 9: "),
+        "type error must point at its statement: {error}"
     );
 }
