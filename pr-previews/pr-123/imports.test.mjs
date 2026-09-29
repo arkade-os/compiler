@@ -18,10 +18,10 @@ const context = vm.createContext({
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 
-const warningSource = 'contract HasWarnings(int value) { function spend() { require(value); } }';
+const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
 const detailed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ 'main.ark': warningSource }), false));
 const warningArtifact = JSON.parse(detailed.artifact);
-assert(detailed.warnings.some(warning => warning.startsWith('warning[type]')));
+assert(detailed.warnings.some(warning => warning.startsWith('warning[validation]')));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
