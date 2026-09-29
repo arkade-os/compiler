@@ -514,7 +514,7 @@ fn parse_errors_name_tokens_not_grammar_rules() {
         "contract T(pubkey k) { function f(signature s) { require(checkSig(s, k)) } }",
     );
     assert!(
-        error.contains("expected a comparison operator, `+`") && !error.contains("_op"),
+        error.contains("expected ';'") && !error.contains("_op"),
         "{error}"
     );
 }
