@@ -828,8 +828,7 @@ pub(crate) fn prepare(
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
             .map(|i| {
-                let message = format!("validation error: {}", located(&i.message, i.span, source));
-                Diagnostic::error(file, message)
+                Diagnostic::error(file, located(&i.message, i.span, source))
                     .with_code("validation")
                     .with_span(i.span)
             })
@@ -845,8 +844,7 @@ pub(crate) fn prepare(
         return Err(type_errors
             .iter()
             .map(|e| {
-                let message = format!("type error: {}", located(&e.message, e.span, source));
-                Diagnostic::error(file, message)
+                Diagnostic::error(file, located(&e.message, e.span, source))
                     .with_code("type")
                     .with_span(e.span)
             })
@@ -857,12 +855,8 @@ pub(crate) fn prepare(
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
-            let message = format!(
-                "warning[validation]: {}",
-                located(&issue.message, issue.span, source)
-            );
             warnings.push(
-                Diagnostic::warning(file, message)
+                Diagnostic::warning(file, located(&issue.message, issue.span, source))
                     .with_code("validation")
                     .with_span(issue.span),
             );

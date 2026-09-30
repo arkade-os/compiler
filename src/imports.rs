@@ -820,6 +820,22 @@ library Fees {
     }
 
     #[test]
+    fn semantic_diagnostics_carry_a_precise_byte_span() {
+        let source = "contract V(pubkey owner) {\n  function spend(signature sig) { require(checkSig(sig, owner)); }\n  function spend(signature s) { require(checkSig(s, owner)); }\n}\n";
+        let diagnostics = check_one(source);
+        let duplicate = diagnostics
+            .iter()
+            .find(|d| d.message.contains("duplicate function name"))
+            .expect("duplicate function name diagnostic");
+        let span = duplicate.span.expect("semantic diagnostics carry a span");
+        assert!(
+            span.start < span.end,
+            "span must be a real range, not a point"
+        );
+        assert_eq!(&source[span.start..span.end], "spend");
+    }
+
+    #[test]
     fn syntax_error_has_a_span_and_a_plain_message() {
         let source = "contract Vault(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner))\n  }\n}\n";
         let [diagnostic]: [_; 1] = check_one(source).try_into().unwrap();
