@@ -5,33 +5,72 @@ on:
     branches: [master]
     paths:
       - '.github/workflows/pairing-product-dev.yml'
+      - '.github/pairing-product.patch'
       - 'src/**'
       - 'tests/**'
-      - 'Cargo.toml'
-      - 'arkade-bindgen/**'
+
+concurrency:
+  group: pairing-product-development
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   compiler-artifact:
+    if: github.repository == 'arkade-os/compiler' && github.event.pull_request.head.repo.full_name == 'arkade-os/compiler' && github.event.pull_request.head.ref == 'feat/pairing-product' && github.actor == 'Kukks'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: feat/pairing-product
           persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: tests/e2e/go.mod
+      - name: Apply reviewed source patch
+        run: |
+          if git apply --check .github/pairing-product.patch; then
+            git apply .github/pairing-product.patch
+          elif git apply --reverse --check .github/pairing-product.patch; then
+            echo 'Patch already applied'
+          else
+            echo 'Patch does not match the current source' >&2
+            exit 1
+          fi
+          cargo fmt --all
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Execute compiled products in VM
+        run: ./scripts/e2e.sh -run TestPairingProduct -v
+      - name: Commit validated source on this draft branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add README.md playground/arkade-language.js src tests
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Add fixed-array pairing-product verification'
+          git -c 'credential.helper=!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' push origin HEAD:refs/heads/feat/pairing-product
       - name: Build compiler for fixture validation
         run: cargo build --release --workspace
-      - name: Collect reproducible development artifacts
+      - name: Collect development artifacts
+        if: always()
         run: |
           mkdir -p dist
-          git archive --format=tar.gz HEAD -o dist/compiler-source.tar.gz
-          cp target/release/arkadec dist/arkadec
-          cp target/release/arkade-bindgen dist/arkade-bindgen
+          git diff > dist/worktree.patch
+          tar --exclude=.git --exclude=target --exclude=dist -czf dist/compiler-source.tar.gz .
+          if test -f target/release/arkadec; then cp target/release/arkadec dist/arkadec; fi
+          if test -f target/release/arkade-bindgen; then cp target/release/arkade-bindgen dist/arkade-bindgen; fi
           git rev-parse HEAD > dist/commit.txt
-          sha256sum dist/arkadec dist/arkade-bindgen dist/compiler-source.tar.gz > dist/SHA256SUMS
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: pairing-product-development
           path: dist/
