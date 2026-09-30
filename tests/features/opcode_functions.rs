@@ -370,6 +370,51 @@ fn test_ec_pairing() {
 }
 
 #[test]
+fn ec_and_group_index_builtins_reject_mistyped_operands() {
+    for (params, statement, expected) in [
+        (
+            "pubkey owner, int curveId",
+            "let r = ecAdd(owner, 1, 2, 3, curveId);",
+            "ecAdd operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "pubkey owner, int curveId",
+            "let r = ecMul(owner, 1, 2, curveId);",
+            "ecMul operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "pubkey owner, int curveId",
+            "require(ecPairing(owner, 1, 2, 3, 4, 5, curveId));",
+            "ecPairing operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "pubkey owner",
+            "let r = modExp(owner, 2, 3);",
+            "modExp operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "int scalar, pubkey p, pubkey q",
+            "require(ecMulScalarVerify(scalar, p, q));",
+            "ecMulScalarVerify operand has type 'int', expected 'bytes32'",
+        ),
+        (
+            "pubkey p, int tweak, pubkey q",
+            "require(tweakVerify(p, tweak, q));",
+            "tweakVerify operand has type 'int', expected 'bytes32'",
+        ),
+        (
+            "pubkey owner",
+            "let r = tx.assetGroups[owner].sumInputs;",
+            "assetGroups[].sum operand has type 'pubkey', expected 'int'",
+        ),
+    ] {
+        let source = format!("contract Grouped({params}) {{ function spend() {{ {statement} }} }}");
+        let error = compile(&source).expect_err(&source).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+#[test]
 fn test_ec_mul_scalar_verify_cannot_be_value_bound() {
     let code = r#"
         contract CryptoOps(pubkey owner) {
@@ -658,14 +703,6 @@ fn unary_negation_in_builtin_atom_arguments() {
             "1 2 OP_NEGATE 3 4 5 6 OP_1 0 OP_ECPAIRING",
         ),
         (
-            "require(ecMulScalarVerify(-1, 2, 3));",
-            "1 OP_NEGATE 2 3 OP_ECMULSCALARVERIFY",
-        ),
-        (
-            "require(tweakVerify(1, -2, 3));",
-            "1 2 OP_NEGATE 3 OP_TWEAKVERIFY",
-        ),
-        (
             "let result = sha256Initialize(-1);",
             "1 OP_NEGATE OP_SHA256INITIALIZE",
         ),
@@ -687,10 +724,7 @@ fn unary_negation_in_builtin_atom_arguments() {
             "let result = num2bin(-(value + 1), (2 + 2));",
             "1 OP_ADD OP_NEGATE 2 2 OP_ADD OP_NUM2BIN",
         ),
-        (
-            "require(ecMulScalarVerify(value, (data + data), data));",
-            "OP_CAT",
-        ),
+        ("let result = digest((data + data), value);", "OP_CAT"),
         (
             "let result = substr(data, --0, 1);",
             "0 OP_NEGATE OP_NEGATE 1 OP_SUBSTR",
@@ -756,7 +790,7 @@ fn logical_negation_preserves_nested_expressions() {
 
 #[test]
 fn grouped_builtin_operands_reject_implicit_byte_conversion() {
-    let error = compile("contract Grouped() { function spend(bytes data) { require(ecMulScalarVerify(1, (data + 1), data)); } }")
+    let error = compile("contract Grouped() { function spend(bytes data) { let result = digest((data + 1), 1); require(result == result); } }")
         .expect_err("grouped operands must validate concatenation types")
         .to_string();
     assert!(error.contains("cannot concatenate bytes"), "{error}");
