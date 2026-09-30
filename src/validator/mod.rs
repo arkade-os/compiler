@@ -805,6 +805,10 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             scalar,
             curve_id,
         } => vec![x, y, scalar, curve_id],
+        Expression::EcPairingProduct {
+            coordinates,
+            curve_id,
+        } => vec![coordinates, curve_id],
         Expression::EcPairing {
             g1_x,
             g1_y,
@@ -1631,6 +1635,25 @@ fn validate_binding_expression(
     }
 
     match expression {
+        Expression::EcPairingProduct {
+            coordinates,
+            curve_id,
+        } => {
+            // The coordinate operand is an aggregate, not a scalar stack value.
+            // Do not relax aggregate validation for any other builtin.
+            validate_value_expression(coordinates, function_name, scopes, issues);
+            validate_binding_expression(curve_id, function_name, scopes, issues, true);
+            if let Expression::ArrayLiteral(elements) = coordinates.as_ref() {
+                for element in elements {
+                    if resolved_expression_type(element, scopes) != ArkType::Int {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{function_name}': ecPairingProduct coordinates must all be int"
+                        )));
+                    }
+                }
+            }
+            return;
+        }
         Expression::BinaryOp { left, op, right }
             if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
         {

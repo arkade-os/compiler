@@ -391,6 +391,21 @@ pub(crate) fn substitute_expression(
                 curve_id, index_var, value_var, k, array_name,
             )),
         },
+        Expression::EcPairingProduct {
+            coordinates,
+            curve_id,
+        } => Expression::EcPairingProduct {
+            coordinates: Box::new(substitute_expression(
+                coordinates,
+                index_var,
+                value_var,
+                k,
+                array_name,
+            )),
+            curve_id: Box::new(substitute_expression(
+                curve_id, index_var, value_var, k, array_name,
+            )),
+        },
         Expression::EcPairing {
             g1_x,
             g1_y,

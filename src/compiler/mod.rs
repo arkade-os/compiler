@@ -39,6 +39,7 @@ mod functions;
 mod introspection;
 mod loops;
 mod optimization;
+mod pairing;
 
 pub(crate) use asset::*;
 pub(crate) use comparison::*;

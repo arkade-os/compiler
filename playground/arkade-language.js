@@ -117,6 +117,7 @@ const arkadeCompletions = [
     S('modExp', 'Function', 'modExp(${1:base}, ${2:exponent}, ${3:modulus})', 'Modular exponentiation'),
     S('ecAdd', 'Function', 'ecAdd(${1:x1}, ${2:y1}, ${3:x2}, ${4:y2}, ${5:curveId})', 'EC point addition'),
     S('ecMul', 'Function', 'ecMul(${1:x}, ${2:y}, ${3:scalar}, ${4:curveId})', 'EC scalar multiplication'),
+    S('ecPairingProduct', 'Function', 'ecPairingProduct(${1:coordinates}, ${2:curveId})', 'Product pairing check over int[6*N], 1 <= N <= 16'),
     S('ecPairing', 'Function', 'ecPairing(${1:g1X}, ${2:g1Y}, ${3:g2Xc1}, ${4:g2Xc0}, ${5:g2Yc1}, ${6:g2Yc0}, ${7:curveId})', 'EC pairing check'),
     S('ecMulScalarVerify', 'Function', 'ecMulScalarVerify(${1:k}, ${2:P}, ${3:Q})', 'Verify Q = k·P'),
     S('tweakVerify', 'Function', 'tweakVerify(${1:P}, ${2:k}, ${3:Q})', 'Verify Q = P + k·G'),

@@ -2,7 +2,10 @@ use super::*;
 use crate::models::{child_exprs_mut, flatten_parameter, is_builtin_type, TypeLeaf};
 
 pub(super) fn extract_calls(expression: &mut Expression, calls: &mut Vec<Expression>) {
-    if matches!(expression, Expression::Call { .. }) {
+    if matches!(
+        expression,
+        Expression::Call { .. } | Expression::EcPairingProduct { .. }
+    ) {
         let replacement = Expression::Variable(format!("$call:{}", calls.len()));
         calls.push(std::mem::replace(expression, replacement));
     } else {
@@ -151,6 +154,13 @@ impl Generator {
     }
 
     pub(super) fn emit_call(&mut self, expression: &Expression) -> Result<(), String> {
+        if let Expression::EcPairingProduct {
+            coordinates,
+            curve_id,
+        } = expression
+        {
+            return self.emit_pairing_product(coordinates, curve_id);
+        }
         let Expression::Call { name, args, .. } = expression else {
             return Err("expected private function call".to_string());
         };

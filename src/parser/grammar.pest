@@ -173,6 +173,7 @@ primary_expr = {
     mod_exp_func |
     ec_add |
     ec_mul |
+    ec_pairing_product |
     ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
@@ -248,6 +249,7 @@ complex_expression = _{
     mod_exp_func |
     ec_add |
     ec_mul |
+    ec_pairing_product |
     ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
@@ -606,6 +608,10 @@ ec_add = {
 
 ec_mul = {
     "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+}
+
+ec_pairing_product = {
+    "ecPairingProduct" ~ "(" ~ general_expression ~ "," ~ general_expression ~ ")"
 }
 
 ec_pairing = {

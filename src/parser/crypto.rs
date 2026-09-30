@@ -123,6 +123,20 @@ pub(crate) fn parse_ec_mul(pair: Pair<Rule>) -> Result<Expression, String> {
     })
 }
 
+pub(crate) fn parse_ec_pairing_product(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    Ok(Expression::EcPairingProduct {
+        coordinates: Box::new(parse_general_expression(
+            inner
+                .next()
+                .ok_or("Missing coordinates in ecPairingProduct")?,
+        )?),
+        curve_id: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing curve ID in ecPairingProduct")?,
+        )?),
+    })
+}
+
 pub(crate) fn parse_ec_pairing(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::EcPairing {
