@@ -241,7 +241,10 @@ fn compile_with_loader(
         LoadError::Message(message) => message,
         LoadError::Diagnostics(diagnostics) => {
             let source = read(entry).unwrap_or_default();
-            crate::diagnostics::render_errors(&diagnostics, &source)
+            format!(
+                "{entry}: {}",
+                crate::diagnostics::render_errors(&diagnostics, &source)
+            )
         }
     })?;
     let root = &modules[entry];

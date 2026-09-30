@@ -410,6 +410,10 @@ fn semantic_diagnostics_carry_source_positions() {
         error.contains("validation error: line 7, column 13: argument 'x' to 'helper'"),
         "error must point at the faulty call: {error}"
     );
+    assert!(
+        error.starts_with("main.ark: "),
+        "error must still be prefixed with the entry file path: {error}"
+    );
 
     let error = compile(
         "contract Positions() {
