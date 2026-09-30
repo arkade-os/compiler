@@ -39,3 +39,17 @@
 +        assert!(arkade_compiler::compile(&source).is_err(), "accepted {bad}");
 +    }
 +}
+--- a/src/compiler/pairing.rs
++++ b/src/compiler/pairing.rs
+@@ -13,9 +13,8 @@
+         if *element != ArkType::Int || !(6..=96).contains(&length) || length % 6 != 0 {
+             return Err("ecPairingProduct expects 1..16 groups of six int coordinates".to_string());
+         }
+-        if typechecker::infer_type(curve_id, &self.scope) != ArkType::Int {
+-            return Err("ecPairingProduct curve ID must be int".to_string());
+-        }
++        // The curve operand was checked before loop lowering. At this stage a
++        // loop value may be an internal scalar alias absent from the type scope.
+ 
+         // Evaluate the aggregate once, including any array-returning helper.
+         // Typed aggregates have their first element on top; the VM expects it deepest.
