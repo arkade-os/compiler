@@ -1,0 +1,41 @@
+--- a/src/validator/mod.rs
++++ b/src/validator/mod.rs
+@@ -1632,6 +1632,22 @@
+     }
+ 
+     match expression {
++        Expression::EcPairingProduct { coordinates, curve_id } => {
++            // The coordinate operand is an aggregate, not a scalar stack value.
++            // Do not relax aggregate validation for any other builtin.
++            validate_value_expression(coordinates, function_name, scopes, issues);
++            validate_binding_expression(curve_id, function_name, scopes, issues, true);
++            if let Expression::ArrayLiteral(elements) = coordinates.as_ref() {
++                for element in elements {
++                    if resolved_expression_type(element, scopes) != ArkType::Int {
++                        issues.push(ValidationIssue::error(format!(
++                            "function '{function_name}': ecPairingProduct coordinates must all be int"
++                        )));
++                    }
++                }
++            }
++            return;
++        }
+         Expression::BinaryOp { left, op, right }
+             if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
+         {
+--- a/tests/features/pairing_product.rs
++++ b/tests/features/pairing_product.rs
+@@ -84,3 +84,13 @@
+     compile_unoptimized(source).unwrap();
+     arkade_compiler::compile(source).unwrap();
+ }
++
++#[test]
++fn pairing_product_rejects_mixed_literal_elements() {
++    for bad in ["true", "0x01", "[1]"] {
++        let source = format!(
++            "contract Product() {{ function spend() {{ require(ecPairingProduct([0, 0, 0, 0, 0, {bad}], 2)); }} }}"
++        );
++        assert!(arkade_compiler::compile(&source).is_err(), "accepted {bad}");
++    }
++}
