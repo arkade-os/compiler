@@ -246,6 +246,16 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
                         index: Box::new(index),
                         source: GroupIOSource::Outputs,
                     });
+                } else if let Some(property) = text[bracket_end + 1..].strip_prefix('.') {
+                    if matches!(
+                        property,
+                        "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
+                    ) {
+                        return Err(format!(
+                            "tx.assetGroups[k].{property} is not supported with an inline index; \
+                             bind the index first: let g = k; g.{property}"
+                        ));
+                    }
                 }
             }
         }
