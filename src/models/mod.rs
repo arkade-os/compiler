@@ -673,7 +673,7 @@ pub enum Expression {
         group_index: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<String>, // Optional property like "amount", "type", "inputIndex", "outputIndex"
+        property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
     /// CheckSig expression result (for use in if conditions)
     CheckSigExpr { signature: String, pubkey: String },

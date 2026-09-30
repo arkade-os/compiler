@@ -110,11 +110,17 @@ pub(crate) const BUILTIN_SIGNATURES: &[BuiltinSignature] = &[
     ),
     sig("assetGroups[].sum", &[("index", ArkType::Int)]),
     sig("assetGroups[].numIO", &[("index", ArkType::Int)]),
+    sig(
+        "assetGroups[].io",
+        &[("groupIndex", ArkType::Int), ("ioIndex", ArkType::Int)],
+    ),
     sig("tx.inputs[].assets", &[("index", ArkType::Int)]),
     sig(
         "tx.inputs[].assets[]",
         &[("ioIndex", ArkType::Int), ("assetIndex", ArkType::Int)],
     ),
+    sig("tx.inputs[].assets.lookup", &[("index", ArkType::Int)]),
+    sig("tx.inputs[].assets.has", &[("index", ArkType::Int)]),
 ];
 
 pub(crate) fn find(name: &str) -> Option<&'static BuiltinSignature> {
@@ -183,12 +189,19 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
         } => ("tweakVerify", vec![point_p, tweak, point_q]),
         Expression::GroupSum { index, .. } => ("assetGroups[].sum", vec![index]),
         Expression::GroupNumIO { index, .. } => ("assetGroups[].numIO", vec![index]),
+        Expression::GroupIOAccess {
+            group_index,
+            io_index,
+            ..
+        } => ("assetGroups[].io", vec![group_index, io_index]),
         Expression::AssetCount { index, .. } => ("tx.inputs[].assets", vec![index]),
         Expression::AssetAt {
             io_index,
             asset_index,
             ..
         } => ("tx.inputs[].assets[]", vec![io_index, asset_index]),
+        Expression::AssetLookup { index, .. } => ("tx.inputs[].assets.lookup", vec![index]),
+        Expression::AssetHas { index, .. } => ("tx.inputs[].assets.has", vec![index]),
         _ => return None,
     })
 }

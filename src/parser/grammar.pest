@@ -363,7 +363,8 @@ asset_group_access = {
         "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
-        array_access ~ "." ~ group_property
+        array_access ~ "." ~ group_property |
+        array_access ~ "." ~ ("inputs" | "outputs") ~ array_access ~ ("." ~ ("amount" | "type"))?
     )
 }
 
@@ -441,6 +442,7 @@ tx_property_body = {
         "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
+        array_access ~ "." ~ ("inputs" | "outputs") ~ array_access ~ ("." ~ ("amount" | "type"))? |
         array_access ~ ("." ~ asset_group_property)?
     )?) |
     // Standard property access

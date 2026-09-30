@@ -246,6 +246,10 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
                         index: Box::new(index),
                         source: GroupIOSource::Outputs,
                     });
+                } else if let Some(rest) = text[bracket_end + 1..].strip_prefix(".inputs[") {
+                    return parse_group_io_access(index, rest, GroupIOSource::Inputs, text);
+                } else if let Some(rest) = text[bracket_end + 1..].strip_prefix(".outputs[") {
+                    return parse_group_io_access(index, rest, GroupIOSource::Outputs, text);
                 }
             }
         }
@@ -264,4 +268,34 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
 
     // Default: treat as a property string
     Ok(Expression::Property(text.to_string()))
+}
+
+/// Parse the `j].amount`/`j].type`/`j]` tail of
+/// `tx.assetGroups[k].inputs[j]` or `tx.assetGroups[k].outputs[j]`, given the
+/// already-parsed group index `k`. `rest` starts right after the opening `[`
+/// of `[j]`; `full_text` is only for error messages.
+fn parse_group_io_access(
+    group_index: Expression,
+    rest: &str,
+    source: GroupIOSource,
+    full_text: &str,
+) -> Result<Expression, String> {
+    let bracket_end = rest
+        .find(']')
+        .ok_or_else(|| format!("missing closing ']' in '{full_text}'"))?;
+    let io_idx_str = &rest[..bracket_end];
+    let io_index = if io_idx_str.chars().all(|c| c.is_ascii_digit()) {
+        Expression::Literal(io_idx_str.to_string())
+    } else {
+        Expression::Variable(io_idx_str.to_string())
+    };
+    let property = rest[bracket_end + 1..]
+        .strip_prefix('.')
+        .map(str::to_string);
+    Ok(Expression::GroupIOAccess {
+        group_index: Box::new(group_index),
+        io_index: Box::new(io_index),
+        source,
+        property,
+    })
 }

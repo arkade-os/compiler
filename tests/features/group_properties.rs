@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPASSETID,
-    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_SUB, OP_SWAP, OP_TXID,
+    OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_SUB, OP_SWAP, OP_TXID,
 };
 
 use crate::common::arkade_asm;
@@ -330,4 +330,68 @@ fn test_group_num_io_together() {
         count,
         asm_str
     );
+}
+
+/// tx.assetGroups[k].outputs[j].amount emits OP_INSPECTASSETGROUP (source=1
+/// for outputs) followed by two OP_NIP to drop type and data, leaving amount.
+#[test]
+fn test_group_io_access_output_amount() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.assetGroups[0].outputs[0].amount >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("group IO access compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let window = asm
+        .windows(4)
+        .find(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_NIP && w[3] == OP_NIP);
+    assert!(
+        window.is_some(),
+        "expected OP_1 {OP_INSPECTASSETGROUP} {OP_NIP} {OP_NIP}: {asm:?}"
+    );
+}
+
+/// The input side is rejected as a value: LOCAL and INTENT inputs don't share
+/// a stack shape, so "amount" isn't at a fixed position.
+#[test]
+fn test_group_io_access_input_amount_is_rejected() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let result = tx.assetGroups[0].inputs[0].amount;
+                require(result >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("input-side group IO access must not bind a value")
+        .to_string();
+    assert!(error.contains("variable-width result"), "{error}");
+}
+
+/// Without a property, the raw (type, data..., amount) tuple isn't one
+/// stack item and can't be bound either.
+#[test]
+fn test_group_io_access_without_property_is_rejected() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let result = tx.assetGroups[0].outputs[0];
+                require(result >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("a raw group IO access must not bind a value")
+        .to_string();
+    assert!(error.contains("does not produce one stack item"), "{error}");
 }
