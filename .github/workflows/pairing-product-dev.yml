@@ -1,0 +1,39 @@
+name: Pairing product development build
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/pairing-product-dev.yml'
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'arkade-bindgen/**'
+
+permissions:
+  contents: read
+
+jobs:
+  compiler-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build compiler for fixture validation
+        run: cargo build --release --workspace
+      - name: Collect reproducible development artifacts
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz HEAD -o dist/compiler-source.tar.gz
+          cp target/release/arkadec dist/arkadec
+          cp target/release/arkade-bindgen dist/arkade-bindgen
+          git rev-parse HEAD > dist/commit.txt
+          sha256sum dist/arkadec dist/arkade-bindgen dist/compiler-source.tar.gz > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pairing-product-development
+          path: dist/
+          retention-days: 3
+          if-no-files-found: error
