@@ -62,14 +62,18 @@ impl Diagnostic {
 }
 
 /// The string `compile`/`compile_file`/`compile_sources` return on failure:
-/// error-severity messages, `"; "`-joined. Nothing parses this text; it's
-/// freeform (CLI stderr, WASM error display), unlike `ContractJson.warnings`,
-/// whose `warning[code]:` tags are part of the tested artifact shape.
+/// error-severity messages, `"; "`-joined, each still prefixed by its kind
+/// (`"validation error: "`, `"type error: "`) the way it was before
+/// diagnostics existed — some tests match on that substring.
 pub(crate) fn render_errors(diagnostics: &[Diagnostic]) -> String {
     diagnostics
         .iter()
         .filter(|d| d.severity == Severity::Error)
-        .map(|d| d.message.as_str())
+        .map(|d| match d.code.as_deref() {
+            Some("validation") => format!("validation error: {}", d.message),
+            Some("type") => format!("type error: {}", d.message),
+            _ => d.message.clone(),
+        })
         .collect::<Vec<_>>()
         .join("; ")
 }
