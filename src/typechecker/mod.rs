@@ -10,6 +10,8 @@ use std::collections::HashMap;
 
 use crate::models::{AssignmentTarget, Contract, Expression, Function, Requirement, Statement};
 
+pub(crate) mod builtins;
+
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
 /// All possible types in Arkade Script.

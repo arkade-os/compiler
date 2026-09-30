@@ -1630,6 +1630,8 @@ fn validate_binding_expression(
         )));
     }
 
+    let registered_builtin = crate::typechecker::builtins::operands(expression);
+
     match expression {
         Expression::BinaryOp { left, op, right }
             if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
@@ -1676,151 +1678,20 @@ fn validate_binding_expression(
                 )));
             }
         }
-        Expression::Substr { .. }
-        | Expression::Cat { .. }
-        | Expression::Bin2Num { .. }
-        | Expression::Num2Bin { .. }
-        | Expression::ReverseBytes { .. }
-        | Expression::SizeOf { .. }
-        | Expression::Digest { .. }
-        | Expression::Sighash { .. }
-        | Expression::PacketInspect { .. }
-        | Expression::InputPacketInspect { .. }
-        | Expression::InputIntrospection { .. }
-        | Expression::OutputIntrospection { .. }
-        | Expression::ModExp { .. }
-        | Expression::EcAdd { .. }
-        | Expression::EcMul { .. }
-        | Expression::EcPairing { .. }
-        | Expression::EcMulScalarVerify { .. }
-        | Expression::TweakVerify { .. }
-        | Expression::GroupSum { .. }
-        | Expression::GroupNumIO { .. }
-        | Expression::AssetCount { .. }
-        | Expression::AssetAt { .. } => {
-            let (bytes, int, pubkey, bytes32) = (
-                ArkType::Bytes,
-                ArkType::Int,
-                ArkType::Pubkey,
-                ArkType::Bytes32,
+        _ if registered_builtin.is_some() => {
+            let (name, operands) = registered_builtin.unwrap();
+            let signature = crate::typechecker::builtins::find(name)
+                .unwrap_or_else(|| panic!("{name} has no registered signature"));
+            debug_assert_eq!(
+                operands.len(),
+                signature.params.len(),
+                "{name}: operands() and its signature disagree on arity"
             );
-            let (builtin, operands) = match expression {
-                Expression::Substr { data, offset, size } => {
-                    ("substr", vec![(data, &bytes), (offset, &int), (size, &int)])
-                }
-                Expression::Cat { left, right } => ("cat", vec![(left, &bytes), (right, &bytes)]),
-                Expression::Bin2Num { data } => ("bin2num", vec![(data, &bytes)]),
-                Expression::Num2Bin { value, size } => {
-                    ("num2bin", vec![(value, &int), (size, &int)])
-                }
-                Expression::ReverseBytes { data } => ("reverseBytes", vec![(data, &bytes)]),
-                Expression::SizeOf { data } => ("size", vec![(data, &bytes)]),
-                Expression::Digest { data, hash_type } => {
-                    ("digest", vec![(data, &bytes), (hash_type, &int)])
-                }
-                Expression::Sighash { hash_type } => ("sighash", vec![(hash_type, &int)]),
-                Expression::PacketInspect { packet_type } => {
-                    ("tx.packet", vec![(packet_type, &int)])
-                }
-                Expression::InputPacketInspect { index, packet_type } => (
-                    "tx.inputs[].packet",
-                    vec![(index, &int), (packet_type, &int)],
-                ),
-                Expression::InputIntrospection { index, .. } => {
-                    ("tx.inputs[]", vec![(index, &int)])
-                }
-                Expression::OutputIntrospection { index, .. } => {
-                    ("tx.outputs[]", vec![(index, &int)])
-                }
-                Expression::ModExp {
-                    base,
-                    exponent,
-                    modulus,
-                } => (
-                    "modExp",
-                    vec![(base, &int), (exponent, &int), (modulus, &int)],
-                ),
-                Expression::EcAdd {
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                    curve_id,
-                } => (
-                    "ecAdd",
-                    vec![
-                        (x1, &int),
-                        (y1, &int),
-                        (x2, &int),
-                        (y2, &int),
-                        (curve_id, &int),
-                    ],
-                ),
-                Expression::EcMul {
-                    x,
-                    y,
-                    scalar,
-                    curve_id,
-                } => (
-                    "ecMul",
-                    vec![(x, &int), (y, &int), (scalar, &int), (curve_id, &int)],
-                ),
-                Expression::EcPairing {
-                    g1_x,
-                    g1_y,
-                    g2_x_c1,
-                    g2_x_c0,
-                    g2_y_c1,
-                    g2_y_c0,
-                    curve_id,
-                } => (
-                    "ecPairing",
-                    vec![
-                        (g1_x, &int),
-                        (g1_y, &int),
-                        (g2_x_c1, &int),
-                        (g2_x_c0, &int),
-                        (g2_y_c1, &int),
-                        (g2_y_c0, &int),
-                        (curve_id, &int),
-                    ],
-                ),
-                Expression::EcMulScalarVerify {
-                    scalar,
-                    point_p,
-                    point_q,
-                } => (
-                    "ecMulScalarVerify",
-                    vec![(scalar, &bytes32), (point_p, &pubkey), (point_q, &pubkey)],
-                ),
-                Expression::TweakVerify {
-                    point_p,
-                    tweak,
-                    point_q,
-                } => (
-                    "tweakVerify",
-                    vec![(point_p, &pubkey), (tweak, &bytes32), (point_q, &pubkey)],
-                ),
-                Expression::GroupSum { index, .. } => ("assetGroups[].sum", vec![(index, &int)]),
-                Expression::GroupNumIO { index, .. } => {
-                    ("assetGroups[].numIO", vec![(index, &int)])
-                }
-                Expression::AssetCount { index, .. } => ("tx.inputs[].assets", vec![(index, &int)]),
-                Expression::AssetAt {
-                    io_index,
-                    asset_index,
-                    ..
-                } => (
-                    "tx.inputs[].assets[]",
-                    vec![(io_index, &int), (asset_index, &int)],
-                ),
-                _ => unreachable!("matched by the enclosing arm"),
-            };
-            for (operand, expected) in operands {
+            for (operand, (_, expected)) in operands.iter().zip(signature.params) {
                 let actual = resolved_expression_type(operand, scopes);
                 if actual != ArkType::Unknown && !binding_types_compatible(expected, &actual) {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': {builtin} operand has type '{}', expected '{}'",
+                        "function '{function_name}': {name} operand has type '{}', expected '{}'",
                         actual.as_str(),
                         expected.as_str()
                     )));
