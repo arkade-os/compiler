@@ -824,7 +824,7 @@ library Fees {
         let source = "contract Vault(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner))\n  }\n}\n";
         let [diagnostic]: [_; 1] = check_one(source).try_into().unwrap();
         assert_eq!(diagnostic.severity, Severity::Error);
-        assert_eq!(diagnostic.message, "expected ';' or an operator");
+        assert_eq!(diagnostic.message, "expected ';'");
         let span = diagnostic.span.expect("syntax errors carry a span");
         assert!(span.start < source.len());
     }
