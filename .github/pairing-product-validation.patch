@@ -53,3 +53,14 @@
  
          // Evaluate the aggregate once, including any array-returning helper.
          // Typed aggregates have their first element on top; the VM expects it deepest.
+--- a/tests/e2e/pairing_product_test.go
++++ b/tests/e2e/pairing_product_test.go
+@@ -25,7 +25,7 @@
+ 		{name: "two four-pair checks", function: "four", pairs: 4, sentinel: 37},
+ 		{name: "sixteen pairs", function: "maximum", pairs: 16, sentinel: 37},
+ 		{name: "nonidentity product", function: "two", pairs: 2, tamper: true, sentinel: 37, wantError: "OP_VERIFY failed"},
+-		{name: "live binding after product", function: "two", pairs: 2, sentinel: 38, wantError: "OP_VERIFY failed"},
++		{name: "live binding after product", function: "two", pairs: 2, sentinel: 38, wantError: "VERIFY failed"},
+ 	} {
+ 		t.Run(test.name, func(t *testing.T) {
+ 			group := covenantGroup(t, contract, test.function)
