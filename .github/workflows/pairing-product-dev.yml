@@ -5,7 +5,7 @@ on:
     branches: [master]
     paths:
       - '.github/workflows/pairing-product-dev.yml'
-      - '.github/pairing-product.patch'
+      - '.github/pairing-product*.patch'
       - 'src/**'
       - 'tests/**'
 
@@ -31,17 +31,15 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: tests/e2e/go.mod
-      - name: Apply reviewed source patch
+          cache-dependency-path: tests/e2e/go.sum
+      - name: Apply reviewed source patches
         run: |
-          if git apply --check .github/pairing-product.patch; then
-            git apply .github/pairing-product.patch
-          elif git apply --reverse --check .github/pairing-product.patch; then
-            echo 'Patch already applied'
-          else
-            echo 'Patch does not match the current source' >&2
-            exit 1
-          fi
+          git apply --check .github/pairing-product.patch
+          git apply .github/pairing-product.patch
+          git apply --check .github/pairing-product-validation.patch
+          git apply .github/pairing-product-validation.patch
           cargo fmt --all
+          gofmt -w tests/e2e/pairing_product_test.go
       - name: Test workspace
         run: cargo test --workspace
       - name: Lint workspace
