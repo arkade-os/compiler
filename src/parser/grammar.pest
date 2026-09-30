@@ -434,8 +434,10 @@ tx_property_access = {
 
 // Body of tx property access - separated to control greediness
 tx_property_body = {
-    // Input.current syntax - first-class support for current input introspection
-    ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
+    // Input.current syntax - first-class support for current input introspection.
+    // Same property set as tx.inputs[i].property (this *is* tx.inputs[i] for
+    // the current i); a property is required, there is no bare form.
+    ("input" ~ "." ~ "current" ~ "." ~ input_introspection_property) |
     // Asset groups access: find, has, length, or indexed property access
     ("assetGroups" ~ (
         "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |

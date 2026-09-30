@@ -1,6 +1,7 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_EQUALVERIFY, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
     OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_SWAP,
 };
 
@@ -292,5 +293,75 @@ fn test_input_output_value_comparison() {
         asm_str.contains(OP_INSPECTINPUTVALUE),
         "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
         asm_str
+    );
+}
+
+/// tx.input.current.arkadeScriptHash/.arkadeWitnessHash used to silently
+/// compile to a scriptPubKey inspection instead of the named field.
+#[test]
+fn test_current_input_arkade_hashes() {
+    let code = r#"
+        contract V(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.input.current.arkadeScriptHash != tx.input.current.arkadeWitnessHash);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("current-input arkade hashes compile");
+    let asm_str = crate::common::arkade_asm(&output, "spend");
+    assert!(
+        asm_str.contains(OP_INSPECTINPUTARKADESCRIPTHASH),
+        "Expected {OP_INSPECTINPUTARKADESCRIPTHASH} in ASM: {asm_str}"
+    );
+    assert!(
+        asm_str.contains(OP_INSPECTINPUTARKADEWITNESSHASH),
+        "Expected {OP_INSPECTINPUTARKADEWITNESSHASH} in ASM: {asm_str}"
+    );
+}
+
+/// An unrecognized tx.input.current property must be a clear parse error,
+/// not a silent fall-through to scriptPubKey inspection.
+#[test]
+fn test_current_input_rejects_unknown_property() {
+    let code = r#"
+        contract V(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let x = tx.input.current.witnessVersion;
+                require(x >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("unknown current-input property must be rejected")
+        .to_string();
+    assert!(
+        error.contains("tx.input.current requires one of"),
+        "{error}"
+    );
+}
+
+/// tx.input.current with no property is not a value on its own.
+#[test]
+fn test_current_input_requires_a_property() {
+    let code = r#"
+        contract V(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let x = tx.input.current;
+                require(x == x);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("bare tx.input.current must be rejected")
+        .to_string();
+    assert!(
+        error.contains("tx.input.current requires one of"),
+        "{error}"
     );
 }

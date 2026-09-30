@@ -436,10 +436,17 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
             asm.push(OP_INSPECTINPUTOUTPOINT.to_string());
         }
-        _ => {
+        Some("arkadeScriptHash") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
+            asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string());
         }
+        Some("arkadeWitnessHash") => {
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string());
+        }
+        // The grammar restricts tx.input.current.* to input_introspection_property,
+        // so every valid parse matches one of the arms above.
+        _ => unreachable!("unrecognized tx.input.current property: {property:?}"),
     }
 }
 

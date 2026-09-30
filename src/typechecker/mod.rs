@@ -862,6 +862,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             Some("scriptPubKey") => ArkType::Bytes,
             Some("sequence") => ArkType::Int,
             Some("outpoint") => ArkType::Struct("Outpoint".to_string()),
+            Some("arkadeScriptHash") | Some("arkadeWitnessHash") => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 

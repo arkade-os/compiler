@@ -251,15 +251,19 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
         }
     }
 
-    // Handle tx.input.current
+    // Handle tx.input.current.<property> — same property set as
+    // tx.inputs[i].<property>, since this *is* tx.inputs[i] for the current i.
     if text.starts_with("tx.input.current") {
-        let property = if text == "tx.input.current" {
-            None
-        } else {
-            text.strip_prefix("tx.input.current.")
-                .map(|rest| rest.to_string())
+        return match text.strip_prefix("tx.input.current.") {
+            Some(
+                p @ ("value" | "scriptPubKey" | "sequence" | "outpoint" | "arkadeScriptHash"
+                | "arkadeWitnessHash"),
+            ) => Ok(Expression::CurrentInput(Some(p.to_string()))),
+            _ => Err(format!(
+                "tx.input.current requires one of: value, scriptPubKey, sequence, outpoint, \
+                 arkadeScriptHash, arkadeWitnessHash (got '{text}')"
+            )),
         };
-        return Ok(Expression::CurrentInput(property));
     }
 
     // Default: treat as a property string
