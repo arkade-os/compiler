@@ -63,17 +63,36 @@ impl Diagnostic {
 
 /// The string `compile`/`compile_file`/`compile_sources` return on failure:
 /// error-severity messages, `"; "`-joined, each still prefixed by its kind
-/// (`"validation error: "`, `"type error: "`) the way it was before
-/// diagnostics existed — some tests match on that substring.
-pub(crate) fn render_errors(diagnostics: &[Diagnostic]) -> String {
+/// (`"validation error: "`, `"type error: "`) and, where a span is known, by
+/// its 1-based line and column in `source` — the way it was before
+/// diagnostics existed. `source` must be the text of the file every
+/// diagnostic in `diagnostics` belongs to (`render_errors` is only ever
+/// called on one file's diagnostics).
+pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String {
     diagnostics
         .iter()
         .filter(|d| d.severity == Severity::Error)
-        .map(|d| match d.code.as_deref() {
-            Some("validation") => format!("validation error: {}", d.message),
-            Some("type") => format!("type error: {}", d.message),
-            _ => d.message.clone(),
+        .map(|d| {
+            let message = located(&d.message, d.span, source);
+            match d.code.as_deref() {
+                Some("validation") => format!("validation error: {message}"),
+                Some("type") => format!("type error: {message}"),
+                _ => message,
+            }
         })
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+/// Prefix `message` with its 1-based line and column, derived from `span`'s
+/// byte offset into `source` — display-only, for the legacy string API;
+/// `Diagnostic::span` itself carries the byte range for structured consumers.
+pub(crate) fn located(message: &str, span: Option<Span>, source: &str) -> String {
+    match span.and_then(|s| pest::Position::new(source, s.start)) {
+        Some(pos) => {
+            let (line, column) = pos.line_col();
+            format!("line {line}, column {column}: {message}")
+        }
+        None => message.to_string(),
+    }
 }

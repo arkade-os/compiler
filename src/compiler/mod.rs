@@ -808,14 +808,15 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
-/// Runs semantic validation and type checking on `contract` (`source` is the
-/// text of `file`). Returns every warning on success, every error (each its
-/// own diagnostic, not joined into one message) on failure.
+/// Runs semantic validation and type checking on `contract`. Returns every
+/// warning on success, every error (each its own diagnostic, not joined into
+/// one message) on failure. Diagnostic messages carry no location prefix —
+/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
+/// `"line N, column M: "` prefix only when rendering the legacy joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
     file: &str,
-    source: &str,
 ) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
     typechecker::resolve_group_properties(contract);
 
@@ -828,7 +829,7 @@ pub(crate) fn prepare(
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
             .map(|i| {
-                Diagnostic::error(file, located(&i.message, i.span, source))
+                Diagnostic::error(file, i.message.clone())
                     .with_code("validation")
                     .with_span(i.span)
             })
@@ -836,6 +837,8 @@ pub(crate) fn prepare(
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
+    // No span available: this rewrites the AST after parsing, not a lookup
+    // against a specific source node.
     rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
@@ -844,7 +847,7 @@ pub(crate) fn prepare(
         return Err(type_errors
             .iter()
             .map(|e| {
-                Diagnostic::error(file, located(&e.message, e.span, source))
+                Diagnostic::error(file, e.message.clone())
                     .with_code("type")
                     .with_span(e.span)
             })
@@ -856,7 +859,7 @@ pub(crate) fn prepare(
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
             warnings.push(
-                Diagnostic::warning(file, located(&issue.message, issue.span, source))
+                Diagnostic::warning(file, issue.message.clone())
                     .with_code("validation")
                     .with_span(issue.span),
             );
@@ -864,19 +867,6 @@ pub(crate) fn prepare(
     }
 
     Ok(warnings)
-}
-
-/// Prefix `message` with its 1-based line and column, derived from `span`'s
-/// byte offset into `source` -- display-only; `Diagnostic::span` carries the
-/// byte range itself.
-fn located(message: &str, span: Option<crate::diagnostics::Span>, source: &str) -> String {
-    match span.and_then(|s| pest::Position::new(source, s.start)) {
-        Some(pos) => {
-            let (line, column) = pos.line_col();
-            format!("line {line}, column {column}: {message}")
-        }
-        None => message.to_string(),
-    }
 }
 
 pub(crate) fn emit(

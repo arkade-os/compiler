@@ -153,10 +153,13 @@ pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Er
 pub(crate) fn parse_error_diagnostic(
     error: &pest::error::Error<Rule>,
     file: &str,
+    source: &str,
 ) -> crate::diagnostics::Diagnostic {
     use pest::error::InputLocation;
     let (start, end) = match error.location {
-        InputLocation::Pos(pos) => (pos, pos),
+        // A point location still needs a non-empty span to underline; cover
+        // one byte, clamped so it never runs past the end of the source.
+        InputLocation::Pos(pos) => (pos, (pos + 1).min(source.len())),
         InputLocation::Span((start, end)) => (start, end),
     };
     crate::diagnostics::Diagnostic::error(file, error.variant.message().into_owned())

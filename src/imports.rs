@@ -28,34 +28,28 @@ impl From<String> for LoadError {
     }
 }
 
-impl std::fmt::Display for LoadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LoadError::Message(message) => write!(f, "{message}"),
-            LoadError::Diagnostics(diagnostics) => {
-                write!(f, "{}", crate::diagnostics::render_errors(diagnostics))
-            }
-        }
-    }
-}
-
 /// Every parse, validation and type diagnostic for `entry`, without writing
 /// an artifact. `entry` may be a library file, checked directly rather than
 /// through a synthetic importer. Unlike `compile_sources`, independent
 /// problems in `entry` each get their own diagnostic instead of being joined
 /// into one message.
 pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
-    let Ok(entry) = relative_path(entry) else {
-        return Vec::new();
+    let entry = match relative_path(entry) {
+        Ok(entry) => entry,
+        Err(e) => return vec![Diagnostic::error(entry, e)],
     };
-    let Ok(normalized) = normalize_files(files) else {
-        return Vec::new();
+    let normalized = match normalize_files(files) {
+        Ok(normalized) => normalized,
+        Err(e) => return vec![Diagnostic::error(entry, e)],
     };
     let Some(source) = normalized.get(&entry) else {
-        return Vec::new();
+        let message = format!(
+            "source file '{entry}' not found; imports require source files supplied through compile_sources or compile_file"
+        );
+        return vec![Diagnostic::error(entry, message)];
     };
     if let Err(error) = parser::try_parse(source) {
-        return vec![parser::parse_error_diagnostic(&error, &entry)];
+        return vec![parser::parse_error_diagnostic(&error, &entry, source)];
     }
 
     let mut modules = BTreeMap::new();
@@ -243,7 +237,13 @@ fn compile_with_loader(
         &mut HashMap::new(),
         false,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| match e {
+        LoadError::Message(message) => message,
+        LoadError::Diagnostics(diagnostics) => {
+            let source = read(entry).unwrap_or_default();
+            crate::diagnostics::render_errors(&diagnostics, &source)
+        }
+    })?;
     let root = &modules[entry];
     let mut bundle = SourceBundle {
         entry: entry.to_string(),
@@ -288,9 +288,11 @@ fn compile_with_loader(
                 .expect("common root")
                 .to_string_lossy()
                 .replace('\\', "/");
+            let source = bundle.files.get(&path).map(String::as_str).unwrap_or("");
             module.warnings.iter().map(move |warning| {
                 let tag = warning.code.as_deref().unwrap_or("general");
-                format!("warning[{tag}]: {} ({path})", warning.message)
+                let message = crate::diagnostics::located(&warning.message, warning.span, source);
+                format!("warning[{tag}]: {message} ({path})")
             })
         })
         .collect();
@@ -456,7 +458,7 @@ fn load(
         }
         contract.functions.extend(helpers.into_values());
         let require_entrypoint = path == entry && !contract.is_library;
-        let warnings = match compiler::prepare(&mut contract, require_entrypoint, path, &source) {
+        let warnings = match compiler::prepare(&mut contract, require_entrypoint, path) {
             Ok(warnings) => warnings,
             Err(diagnostics) if path == entry => {
                 return Err(LoadError::Diagnostics(diagnostics));
@@ -464,6 +466,7 @@ fn load(
             Err(diagnostics) => {
                 return Err(LoadError::Message(crate::diagnostics::render_errors(
                     &diagnostics,
+                    &source,
                 )));
             }
         };
@@ -842,7 +845,8 @@ library Fees {
         assert_eq!(diagnostic.severity, Severity::Error);
         assert_eq!(diagnostic.message, "expected ';'");
         let span = diagnostic.span.expect("syntax errors carry a span");
-        assert!(span.start < source.len());
+        assert!(span.start < span.end, "span must cover at least one byte");
+        assert!(span.end <= source.len());
     }
 
     #[test]
@@ -862,5 +866,36 @@ library Fees {
             "{}",
             diagnostic.message
         );
+    }
+
+    #[test]
+    fn check_reports_an_entry_not_present_in_files_instead_of_going_silent() {
+        let files: BTreeMap<_, _> = [("main.ark".to_string(), "irrelevant".to_string())].into();
+        let [diagnostic]: [_; 1] = super::check_sources("missing.ark", &files)
+            .try_into()
+            .unwrap();
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert!(
+            diagnostic.message.contains("missing.ark"),
+            "{}",
+            diagnostic.message
+        );
+    }
+
+    #[test]
+    fn a_dependency_failure_reaches_the_entry_as_a_diagnostic() {
+        let main = "import \"lib.ark\";\ncontract V(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        let broken_lib = "library L {\n  function helper() {\n    require(missing);\n  }\n}\n";
+        let files: BTreeMap<_, _> = [
+            ("main.ark".to_string(), main.to_string()),
+            ("lib.ark".to_string(), broken_lib.to_string()),
+        ]
+        .into();
+        let diagnostics = super::check_sources("main.ark", &files);
+        assert!(
+            !diagnostics.is_empty(),
+            "a broken import must surface a diagnostic"
+        );
+        assert!(diagnostics[0].severity == Severity::Error);
     }
 }
