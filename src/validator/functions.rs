@@ -35,13 +35,13 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
             &contract.structs,
         ));
         validate_body(&function.statements, function, &mut scope, contract, issues);
-        locate(&mut issues[first..], function.position);
+        locate(&mut issues[first..], function.span);
     }
 
     let mut guarantees = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         if let Err(error) = analyze_function(function, contract, &mut Vec::new(), &mut guarantees) {
-            issues.push(ValidationIssue::error(error).at(function.position));
+            issues.push(ValidationIssue::error(error).at(function.span));
             return;
         }
     }
@@ -53,11 +53,11 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
                     "private function '{}' must return a value on every path",
                     function.name
                 ))
-                .at(function.position),
+                .at(function.span),
             );
         }
         if !function.is_private && (flow.fallthrough | flow.returned) & 1 != 0 {
-            issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)).at(function.position));
+            issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)).at(function.span));
         }
     }
 }
@@ -173,7 +173,7 @@ fn validate_body(
             }
             Statement::Call(_) | Statement::Require(_) | Statement::VarAssign { .. } => {}
         }
-        locate(&mut issues[first..], located.position);
+        locate(&mut issues[first..], located.span);
     }
 }
 

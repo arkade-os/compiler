@@ -21,7 +21,7 @@ pub(crate) fn substitute_loop_body(
 ) -> Vec<LocatedStatement> {
     body.iter()
         .map(|stmt| LocatedStatement {
-            position: stmt.position,
+            span: stmt.span,
             statement: substitute_statement(&stmt.statement, index_var, value_var, k, array_name),
         })
         .collect()

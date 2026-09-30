@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
+use crate::diagnostics::Diagnostic;
 use crate::models::{
     self, Contract, ContractJson, Expression, LocatedStatement, SourceBundle, Statement,
 };
@@ -10,7 +11,80 @@ use crate::{compiler, parser, typechecker};
 struct Module {
     contract: Contract,
     structs: HashSet<String>,
-    warnings: Vec<String>,
+    warnings: Vec<Diagnostic>,
+}
+
+/// `load()`'s failure: either a single fail-fast message (I/O, cycle, unknown
+/// import, internal invariant) or the diagnostics `compiler::prepare`
+/// collected for the file currently being loaded.
+pub(crate) enum LoadError {
+    Message(String),
+    Diagnostics(Vec<Diagnostic>),
+}
+
+impl From<String> for LoadError {
+    fn from(message: String) -> Self {
+        LoadError::Message(message)
+    }
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Message(message) => write!(f, "{message}"),
+            LoadError::Diagnostics(diagnostics) => {
+                write!(f, "{}", crate::diagnostics::render_errors(diagnostics))
+            }
+        }
+    }
+}
+
+/// Every parse, validation and type diagnostic for `entry`, without writing
+/// an artifact. `entry` may be a library file, checked directly rather than
+/// through a synthetic importer. Unlike `compile_sources`, independent
+/// problems in `entry` each get their own diagnostic instead of being joined
+/// into one message.
+pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
+    let Ok(entry) = relative_path(entry) else {
+        return Vec::new();
+    };
+    let Ok(normalized) = normalize_files(files) else {
+        return Vec::new();
+    };
+    let Some(source) = normalized.get(&entry) else {
+        return Vec::new();
+    };
+    if let Err(error) = parser::try_parse(source) {
+        return vec![parser::parse_error_diagnostic(&error, &entry)];
+    }
+
+    let mut modules = BTreeMap::new();
+    let mut loaded_files = BTreeMap::new();
+    let result = load(
+        &entry,
+        &entry,
+        &mut |path| {
+            normalized.get(path).cloned().ok_or_else(|| {
+            format!("source file '{path}' not found; imports require source files supplied through compile_sources or compile_file")
+        })
+        },
+        &mut modules,
+        &mut loaded_files,
+        &mut Vec::new(),
+        &mut HashMap::new(),
+        true,
+    );
+
+    match result {
+        Ok(()) => modules[&entry].warnings.clone(),
+        Err(LoadError::Diagnostics(diagnostics)) => diagnostics,
+        Err(LoadError::Message(message)) => {
+            let message = message
+                .strip_prefix(&format!("{entry}: "))
+                .unwrap_or(&message);
+            vec![Diagnostic::error(entry, message)]
+        }
+    }
 }
 
 pub(crate) fn compile_sources(
@@ -167,7 +241,9 @@ fn compile_with_loader(
         &mut files,
         &mut Vec::new(),
         &mut HashMap::new(),
-    )?;
+        false,
+    )
+    .map_err(|e| e.to_string())?;
     let root = &modules[entry];
     let mut bundle = SourceBundle {
         entry: entry.to_string(),
@@ -212,10 +288,10 @@ fn compile_with_loader(
                 .expect("common root")
                 .to_string_lossy()
                 .replace('\\', "/");
-            module
-                .warnings
-                .iter()
-                .map(move |warning| format!("{warning} ({path})"))
+            module.warnings.iter().map(move |warning| {
+                let tag = warning.code.as_deref().unwrap_or("general");
+                format!("warning[{tag}]: {} ({path})", warning.message)
+            })
         })
         .collect();
     compiler::emit(&root.contract, bundle, warnings, options)
@@ -229,19 +305,22 @@ fn load(
     files: &mut BTreeMap<String, String>,
     active: &mut Vec<String>,
     declarations: &mut HashMap<String, String>,
-) -> Result<(), String> {
+    entry_may_be_library: bool,
+) -> Result<(), LoadError> {
     if modules.contains_key(path) {
         return Ok(());
     }
     if active.iter().any(|p| p == path) {
-        return Err(format!(
+        return Err(LoadError::Message(format!(
             "circular import: {} -> {path}",
             active.join(" -> ")
-        ));
+        )));
     }
     // Recursive loading is bounded; use an iterative traversal for deeper projects.
     if active.len() >= 128 {
-        return Err("import depth exceeds 128 files".to_string());
+        return Err(LoadError::Message(
+            "import depth exceeds 128 files".to_string(),
+        ));
     }
     active.push(path.to_string());
     let result = (|| {
@@ -258,6 +337,7 @@ fn load(
                 files,
                 active,
                 declarations,
+                entry_may_be_library,
             )?;
             if !dependencies.contains(&dependency) {
                 dependencies.push(dependency);
@@ -273,15 +353,20 @@ fn load(
             }
         }
         let mut contract = parser::parse_with_constants(&source, &constants)?;
-        if path == entry && contract.is_library {
-            return Err("entry file must declare a contract, not a library".to_string());
+        if path == entry && contract.is_library && !entry_may_be_library {
+            return Err(LoadError::Message(
+                "entry file must declare a contract, not a library".to_string(),
+            ));
         }
         let own_structs: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
         if models::is_builtin_type(&contract.name)
             || models::is_builtin_struct(&contract.name)
             || matches!(contract.name.as_str(), "tx" | "this")
         {
-            return Err(format!("contract name '{}' is reserved", contract.name));
+            return Err(LoadError::Message(format!(
+                "contract name '{}' is reserved",
+                contract.name
+            )));
         }
         for name in contract
             .structs
@@ -290,9 +375,9 @@ fn load(
             .chain((!contract.name.is_empty()).then_some(&contract.name))
         {
             if let Some(previous) = declarations.insert(name.clone(), path.to_string()) {
-                return Err(format!(
+                return Err(LoadError::Message(format!(
                     "duplicate declaration '{name}' in '{previous}' and '{path}'"
-                ));
+                )));
             }
         }
         let mut visible_structs = own_structs.clone();
@@ -370,7 +455,18 @@ fn load(
             })?;
         }
         contract.functions.extend(helpers.into_values());
-        let warnings = compiler::prepare(&mut contract, path == entry)?;
+        let require_entrypoint = path == entry && !contract.is_library;
+        let warnings = match compiler::prepare(&mut contract, require_entrypoint, path, &source) {
+            Ok(warnings) => warnings,
+            Err(diagnostics) if path == entry => {
+                return Err(LoadError::Diagnostics(diagnostics));
+            }
+            Err(diagnostics) => {
+                return Err(LoadError::Message(crate::diagnostics::render_errors(
+                    &diagnostics,
+                )));
+            }
+        };
         files.insert(path.to_string(), source);
         modules.insert(
             path.to_string(),
@@ -383,7 +479,10 @@ fn load(
         Ok(())
     })();
     active.pop();
-    result.map_err(|error: String| format!("{path}: {error}"))
+    result.map_err(|error| match error {
+        LoadError::Message(message) => LoadError::Message(format!("{path}: {message}")),
+        diagnostics @ LoadError::Diagnostics(_) => diagnostics,
+    })
 }
 
 fn validate_scope(
@@ -687,5 +786,65 @@ library Fees {
         );
         let broken = [("main.ark".to_string(), "contract A( {".to_string())].into();
         assert!(super::source_symbols("main.ark", &broken).is_err());
+    }
+
+    use crate::diagnostics::Severity;
+    use std::collections::BTreeMap;
+
+    fn check_one(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let files: BTreeMap<_, _> = [("main.ark".to_string(), source.to_string())].into();
+        super::check_sources("main.ark", &files)
+    }
+
+    #[test]
+    fn valid_contract_has_no_diagnostics() {
+        let source = "contract Vault(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        assert_eq!(check_one(source), vec![]);
+    }
+
+    #[test]
+    fn three_independent_errors_yield_three_diagnostics() {
+        let source = "contract Bad(pubkey owner, pubkey owner) {\n  function spend(signature sig, signature sig) { require(checkSig(sig, owner)); }\n  function spend(signature s) { require(checkSig(s, owner)); }\n}\n";
+        let diagnostics = check_one(source);
+        assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
+        assert!(diagnostics.iter().all(|d| d.severity == Severity::Error));
+        assert!(diagnostics.iter().any(|d| d
+            .message
+            .contains("duplicate constructor parameter 'owner'")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("duplicate function name 'spend'")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("duplicate parameter 'sig'")));
+    }
+
+    #[test]
+    fn syntax_error_has_a_span_and_a_plain_message() {
+        let source = "contract Vault(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner))\n  }\n}\n";
+        let [diagnostic]: [_; 1] = check_one(source).try_into().unwrap();
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.message, "expected ';' or an operator");
+        let span = diagnostic.span.expect("syntax errors carry a span");
+        assert!(span.start < source.len());
+    }
+
+    #[test]
+    fn a_library_is_checked_directly_without_a_wrapper() {
+        let library = "library Rules {\n  function preservesValue() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n}\n";
+        let files: BTreeMap<_, _> = [("lib/rules.ark".to_string(), library.to_string())].into();
+        assert_eq!(super::check_sources("lib/rules.ark", &files), vec![]);
+
+        let broken = library.replace("tx.inputs[0].value", "missing");
+        let files: BTreeMap<_, _> = [("lib/rules.ark".to_string(), broken)].into();
+        let [diagnostic]: [_; 1] = super::check_sources("lib/rules.ark", &files)
+            .try_into()
+            .unwrap();
+        assert_eq!(diagnostic.file, "lib/rules.ark");
+        assert!(
+            !diagnostic.message.contains("__arkade_lsp_check__"),
+            "{}",
+            diagnostic.message
+        );
     }
 }

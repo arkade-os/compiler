@@ -116,15 +116,15 @@ impl ArkType {
 pub struct TypeError {
     /// Human-readable description of the problem.
     pub message: String,
-    /// 1-based line and column of the statement that caused it.
-    pub position: Option<(usize, usize)>,
+    /// Byte range of the statement that caused it.
+    pub span: Option<crate::diagnostics::Span>,
 }
 
 impl TypeError {
     fn new(msg: impl Into<String>) -> Self {
         TypeError {
             message: msg.into(),
-            position: None,
+            span: None,
         }
     }
 }
@@ -411,7 +411,7 @@ fn check_statements(
         check_statement(&stmt.statement, scope, errors, fn_name, structs);
         // Nested statements have already claimed their own errors.
         for error in &mut errors[first..] {
-            error.position.get_or_insert(stmt.position);
+            error.span.get_or_insert(stmt.span);
         }
     }
 }

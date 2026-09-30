@@ -1,3 +1,4 @@
+use crate::diagnostics::Diagnostic;
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
     FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
@@ -807,10 +808,15 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
+/// Runs semantic validation and type checking on `contract` (`source` is the
+/// text of `file`). Returns every warning on success, every error (each its
+/// own diagnostic, not joined into one message) on failure.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
-) -> Result<Vec<String>, String> {
+    file: &str,
+    source: &str,
+) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
     typechecker::resolve_group_properties(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -818,44 +824,63 @@ pub(crate) fn prepare(
     // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if validator::has_errors(&ast_issues) {
-        let errors: Vec<String> = ast_issues
+        return Err(ast_issues
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
-            .map(|i| format!("validation error: {}", located(&i.message, i.position)))
-            .collect();
-        return Err(errors.join("; "));
+            .map(|i| {
+                let message = format!("validation error: {}", located(&i.message, i.span, source));
+                Diagnostic::error(file, message)
+                    .with_code("validation")
+                    .with_span(i.span)
+            })
+            .collect());
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(contract)?;
+    rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
     let type_errors = typechecker::check_contract(contract);
     if !type_errors.is_empty() {
         return Err(type_errors
             .iter()
-            .map(|e| format!("type error: {}", located(&e.message, e.position)))
-            .collect::<Vec<_>>()
-            .join("; "));
+            .map(|e| {
+                let message = format!("type error: {}", located(&e.message, e.span, source));
+                Diagnostic::error(file, message)
+                    .with_code("type")
+                    .with_span(e.span)
+            })
+            .collect());
     }
     let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
-            warnings.push(format!(
+            let message = format!(
                 "warning[validation]: {}",
-                located(&issue.message, issue.position)
-            ));
+                located(&issue.message, issue.span, source)
+            );
+            warnings.push(
+                Diagnostic::warning(file, message)
+                    .with_code("validation")
+                    .with_span(issue.span),
+            );
         }
     }
 
     Ok(warnings)
 }
 
-fn located(message: &str, position: Option<(usize, usize)>) -> String {
-    match position {
-        Some((line, column)) => format!("line {line}, column {column}: {message}"),
+/// Prefix `message` with its 1-based line and column, derived from `span`'s
+/// byte offset into `source` -- display-only; `Diagnostic::span` carries the
+/// byte range itself.
+fn located(message: &str, span: Option<crate::diagnostics::Span>, source: &str) -> String {
+    match span.and_then(|s| pest::Position::new(source, s.start)) {
+        Some(pos) => {
+            let (line, column) = pos.line_col();
+            format!("line {line}, column {column}: {message}")
+        }
         None => message.to_string(),
     }
 }

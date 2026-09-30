@@ -142,6 +142,27 @@ fn rule_term(rule: &Rule) -> Option<String> {
     Some(term.to_string())
 }
 
+/// The raw pest parse, with the error already rewritten in source-language
+/// terms by `readable_error`. Used where the byte position of a failure
+/// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
+pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Error<Rule>> {
+    pest::set_error_detail(true);
+    ArkadeParser::parse(Rule::main, source).map_err(|e| readable_error(e, source))
+}
+
+pub(crate) fn parse_error_diagnostic(
+    error: &pest::error::Error<Rule>,
+    file: &str,
+) -> crate::diagnostics::Diagnostic {
+    use pest::error::InputLocation;
+    let (start, end) = match error.location {
+        InputLocation::Pos(pos) => (pos, pos),
+        InputLocation::Span((start, end)) => (start, end),
+    };
+    crate::diagnostics::Diagnostic::error(file, error.variant.message().into_owned())
+        .with_span(crate::diagnostics::Span { start, end })
+}
+
 /// Build a Contract AST from parsed Pest pairs
 fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, String> {
     let mut contract = Contract {
@@ -308,7 +329,10 @@ fn parse_function(
     let is_private = is_library || visibility != "public";
     let is_exported = is_static && visibility != "private";
     let name = inner.next().ok_or("Missing function name")?;
-    let position = name.as_span().start_pos().line_col();
+    let span = crate::diagnostics::Span {
+        start: name.as_span().start(),
+        end: name.as_span().end(),
+    };
     let name = name.as_str().to_string();
     if is_private
         && (expr::reserved_function_signature(&name).is_some()
@@ -331,7 +355,7 @@ fn parse_function(
     }
     Ok(Function {
         name,
-        position,
+        span,
         parameters,
         statements,
         is_private,
@@ -347,7 +371,10 @@ fn parse_statement(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<Option<LocatedStatement>, String> {
-    let position = pair.as_span().start_pos().line_col();
+    let span = crate::diagnostics::Span {
+        start: pair.as_span().start(),
+        end: pair.as_span().end(),
+    };
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
@@ -519,10 +546,7 @@ fn parse_statement(
         }
         _ => return Ok(None),
     };
-    Ok(Some(LocatedStatement {
-        position,
-        statement,
-    }))
+    Ok(Some(LocatedStatement { span, statement }))
 }
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
