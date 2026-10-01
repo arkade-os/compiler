@@ -834,18 +834,15 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             modulus,
         } => vec![base, exponent, modulus],
         Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
+            point_p,
+            point_q,
             curve_id,
-        } => vec![x1, y1, x2, y2, curve_id],
+        } => vec![point_p, point_q, curve_id],
         Expression::EcMul {
-            x,
-            y,
+            point,
             scalar,
             curve_id,
-        } => vec![x, y, scalar, curve_id],
+        } => vec![point, scalar, curve_id],
         Expression::EcPairing {
             g1_x,
             g1_y,
@@ -1628,8 +1625,15 @@ fn validate_binding_expression(
         | Expression::PacketInspect { .. }
         | Expression::InputPacketInspect { .. }
         | Expression::InputIntrospection { .. }
-        | Expression::OutputIntrospection { .. } => {
+        | Expression::OutputIntrospection { .. }
+        | Expression::EcAdd { .. }
+        | Expression::EcMul { .. }
+        | Expression::EcPairing { .. }
+        | Expression::EcMulScalarVerify { .. }
+        | Expression::TweakVerify { .. } => {
             let (bytes, int) = (ArkType::Bytes, ArkType::Int);
+            let (bytes32, pubkey) = (ArkType::Bytes32, ArkType::Pubkey);
+            let point = ArkType::Struct("ECPoint".to_string());
             let (builtin, operands) = match expression {
                 Expression::Substr { data, offset, size } => {
                     ("substr", vec![(data, &bytes), (offset, &int), (size, &int)])
@@ -1658,11 +1662,61 @@ fn validate_binding_expression(
                 Expression::OutputIntrospection { index, .. } => {
                     ("tx.outputs[]", vec![(index, &int)])
                 }
+                Expression::EcAdd {
+                    point_p,
+                    point_q,
+                    curve_id,
+                } => (
+                    "ecAdd",
+                    vec![(point_p, &point), (point_q, &point), (curve_id, &int)],
+                ),
+                Expression::EcMul {
+                    point: value,
+                    scalar,
+                    curve_id,
+                } => (
+                    "ecMul",
+                    vec![(value, &point), (scalar, &int), (curve_id, &int)],
+                ),
+                Expression::EcPairing {
+                    g1_x,
+                    g1_y,
+                    g2_x_c1,
+                    g2_x_c0,
+                    g2_y_c1,
+                    g2_y_c0,
+                    curve_id,
+                } => (
+                    "ecPairing",
+                    [g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id]
+                        .into_iter()
+                        .map(|operand| (operand, &int))
+                        .collect(),
+                ),
+                // Scalars are 32-byte big-endian; P is x-only for tweakVerify and compressed otherwise.
+                Expression::EcMulScalarVerify {
+                    scalar,
+                    point_p,
+                    point_q,
+                } => (
+                    "ecMulScalarVerify",
+                    vec![(scalar, &bytes32), (point_p, &pubkey), (point_q, &pubkey)],
+                ),
+                Expression::TweakVerify {
+                    point_p,
+                    tweak,
+                    point_q,
+                } => (
+                    "tweakVerify",
+                    vec![(point_p, &bytes32), (tweak, &bytes32), (point_q, &pubkey)],
+                ),
                 _ => unreachable!("matched by the enclosing arm"),
             };
             for (operand, expected) in operands {
                 let actual = resolved_expression_type(operand, scopes);
-                if actual != ArkType::Unknown && !binding_types_compatible(expected, &actual) {
+                // Struct operands are emitted field by field, so their type must be known.
+                let known = actual != ArkType::Unknown || matches!(expected, ArkType::Struct(_));
+                if known && !binding_types_compatible(expected, &actual) {
                     issues.push(ValidationIssue::error(format!(
                         "function '{function_name}': {builtin} operand has type '{}', expected '{}'",
                         actual.as_str(),
@@ -1862,6 +1916,8 @@ fn validate_binding_expression(
                 | Expression::Tunnel { .. }
                 | Expression::FieldAccess { .. }
                 | Expression::IndexAccess { .. }
+                | Expression::EcAdd { .. }
+                | Expression::EcMul { .. }
         ) {
             validate_value_expression(child, function_name, scopes, issues);
         } else {

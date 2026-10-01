@@ -322,28 +322,26 @@ pub(crate) fn substitute_expression(
             )),
         },
         Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
+            point_p,
+            point_q,
             curve_id,
         } => Expression::EcAdd {
-            x1: Box::new(substitute_expression(x1, index_var, value_var, k, items)),
-            y1: Box::new(substitute_expression(y1, index_var, value_var, k, items)),
-            x2: Box::new(substitute_expression(x2, index_var, value_var, k, items)),
-            y2: Box::new(substitute_expression(y2, index_var, value_var, k, items)),
+            point_p: Box::new(substitute_expression(
+                point_p, index_var, value_var, k, items,
+            )),
+            point_q: Box::new(substitute_expression(
+                point_q, index_var, value_var, k, items,
+            )),
             curve_id: Box::new(substitute_expression(
                 curve_id, index_var, value_var, k, items,
             )),
         },
         Expression::EcMul {
-            x,
-            y,
+            point,
             scalar,
             curve_id,
         } => Expression::EcMul {
-            x: Box::new(substitute_expression(x, index_var, value_var, k, items)),
-            y: Box::new(substitute_expression(y, index_var, value_var, k, items)),
+            point: Box::new(substitute_expression(point, index_var, value_var, k, items)),
             scalar: Box::new(substitute_expression(
                 scalar, index_var, value_var, k, items,
             )),

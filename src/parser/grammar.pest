@@ -593,12 +593,14 @@ mod_exp_func = {
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
 
+// EC point addition: ecAdd(P, Q, curveId) → OP_ECADD, where P and Q are ECPoints
 ec_add = {
-    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
+// EC scalar multiplication: ecMul(P, scalar, curveId) → OP_ECMUL, where P is an ECPoint
 ec_mul = {
-    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 ec_pairing = {

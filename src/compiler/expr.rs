@@ -9,6 +9,24 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
     }
 }
 
+/// Push a two-field native struct with its first field deepest, as native opcodes expect.
+fn emit_native_pair_asm(value: &Expression, fields: [&str; 2], asm: &mut Vec<String>) {
+    match value {
+        Expression::Variable(name) | Expression::Property(name) if !name.starts_with("$call:") => {
+            for field in fields {
+                asm.push(format!("<{name}.{field}>"));
+            }
+        }
+        _ => {
+            emit_expression_asm(value, asm);
+            // Helpers return structs first-field-on-top.
+            if matches!(value, Expression::Variable(name) if name.starts_with("$call:")) {
+                asm.push(OP_SWAP.to_string());
+            }
+        }
+    }
+}
+
 /// Emit assembly for an expression (push its value onto the stack)
 pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
     match expr {
@@ -46,22 +64,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.push(flags.to_string());
             for exception in exceptions {
-                match exception {
-                    Expression::Variable(name) | Expression::Property(name)
-                        if !name.starts_with("$call:") =>
-                    {
-                        asm.push(format!("<{name}.txid>"));
-                        asm.push(format!("<{name}.gidx>"));
-                    }
-                    _ => {
-                        emit_expression_asm(exception, asm);
-                        // Helpers return structs first-field-on-top; native opcodes push it deepest.
-                        if matches!(exception, Expression::Variable(name) if name.starts_with("$call:"))
-                        {
-                            asm.push(OP_SWAP.to_string());
-                        }
-                    }
-                }
+                emit_native_pair_asm(exception, ["txid", "gidx"], asm);
             }
             asm.push(exceptions.len().to_string());
             asm.push(OP_TUNNEL.to_string());
@@ -287,27 +290,21 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         // Elliptic curve operations
         Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
+            point_p,
+            point_q,
             curve_id,
         } => {
-            emit_expression_asm(x1, asm);
-            emit_expression_asm(y1, asm);
-            emit_expression_asm(x2, asm);
-            emit_expression_asm(y2, asm);
+            emit_native_pair_asm(point_p, ["x", "y"], asm);
+            emit_native_pair_asm(point_q, ["x", "y"], asm);
             emit_expression_asm(curve_id, asm);
             asm.push(OP_ECADD.to_string());
         }
         Expression::EcMul {
-            x,
-            y,
+            point,
             scalar,
             curve_id,
         } => {
-            emit_expression_asm(x, asm);
-            emit_expression_asm(y, asm);
+            emit_native_pair_asm(point, ["x", "y"], asm);
             emit_expression_asm(scalar, asm);
             emit_expression_asm(curve_id, asm);
             asm.push(OP_ECMUL.to_string());

@@ -88,17 +88,17 @@ contract Composite(Pair initial) {
     private function copy(Pair value) Pair { return value; }
     private function make(int x) Pair { return { left: x, right: [x + 1, x + 2] }; }
     private function values(int[2] items) int[2] { items[0] = items[0] + 1; return items; }
-    private function point(int n) ECPoint { return ecMul(1, 2, n, 0); }
+    private function point(ECPoint base, int n) ECPoint { return ecMul(base, n, 0); }
     private function xCoordinate(ECPoint point) int { return point.x; }
-    function spend(int amount) {
+    function spend(int amount, ECPoint base) {
         Pair nested = { left: amount, right: values([amount, amount + 1]) };
-        Wrapped wrapped = { pair: make(amount), point: point(amount) };
+        Wrapped wrapped = { pair: make(amount), point: point(base, amount) };
         require(nested.right[0] == amount + 1);
         require(wrapped.pair.left == amount);
         Pair pair = copy(make(amount));
         let other = copy(initial);
         int[2] result = values(pair.right);
-        let point = point(amount);
+        let point = point(base, amount);
         require(xCoordinate(point) >= 0);
         require(result[0] == pair.right[0] + 1);
         require(other.left == initial.left);

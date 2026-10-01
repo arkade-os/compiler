@@ -754,18 +754,15 @@ pub enum Expression {
         modulus: Box<Expression>,
     },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// EC point addition. Produces an `ECPoint`.
+    /// EC point addition: ecAdd(P, Q, curveId). Produces an `ECPoint`.
     EcAdd {
-        x1: Box<Expression>,
-        y1: Box<Expression>,
-        x2: Box<Expression>,
-        y2: Box<Expression>,
+        point_p: Box<Expression>,
+        point_q: Box<Expression>,
         curve_id: Box<Expression>,
     },
-    /// EC scalar multiplication. Produces an `ECPoint`.
+    /// EC scalar multiplication: ecMul(P, scalar, curveId). Produces an `ECPoint`.
     EcMul {
-        x: Box<Expression>,
-        y: Box<Expression>,
+        point: Box<Expression>,
         scalar: Box<Expression>,
         curve_id: Box<Expression>,
     },
@@ -969,18 +966,15 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             modulus,
         } => vec![base, exponent, modulus],
         Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
+            point_p,
+            point_q,
             curve_id,
-        } => vec![x1, y1, x2, y2, curve_id],
+        } => vec![point_p, point_q, curve_id],
         Expression::EcMul {
-            x,
-            y,
+            point,
             scalar,
             curve_id,
-        } => vec![x, y, scalar, curve_id],
+        } => vec![point, scalar, curve_id],
         Expression::EcPairing {
             g1_x,
             g1_y,

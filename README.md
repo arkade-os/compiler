@@ -461,7 +461,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Packets.** `tx.packet(type)` and `tx.inputs[i].packet(type)` return the raw extension packet bytes and assert presence.
 
-**Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(x1, y1, x2, y2, curve)` and `ecMul(x, y, k, curve)` returning `ECPoint`, `ecPairing(...)`, `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
+**Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(...)`, `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
 
 **Instantiation.** `new Contract(args...)` on either side of a `scriptPubKey` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array arguments flatten element by element.
 
