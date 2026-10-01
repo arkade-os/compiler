@@ -7,7 +7,7 @@
 //!
 //! Builtins whose check isn't a fixed positional-type comparison (`cast`,
 //! `checkTime`, `tunnel`, `checkSig`, ...) aren't here; they keep their own
-//! hand-written check.
+//! hand-written check in the validator.
 
 use super::ArkType;
 use crate::models::Expression;
