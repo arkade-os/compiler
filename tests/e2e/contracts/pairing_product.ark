@@ -1,0 +1,24 @@
+contract PairingProductCases(int expected) {
+    private function product(int[12] points) bool {
+        return ecPairingProduct(points, 2);
+    }
+
+    function two(int[12] points, int sentinel) {
+        require(product(points));
+        require(sentinel == expected);
+        require(points[0] == 1);
+    }
+
+    function four(int[24] points, int sentinel) {
+        require(ecPairingProduct(points, 2));
+        require(ecPairingProduct(points, 2));
+        require(sentinel == expected);
+        require(points[0] == 1);
+    }
+
+    function maximum(int[96] points, int sentinel) {
+        require(ecPairingProduct(points, 2));
+        require(sentinel == expected);
+        require(points[0] == 1);
+    }
+}

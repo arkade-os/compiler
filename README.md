@@ -463,6 +463,15 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(x1, y1, x2, y2, curve)` and `ecMul(x, y, k, curve)` returning `ECPoint`, `ecPairing(...)`, `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
 
+`ecPairingProduct(coordinates, curveId)` checks a product of pairings with a fixed
+`int[6*N]` array, for `1 <= N <= 16`. Each group is ordered
+`[g1X, g1Y, g2Xc1, g2Xc0, g2Yc1, g2Yc0]`. The compiler evaluates the array
+once and emits one `OP_ECPAIRING` with `pair_count = N`; it does not combine
+independent boolean pairing checks. Only BN254 (`curveId = 2`) is supported
+by the current VM. Coordinate validation, subgroup checks, and compute limits
+remain VM rules. Empty products are rejected by this high-level API.
+The original seven-argument `ecPairing(...)` remains a one-pair check.
+
 **Instantiation.** `new Contract(args...)` on either side of a `scriptPubKey` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array arguments flatten element by element.
 
 ### Tapscript bodies

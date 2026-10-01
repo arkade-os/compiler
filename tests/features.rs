@@ -34,6 +34,8 @@ mod no_shadowing;
 mod opcode_functions;
 #[path = "features/packet_primitives.rs"]
 mod packet_primitives;
+#[path = "features/pairing_product.rs"]
+mod pairing_product;
 #[path = "features/private_functions.rs"]
 mod private_functions;
 #[path = "features/static_arrays.rs"]

@@ -605,6 +605,26 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
 
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
     match expr {
+        Expression::EcPairingProduct {
+            coordinates,
+            curve_id,
+        } => {
+            check_expression(coordinates, scope, errors, fn_name);
+            check_expression(curve_id, scope, errors, fn_name);
+            let valid = matches!(infer_type(coordinates, scope),
+                ArkType::Array(element, length)
+                    if *element == ArkType::Int && (6..=96).contains(&length) && length % 6 == 0);
+            if !valid {
+                errors.push(TypeError::new(format!(
+                    "fn {fn_name}: ecPairingProduct expects int[6*N] coordinates for 1 <= N <= 16"
+                )));
+            }
+            if infer_type(curve_id, scope) != ArkType::Int {
+                errors.push(TypeError::new(format!(
+                    "fn {fn_name}: ecPairingProduct curve ID must be int"
+                )));
+            }
+        }
         Expression::Call { args, .. } | Expression::ArrayLiteral(args) => {
             for argument in args {
                 check_expression(argument, scope, errors, fn_name);
@@ -942,6 +962,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         | Expression::CheckSigFromStackExpr { .. }
         | Expression::CheckSigFromStackVerify { .. }
         | Expression::EcPairing { .. }
+        | Expression::EcPairingProduct { .. }
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => ArkType::Bool,
         Expression::EcAdd { .. } | Expression::EcMul { .. } => {

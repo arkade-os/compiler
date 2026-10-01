@@ -754,7 +754,12 @@ pub enum Expression {
         scalar: Box<Expression>,
         curve_id: Box<Expression>,
     },
-    /// One-pair pairing check. Tuple support can generalize this to multiple pairs.
+    /// Fixed-array product pairing check, with six coordinates per pair.
+    EcPairingProduct {
+        coordinates: Box<Expression>,
+        curve_id: Box<Expression>,
+    },
+    /// One-pair pairing check.
     EcPairing {
         g1_x: Box<Expression>,
         g1_y: Box<Expression>,
@@ -955,6 +960,10 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             scalar,
             curve_id,
         } => vec![x, y, scalar, curve_id],
+        Expression::EcPairingProduct {
+            coordinates,
+            curve_id,
+        } => vec![coordinates, curve_id],
         Expression::EcPairing {
             g1_x,
             g1_y,
