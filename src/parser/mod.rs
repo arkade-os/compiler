@@ -157,9 +157,16 @@ pub(crate) fn parse_error_diagnostic(
 ) -> crate::diagnostics::Diagnostic {
     use pest::error::InputLocation;
     let (start, end) = match error.location {
-        // A point location still needs a non-empty span to underline; cover
-        // one byte, clamped so it never runs past the end of the source.
-        InputLocation::Pos(pos) => (pos, (pos + 1).min(source.len())),
+        // A point location still needs a non-empty span to underline: cover the
+        // character there, or at end of input the last non-whitespace one.
+        InputLocation::Pos(pos) => match source[pos..].chars().next() {
+            Some(c) => (pos, pos + c.len_utf8()),
+            None => {
+                let text = source[..pos].trim_end();
+                let start = text.char_indices().next_back().map_or(0, |(i, _)| i);
+                (start, text.len())
+            }
+        },
         InputLocation::Span((start, end)) => (start, end),
     };
     crate::diagnostics::Diagnostic::error(file, error.variant.message().into_owned())

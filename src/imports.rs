@@ -16,10 +16,10 @@ struct Module {
 
 /// `load()`'s failure: either a single fail-fast message (I/O, cycle, unknown
 /// import, internal invariant) or the diagnostics `compiler::prepare`
-/// collected for the file currently being loaded.
+/// collected for one file, with that file's source.
 pub(crate) enum LoadError {
     Message(String),
-    Diagnostics(Vec<Diagnostic>),
+    Diagnostics(Vec<Diagnostic>, String),
 }
 
 impl From<String> for LoadError {
@@ -70,7 +70,7 @@ pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Ve
 
     match result {
         Ok(()) => modules[&entry].warnings.clone(),
-        Err(LoadError::Diagnostics(diagnostics)) => diagnostics,
+        Err(LoadError::Diagnostics(diagnostics, _)) => diagnostics,
         Err(LoadError::Message(message)) => {
             let message = message
                 .strip_prefix(&format!("{entry}: "))
@@ -237,13 +237,11 @@ fn compile_with_loader(
     )
     .map_err(|e| match e {
         LoadError::Message(message) => message,
-        LoadError::Diagnostics(diagnostics) => {
-            let source = read(entry).unwrap_or_default();
-            format!(
-                "{entry}: {}",
-                crate::diagnostics::render_errors(&diagnostics, &source)
-            )
-        }
+        LoadError::Diagnostics(diagnostics, source) => format!(
+            "{}: {}",
+            diagnostics.first().map_or(entry, |d| d.file.as_str()),
+            crate::diagnostics::render_errors(&diagnostics, &source)
+        ),
     })?;
     let root = &modules[entry];
     if root.contract.is_library {
@@ -457,18 +455,8 @@ fn load(
         }
         contract.functions.extend(helpers.into_values());
         let require_entrypoint = path == entry && !contract.is_library;
-        let warnings = match compiler::prepare(&mut contract, require_entrypoint, path) {
-            Ok(warnings) => warnings,
-            Err(diagnostics) if path == entry => {
-                return Err(LoadError::Diagnostics(diagnostics));
-            }
-            Err(diagnostics) => {
-                return Err(LoadError::Message(crate::diagnostics::render_errors(
-                    &diagnostics,
-                    &source,
-                )));
-            }
-        };
+        let warnings = compiler::prepare(&mut contract, require_entrypoint, path)
+            .map_err(|diagnostics| LoadError::Diagnostics(diagnostics, source.clone()))?;
         files.insert(path.to_string(), source);
         modules.insert(
             path.to_string(),
@@ -483,7 +471,7 @@ fn load(
     active.pop();
     result.map_err(|error| match error {
         LoadError::Message(message) => LoadError::Message(format!("{path}: {message}")),
-        diagnostics @ LoadError::Diagnostics(_) => diagnostics,
+        diagnostics @ LoadError::Diagnostics(..) => diagnostics,
     })
 }
 
@@ -849,6 +837,18 @@ library Fees {
     }
 
     #[test]
+    fn syntax_error_spans_cover_a_whole_character_even_at_end_of_input() {
+        for (source, expected) in [
+            ("contract V(pubkey o) {\n  function f(signature s) {\n    require(checkSig(s, o)) é\n  }\n}\n", "é"),
+            ("contract A(pubkey o) {\n", "{"),
+        ] {
+            let [diagnostic]: [_; 1] = check_one(source).try_into().unwrap();
+            let span = diagnostic.span.expect("syntax errors carry a span");
+            assert_eq!(source.get(span.start..span.end), Some(expected), "{source:?}");
+        }
+    }
+
+    #[test]
     fn a_library_is_checked_directly_without_a_wrapper() {
         let library = "library Rules {\n  function preservesValue() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n}\n";
         let files: BTreeMap<_, _> = [("lib/rules.ark".to_string(), library.to_string())].into();
@@ -882,7 +882,7 @@ library Fees {
     }
 
     #[test]
-    fn a_dependency_failure_reaches_the_entry_as_a_diagnostic() {
+    fn a_dependency_failure_is_located_in_the_dependency() {
         let main = "import \"lib.ark\";\ncontract V(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
         let broken_lib = "library L {\n  function helper() {\n    require(missing);\n  }\n}\n";
         let files: BTreeMap<_, _> = [
@@ -890,11 +890,18 @@ library Fees {
             ("lib.ark".to_string(), broken_lib.to_string()),
         ]
         .into();
-        let diagnostics = super::check_sources("main.ark", &files);
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.file, "lib.ark");
+        let span = diagnostic
+            .span
+            .expect("dependency diagnostics carry a span");
+        assert_eq!(&broken_lib[span.start..span.end], "require(missing);");
+
+        let error = super::compile_sources("main.ark", &files, Default::default()).unwrap_err();
         assert!(
-            !diagnostics.is_empty(),
-            "a broken import must surface a diagnostic"
+            error.starts_with("lib.ark: validation error: line 3, column 5: "),
+            "{error}"
         );
-        assert!(diagnostics[0].severity == Severity::Error);
     }
 }
