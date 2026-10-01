@@ -1682,14 +1682,20 @@ fn validate_binding_expression(
             let (name, operands) = registered_builtin.unwrap();
             let signature = crate::typechecker::builtins::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
-            debug_assert_eq!(
+            assert_eq!(
                 operands.len(),
                 signature.params.len(),
                 "{name}: operands() and its signature disagree on arity"
             );
             for (operand, (_, expected)) in operands.iter().zip(signature.params) {
                 let actual = resolved_expression_type(operand, scopes);
-                if actual != ArkType::Unknown && !binding_types_compatible(expected, &actual) {
+                // A hex literal carries its own width, so 32 bytes need no cast.
+                let literal_bytes32 = *expected == ArkType::Bytes32
+                    && matches!(operand, Expression::Literal(value) if value.starts_with("0x") && value.len() == 66);
+                if actual != ArkType::Unknown
+                    && !literal_bytes32
+                    && !binding_types_compatible(expected, &actual)
+                {
                     issues.push(ValidationIssue::error(format!(
                         "function '{function_name}': {name} operand has type '{}', expected '{}'",
                         actual.as_str(),

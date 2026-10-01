@@ -408,6 +408,16 @@ fn ec_and_group_index_builtins_reject_mistyped_operands() {
             "assetGroups[].sum operand has type 'pubkey', expected 'int'",
         ),
         (
+            "pubkey owner",
+            "let r = tx.assetGroups[owner].numInputs;",
+            "assetGroups[].numIO operand has type 'pubkey', expected 'int'",
+        ),
+        (
+            "pubkey owner",
+            "let r = tx.assetGroups[0].outputs[owner].amount;",
+            "assetGroups[].io operand has type 'pubkey', expected 'int'",
+        ),
+        (
             "int x",
             "let r = sha256(x);",
             "sha256 operand has type 'int', expected 'bytes'",
@@ -431,6 +441,35 @@ fn ec_and_group_index_builtins_reject_mistyped_operands() {
         let source = format!("contract Grouped({params}) {{ function spend() {{ {statement} }} }}");
         let error = compile(&source).expect_err(&source).to_string();
         assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+#[test]
+fn bytes32_operands_accept_only_32_byte_literals() {
+    let word = format!("0x{}", "01".repeat(32));
+    let short = format!("0x{}", "01".repeat(31));
+    for (params, statement) in [
+        ("bytes d", "let r = sha256Update(LIT, d); require(r == r);"),
+        (
+            "bytes d",
+            "let r = sha256Finalize(LIT, d); require(r == r);",
+        ),
+        (
+            "pubkey p, pubkey q",
+            "require(ecMulScalarVerify(LIT, p, q));",
+        ),
+        ("pubkey p, pubkey q", "require(tweakVerify(p, LIT, q));"),
+    ] {
+        let source = |literal: &str| {
+            let statement = statement.replace("LIT", literal);
+            format!("contract Grouped({params}) {{ function spend() {{ {statement} }} }}")
+        };
+        compile(&source(&word)).unwrap_or_else(|error| panic!("{statement}: {error}"));
+        let error = compile(&source(&short)).expect_err(statement).to_string();
+        assert!(
+            error.contains("operand has type 'bytes', expected 'bytes32'"),
+            "{statement}: {error}"
+        );
     }
 }
 
