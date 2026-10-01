@@ -217,40 +217,53 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
 
     // Handle tx.assetGroups[idx].sumInputs or tx.assetGroups[idx].sumOutputs
     if text.starts_with("tx.assetGroups[") {
-        if let Some(bracket_start) = text.find('[') {
-            if let Some(bracket_end) = text.find(']') {
-                let idx_str = &text[bracket_start + 1..bracket_end];
-                let index = if idx_str.chars().all(|c| c.is_ascii_digit()) {
-                    Expression::Literal(idx_str.to_string())
-                } else {
-                    Expression::Variable(idx_str.to_string())
-                };
-
-                if text.ends_with(".sumInputs") {
-                    return Ok(Expression::GroupSum {
-                        index: Box::new(index),
-                        source: GroupSumSource::Inputs,
-                    });
-                } else if text.ends_with(".sumOutputs") {
-                    return Ok(Expression::GroupSum {
-                        index: Box::new(index),
-                        source: GroupSumSource::Outputs,
-                    });
-                } else if text.ends_with(".numInputs") {
-                    return Ok(Expression::GroupNumIO {
-                        index: Box::new(index),
-                        source: GroupIOSource::Inputs,
-                    });
-                } else if text.ends_with(".numOutputs") {
-                    return Ok(Expression::GroupNumIO {
-                        index: Box::new(index),
-                        source: GroupIOSource::Outputs,
-                    });
-                } else if let Some(rest) = text[bracket_end + 1..].strip_prefix(".inputs[") {
-                    return parse_group_io_access(index, rest, GroupIOSource::Inputs, text);
-                } else if let Some(rest) = text[bracket_end + 1..].strip_prefix(".outputs[") {
-                    return parse_group_io_access(index, rest, GroupIOSource::Outputs, text);
-                }
+        let mut indices = pair
+            .clone()
+            .into_inner()
+            .flatten()
+            .filter(|p| p.as_rule() == Rule::array_access);
+        if let Some(group) = indices.next() {
+            let after_group = &text[group.as_span().end() - pair.as_span().start()..];
+            let index = parse_array_access_index(group)?;
+            let io_source = if after_group.starts_with(".inputs[") {
+                Some(GroupIOSource::Inputs)
+            } else if after_group.starts_with(".outputs[") {
+                Some(GroupIOSource::Outputs)
+            } else {
+                None
+            };
+            if text.ends_with(".sumInputs") {
+                return Ok(Expression::GroupSum {
+                    index: Box::new(index),
+                    source: GroupSumSource::Inputs,
+                });
+            } else if text.ends_with(".sumOutputs") {
+                return Ok(Expression::GroupSum {
+                    index: Box::new(index),
+                    source: GroupSumSource::Outputs,
+                });
+            } else if text.ends_with(".numInputs") {
+                return Ok(Expression::GroupNumIO {
+                    index: Box::new(index),
+                    source: GroupIOSource::Inputs,
+                });
+            } else if text.ends_with(".numOutputs") {
+                return Ok(Expression::GroupNumIO {
+                    index: Box::new(index),
+                    source: GroupIOSource::Outputs,
+                });
+            } else if let (Some(source), Some(io)) = (io_source, indices.next()) {
+                // The grammar ends the access with `]`, `amount` or `type`.
+                let property = ["amount", "type"]
+                    .into_iter()
+                    .find(|property| text.ends_with(property))
+                    .map(str::to_string);
+                return Ok(Expression::GroupIOAccess {
+                    group_index: Box::new(index),
+                    io_index: Box::new(parse_array_access_index(io)?),
+                    source,
+                    property,
+                });
             }
         }
     }
@@ -270,32 +283,14 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
     Ok(Expression::Property(text.to_string()))
 }
 
-/// Parse the `j].amount`/`j].type`/`j]` tail of
-/// `tx.assetGroups[k].inputs[j]` or `tx.assetGroups[k].outputs[j]`, given the
-/// already-parsed group index `k`. `rest` starts right after the opening `[`
-/// of `[j]`; `full_text` is only for error messages.
-fn parse_group_io_access(
-    group_index: Expression,
-    rest: &str,
-    source: GroupIOSource,
-    full_text: &str,
-) -> Result<Expression, String> {
-    let bracket_end = rest
-        .find(']')
-        .ok_or_else(|| format!("missing closing ']' in '{full_text}'"))?;
-    let io_idx_str = &rest[..bracket_end];
-    let io_index = if io_idx_str.chars().all(|c| c.is_ascii_digit()) {
-        Expression::Literal(io_idx_str.to_string())
-    } else {
-        Expression::Variable(io_idx_str.to_string())
-    };
-    let property = rest[bracket_end + 1..]
-        .strip_prefix('.')
-        .map(str::to_string);
-    Ok(Expression::GroupIOAccess {
-        group_index: Box::new(group_index),
-        io_index: Box::new(io_index),
-        source,
-        property,
+/// The index inside an `array_access` pair, without surrounding trivia.
+fn parse_array_access_index(array_access: Pair<Rule>) -> Result<Expression, String> {
+    let index = array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing index value")?;
+    Ok(match index.as_rule() {
+        Rule::number_literal => Expression::Literal(index.as_str().to_string()),
+        _ => Expression::Variable(index.as_str().to_string()),
     })
 }

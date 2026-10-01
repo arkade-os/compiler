@@ -1,6 +1,6 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
+    OP_0, OP_1, OP_2DROP, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
     OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_SUB, OP_SWAP, OP_TXID,
 };
@@ -354,6 +354,57 @@ fn test_group_io_access_output_amount() {
         window.is_some(),
         "expected OP_1 {OP_INSPECTASSETGROUP} {OP_NIP} {OP_NIP}: {asm:?}"
     );
+}
+
+#[test]
+fn test_group_io_access_output_type() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.assetGroups[0].outputs[0].type >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("group IO access compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        asm.windows(3)
+            .any(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_2DROP),
+        "expected OP_1 {OP_INSPECTASSETGROUP} {OP_2DROP}: {asm:?}"
+    );
+}
+
+#[test]
+fn test_group_indices_ignore_whitespace_and_comments() {
+    let compile_body = |body: &str| {
+        let code = format!(
+            "contract GroupIOTest(pubkey owner) {{ function spend(signature sig, int g) {{
+                require(checkSig(sig, owner));
+                {body}
+            }} }}"
+        );
+        let output = compile(&code).unwrap_or_else(|error| panic!("{body}: {error}"));
+        crate::common::arkade_asm_tokens(&output, "spend")
+    };
+
+    for (plain, spaced) in [
+        (
+            "require(tx.assetGroups[g].outputs[1].amount >= 0);",
+            "require(tx.assetGroups[ g ].outputs[ 1 // io\n ]. amount >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[g].outputs[g].type >= 0);",
+            "require(tx.assetGroups[ g ].outputs[\tg ]. type >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[0].sumInputs >= tx.assetGroups[g].numOutputs);",
+            "require(tx.assetGroups[ 0 ].sumInputs >= tx.assetGroups[ g ].numOutputs);",
+        ),
+    ] {
+        assert_eq!(compile_body(plain), compile_body(spaced), "{spaced}");
+    }
 }
 
 /// The input side is rejected as a value: LOCAL and INTENT inputs don't share
