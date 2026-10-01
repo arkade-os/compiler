@@ -596,29 +596,19 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
 }
 
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
+    if let Expression::ArrayIndex { array, index } = expr {
+        // Recurses into the index itself.
+        check_array_index(array, index, scope, errors, fn_name);
+        return;
+    }
+    for child in crate::validator::child_exprs(expr) {
+        check_expression(child, scope, errors, fn_name);
+    }
     match expr {
-        Expression::Call { args, .. } | Expression::ArrayLiteral(args) => {
-            for argument in args {
-                check_expression(argument, scope, errors, fn_name);
-            }
-        }
-        Expression::StructLiteral(fields) => {
-            for (_, value) in fields {
-                check_expression(value, scope, errors, fn_name);
-            }
-        }
-        Expression::Negate { value } | Expression::Not { value } => {
-            check_expression(value, scope, errors, fn_name);
-        }
-        Expression::ArrayIndex { array, index } => {
-            check_array_index(array, index, scope, errors, fn_name);
-        }
-        Expression::BinaryOp { left, op, right } => {
-            check_expression(left, scope, errors, fn_name);
-            check_expression(right, scope, errors, fn_name);
-            if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=") {
-                check_comparison(left, op, right, scope, errors, fn_name);
-            }
+        Expression::BinaryOp { left, op, right }
+            if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=") =>
+        {
+            check_comparison(left, op, right, scope, errors, fn_name);
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             check_signature_expression(signature, pubkey, "checkSig", scope, errors, fn_name);
