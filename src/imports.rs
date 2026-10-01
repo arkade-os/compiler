@@ -66,7 +66,6 @@ pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Ve
         &mut loaded_files,
         &mut Vec::new(),
         &mut HashMap::new(),
-        true,
     );
 
     match result {
@@ -235,7 +234,6 @@ fn compile_with_loader(
         &mut files,
         &mut Vec::new(),
         &mut HashMap::new(),
-        false,
     )
     .map_err(|e| match e {
         LoadError::Message(message) => message,
@@ -248,6 +246,11 @@ fn compile_with_loader(
         }
     })?;
     let root = &modules[entry];
+    if root.contract.is_library {
+        return Err(format!(
+            "{entry}: entry file must declare a contract, not a library"
+        ));
+    }
     let mut bundle = SourceBundle {
         entry: entry.to_string(),
         files,
@@ -310,7 +313,6 @@ fn load(
     files: &mut BTreeMap<String, String>,
     active: &mut Vec<String>,
     declarations: &mut HashMap<String, String>,
-    entry_may_be_library: bool,
 ) -> Result<(), LoadError> {
     if modules.contains_key(path) {
         return Ok(());
@@ -342,7 +344,6 @@ fn load(
                 files,
                 active,
                 declarations,
-                entry_may_be_library,
             )?;
             if !dependencies.contains(&dependency) {
                 dependencies.push(dependency);
@@ -358,11 +359,6 @@ fn load(
             }
         }
         let mut contract = parser::parse_with_constants(&source, &constants)?;
-        if path == entry && contract.is_library && !entry_may_be_library {
-            return Err(LoadError::Message(
-                "entry file must declare a contract, not a library".to_string(),
-            ));
-        }
         let own_structs: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
         if models::is_builtin_type(&contract.name)
             || models::is_builtin_struct(&contract.name)
