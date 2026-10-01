@@ -267,7 +267,6 @@ complex_expression = _{
     output_introspection |
     tx_introspection |
     group_control_is |
-    asset_group_access |
     constructor |
     tx_property_access |
     this_property_access |
@@ -356,28 +355,9 @@ output_introspection_property = { "value" | "scriptPubKey" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
-// Asset group access: tx.assetGroups.find(id), tx.assetGroups.length,
-// tx.assetGroups[k].sumInputs, etc.
-asset_group_access = {
-    "tx" ~ "." ~ "assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
-        "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
-        "." ~ "length" |
-        array_access ~ "." ~ group_property |
-        array_access ~ "." ~ ("inputs" | "outputs") ~ array_access ~ ("." ~ ("amount" | "type"))?
-    )
-}
-
-// Group property names — atomic to prevent partial matches
-// numInputs/numOutputs must come before sumInputs/sumOutputs to prevent partial matches
-// Control membership is tested with `controlIs(txid, gidx)` / `hasControl`.
-group_property = @{
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
-}
-
 // Group control predicates compare explicit AssetId components:
 //   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
-//   group.hasControl            → Bool (handled as a plain group_property)
+//   group.hasControl            → Bool (handled as a plain group property)
 group_control_is = {
     identifier ~ "." ~ "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }

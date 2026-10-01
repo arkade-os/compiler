@@ -123,7 +123,7 @@ fn rule_term(rule: &Rule) -> Option<String> {
         }
         Rule::input_introspection_property => "an input property",
         Rule::output_introspection_property => "an output property",
-        Rule::asset_group_property | Rule::group_property => "an asset group property",
+        Rule::asset_group_property => "an asset group property",
         Rule::asset_at_property => "an asset property",
         Rule::this_property => "a contract property",
         Rule::identifier => "a name",

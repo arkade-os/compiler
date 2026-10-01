@@ -446,3 +446,25 @@ fn test_group_io_access_without_property_is_rejected() {
         .to_string();
     assert!(error.contains("does not produce one stack item"), "{error}");
 }
+
+#[test]
+fn test_group_access_as_constructor_argument_is_parsed() {
+    let code = r#"
+        contract T(int amount, pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(amount >= 0);
+                require(tx.outputs[0].scriptPubKey == new T(tx.assetGroups[0].sumInputs, owner));
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("computed constructor arguments are rejected")
+        .to_string();
+    assert!(
+        error.contains("computed contract arguments are not supported"),
+        "{error}"
+    );
+    assert!(!error.contains("is undefined"), "{error}");
+}
