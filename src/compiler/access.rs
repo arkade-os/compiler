@@ -49,7 +49,7 @@ impl Generator {
     ) -> Result<(), String> {
         for (position, (index, length, stride)) in indices.iter().enumerate() {
             self.emit_expression(index)?;
-            self.check_array_index_length(*length)?;
+            self.check_array_index(*length)?;
             if *stride != 1 {
                 self.push_integer_temporary(*stride);
                 self.apply(OP_MUL, 2, 1)?;

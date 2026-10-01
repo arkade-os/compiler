@@ -273,11 +273,7 @@ impl Generator {
         });
     }
 
-    fn check_array_index(&mut self, array: &str) -> Result<(), String> {
-        self.check_array_index_length(self.array_length(array))
-    }
-
-    fn check_array_index_length(&mut self, length: usize) -> Result<(), String> {
+    fn check_array_index(&mut self, length: usize) -> Result<(), String> {
         self.apply(OP_DUP, 1, 2)?;
         self.push_integer_temporary(0);
         self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
@@ -304,7 +300,7 @@ impl Generator {
                     )
                 })?;
 
-        self.check_array_index(array)?;
+        self.check_array_index(self.array_length(array))?;
         if first_depth_without_index != 0 {
             self.push_integer_temporary(first_depth_without_index);
             self.apply(OP_ADD, 2, 1)?;
@@ -707,7 +703,7 @@ impl Generator {
                         "internal compiler error: array assignment operands for '{array}' are not on the stack"
                     )
                 })?;
-        self.check_array_index(array)?;
+        self.check_array_index(self.array_length(array))?;
         if first_depth_without_operands != 0 {
             self.push_integer_temporary(first_depth_without_operands);
             self.apply(OP_ADD, 2, 1)?;

@@ -648,12 +648,23 @@ fn walk_asset_id_stmts(
             Statement::ForIn {
                 index_var,
                 value_var,
+                iterable,
                 body,
-                ..
             } => {
+                check_asset_id_expr(iterable, scope, fname, issues);
+                let element = match infer_type(iterable, scope) {
+                    ArkType::Array(element, _) => *element,
+                    _ => ArkType::Unknown,
+                };
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
-                loop_scope.insert(value_var.clone(), ArkType::Unknown);
+                crate::typechecker::bind_local_type(
+                    &mut loop_scope,
+                    value_var,
+                    None,
+                    element,
+                    structs,
+                );
                 walk_asset_id_stmts(body, &mut loop_scope, fname, structs, issues);
             }
             Statement::ForCount { count, body } => {
@@ -1090,15 +1101,22 @@ fn validate_binding_statements(
                 let inferred = resolved_expression_type(value, scopes);
                 match target {
                     AssignmentTarget::Access(access) => {
+                        let before = issues.len();
                         validate_binding_expression(access, function_name, scopes, issues, true);
-                        let expected = resolved_expression_type(access, scopes);
-                        if !binding_types_compatible(&expected, &inferred) {
-                            issues.push(ValidationIssue::error(format!("function '{function_name}': assignment to an indexed field changes its type from '{}' to '{}'", expected.as_str(), inferred.as_str())));
-                        }
-                        match access.binding_path().as_deref().and_then(|name| find_binding(scopes, name)) {
-                            None => issues.push(ValidationIssue::error(format!("function '{function_name}': assignment target is not a binding"))),
-                            Some(binding) if binding.source == BindingSource::Loop => issues.push(ValidationIssue::error(format!("function '{function_name}': cannot assign to compile-time loop variable"))),
-                            Some(_) => {}
+                        // An invalid access already explains the target.
+                        if issues.len() == before {
+                            let expected = resolved_expression_type(access, scopes);
+                            if expected != ArkType::Unknown
+                                && inferred != ArkType::Unknown
+                                && !binding_types_compatible(&expected, &inferred)
+                            {
+                                issues.push(ValidationIssue::error(format!("function '{function_name}': assignment to an indexed field changes its type from '{}' to '{}'", expected.as_str(), inferred.as_str())));
+                            }
+                            match access.binding_path().as_deref().and_then(|name| find_binding(scopes, name)) {
+                                None => issues.push(ValidationIssue::error(format!("function '{function_name}': assignment target is not a binding"))),
+                                Some(binding) if binding.source == BindingSource::Loop => issues.push(ValidationIssue::error(format!("function '{function_name}': cannot assign to compile-time loop variable"))),
+                                Some(_) => {}
+                            }
                         }
                     }
                     AssignmentTarget::Binding(name) => match find_binding(scopes, name) {
@@ -1943,9 +1961,9 @@ fn validate_asset_id(
     let txid_type = infer_type(asset_txid, scope);
     if txid_type != ArkType::Bytes32 {
         issues.push(ValidationIssue::error(format!(
-            "function '{}': asset id txid operand {} must be bytes32, got {}",
+            "function '{}': asset id txid operand '{}' must be bytes32, got {}",
             fname,
-            describe_operand(asset_txid),
+            asset_txid.source_text(),
             txid_type.as_str()
         )));
     }
@@ -1968,21 +1986,12 @@ fn validate_asset_id(
         let gidx_type = infer_type(asset_gidx, scope);
         if gidx_type != ArkType::Int {
             issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx operand {} must be int (0..65535), got {}",
+                "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
                 fname,
-                describe_operand(asset_gidx),
+                asset_gidx.source_text(),
                 gidx_type.as_str()
             )));
         }
-    }
-}
-
-fn describe_operand(expr: &Expression) -> String {
-    match expr {
-        Expression::Variable(name) | Expression::Literal(name) | Expression::Property(name) => {
-            format!("'{}'", name)
-        }
-        _ => "<expr>".to_string(),
     }
 }
 

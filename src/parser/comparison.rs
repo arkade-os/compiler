@@ -40,7 +40,12 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     if rhs_is_simple
         && matches!(
             preimage_expr,
-            Expression::Variable(_) | Expression::Literal(_) | Expression::Property(_)
+            Expression::Variable(_)
+                | Expression::Literal(_)
+                | Expression::Property(_)
+                | Expression::ArrayIndex { .. }
+                | Expression::FieldAccess { .. }
+                | Expression::IndexAccess { .. }
         )
     {
         return Ok(Requirement::HashEqual {

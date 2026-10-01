@@ -282,6 +282,10 @@ fn access_diagnostics_report_the_written_path_once() {
             "P p = rows[t].points; require(p.x == 1);",
             "binding 'p' declares type 'P'",
         ),
+        (
+            "P[2] ps = [{ x: 1 }, { x: 2 }]; ps[t].missing = 1; require(ps[0].x == 1);",
+            "field 'ps[t].missing' is undefined",
+        ),
     ] {
         let source = format!(
             "struct P {{ int x; }} struct Row {{ P[2] points; }} \
@@ -315,4 +319,32 @@ contract C() {
         arkade_asm(&output, "spend"),
         "OP_0 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP"
     );
+}
+
+#[test]
+fn struct_array_fields_feed_hash_and_asset_id_operands() {
+    let output = compile(
+        r#"
+struct Signer { bytes key; }
+contract C(Signer[2] signers, bytes20 h) {
+    function spend(int i) { require(hash160(signers[i].key) == h); }
+}
+"#,
+    )
+    .unwrap();
+    assert!(arkade_asm_tokens(&output, "spend").contains(&"OP_HASH160".to_string()));
+
+    compile(
+        r#"
+struct Rule { AssetId id; int amount; }
+contract C(Rule[2] rules) {
+    function spend() {
+        for (i, rule) in rules {
+            require(tx.outputs[0].assets.lookup(rule.id.txid, rule.id.gidx) >= rule.amount);
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
 }
