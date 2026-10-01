@@ -1336,8 +1336,11 @@ function doCompile() {
     const source = editor.getValue();
     clearErrors();
 
+    let entry;
     try {
-        const { entry, files } = compilationSources();
+        const sources = compilationSources();
+        entry = sources.entry;
+        const files = sources.files;
         const optimize = document.getElementById('optimize-toggle').checked;
         const { artifact: result, warnings } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
         lastCompiledSource = source;
@@ -1348,7 +1351,7 @@ function doCompile() {
         showWarnings(warnings);
         markCompiled();
     } catch (err) {
-        showError(err.toString());
+        showError(err.toString(), entry);
     }
 }
 
@@ -1510,7 +1513,7 @@ function showWarnings(warnings) {
 }
 
 // Show error
-function showError(message) {
+function showError(message, entry) {
     const statusEl = document.getElementById('compile-status');
     statusEl.innerHTML = `<i class="fas fa-times-circle"></i> Error`;
     statusEl.className = 'compile-status error';
@@ -1527,8 +1530,9 @@ function showError(message) {
     // Switch to errors tab
     switchTab('errors');
 
-    // Highlight line if possible
-    const lineMatch = message.match(/line (\d+)/i);
+    // Highlight the line only when the error is located in the entry, the file in the editor.
+    const lineMatch = entry && message.startsWith(`${entry}: `)
+        && message.slice(entry.length + 2).match(/^(?:\w+ error: )?line (\d+)/);
     if (lineMatch && editor) {
         const lineNumber = parseInt(lineMatch[1], 10);
         editor.revealLineInCenter(lineNumber);
