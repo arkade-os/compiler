@@ -32,7 +32,7 @@ impl From<String> for LoadError {
 /// an artifact. `entry` may be a library file, checked directly rather than
 /// through a synthetic importer. Unlike `compile_sources`, independent
 /// problems in `entry` each get their own diagnostic instead of being joined
-/// into one message.
+/// into one message. Diagnostics from imports name the imported file.
 pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
     let entry = match relative_path(entry) {
         Ok(entry) => entry,
@@ -69,7 +69,7 @@ pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Ve
     );
 
     match result {
-        Ok(()) => modules[&entry].warnings.clone(),
+        Ok(()) => modules.into_values().flat_map(|m| m.warnings).collect(),
         Err(LoadError::Diagnostics(diagnostics, _)) => diagnostics,
         Err(LoadError::Message(message)) => {
             let message = message
@@ -876,6 +876,25 @@ library Fees {
         assert_eq!(diagnostic.severity, Severity::Error);
         assert!(
             diagnostic.message.contains("missing.ark"),
+            "{}",
+            diagnostic.message
+        );
+    }
+
+    #[test]
+    fn dependency_warnings_are_reported_in_the_dependency() {
+        let main = "import \"other.ark\";\ncontract V(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        let other = "contract Other(pubkey owner, int unused) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        let files: BTreeMap<_, _> = [
+            ("main.ark".to_string(), main.to_string()),
+            ("other.ark".to_string(), other.to_string()),
+        ]
+        .into();
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.severity, Severity::Warning);
+        assert_eq!(diagnostic.file, "other.ark");
+        assert!(
+            diagnostic.message.contains("'unused'"),
             "{}",
             diagnostic.message
         );
