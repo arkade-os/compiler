@@ -45,6 +45,16 @@ pub(crate) const BUILTIN_SIGNATURES: &[BuiltinSignature] = &[
         "digest",
         &[("data", ArkType::Bytes), ("hashType", ArkType::Int)],
     ),
+    sig("sha256", &[("data", ArkType::Bytes)]),
+    sig("sha256Initialize", &[("data", ArkType::Bytes)]),
+    sig(
+        "sha256Update",
+        &[("context", ArkType::Bytes32), ("chunk", ArkType::Bytes)],
+    ),
+    sig(
+        "sha256Finalize",
+        &[("context", ArkType::Bytes32), ("lastChunk", ArkType::Bytes)],
+    ),
     sig("sighash", &[("hashType", ArkType::Int)]),
     sig("tx.packet", &[("packetType", ArkType::Int)]),
     sig(
@@ -140,6 +150,13 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
         Expression::ReverseBytes { data } => ("reverseBytes", vec![data]),
         Expression::SizeOf { data } => ("size", vec![data]),
         Expression::Digest { data, hash_type } => ("digest", vec![data, hash_type]),
+        Expression::Sha256 { data } => ("sha256", vec![data]),
+        Expression::Sha256Initialize { data } => ("sha256Initialize", vec![data]),
+        Expression::Sha256Update { context, chunk } => ("sha256Update", vec![context, chunk]),
+        Expression::Sha256Finalize {
+            context,
+            last_chunk,
+        } => ("sha256Finalize", vec![context, last_chunk]),
         Expression::Sighash { hash_type } => ("sighash", vec![hash_type]),
         Expression::PacketInspect { packet_type } => ("tx.packet", vec![packet_type]),
         Expression::InputPacketInspect { index, packet_type } => {

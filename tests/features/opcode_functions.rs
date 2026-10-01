@@ -407,6 +407,26 @@ fn ec_and_group_index_builtins_reject_mistyped_operands() {
             "let r = tx.assetGroups[owner].sumInputs;",
             "assetGroups[].sum operand has type 'pubkey', expected 'int'",
         ),
+        (
+            "int x",
+            "let r = sha256(x);",
+            "sha256 operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "int x",
+            "let r = sha256Initialize(x);",
+            "sha256Initialize operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "bytes32 ctx, int x",
+            "let r = sha256Update(ctx, x);",
+            "sha256Update operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "bytes32 ctx, int x",
+            "let r = sha256Finalize(ctx, x);",
+            "sha256Finalize operand has type 'int', expected 'bytes'",
+        ),
     ] {
         let source = format!("contract Grouped({params}) {{ function spend() {{ {statement} }} }}");
         let error = compile(&source).expect_err(&source).to_string();
@@ -701,18 +721,6 @@ fn unary_negation_in_builtin_atom_arguments() {
         (
             "let result = ecPairing(1, -2, 3, 4, 5, 6, 0);",
             "1 2 OP_NEGATE 3 4 5 6 OP_1 0 OP_ECPAIRING",
-        ),
-        (
-            "let result = sha256Initialize(-1);",
-            "1 OP_NEGATE OP_SHA256INITIALIZE",
-        ),
-        (
-            "let result = sha256Update(data, -1);",
-            "1 OP_NEGATE OP_SHA256UPDATE",
-        ),
-        (
-            "let result = sha256Finalize(data, -1);",
-            "1 OP_NEGATE OP_SHA256FINALIZE",
         ),
         ("let result = sighash(-1);", "1 OP_NEGATE OP_SIGHASH"),
         ("let result = digest(data, -1);", "1 OP_NEGATE OP_DIGEST"),
