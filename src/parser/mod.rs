@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Function, LocatedStatement, Parameter, Statement,
-    StructDefinition,
+    AssignmentTarget, Constant, Contract, Expression, Function, LocatedStatement, Parameter,
+    Statement, StructDefinition,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -18,6 +18,7 @@ mod checksig;
 mod comparison;
 mod crypto;
 mod expr;
+pub(crate) use expr::parse_binding_expression;
 mod introspection;
 #[cfg(any(feature = "wasm", test))]
 mod symbols;
@@ -560,25 +561,10 @@ fn parse_statement(
 }
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
-    let mut path = Vec::new();
-    let mut index = None;
-    for part in pair.into_inner() {
-        match part.as_rule() {
-            Rule::identifier => path.push(part.as_str().to_string()),
-            Rule::general_expression => index = Some(parse_general_expression(part)?),
-            rule => return Err(format!("Unexpected rule in assignment target: {rule:?}")),
-        }
-    }
-    let name = path.join(".");
-    if name.is_empty() {
-        return Err("Parse error: Missing assignment target".to_string());
-    }
-    Ok(match index {
-        Some(index) => AssignmentTarget::ArrayIndex {
-            array: name,
-            index: Box::new(index),
-        },
-        None => AssignmentTarget::Binding(name),
+    Ok(match expr::parse_property_access(pair)? {
+        Expression::Variable(name) | Expression::Property(name) => AssignmentTarget::Binding(name),
+        Expression::ArrayIndex { array, index } => AssignmentTarget::ArrayIndex { array, index },
+        value => AssignmentTarget::Access(Box::new(value)),
     })
 }
 

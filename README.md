@@ -321,11 +321,11 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `int` | CScriptNum integer |
 | `bool` | Boolean |
 | `asset` | Asset identifier |
-| `T[n]` | Fixed-size array of a scalar type, `n` a positive integer literal or `int` constant |
-| `struct` | User-declared, nested structs and scalar arrays allowed |
+| `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
+| `struct` | User-declared, nested structs and fixed-size arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint` | Native result structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalar elements; structs contain scalars, arrays, and nested structs. Read and assign fields individually; `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
+Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Read and assign fields individually; `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
 
 ### Functions
 

@@ -18,8 +18,10 @@ pub(crate) fn referenced_parameters<'a>(
 fn collect_name<'a>(name: &'a str, names: &mut HashSet<&'a str>) {
     names.insert(name.split(['.', '[']).next().unwrap_or(name));
     // Named crypto operands can carry runtime indices, e.g. keys[index].
-    if let Some((_, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
-        collect_name(index, names);
+    for part in name.split('[').skip(1) {
+        if let Some((index, _)) = part.split_once(']') {
+            collect_name(index, names);
+        }
     }
 }
 
@@ -131,7 +133,9 @@ fn collect_statements<'a>(
                 collect_expression(value, names, functions, visited)
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     collect_expression(index, names, functions, visited);
                 }
                 collect_expression(value, names, functions, visited);

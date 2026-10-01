@@ -158,7 +158,7 @@ fn insert_type_bindings(
             ArkType::Array(Box::new(element_type.clone()), length),
         );
         for index in 0..length {
-            scope.insert(format!("{name}[{index}]"), element_type.clone());
+            insert_type_bindings(scope, &format!("{name}[{index}]"), base, structs, stack);
         }
         return;
     }
@@ -280,7 +280,9 @@ fn resolve_statements(
                 bind_local_type(scope, name, declared_type.as_deref(), binding_type, structs);
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     resolve_expression(index, scope, returns);
                 }
                 resolve_expression(value, scope, returns);
@@ -309,7 +311,7 @@ fn resolve_statements(
                 };
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
-                loop_scope.insert(value_var.clone(), element_type);
+                bind_local_type(&mut loop_scope, value_var, None, element_type, structs);
                 resolve_statements(body, &mut loop_scope, structs, returns);
             }
             Statement::ForCount { count, body } => {
@@ -446,6 +448,10 @@ fn check_statement(
         }
         Statement::VarAssign { target, value } => {
             let (target_name, original_type) = match target {
+                AssignmentTarget::Access(value) => {
+                    check_expression(value, scope, errors, fn_name);
+                    ("indexed field".to_string(), Some(infer_type(value, scope)))
+                }
                 AssignmentTarget::Binding(name) => {
                     let original_type = scope.get(name.as_str()).cloned();
                     if original_type.is_none() {
@@ -513,7 +519,7 @@ fn check_statement(
                 ArkType::Array(element, _) => *element,
                 _ => ArkType::Unknown,
             };
-            loop_scope.insert(value_var.clone(), element);
+            bind_local_type(&mut loop_scope, value_var, None, element, structs);
             check_statements(body, &mut loop_scope, errors, fn_name, structs);
         }
         Statement::ForCount { count, body } => {
@@ -617,6 +623,13 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         }
         Expression::Negate { value } | Expression::Not { value } => {
             check_expression(value, scope, errors, fn_name);
+        }
+        Expression::FieldAccess { value, .. } => check_expression(value, scope, errors, fn_name),
+        Expression::IndexAccess { value, index } => {
+            check_expression(value, scope, errors, fn_name);
+            if let Some(array) = value.binding_path() {
+                check_array_index(&array, index, scope, errors, fn_name);
+            }
         }
         Expression::ArrayIndex { array, index } => {
             check_array_index(array, index, scope, errors, fn_name);
@@ -829,6 +842,14 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             elements.len(),
         ),
         Expression::StructLiteral(_) => ArkType::Unknown,
+        Expression::FieldAccess { .. } => expr
+            .binding_path()
+            .map(|name| infer_type(&Expression::Property(name), scope))
+            .unwrap_or(ArkType::Unknown),
+        Expression::IndexAccess { value, .. } => match infer_type(value, scope) {
+            ArkType::Array(element, _) => *element,
+            _ => ArkType::Unknown,
+        },
         Expression::ArrayIndex { array, .. } => match scope.get(array) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,

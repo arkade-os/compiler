@@ -104,7 +104,7 @@ var_assign = {
 }
 
 assignment_target = {
-    identifier ~ ("." ~ identifier)* ~ ("[" ~ general_expression ~ "]")?
+    identifier ~ binding_suffix*
 }
 
 // Require statement
@@ -152,7 +152,7 @@ multiplicative_expr = {
 unary_expr = { (sub_op | not_op)* ~ primary_expr }
 
 // Built-in operands accept prefixes on literals, bindings, and grouped expressions.
-unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | qualified_name | number_literal) }
+unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | identifier_property_access | qualified_name | number_literal) }
 
 // Primary expressions (atoms)
 primary_expr = {
@@ -381,10 +381,9 @@ group_control_is = {
     identifier ~ "." ~ "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
-// Named field path, optionally ending in an array index.
-identifier_property_access = {
-    identifier ~ ("." ~ identifier)+ ~ ("[" ~ general_expression ~ "]")?
-}
+// Field and index suffixes may alternate for arrays of structs.
+binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
+identifier_property_access = { identifier ~ binding_suffix+ }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
 
@@ -553,10 +552,7 @@ array = {
 // Named operands used by crypto checks. Dynamic indices here remain limited
 // to a single binding because these AST nodes store operand names directly.
 named_binding = @{
-    identifier ~ (
-        ("." ~ identifier)+ ~ ("[" ~ (qualified_name | number_literal) ~ "]")? |
-        "[" ~ (qualified_name | number_literal) ~ "]"
-    )?
+    identifier ~ (("." ~ identifier) | ("[" ~ (qualified_name | number_literal) ~ "]"))*
 }
 
 // SHA256 function. Accepts any additive expression so concatenation chains

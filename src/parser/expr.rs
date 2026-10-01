@@ -345,25 +345,45 @@ pub(crate) fn parse_complex_expression(
 // ─── Byte-string Manipulation Parsing ──────────────────────────────────
 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
-    let mut inner = pair.into_inner().collect::<Vec<_>>();
-    let index = match inner.last() {
-        Some(part) if part.as_rule() == Rule::general_expression => {
-            Some(inner.pop().ok_or("Missing field array index")?)
-        }
-        _ => None,
-    };
-    let path = inner
-        .iter()
-        .map(|part| part.as_str())
-        .collect::<Vec<_>>()
-        .join(".");
-    match index {
-        Some(index) => Ok(Expression::ArrayIndex {
-            array: path,
-            index: Box::new(parse_general_expression(index)?),
-        }),
-        None => Ok(Expression::Property(path)),
+    let mut inner = pair.into_inner();
+    let mut value = Expression::Variable(
+        inner
+            .next()
+            .ok_or("Missing binding name")?
+            .as_str()
+            .to_string(),
+    );
+    for suffix in inner {
+        let part = suffix.into_inner().next().ok_or("Missing binding suffix")?;
+        value = match part.as_rule() {
+            Rule::identifier => {
+                let field = part.as_str().to_string();
+                match value {
+                    Expression::Variable(name) | Expression::Property(name) => {
+                        Expression::Property(format!("{name}.{field}"))
+                    }
+                    value => Expression::FieldAccess {
+                        value: Box::new(value),
+                        field,
+                    },
+                }
+            }
+            Rule::general_expression => {
+                let index = Box::new(parse_general_expression(part)?);
+                match value {
+                    Expression::Variable(array) | Expression::Property(array) => {
+                        Expression::ArrayIndex { array, index }
+                    }
+                    value => Expression::IndexAccess {
+                        value: Box::new(value),
+                        index,
+                    },
+                }
+            }
+            rule => return Err(format!("Unexpected binding suffix: {rule:?}")),
+        };
     }
+    Ok(value)
 }
 
 /// Parse a `byte_value` rule into an Expression. Used wherever the grammar
@@ -456,4 +476,16 @@ pub(crate) fn reject_malformed_asset_call(text: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+pub(crate) fn parse_binding_expression(text: &str) -> Result<Expression, String> {
+    use pest::Parser;
+    let pair = super::ArkadeParser::parse(Rule::assignment_target, text)
+        .map_err(|error| error.to_string())?
+        .next()
+        .ok_or("Missing binding")?;
+    if pair.as_str().len() != text.len() {
+        return Err(format!("Invalid binding '{text}'"));
+    }
+    parse_property_access(pair)
 }

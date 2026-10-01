@@ -55,9 +55,14 @@ pub(crate) fn substitute_statement(
         },
         Statement::VarAssign { target, value } => Statement::VarAssign {
             target: match target {
-                AssignmentTarget::Binding(name) => AssignmentTarget::Binding(name.clone()),
+                AssignmentTarget::Access(value) => AssignmentTarget::Access(Box::new(
+                    substitute_expression(value, index_var, value_var, k, array_name),
+                )),
+                AssignmentTarget::Binding(name) => AssignmentTarget::Binding(substitute_loop_name(
+                    name, index_var, value_var, k, array_name,
+                )),
                 AssignmentTarget::ArrayIndex { array, index } => AssignmentTarget::ArrayIndex {
-                    array: array.clone(),
+                    array: substitute_loop_name(array, index_var, value_var, k, array_name),
                     index: Box::new(substitute_expression(
                         index, index_var, value_var, k, array_name,
                     )),
@@ -161,7 +166,18 @@ fn substitute_loop_name(
         return k.to_string();
     }
     if name == value_var {
-        return internal_array_binding_name(array_name, &k.to_string());
+        return format!("{array_name}[{k}]");
+    }
+    if let Some(suffix) = name
+        .strip_prefix(value_var)
+        .filter(|suffix| suffix.starts_with('.'))
+    {
+        return format!("{array_name}[{k}]{suffix}");
+    }
+    if name.contains("].") || name.matches('[').count() > 1 {
+        return name
+            .replace(&format!("[{index_var}]"), &format!("[{k}]"))
+            .replace(&format!("[{value_var}]"), &format!("[{array_name}[{k}]]"));
     }
     if let Some(open) = name.find('[') {
         if name.ends_with(']') {
@@ -203,9 +219,9 @@ pub(crate) fn substitute_expression(
         },
         // Replace index variable with literal k
         Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
-        // Replace the value variable with its source-impossible stack binding.
+        // Keep the source path so composite loop values can be flattened.
         Expression::Variable(var) if var == value_var => {
-            Expression::Variable(internal_array_binding_name(array_name, &k.to_string()))
+            Expression::Variable(format!("{array_name}[{k}]"))
         }
         Expression::ArrayLiteral(elements) => Expression::ArrayLiteral(
             elements
@@ -225,7 +241,7 @@ pub(crate) fn substitute_expression(
                 .collect(),
         ),
         Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
-            array: array.clone(),
+            array: substitute_loop_name(array, index_var, value_var, k, array_name),
             index: Box::new(substitute_expression(
                 index, index_var, value_var, k, array_name,
             )),
@@ -255,7 +271,9 @@ pub(crate) fn substitute_expression(
                     }
                 }
             }
-            expr.clone()
+            Expression::Property(substitute_loop_name(
+                prop, index_var, value_var, k, array_name,
+            ))
         }
         // Recursively substitute in binary operations
         Expression::BinaryOp { left, op, right } => Expression::BinaryOp {

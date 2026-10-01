@@ -327,7 +327,9 @@ fn fold_statements(
                 fold_expression(value, values);
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     fold_expression(index, values);
                 }
                 fold_expression(value, values);
@@ -446,9 +448,16 @@ fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
         *name = value.clone();
         return;
     }
-    if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
-        if let Some(value) = values.get(index) {
-            *name = format!("{array}[{value}]");
-        }
+    let mut cursor = 0;
+    while let Some(open) = name[cursor..].find('[').map(|offset| cursor + offset + 1) {
+        let Some(close) = name[open..].find(']').map(|offset| open + offset) else {
+            break;
+        };
+        cursor = if let Some(value) = values.get(&name[open..close]) {
+            name.replace_range(open..close, value);
+            open + value.len() + 1
+        } else {
+            close + 1
+        };
     }
 }

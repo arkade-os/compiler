@@ -30,6 +30,7 @@ pub mod tapscript;
 
 // ASM codegen and rewrite passes split into submodules;
 // siblings reach each other via `use super::*`.
+mod access;
 mod asset;
 mod comparison;
 mod concat;
@@ -176,15 +177,12 @@ impl Generator {
         })
     }
 
-    /// Element count of an array binding, read off the symbolic stack: its
-    /// elements are bound as `$array:name:0 … $array:name:N-1`.
+    /// Declared element count, independent of the flattened element width.
     fn array_length(&self, array: &str) -> usize {
-        (0..)
-            .take_while(|i| {
-                self.binding_index(&internal_array_binding_name(array, &i.to_string()))
-                    .is_some()
-            })
-            .count()
+        match self.scope.get(array) {
+            Some(typechecker::ArkType::Array(_, length)) => *length,
+            _ => 0,
+        }
     }
 
     fn internal_binding_name(name: &str) -> String {
@@ -192,7 +190,10 @@ impl Generator {
         if name.starts_with(INTERNAL_ARRAY_BINDING_PREFIX) {
             return name.to_string();
         }
-        if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
+        if let Some((array, index)) = name
+            .strip_suffix(']')
+            .and_then(|name| name.rsplit_once('['))
+        {
             if index.parse::<usize>().is_ok() {
                 return internal_array_binding_name(array, index);
             }
@@ -209,6 +210,14 @@ impl Generator {
         let is_binding = self
             .binding_index(&Self::internal_binding_name(name))
             .is_some();
+        if !is_binding
+            && name.contains('[')
+            && (name.contains("].") || name.matches('[').count() > 1)
+        {
+            let value = crate::parser::parse_binding_expression(name)?;
+            let ty = typechecker::infer_type(&value, &self.scope).as_str();
+            return self.emit_access_value(&value, &ty);
+        }
         if let Some(array) = name.trim().strip_suffix(".length").filter(|_| !is_binding) {
             let length = self.array_length(array);
             if length == 0 {
@@ -220,7 +229,7 @@ impl Generator {
         if let Some((array, index)) = name
             .trim()
             .strip_suffix(']')
-            .and_then(|name| name.split_once('['))
+            .and_then(|name| name.rsplit_once('['))
         {
             if index.parse::<usize>().is_err() {
                 return self.read_indexed_binding(array, index);
@@ -254,6 +263,7 @@ impl Generator {
                 take || (!self.preserve_bindings
                     && index >= self.pinned_stack_len
                     && !name.starts_with('$')
+                    && !name.contains('[')
                     && (self
                         .scopes
                         .last()
@@ -286,13 +296,17 @@ impl Generator {
     }
 
     fn check_array_index(&mut self, array: &str) -> Result<(), String> {
+        self.check_array_index_length(self.array_length(array))
+    }
+
+    fn check_array_index_length(&mut self, length: usize) -> Result<(), String> {
         self.apply(OP_DUP, 1, 2)?;
         self.push_integer_temporary(0);
         self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)?;
 
         self.apply(OP_DUP, 1, 2)?;
-        self.push_integer_temporary(self.array_length(array));
+        self.push_integer_temporary(length);
         self.apply(OP_LESSTHAN, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)
     }
@@ -537,8 +551,8 @@ impl Generator {
             .count();
         let mut raw = Vec::new();
         let mut expression = expression.clone();
-        let mut calls = Vec::new();
-        functions::extract_calls(&mut expression, &mut calls);
+        let mut values = Vec::new();
+        functions::extract_values(&mut expression, &mut values, &self.scope);
         emit_expression_asm(&expression, &mut raw);
         // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
         let preserved = self.preserve_bindings;
@@ -563,7 +577,13 @@ impl Generator {
                 .and_then(|s| s.strip_suffix('>'))
             {
                 let index = index.parse::<usize>().map_err(|_| "invalid call marker")?;
-                self.emit_call(calls.get(index).ok_or("invalid call marker")?)?;
+                let value = values.get(index).ok_or("invalid call marker")?;
+                if matches!(value, Expression::Call { .. }) {
+                    self.emit_call(value)?;
+                } else {
+                    let ty = typechecker::infer_type(value, &self.scope).as_str();
+                    self.emit_access_value(value, &ty)?;
+                }
             } else {
                 self.lower_raw_token(&token)?;
             }
@@ -611,6 +631,7 @@ impl Generator {
 
     fn assign(&mut self, target: &AssignmentTarget) -> Result<(), String> {
         match target {
+            AssignmentTarget::Access(value) => self.assign_access(value),
             AssignmentTarget::Binding(name) => self.assign_static_binding(name, name),
             AssignmentTarget::ArrayIndex { array, index } => match index.as_ref() {
                 Expression::Literal(index) => self.assign_static_binding(
@@ -1120,10 +1141,14 @@ fn generate_asm_from_statements_recursive(
                 declared_type,
                 value,
             } => {
-                let result_type = declared_type.as_deref().or_else(|| match value {
-                    Expression::Call { return_type, .. } => return_type.as_deref(),
-                    _ => crate::models::expression_result_struct(value),
-                });
+                let composite_type = generator.composite_type(value);
+                let result_type = declared_type
+                    .as_deref()
+                    .or_else(|| match value {
+                        Expression::Call { return_type, .. } => return_type.as_deref(),
+                        _ => crate::models::expression_result_struct(value),
+                    })
+                    .or(composite_type.as_deref());
                 if let Some(ty) = result_type {
                     generator.emit_typed_value(value, ty)?;
                     generator.bind_value(name, ty)?;

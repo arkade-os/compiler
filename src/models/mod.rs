@@ -93,17 +93,15 @@ fn flatten_type(
     leaves: &mut Vec<TypeLeaf>,
 ) -> Result<(), String> {
     if let Some((element_type, length)) = array_type_parts(declared_type) {
-        if !is_builtin_type(element_type) {
-            return Err(format!(
-                "arrays of structs are not supported: '{declared_type}'"
-            ));
-        }
         for index in 0..length {
-            leaves.push(TypeLeaf {
-                access_name: format!("{access_name}[{index}]"),
-                emitted_name: format!("{emitted_name}.{index}"),
-                leaf_type: element_type.to_string(),
-            });
+            flatten_type(
+                &format!("{access_name}[{index}]"),
+                &format!("{emitted_name}.{index}"),
+                element_type,
+                structs,
+                stack,
+                leaves,
+            )?;
         }
         return Ok(());
     }
@@ -374,6 +372,7 @@ pub enum Statement {
 /// A binding or array element on the left-hand side of an assignment.
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
+    Access(Box<Expression>),
     Binding(String),
     ArrayIndex {
         array: String,
@@ -586,6 +585,16 @@ pub enum Expression {
     ArrayLiteral(Vec<Expression>),
     /// Named struct literal; only valid as the initializer of a typed declaration.
     StructLiteral(Vec<(String, Expression)>),
+    /// A field of a statically laid-out value.
+    FieldAccess {
+        value: Box<Expression>,
+        field: String,
+    },
+    /// An array nested inside an indexed value.
+    IndexAccess {
+        value: Box<Expression>,
+        index: Box<Expression>,
+    },
     /// Array element selected by an integer expression.
     ArrayIndex {
         array: String,
@@ -869,6 +878,8 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         | Expression::CheckSigFromStackExpr { .. }
         | Expression::CheckSigFromStackVerify { .. } => vec![],
 
+        Expression::FieldAccess { value, .. } => vec![value],
+        Expression::IndexAccess { value, index } => vec![value, index],
         Expression::ArrayIndex { index, .. } => vec![index],
 
         Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
@@ -984,5 +995,33 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+    }
+}
+
+impl Expression {
+    /// Resolve the layout path, using element zero for runtime indexes.
+    pub(crate) fn binding_path(&self) -> Option<String> {
+        match self {
+            Self::Variable(name) | Self::Property(name) => Some(name.clone()),
+            Self::ArrayIndex { array, index } => {
+                Some(format!("{array}[{}]", index.binding_index()))
+            }
+            Self::IndexAccess { value, index } => Some(format!(
+                "{}[{}]",
+                value.binding_path()?,
+                index.binding_index()
+            )),
+            Self::FieldAccess { value, field } => {
+                Some(format!("{}.{field}", value.binding_path()?))
+            }
+            _ => None,
+        }
+    }
+
+    fn binding_index(&self) -> &str {
+        match self {
+            Self::Literal(index) if index.parse::<usize>().is_ok() => index,
+            _ => "0",
+        }
     }
 }
