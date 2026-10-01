@@ -45,8 +45,8 @@ pub enum Severity {
 pub struct ValidationIssue {
     pub severity: Severity,
     pub message: String,
-    /// 1-based line and column of the statement or function that caused it.
-    pub position: Option<(usize, usize)>,
+    /// Byte range of the statement or function that caused it.
+    pub span: Option<crate::diagnostics::Span>,
 }
 
 impl ValidationIssue {
@@ -54,7 +54,7 @@ impl ValidationIssue {
         Self {
             severity: Severity::Error,
             message: message.into(),
-            position: None,
+            span: None,
         }
     }
 
@@ -62,20 +62,20 @@ impl ValidationIssue {
         Self {
             severity: Severity::Warning,
             message: message.into(),
-            position: None,
+            span: None,
         }
     }
 
-    fn at(mut self, position: (usize, usize)) -> Self {
-        self.position = Some(position);
+    fn at(mut self, span: crate::diagnostics::Span) -> Self {
+        self.span = Some(span);
         self
     }
 }
 
 /// Positions issues that a nested statement has not already positioned.
-fn locate(issues: &mut [ValidationIssue], position: (usize, usize)) {
+fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
     for issue in issues {
-        issue.position.get_or_insert(position);
+        issue.span.get_or_insert(span);
     }
 }
 
@@ -125,7 +125,7 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
                         "duplicate function name '{}'; each function must have a unique name",
                         func.name
                     ))
-                    .at(func.position),
+                    .at(func.span),
                 );
             }
         }
@@ -162,7 +162,7 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
                 )));
             }
         }
-        locate(&mut issues[first..], func.position);
+        locate(&mut issues[first..], func.span);
     }
 
     functions::validate_functions(contract, &mut issues);
@@ -302,7 +302,7 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
         // Imported helpers are positioned in their defining file.
         if !function.is_imported() {
             validate_local_types(&function.statements, &function.name, &definitions, issues);
-            locate(&mut issues[first..], function.position);
+            locate(&mut issues[first..], function.span);
         }
     }
 }
@@ -344,7 +344,7 @@ fn validate_local_types(
             }
             _ => {}
         }
-        locate(&mut issues[first..], statement.position);
+        locate(&mut issues[first..], statement.span);
     }
 }
 
@@ -506,7 +506,7 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
                     "variable '{}' in function '{}' is never used",
                     parameter.name, function.name
                 ))
-                .at(function.position),
+                .at(function.span),
             );
         }
         check_unused_locals(&function.statements, &function.name, issues);
@@ -543,7 +543,7 @@ fn check_unused_locals(
                     ValidationIssue::error(format!(
                         "variable '{name}' in function '{function}' is never used"
                     ))
-                    .at(statement.position),
+                    .at(statement.span),
                 );
             }
             Statement::IfElse {
@@ -672,7 +672,7 @@ fn walk_asset_id_stmts(
                 walk_asset_id_stmts(body, &mut scope.clone(), fname, structs, issues);
             }
         }
-        locate(&mut issues[first..], stmt.position);
+        locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -1280,7 +1280,7 @@ fn validate_binding_statements(
                 scopes.pop();
             }
         }
-        locate(&mut issues[first..], statement.position);
+        locate(&mut issues[first..], statement.span);
     }
 }
 
@@ -2131,7 +2131,7 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
             &const_names,
             issues,
         );
-        locate(&mut issues[first..], func.position);
+        locate(&mut issues[first..], func.span);
     }
 }
 
@@ -2185,7 +2185,7 @@ fn check_ctor_assignment(
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
-        locate(&mut issues[first..], stmt.position);
+        locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -2281,7 +2281,7 @@ fn walk_scope(
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
-        locate(&mut issues[first..], stmt.position);
+        locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -2525,7 +2525,7 @@ contract Demo() {
 
     fn located(statement: Statement) -> LocatedStatement {
         LocatedStatement {
-            position: (1, 1),
+            span: crate::diagnostics::Span { start: 0, end: 0 },
             statement,
         }
     }
@@ -2541,7 +2541,7 @@ contract Demo() {
             }],
             functions: vec![Function {
                 name: "spend".to_string(),
-                position: (1, 1),
+                span: crate::diagnostics::Span { start: 0, end: 0 },
                 parameters: vec![
                     Parameter {
                         name: "ownerSig".to_string(),

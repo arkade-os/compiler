@@ -1,3 +1,4 @@
+use crate::diagnostics::Diagnostic;
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
     FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
@@ -807,10 +808,16 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
+/// Runs semantic validation and type checking on `contract`. Returns every
+/// warning on success, every error (each its own diagnostic, not joined into
+/// one message) on failure. Diagnostic messages carry no location prefix —
+/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
+/// `"line N, column M: "` prefix only when rendering the legacy joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
-) -> Result<Vec<String>, String> {
+    file: &str,
+) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
     typechecker::resolve_group_properties(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -818,46 +825,48 @@ pub(crate) fn prepare(
     // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if validator::has_errors(&ast_issues) {
-        let errors: Vec<String> = ast_issues
+        return Err(ast_issues
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
-            .map(|i| format!("validation error: {}", located(&i.message, i.position)))
-            .collect();
-        return Err(errors.join("; "));
+            .map(|i| {
+                Diagnostic::error(file, i.message.clone())
+                    .with_code("validation")
+                    .with_span(i.span)
+            })
+            .collect());
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(contract)?;
+    // No span available: this rewrites the AST after parsing, not a lookup
+    // against a specific source node.
+    rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
     let type_errors = typechecker::check_contract(contract);
     if !type_errors.is_empty() {
         return Err(type_errors
             .iter()
-            .map(|e| format!("type error: {}", located(&e.message, e.position)))
-            .collect::<Vec<_>>()
-            .join("; "));
+            .map(|e| {
+                Diagnostic::error(file, e.message.clone())
+                    .with_code("type")
+                    .with_span(e.span)
+            })
+            .collect());
     }
     let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
-            warnings.push(format!(
-                "warning[validation]: {}",
-                located(&issue.message, issue.position)
-            ));
+            warnings.push(
+                Diagnostic::warning(file, issue.message.clone())
+                    .with_code("validation")
+                    .with_span(issue.span),
+            );
         }
     }
 
     Ok(warnings)
-}
-
-fn located(message: &str, position: Option<(usize, usize)>) -> String {
-    match position {
-        Some((line, column)) => format!("line {line}, column {column}: {message}"),
-        None => message.to_string(),
-    }
 }
 
 pub(crate) fn emit(

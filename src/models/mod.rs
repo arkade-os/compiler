@@ -303,8 +303,8 @@ pub struct Function {
     pub name: String,
     /// Function arguments
     pub parameters: Vec<Parameter>,
-    /// 1-based line and column where the function name starts.
-    pub position: (usize, usize),
+    /// Byte range of the function name.
+    pub span: crate::diagnostics::Span,
     /// Function body statements.
     pub statements: Vec<LocatedStatement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
@@ -324,10 +324,10 @@ impl Function {
     }
 }
 
-/// A statement with the 1-based line and column where it starts.
+/// A statement with the byte range of its source text.
 #[derive(Debug, Clone)]
 pub struct LocatedStatement {
-    pub position: (usize, usize),
+    pub span: crate::diagnostics::Span,
     pub statement: Statement,
 }
 
