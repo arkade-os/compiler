@@ -388,3 +388,44 @@ contract Demo(bytes32 expected) {
         "expected a validation diagnostic, got: {error}"
     );
 }
+
+#[test]
+fn semantic_diagnostics_carry_source_positions() {
+    let error = compile(
+        "contract Positions(pubkey owner) {
+    private function helper(int x) {
+        require(x > 0);
+    }
+    function spend(signature sig, bool flag) {
+        if (flag) {
+            helper(sig);
+        }
+        require(checkSig(sig, owner));
+    }
+}",
+    )
+    .expect_err("mistyped helper argument must fail")
+    .to_string();
+    assert!(
+        error.contains("validation error: line 7, column 13: argument 'x' to 'helper'"),
+        "error must point at the faulty call: {error}"
+    );
+    assert!(
+        error.starts_with("main.ark: "),
+        "error must still be prefixed with the entry file path: {error}"
+    );
+
+    let error = compile(
+        "contract Positions() {
+    function spend() {
+        require(1);
+    }
+}",
+    )
+    .expect_err("non-boolean require must fail")
+    .to_string();
+    assert!(
+        error.contains("type error: line 3, column 9: "),
+        "type error must point at its statement: {error}"
+    );
+}

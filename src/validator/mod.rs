@@ -20,7 +20,8 @@
 //! whether any are fatal.
 
 use crate::models::{
-    AssignmentTarget, Contract, ContractJson, Expression, KeyExpr, Requirement, Statement, TapItem,
+    AssignmentTarget, Contract, ContractJson, Expression, KeyExpr, LocatedStatement, Requirement,
+    Statement, TapItem,
 };
 use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
@@ -44,6 +45,8 @@ pub enum Severity {
 pub struct ValidationIssue {
     pub severity: Severity,
     pub message: String,
+    /// Byte range of the statement or function that caused it.
+    pub span: Option<crate::diagnostics::Span>,
 }
 
 impl ValidationIssue {
@@ -51,6 +54,7 @@ impl ValidationIssue {
         Self {
             severity: Severity::Error,
             message: message.into(),
+            span: None,
         }
     }
 
@@ -58,7 +62,20 @@ impl ValidationIssue {
         Self {
             severity: Severity::Warning,
             message: message.into(),
+            span: None,
         }
+    }
+
+    fn at(mut self, span: crate::diagnostics::Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+}
+
+/// Positions issues that a nested statement has not already positioned.
+fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
+    for issue in issues {
+        issue.span.get_or_insert(span);
     }
 }
 
@@ -103,10 +120,13 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
         let mut seen: HashSet<&str> = HashSet::new();
         for func in contract.functions.iter().filter(|f| !f.is_imported()) {
             if !seen.insert(func.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "duplicate function name '{}'; each function must have a unique name",
-                    func.name
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "duplicate function name '{}'; each function must have a unique name",
+                        func.name
+                    ))
+                    .at(func.span),
+                );
             }
         }
     }
@@ -127,6 +147,7 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
 
     // ── Unique parameter names within each function ────────────────────────
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let first = issues.len();
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &func.parameters {
             validate_source_identifier(
@@ -141,6 +162,7 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
                 )));
             }
         }
+        locate(&mut issues[first..], func.span);
     }
 
     functions::validate_functions(contract, &mut issues);
@@ -264,37 +286,36 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
             issues,
         );
     }
-    for parameter in contract
-        .parameters
-        .iter()
-        .chain(
-            contract
-                .functions
-                .iter()
-                .flat_map(|function| &function.parameters),
-        )
-        .chain(
-            contract
-                .tapscripts
-                .iter()
-                .flat_map(|tapscript| &tapscript.inputs),
-        )
-    {
+    for parameter in contract.parameters.iter().chain(
+        contract
+            .tapscripts
+            .iter()
+            .flat_map(|tapscript| &tapscript.inputs),
+    ) {
         validate_declared_type(&parameter.param_type, "parameter", &definitions, issues);
     }
-    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
-        validate_local_types(&function.statements, &function.name, &definitions, issues);
+    for function in &contract.functions {
+        let first = issues.len();
+        for parameter in &function.parameters {
+            validate_declared_type(&parameter.param_type, "parameter", &definitions, issues);
+        }
+        // Imported helpers are positioned in their defining file.
+        if !function.is_imported() {
+            validate_local_types(&function.statements, &function.name, &definitions, issues);
+            locate(&mut issues[first..], function.span);
+        }
     }
 }
 
 fn validate_local_types(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     function_name: &str,
     definitions: &HashMap<&str, &crate::models::StructDefinition>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     for statement in statements {
-        match statement {
+        let first = issues.len();
+        match &statement.statement {
             Statement::LetBinding {
                 declared_type: Some(declared_type),
                 ..
@@ -323,6 +344,7 @@ fn validate_local_types(
             }
             _ => {}
         }
+        locate(&mut issues[first..], statement.span);
     }
 }
 
@@ -479,10 +501,13 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
             .iter()
             .filter(|p| !used.contains(p.name.as_str()))
         {
-            issues.push(ValidationIssue::error(format!(
-                "variable '{}' in function '{}' is never used",
-                parameter.name, function.name
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "variable '{}' in function '{}' is never used",
+                    parameter.name, function.name
+                ))
+                .at(function.span),
+            );
         }
         check_unused_locals(&function.statements, &function.name, issues);
         contract_used.extend(used);
@@ -504,19 +529,22 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
 // ponytail: rescans the rest of the block per binding, O(n²) in block length;
 // index reads per binding in one pass if contract bodies ever grow large.
 fn check_unused_locals(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     function: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
     for (index, statement) in statements.iter().enumerate() {
-        match statement {
+        match &statement.statement {
             Statement::LetBinding { name, .. }
                 if !references::referenced_parameters(&statements[index + 1..], &[])
                     .contains(name.as_str()) =>
             {
-                issues.push(ValidationIssue::error(format!(
-                    "variable '{name}' in function '{function}' is never used"
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "variable '{name}' in function '{function}' is never used"
+                    ))
+                    .at(statement.span),
+                );
             }
             Statement::IfElse {
                 then_body,
@@ -566,14 +594,15 @@ fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue
 }
 
 fn walk_asset_id_stmts(
-    stmts: &[Statement],
+    stmts: &[LocatedStatement],
     scope: &mut Scope,
     fname: &str,
     structs: &[crate::models::StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
-        match stmt {
+        let first = issues.len();
+        match &stmt.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 check_asset_id_expr(expression, scope, fname, issues)
             }
@@ -643,6 +672,7 @@ fn walk_asset_id_stmts(
                 walk_asset_id_stmts(body, &mut scope.clone(), fname, structs, issues);
             }
         }
+        locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -942,14 +972,15 @@ fn check_binding_semantics(contract: &Contract, issues: &mut Vec<ValidationIssue
 }
 
 fn validate_binding_statements(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     function_name: &str,
     scopes: &mut BindingScopes,
     structs: &[crate::models::StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for statement in statements {
-        match statement {
+        let first = issues.len();
+        match &statement.statement {
             Statement::Call(expression) => {
                 validate_binding_expression(expression, function_name, scopes, issues, false)
             }
@@ -1249,6 +1280,7 @@ fn validate_binding_statements(
                 scopes.pop();
             }
         }
+        locate(&mut issues[first..], statement.span);
     }
 }
 
@@ -2066,6 +2098,7 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     }
 
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let first = issues.len();
         // Seed frame: constructor params + this function's params.
         let mut seed: HashSet<String> = ctor_names
             .iter()
@@ -2098,20 +2131,22 @@ fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
             &const_names,
             issues,
         );
+        locate(&mut issues[first..], func.span);
     }
 }
 
 /// Reject assignments to constructor parameters or their flattened children.
 /// Recurses into branch and loop bodies.
 fn check_ctor_assignment(
-    stmts: &[Statement],
+    stmts: &[LocatedStatement],
     fname: &str,
     ctor_names: &HashSet<&str>,
     const_names: &HashSet<&str>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
-        match stmt {
+        let first = issues.len();
+        match &stmt.statement {
             Statement::VarAssign { target, .. } => {
                 let name = match target {
                     AssignmentTarget::Binding(name) => name,
@@ -2150,6 +2185,7 @@ fn check_ctor_assignment(
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
+        locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -2161,13 +2197,14 @@ fn in_scope(stack: &[HashSet<String>], name: &str) -> bool {
 /// Walk statements maintaining a lexical scope stack. Each block (`for` body,
 /// `if`/`else` branch) is a pushed frame, so sibling blocks do not conflict.
 fn walk_scope(
-    stmts: &[Statement],
+    stmts: &[LocatedStatement],
     fname: &str,
     stack: &mut Vec<HashSet<String>>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
-        match stmt {
+        let first = issues.len();
+        match &stmt.statement {
             Statement::LetBinding { name, .. } => {
                 validate_source_identifier(name, &format!("binding in function '{fname}'"), issues);
                 if in_scope(stack, name) {
@@ -2244,6 +2281,7 @@ fn walk_scope(
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
+        locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -2485,6 +2523,13 @@ contract Demo() {
             .contains("assignment to an element of 'values' changes its type")));
     }
 
+    fn located(statement: Statement) -> LocatedStatement {
+        LocatedStatement {
+            span: crate::diagnostics::Span { start: 0, end: 0 },
+            statement,
+        }
+    }
+
     fn make_contract(name: &str) -> Contract {
         Contract {
             name: name.to_string(),
@@ -2496,6 +2541,7 @@ contract Demo() {
             }],
             functions: vec![Function {
                 name: "spend".to_string(),
+                span: crate::diagnostics::Span { start: 0, end: 0 },
                 parameters: vec![
                     Parameter {
                         name: "ownerSig".to_string(),
@@ -2506,10 +2552,10 @@ contract Demo() {
                         param_type: "bool".to_string(),
                     },
                 ],
-                statements: vec![Statement::Require(Requirement::CheckSig {
+                statements: vec![located(Statement::Require(Requirement::CheckSig {
                     signature: "ownerSig".to_string(),
                     pubkey: "owner".to_string(),
-                })],
+                }))],
                 is_private: false,
                 is_static: false,
                 is_exported: false,
@@ -2535,14 +2581,14 @@ contract Demo() {
         // An if with a require in the then-branch but no else leaves the
         // "condition false" path with no require() → a trivially-passing spend.
         let mut contract = make_contract("BarePath");
-        contract.functions[0].statements = vec![Statement::IfElse {
+        contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: Expression::Variable("flag".to_string()),
-            then_body: vec![Statement::Require(Requirement::CheckSig {
+            then_body: vec![located(Statement::Require(Requirement::CheckSig {
                 signature: "ownerSig".to_string(),
                 pubkey: "owner".to_string(),
-            })],
+            }))],
             else_body: None,
-        }];
+        })];
         let issues = validate_ast(&contract, true);
         assert!(has_errors(&issues));
         assert!(issues
@@ -2554,16 +2600,16 @@ contract Demo() {
     fn require_in_both_branches_is_ok() {
         let mut contract = make_contract("BothPaths");
         let req = || {
-            Statement::Require(Requirement::CheckSig {
+            located(Statement::Require(Requirement::CheckSig {
                 signature: "ownerSig".to_string(),
                 pubkey: "owner".to_string(),
-            })
+            }))
         };
-        contract.functions[0].statements = vec![Statement::IfElse {
+        contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: Expression::Variable("flag".to_string()),
             then_body: vec![req()],
             else_body: Some(vec![req()]),
-        }];
+        })];
         assert!(!has_errors(&validate_ast(&contract, true)));
     }
 

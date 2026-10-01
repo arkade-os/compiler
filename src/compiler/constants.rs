@@ -1,5 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Expression, KeyExpr, Requirement, Statement, TapItem,
+    AssignmentTarget, Constant, Contract, Expression, KeyExpr, LocatedStatement, Requirement,
+    Statement, TapItem,
 };
 use std::collections::HashMap;
 
@@ -307,11 +308,11 @@ fn fold_type(declared_type: &mut String, values: &HashMap<String, String>) -> Re
 }
 
 fn fold_statements(
-    statements: &mut [Statement],
+    statements: &mut [LocatedStatement],
     values: &HashMap<String, String>,
 ) -> Result<(), String> {
     for statement in statements {
-        match statement {
+        match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 fold_expression(expression, values)
             }

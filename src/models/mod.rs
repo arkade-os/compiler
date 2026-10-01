@@ -303,8 +303,10 @@ pub struct Function {
     pub name: String,
     /// Function arguments
     pub parameters: Vec<Parameter>,
+    /// Byte range of the function name.
+    pub span: crate::diagnostics::Span,
     /// Function body statements.
-    pub statements: Vec<Statement>,
+    pub statements: Vec<LocatedStatement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
     pub is_private: bool,
     /// Whether this helper cannot see constructor state.
@@ -320,6 +322,13 @@ impl Function {
     pub(crate) fn is_imported(&self) -> bool {
         self.name.contains('.')
     }
+}
+
+/// A statement with the byte range of its source text.
+#[derive(Debug, Clone)]
+pub struct LocatedStatement {
+    pub span: crate::diagnostics::Span,
+    pub statement: Statement,
 }
 
 /// Statement AST - represents any executable statement in a function body
@@ -345,20 +354,20 @@ pub enum Statement {
     /// if (condition) { then_body } else { else_body }
     IfElse {
         condition: Expression,
-        then_body: Vec<Statement>,
-        else_body: Option<Vec<Statement>>,
+        then_body: Vec<LocatedStatement>,
+        else_body: Option<Vec<LocatedStatement>>,
     },
     /// for (index_var, value_var) in iterable { body }
     ForIn {
         index_var: String,
         value_var: String,
         iterable: Expression,
-        body: Vec<Statement>,
+        body: Vec<LocatedStatement>,
     },
     /// for (count) { body }
     ForCount {
         count: Expression,
-        body: Vec<Statement>,
+        body: Vec<LocatedStatement>,
     },
 }
 

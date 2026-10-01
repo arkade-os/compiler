@@ -892,6 +892,7 @@ mod tests {
                 .iter()
                 .map(|n| Function {
                     name: (*n).into(),
+                    span: crate::diagnostics::Span { start: 0, end: 0 },
                     parameters: vec![],
                     statements: vec![],
                     is_private: false,

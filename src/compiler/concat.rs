@@ -51,9 +51,9 @@ pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) -> Resu
 }
 
 impl ConcatPass {
-    fn rewrite_statements_concat(&mut self, stmts: &mut [Statement], scope: &mut Scope) {
+    fn rewrite_statements_concat(&mut self, stmts: &mut [LocatedStatement], scope: &mut Scope) {
         for stmt in stmts {
-            self.rewrite_statement_concat(stmt, scope);
+            self.rewrite_statement_concat(&mut stmt.statement, scope);
         }
     }
 

@@ -1,6 +1,7 @@
+use crate::diagnostics::Diagnostic;
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
-    FunctionInput, Parameter, Requirement, Statement,
+    FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
@@ -807,10 +808,16 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
+/// Runs semantic validation and type checking on `contract`. Returns every
+/// warning on success, every error (each its own diagnostic, not joined into
+/// one message) on failure. Diagnostic messages carry no location prefix —
+/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
+/// `"line N, column M: "` prefix only when rendering the legacy joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
-) -> Result<Vec<String>, String> {
+    file: &str,
+) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
     typechecker::resolve_group_properties(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -818,32 +825,44 @@ pub(crate) fn prepare(
     // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if validator::has_errors(&ast_issues) {
-        let errors: Vec<String> = ast_issues
+        return Err(ast_issues
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
-            .map(|i| format!("validation error: {}", i.message))
-            .collect();
-        return Err(errors.join("; "));
+            .map(|i| {
+                Diagnostic::error(file, i.message.clone())
+                    .with_code("validation")
+                    .with_span(i.span)
+            })
+            .collect());
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(contract)?;
+    // No span available: this rewrites the AST after parsing, not a lookup
+    // against a specific source node.
+    rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
     let type_errors = typechecker::check_contract(contract);
     if !type_errors.is_empty() {
         return Err(type_errors
             .iter()
-            .map(|e| format!("type error: {}", e.message))
-            .collect::<Vec<_>>()
-            .join("; "));
+            .map(|e| {
+                Diagnostic::error(file, e.message.clone())
+                    .with_code("type")
+                    .with_span(e.span)
+            })
+            .collect());
     }
     let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
-            warnings.push(format!("warning[validation]: {}", issue.message));
+            warnings.push(
+                Diagnostic::warning(file, issue.message.clone())
+                    .with_code("validation")
+                    .with_span(issue.span),
+            );
         }
     }
 
@@ -997,11 +1016,11 @@ fn for_each_expanded_param(
 
 /// Recursively generate assembly from statements
 fn generate_asm_from_statements_recursive(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     generator: &mut Generator,
 ) -> Result<(), String> {
     for (index, stmt) in statements.iter().enumerate() {
-        match stmt {
+        match &stmt.statement {
             Statement::Call(expression) => generator.emit_call(expression)?,
             Statement::Return(value) => {
                 generator.emit_return(value.as_ref())?;

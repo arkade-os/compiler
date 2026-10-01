@@ -1,5 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Function, Parameter, Statement, StructDefinition,
+    AssignmentTarget, Constant, Contract, Function, LocatedStatement, Parameter, Statement,
+    StructDefinition,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -139,6 +140,37 @@ fn rule_term(rule: &Rule) -> Option<String> {
         other => return Some(format!("{other:?}").replace('_', " ")),
     };
     Some(term.to_string())
+}
+
+/// The raw pest parse, with the error already rewritten in source-language
+/// terms by `readable_error`. Used where the byte position of a failure
+/// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
+pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Error<Rule>> {
+    pest::set_error_detail(true);
+    ArkadeParser::parse(Rule::main, source).map_err(|e| readable_error(e, source))
+}
+
+pub(crate) fn parse_error_diagnostic(
+    error: &pest::error::Error<Rule>,
+    file: &str,
+    source: &str,
+) -> crate::diagnostics::Diagnostic {
+    use pest::error::InputLocation;
+    let (start, end) = match error.location {
+        // A point location still needs a non-empty span to underline: cover the
+        // character there, or at end of input the last non-whitespace one.
+        InputLocation::Pos(pos) => match source[pos..].chars().next() {
+            Some(c) => (pos, pos + c.len_utf8()),
+            None => {
+                let text = source[..pos].trim_end();
+                let start = text.char_indices().next_back().map_or(0, |(i, _)| i);
+                (start, text.len())
+            }
+        },
+        InputLocation::Span((start, end)) => (start, end),
+    };
+    crate::diagnostics::Diagnostic::error(file, error.variant.message().into_owned())
+        .with_span(crate::diagnostics::Span { start, end })
 }
 
 /// Build a Contract AST from parsed Pest pairs
@@ -306,11 +338,12 @@ fn parse_function(
     let is_static = is_library || visibility == "static";
     let is_private = is_library || visibility != "public";
     let is_exported = is_static && visibility != "private";
-    let name = inner
-        .next()
-        .ok_or("Missing function name")?
-        .as_str()
-        .to_string();
+    let name = inner.next().ok_or("Missing function name")?;
+    let span = crate::diagnostics::Span {
+        start: name.as_span().start(),
+        end: name.as_span().end(),
+    };
+    let name = name.as_str().to_string();
     if is_private
         && (expr::reserved_function_signature(&name).is_some()
             || matches!(
@@ -326,28 +359,33 @@ fn parse_function(
     } else {
         None
     };
-    let mut func = Function {
+    let mut statements = Vec::new();
+    for statement in inner {
+        statements.extend(parse_statement(&name, statement, constants)?);
+    }
+    Ok(Function {
         name,
+        span,
         parameters,
-        statements: Vec::new(),
+        statements,
         is_private,
         is_static,
         is_exported,
         return_type,
-    };
-    for statement in inner {
-        parse_function_body(&mut func, statement, constants)?;
-    }
-    Ok(func)
+    })
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
-fn parse_function_body(
-    func: &mut Function,
+fn parse_statement(
+    function_name: &str,
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<(), String> {
-    match pair.as_rule() {
+) -> Result<Option<LocatedStatement>, String> {
+    let span = crate::diagnostics::Span {
+        start: pair.as_span().start(),
+        end: pair.as_span().end(),
+    };
+    let statement = match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
             let expr = match inner.next() {
@@ -355,7 +393,7 @@ fn parse_function_body(
                 None => {
                     return Err(format!(
                         "Parse error: Invalid arguments to function {}",
-                        func.name
+                        function_name
                     ))
                 }
             };
@@ -365,9 +403,7 @@ fn parse_function_body(
                 parse_string_literal(message.as_str())?;
             }
 
-            // Wrap the requirement in a Statement::Require
-            func.statements.push(Statement::Require(requirement));
-            Ok(())
+            Statement::Require(requirement)
         }
         Rule::let_binding => {
             let mut inner = pair.into_inner();
@@ -381,12 +417,11 @@ fn parse_function_body(
                 .ok_or_else(|| "Parse error: Missing value in let binding".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::LetBinding {
+            Statement::LetBinding {
                 name,
                 declared_type: None,
                 value,
-            });
-            Ok(())
+            }
         }
         Rule::var_assign => {
             let mut inner = pair.into_inner();
@@ -400,8 +435,7 @@ fn parse_function_body(
                 .ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::VarAssign { target, value });
-            Ok(())
+            Statement::VarAssign { target, value }
         }
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
@@ -413,20 +447,19 @@ fn parse_function_body(
             let then_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
-            let then_body = parse_block(then_block, constants)?;
+            let then_body = parse_block(function_name, then_block, constants)?;
 
             let else_body = if let Some(else_block) = inner.next() {
-                Some(parse_block(else_block, constants)?)
+                Some(parse_block(function_name, else_block, constants)?)
             } else {
                 None
             };
 
-            func.statements.push(Statement::IfElse {
+            Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
-            });
-            Ok(())
+            }
         }
         Rule::for_stmt => {
             let loop_statement = pair
@@ -456,17 +489,18 @@ fn parse_function_body(
                             "Parse error: Missing iterable in for loop".to_string()
                         })?)?;
                     let body = parse_block(
+                        function_name,
                         inner
                             .next()
                             .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
                         constants,
                     )?;
-                    func.statements.push(Statement::ForIn {
+                    Statement::ForIn {
                         index_var,
                         value_var,
                         iterable,
                         body,
-                    });
+                    }
                 }
                 Rule::for_count_stmt => {
                     let count =
@@ -474,22 +508,20 @@ fn parse_function_body(
                             "Parse error: Missing count in for loop".to_string()
                         })?)?;
                     let body = parse_block(
+                        function_name,
                         inner
                             .next()
                             .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
                         constants,
                     )?;
-                    func.statements.push(Statement::ForCount { count, body });
+                    Statement::ForCount { count, body }
                 }
                 _ => return Err("Parse error: Invalid for loop".to_string()),
             }
-            Ok(())
         }
         Rule::function_call_stmt => {
             let call = pair.into_inner().next().ok_or("Missing function call")?;
-            func.statements
-                .push(Statement::Call(parse_general_expression(call)?));
-            Ok(())
+            Statement::Call(parse_general_expression(call)?)
         }
         Rule::return_stmt => {
             let value = pair
@@ -497,8 +529,7 @@ fn parse_function_body(
                 .nth(1)
                 .map(parse_general_expression)
                 .transpose()?;
-            func.statements.push(Statement::Return(value));
-            Ok(())
+            Statement::Return(value)
         }
         Rule::variable_declaration => {
             let mut inner = pair.into_inner();
@@ -517,15 +548,15 @@ fn parse_function_body(
                 .ok_or_else(|| "Parse error: Missing value".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::LetBinding {
+            Statement::LetBinding {
                 name,
                 declared_type: Some(declared_type),
                 value,
-            });
-            Ok(())
+            }
         }
-        _ => Ok(()),
-    }
+        _ => return Ok(None),
+    };
+    Ok(Some(LocatedStatement { span, statement }))
 }
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
@@ -554,25 +585,15 @@ fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String>
 // ─── Expression Parsing ────────────────────────────────────────────────────────
 
 // Parse a block of statements
-fn parse_block(pair: Pair<Rule>, constants: &[Constant]) -> Result<Vec<Statement>, String> {
+fn parse_block(
+    function_name: &str,
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<Vec<LocatedStatement>, String> {
     let mut statements = Vec::new();
-
     for inner in pair.into_inner() {
-        // Create a temporary function to collect statements
-        let mut temp_func = Function {
-            name: String::new(),
-            parameters: Vec::new(),
-            statements: Vec::new(),
-            is_private: false,
-            is_static: false,
-            is_exported: false,
-            return_type: None,
-        };
-
-        parse_function_body(&mut temp_func, inner, constants)?;
-        statements.extend(temp_func.statements);
+        statements.extend(parse_statement(function_name, inner, constants)?);
     }
-
     Ok(statements)
 }
 
@@ -678,10 +699,10 @@ mod tests {
         assert_eq!(contract.parameters[0].param_type, "pubkey[C.N]");
         assert_eq!(contract.functions[0].parameters[0].param_type, "int[N]");
         assert!(
-            matches!(&contract.functions[0].statements[0], Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
+            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
         );
         assert!(
-            matches!(&contract.functions[0].statements[1], Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "-"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "-"))
         );
         for size in ["", "0", "-1", "1 2", "N + 1"] {
             assert!(
@@ -703,13 +724,13 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0], Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xDEADbeef")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xDEADbeef")
         );
         assert!(
-            matches!(&statements[1], Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xc5be0a")
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xc5be0a")
         );
         assert!(
-            matches!(&statements[2], Statement::Require(Requirement::Comparison { left: Expression::Literal(left), right: Expression::Literal(right), .. }) if left == "0x68656c6c6f" && left == right)
+            matches!(&statements[2].statement, Statement::Require(Requirement::Comparison { left: Expression::Literal(left), right: Expression::Literal(right), .. }) if left == "0x68656c6c6f" && left == right)
         );
     }
 
@@ -721,10 +742,10 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0], Statement::LetBinding { value: Expression::Property(name), .. } if name == "x.field")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression::Property(name), .. } if name == "x.field")
         );
         assert!(
-            matches!(&statements[1], Statement::LetBinding { value: Expression::Call { name, args, .. }, .. } if name == "Helper.value" && args.is_empty())
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression::Call { name, args, .. }, .. } if name == "Helper.value" && args.is_empty())
         );
     }
 
@@ -745,14 +766,14 @@ mod tests {
         assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
         assert!(!contract.functions[3].is_private);
         assert!(
-            matches!(&contract.functions[0].statements[0], Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op == "+"))
+            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op == "+"))
         );
         assert!(matches!(
-            &contract.functions[1].statements[1],
+            &contract.functions[1].statements[1].statement,
             Statement::Return(None)
         ));
         assert!(matches!(
-            &contract.functions[2].statements[0],
+            &contract.functions[2].statements[0].statement,
             Statement::Return(Some(_))
         ));
     }
@@ -763,7 +784,7 @@ mod tests {
         let Statement::LetBinding {
             value: Expression::BinaryOp { left, op, right },
             ..
-        } = &contract.functions[0].statements[0]
+        } = &contract.functions[0].statements[0].statement
         else {
             panic!("expected logical expression");
         };
@@ -776,7 +797,7 @@ mod tests {
             matches!(right.as_ref(), Expression::BinaryOp { left, op, .. }
             if op == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "&&"))
         );
-        assert!(matches!(&contract.functions[0].statements[1],
+        assert!(matches!(&contract.functions[0].statements[1].statement,
             Statement::Require(Requirement::Expression(Expression::BinaryOp { left, op, right }))
             if op == "&&"
                 && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "||")
@@ -790,7 +811,7 @@ mod tests {
         let Statement::LetBinding {
             value: Expression::BinaryOp { left, op, right },
             ..
-        } = &contract.functions[0].statements[0]
+        } = &contract.functions[0].statements[0].statement
         else {
             panic!("comparison must be the outer expression");
         };
@@ -804,7 +825,7 @@ mod tests {
         assert!(matches!(value.as_ref(), Expression::Literal(value) if value == "true"));
         assert!(matches!(right.as_ref(), Expression::Literal(value) if value == "false"));
         assert!(
-            matches!(&contract.functions[0].statements[1], Statement::LetBinding { value: Expression::Not { value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression::Not { value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
         );
     }
 
@@ -831,14 +852,14 @@ contract Demo() {
 
         let statements = &contract.functions[0].statements;
         assert!(matches!(
-            &statements[0],
+            &statements[0].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
             } if name == "state.enabled"
         ));
         assert!(matches!(
-            &statements[1],
+            &statements[1].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { array, index },
                 ..
@@ -846,7 +867,7 @@ contract Demo() {
                 && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "+")
         ));
         assert!(matches!(
-            &statements[2],
+            &statements[2].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
@@ -871,7 +892,7 @@ contract Demo(pubkey first, pubkey second) {
 
         let statements = &contract.functions[0].statements;
         assert!(matches!(
-            &statements[0],
+            &statements[0].statement,
             Statement::LetBinding {
                 name,
                 declared_type: None,
@@ -879,7 +900,7 @@ contract Demo(pubkey first, pubkey second) {
             } if name == "inferred"
         ));
         assert!(matches!(
-            &statements[1],
+            &statements[1].statement,
             Statement::LetBinding {
                 name,
                 declared_type: Some(declared_type),
@@ -887,7 +908,7 @@ contract Demo(pubkey first, pubkey second) {
             } if name == "explicit" && declared_type == "int"
         ));
         assert!(matches!(
-            &statements[2],
+            &statements[2].statement,
             Statement::Require(Requirement::CheckMultisig {
                 pubkeys,
                 signatures,
@@ -914,13 +935,13 @@ contract Demo() {
             then_body,
             else_body: Some(else_body),
             ..
-        } = &contract.functions[0].statements[0]
+        } = &contract.functions[0].statements[0].statement
         else {
             panic!("expected if/else");
         };
         for body in [then_body, else_body] {
             assert!(matches!(
-                body[0],
+                body[0].statement,
                 Statement::Require(Requirement::CheckMultisig { threshold: 1, .. })
             ));
         }

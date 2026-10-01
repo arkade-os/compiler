@@ -13,14 +13,17 @@ use super::internal_array_binding_name;
 /// - `Variable(value_var)` → its internal array-element binding
 /// - Property-form indexing `arr[index_var]` → the same internal binding
 pub(crate) fn substitute_loop_body(
-    body: &[Statement],
+    body: &[LocatedStatement],
     index_var: &str,
     value_var: &str,
     k: usize,
     array_name: &str,
-) -> Vec<Statement> {
+) -> Vec<LocatedStatement> {
     body.iter()
-        .map(|stmt| substitute_statement(stmt, index_var, value_var, k, array_name))
+        .map(|stmt| LocatedStatement {
+            span: stmt.span,
+            statement: substitute_statement(&stmt.statement, index_var, value_var, k, array_name),
+        })
         .collect()
 }
 
