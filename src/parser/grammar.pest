@@ -549,11 +549,8 @@ array = {
     "[" ~ named_binding ~ ("," ~ named_binding)* ~ "]"
 }
 
-// Named operands used by crypto checks. Dynamic indices here remain limited
-// to a single binding because these AST nodes store operand names directly.
-named_binding = @{
-    identifier ~ (("." ~ identifier) | ("[" ~ (qualified_name | number_literal) ~ "]"))*
-}
+// Named operands used by crypto checks: a binding with field and index suffixes.
+named_binding = { identifier ~ binding_suffix* }
 
 // SHA256 function. Accepts any additive expression so concatenation chains
 // like `sha256(a + b + c)` parse (`additive_expr` cascades down to primary,

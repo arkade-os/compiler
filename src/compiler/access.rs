@@ -2,52 +2,45 @@ use super::*;
 use crate::typechecker::{infer_type, ArkType};
 
 impl Generator {
-    fn access_layout<'a>(
+    /// Resolve an access to its layout path, collecting runtime indexes.
+    fn access_indices<'a>(
         &self,
         value: &'a Expression,
         indices: &mut Vec<(&'a Expression, usize, usize)>,
     ) -> Result<String, String> {
-        match value {
-            Expression::Variable(name) | Expression::Property(name) => Ok(name.clone()),
-            Expression::FieldAccess { value, field } => {
-                Ok(format!("{}.{field}", self.access_layout(value, indices)?))
+        let path = value.binding_path().ok_or("expected a binding access")?;
+        let (array, index) = match value {
+            Expression::FieldAccess { value, .. } => {
+                self.access_indices(value, indices)?;
+                return Ok(path);
             }
-            Expression::ArrayIndex { array, index } => {
-                self.index_layout(array.clone(), index, indices)
-            }
+            Expression::ArrayIndex { array, index } => (array.clone(), index),
             Expression::IndexAccess { value, index } => {
-                let array = self.access_layout(value, indices)?;
-                self.index_layout(array, index, indices)
+                (self.access_indices(value, indices)?, index)
             }
-            _ => Err("expected a binding access".to_string()),
-        }
-    }
-
-    fn index_layout<'a>(
-        &self,
-        array: String,
-        index: &'a Expression,
-        indices: &mut Vec<(&'a Expression, usize, usize)>,
-    ) -> Result<String, String> {
+            _ => return Ok(path),
+        };
         let Some(ArkType::Array(element, length)) = self.scope.get(&array) else {
             return Err(format!("'{array}' is not an array"));
         };
-        if let Expression::Literal(index) = index {
-            if let Ok(index) = index.parse::<usize>() {
-                if index >= *length {
-                    return Err(format!(
-                        "array index '{index}' is out of range for '{array}'"
-                    ));
-                }
-                return Ok(format!("{array}[{index}]"));
+        let literal = match index.as_ref() {
+            Expression::Literal(literal) => literal.parse::<usize>().ok(),
+            _ => None,
+        };
+        match literal {
+            Some(literal) if literal >= *length => {
+                return Err(format!(
+                    "array index '{literal}' is out of range for '{array}'"
+                ));
             }
+            Some(_) => {}
+            None => indices.push((
+                index,
+                *length,
+                self.value_leaves("", &element.as_str())?.len(),
+            )),
         }
-        indices.push((
-            index,
-            *length,
-            self.value_leaves("", &element.as_str())?.len(),
-        ));
-        Ok(format!("{array}[0]"))
+        Ok(path)
     }
 
     fn emit_access_offset(
@@ -70,7 +63,7 @@ impl Generator {
 
     pub(super) fn emit_access_value(&mut self, value: &Expression, ty: &str) -> Result<(), String> {
         let mut indices = Vec::new();
-        let name = self.access_layout(value, &mut indices)?;
+        let name = self.access_indices(value, &mut indices)?;
         let length = name
             .strip_suffix(".length")
             .filter(|_| !self.scope.contains_key(&name))
@@ -125,7 +118,7 @@ impl Generator {
             return Err("assignment requires a scalar field".to_string());
         }
         let mut indices = Vec::new();
-        let name = self.access_layout(value, &mut indices)?;
+        let name = self.access_indices(value, &mut indices)?;
         if indices.is_empty() {
             return self.assign_static_binding(&name, &name);
         }

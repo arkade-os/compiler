@@ -204,26 +204,26 @@ pub(crate) fn parse_check_sig_from_stack_verify_expr(
     pair: Pair<Rule>,
 ) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let signature = parse_named_operand(
+    let signature = parse_operand(
         inner
             .next()
             .ok_or("Missing signature in checkSigFromStackVerify")?,
     )?;
-    let pubkey = parse_named_operand(
+    let pubkey = parse_operand(
         inner
             .next()
             .ok_or("Missing pubkey in checkSigFromStackVerify")?,
     )?;
-    let message = parse_named_operand(
+    let message = parse_operand(
         inner
             .next()
             .ok_or("Missing message in checkSigFromStackVerify")?,
     )?;
 
     Ok(Expression::CheckSigFromStackVerify {
-        signature,
-        pubkey,
-        message,
+        signature: Box::new(signature),
+        pubkey: Box::new(pubkey),
+        message: Box::new(message),
     })
 }
 

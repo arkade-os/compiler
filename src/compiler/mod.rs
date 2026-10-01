@@ -210,14 +210,6 @@ impl Generator {
         let is_binding = self
             .binding_index(&Self::internal_binding_name(name))
             .is_some();
-        if !is_binding
-            && name.contains('[')
-            && (name.contains("].") || name.matches('[').count() > 1)
-        {
-            let value = crate::parser::parse_binding_expression(name)?;
-            let ty = typechecker::infer_type(&value, &self.scope).as_str();
-            return self.emit_access_value(&value, &ty);
-        }
         if let Some(array) = name.trim().strip_suffix(".length").filter(|_| !is_binding) {
             let length = self.array_length(array);
             if length == 0 {
@@ -225,15 +217,6 @@ impl Generator {
             }
             self.push_integer_temporary(length);
             return Ok(());
-        }
-        if let Some((array, index)) = name
-            .trim()
-            .strip_suffix(']')
-            .and_then(|name| name.rsplit_once('['))
-        {
-            if index.parse::<usize>().is_err() {
-                return self.read_indexed_binding(array, index);
-            }
         }
         let name = Self::internal_binding_name(name);
         self.read_static_binding(&name, false)
@@ -290,11 +273,6 @@ impl Generator {
         });
     }
 
-    fn read_indexed_binding(&mut self, array: &str, index: &str) -> Result<(), String> {
-        self.read_binding(index)?;
-        self.select_indexed_value(array)
-    }
-
     fn check_array_index(&mut self, array: &str) -> Result<(), String> {
         self.check_array_index_length(self.array_length(array))
     }
@@ -332,15 +310,6 @@ impl Generator {
             self.apply(OP_ADD, 2, 1)?;
         }
         self.apply(OP_PICK, 1, 1)
-    }
-
-    fn read_binding_or_integer(&mut self, value: &str) -> Result<(), String> {
-        if value.parse::<i64>().is_ok() {
-            self.push_temporary(value);
-            Ok(())
-        } else {
-            self.read_binding(value)
-        }
     }
 
     fn pop_temporaries(&mut self, count: usize, opcode: &str) -> Result<(), String> {
@@ -1087,14 +1056,13 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let array_name = match iterable {
-                    Expression::Variable(name) | Expression::Property(name) => name,
-                    _ => return Err("unsupported loop iterable".to_string()),
+                let typechecker::ArkType::Array(_, length) =
+                    typechecker::infer_type(iterable, &generator.scope)
+                else {
+                    return Err("unsupported loop iterable".to_string());
                 };
-                let array_name = array_name.as_str();
-                for k in 0..generator.array_length(array_name) {
-                    let substituted =
-                        substitute_loop_body(body, index_var, value_var, k, array_name);
+                for k in 0..length {
+                    let substituted = substitute_loop_body(body, index_var, value_var, k, iterable);
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
                     if k > 0 && functions::contains_return(body) {
@@ -1209,9 +1177,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     pubkey,
                     message,
                 } => {
-                    generator.read_binding(signature)?;
-                    generator.read_binding(message)?;
-                    generator.read_binding(pubkey)?;
+                    generator.emit_expression(signature)?;
+                    generator.emit_expression(message)?;
+                    generator.emit_expression(pubkey)?;
                     generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
@@ -1243,8 +1211,8 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             Ok(())
         }
         Requirement::CheckSig { signature, pubkey } => {
-            generator.read_binding(signature)?;
-            generator.read_binding(pubkey)?;
+            generator.emit_expression(signature)?;
+            generator.emit_expression(pubkey)?;
             generator.apply(OP_CHECKSIG, 2, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1254,9 +1222,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             pubkey,
             message,
         } => {
-            generator.read_binding(signature)?;
-            generator.read_binding(message)?;
-            generator.read_binding(pubkey)?;
+            generator.emit_expression(signature)?;
+            generator.emit_expression(message)?;
+            generator.emit_expression(pubkey)?;
             generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1289,12 +1257,12 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 return Err("checkMultisig key and signature counts must match".to_string());
             }
             for signature in signatures.iter().rev() {
-                generator.read_binding(signature)?;
+                generator.emit_expression(signature)?;
             }
-            generator.read_binding(&pubkeys[0])?;
+            generator.emit_expression(&pubkeys[0])?;
             generator.apply(OP_CHECKSIG, 2, 1)?;
             for pubkey in pubkeys.iter().skip(1) {
-                generator.read_binding(pubkey)?;
+                generator.emit_expression(pubkey)?;
                 generator.apply(OP_CHECKSIGADD, 3, 1)?;
             }
             if threshold <= &16 {
@@ -1311,9 +1279,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             preimage,
             hash,
         } => {
-            generator.read_binding_or_integer(preimage)?;
+            generator.emit_expression(preimage)?;
             generator.lower_raw_opcode(hash_fn.opcode())?;
-            generator.read_binding_or_integer(hash)?;
+            generator.emit_expression(hash)?;
             generator.apply(OP_EQUAL, 2, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())

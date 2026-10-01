@@ -135,7 +135,12 @@ fn validate_body(
                 declared_type,
                 value,
             } => {
-                if let Some(expected) = declared_type {
+                // Non-literal initializers are type-checked with the declaration.
+                if let (
+                    Some(expected),
+                    Expression::ArrayLiteral(_) | Expression::StructLiteral(_),
+                ) = (declared_type, value)
+                {
                     validate_value(
                         expected,
                         value,

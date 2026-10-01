@@ -573,7 +573,7 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                     &ArkType::Pubkey,
                     errors,
                     fn_name,
-                    &format!("checkMultisig() pubkey '{}'", pk),
+                    &format!("checkMultisig() pubkey '{}'", pk.source_text()),
                 );
             }
             for signature in signatures {
@@ -583,22 +583,24 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                     &ArkType::Signature,
                     errors,
                     fn_name,
-                    &format!("checkMultisig() signature '{}'", signature),
+                    &format!("checkMultisig() signature '{}'", signature.source_text()),
                 );
             }
         }
         Requirement::HashEqual { hash_fn, hash, .. } => {
-            if let Some(t) = scope.get(hash.as_str()) {
-                if !digest_accepts(hash_fn, t) {
-                    errors.push(TypeError::new(format!(
-                        "fn {}: {} comparison: '{}' has type '{}', expected {}",
-                        fn_name,
-                        hash_fn.name(),
-                        hash,
-                        t.as_str(),
-                        hash_fn.digest_type()
-                    )));
-                }
+            let t = infer_type(hash, scope);
+            if !matches!(hash, Expression::Literal(_))
+                && t != ArkType::Unknown
+                && !digest_accepts(hash_fn, &t)
+            {
+                errors.push(TypeError::new(format!(
+                    "fn {}: {} comparison: '{}' has type '{}', expected {}",
+                    fn_name,
+                    hash_fn.name(),
+                    hash.source_text(),
+                    t.as_str(),
+                    hash_fn.digest_type()
+                )));
             }
         }
         Requirement::Comparison { left, op, right } => {
@@ -700,19 +702,20 @@ pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)>
 }
 
 fn check_signature_expression(
-    signature: &str,
-    pubkey: &str,
+    signature: &Expression,
+    pubkey: &Expression,
     call: &str,
     scope: &Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
 ) {
-    if scope.get(signature) == Some(&ArkType::Pubkey)
-        && scope.get(pubkey) == Some(&ArkType::Signature)
+    let (signature_text, pubkey_text) = (signature.source_text(), pubkey.source_text());
+    if infer_type(signature, scope) == ArkType::Pubkey
+        && infer_type(pubkey, scope) == ArkType::Signature
     {
         errors.push(TypeError::new(format!(
             "fn {}: {}({}, {}) — arguments appear swapped: expected (signature, pubkey)",
-            fn_name, call, signature, pubkey
+            fn_name, call, signature_text, pubkey_text
         )));
         return;
     }
@@ -722,7 +725,7 @@ fn check_signature_expression(
         &ArkType::Signature,
         errors,
         fn_name,
-        &format!("{call}() arg 1 '{signature}'"),
+        &format!("{call}() arg 1 '{signature_text}'"),
     );
     expect_type(
         scope,
@@ -730,7 +733,7 @@ fn check_signature_expression(
         &ArkType::Pubkey,
         errors,
         fn_name,
-        &format!("{call}() arg 2 '{pubkey}'"),
+        &format!("{call}() arg 2 '{pubkey_text}'"),
     );
 }
 
@@ -794,14 +797,16 @@ fn is_numeric(t: &ArkType) -> bool {
 
 fn expect_type(
     scope: &Scope,
-    name: &str,
+    value: &Expression,
     expected: &ArkType,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
     label: &str,
 ) {
-    if let Some(actual) = scope.get(name) {
-        if actual != expected && *actual != ArkType::Unknown {
+    // Literal operands are checked by the validator.
+    if !matches!(value, Expression::Literal(_)) {
+        let actual = infer_type(value, scope);
+        if actual != *expected && actual != ArkType::Unknown {
             errors.push(TypeError::new(format!(
                 "fn {}: {} has type '{}', expected '{}'",
                 fn_name,

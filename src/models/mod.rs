@@ -386,24 +386,27 @@ pub enum Requirement {
     /// Expression that must evaluate to true
     Expression(Expression),
     /// Check signature requirement
-    CheckSig { signature: String, pubkey: String },
+    CheckSig {
+        signature: Expression,
+        pubkey: Expression,
+    },
     /// Check signature from stack requirement (signature verified against a message)
     CheckSigFromStack {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Expression,
+        pubkey: Expression,
+        message: Expression,
     },
     /// Check multisig requirement
     CheckMultisig {
-        pubkeys: Vec<String>,
-        signatures: Vec<String>,
+        pubkeys: Vec<Expression>,
+        signatures: Vec<Expression>,
         threshold: u16,
     },
     /// Hash equal requirement
     HashEqual {
         hash_fn: HashFn,
-        preimage: String,
-        hash: String,
+        preimage: Expression,
+        hash: Expression,
     },
     /// Comparison requirement
     Comparison {
@@ -694,12 +697,15 @@ pub enum Expression {
         property: Option<String>, // Optional property like "amount", "type", "inputIndex", "outputIndex"
     },
     /// CheckSig expression result (for use in if conditions)
-    CheckSigExpr { signature: String, pubkey: String },
+    CheckSigExpr {
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+    },
     /// CheckSigFromStack expression result
     CheckSigFromStackExpr {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     // ─── Byte-string operations ────────────────────────────────────────
     /// Byte-string concatenation: produced by the rewrite pass when `+` has at
@@ -787,9 +793,9 @@ pub enum Expression {
     },
     /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
     CheckSigFromStackVerify {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
@@ -873,10 +879,19 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         | Expression::TxIntrospection { .. }
         | Expression::IntentInspect { .. }
         | Expression::GroupProperty { .. }
-        | Expression::AssetGroupsLength
-        | Expression::CheckSigExpr { .. }
-        | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. } => vec![],
+        | Expression::AssetGroupsLength => vec![],
+
+        Expression::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => vec![signature, pubkey, message],
 
         Expression::FieldAccess { value, .. } => vec![value],
         Expression::IndexAccess { value, index } => vec![value, index],
@@ -1001,27 +1016,38 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
 impl Expression {
     /// Resolve the layout path, using element zero for runtime indexes.
     pub(crate) fn binding_path(&self) -> Option<String> {
+        self.access_path(&|index| match index {
+            Self::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
+            _ => "0".to_string(),
+        })
+    }
+
+    /// Spell an operand as written, for diagnostics.
+    pub(crate) fn source_text(&self) -> String {
         match self {
-            Self::Variable(name) | Self::Property(name) => Some(name.clone()),
-            Self::ArrayIndex { array, index } => {
-                Some(format!("{array}[{}]", index.binding_index()))
+            Self::Literal(value) => value.clone(),
+            Self::BinaryOp { left, op, right } => {
+                format!("{} {op} {}", left.source_text(), right.source_text())
             }
-            Self::IndexAccess { value, index } => Some(format!(
-                "{}[{}]",
-                value.binding_path()?,
-                index.binding_index()
-            )),
-            Self::FieldAccess { value, field } => {
-                Some(format!("{}.{field}", value.binding_path()?))
-            }
-            _ => None,
+            _ => self
+                .access_path(&Self::source_text)
+                .unwrap_or_else(|| "<expr>".to_string()),
         }
     }
 
-    fn binding_index(&self) -> &str {
+    fn access_path(&self, index_text: &dyn Fn(&Self) -> String) -> Option<String> {
         match self {
-            Self::Literal(index) if index.parse::<usize>().is_ok() => index,
-            _ => "0",
+            Self::Variable(name) | Self::Property(name) => Some(name.clone()),
+            Self::ArrayIndex { array, index } => Some(format!("{array}[{}]", index_text(index))),
+            Self::IndexAccess { value, index } => Some(format!(
+                "{}[{}]",
+                value.access_path(index_text)?,
+                index_text(index)
+            )),
+            Self::FieldAccess { value, field } => {
+                Some(format!("{}.{field}", value.access_path(index_text)?))
+            }
+            _ => None,
         }
     }
 }

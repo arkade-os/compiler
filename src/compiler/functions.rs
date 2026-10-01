@@ -201,13 +201,22 @@ impl Generator {
             if is_builtin_type(&parameter.param_type)
                 && !assigns_parameter(&function.statements, &parameter.name)
             {
-                if let Expression::Variable(source) = argument {
-                    if let Some(source_index) = self.binding_index(source).filter(|&i| i < baseline)
+                let source = match argument {
+                    Expression::Variable(name) => Some(Self::internal_binding_name(name)),
+                    Expression::ArrayIndex { array, index } => match index.as_ref() {
+                        Expression::Literal(index) => {
+                            Some(Self::internal_binding_name(&format!("{array}[{index}]")))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(source) = source {
+                    if let Some(source_index) =
+                        self.binding_index(&source).filter(|&i| i < baseline)
                     {
                         if self.read_cursor.is_none() {
-                            if let Some(previous) =
-                                self.last_reads.get(&(source.clone(), source_index))
-                            {
+                            if let Some(previous) = self.last_reads.get(&(source, source_index)) {
                                 self.final_reads[*previous] = false;
                             }
                         }

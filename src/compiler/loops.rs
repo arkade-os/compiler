@@ -1,28 +1,23 @@
 use crate::models::*;
 
-use super::internal_array_binding_name;
-
 // ─── Loop Unrolling ─────────────────────────────────────────────────────────────
 
 /// Substitute loop variables in the body for a specific iteration index k.
 ///
 /// Transforms:
-/// - `GroupProperty { group: value_var, property: "sumOutputs" }` → `GroupSum { index: k, source: Outputs }`
-/// - `GroupProperty { group: value_var, property: "sumInputs" }` → `GroupSum { index: k, source: Inputs }`
-/// - `Variable(index_var)` → `Literal(k)`
-/// - `Variable(value_var)` → its internal array-element binding
-/// - Property-form indexing `arr[index_var]` → the same internal binding
+/// - `index_var` → `Literal(k)`
+/// - `value_var` and paths rooted at it → accesses on element `k` of `items`
 pub(crate) fn substitute_loop_body(
     body: &[LocatedStatement],
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: &str,
+    items: &Expression,
 ) -> Vec<LocatedStatement> {
     body.iter()
         .map(|stmt| LocatedStatement {
             span: stmt.span,
-            statement: substitute_statement(&stmt.statement, index_var, value_var, k, array_name),
+            statement: substitute_statement(&stmt.statement, index_var, value_var, k, items),
         })
         .collect()
 }
@@ -32,18 +27,20 @@ pub(crate) fn substitute_statement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: &str,
+    items: &Expression,
 ) -> Statement {
     match stmt {
         Statement::Call(expression) => Statement::Call(substitute_expression(
-            expression, index_var, value_var, k, array_name,
+            expression, index_var, value_var, k, items,
         )),
-        Statement::Return(value) => Statement::Return(value.as_ref().map(|expression| {
-            substitute_expression(expression, index_var, value_var, k, array_name)
-        })),
-        Statement::Require(req) => Statement::Require(substitute_requirement(
-            req, index_var, value_var, k, array_name,
-        )),
+        Statement::Return(value) => {
+            Statement::Return(value.as_ref().map(|expression| {
+                substitute_expression(expression, index_var, value_var, k, items)
+            }))
+        }
+        Statement::Require(req) => {
+            Statement::Require(substitute_requirement(req, index_var, value_var, k, items))
+        }
         Statement::LetBinding {
             name,
             declared_type,
@@ -51,35 +48,43 @@ pub(crate) fn substitute_statement(
         } => Statement::LetBinding {
             name: name.clone(),
             declared_type: declared_type.clone(),
-            value: substitute_expression(value, index_var, value_var, k, array_name),
+            value: substitute_expression(value, index_var, value_var, k, items),
         },
         Statement::VarAssign { target, value } => Statement::VarAssign {
-            target: match target {
-                AssignmentTarget::Access(value) => AssignmentTarget::Access(Box::new(
-                    substitute_expression(value, index_var, value_var, k, array_name),
-                )),
-                AssignmentTarget::Binding(name) => AssignmentTarget::Binding(substitute_loop_name(
-                    name, index_var, value_var, k, array_name,
-                )),
-                AssignmentTarget::ArrayIndex { array, index } => AssignmentTarget::ArrayIndex {
-                    array: substitute_loop_name(array, index_var, value_var, k, array_name),
-                    index: Box::new(substitute_expression(
-                        index, index_var, value_var, k, array_name,
-                    )),
+            target: match substitute_expression(
+                &match target {
+                    AssignmentTarget::Access(value) => (**value).clone(),
+                    AssignmentTarget::Binding(name) => Expression::Property(name.clone()),
+                    AssignmentTarget::ArrayIndex { array, index } => Expression::ArrayIndex {
+                        array: array.clone(),
+                        index: index.clone(),
+                    },
                 },
+                index_var,
+                value_var,
+                k,
+                items,
+            ) {
+                Expression::Variable(name) | Expression::Property(name) => {
+                    AssignmentTarget::Binding(name)
+                }
+                Expression::ArrayIndex { array, index } => {
+                    AssignmentTarget::ArrayIndex { array, index }
+                }
+                value => AssignmentTarget::Access(Box::new(value)),
             },
-            value: substitute_expression(value, index_var, value_var, k, array_name),
+            value: substitute_expression(value, index_var, value_var, k, items),
         },
         Statement::IfElse {
             condition,
             then_body,
             else_body,
         } => Statement::IfElse {
-            condition: substitute_expression(condition, index_var, value_var, k, array_name),
-            then_body: substitute_loop_body(then_body, index_var, value_var, k, array_name),
+            condition: substitute_expression(condition, index_var, value_var, k, items),
+            then_body: substitute_loop_body(then_body, index_var, value_var, k, items),
             else_body: else_body
                 .as_ref()
-                .map(|b| substitute_loop_body(b, index_var, value_var, k, array_name)),
+                .map(|b| substitute_loop_body(b, index_var, value_var, k, items)),
         },
         Statement::ForIn {
             index_var: inner_idx,
@@ -89,12 +94,12 @@ pub(crate) fn substitute_statement(
         } => Statement::ForIn {
             index_var: inner_idx.clone(),
             value_var: inner_val.clone(),
-            iterable: substitute_expression(iterable, index_var, value_var, k, array_name),
-            body: substitute_loop_body(body, index_var, value_var, k, array_name),
+            iterable: substitute_expression(iterable, index_var, value_var, k, items),
+            body: substitute_loop_body(body, index_var, value_var, k, items),
         },
         Statement::ForCount { count, body } => Statement::ForCount {
-            count: substitute_expression(count, index_var, value_var, k, array_name),
-            body: substitute_loop_body(body, index_var, value_var, k, array_name),
+            count: substitute_expression(count, index_var, value_var, k, items),
+            body: substitute_loop_body(body, index_var, value_var, k, items),
         },
     }
 }
@@ -104,29 +109,29 @@ pub(crate) fn substitute_requirement(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: &str,
+    items: &Expression,
 ) -> Requirement {
     match req {
-        Requirement::Expression(expr) => Requirement::Expression(substitute_expression(
-            expr, index_var, value_var, k, array_name,
-        )),
+        Requirement::Expression(expr) => {
+            Requirement::Expression(substitute_expression(expr, index_var, value_var, k, items))
+        }
         Requirement::Comparison { left, op, right } => Requirement::Comparison {
-            left: substitute_expression(left, index_var, value_var, k, array_name),
+            left: substitute_expression(left, index_var, value_var, k, items),
             op: op.clone(),
-            right: substitute_expression(right, index_var, value_var, k, array_name),
+            right: substitute_expression(right, index_var, value_var, k, items),
         },
         Requirement::CheckSig { signature, pubkey } => Requirement::CheckSig {
-            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
-            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
+            signature: substitute_expression(signature, index_var, value_var, k, items),
+            pubkey: substitute_expression(pubkey, index_var, value_var, k, items),
         },
         Requirement::CheckSigFromStack {
             signature,
             pubkey,
             message,
         } => Requirement::CheckSigFromStack {
-            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
-            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
-            message: substitute_loop_name(message, index_var, value_var, k, array_name),
+            signature: substitute_expression(signature, index_var, value_var, k, items),
+            pubkey: substitute_expression(pubkey, index_var, value_var, k, items),
+            message: substitute_expression(message, index_var, value_var, k, items),
         },
         Requirement::CheckMultisig {
             pubkeys,
@@ -135,11 +140,11 @@ pub(crate) fn substitute_requirement(
         } => Requirement::CheckMultisig {
             pubkeys: pubkeys
                 .iter()
-                .map(|name| substitute_loop_name(name, index_var, value_var, k, array_name))
+                .map(|key| substitute_expression(key, index_var, value_var, k, items))
                 .collect(),
             signatures: signatures
                 .iter()
-                .map(|name| substitute_loop_name(name, index_var, value_var, k, array_name))
+                .map(|sig| substitute_expression(sig, index_var, value_var, k, items))
                 .collect(),
             threshold: *threshold,
         },
@@ -149,52 +154,61 @@ pub(crate) fn substitute_requirement(
             hash,
         } => Requirement::HashEqual {
             hash_fn: hash_fn.clone(),
-            preimage: substitute_loop_name(preimage, index_var, value_var, k, array_name),
-            hash: substitute_loop_name(hash, index_var, value_var, k, array_name),
+            preimage: substitute_expression(preimage, index_var, value_var, k, items),
+            hash: substitute_expression(hash, index_var, value_var, k, items),
         },
     }
 }
 
-fn substitute_loop_name(
-    name: &str,
+/// Resolve a dotted binding path, rooting `value_var` paths at element `k` of `items`.
+fn substitute_path(
+    path: &str,
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: &str,
+    items: &Expression,
+) -> Option<Expression> {
+    if path == index_var {
+        return Some(Expression::Literal(k.to_string()));
+    }
+    let mut fields = path.split('.');
+    if fields.next() != Some(value_var) {
+        return None;
+    }
+    let index = Box::new(Expression::Literal(k.to_string()));
+    let element = match items {
+        Expression::Variable(array) | Expression::Property(array) => Expression::ArrayIndex {
+            array: array.clone(),
+            index,
+        },
+        value => Expression::IndexAccess {
+            value: Box::new(value.clone()),
+            index,
+        },
+    };
+    Some(
+        fields.fold(element, |value, field| Expression::FieldAccess {
+            value: Box::new(value),
+            field: field.to_string(),
+        }),
+    )
+}
+
+/// Substitute a named group index; loop values resolve only over named arrays.
+fn substitute_group(
+    group: &str,
+    index_var: &str,
+    value_var: &str,
+    k: usize,
+    items: &Expression,
 ) -> String {
-    if name == index_var {
-        return k.to_string();
-    }
-    if name == value_var {
-        return format!("{array_name}[{k}]");
-    }
-    if let Some(suffix) = name
-        .strip_prefix(value_var)
-        .filter(|suffix| suffix.starts_with('.'))
-    {
-        return format!("{array_name}[{k}]{suffix}");
-    }
-    if name.contains("].") || name.matches('[').count() > 1 {
-        return name
-            .replace(&format!("[{index_var}]"), &format!("[{k}]"))
-            .replace(&format!("[{value_var}]"), &format!("[{array_name}[{k}]]"));
-    }
-    if let Some(open) = name.find('[') {
-        if name.ends_with(']') {
-            let index = &name[open + 1..name.len() - 1];
-            if index == index_var {
-                return internal_array_binding_name(&name[..open], &k.to_string());
-            }
-            if index == value_var {
-                return format!(
-                    "{}[{}]",
-                    &name[..open],
-                    internal_array_binding_name(array_name, &k.to_string())
-                );
-            }
+    match items {
+        _ if group == index_var => k.to_string(),
+        Expression::Variable(array) | Expression::Property(array) if group == value_var => {
+            format!("{array}[{k}]")
         }
+        _ => group.to_string(),
     }
-    name.to_string()
 }
 
 pub(crate) fn substitute_expression(
@@ -202,7 +216,7 @@ pub(crate) fn substitute_expression(
     index_var: &str,
     value_var: &str,
     k: usize,
-    array_name: &str,
+    items: &Expression,
 ) -> Expression {
     match expr {
         Expression::Call {
@@ -213,20 +227,17 @@ pub(crate) fn substitute_expression(
             name: name.clone(),
             args: args
                 .iter()
-                .map(|arg| substitute_expression(arg, index_var, value_var, k, array_name))
+                .map(|arg| substitute_expression(arg, index_var, value_var, k, items))
                 .collect(),
             return_type: return_type.clone(),
         },
-        // Replace index variable with literal k
-        Expression::Variable(var) if var == index_var => Expression::Literal(k.to_string()),
-        // Keep the source path so composite loop values can be flattened.
-        Expression::Variable(var) if var == value_var => {
-            Expression::Variable(format!("{array_name}[{k}]"))
+        Expression::Variable(path) | Expression::Property(path) => {
+            substitute_path(path, index_var, value_var, k, items).unwrap_or_else(|| expr.clone())
         }
         Expression::ArrayLiteral(elements) => Expression::ArrayLiteral(
             elements
                 .iter()
-                .map(|element| substitute_expression(element, index_var, value_var, k, array_name))
+                .map(|element| substitute_expression(element, index_var, value_var, k, items))
                 .collect(),
         ),
         Expression::StructLiteral(fields) => Expression::StructLiteral(
@@ -235,124 +246,66 @@ pub(crate) fn substitute_expression(
                 .map(|(name, value)| {
                     (
                         name.clone(),
-                        substitute_expression(value, index_var, value_var, k, array_name),
+                        substitute_expression(value, index_var, value_var, k, items),
                     )
                 })
                 .collect(),
         ),
-        Expression::ArrayIndex { array, index } => Expression::ArrayIndex {
-            array: substitute_loop_name(array, index_var, value_var, k, array_name),
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
-        },
+        Expression::ArrayIndex { array, index } => {
+            let index = Box::new(substitute_expression(index, index_var, value_var, k, items));
+            match substitute_path(array, index_var, value_var, k, items) {
+                Some(value) => Expression::IndexAccess {
+                    value: Box::new(value),
+                    index,
+                },
+                None => Expression::ArrayIndex {
+                    array: array.clone(),
+                    index,
+                },
+            }
+        }
         Expression::GroupProperty { group, property } => Expression::GroupProperty {
-            group: substitute_loop_name(group, index_var, value_var, k, array_name),
+            group: substitute_group(group, index_var, value_var, k, items),
             property: property.clone(),
         },
-        // Handle property strings that represent array indexing (e.g., "oracles[i]").
-        Expression::Property(prop) => {
-            // Check if this looks like array indexing
-            if let Some(bracket_start) = prop.find('[') {
-                if let Some(bracket_end) = prop.find(']') {
-                    let arr_name = &prop[..bracket_start];
-                    let idx = &prop[bracket_start + 1..bracket_end];
-                    if idx == index_var {
-                        return Expression::Variable(internal_array_binding_name(
-                            arr_name,
-                            &k.to_string(),
-                        ));
-                    }
-                    if idx == value_var {
-                        return Expression::Property(format!(
-                            "{arr_name}[{}]",
-                            internal_array_binding_name(array_name, &k.to_string())
-                        ));
-                    }
-                }
-            }
-            Expression::Property(substitute_loop_name(
-                prop, index_var, value_var, k, array_name,
-            ))
-        }
         // Recursively substitute in binary operations
         Expression::BinaryOp { left, op, right } => Expression::BinaryOp {
-            left: Box::new(substitute_expression(
-                left, index_var, value_var, k, array_name,
-            )),
+            left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
             op: op.clone(),
-            right: Box::new(substitute_expression(
-                right, index_var, value_var, k, array_name,
-            )),
-        },
-        Expression::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        } => Expression::CheckSigFromStackExpr {
-            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
-            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
-            message: substitute_loop_name(message, index_var, value_var, k, array_name),
-        },
-        Expression::CheckSigExpr { signature, pubkey } => Expression::CheckSigExpr {
-            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
-            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
-        },
-        Expression::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => Expression::CheckSigFromStackVerify {
-            signature: substitute_loop_name(signature, index_var, value_var, k, array_name),
-            pubkey: substitute_loop_name(pubkey, index_var, value_var, k, array_name),
-            message: substitute_loop_name(message, index_var, value_var, k, array_name),
+            right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
         },
         // Handle InputIntrospection - substitute index if it matches loop variable
         Expression::InputIntrospection { index, property } => Expression::InputIntrospection {
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
             property: property.clone(),
         },
         // Handle OutputIntrospection - substitute index if it matches loop variable
         Expression::OutputIntrospection { index, property } => Expression::OutputIntrospection {
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
             property: property.clone(),
         },
         Expression::Negate { value } => Expression::Negate {
-            value: Box::new(substitute_expression(
-                value, index_var, value_var, k, array_name,
-            )),
+            value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
         },
         Expression::Not { value } => Expression::Not {
-            value: Box::new(substitute_expression(
-                value, index_var, value_var, k, array_name,
-            )),
+            value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
         },
         Expression::ReverseBytes { data } => Expression::ReverseBytes {
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
         Expression::Cast { target, data } => Expression::Cast {
             target: target.clone(),
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
         Expression::Sighash { hash_type } => Expression::Sighash {
             hash_type: Box::new(substitute_expression(
-                hash_type, index_var, value_var, k, array_name,
+                hash_type, index_var, value_var, k, items,
             )),
         },
         Expression::Digest { data, hash_type } => Expression::Digest {
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
             hash_type: Box::new(substitute_expression(
-                hash_type, index_var, value_var, k, array_name,
+                hash_type, index_var, value_var, k, items,
             )),
         },
         Expression::ModExp {
@@ -360,14 +313,12 @@ pub(crate) fn substitute_expression(
             exponent,
             modulus,
         } => Expression::ModExp {
-            base: Box::new(substitute_expression(
-                base, index_var, value_var, k, array_name,
-            )),
+            base: Box::new(substitute_expression(base, index_var, value_var, k, items)),
             exponent: Box::new(substitute_expression(
-                exponent, index_var, value_var, k, array_name,
+                exponent, index_var, value_var, k, items,
             )),
             modulus: Box::new(substitute_expression(
-                modulus, index_var, value_var, k, array_name,
+                modulus, index_var, value_var, k, items,
             )),
         },
         Expression::EcAdd {
@@ -377,20 +328,12 @@ pub(crate) fn substitute_expression(
             y2,
             curve_id,
         } => Expression::EcAdd {
-            x1: Box::new(substitute_expression(
-                x1, index_var, value_var, k, array_name,
-            )),
-            y1: Box::new(substitute_expression(
-                y1, index_var, value_var, k, array_name,
-            )),
-            x2: Box::new(substitute_expression(
-                x2, index_var, value_var, k, array_name,
-            )),
-            y2: Box::new(substitute_expression(
-                y2, index_var, value_var, k, array_name,
-            )),
+            x1: Box::new(substitute_expression(x1, index_var, value_var, k, items)),
+            y1: Box::new(substitute_expression(y1, index_var, value_var, k, items)),
+            x2: Box::new(substitute_expression(x2, index_var, value_var, k, items)),
+            y2: Box::new(substitute_expression(y2, index_var, value_var, k, items)),
             curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, array_name,
+                curve_id, index_var, value_var, k, items,
             )),
         },
         Expression::EcMul {
@@ -399,17 +342,13 @@ pub(crate) fn substitute_expression(
             scalar,
             curve_id,
         } => Expression::EcMul {
-            x: Box::new(substitute_expression(
-                x, index_var, value_var, k, array_name,
-            )),
-            y: Box::new(substitute_expression(
-                y, index_var, value_var, k, array_name,
-            )),
+            x: Box::new(substitute_expression(x, index_var, value_var, k, items)),
+            y: Box::new(substitute_expression(y, index_var, value_var, k, items)),
             scalar: Box::new(substitute_expression(
-                scalar, index_var, value_var, k, array_name,
+                scalar, index_var, value_var, k, items,
             )),
             curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, array_name,
+                curve_id, index_var, value_var, k, items,
             )),
         },
         Expression::EcPairing {
@@ -421,39 +360,31 @@ pub(crate) fn substitute_expression(
             g2_y_c0,
             curve_id,
         } => Expression::EcPairing {
-            g1_x: Box::new(substitute_expression(
-                g1_x, index_var, value_var, k, array_name,
-            )),
-            g1_y: Box::new(substitute_expression(
-                g1_y, index_var, value_var, k, array_name,
-            )),
+            g1_x: Box::new(substitute_expression(g1_x, index_var, value_var, k, items)),
+            g1_y: Box::new(substitute_expression(g1_y, index_var, value_var, k, items)),
             g2_x_c1: Box::new(substitute_expression(
-                g2_x_c1, index_var, value_var, k, array_name,
+                g2_x_c1, index_var, value_var, k, items,
             )),
             g2_x_c0: Box::new(substitute_expression(
-                g2_x_c0, index_var, value_var, k, array_name,
+                g2_x_c0, index_var, value_var, k, items,
             )),
             g2_y_c1: Box::new(substitute_expression(
-                g2_y_c1, index_var, value_var, k, array_name,
+                g2_y_c1, index_var, value_var, k, items,
             )),
             g2_y_c0: Box::new(substitute_expression(
-                g2_y_c0, index_var, value_var, k, array_name,
+                g2_y_c0, index_var, value_var, k, items,
             )),
             curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, array_name,
+                curve_id, index_var, value_var, k, items,
             )),
         },
         Expression::AssetCount { source, index } => Expression::AssetCount {
             source: source.clone(),
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
         },
         Expression::GroupSum { source, index } => Expression::GroupSum {
             source: source.clone(),
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
         },
         Expression::AssetAt {
             source,
@@ -464,21 +395,19 @@ pub(crate) fn substitute_expression(
             source: source.clone(),
             property: property.clone(),
             io_index: Box::new(substitute_expression(
-                io_index, index_var, value_var, k, array_name,
+                io_index, index_var, value_var, k, items,
             )),
             asset_index: Box::new(substitute_expression(
                 asset_index,
                 index_var,
                 value_var,
                 k,
-                array_name,
+                items,
             )),
         },
         Expression::GroupNumIO { source, index } => Expression::GroupNumIO {
             source: source.clone(),
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
         },
         Expression::GroupIOAccess {
             source,
@@ -493,47 +422,37 @@ pub(crate) fn substitute_expression(
                 index_var,
                 value_var,
                 k,
-                array_name,
+                items,
             )),
             io_index: Box::new(substitute_expression(
-                io_index, index_var, value_var, k, array_name,
+                io_index, index_var, value_var, k, items,
             )),
         },
         Expression::Concat { left, right } => Expression::Concat {
-            left: Box::new(substitute_expression(
-                left, index_var, value_var, k, array_name,
-            )),
-            right: Box::new(substitute_expression(
-                right, index_var, value_var, k, array_name,
-            )),
+            left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
+            right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
         },
         Expression::Sha256 { data } => Expression::Sha256 {
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
         Expression::Sha256Initialize { data } => Expression::Sha256Initialize {
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
         Expression::Sha256Update { context, chunk } => Expression::Sha256Update {
             context: Box::new(substitute_expression(
-                context, index_var, value_var, k, array_name,
+                context, index_var, value_var, k, items,
             )),
-            chunk: Box::new(substitute_expression(
-                chunk, index_var, value_var, k, array_name,
-            )),
+            chunk: Box::new(substitute_expression(chunk, index_var, value_var, k, items)),
         },
         Expression::Sha256Finalize {
             context,
             last_chunk,
         } => Expression::Sha256Finalize {
             context: Box::new(substitute_expression(
-                context, index_var, value_var, k, array_name,
+                context, index_var, value_var, k, items,
             )),
             last_chunk: Box::new(substitute_expression(
-                last_chunk, index_var, value_var, k, array_name,
+                last_chunk, index_var, value_var, k, items,
             )),
         },
         Expression::EcMulScalarVerify {
@@ -542,13 +461,13 @@ pub(crate) fn substitute_expression(
             point_q,
         } => Expression::EcMulScalarVerify {
             scalar: Box::new(substitute_expression(
-                scalar, index_var, value_var, k, array_name,
+                scalar, index_var, value_var, k, items,
             )),
             point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, array_name,
+                point_p, index_var, value_var, k, items,
             )),
             point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, array_name,
+                point_q, index_var, value_var, k, items,
             )),
         },
         Expression::TweakVerify {
@@ -557,51 +476,33 @@ pub(crate) fn substitute_expression(
             point_q,
         } => Expression::TweakVerify {
             point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, array_name,
+                point_p, index_var, value_var, k, items,
             )),
-            tweak: Box::new(substitute_expression(
-                tweak, index_var, value_var, k, array_name,
-            )),
+            tweak: Box::new(substitute_expression(tweak, index_var, value_var, k, items)),
             point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, array_name,
+                point_q, index_var, value_var, k, items,
             )),
         },
         Expression::Substr { data, offset, size } => Expression::Substr {
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
             offset: Box::new(substitute_expression(
-                offset, index_var, value_var, k, array_name,
+                offset, index_var, value_var, k, items,
             )),
-            size: Box::new(substitute_expression(
-                size, index_var, value_var, k, array_name,
-            )),
+            size: Box::new(substitute_expression(size, index_var, value_var, k, items)),
         },
         Expression::Cat { left, right } => Expression::Cat {
-            left: Box::new(substitute_expression(
-                left, index_var, value_var, k, array_name,
-            )),
-            right: Box::new(substitute_expression(
-                right, index_var, value_var, k, array_name,
-            )),
+            left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
+            right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
         },
         Expression::Bin2Num { data } => Expression::Bin2Num {
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
         Expression::Num2Bin { value, size } => Expression::Num2Bin {
-            value: Box::new(substitute_expression(
-                value, index_var, value_var, k, array_name,
-            )),
-            size: Box::new(substitute_expression(
-                size, index_var, value_var, k, array_name,
-            )),
+            value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
+            size: Box::new(substitute_expression(size, index_var, value_var, k, items)),
         },
         Expression::SizeOf { data } => Expression::SizeOf {
-            data: Box::new(substitute_expression(
-                data, index_var, value_var, k, array_name,
-            )),
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
         Expression::PacketInspect { packet_type } => Expression::PacketInspect {
             packet_type: Box::new(substitute_expression(
@@ -609,19 +510,17 @@ pub(crate) fn substitute_expression(
                 index_var,
                 value_var,
                 k,
-                array_name,
+                items,
             )),
         },
         Expression::InputPacketInspect { index, packet_type } => Expression::InputPacketInspect {
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
             packet_type: Box::new(substitute_expression(
                 packet_type,
                 index_var,
                 value_var,
                 k,
-                array_name,
+                items,
             )),
         },
         // Recurse into contract instance arguments
@@ -632,7 +531,7 @@ pub(crate) fn substitute_expression(
             contract_name: contract_name.clone(),
             args: args
                 .iter()
-                .map(|a| substitute_expression(a, index_var, value_var, k, array_name))
+                .map(|a| substitute_expression(a, index_var, value_var, k, items))
                 .collect(),
         },
         // Asset lookups/has: substitute the io index and both Asset ID operands
@@ -644,14 +543,12 @@ pub(crate) fn substitute_expression(
             asset_gidx,
         } => Expression::AssetLookup {
             source: source.clone(),
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
             asset_txid: Box::new(substitute_expression(
-                asset_txid, index_var, value_var, k, array_name,
+                asset_txid, index_var, value_var, k, items,
             )),
             asset_gidx: Box::new(substitute_expression(
-                asset_gidx, index_var, value_var, k, array_name,
+                asset_gidx, index_var, value_var, k, items,
             )),
         },
         Expression::AssetHas {
@@ -661,14 +558,12 @@ pub(crate) fn substitute_expression(
             asset_gidx,
         } => Expression::AssetHas {
             source: source.clone(),
-            index: Box::new(substitute_expression(
-                index, index_var, value_var, k, array_name,
-            )),
+            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
             asset_txid: Box::new(substitute_expression(
-                asset_txid, index_var, value_var, k, array_name,
+                asset_txid, index_var, value_var, k, items,
             )),
             asset_gidx: Box::new(substitute_expression(
-                asset_gidx, index_var, value_var, k, array_name,
+                asset_gidx, index_var, value_var, k, items,
             )),
         },
         Expression::GroupFind {
@@ -676,10 +571,10 @@ pub(crate) fn substitute_expression(
             asset_gidx,
         } => Expression::GroupFind {
             asset_txid: Box::new(substitute_expression(
-                asset_txid, index_var, value_var, k, array_name,
+                asset_txid, index_var, value_var, k, items,
             )),
             asset_gidx: Box::new(substitute_expression(
-                asset_gidx, index_var, value_var, k, array_name,
+                asset_gidx, index_var, value_var, k, items,
             )),
         },
         Expression::GroupHas {
@@ -687,10 +582,10 @@ pub(crate) fn substitute_expression(
             asset_gidx,
         } => Expression::GroupHas {
             asset_txid: Box::new(substitute_expression(
-                asset_txid, index_var, value_var, k, array_name,
+                asset_txid, index_var, value_var, k, items,
             )),
             asset_gidx: Box::new(substitute_expression(
-                asset_gidx, index_var, value_var, k, array_name,
+                asset_gidx, index_var, value_var, k, items,
             )),
         },
         Expression::GroupControlIs {
@@ -698,18 +593,18 @@ pub(crate) fn substitute_expression(
             asset_txid,
             asset_gidx,
         } => Expression::GroupControlIs {
-            group: substitute_loop_name(group, index_var, value_var, k, array_name),
+            group: substitute_group(group, index_var, value_var, k, items),
             asset_txid: Box::new(substitute_expression(
-                asset_txid, index_var, value_var, k, array_name,
+                asset_txid, index_var, value_var, k, items,
             )),
             asset_gidx: Box::new(substitute_expression(
-                asset_gidx, index_var, value_var, k, array_name,
+                asset_gidx, index_var, value_var, k, items,
             )),
         },
         _ => {
             let mut expression = expr.clone();
             for child in crate::models::child_exprs_mut(&mut expression) {
-                *child = substitute_expression(child, index_var, value_var, k, array_name);
+                *child = substitute_expression(child, index_var, value_var, k, items);
             }
             expression
         }

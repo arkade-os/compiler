@@ -215,8 +215,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_contract_instance_asm(contract_name, args, asm);
         }
         Expression::CheckSigExpr { signature, pubkey } => {
-            asm.push(format!("<{}>", signature));
-            asm.push(format!("<{}>", pubkey));
+            emit_expression_asm(signature, asm);
+            emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIG.to_string());
         }
         Expression::CheckSigFromStackExpr {
@@ -224,9 +224,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             pubkey,
             message,
         } => {
-            asm.push(format!("<{}>", signature));
-            asm.push(format!("<{}>", message));
-            asm.push(format!("<{}>", pubkey));
+            emit_expression_asm(signature, asm);
+            emit_expression_asm(message, asm);
+            emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         // Streaming SHA256
@@ -356,9 +356,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             pubkey,
             message,
         } => {
-            asm.push(format!("<{}>", signature));
-            asm.push(format!("<{}>", message));
-            asm.push(format!("<{}>", pubkey));
+            emit_expression_asm(signature, asm);
+            emit_expression_asm(message, asm);
+            emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
             asm.push(OP_VERIFY.to_string());
         }

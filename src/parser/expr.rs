@@ -123,6 +123,18 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
     }
 }
 
+/// Parse a crypto-check operand: a binding access or a byte literal.
+pub(crate) fn parse_operand(pair: Pair<Rule>) -> Result<Expression, String> {
+    match pair.as_rule() {
+        Rule::sig_arg | Rule::key_expr => {
+            parse_operand(pair.into_inner().next().ok_or("Missing operand")?)
+        }
+        Rule::named_binding => parse_property_access(pair),
+        Rule::tweak_key => Err("tweak(...) is only available in tapscript functions".to_string()),
+        _ => Ok(Expression::Literal(parse_named_operand(pair)?)),
+    }
+}
+
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         Rule::primary_expr => {
@@ -222,15 +234,15 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
-            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
+            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
+            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
             Ok(Expression::CheckSigExpr { signature, pubkey })
         }
         Rule::check_sig_from_stack => {
             let mut inner = pair.into_inner();
-            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
-            let message = parse_named_operand(inner.next().ok_or("Missing message")?)?;
+            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
+            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
+            let message = Box::new(parse_operand(inner.next().ok_or("Missing message")?)?);
             Ok(Expression::CheckSigFromStackExpr {
                 signature,
                 pubkey,
@@ -404,14 +416,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::asset_at => parse_asset_at_to_expression(inner),
         Rule::hex_literal | Rule::string_literal => parse_primary_expr(inner),
         Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
-        Rule::named_binding => {
-            let name = inner.as_str().to_string();
-            if name.contains(['.', '[']) {
-                Ok(Expression::Property(name))
-            } else {
-                Ok(Expression::Variable(name))
-            }
-        }
+        Rule::named_binding => parse_property_access(inner),
         r => Err(format!("Unsupported byte_value rule: {:?}", r)),
     }
 }
@@ -476,16 +481,4 @@ pub(crate) fn reject_malformed_asset_call(text: &str) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-pub(crate) fn parse_binding_expression(text: &str) -> Result<Expression, String> {
-    use pest::Parser;
-    let pair = super::ArkadeParser::parse(Rule::assignment_target, text)
-        .map_err(|error| error.to_string())?
-        .next()
-        .ok_or("Missing binding")?;
-    if pair.as_str().len() != text.len() {
-        return Err(format!("Invalid binding '{text}'"));
-    }
-    parse_property_access(pair)
 }

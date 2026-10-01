@@ -37,16 +37,17 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     );
 
     // Simple operands use structured HashEqual emission.
-    if rhs_is_simple {
-        if let Expression::Variable(name) | Expression::Literal(name) | Expression::Property(name) =
-            &preimage_expr
-        {
-            return Ok(Requirement::HashEqual {
-                hash_fn,
-                preimage: name.clone(),
-                hash: parse_named_operand(rhs_pair)?,
-            });
-        }
+    if rhs_is_simple
+        && matches!(
+            preimage_expr,
+            Expression::Variable(_) | Expression::Literal(_) | Expression::Property(_)
+        )
+    {
+        return Ok(Requirement::HashEqual {
+            hash_fn,
+            preimage: preimage_expr,
+            hash: parse_operand(rhs_pair)?,
+        });
     }
 
     // Complex preimage and/or complex RHS: emit via Comparison so byte-producing
@@ -61,10 +62,7 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
         Rule::substr_func => parse_substr(rhs_pair)?,
         Rule::cat_func => parse_cat(rhs_pair)?,
         Rule::num2bin_func => parse_num2bin(rhs_pair)?,
-        Rule::identifier => Expression::Variable(rhs_pair.as_str().to_string()),
-        Rule::number_literal => Expression::Literal(rhs_pair.as_str().to_string()),
-        Rule::hex_literal | Rule::string_literal => parse_primary_expr(rhs_pair)?,
-        _ => Expression::Property(rhs_pair.as_str().to_string()),
+        _ => parse_operand(rhs_pair)?,
     };
 
     Ok(Requirement::Comparison {

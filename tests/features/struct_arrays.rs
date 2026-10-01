@@ -1,5 +1,5 @@
 use crate::common::{
-    arkade_asm_tokens, arkade_inputs, compile_unoptimized as compile, group, leaf_asm,
+    arkade_asm, arkade_asm_tokens, arkade_inputs, compile_unoptimized as compile, group, leaf_asm,
     witness_names,
 };
 
@@ -226,4 +226,93 @@ contract C() {
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.windows(2).any(|tokens| tokens == ["2", "OP_TUNNEL"]));
     assert_eq!(asm.iter().filter(|token| *token == "OP_SWAP").count(), 2);
+}
+
+#[test]
+fn loop_values_resolve_inside_named_operands_and_nested_iterables() {
+    let output = compile(
+        r#"
+struct Signer { pubkey[2] keys; }
+contract C(Signer[2] signers) {
+    function spend(signature sig) {
+        for (i, s) in signers { require(checkSig(sig, s.keys[i])); }
+    }
+}
+"#,
+    )
+    .unwrap();
+    // Iteration k checks signers[k].keys[k].
+    assert_eq!(
+        arkade_asm(&output, "spend"),
+        "<signers.1.keys.1> <signers.1.keys.0> <signers.0.keys.1> <signers.0.keys.0> \
+         OP_4 OP_PICK OP_1 OP_PICK OP_CHECKSIG OP_VERIFY \
+         OP_4 OP_PICK OP_4 OP_PICK OP_CHECKSIG OP_VERIFY OP_1 OP_NIP OP_NIP OP_NIP OP_NIP OP_NIP"
+    );
+
+    for body in [
+        "for (i, x) in idx { for (j, s) in signers { require(checkSig(sig, s.keys[i])); } }",
+        "for (i, item) in items { for (j, w) in item.idx { require(checkSig(sig, signers[0].keys[w])); } }",
+        "for (j, w) in items[1].idx { require(checkSig(sig, signers[w].keys[j])); }",
+        "for (i, item) in items { for (j, w) in items[i].idx { require(w > j); } } require(checkSig(sig, signers[0].keys[0]));",
+    ] {
+        let source = format!(
+            "struct Signer {{ pubkey[2] keys; }} struct It {{ int[2] idx; }} \
+             contract C(Signer[2] signers, It[2] items, int[2] idx) {{ function spend(signature sig) {{ {body} }} }}"
+        );
+        compile(&source).unwrap_or_else(|error| panic!("{body}: {error}"));
+    }
+}
+
+#[test]
+fn access_diagnostics_report_the_written_path_once() {
+    for (body, expected) in [
+        (
+            "require(rows[5].points[t].x == 1);",
+            "array index '5' is out of range for 'rows[2]'",
+        ),
+        (
+            "require(rows[t].points[5].x == 1);",
+            "array index '5' is out of range for 'rows[t].points[2]'",
+        ),
+        (
+            "require(rows[t].points[0].z == 1);",
+            "field 'rows[t].points[0].z' is undefined",
+        ),
+        (
+            "P p = rows[t].points; require(p.x == 1);",
+            "binding 'p' declares type 'P'",
+        ),
+    ] {
+        let source = format!(
+            "struct P {{ int x; }} struct Row {{ P[2] points; }} \
+             contract C(Row[2] rows) {{ function spend(int t) {{ {body} }} }}"
+        );
+        let error = compile(&source).unwrap_err().to_string();
+        assert!(error.contains(expected), "{body}: {error}");
+        assert_eq!(
+            error.matches("validation error").count(),
+            1,
+            "{body}: {error}"
+        );
+    }
+}
+
+#[test]
+fn loop_values_alias_scalar_helper_arguments() {
+    let output = compile(
+        r#"
+contract C() {
+    private function positive(int value) { require(value > 0); }
+    function spend(int[2] xs) {
+        for (i, x) in xs { positive(x); }
+    }
+}
+"#,
+    )
+    .unwrap();
+    // The helper reads each element in place instead of copying it into an argument slot.
+    assert_eq!(
+        arkade_asm(&output, "spend"),
+        "OP_0 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP"
+    );
 }

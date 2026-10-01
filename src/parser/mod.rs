@@ -18,7 +18,6 @@ mod checksig;
 mod comparison;
 mod crypto;
 mod expr;
-pub(crate) use expr::parse_binding_expression;
 mod introspection;
 #[cfg(any(feature = "wasm", test))]
 mod symbols;
@@ -816,6 +815,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_operand_paths_as_structured_accesses() {
+        let contract = parse(
+            r#"
+contract C() {
+    function spend(signature sig) {
+        require(checkSig(sig, signers[i + 1].keys[0]));
+        let part = substr(rows[0].data, p.offset, 1);
+    }
+}
+"#,
+        )
+        .unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(matches!(
+            &statements[0].statement,
+            Statement::Require(Requirement::CheckSig { pubkey: pubkey @ Expression::IndexAccess { .. }, .. })
+                if pubkey.source_text() == "signers[i + 1].keys[0]"
+        ));
+        assert!(matches!(
+            &statements[1].statement,
+            Statement::LetBinding { value: Expression::Substr { data, offset, .. }, .. }
+                if matches!(data.as_ref(), Expression::FieldAccess { field, .. } if field == "data")
+                    && matches!(offset.as_ref(), Expression::Property(name) if name == "p.offset")
+        ));
+    }
+
+    #[test]
     fn parses_structured_assignment_targets() {
         let contract = parse(
             r#"
@@ -899,7 +925,8 @@ contract Demo(pubkey first, pubkey second) {
                 pubkeys,
                 signatures,
                 threshold: 2,
-            }) if pubkeys == &["first", "second"] && signatures == &["firstSig", "secondSig"]
+            }) if pubkeys.iter().map(Expression::source_text).eq(["first", "second"])
+                && signatures.iter().map(Expression::source_text).eq(["firstSig", "secondSig"])
         ));
     }
 
