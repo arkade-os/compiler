@@ -1,0 +1,124 @@
+// FundingBeacon Contract
+//
+// Pooled-model funding-rate oracle. Publishes a monotone cumulative
+// yield index for the StabilityPool. Distinct from PriceBeacon — this
+// contract carries the funding rate, not BTC/USD price.
+//
+// Asset layout:
+//   - yieldTicker (bytes32): identifies the funding feed (e.g. commitment to
+//     "BTC-USD-FUNDING-v1"). The asset's quantity is the cumulative
+//     yieldIndex in INDEX_SCALE units (proposed scale: 1e8). Monotone
+//     non-decreasing.
+//   - yieldClock  (bytes32): block height of the last update. Same
+//     semantics as PriceBeacon.clock — Bitcoin block height for
+//     nLockTime parity with `tx.time`.
+//
+// Index semantics (off-chain trust, on-chain monotonicity):
+//   newIndex - oldIndex
+//     == fundingSatPerBlock × INDEX_SCALE × (newHeight - oldHeight)
+// The oracle is trusted to compute the increment. The contract only
+// enforces that the index never decreases.
+//
+// Consumers (StabilityPool, SeekerShare) read the current index and
+// snapshot it. Funding accrual for an aggregate USD claim from
+// entryIndex to currentIndex is:
+//   accruedSats = aggregateUSD × (currentIndex - entryIndex) / INDEX_SCALE
+//
+// Staleness: same convention as PriceBeacon. Consumers enforce
+//   tx.time - yieldClock <= 144   (≈ 24 hours)
+//
+// Trust model: v0 is single-oracle, reputation-based. v1 should be
+// threshold-of-N. The off-chain oracle is required to publish a
+// rate-capped sequence to avoid distress death-spirals (see PRD §5).
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract FundingBeacon(
+  bytes32 yieldTicker,  // asset whose quantity = cumulative yield index
+  bytes32 yieldClock,   // asset whose quantity = block height of last update
+  pubkey  oraclePk,     // authorized updater
+  int     exit          // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // UPDATE
+  // Oracle publishes a new cumulative index and block height. Both are
+  // monotonically non-decreasing. Same-block updates are permitted so the
+  // oracle can refresh the index in sub-block cadence on Arkade.
+  // -------------------------------------------------------------------------
+  function update(signature oracleSig, int newIndex, int newBlockHeight) {
+    require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
+
+    int currentIndex  = tx.inputs[0].assets.lookup(yieldTicker);
+    int currentHeight = tx.inputs[0].assets.lookup(yieldClock);
+
+    require(newIndex >= currentIndex, "index must not regress");
+    require(newBlockHeight >= currentHeight, "block height must not regress");
+
+    require(
+      tx.outputs[0].scriptPubKey == new FundingBeacon(yieldTicker, yieldClock, oraclePk, exit),
+      "beacon script must survive"
+    );
+    require(
+      tx.outputs[0].assets.lookup(yieldTicker) == newIndex,
+      "index not updated correctly"
+    );
+    require(
+      tx.outputs[0].assets.lookup(yieldClock) == newBlockHeight,
+      "block height not updated correctly"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // PASSTHROUGH
+  // Any transaction reading the beacon routes it through passthrough.
+  // Both yieldTicker and yieldClock assets must be preserved.
+  // -------------------------------------------------------------------------
+  function passthrough() {
+    require(
+      tx.outputs[0].scriptPubKey == new FundingBeacon(yieldTicker, yieldClock, oraclePk, exit),
+      "beacon script must survive"
+    );
+
+    int currentIndex = tx.inputs[0].assets.lookup(yieldTicker);
+    require(
+      tx.outputs[0].assets.lookup(yieldTicker) >= currentIndex,
+      "index asset must survive"
+    );
+
+    int currentHeight = tx.inputs[0].assets.lookup(yieldClock);
+    require(
+      tx.outputs[0].assets.lookup(yieldClock) >= currentHeight,
+      "clock asset must survive"
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // MIGRATE
+  // Transfers oracle authority to a new key. Index and block height are
+  // preserved. Asset IDs are stable across rotations so existing pool
+  // contracts remain valid.
+  // -------------------------------------------------------------------------
+  function migrate(signature oracleSig, pubkey newOraclePk) {
+    require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
+
+    int currentIndex  = tx.inputs[0].assets.lookup(yieldTicker);
+    int currentHeight = tx.inputs[0].assets.lookup(yieldClock);
+
+    require(
+      tx.outputs[0].scriptPubKey == new FundingBeacon(yieldTicker, yieldClock, newOraclePk, exit),
+      "invalid new beacon"
+    );
+    require(
+      tx.outputs[0].assets.lookup(yieldTicker) == currentIndex,
+      "index must be preserved"
+    );
+    require(
+      tx.outputs[0].assets.lookup(yieldClock) == currentHeight,
+      "block height must be preserved"
+    );
+  }
+}
