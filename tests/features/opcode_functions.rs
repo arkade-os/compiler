@@ -246,8 +246,8 @@ fn test_mod_exp() {
 fn test_ec_add_returns_typed_point() {
     let code = r#"
         contract EllipticCurve(int curveId) {
-            function add(int x1, int y1, int x2, int y2) {
-                ECPoint result = ecAdd(x1, y1, x2, y2, curveId);
+            function add(ECPoint p, ECPoint q) {
+                ECPoint result = ecAdd(p, q, curveId);
                 require(result.x >= 0);
                 require(result.y >= 0);
             }
@@ -263,12 +263,131 @@ fn test_ec_add_returns_typed_point() {
 }
 
 #[test]
+fn test_ec_operands_are_type_checked() {
+    let compile_spend = |statement: &str| {
+        compile(&format!(
+            "struct Other {{ int x; int y; }}
+            contract EllipticCurve() {{
+                function spend(
+                    ECPoint p, ECPoint q, Other other, int x, bytes data, bytes32 scalar, pubkey key,
+                    ECPoint[2] g1, G2Point[2] g2
+                ) {{
+                    {statement}
+                }}
+            }}"
+        ))
+    };
+    for (statement, message) in [
+        (
+            "require(ecAdd(x, q, 0) == p);",
+            "ecAdd operand has type 'int', expected 'ECPoint'",
+        ),
+        (
+            "require(ecAdd(p, other, 0) == p);",
+            "ecAdd operand has type 'Other', expected 'ECPoint'",
+        ),
+        (
+            "require(ecAdd(p, q, data) == p);",
+            "ecAdd operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "require(ecMul(x, 1, 0) == p);",
+            "ecMul operand has type 'int', expected 'ECPoint'",
+        ),
+        (
+            "require(ecMul(p, data, 0) == p);",
+            "ecMul operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "require(ecMul(p, 1, data) == p);",
+            "ecMul operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "require(ecPairing(p, g2, 2));",
+            "ecPairing operand has type 'ECPoint', expected 'ECPoint[1]'",
+        ),
+        (
+            "require(ecPairing(g1, p, 2));",
+            "ecPairing operand has type 'ECPoint', expected 'G2Point[2]'",
+        ),
+        (
+            "require(ecPairing(g1, g2, key));",
+            "ecPairing operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "require(ecMulScalarVerify(x, key, key));",
+            "ecMulScalarVerify operand has type 'int', expected 'bytes32'",
+        ),
+        (
+            "require(ecMulScalarVerify(scalar, x, key));",
+            "ecMulScalarVerify operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "require(tweakVerify(key, scalar, key));",
+            "tweakVerify operand has type 'bytes', expected 'bytes32'",
+        ),
+        (
+            "require(tweakVerify(scalar, x, key));",
+            "tweakVerify operand has type 'int', expected 'bytes32'",
+        ),
+        (
+            "require(tweakVerify(scalar, scalar, x));",
+            "tweakVerify operand has type 'int', expected 'bytes'",
+        ),
+    ] {
+        let error = compile_spend(statement)
+            .expect_err(&format!("{statement} must be rejected"))
+            .to_string();
+        assert!(
+            error.contains(message),
+            "{statement}: unexpected error: {error}"
+        );
+    }
+    compile_spend(
+        "require(ecAdd(p, q, 0) == ecMul(p, 2, 0));
+        require(other.x == x);
+        require(ecPairing(g1, g2, 2));
+        require(ecMulScalarVerify(scalar, key, key));
+        require(tweakVerify(scalar, scalar, key));
+        require(ecMulScalarVerify(scalar, data, scalar));
+        require(tweakVerify((bytes32(data)), scalar, data));",
+    )
+    .expect("well-typed EC operands compile");
+}
+
+#[test]
+fn test_ec_operands_accept_point_values() {
+    let output = compile(
+        r#"
+        struct Keys { ECPoint base; int scalar; }
+        contract EllipticCurve(ECPoint generator) {
+            private function double(ECPoint p) ECPoint { return ecAdd(p, p, 0); }
+            function spend(Keys keys) {
+                let sum = ecAdd((double(keys.base)), (ecMul(generator, keys.scalar, 0)), 0);
+                require(sum.x >= 0);
+            }
+        }
+    "#,
+    )
+    .expect("ECPoint bindings, fields, helper results, and native results are points");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        contains_tokens(&asm, &[OP_ECADD, OP_SWAP, OP_SWAP]),
+        "helper point must return to native field order: {asm:?}"
+    );
+    assert!(
+        contains_tokens(&asm, &[OP_ECMUL, "0", OP_ECADD]),
+        "nested native point must feed ecAdd unswapped: {asm:?}"
+    );
+}
+
+#[test]
 fn test_native_result_type_must_match_declaration() {
     let error = compile(
         r#"
         contract EllipticCurve(int curveId) {
-            function add(int x1, int y1, int x2, int y2) {
-                AssetId result = ecAdd(x1, y1, x2, y2, curveId);
+            function add(ECPoint p, ECPoint q) {
+                AssetId result = ecAdd(p, q, curveId);
                 require(result.gidx >= 0);
             }
         }
@@ -287,8 +406,8 @@ fn test_native_result_type_must_match_declaration() {
 fn test_ec_mul_infers_point_type() {
     let code = r#"
         contract EllipticCurve(int curveId) {
-            function multiply(int x, int y, int scalar) {
-                let result = ecMul(x, y, scalar, curveId);
+            function multiply(ECPoint p, int scalar) {
+                let result = ecMul(p, scalar, curveId);
                 require(result.x >= 0);
                 require(result.y >= 0);
             }
@@ -308,8 +427,8 @@ fn test_inferred_point_fields_keep_their_types_during_concat_rewrite() {
     let error = compile(
         r#"
         contract EllipticCurve(int curveId) {
-            function multiply(int x, int y, int scalar, bytes suffix) {
-                let result = ecMul(x, y, scalar, curveId);
+            function multiply(ECPoint p, int scalar, bytes suffix) {
+                let result = ecMul(p, scalar, curveId);
                 require(result.x + suffix == suffix);
             }
         }
@@ -325,97 +444,72 @@ fn test_inferred_point_fields_keep_their_types_during_concat_rewrite() {
 }
 
 #[test]
-fn test_ec_pairing() {
-    let code = r#"
-        contract EllipticCurve(int curveId) {
-            function pair(
-                int g1X,
-                int g1Y,
-                int g2Xc1,
-                int g2Xc0,
-                int g2Yc1,
-                int g2Yc0
-            ) {
-                require(ecPairing(g1X, g1Y, g2Xc1, g2Xc0, g2Yc1, g2Yc0, curveId));
+fn test_ec_pairing_takes_aligned_point_arrays() {
+    let output = compile(
+        r#"
+        struct Proof { ECPoint[2] g1; G2Point[2] g2; }
+        contract EllipticCurve() {
+            function pair(ECPoint[2] g1, G2Point[2] g2, Proof[2] proofs, int index) {
+                require(ecPairing(g1, g2, 2));
+                require(ecPairing(proofs[index].g1, proofs[index].g2, 2));
             }
         }
-    "#;
-
-    let output = compile(code).expect("compile ecPairing");
+    "#,
+    )
+    .expect("ecPairing accepts bindings and struct-array fields");
     let asm = crate::common::arkade_asm_tokens(&output, "pair");
+    assert_eq!(
+        asm.iter().filter(|token| *token == OP_ECPAIRING).count(),
+        2,
+        "{asm:?}"
+    );
     assert!(
-        contains_tokens(
-            &asm,
-            &[
-                OP_1,
-                OP_ROLL,
-                "OP_2",
-                OP_ROLL,
-                "OP_3",
-                OP_ROLL,
-                "OP_4",
-                OP_ROLL,
-                "OP_5",
-                OP_ROLL,
-                "OP_6",
-                OP_ROLL,
-                OP_1,
-                "OP_7",
-                OP_ROLL,
-                OP_ECPAIRING
-            ]
-        ),
-        "Expected ordered {OP_ECPAIRING} operand reads in ASM: {asm:?}"
+        contains_tokens(&asm, &["OP_2", "2", OP_ECPAIRING]),
+        "pair count must precede the curve id: {asm:?}"
+    );
+
+    let error = compile(
+        r#"
+        contract EllipticCurve() {
+            function mismatched(ECPoint[2] g1, G2Point[3] g2) { require(ecPairing(g1, g2, 2)); }
+            function many(ECPoint[17] g1, G2Point[17] g2) { require(ecPairing(g1, g2, 2)); }
+        }
+    "#,
+    )
+    .expect_err("misaligned and oversized pairings are rejected")
+    .to_string();
+    assert!(
+        error.contains("ecPairing operand has type 'G2Point[3]', expected 'G2Point[2]'"),
+        "{error}"
+    );
+    assert!(
+        error.contains("ecPairing supports at most 16 pairs, got 17"),
+        "{error}"
     );
 }
 
 #[test]
-fn ec_and_group_index_builtins_reject_mistyped_operands() {
+fn modexp_group_index_and_sha256_builtins_reject_mistyped_operands() {
     for (params, statement, expected) in [
-        (
-            "pubkey owner, int curveId",
-            "let r = ecAdd(owner, 1, 2, 3, curveId);",
-            "ecAdd operand has type 'pubkey', expected 'int'",
-        ),
-        (
-            "pubkey owner, int curveId",
-            "let r = ecMul(owner, 1, 2, curveId);",
-            "ecMul operand has type 'pubkey', expected 'int'",
-        ),
-        (
-            "pubkey owner, int curveId",
-            "require(ecPairing(owner, 1, 2, 3, 4, 5, curveId));",
-            "ecPairing operand has type 'pubkey', expected 'int'",
-        ),
         (
             "pubkey owner",
             "let r = modExp(owner, 2, 3);",
-            "modExp operand has type 'pubkey', expected 'int'",
-        ),
-        (
-            "int scalar, pubkey p, pubkey q",
-            "require(ecMulScalarVerify(scalar, p, q));",
-            "ecMulScalarVerify operand has type 'int', expected 'bytes32'",
-        ),
-        (
-            "pubkey p, int tweak, pubkey q",
-            "require(tweakVerify(p, tweak, q));",
-            "tweakVerify operand has type 'int', expected 'bytes32'",
+            "modExp operand has type 'bytes', expected 'int'",
         ),
         (
             "pubkey owner",
             "let r = tx.assetGroups[owner].sumInputs;",
-            "assetGroups[].sum operand has type 'pubkey', expected 'int'",
+            "assetGroups[].sum operand has type 'bytes', expected 'int'",
         ),
         (
             "pubkey owner",
             "let r = tx.assetGroups[owner].numInputs;",
-            "assetGroups[].numIO operand has type 'pubkey', expected 'int'",
+            "assetGroups[].numIO operand has type 'bytes', expected 'int'",
         ),
         (
             "pubkey owner",
             "let r = tx.assetGroups[0].outputs[owner].amount;",
-            "assetGroups[].io operand has type 'pubkey', expected 'int'",
+            "assetGroups[].io operand has type 'bytes', expected 'int'",
         ),
         (
             "int x",
@@ -458,7 +552,7 @@ fn bytes32_operands_accept_only_32_byte_literals() {
             "pubkey p, pubkey q",
             "require(ecMulScalarVerify(LIT, p, q));",
         ),
-        ("pubkey p, pubkey q", "require(tweakVerify(p, LIT, q));"),
+        ("bytes32 p, pubkey q", "require(tweakVerify(p, LIT, q));"),
     ] {
         let source = |literal: &str| {
             let statement = statement.replace("LIT", literal);
@@ -498,7 +592,7 @@ fn test_ec_mul_scalar_verify_cannot_be_value_bound() {
 fn test_tweak_verify_cannot_be_value_bound() {
     let code = r#"
         contract CryptoOps(pubkey owner) {
-            function verifyTweak(signature ownerSig, pubkey P, bytes32 tweak, pubkey Q) {
+            function verifyTweak(signature ownerSig, bytes32 P, bytes32 tweak, pubkey Q) {
                 require(checkSig(ownerSig, owner));
                 let result = tweakVerify(P, tweak, Q);
             }
@@ -750,16 +844,16 @@ fn unary_negation_in_builtin_atom_arguments() {
             "OP_0 OP_ROLL OP_NEGATE OP_NEGATE 2 3 OP_MODEXP",
         ),
         (
-            "let result = ecAdd(-1, 2, 3, 4, 0);",
-            "1 OP_NEGATE 2 3 4 0 OP_ECADD",
+            "let result = ecAdd(point, point, -1);",
+            "1 OP_NEGATE OP_ECADD",
         ),
         (
-            "let result = ecMul(1, 2, -3, 0);",
-            "1 2 3 OP_NEGATE 0 OP_ECMUL",
+            "let result = ecMul(point, -3, 0);",
+            "3 OP_NEGATE 0 OP_ECMUL",
         ),
         (
-            "let result = ecPairing(1, -2, 3, 4, 5, 6, 0);",
-            "1 2 OP_NEGATE 3 4 5 6 OP_1 0 OP_ECPAIRING",
+            "let result = ecPairing(g1s, g2s, -2);",
+            "OP_1 2 OP_NEGATE OP_ECPAIRING",
         ),
         ("let result = sighash(-1);", "1 OP_NEGATE OP_SIGHASH"),
         ("let result = digest(data, -1);", "1 OP_NEGATE OP_DIGEST"),
@@ -771,7 +865,10 @@ fn unary_negation_in_builtin_atom_arguments() {
             "let result = num2bin(-(value + 1), (2 + 2));",
             "1 OP_ADD OP_NEGATE 2 2 OP_ADD OP_NUM2BIN",
         ),
-        ("let result = digest((data + data), value);", "OP_CAT"),
+        (
+            "require(tweakVerify(scalar, scalar, (pubkey(data + data))));",
+            "OP_CAT",
+        ),
         (
             "let result = substr(data, --0, 1);",
             "0 OP_NEGATE OP_NEGATE 1 OP_SUBSTR",
@@ -785,12 +882,19 @@ fn unary_negation_in_builtin_atom_arguments() {
             "1 OP_NEGATE OP_NEGATE 0 OP_INSPECTINPUTPACKET",
         ),
     ] {
-        let params = [("value", "int value"), ("data", "bytes data")]
-            .iter()
-            .filter(|(name, _)| statement.contains(name))
-            .map(|(_, param)| *param)
-            .collect::<Vec<_>>()
-            .join(", ");
+        let params = [
+            ("value", "int value"),
+            ("data", "bytes data"),
+            ("point", "ECPoint point"),
+            ("scalar", "bytes32 scalar"),
+            ("g1s", "ECPoint[1] g1s"),
+            ("g2s", "G2Point[1] g2s"),
+        ]
+        .iter()
+        .filter(|(name, _)| statement.contains(name))
+        .map(|(_, param)| *param)
+        .collect::<Vec<_>>()
+        .join(", ");
         let read = if statement.starts_with("let") {
             "require(result == result);"
         } else {
@@ -837,7 +941,7 @@ fn logical_negation_preserves_nested_expressions() {
 
 #[test]
 fn grouped_builtin_operands_reject_implicit_byte_conversion() {
-    let error = compile("contract Grouped() { function spend(bytes data) { let result = digest((data + 1), 1); require(result == result); } }")
+    let error = compile("contract Grouped() { function spend(bytes data, bytes32 k, pubkey q) { require(ecMulScalarVerify(k, (pubkey(data + 1)), q)); } }")
         .expect_err("grouped operands must validate concatenation types")
         .to_string();
     assert!(error.contains("cannot concatenate bytes"), "{error}");

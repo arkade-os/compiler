@@ -61,3 +61,6 @@ mod validation_error;
 
 #[path = "features/imports.rs"]
 mod imports;
+
+#[path = "features/struct_arrays.rs"]
+mod struct_arrays;

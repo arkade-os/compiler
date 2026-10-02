@@ -468,3 +468,30 @@ fn test_group_access_as_constructor_argument_is_parsed() {
     );
     assert!(!error.contains("is undefined"), "{error}");
 }
+
+/// tx.assetGroups[k].delta/.hasControl/.metadataHash/.assetId/.isFresh with an
+/// inline index used to fall through to "binding '...' is undefined" instead
+/// of a message pointing at the working bound-variable form.
+#[test]
+fn test_indexed_group_property_names_the_workaround() {
+    for property in ["delta", "hasControl", "metadataHash", "assetId", "isFresh"] {
+        let code = format!(
+            r#"
+            contract V(pubkey owner) {{
+                function spend(signature sig) {{
+                    require(checkSig(sig, owner));
+                    let x = tx.assetGroups[0].{property};
+                    require(x == x);
+                }}
+            }}
+        "#
+        );
+        let error = compile(&code)
+            .expect_err(&format!("indexed {property} must be rejected"))
+            .to_string();
+        assert!(
+            error.contains("not supported with an inline index") && error.contains(property),
+            "{property}: {error}"
+        );
+    }
+}

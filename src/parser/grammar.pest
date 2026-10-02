@@ -104,7 +104,7 @@ var_assign = {
 }
 
 assignment_target = {
-    identifier ~ ("." ~ identifier)* ~ ("[" ~ general_expression ~ "]")?
+    identifier ~ binding_suffix*
 }
 
 // Require statement
@@ -152,7 +152,7 @@ multiplicative_expr = {
 unary_expr = { (sub_op | not_op)* ~ primary_expr }
 
 // Built-in operands accept prefixes on literals, bindings, and grouped expressions.
-unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | qualified_name | number_literal) }
+unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | identifier_property_access | qualified_name | number_literal) }
 
 // Primary expressions (atoms)
 primary_expr = {
@@ -362,10 +362,9 @@ group_control_is = {
     identifier ~ "." ~ "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
-// Named field path, optionally ending in an array index.
-identifier_property_access = {
-    identifier ~ ("." ~ identifier)+ ~ ("[" ~ general_expression ~ "]")?
-}
+// Field and index suffixes may alternate for arrays of structs.
+binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
+identifier_property_access = { identifier ~ binding_suffix+ }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
 
@@ -415,8 +414,10 @@ tx_property_access = {
 
 // Body of tx property access - separated to control greediness
 tx_property_body = {
-    // Input.current syntax - first-class support for current input introspection
-    ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
+    // Input.current syntax - first-class support for current input introspection.
+    // Same property set as tx.inputs[i].property (this *is* tx.inputs[i] for
+    // the current i); a property is required, there is no bare form.
+    ("input" ~ "." ~ "current" ~ "." ~ input_introspection_property) |
     // Asset groups access: find, has, length, or indexed property access
     ("assetGroups" ~ (
         "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
@@ -532,14 +533,8 @@ array = {
     "[" ~ named_binding ~ ("," ~ named_binding)* ~ "]"
 }
 
-// Named operands used by crypto checks. Dynamic indices here remain limited
-// to a single binding because these AST nodes store operand names directly.
-named_binding = @{
-    identifier ~ (
-        ("." ~ identifier)+ ~ ("[" ~ (qualified_name | number_literal) ~ "]")? |
-        "[" ~ (qualified_name | number_literal) ~ "]"
-    )?
-}
+// Named operands used by crypto checks: a binding with field and index suffixes.
+named_binding = { identifier ~ binding_suffix* }
 
 // SHA256 function. Accepts any additive expression so concatenation chains
 // like `sha256(a + b + c)` parse (`additive_expr` cascades down to primary,
@@ -582,16 +577,19 @@ mod_exp_func = {
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
 
+// EC point addition: ecAdd(P, Q, curveId) → OP_ECADD, where P and Q are ECPoints
 ec_add = {
-    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
+// EC scalar multiplication: ecMul(P, scalar, curveId) → OP_ECMUL, where P is an ECPoint
 ec_mul = {
-    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
+// Pairing-product check: ecPairing(ECPoint[n] g1, G2Point[n] g2, curveId) → OP_ECPAIRING
 ec_pairing = {
-    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY

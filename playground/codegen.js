@@ -61,7 +61,7 @@ function tsFieldName(s) {
 
 function inferEncoding(typeStr) {
     const map = {
-        pubkey: 'compressed-33', signature: 'schnorr-64',
+        pubkey: 'raw', signature: 'schnorr-64',
         bytes: 'raw', bytes20: 'raw-20', bytes32: 'raw-32',
         int: 'scriptnum', bool: 'scriptnum', asset: 'raw-32',
     };
@@ -84,6 +84,10 @@ function expandFields(name, typeStr, isInjected, structs = []) {
         AssetId: [{ name: 'txid', type: 'bytes32' }, { name: 'gidx', type: 'int' }],
         Outpoint: [{ name: 'txid', type: 'bytes32' }, { name: 'vout', type: 'int' }],
         ECPoint: [{ name: 'x', type: 'int' }, { name: 'y', type: 'int' }],
+        G2Point: [
+            { name: 'xC1', type: 'int' }, { name: 'xC0', type: 'int' },
+            { name: 'yC1', type: 'int' }, { name: 'yC0', type: 'int' },
+        ],
     };
     const definition = structs.find(definition => definition.name === typeStr)
         || (nativeFields[typeStr] && { fields: nativeFields[typeStr] });
@@ -135,7 +139,7 @@ function leafSuffix(groupName, leafName) {
 // ─── TypeScript backend ──────────────────────────────────────────────
 
 const TS_TYPE_MAP = {
-    'compressed-33': 'Pubkey', 'schnorr-64': 'Signature',
+    'schnorr-64': 'Signature',
     'raw': 'Bytes', 'raw-20': 'Bytes20', 'raw-32': 'Bytes32',
     'scriptnum': 'bigint',
 };
@@ -154,7 +158,7 @@ function generateTypeScript(ir) {
 
     // Collect type aliases for imports
     const aliases = new Set();
-    const sdkAliases = { 'compressed-33': 'Pubkey', 'schnorr-64': 'Signature', 'raw': 'Bytes', 'raw-20': 'Bytes20', 'raw-32': 'Bytes32' };
+    const sdkAliases = { 'schnorr-64': 'Signature', 'raw': 'Bytes', 'raw-20': 'Bytes20', 'raw-32': 'Bytes32' };
     const collectAliases = (fields) => fields.forEach(f => { if (sdkAliases[f.encoding]) aliases.add(sdkAliases[f.encoding]); });
     collectAliases(ir.constructorFields);
     ir.functions.forEach(fn => fn.leaves.forEach(l => collectAliases(l.userFields)));
@@ -221,7 +225,7 @@ function generateTypeScript(ir) {
 // ─── Go backend ──────────────────────────────────────────────────────
 
 const GO_TYPE_MAP = {
-    'compressed-33': '[33]byte', 'schnorr-64': '[64]byte',
+    'schnorr-64': '[64]byte',
     'raw': '[]byte', 'raw-20': '[20]byte', 'raw-32': '[32]byte',
     'scriptnum': 'int64',
 };
@@ -232,11 +236,11 @@ function goTypeForField(field) {
 }
 
 function isFixedArray(encoding) {
-    return ['compressed-33', 'schnorr-64', 'raw-20', 'raw-32'].includes(encoding);
+    return ['schnorr-64', 'raw-20', 'raw-32'].includes(encoding);
 }
 
 const ENCODING_CONST = {
-    'compressed-33': 'ark.Compressed33', 'schnorr-64': 'ark.Schnorr64',
+    'schnorr-64': 'ark.Schnorr64',
     'raw': 'ark.Raw', 'raw-20': 'ark.Raw20', 'raw-32': 'ark.Raw32',
     'scriptnum': 'ark.ScriptNum',
 };

@@ -5,132 +5,107 @@
 //! compare — the alternative to declaring "digest expects (bytes, int)"
 //! again at every checking site.
 //!
+//! Parameter types use source syntax and parse with [`super::ArkType::parse`].
+//! `T[]` is an array of `T` whose length is taken from the first `[]`
+//! operand, so every `[]` operand of a call must have the same length.
+//!
 //! Builtins whose check isn't a fixed positional-type comparison (`cast`,
 //! `checkTime`, `tunnel`, `checkSig`, ...) aren't here; they keep their own
 //! hand-written check in the validator.
 
-use super::ArkType;
 use crate::models::Expression;
 
 pub(crate) struct BuiltinSignature {
     pub name: &'static str,
-    pub params: &'static [(&'static str, ArkType)],
+    pub params: &'static [(&'static str, &'static str)],
 }
 
-const fn sig(name: &'static str, params: &'static [(&'static str, ArkType)]) -> BuiltinSignature {
+const fn sig(
+    name: &'static str,
+    params: &'static [(&'static str, &'static str)],
+) -> BuiltinSignature {
     BuiltinSignature { name, params }
 }
 
 pub(crate) const BUILTIN_SIGNATURES: &[BuiltinSignature] = &[
     sig(
         "substr",
-        &[
-            ("data", ArkType::Bytes),
-            ("offset", ArkType::Int),
-            ("size", ArkType::Int),
-        ],
+        &[("data", "bytes"), ("offset", "int"), ("size", "int")],
     ),
-    sig(
-        "cat",
-        &[("left", ArkType::Bytes), ("right", ArkType::Bytes)],
-    ),
-    sig("bin2num", &[("data", ArkType::Bytes)]),
-    sig(
-        "num2bin",
-        &[("value", ArkType::Int), ("size", ArkType::Int)],
-    ),
-    sig("reverseBytes", &[("data", ArkType::Bytes)]),
-    sig("size", &[("data", ArkType::Bytes)]),
-    sig(
-        "digest",
-        &[("data", ArkType::Bytes), ("hashType", ArkType::Int)],
-    ),
-    sig("sha256", &[("data", ArkType::Bytes)]),
-    sig("sha256Initialize", &[("data", ArkType::Bytes)]),
+    sig("cat", &[("left", "bytes"), ("right", "bytes")]),
+    sig("bin2num", &[("data", "bytes")]),
+    sig("num2bin", &[("value", "int"), ("size", "int")]),
+    sig("reverseBytes", &[("data", "bytes")]),
+    sig("size", &[("data", "bytes")]),
+    sig("digest", &[("data", "bytes"), ("hashType", "int")]),
+    sig("sha256", &[("data", "bytes")]),
+    sig("sha256Initialize", &[("data", "bytes")]),
     sig(
         "sha256Update",
-        &[("context", ArkType::Bytes32), ("chunk", ArkType::Bytes)],
+        &[("context", "bytes32"), ("chunk", "bytes")],
     ),
     sig(
         "sha256Finalize",
-        &[("context", ArkType::Bytes32), ("lastChunk", ArkType::Bytes)],
+        &[("context", "bytes32"), ("lastChunk", "bytes")],
     ),
-    sig("sighash", &[("hashType", ArkType::Int)]),
-    sig("tx.packet", &[("packetType", ArkType::Int)]),
+    sig("sighash", &[("hashType", "int")]),
+    sig("tx.packet", &[("packetType", "int")]),
     sig(
         "tx.inputs[].packet",
-        &[("index", ArkType::Int), ("packetType", ArkType::Int)],
+        &[("index", "int"), ("packetType", "int")],
     ),
-    sig("tx.inputs[]", &[("index", ArkType::Int)]),
-    sig("tx.outputs[]", &[("index", ArkType::Int)]),
+    sig("tx.inputs[]", &[("index", "int")]),
+    sig("tx.outputs[]", &[("index", "int")]),
     sig(
         "modExp",
-        &[
-            ("base", ArkType::Int),
-            ("exponent", ArkType::Int),
-            ("modulus", ArkType::Int),
-        ],
+        &[("base", "int"), ("exponent", "int"), ("modulus", "int")],
     ),
     sig(
         "ecAdd",
         &[
-            ("x1", ArkType::Int),
-            ("y1", ArkType::Int),
-            ("x2", ArkType::Int),
-            ("y2", ArkType::Int),
-            ("curveId", ArkType::Int),
+            ("pointP", "ECPoint"),
+            ("pointQ", "ECPoint"),
+            ("curveId", "int"),
         ],
     ),
     sig(
         "ecMul",
-        &[
-            ("x", ArkType::Int),
-            ("y", ArkType::Int),
-            ("scalar", ArkType::Int),
-            ("curveId", ArkType::Int),
-        ],
+        &[("point", "ECPoint"), ("scalar", "int"), ("curveId", "int")],
     ),
     sig(
         "ecPairing",
-        &[
-            ("g1X", ArkType::Int),
-            ("g1Y", ArkType::Int),
-            ("g2Xc1", ArkType::Int),
-            ("g2Xc0", ArkType::Int),
-            ("g2Yc1", ArkType::Int),
-            ("g2Yc0", ArkType::Int),
-            ("curveId", ArkType::Int),
-        ],
+        &[("g1", "ECPoint[]"), ("g2", "G2Point[]"), ("curveId", "int")],
     ),
+    // Scalars are 32-byte big-endian; P is x-only for tweakVerify and compressed otherwise.
     sig(
         "ecMulScalarVerify",
         &[
-            ("scalar", ArkType::Bytes32),
-            ("pointP", ArkType::Pubkey),
-            ("pointQ", ArkType::Pubkey),
+            ("scalar", "bytes32"),
+            ("pointP", "bytes"),
+            ("pointQ", "bytes"),
         ],
     ),
     sig(
         "tweakVerify",
         &[
-            ("pointP", ArkType::Pubkey),
-            ("tweak", ArkType::Bytes32),
-            ("pointQ", ArkType::Pubkey),
+            ("pointP", "bytes32"),
+            ("tweak", "bytes32"),
+            ("pointQ", "bytes"),
         ],
     ),
-    sig("assetGroups[].sum", &[("index", ArkType::Int)]),
-    sig("assetGroups[].numIO", &[("index", ArkType::Int)]),
+    sig("assetGroups[].sum", &[("index", "int")]),
+    sig("assetGroups[].numIO", &[("index", "int")]),
     sig(
         "assetGroups[].io",
-        &[("groupIndex", ArkType::Int), ("ioIndex", ArkType::Int)],
+        &[("groupIndex", "int"), ("ioIndex", "int")],
     ),
-    sig("tx.inputs[].assets", &[("index", ArkType::Int)]),
+    sig("tx.inputs[].assets", &[("index", "int")]),
     sig(
         "tx.inputs[].assets[]",
-        &[("ioIndex", ArkType::Int), ("assetIndex", ArkType::Int)],
+        &[("ioIndex", "int"), ("assetIndex", "int")],
     ),
-    sig("tx.inputs[].assets.lookup", &[("index", ArkType::Int)]),
-    sig("tx.inputs[].assets.has", &[("index", ArkType::Int)]),
+    sig("tx.inputs[].assets.lookup", &[("index", "int")]),
+    sig("tx.inputs[].assets.has", &[("index", "int")]),
 ];
 
 pub(crate) fn find(name: &str) -> Option<&'static BuiltinSignature> {
@@ -170,30 +145,16 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
             modulus,
         } => ("modExp", vec![base, exponent, modulus]),
         Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
+            point_p,
+            point_q,
             curve_id,
-        } => ("ecAdd", vec![x1, y1, x2, y2, curve_id]),
+        } => ("ecAdd", vec![point_p, point_q, curve_id]),
         Expression::EcMul {
-            x,
-            y,
+            point,
             scalar,
             curve_id,
-        } => ("ecMul", vec![x, y, scalar, curve_id]),
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => (
-            "ecPairing",
-            vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
-        ),
+        } => ("ecMul", vec![point, scalar, curve_id]),
+        Expression::EcPairing { g1, g2, curve_id } => ("ecPairing", vec![g1, g2, curve_id]),
         Expression::EcMulScalarVerify {
             scalar,
             point_p,
@@ -243,6 +204,20 @@ mod tests {
                 "{} has no parameters",
                 signature.name
             );
+            for (param, declared) in signature.params {
+                let element = declared.strip_suffix("[]").unwrap_or(declared);
+                let known = match crate::typechecker::ArkType::parse(element) {
+                    crate::typechecker::ArkType::Struct(name) => {
+                        crate::models::builtin_struct_fields(&name).is_some()
+                    }
+                    parsed => parsed != crate::typechecker::ArkType::Unknown,
+                };
+                assert!(
+                    known,
+                    "{}: {param} has unknown type '{declared}'",
+                    signature.name
+                );
+            }
         }
     }
 }

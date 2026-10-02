@@ -1,6 +1,7 @@
 // Compilation entry points, data models, and opcode constants are public.
 // Pipeline stages are crate-internal.
 mod compiler;
+pub mod diagnostics;
 mod imports;
 pub mod models;
 pub mod opcodes;
@@ -11,6 +12,7 @@ mod validator;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+pub use diagnostics::{Diagnostic, Severity, Span};
 pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
     WitnessElement,
@@ -106,4 +108,13 @@ pub fn compile_sources_with_options(
     options: CompileOptions,
 ) -> Result<ContractJson, Box<dyn std::error::Error>> {
     imports::compile_sources(entry, files, options).map_err(Into::into)
+}
+
+/// Every parse, validation and type diagnostic for `entry`, without writing
+/// an artifact. Unlike the `compile_*` functions, this does not stop at the
+/// first error: independent problems in `entry` each get their own entry.
+/// Diagnostics from imports name the imported file. `entry` may be a library
+/// file.
+pub fn check(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Vec<Diagnostic> {
+    imports::check_sources(entry, files)
 }

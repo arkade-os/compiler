@@ -1,6 +1,7 @@
+use crate::diagnostics::Diagnostic;
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
-    FunctionInput, Parameter, Requirement, Statement,
+    FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
     OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
@@ -29,6 +30,7 @@ pub mod tapscript;
 
 // ASM codegen and rewrite passes split into submodules;
 // siblings reach each other via `use super::*`.
+mod access;
 mod asset;
 mod comparison;
 mod concat;
@@ -175,15 +177,12 @@ impl Generator {
         })
     }
 
-    /// Element count of an array binding, read off the symbolic stack: its
-    /// elements are bound as `$array:name:0 … $array:name:N-1`.
+    /// Declared element count, independent of the flattened element width.
     fn array_length(&self, array: &str) -> usize {
-        (0..)
-            .take_while(|i| {
-                self.binding_index(&internal_array_binding_name(array, &i.to_string()))
-                    .is_some()
-            })
-            .count()
+        match self.scope.get(array) {
+            Some(typechecker::ArkType::Array(_, length)) => *length,
+            _ => 0,
+        }
     }
 
     fn internal_binding_name(name: &str) -> String {
@@ -191,7 +190,10 @@ impl Generator {
         if name.starts_with(INTERNAL_ARRAY_BINDING_PREFIX) {
             return name.to_string();
         }
-        if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
+        if let Some((array, index)) = name
+            .strip_suffix(']')
+            .and_then(|name| name.rsplit_once('['))
+        {
             if index.parse::<usize>().is_ok() {
                 return internal_array_binding_name(array, index);
             }
@@ -215,15 +217,6 @@ impl Generator {
             }
             self.push_integer_temporary(length);
             return Ok(());
-        }
-        if let Some((array, index)) = name
-            .trim()
-            .strip_suffix(']')
-            .and_then(|name| name.split_once('['))
-        {
-            if index.parse::<usize>().is_err() {
-                return self.read_indexed_binding(array, index);
-            }
         }
         let name = Self::internal_binding_name(name);
         self.read_static_binding(&name, false)
@@ -253,6 +246,7 @@ impl Generator {
                 take || (!self.preserve_bindings
                     && index >= self.pinned_stack_len
                     && !name.starts_with('$')
+                    && !name.contains('[')
                     && (self
                         .scopes
                         .last()
@@ -279,19 +273,14 @@ impl Generator {
         });
     }
 
-    fn read_indexed_binding(&mut self, array: &str, index: &str) -> Result<(), String> {
-        self.read_binding(index)?;
-        self.select_indexed_value(array)
-    }
-
-    fn check_array_index(&mut self, array: &str) -> Result<(), String> {
+    fn check_array_index(&mut self, length: usize) -> Result<(), String> {
         self.apply(OP_DUP, 1, 2)?;
         self.push_integer_temporary(0);
         self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)?;
 
         self.apply(OP_DUP, 1, 2)?;
-        self.push_integer_temporary(self.array_length(array));
+        self.push_integer_temporary(length);
         self.apply(OP_LESSTHAN, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)
     }
@@ -311,21 +300,12 @@ impl Generator {
                     )
                 })?;
 
-        self.check_array_index(array)?;
+        self.check_array_index(self.array_length(array))?;
         if first_depth_without_index != 0 {
             self.push_integer_temporary(first_depth_without_index);
             self.apply(OP_ADD, 2, 1)?;
         }
         self.apply(OP_PICK, 1, 1)
-    }
-
-    fn read_binding_or_integer(&mut self, value: &str) -> Result<(), String> {
-        if value.parse::<i64>().is_ok() {
-            self.push_temporary(value);
-            Ok(())
-        } else {
-            self.read_binding(value)
-        }
     }
 
     fn pop_temporaries(&mut self, count: usize, opcode: &str) -> Result<(), String> {
@@ -457,7 +437,6 @@ impl Generator {
             OP_SIZE => self.apply(opcode, 1, 2),
             OP_ECADD => self.apply(opcode, 5, 2),
             OP_ECMUL => self.apply(opcode, 4, 2),
-            OP_ECPAIRING => self.apply(opcode, 8, 1),
             OP_ECMULSCALARVERIFY | OP_TWEAKVERIFY => self.apply(opcode, 3, 0),
             OP_INSPECTASSETGROUP => self.apply(opcode, 3, 3),
             _ => Err(format!(
@@ -536,8 +515,8 @@ impl Generator {
             .count();
         let mut raw = Vec::new();
         let mut expression = expression.clone();
-        let mut calls = Vec::new();
-        functions::extract_calls(&mut expression, &mut calls);
+        let mut values = Vec::new();
+        functions::extract_values(&mut expression, &mut values, &self.scope);
         emit_expression_asm(&expression, &mut raw);
         // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
         let preserved = self.preserve_bindings;
@@ -562,7 +541,15 @@ impl Generator {
                 .and_then(|s| s.strip_suffix('>'))
             {
                 let index = index.parse::<usize>().map_err(|_| "invalid call marker")?;
-                self.emit_call(calls.get(index).ok_or("invalid call marker")?)?;
+                let value = values.get(index).ok_or("invalid call marker")?;
+                if matches!(value, Expression::Call { .. }) {
+                    self.emit_call(value)?;
+                } else if matches!(value, Expression::EcPairing { .. }) {
+                    self.emit_pairing(value)?;
+                } else {
+                    let ty = typechecker::infer_type(value, &self.scope).as_str();
+                    self.emit_access_value(value, &ty)?;
+                }
             } else {
                 self.lower_raw_token(&token)?;
             }
@@ -610,6 +597,7 @@ impl Generator {
 
     fn assign(&mut self, target: &AssignmentTarget) -> Result<(), String> {
         match target {
+            AssignmentTarget::Access(value) => self.assign_access(value),
             AssignmentTarget::Binding(name) => self.assign_static_binding(name, name),
             AssignmentTarget::ArrayIndex { array, index } => match index.as_ref() {
                 Expression::Literal(index) => self.assign_static_binding(
@@ -716,7 +704,7 @@ impl Generator {
                         "internal compiler error: array assignment operands for '{array}' are not on the stack"
                     )
                 })?;
-        self.check_array_index(array)?;
+        self.check_array_index(self.array_length(array))?;
         if first_depth_without_operands != 0 {
             self.push_integer_temporary(first_depth_without_operands);
             self.apply(OP_ADD, 2, 1)?;
@@ -807,10 +795,16 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
+/// Runs semantic validation and type checking on `contract`. Returns every
+/// warning on success, every error (each its own diagnostic, not joined into
+/// one message) on failure. Diagnostic messages carry no location prefix —
+/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
+/// `"line N, column M: "` prefix only when rendering the legacy joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
-) -> Result<Vec<String>, String> {
+    file: &str,
+) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
     typechecker::resolve_group_properties(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -818,32 +812,44 @@ pub(crate) fn prepare(
     // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if validator::has_errors(&ast_issues) {
-        let errors: Vec<String> = ast_issues
+        return Err(ast_issues
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
-            .map(|i| format!("validation error: {}", i.message))
-            .collect();
-        return Err(errors.join("; "));
+            .map(|i| {
+                Diagnostic::error(file, i.message.clone())
+                    .with_code("validation")
+                    .with_span(i.span)
+            })
+            .collect());
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(contract)?;
+    // No span available: this rewrites the AST after parsing, not a lookup
+    // against a specific source node.
+    rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
     let type_errors = typechecker::check_contract(contract);
     if !type_errors.is_empty() {
         return Err(type_errors
             .iter()
-            .map(|e| format!("type error: {}", e.message))
-            .collect::<Vec<_>>()
-            .join("; "));
+            .map(|e| {
+                Diagnostic::error(file, e.message.clone())
+                    .with_code("type")
+                    .with_span(e.span)
+            })
+            .collect());
     }
     let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
-            warnings.push(format!("warning[validation]: {}", issue.message));
+            warnings.push(
+                Diagnostic::warning(file, issue.message.clone())
+                    .with_code("validation")
+                    .with_span(issue.span),
+            );
         }
     }
 
@@ -997,11 +1003,11 @@ fn for_each_expanded_param(
 
 /// Recursively generate assembly from statements
 fn generate_asm_from_statements_recursive(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     generator: &mut Generator,
 ) -> Result<(), String> {
     for (index, stmt) in statements.iter().enumerate() {
-        match stmt {
+        match &stmt.statement {
             Statement::Call(expression) => generator.emit_call(expression)?,
             Statement::Return(value) => {
                 generator.emit_return(value.as_ref())?;
@@ -1047,14 +1053,13 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let array_name = match iterable {
-                    Expression::Variable(name) | Expression::Property(name) => name,
-                    _ => return Err("unsupported loop iterable".to_string()),
+                let typechecker::ArkType::Array(_, length) =
+                    typechecker::infer_type(iterable, &generator.scope)
+                else {
+                    return Err("unsupported loop iterable".to_string());
                 };
-                let array_name = array_name.as_str();
-                for k in 0..generator.array_length(array_name) {
-                    let substituted =
-                        substitute_loop_body(body, index_var, value_var, k, array_name);
+                for k in 0..length {
+                    let substituted = substitute_loop_body(body, index_var, value_var, k, iterable);
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
                     if k > 0 && functions::contains_return(body) {
@@ -1101,10 +1106,14 @@ fn generate_asm_from_statements_recursive(
                 declared_type,
                 value,
             } => {
-                let result_type = declared_type.as_deref().or_else(|| match value {
-                    Expression::Call { return_type, .. } => return_type.as_deref(),
-                    _ => crate::models::expression_result_struct(value),
-                });
+                let composite_type = generator.composite_type(value);
+                let result_type = declared_type
+                    .as_deref()
+                    .or_else(|| match value {
+                        Expression::Call { return_type, .. } => return_type.as_deref(),
+                        _ => crate::models::expression_result_struct(value),
+                    })
+                    .or(composite_type.as_deref());
                 if let Some(ty) = result_type {
                     generator.emit_typed_value(value, ty)?;
                     generator.bind_value(name, ty)?;
@@ -1165,9 +1174,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     pubkey,
                     message,
                 } => {
-                    generator.read_binding(signature)?;
-                    generator.read_binding(message)?;
-                    generator.read_binding(pubkey)?;
+                    generator.emit_expression(signature)?;
+                    generator.emit_expression(message)?;
+                    generator.emit_expression(pubkey)?;
                     generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
@@ -1199,8 +1208,8 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             Ok(())
         }
         Requirement::CheckSig { signature, pubkey } => {
-            generator.read_binding(signature)?;
-            generator.read_binding(pubkey)?;
+            generator.emit_expression(signature)?;
+            generator.emit_expression(pubkey)?;
             generator.apply(OP_CHECKSIG, 2, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1210,9 +1219,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             pubkey,
             message,
         } => {
-            generator.read_binding(signature)?;
-            generator.read_binding(message)?;
-            generator.read_binding(pubkey)?;
+            generator.emit_expression(signature)?;
+            generator.emit_expression(message)?;
+            generator.emit_expression(pubkey)?;
             generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1245,12 +1254,12 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 return Err("checkMultisig key and signature counts must match".to_string());
             }
             for signature in signatures.iter().rev() {
-                generator.read_binding(signature)?;
+                generator.emit_expression(signature)?;
             }
-            generator.read_binding(&pubkeys[0])?;
+            generator.emit_expression(&pubkeys[0])?;
             generator.apply(OP_CHECKSIG, 2, 1)?;
             for pubkey in pubkeys.iter().skip(1) {
-                generator.read_binding(pubkey)?;
+                generator.emit_expression(pubkey)?;
                 generator.apply(OP_CHECKSIGADD, 3, 1)?;
             }
             if threshold <= &16 {
@@ -1267,9 +1276,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             preimage,
             hash,
         } => {
-            generator.read_binding_or_integer(preimage)?;
+            generator.emit_expression(preimage)?;
             generator.lower_raw_opcode(hash_fn.opcode())?;
-            generator.read_binding_or_integer(hash)?;
+            generator.emit_expression(hash)?;
             generator.apply(OP_EQUAL, 2, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())

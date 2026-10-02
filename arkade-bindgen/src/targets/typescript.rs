@@ -22,11 +22,7 @@ impl CodegenTarget for TypeScriptTarget {
 
 fn ts_type(encoding: &Encoding) -> &'static str {
     match encoding {
-        Encoding::Compressed33
-        | Encoding::Schnorr64
-        | Encoding::Raw
-        | Encoding::Raw20
-        | Encoding::Raw32 => "Uint8Array",
+        Encoding::Schnorr64 | Encoding::Raw | Encoding::Raw20 | Encoding::Raw32 => "Uint8Array",
         Encoding::ScriptNum => "bigint",
         Encoding::Unknown(_) => "Uint8Array",
     }
@@ -35,7 +31,6 @@ fn ts_type(encoding: &Encoding) -> &'static str {
 /// Map encoding to runtime SDK type alias name for imports.
 fn sdk_type_alias(encoding: &Encoding) -> Option<&'static str> {
     match encoding {
-        Encoding::Compressed33 => Some("Pubkey"),
         Encoding::Schnorr64 => Some("Signature"),
         Encoding::Raw => Some("Bytes"),
         Encoding::Raw20 => Some("Bytes20"),

@@ -1,5 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Expression, KeyExpr, Requirement, Statement, TapItem,
+    AssignmentTarget, Constant, Contract, Expression, KeyExpr, LocatedStatement, Requirement,
+    Statement, TapItem,
 };
 use std::collections::HashMap;
 
@@ -307,11 +308,11 @@ fn fold_type(declared_type: &mut String, values: &HashMap<String, String>) -> Re
 }
 
 fn fold_statements(
-    statements: &mut [Statement],
+    statements: &mut [LocatedStatement],
     values: &HashMap<String, String>,
 ) -> Result<(), String> {
     for statement in statements {
-        match statement {
+        match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 fold_expression(expression, values)
             }
@@ -326,7 +327,9 @@ fn fold_statements(
                 fold_expression(value, values);
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     fold_expression(index, values);
                 }
                 fold_expression(value, values);
@@ -368,30 +371,30 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
             fold_expression(right, values);
         }
         Requirement::CheckSig { signature, pubkey } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
+            fold_expression(signature, values);
+            fold_expression(pubkey, values);
         }
         Requirement::CheckSigFromStack {
             signature,
             pubkey,
             message,
         } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
-            fold_named_index(message, values);
+            for operand in [signature, pubkey, message] {
+                fold_expression(operand, values);
+            }
         }
         Requirement::CheckMultisig {
             pubkeys,
             signatures,
             ..
         } => {
-            for name in pubkeys.iter_mut().chain(signatures) {
-                fold_named_index(name, values);
+            for operand in pubkeys.iter_mut().chain(signatures) {
+                fold_expression(operand, values);
             }
         }
         Requirement::HashEqual { preimage, hash, .. } => {
-            fold_named_index(preimage, values);
-            fold_named_index(hash, values);
+            fold_expression(preimage, values);
+            fold_expression(hash, values);
         }
     }
 }
@@ -402,7 +405,6 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
             *expression = Expression::Literal(values[name].clone());
             return;
         }
-        Expression::Property(name) => fold_named_index(name, values),
         Expression::Tunnel { policy, .. } => {
             for value in policy.iter_mut() {
                 if let Ok(literal) = evaluate(value, &mut |name| {
@@ -414,24 +416,6 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
                     *value = Expression::Literal(literal);
                 }
             }
-        }
-        Expression::CheckSigExpr { signature, pubkey } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
-        }
-        Expression::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | Expression::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
-            fold_named_index(message, values);
         }
         _ => {}
     }
@@ -445,9 +429,16 @@ fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
         *name = value.clone();
         return;
     }
-    if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
-        if let Some(value) = values.get(index) {
-            *name = format!("{array}[{value}]");
-        }
+    let mut cursor = 0;
+    while let Some(open) = name[cursor..].find('[').map(|offset| cursor + offset + 1) {
+        let Some(close) = name[open..].find(']').map(|offset| open + offset) else {
+            break;
+        };
+        cursor = if let Some(value) = values.get(&name[open..close]) {
+            name.replace_range(open..close, value);
+            open + value.len() + 1
+        } else {
+            close + 1
+        };
     }
 }

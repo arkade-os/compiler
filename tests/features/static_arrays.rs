@@ -515,7 +515,8 @@ contract Local(bytes32 h) {
     .to_string();
 
     assert!(
-        error.contains("element 1 of array 'xs' has type 'int', expected 'bytes32'"),
+        error.contains("binding 'xs'")
+            && error.contains("element 1: expected 'bytes32', got 'int'"),
         "unexpected error: {error}"
     );
 }

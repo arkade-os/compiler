@@ -298,7 +298,7 @@ pub fn validate_arkd_rules(
     let in_scope = |name: &str| -> bool {
         name == "server"
             || name == "emulator"
-            || constructor_scope.get(name) == Some(&ArkType::Pubkey)
+            || constructor_scope.get(name) == Some(&ArkType::Bytes)
             || ts
                 .inputs
                 .iter()
@@ -316,7 +316,7 @@ pub fn validate_arkd_rules(
                 return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
             }
             KeyExpr::Tweak { base, func } if base != "emulator" => {
-                if constructor_scope.get(base) != Some(&ArkType::Pubkey) {
+                if constructor_scope.get(base) != Some(&ArkType::Bytes) {
                     return Err(format!(
                         "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
                         ts.name
@@ -892,6 +892,7 @@ mod tests {
                 .iter()
                 .map(|n| Function {
                     name: (*n).into(),
+                    span: crate::diagnostics::Span { start: 0, end: 0 },
                     parameters: vec![],
                     statements: vec![],
                     is_private: false,

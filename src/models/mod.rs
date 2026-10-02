@@ -29,6 +29,13 @@ pub fn builtin_struct_fields(
         "AssetId" => Some(&[("txid", "bytes32"), ("gidx", "int")]),
         "Outpoint" => Some(&[("txid", "bytes32"), ("vout", "int")]),
         "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
+        // alt_bn128 G2 point; each coordinate is an Fp2 element `c1 * i + c0`.
+        "G2Point" => Some(&[
+            ("xC1", "int"),
+            ("xC0", "int"),
+            ("yC1", "int"),
+            ("yC0", "int"),
+        ]),
         _ => None,
     }
 }
@@ -93,17 +100,15 @@ fn flatten_type(
     leaves: &mut Vec<TypeLeaf>,
 ) -> Result<(), String> {
     if let Some((element_type, length)) = array_type_parts(declared_type) {
-        if !is_builtin_type(element_type) {
-            return Err(format!(
-                "arrays of structs are not supported: '{declared_type}'"
-            ));
-        }
         for index in 0..length {
-            leaves.push(TypeLeaf {
-                access_name: format!("{access_name}[{index}]"),
-                emitted_name: format!("{emitted_name}.{index}"),
-                leaf_type: element_type.to_string(),
-            });
+            flatten_type(
+                &format!("{access_name}[{index}]"),
+                &format!("{emitted_name}.{index}"),
+                element_type,
+                structs,
+                stack,
+                leaves,
+            )?;
         }
         return Ok(());
     }
@@ -172,7 +177,6 @@ pub struct FunctionInput {
 ///
 /// | encoding        | description                                   |
 /// |-----------------|-----------------------------------------------|
-/// | `compressed-33` | 33-byte SEC-compressed secp256k1 public key  |
 /// | `schnorr-64`    | 64-byte Schnorr signature (BIP-340)           |
 /// | `raw`           | arbitrary byte array (caller decides length)  |
 /// | `raw-20`        | 20-byte array (e.g., HASH160)                 |
@@ -303,8 +307,10 @@ pub struct Function {
     pub name: String,
     /// Function arguments
     pub parameters: Vec<Parameter>,
+    /// Byte range of the function name.
+    pub span: crate::diagnostics::Span,
     /// Function body statements.
-    pub statements: Vec<Statement>,
+    pub statements: Vec<LocatedStatement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
     pub is_private: bool,
     /// Whether this helper cannot see constructor state.
@@ -320,6 +326,13 @@ impl Function {
     pub(crate) fn is_imported(&self) -> bool {
         self.name.contains('.')
     }
+}
+
+/// A statement with the byte range of its source text.
+#[derive(Debug, Clone)]
+pub struct LocatedStatement {
+    pub span: crate::diagnostics::Span,
+    pub statement: Statement,
 }
 
 /// Statement AST - represents any executable statement in a function body
@@ -345,26 +358,27 @@ pub enum Statement {
     /// if (condition) { then_body } else { else_body }
     IfElse {
         condition: Expression,
-        then_body: Vec<Statement>,
-        else_body: Option<Vec<Statement>>,
+        then_body: Vec<LocatedStatement>,
+        else_body: Option<Vec<LocatedStatement>>,
     },
     /// for (index_var, value_var) in iterable { body }
     ForIn {
         index_var: String,
         value_var: String,
         iterable: Expression,
-        body: Vec<Statement>,
+        body: Vec<LocatedStatement>,
     },
     /// for (count) { body }
     ForCount {
         count: Expression,
-        body: Vec<Statement>,
+        body: Vec<LocatedStatement>,
     },
 }
 
 /// A binding or array element on the left-hand side of an assignment.
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
+    Access(Box<Expression>),
     Binding(String),
     ArrayIndex {
         array: String,
@@ -378,24 +392,27 @@ pub enum Requirement {
     /// Expression that must evaluate to true
     Expression(Expression),
     /// Check signature requirement
-    CheckSig { signature: String, pubkey: String },
+    CheckSig {
+        signature: Expression,
+        pubkey: Expression,
+    },
     /// Check signature from stack requirement (signature verified against a message)
     CheckSigFromStack {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Expression,
+        pubkey: Expression,
+        message: Expression,
     },
     /// Check multisig requirement
     CheckMultisig {
-        pubkeys: Vec<String>,
-        signatures: Vec<String>,
+        pubkeys: Vec<Expression>,
+        signatures: Vec<Expression>,
         threshold: u16,
     },
     /// Hash equal requirement
     HashEqual {
         hash_fn: HashFn,
-        preimage: String,
-        hash: String,
+        preimage: Expression,
+        hash: Expression,
     },
     /// Comparison requirement
     Comparison {
@@ -577,6 +594,16 @@ pub enum Expression {
     ArrayLiteral(Vec<Expression>),
     /// Named struct literal; only valid as the initializer of a typed declaration.
     StructLiteral(Vec<(String, Expression)>),
+    /// A field of a statically laid-out value.
+    FieldAccess {
+        value: Box<Expression>,
+        field: String,
+    },
+    /// An array nested inside an indexed value.
+    IndexAccess {
+        value: Box<Expression>,
+        index: Box<Expression>,
+    },
     /// Array element selected by an integer expression.
     ArrayIndex {
         array: String,
@@ -676,12 +703,15 @@ pub enum Expression {
         property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
     /// CheckSig expression result (for use in if conditions)
-    CheckSigExpr { signature: String, pubkey: String },
+    CheckSigExpr {
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+    },
     /// CheckSigFromStack expression result
     CheckSigFromStackExpr {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     // ─── Byte-string operations ────────────────────────────────────────
     /// Byte-string concatenation: produced by the rewrite pass when `+` has at
@@ -730,29 +760,22 @@ pub enum Expression {
         modulus: Box<Expression>,
     },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// EC point addition. Produces an `ECPoint`.
+    /// EC point addition: ecAdd(P, Q, curveId). Produces an `ECPoint`.
     EcAdd {
-        x1: Box<Expression>,
-        y1: Box<Expression>,
-        x2: Box<Expression>,
-        y2: Box<Expression>,
+        point_p: Box<Expression>,
+        point_q: Box<Expression>,
         curve_id: Box<Expression>,
     },
-    /// EC scalar multiplication. Produces an `ECPoint`.
+    /// EC scalar multiplication: ecMul(P, scalar, curveId). Produces an `ECPoint`.
     EcMul {
-        x: Box<Expression>,
-        y: Box<Expression>,
+        point: Box<Expression>,
         scalar: Box<Expression>,
         curve_id: Box<Expression>,
     },
-    /// One-pair pairing check. Tuple support can generalize this to multiple pairs.
+    /// Pairing-product check over aligned `ECPoint[n]` and `G2Point[n]` arrays.
     EcPairing {
-        g1_x: Box<Expression>,
-        g1_y: Box<Expression>,
-        g2_x_c1: Box<Expression>,
-        g2_x_c0: Box<Expression>,
-        g2_y_c1: Box<Expression>,
-        g2_y_c0: Box<Expression>,
+        g1: Box<Expression>,
+        g2: Box<Expression>,
         curve_id: Box<Expression>,
     },
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
@@ -769,9 +792,9 @@ pub enum Expression {
     },
     /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
     CheckSigFromStackVerify {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
@@ -855,11 +878,22 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         | Expression::TxIntrospection { .. }
         | Expression::IntentInspect { .. }
         | Expression::GroupProperty { .. }
-        | Expression::AssetGroupsLength
-        | Expression::CheckSigExpr { .. }
-        | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. } => vec![],
+        | Expression::AssetGroupsLength => vec![],
 
+        Expression::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => vec![signature, pubkey, message],
+
+        Expression::FieldAccess { value, .. } => vec![value],
+        Expression::IndexAccess { value, index } => vec![value, index],
         Expression::ArrayIndex { index, .. } => vec![index],
 
         Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
@@ -934,27 +968,16 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             modulus,
         } => vec![base, exponent, modulus],
         Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
+            point_p,
+            point_q,
             curve_id,
-        } => vec![x1, y1, x2, y2, curve_id],
+        } => vec![point_p, point_q, curve_id],
         Expression::EcMul {
-            x,
-            y,
+            point,
             scalar,
             curve_id,
-        } => vec![x, y, scalar, curve_id],
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
+        } => vec![point, scalar, curve_id],
+        Expression::EcPairing { g1, g2, curve_id } => vec![g1, g2, curve_id],
         Expression::EcMulScalarVerify {
             scalar,
             point_p,
@@ -975,5 +998,44 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+    }
+}
+
+impl Expression {
+    /// Resolve the layout path, using element zero for runtime indexes.
+    pub(crate) fn binding_path(&self) -> Option<String> {
+        self.access_path(&|index| match index {
+            Self::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
+            _ => "0".to_string(),
+        })
+    }
+
+    /// Spell an operand as written, for diagnostics.
+    pub(crate) fn source_text(&self) -> String {
+        match self {
+            Self::Literal(value) => value.clone(),
+            Self::BinaryOp { left, op, right } => {
+                format!("{} {op} {}", left.source_text(), right.source_text())
+            }
+            _ => self
+                .access_path(&Self::source_text)
+                .unwrap_or_else(|| "<expr>".to_string()),
+        }
+    }
+
+    fn access_path(&self, index_text: &dyn Fn(&Self) -> String) -> Option<String> {
+        match self {
+            Self::Variable(name) | Self::Property(name) => Some(name.clone()),
+            Self::ArrayIndex { array, index } => Some(format!("{array}[{}]", index_text(index))),
+            Self::IndexAccess { value, index } => Some(format!(
+                "{}[{}]",
+                value.access_path(index_text)?,
+                index_text(index)
+            )),
+            Self::FieldAccess { value, field } => {
+                Some(format!("{}.{field}", value.access_path(index_text)?))
+            }
+            _ => None,
+        }
     }
 }
