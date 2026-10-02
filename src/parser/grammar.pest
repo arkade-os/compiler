@@ -621,6 +621,9 @@ check_sig_from_stack_verify = {
 //   sha256(substr(tx.inputs[1].packet(LzReceive), 1, 140))
 byte_value = {
     intent_field |
+    sha256_func |
+    digest_func |
+    cast_func |
     substr_func |
     cat_func |
     bitwise_func |

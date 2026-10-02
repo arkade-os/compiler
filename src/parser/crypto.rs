@@ -236,7 +236,8 @@ pub(crate) fn parse_bitwise(pair: Pair<Rule>) -> Result<Expression, String> {
     let op = match inner.next().ok_or("Missing bitwise builtin name")?.as_str() {
         "bitAnd" => BitwiseOp::And,
         "bitOr" => BitwiseOp::Or,
-        _ => BitwiseOp::Xor,
+        "bitXor" => BitwiseOp::Xor,
+        other => return Err(format!("Unknown bitwise builtin: {other}")),
     };
     let left = parse_byte_value(inner.next().ok_or("Missing first bitwise operand")?)?;
     let right = parse_byte_value(inner.next().ok_or("Missing second bitwise operand")?)?;

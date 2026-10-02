@@ -422,7 +422,11 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::input_introspection => parse_input_introspection_to_expression(inner),
         Rule::output_introspection => parse_output_introspection_to_expression(inner),
         Rule::asset_at => parse_asset_at_to_expression(inner),
-        Rule::hex_literal | Rule::string_literal => parse_primary_expr(inner),
+        Rule::hex_literal
+        | Rule::string_literal
+        | Rule::sha256_func
+        | Rule::digest_func
+        | Rule::cast_func => parse_primary_expr(inner),
         Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
         Rule::named_binding => parse_property_access(inner),
         r => Err(format!("Unsupported byte_value rule: {:?}", r)),
