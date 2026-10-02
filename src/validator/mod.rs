@@ -1725,9 +1725,17 @@ fn validate_binding_expression(
         }
         Expression::Cast { target, data } => {
             let actual = resolved_expression_type(data, scopes);
-            if actual != ArkType::Bytes && actual != ArkType::Unknown {
+            let (source, hint) = match target.as_str() {
+                "int" => (
+                    ArkType::Bool,
+                    "only bool or a hex literal can be cast; use bin2num for bytes",
+                ),
+                "bool" => (ArkType::Int, "only int can be cast"),
+                _ => (ArkType::Bytes, "only bytes can be cast"),
+            };
+            if actual != source && actual != ArkType::Unknown {
                 issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': cannot cast '{}' to '{target}'; only bytes can be cast",
+                    "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
                     actual.as_str()
                 )));
             }

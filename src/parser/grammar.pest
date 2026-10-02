@@ -680,7 +680,8 @@ size_func = {
 
 // Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
 // pubkey/signature are semantic because the VM validates them when consumed.
-cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32") ~ !(ASCII_ALPHANUMERIC | "_") }
+// int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
+cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
 cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 
 // ─── Packet Introspection ──────────────────────────────────────────────
