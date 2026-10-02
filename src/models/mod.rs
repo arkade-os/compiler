@@ -565,6 +565,23 @@ pub enum GroupIOSource {
     Outputs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitwiseOp {
+    And,
+    Or,
+    Xor,
+}
+
+impl BitwiseOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            BitwiseOp::And => "bitAnd",
+            BitwiseOp::Or => "bitOr",
+            BitwiseOp::Xor => "bitXor",
+        }
+    }
+}
+
 /// Expression AST
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -820,6 +837,14 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
+    /// Bytewise logic over equal-length operands: bitAnd/bitOr/bitXor(a, b)
+    Bitwise {
+        op: BitwiseOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    /// Bytewise inversion: bitNot(data) → OP_INVERT
+    BitNot { data: Box<Expression> },
     /// Bytes-to-number (little-endian, leading-zero-stripped BigNum): bin2num(bytes) → OP_BIN2NUM
     Bin2Num { data: Box<Expression> },
     /// Number-to-bytes (little-endian, zero-padded): num2bin(num, size) → OP_NUM2BIN
@@ -990,9 +1015,12 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
         Expression::Substr { data, offset, size } => vec![data, offset, size],
-        Expression::Cat { left, right } => vec![left, right],
+        Expression::Cat { left, right } | Expression::Bitwise { left, right, .. } => {
+            vec![left, right]
+        }
         Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
+        | Expression::BitNot { data }
         | Expression::SizeOf { data }
         | Expression::Cast { data, .. } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],

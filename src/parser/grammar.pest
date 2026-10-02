@@ -178,6 +178,8 @@ primary_expr = {
     tweak_verify |
     substr_func |
     cat_func |
+    bitwise_func |
+    bit_not_func |
     bin2num_func |
     num2bin_func |
     reverse_bytes_func |
@@ -253,6 +255,8 @@ complex_expression = _{
     tweak_verify |
     substr_func |
     cat_func |
+    bitwise_func |
+    bit_not_func |
     bin2num_func |
     num2bin_func |
     reverse_bytes_func |
@@ -617,8 +621,13 @@ check_sig_from_stack_verify = {
 //   sha256(substr(tx.inputs[1].packet(LzReceive), 1, 140))
 byte_value = {
     intent_field |
+    sha256_func |
+    digest_func |
+    cast_func |
     substr_func |
     cat_func |
+    bitwise_func |
+    bit_not_func |
     num2bin_func |
     reverse_bytes_func |
     packet_inspect |
@@ -638,6 +647,17 @@ substr_func = {
 // Byte concatenation: cat(a, b) → OP_CAT
 cat_func = {
     "cat" ~ "(" ~ byte_value ~ "," ~ byte_value ~ ")"
+}
+
+// Bytewise logic: bitAnd/bitOr/bitXor(a, b) → OP_AND/OP_OR/OP_XOR
+bitwise_func = {
+    bitwise_op ~ "(" ~ byte_value ~ "," ~ byte_value ~ ")"
+}
+bitwise_op = { "bitAnd" | "bitOr" | "bitXor" }
+
+// Bytewise inversion: bitNot(bytes) → OP_INVERT
+bit_not_func = {
+    "bitNot" ~ "(" ~ byte_value ~ ")"
 }
 
 // Bytes → BigNum: bin2num(bytes) → OP_BIN2NUM

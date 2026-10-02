@@ -971,6 +971,13 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         // Byte-string manipulation (introspector extensions)
         Expression::Substr { .. } => ArkType::Bytes,
         Expression::Cat { .. } => ArkType::Bytes,
+        Expression::Bitwise { .. } | Expression::BitNot { .. } => {
+            match static_byte_width(expr, scope) {
+                Some(20) => ArkType::Bytes20,
+                Some(32) => ArkType::Bytes32,
+                _ => ArkType::Bytes,
+            }
+        }
         Expression::Bin2Num { .. } => ArkType::Int,
         Expression::Num2Bin { .. } => ArkType::Bytes,
         Expression::ReverseBytes { .. } => ArkType::Bytes,
@@ -1011,6 +1018,23 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
 /// Returns true when the type widens to `bytes`: it can be concatenated with
 /// `+` and compared or bound to `bytes`, but never to another sized type.
+/// Byte length of `expr` when it is known at compile time.
+pub(crate) fn static_byte_width(expr: &Expression, scope: &Scope) -> Option<usize> {
+    match expr {
+        Expression::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
+        // Operands share one length, so either side's known width is the result's.
+        Expression::Bitwise { left, right, .. } => {
+            static_byte_width(left, scope).or_else(|| static_byte_width(right, scope))
+        }
+        Expression::BitNot { data } => static_byte_width(data, scope),
+        _ => match infer_type(expr, scope) {
+            ArkType::Bytes20 => Some(20),
+            ArkType::Bytes32 => Some(32),
+            _ => None,
+        },
+    }
+}
+
 pub fn is_bytes_like(t: &ArkType) -> bool {
     matches!(
         t,

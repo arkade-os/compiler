@@ -472,6 +472,14 @@ pub(crate) fn substitute_expression(
             left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
             right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
         },
+        Expression::Bitwise { op, left, right } => Expression::Bitwise {
+            op: *op,
+            left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
+            right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
+        },
+        Expression::BitNot { data } => Expression::BitNot {
+            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
+        },
         Expression::Bin2Num { data } => Expression::Bin2Num {
             data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },

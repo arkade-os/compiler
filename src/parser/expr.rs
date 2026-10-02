@@ -95,6 +95,10 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "ecMul" => Some("ecMul(P, scalar, curveId)"),
         "ecPairing" => Some("ecPairing(g1Points, g2Points, curveId)"),
         "reverseBytes" => Some("reverseBytes(data)"),
+        "bitAnd" => Some("bitAnd(a, b)"),
+        "bitOr" => Some("bitOr(a, b)"),
+        "bitXor" => Some("bitXor(a, b)"),
+        "bitNot" => Some("bitNot(data)"),
         "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
@@ -275,6 +279,8 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         // Byte-string manipulation
         Rule::substr_func => parse_substr(pair),
         Rule::cat_func => parse_cat(pair),
+        Rule::bitwise_func => parse_bitwise(pair),
+        Rule::bit_not_func => parse_bit_not(pair),
         Rule::bin2num_func => parse_bin2num(pair),
         Rule::num2bin_func => parse_num2bin(pair),
         Rule::reverse_bytes_func => parse_reverse_bytes(pair),
@@ -407,6 +413,8 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::substr_func => parse_substr(inner),
         Rule::intent_field => parse_intent_inspect(inner),
         Rule::cat_func => parse_cat(inner),
+        Rule::bitwise_func => parse_bitwise(inner),
+        Rule::bit_not_func => parse_bit_not(inner),
         Rule::num2bin_func => parse_num2bin(inner),
         Rule::reverse_bytes_func => parse_reverse_bytes(inner),
         Rule::packet_inspect => parse_packet_inspect(inner),
@@ -414,7 +422,11 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::input_introspection => parse_input_introspection_to_expression(inner),
         Rule::output_introspection => parse_output_introspection_to_expression(inner),
         Rule::asset_at => parse_asset_at_to_expression(inner),
-        Rule::hex_literal | Rule::string_literal => parse_primary_expr(inner),
+        Rule::hex_literal
+        | Rule::string_literal
+        | Rule::sha256_func
+        | Rule::digest_func
+        | Rule::cast_func => parse_primary_expr(inner),
         Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
         Rule::named_binding => parse_property_access(inner),
         r => Err(format!("Unsupported byte_value rule: {:?}", r)),
