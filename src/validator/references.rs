@@ -16,11 +16,7 @@ pub(crate) fn referenced_parameters<'a>(
 }
 
 fn collect_name<'a>(name: &'a str, names: &mut HashSet<&'a str>) {
-    names.insert(name.split(['.', '[']).next().unwrap_or(name));
-    // Named crypto operands can carry runtime indices, e.g. keys[index].
-    if let Some((_, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
-        collect_name(index, names);
-    }
+    names.insert(name.split('.').next().unwrap_or(name));
 }
 
 fn collect_expression<'a>(
@@ -44,24 +40,6 @@ fn collect_expression<'a>(
         | Expression::ArrayIndex { array: name, .. }
         | Expression::GroupProperty { group: name, .. }
         | Expression::GroupControlIs { group: name, .. } => collect_name(name, names),
-        Expression::CheckSigExpr { signature, pubkey } => {
-            collect_name(signature, names);
-            collect_name(pubkey, names);
-        }
-        Expression::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | Expression::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => {
-            collect_name(signature, names);
-            collect_name(pubkey, names);
-            collect_name(message, names);
-        }
         _ => {}
     }
     for child in child_exprs(expression) {
@@ -84,30 +62,32 @@ fn collect_requirement<'a>(
             collect_expression(right, names, functions, visited);
         }
         Requirement::CheckSig { signature, pubkey } => {
-            collect_name(signature, names);
-            collect_name(pubkey, names);
+            for operand in [signature, pubkey] {
+                collect_expression(operand, names, functions, visited);
+            }
         }
         Requirement::CheckSigFromStack {
             signature,
             pubkey,
             message,
         } => {
-            collect_name(signature, names);
-            collect_name(pubkey, names);
-            collect_name(message, names);
+            for operand in [signature, pubkey, message] {
+                collect_expression(operand, names, functions, visited);
+            }
         }
         Requirement::CheckMultisig {
             pubkeys,
             signatures,
             ..
         } => {
-            for name in pubkeys.iter().chain(signatures) {
-                collect_name(name, names);
+            for operand in pubkeys.iter().chain(signatures) {
+                collect_expression(operand, names, functions, visited);
             }
         }
         Requirement::HashEqual { preimage, hash, .. } => {
-            collect_name(preimage, names);
-            collect_name(hash, names);
+            for operand in [preimage, hash] {
+                collect_expression(operand, names, functions, visited);
+            }
         }
     }
 }
@@ -131,7 +111,9 @@ fn collect_statements<'a>(
                 collect_expression(value, names, functions, visited)
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     collect_expression(index, names, functions, visited);
                 }
                 collect_expression(value, names, functions, visited);

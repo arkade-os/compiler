@@ -665,7 +665,9 @@ fn visit_statements(
                 _ => {}
             },
             Statement::VarAssign { target, value } => {
-                if let models::AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let models::AssignmentTarget::ArrayIndex { index, .. }
+                | models::AssignmentTarget::Access(index) = target
+                {
                     visit_expression(index, visit)?;
                 }
                 visit_expression(value, visit)?;

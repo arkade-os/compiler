@@ -158,7 +158,7 @@ fn insert_type_bindings(
             ArkType::Array(Box::new(element_type.clone()), length),
         );
         for index in 0..length {
-            scope.insert(format!("{name}[{index}]"), element_type.clone());
+            insert_type_bindings(scope, &format!("{name}[{index}]"), base, structs, stack);
         }
         return;
     }
@@ -280,7 +280,9 @@ fn resolve_statements(
                 bind_local_type(scope, name, declared_type.as_deref(), binding_type, structs);
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     resolve_expression(index, scope, returns);
                 }
                 resolve_expression(value, scope, returns);
@@ -309,7 +311,7 @@ fn resolve_statements(
                 };
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
-                loop_scope.insert(value_var.clone(), element_type);
+                bind_local_type(&mut loop_scope, value_var, None, element_type, structs);
                 resolve_statements(body, &mut loop_scope, structs, returns);
             }
             Statement::ForCount { count, body } => {
@@ -446,6 +448,10 @@ fn check_statement(
         }
         Statement::VarAssign { target, value } => {
             let (target_name, original_type) = match target {
+                AssignmentTarget::Access(value) => {
+                    check_expression(value, scope, errors, fn_name);
+                    ("indexed field".to_string(), Some(infer_type(value, scope)))
+                }
                 AssignmentTarget::Binding(name) => {
                     let original_type = scope.get(name.as_str()).cloned();
                     if original_type.is_none() {
@@ -513,7 +519,7 @@ fn check_statement(
                 ArkType::Array(element, _) => *element,
                 _ => ArkType::Unknown,
             };
-            loop_scope.insert(value_var.clone(), element);
+            bind_local_type(&mut loop_scope, value_var, None, element, structs);
             check_statements(body, &mut loop_scope, errors, fn_name, structs);
         }
         Statement::ForCount { count, body } => {
@@ -567,7 +573,7 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                     &ArkType::Pubkey,
                     errors,
                     fn_name,
-                    &format!("checkMultisig() pubkey '{}'", pk),
+                    &format!("checkMultisig() pubkey '{}'", pk.source_text()),
                 );
             }
             for signature in signatures {
@@ -577,22 +583,24 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                     &ArkType::Signature,
                     errors,
                     fn_name,
-                    &format!("checkMultisig() signature '{}'", signature),
+                    &format!("checkMultisig() signature '{}'", signature.source_text()),
                 );
             }
         }
         Requirement::HashEqual { hash_fn, hash, .. } => {
-            if let Some(t) = scope.get(hash.as_str()) {
-                if !digest_accepts(hash_fn, t) {
-                    errors.push(TypeError::new(format!(
-                        "fn {}: {} comparison: '{}' has type '{}', expected {}",
-                        fn_name,
-                        hash_fn.name(),
-                        hash,
-                        t.as_str(),
-                        hash_fn.digest_type()
-                    )));
-                }
+            let t = infer_type(hash, scope);
+            if !matches!(hash, Expression::Literal(_))
+                && t != ArkType::Unknown
+                && !digest_accepts(hash_fn, &t)
+            {
+                errors.push(TypeError::new(format!(
+                    "fn {}: {} comparison: '{}' has type '{}', expected {}",
+                    fn_name,
+                    hash_fn.name(),
+                    hash.source_text(),
+                    t.as_str(),
+                    hash_fn.digest_type()
+                )));
             }
         }
         Requirement::Comparison { left, op, right } => {
@@ -617,6 +625,13 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         }
         Expression::Negate { value } | Expression::Not { value } => {
             check_expression(value, scope, errors, fn_name);
+        }
+        Expression::FieldAccess { value, .. } => check_expression(value, scope, errors, fn_name),
+        Expression::IndexAccess { value, index } => {
+            check_expression(value, scope, errors, fn_name);
+            if let Some(array) = value.binding_path() {
+                check_array_index(&array, index, scope, errors, fn_name);
+            }
         }
         Expression::ArrayIndex { array, index } => {
             check_array_index(array, index, scope, errors, fn_name);
@@ -687,19 +702,20 @@ pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)>
 }
 
 fn check_signature_expression(
-    signature: &str,
-    pubkey: &str,
+    signature: &Expression,
+    pubkey: &Expression,
     call: &str,
     scope: &Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
 ) {
-    if scope.get(signature) == Some(&ArkType::Pubkey)
-        && scope.get(pubkey) == Some(&ArkType::Signature)
+    let (signature_text, pubkey_text) = (signature.source_text(), pubkey.source_text());
+    if infer_type(signature, scope) == ArkType::Pubkey
+        && infer_type(pubkey, scope) == ArkType::Signature
     {
         errors.push(TypeError::new(format!(
             "fn {}: {}({}, {}) — arguments appear swapped: expected (signature, pubkey)",
-            fn_name, call, signature, pubkey
+            fn_name, call, signature_text, pubkey_text
         )));
         return;
     }
@@ -709,7 +725,7 @@ fn check_signature_expression(
         &ArkType::Signature,
         errors,
         fn_name,
-        &format!("{call}() arg 1 '{signature}'"),
+        &format!("{call}() arg 1 '{signature_text}'"),
     );
     expect_type(
         scope,
@@ -717,7 +733,7 @@ fn check_signature_expression(
         &ArkType::Pubkey,
         errors,
         fn_name,
-        &format!("{call}() arg 2 '{pubkey}'"),
+        &format!("{call}() arg 2 '{pubkey_text}'"),
     );
 }
 
@@ -781,14 +797,16 @@ fn is_numeric(t: &ArkType) -> bool {
 
 fn expect_type(
     scope: &Scope,
-    name: &str,
+    value: &Expression,
     expected: &ArkType,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
     label: &str,
 ) {
-    if let Some(actual) = scope.get(name) {
-        if actual != expected && *actual != ArkType::Unknown {
+    // Literal operands are checked by the validator.
+    if !matches!(value, Expression::Literal(_)) {
+        let actual = infer_type(value, scope);
+        if actual != *expected && actual != ArkType::Unknown {
             errors.push(TypeError::new(format!(
                 "fn {}: {} has type '{}', expected '{}'",
                 fn_name,
@@ -829,6 +847,14 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             elements.len(),
         ),
         Expression::StructLiteral(_) => ArkType::Unknown,
+        Expression::FieldAccess { .. } => expr
+            .binding_path()
+            .map(|name| infer_type(&Expression::Property(name), scope))
+            .unwrap_or(ArkType::Unknown),
+        Expression::IndexAccess { value, .. } => match infer_type(value, scope) {
+            ArkType::Array(element, _) => *element,
+            _ => ArkType::Unknown,
+        },
         Expression::ArrayIndex { array, .. } => match scope.get(array) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,

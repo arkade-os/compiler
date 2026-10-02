@@ -135,6 +135,21 @@ fn validate_body(
                 declared_type,
                 value,
             } => {
+                // Non-literal initializers are type-checked with the declaration.
+                if let (
+                    Some(expected),
+                    Expression::ArrayLiteral(_) | Expression::StructLiteral(_),
+                ) = (declared_type, value)
+                {
+                    validate_value(
+                        expected,
+                        value,
+                        scope,
+                        contract,
+                        &format!("binding '{name}' in '{}'", function.name),
+                        issues,
+                    );
+                }
                 crate::typechecker::bind_local_type(
                     scope,
                     name,
@@ -165,7 +180,13 @@ fn validate_body(
                     _ => ArkType::Unknown,
                 };
                 scope.insert(index_var.clone(), ArkType::Int);
-                scope.insert(value_var.clone(), element);
+                crate::typechecker::bind_local_type(
+                    &mut scope,
+                    value_var,
+                    None,
+                    element,
+                    &contract.structs,
+                );
                 validate_body(body, function, &mut scope, contract, issues);
             }
             Statement::ForCount { body, .. } => {
@@ -253,8 +274,15 @@ fn validate_value(
                     elements.len()
                 )));
             }
-            for value in elements {
-                validate_value(&element.as_str(), value, scope, contract, context, issues);
+            for (index, value) in elements.iter().enumerate() {
+                validate_value(
+                    &element.as_str(),
+                    value,
+                    scope,
+                    contract,
+                    &format!("{context}, element {index}"),
+                    issues,
+                );
             }
         }
         (Expression::StructLiteral(fields), ArkType::Struct(name)) => {
@@ -281,7 +309,14 @@ fn validate_value(
                         )));
                     }
                     if let Some(field) = definition.fields.iter().find(|f| f.name == *name) {
-                        validate_value(&field.param_type, value, scope, contract, context, issues);
+                        validate_value(
+                            &field.param_type,
+                            value,
+                            scope,
+                            contract,
+                            &format!("{context}, field '{name}'"),
+                            issues,
+                        );
                     } else {
                         issues.push(ValidationIssue::error(format!(
                             "{context}: unknown field '{name}'"
@@ -317,7 +352,7 @@ fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
         Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
         Statement::LetBinding { value, .. } => vec![value],
         Statement::VarAssign {
-            target: AssignmentTarget::ArrayIndex { index, .. },
+            target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
             value,
         } => vec![value, index],
         Statement::VarAssign { value, .. } => vec![value],

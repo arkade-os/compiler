@@ -1,13 +1,25 @@
 use super::*;
 use crate::models::{child_exprs_mut, flatten_parameter, is_builtin_type, TypeLeaf};
 
-pub(super) fn extract_calls(expression: &mut Expression, calls: &mut Vec<Expression>) {
-    if matches!(expression, Expression::Call { .. }) {
-        let replacement = Expression::Variable(format!("$call:{}", calls.len()));
-        calls.push(std::mem::replace(expression, replacement));
+pub(super) fn extract_values(
+    expression: &mut Expression,
+    values: &mut Vec<Expression>,
+    scope: &typechecker::Scope,
+) {
+    if matches!(
+        expression,
+        Expression::Call { .. } | Expression::FieldAccess { .. } | Expression::IndexAccess { .. }
+    ) || (matches!(expression, Expression::ArrayIndex { .. })
+        && matches!(
+            typechecker::infer_type(expression, scope),
+            typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
+        ))
+    {
+        let replacement = Expression::Variable(format!("$call:{}", values.len()));
+        values.push(std::mem::replace(expression, replacement));
     } else {
         for child in child_exprs_mut(expression) {
-            extract_calls(child, calls);
+            extract_values(child, values, scope);
         }
     }
 }
@@ -98,6 +110,14 @@ impl Generator {
         if is_builtin_type(ty) {
             return self.emit_expression(expression);
         }
+        if matches!(
+            expression,
+            Expression::ArrayIndex { .. }
+                | Expression::FieldAccess { .. }
+                | Expression::IndexAccess { .. }
+        ) {
+            return self.emit_access_value(expression, ty);
+        }
         if let Expression::Variable(name) | Expression::Property(name) = expression {
             for leaf in self.value_leaves(name, ty)?.iter().rev() {
                 self.read_binding(&leaf.access_name)?;
@@ -181,13 +201,22 @@ impl Generator {
             if is_builtin_type(&parameter.param_type)
                 && !assigns_parameter(&function.statements, &parameter.name)
             {
-                if let Expression::Variable(source) = argument {
-                    if let Some(source_index) = self.binding_index(source).filter(|&i| i < baseline)
+                let source = match argument {
+                    Expression::Variable(name) => Some(Self::internal_binding_name(name)),
+                    Expression::ArrayIndex { array, index } => match index.as_ref() {
+                        Expression::Literal(index) => {
+                            Some(Self::internal_binding_name(&format!("{array}[{index}]")))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(source) = source {
+                    if let Some(source_index) =
+                        self.binding_index(&source).filter(|&i| i < baseline)
                     {
                         if self.read_cursor.is_none() {
-                            if let Some(previous) =
-                                self.last_reads.get(&(source.clone(), source_index))
-                            {
+                            if let Some(previous) = self.last_reads.get(&(source, source_index)) {
                                 self.final_reads[*previous] = false;
                             }
                         }

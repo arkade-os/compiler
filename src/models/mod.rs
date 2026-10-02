@@ -93,17 +93,15 @@ fn flatten_type(
     leaves: &mut Vec<TypeLeaf>,
 ) -> Result<(), String> {
     if let Some((element_type, length)) = array_type_parts(declared_type) {
-        if !is_builtin_type(element_type) {
-            return Err(format!(
-                "arrays of structs are not supported: '{declared_type}'"
-            ));
-        }
         for index in 0..length {
-            leaves.push(TypeLeaf {
-                access_name: format!("{access_name}[{index}]"),
-                emitted_name: format!("{emitted_name}.{index}"),
-                leaf_type: element_type.to_string(),
-            });
+            flatten_type(
+                &format!("{access_name}[{index}]"),
+                &format!("{emitted_name}.{index}"),
+                element_type,
+                structs,
+                stack,
+                leaves,
+            )?;
         }
         return Ok(());
     }
@@ -374,6 +372,7 @@ pub enum Statement {
 /// A binding or array element on the left-hand side of an assignment.
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
+    Access(Box<Expression>),
     Binding(String),
     ArrayIndex {
         array: String,
@@ -387,24 +386,27 @@ pub enum Requirement {
     /// Expression that must evaluate to true
     Expression(Expression),
     /// Check signature requirement
-    CheckSig { signature: String, pubkey: String },
+    CheckSig {
+        signature: Expression,
+        pubkey: Expression,
+    },
     /// Check signature from stack requirement (signature verified against a message)
     CheckSigFromStack {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Expression,
+        pubkey: Expression,
+        message: Expression,
     },
     /// Check multisig requirement
     CheckMultisig {
-        pubkeys: Vec<String>,
-        signatures: Vec<String>,
+        pubkeys: Vec<Expression>,
+        signatures: Vec<Expression>,
         threshold: u16,
     },
     /// Hash equal requirement
     HashEqual {
         hash_fn: HashFn,
-        preimage: String,
-        hash: String,
+        preimage: Expression,
+        hash: Expression,
     },
     /// Comparison requirement
     Comparison {
@@ -586,6 +588,16 @@ pub enum Expression {
     ArrayLiteral(Vec<Expression>),
     /// Named struct literal; only valid as the initializer of a typed declaration.
     StructLiteral(Vec<(String, Expression)>),
+    /// A field of a statically laid-out value.
+    FieldAccess {
+        value: Box<Expression>,
+        field: String,
+    },
+    /// An array nested inside an indexed value.
+    IndexAccess {
+        value: Box<Expression>,
+        index: Box<Expression>,
+    },
     /// Array element selected by an integer expression.
     ArrayIndex {
         array: String,
@@ -685,12 +697,15 @@ pub enum Expression {
         property: Option<String>, // Optional property like "amount", "type", "inputIndex", "outputIndex"
     },
     /// CheckSig expression result (for use in if conditions)
-    CheckSigExpr { signature: String, pubkey: String },
+    CheckSigExpr {
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+    },
     /// CheckSigFromStack expression result
     CheckSigFromStackExpr {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     // ─── Byte-string operations ────────────────────────────────────────
     /// Byte-string concatenation: produced by the rewrite pass when `+` has at
@@ -778,9 +793,9 @@ pub enum Expression {
     },
     /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
     CheckSigFromStackVerify {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
@@ -864,11 +879,22 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         | Expression::TxIntrospection { .. }
         | Expression::IntentInspect { .. }
         | Expression::GroupProperty { .. }
-        | Expression::AssetGroupsLength
-        | Expression::CheckSigExpr { .. }
-        | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. } => vec![],
+        | Expression::AssetGroupsLength => vec![],
 
+        Expression::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => vec![signature, pubkey, message],
+
+        Expression::FieldAccess { value, .. } => vec![value],
+        Expression::IndexAccess { value, index } => vec![value, index],
         Expression::ArrayIndex { index, .. } => vec![index],
 
         Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
@@ -984,5 +1010,44 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::Num2Bin { value, size } => vec![value, size],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+    }
+}
+
+impl Expression {
+    /// Resolve the layout path, using element zero for runtime indexes.
+    pub(crate) fn binding_path(&self) -> Option<String> {
+        self.access_path(&|index| match index {
+            Self::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
+            _ => "0".to_string(),
+        })
+    }
+
+    /// Spell an operand as written, for diagnostics.
+    pub(crate) fn source_text(&self) -> String {
+        match self {
+            Self::Literal(value) => value.clone(),
+            Self::BinaryOp { left, op, right } => {
+                format!("{} {op} {}", left.source_text(), right.source_text())
+            }
+            _ => self
+                .access_path(&Self::source_text)
+                .unwrap_or_else(|| "<expr>".to_string()),
+        }
+    }
+
+    fn access_path(&self, index_text: &dyn Fn(&Self) -> String) -> Option<String> {
+        match self {
+            Self::Variable(name) | Self::Property(name) => Some(name.clone()),
+            Self::ArrayIndex { array, index } => Some(format!("{array}[{}]", index_text(index))),
+            Self::IndexAccess { value, index } => Some(format!(
+                "{}[{}]",
+                value.access_path(index_text)?,
+                index_text(index)
+            )),
+            Self::FieldAccess { value, field } => {
+                Some(format!("{}.{field}", value.access_path(index_text)?))
+            }
+            _ => None,
+        }
     }
 }

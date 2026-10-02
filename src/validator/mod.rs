@@ -379,18 +379,11 @@ fn validate_struct_fields<'a>(
                 issues,
             );
         }
-        let (base, is_array) = crate::models::array_type_parts(&field.param_type)
-            .map(|(base, _)| (base, true))
-            .unwrap_or((field.param_type.as_str(), false));
+        let base = crate::models::array_type_parts(&field.param_type)
+            .map(|(base, _)| base)
+            .unwrap_or(&field.param_type);
         if let Some(nested) = definitions.get(base) {
-            if is_array {
-                issues.push(ValidationIssue::error(format!(
-                    "field '{}.{}' is an array of structs; arrays of structs are not supported",
-                    definition.name, field.name
-                )));
-            } else {
-                validate_struct_fields(nested, definitions, stack, validated, issues);
-            }
+            validate_struct_fields(nested, definitions, stack, validated, issues);
         }
     }
     stack.pop();
@@ -410,12 +403,6 @@ fn validate_declared_type(
     {
         issues.push(ValidationIssue::error(format!(
             "{context} uses unknown type '{base}'"
-        )));
-    }
-    if array.is_some() && (definitions.contains_key(base) || crate::models::is_builtin_struct(base))
-    {
-        issues.push(ValidationIssue::error(format!(
-            "{context} uses an array of structs; arrays of structs are not supported"
         )));
     }
 }
@@ -636,7 +623,9 @@ fn walk_asset_id_stmts(
                 );
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     check_asset_id_expr(index, scope, fname, issues);
                 }
                 check_asset_id_expr(value, scope, fname, issues);
@@ -659,12 +648,23 @@ fn walk_asset_id_stmts(
             Statement::ForIn {
                 index_var,
                 value_var,
+                iterable,
                 body,
-                ..
             } => {
+                check_asset_id_expr(iterable, scope, fname, issues);
+                let element = match infer_type(iterable, scope) {
+                    ArkType::Array(element, _) => *element,
+                    _ => ArkType::Unknown,
+                };
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
-                loop_scope.insert(value_var.clone(), ArkType::Unknown);
+                crate::typechecker::bind_local_type(
+                    &mut loop_scope,
+                    value_var,
+                    None,
+                    element,
+                    structs,
+                );
                 walk_asset_id_stmts(body, &mut loop_scope, fname, structs, issues);
             }
             Statement::ForCount { count, body } => {
@@ -744,11 +744,22 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         | Expression::TxIntrospection { .. }
         | Expression::IntentInspect { .. }
         | Expression::GroupProperty { .. }
-        | Expression::AssetGroupsLength
-        | Expression::CheckSigExpr { .. }
-        | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. } => vec![],
+        | Expression::AssetGroupsLength => vec![],
 
+        Expression::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => vec![signature, pubkey, message],
+
+        Expression::FieldAccess { value, .. } => vec![value],
+        Expression::IndexAccess { value, index } => vec![value, index],
         Expression::ArrayIndex { index, .. } => vec![index],
 
         Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
@@ -902,15 +913,6 @@ fn insert_parameters(
 }
 
 fn find_binding<'a>(scopes: &'a BindingScopes, name: &str) -> Option<&'a BindingInfo> {
-    if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
-        if index.parse::<usize>().is_err() {
-            let first_element = format!("{array}[0]");
-            return scopes
-                .iter()
-                .rev()
-                .find_map(|frame| frame.get(&first_element));
-        }
-    }
     scopes.iter().rev().find_map(|frame| frame.get(name))
 }
 
@@ -999,37 +1001,23 @@ fn validate_binding_statements(
                 // Composite initializers are validated through their scalar
                 // children; the declaration itself owns their result shape.
                 match value {
-                    Expression::ArrayLiteral(elements) => {
-                        for element in elements {
-                            validate_binding_expression(
-                                element,
-                                function_name,
-                                scopes,
-                                issues,
-                                true,
-                            );
-                        }
-                    }
-                    Expression::StructLiteral(fields) => {
-                        match declared_type.as_deref().and_then(|declared_type| {
-                            structs
-                                .iter()
-                                .find(|definition| definition.name == declared_type)
-                        }) {
-                            Some(definition) => validate_struct_literal(
-                                name,
-                                definition,
-                                fields,
-                                function_name,
-                                scopes,
-                                structs,
-                                issues,
-                            ),
-                            None => issues.push(ValidationIssue::error(format!(
+                    Expression::StructLiteral(_) => {
+                        if !declared_type
+                            .as_deref()
+                            .is_some_and(|ty| matches!(ArkType::parse(ty), ArkType::Struct(_)))
+                        {
+                            issues.push(ValidationIssue::error(format!(
                                 "function '{}': struct literal needs a declared struct type",
                                 function_name
-                            ))),
+                            )));
                         }
+                        validate_value_expression(value, function_name, scopes, issues);
+                    }
+                    Expression::ArrayLiteral(_)
+                    | Expression::ArrayIndex { .. }
+                    | Expression::FieldAccess { .. }
+                    | Expression::IndexAccess { .. } => {
+                        validate_value_expression(value, function_name, scopes, issues)
                     }
                     _ => validate_binding_expression(
                         value,
@@ -1045,28 +1033,8 @@ fn validate_binding_statements(
                     .as_deref()
                     .map(ArkType::parse)
                     .unwrap_or_else(|| inferred.clone());
-                // The inferred array type only carries the first element's type,
-                // so check every element against the declared element type.
-                if let (Expression::ArrayLiteral(elements), ArkType::Array(element_type, _)) =
-                    (value, &binding_type)
-                {
-                    for (index, element) in elements.iter().enumerate() {
-                        let actual = resolved_expression_type(element, scopes);
-                        if actual != ArkType::Unknown
-                            && !binding_types_compatible(element_type, &actual)
-                        {
-                            issues.push(ValidationIssue::error(format!(
-                                "function '{}': element {} of array '{}' has type '{}', expected '{}'",
-                                function_name,
-                                index,
-                                name,
-                                actual.as_str(),
-                                element_type.as_str()
-                            )));
-                        }
-                    }
-                }
                 if declared_type.is_some()
+                    && !matches!(&inferred, ArkType::Array(element, _) if **element == ArkType::Unknown)
                     && inferred != ArkType::Unknown
                     && !binding_types_compatible(&binding_type, &inferred)
                 {
@@ -1093,7 +1061,13 @@ fn validate_binding_statements(
                     let result_type = crate::models::expression_result_struct(value);
                     if !matches!(value, Expression::StructLiteral(_))
                         && result_type != Some(struct_type.as_str())
-                        && !matches!(value, Expression::Call { .. })
+                        && !matches!(
+                            value,
+                            Expression::Call { .. }
+                                | Expression::ArrayIndex { .. }
+                                | Expression::FieldAccess { .. }
+                                | Expression::IndexAccess { .. }
+                        )
                     {
                         issues.push(ValidationIssue::error(format!(
                             "function '{}': struct binding '{}' must be initialized with a matching struct value",
@@ -1126,6 +1100,25 @@ fn validate_binding_statements(
                 validate_binding_expression(value, function_name, scopes, issues, true);
                 let inferred = resolved_expression_type(value, scopes);
                 match target {
+                    AssignmentTarget::Access(access) => {
+                        let before = issues.len();
+                        validate_binding_expression(access, function_name, scopes, issues, true);
+                        // An invalid access already explains the target.
+                        if issues.len() == before {
+                            let expected = resolved_expression_type(access, scopes);
+                            if expected != ArkType::Unknown
+                                && inferred != ArkType::Unknown
+                                && !binding_types_compatible(&expected, &inferred)
+                            {
+                                issues.push(ValidationIssue::error(format!("function '{function_name}': assignment to an indexed field changes its type from '{}' to '{}'", expected.as_str(), inferred.as_str())));
+                            }
+                            match access.binding_path().as_deref().and_then(|name| find_binding(scopes, name)) {
+                                None => issues.push(ValidationIssue::error(format!("function '{function_name}': assignment target is not a binding"))),
+                                Some(binding) if binding.source == BindingSource::Loop => issues.push(ValidationIssue::error(format!("function '{function_name}': cannot assign to compile-time loop variable"))),
+                                Some(_) => {}
+                            }
+                        }
+                    }
                     AssignmentTarget::Binding(name) => match find_binding(scopes, name) {
                         None => issues.push(ValidationIssue::error(format!(
                             "function '{}': assignment to undeclared variable '{}'",
@@ -1157,7 +1150,7 @@ fn validate_binding_statements(
                     },
                     AssignmentTarget::ArrayIndex { array, index } => {
                         if let Some((element_type, source)) =
-                            validate_array_index(array, index, function_name, scopes, issues)
+                            validate_array_index(array, array, index, function_name, scopes, issues)
                         {
                             if source == BindingSource::Loop {
                                 issues.push(ValidationIssue::error(format!(
@@ -1246,6 +1239,26 @@ fn validate_binding_statements(
                         )));
                         ArkType::Unknown
                     }
+                    Expression::ArrayIndex { .. }
+                    | Expression::FieldAccess { .. }
+                    | Expression::IndexAccess { .. } => {
+                        let before = issues.len();
+                        validate_value_expression(iterable, function_name, scopes, issues);
+                        match resolved_expression_type(iterable, scopes) {
+                            ArkType::Array(element, _) => *element,
+                            actual => {
+                                if issues.len() == before {
+                                    issues.push(ValidationIssue::error(format!(
+                                        "function '{}': loop iterable '{}' has type '{}', expected array",
+                                        function_name,
+                                        iterable.source_text(),
+                                        actual.as_str()
+                                    )));
+                                }
+                                ArkType::Unknown
+                            }
+                        }
+                    }
                     _ => {
                         issues.push(ValidationIssue::error(format!(
                             "function '{}': unsupported loop iterable",
@@ -1256,13 +1269,23 @@ fn validate_binding_statements(
                 };
                 let mut frame = HashMap::new();
                 for (name, binding_type) in [(index_var, ArkType::Int), (value_var, element_type)] {
-                    frame.insert(
-                        name.clone(),
-                        BindingInfo {
-                            binding_type,
-                            source: BindingSource::Loop,
-                        },
+                    let mut local = Scope::new();
+                    crate::typechecker::bind_local_type(
+                        &mut local,
+                        name,
+                        None,
+                        binding_type,
+                        structs,
                     );
+                    frame.extend(local.into_iter().map(|(name, binding_type)| {
+                        (
+                            name,
+                            BindingInfo {
+                                binding_type,
+                                source: BindingSource::Loop,
+                            },
+                        )
+                    }));
                 }
                 scopes.push(frame);
                 validate_binding_statements(body, function_name, scopes, structs, issues);
@@ -1284,122 +1307,6 @@ fn validate_binding_statements(
     }
 }
 
-fn validate_struct_literal(
-    access_name: &str,
-    definition: &crate::models::StructDefinition,
-    fields: &[(String, Expression)],
-    function_name: &str,
-    scopes: &BindingScopes,
-    structs: &[crate::models::StructDefinition],
-    issues: &mut Vec<ValidationIssue>,
-) {
-    let mut seen = HashSet::new();
-    for (name, _) in fields {
-        if !seen.insert(name.as_str()) {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': struct literal '{}' initializes field '{}' more than once",
-                function_name, access_name, name
-            )));
-        }
-        if !definition.fields.iter().any(|field| field.name == *name) {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': struct literal '{}' has unknown field '{}'",
-                function_name, access_name, name
-            )));
-        }
-    }
-
-    for field in &definition.fields {
-        let Some((_, value)) = fields.iter().find(|(name, _)| name == &field.name) else {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': struct literal '{}' is missing field '{}'",
-                function_name, access_name, field.name
-            )));
-            continue;
-        };
-        let field_name = format!("{access_name}.{}", field.name);
-        if let Some((element_type, length)) = crate::models::array_type_parts(&field.param_type)
-            .filter(|_| !matches!(value, Expression::Call { .. }))
-        {
-            let Expression::ArrayLiteral(elements) = value else {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': field '{}' must be initialized with an array literal",
-                    function_name, field_name
-                )));
-                continue;
-            };
-            if elements.len() != length {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': array field '{}' declares {} elements but its initializer has {}",
-                    function_name,
-                    field_name,
-                    length,
-                    elements.len()
-                )));
-            }
-            let expected = ArkType::parse(element_type);
-            for (index, element) in elements.iter().enumerate() {
-                validate_binding_expression(element, function_name, scopes, issues, true);
-                let actual = resolved_expression_type(element, scopes);
-                if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{}': field '{}[{}]' has type '{}', expected '{}'",
-                        function_name,
-                        field_name,
-                        index,
-                        actual.as_str(),
-                        expected.as_str()
-                    )));
-                }
-            }
-            continue;
-        }
-        if let Some(nested) = structs
-            .iter()
-            .find(|definition| definition.name == field.param_type)
-            .filter(|_| !matches!(value, Expression::Call { .. }))
-        {
-            let Expression::StructLiteral(nested_fields) = value else {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': field '{}' must be initialized with a struct literal",
-                    function_name, field_name
-                )));
-                continue;
-            };
-            validate_struct_literal(
-                &field_name,
-                nested,
-                nested_fields,
-                function_name,
-                scopes,
-                structs,
-                issues,
-            );
-            continue;
-        }
-        validate_binding_expression(
-            value,
-            function_name,
-            scopes,
-            issues,
-            crate::models::is_builtin_type(&field.param_type),
-        );
-        let expected = ArkType::parse(&field.param_type);
-        let actual = resolved_expression_type(value, scopes);
-        if (actual != ArkType::Unknown || crate::models::is_builtin_struct(&field.param_type))
-            && !binding_types_compatible(&expected, &actual)
-        {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': field '{}' has type '{}', expected '{}'",
-                function_name,
-                field_name,
-                actual.as_str(),
-                expected.as_str()
-            )));
-        }
-    }
-}
-
 fn validate_named_binding(
     name: &str,
     expected: Option<ArkType>,
@@ -1408,35 +1315,6 @@ fn validate_named_binding(
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    if name.starts_with("0x") {
-        if expected.as_ref().is_some_and(|ty| *ty != ArkType::Bytes) {
-            issues.push(ValidationIssue::error(format!(
-                "function '{function_name}': {label} literal has type 'bytes', expected '{}'",
-                expected.expect("checked above").as_str()
-            )));
-        }
-        return;
-    }
-    if let Some((_, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
-        if index.parse::<usize>().is_err() {
-            match find_binding(scopes, index) {
-                None => issues.push(ValidationIssue::error(format!(
-                    "function '{}': array index '{}' is undefined",
-                    function_name, index
-                ))),
-                Some(binding) if binding.binding_type != ArkType::Int => {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{}': array index '{}' has type '{}', expected 'int'",
-                        function_name,
-                        index,
-                        binding.binding_type.as_str()
-                    )));
-                }
-                Some(_) => {}
-            }
-        }
-    }
-
     match find_binding(scopes, name) {
         None => issues.push(ValidationIssue::error(format!(
             "function '{}': {} '{}' is undefined",
@@ -1460,21 +1338,73 @@ fn validate_named_binding(
     }
 }
 
-fn validate_message(
-    message: &str,
+/// Validate a crypto-check operand, reporting only its first fault.
+fn validate_operand(
+    value: &Expression,
+    expected: Option<ArkType>,
+    label: &str,
     function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    validate_named_binding(message, None, "message", function_name, scopes, issues);
-    if let Some(binding) = find_binding(scopes, message).filter(|binding| {
-        binding.binding_type != ArkType::Unknown
-            && !binding_types_compatible(&ArkType::Bytes, &binding.binding_type)
+    if let Expression::Variable(name) | Expression::Property(name) = value {
+        if find_binding(scopes, name).is_none() {
+            issues.push(ValidationIssue::error(format!(
+                "function '{function_name}': {label} '{name}' is undefined"
+            )));
+            return;
+        }
+    }
+    let before = issues.len();
+    validate_binding_expression(value, function_name, scopes, issues, true);
+    let actual = resolved_expression_type(value, scopes);
+    if let Some(expected) = expected.filter(|expected| {
+        issues.len() == before
+            && actual != ArkType::Unknown
+            && !binding_types_compatible(expected, &actual)
     }) {
         issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': message '{message}' has type '{}', expected 'bytes'",
-            binding.binding_type.as_str()
+            "function '{function_name}': {label} '{}' has type '{}', expected '{}'",
+            value.source_text(),
+            actual.as_str(),
+            expected.as_str()
         )));
+    }
+}
+
+fn validate_signature_operands(
+    signature: &Expression,
+    pubkey: &Expression,
+    message: Option<&Expression>,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    validate_operand(
+        signature,
+        Some(ArkType::Signature),
+        "signature",
+        function_name,
+        scopes,
+        issues,
+    );
+    validate_operand(
+        pubkey,
+        Some(ArkType::Pubkey),
+        "public key",
+        function_name,
+        scopes,
+        issues,
+    );
+    if let Some(message) = message {
+        validate_operand(
+            message,
+            Some(ArkType::Bytes),
+            "message",
+            function_name,
+            scopes,
+            issues,
+        );
     }
 }
 
@@ -1495,45 +1425,21 @@ fn validate_binding_requirement(
             validate_binding_expression(expression, function_name, scopes, issues, produces_value);
         }
         Requirement::CheckSig { signature, pubkey } => {
-            validate_named_binding(
-                signature,
-                Some(ArkType::Signature),
-                "signature",
-                function_name,
-                scopes,
-                issues,
-            );
-            validate_named_binding(
-                pubkey,
-                Some(ArkType::Pubkey),
-                "public key",
-                function_name,
-                scopes,
-                issues,
-            );
+            validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
         }
         Requirement::CheckSigFromStack {
             signature,
             pubkey,
             message,
         } => {
-            validate_named_binding(
+            validate_signature_operands(
                 signature,
-                Some(ArkType::Signature),
-                "signature",
-                function_name,
-                scopes,
-                issues,
-            );
-            validate_named_binding(
                 pubkey,
-                Some(ArkType::Pubkey),
-                "public key",
+                Some(message),
                 function_name,
                 scopes,
                 issues,
             );
-            validate_message(message, function_name, scopes, issues);
         }
         Requirement::CheckMultisig {
             pubkeys,
@@ -1547,7 +1453,7 @@ fn validate_binding_requirement(
                 )));
             }
             for pubkey in pubkeys {
-                validate_named_binding(
+                validate_operand(
                     pubkey,
                     Some(ArkType::Pubkey),
                     "multisig public key",
@@ -1557,7 +1463,7 @@ fn validate_binding_requirement(
                 );
             }
             for signature in signatures {
-                validate_named_binding(
+                validate_operand(
                     signature,
                     Some(ArkType::Signature),
                     "multisig signature",
@@ -1568,8 +1474,8 @@ fn validate_binding_requirement(
             }
         }
         Requirement::HashEqual { preimage, hash, .. } => {
-            validate_named_binding(preimage, None, "preimage", function_name, scopes, issues);
-            validate_named_binding(hash, None, "hash", function_name, scopes, issues);
+            validate_operand(preimage, None, "preimage", function_name, scopes, issues);
+            validate_operand(hash, None, "hash", function_name, scopes, issues);
         }
         Requirement::Comparison { left, op, right } => {
             let left_type = resolved_expression_type(left, scopes);
@@ -1610,7 +1516,10 @@ fn validate_value_expression(
     let scalar = !matches!(
         resolved_expression_type(expression, scopes),
         ArkType::Array(..) | ArkType::Struct(..)
-    ) && !matches!(expression, Expression::StructLiteral(_));
+    ) && !matches!(
+        expression,
+        Expression::StructLiteral(_) | Expression::ArrayLiteral(_)
+    );
     validate_binding_expression(expression, function_name, scopes, issues, scalar);
 }
 
@@ -1830,25 +1739,53 @@ fn validate_binding_expression(
         Expression::Variable(name) => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
-        Expression::ArrayIndex { array, index } => {
-            validate_array_index(array, index, function_name, scopes, issues);
+        // Inner accesses are validated first so a bad path reports only its first fault.
+        Expression::FieldAccess { value, .. } => {
+            let before = issues.len();
+            validate_value_expression(value, function_name, scopes, issues);
+            if issues.len() == before {
+                if let Some(name) = expression.binding_path() {
+                    if let Some(array) = name
+                        .strip_suffix(".length")
+                        .filter(|_| find_binding(scopes, &name).is_none())
+                    {
+                        validate_array_length(array, function_name, scopes, issues);
+                    } else if find_binding(scopes, &name).is_none() {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{function_name}': field '{}' is undefined",
+                            expression.source_text()
+                        )));
+                    }
+                }
+            }
+            return;
         }
-        Expression::Property(name) if name.contains('[') => {
-            validate_named_binding(name, None, "binding", function_name, scopes, issues);
+        Expression::IndexAccess { value, index } => {
+            let before = issues.len();
+            validate_value_expression(value, function_name, scopes, issues);
+            validate_binding_expression(index, function_name, scopes, issues, true);
+            if issues.len() == before {
+                if let Some(array) = value.binding_path() {
+                    validate_array_index(
+                        &array,
+                        &value.source_text(),
+                        index,
+                        function_name,
+                        scopes,
+                        issues,
+                    );
+                }
+            }
+            return;
+        }
+        Expression::ArrayIndex { array, index } => {
+            validate_array_index(array, array, index, function_name, scopes, issues);
         }
         Expression::Property(name)
             if name.ends_with(".length") && find_binding(scopes, name).is_none() =>
         {
-            let array = name.trim_end_matches(".length");
-            if !matches!(
-                find_binding(scopes, array).map(|binding| &binding.binding_type),
-                Some(ArkType::Array(..))
-            ) {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': '{}' is not an array; '.length' is undefined",
-                    function_name, array
-                )));
-            }
+            let array = name.strip_suffix(".length").expect("checked suffix");
+            validate_array_length(array, function_name, scopes, issues);
         }
         Expression::Property(name) => {
             let root = name.split('.').next().unwrap_or(name);
@@ -1869,22 +1806,8 @@ fn validate_binding_expression(
             );
         }
         Expression::CheckSigExpr { signature, pubkey } => {
-            validate_named_binding(
-                signature,
-                Some(ArkType::Signature),
-                "signature",
-                function_name,
-                scopes,
-                issues,
-            );
-            validate_named_binding(
-                pubkey,
-                Some(ArkType::Pubkey),
-                "public key",
-                function_name,
-                scopes,
-                issues,
-            );
+            validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
+            return;
         }
         Expression::CheckSigFromStackExpr {
             signature,
@@ -1896,23 +1819,15 @@ fn validate_binding_expression(
             pubkey,
             message,
         } => {
-            validate_named_binding(
+            validate_signature_operands(
                 signature,
-                Some(ArkType::Signature),
-                "signature",
-                function_name,
-                scopes,
-                issues,
-            );
-            validate_named_binding(
                 pubkey,
-                Some(ArkType::Pubkey),
-                "public key",
+                Some(message),
                 function_name,
                 scopes,
                 issues,
             );
-            validate_message(message, function_name, scopes, issues);
+            return;
         }
         Expression::ContractInstance { args, .. } => {
             for argument in args {
@@ -1945,6 +1860,8 @@ fn validate_binding_expression(
                 | Expression::StructLiteral(_)
                 | Expression::ArrayLiteral(_)
                 | Expression::Tunnel { .. }
+                | Expression::FieldAccess { .. }
+                | Expression::IndexAccess { .. }
         ) {
             validate_value_expression(child, function_name, scopes, issues);
         } else {
@@ -1959,8 +1876,26 @@ fn validate_binding_expression(
     }
 }
 
+fn validate_array_length(
+    array: &str,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    if !matches!(
+        find_binding(scopes, array).map(|binding| &binding.binding_type),
+        Some(ArkType::Array(..))
+    ) {
+        issues.push(ValidationIssue::error(format!(
+            "function '{function_name}': '{array}' is not an array; '.length' is undefined"
+        )));
+    }
+}
+
+/// Validate `array[index]`; `written` is the array as spelled in source.
 fn validate_array_index(
     array: &str,
+    written: &str,
     index: &Expression,
     function_name: &str,
     scopes: &BindingScopes,
@@ -1970,7 +1905,7 @@ fn validate_array_index(
         None => {
             issues.push(ValidationIssue::error(format!(
                 "function '{}': array '{}' is undefined",
-                function_name, array
+                function_name, written
             )));
             None
         }
@@ -1981,7 +1916,7 @@ fn validate_array_index(
         Some(_) => {
             issues.push(ValidationIssue::error(format!(
                 "function '{}': binding '{}' is not an array",
-                function_name, array
+                function_name, written
             )));
             None
         }
@@ -2007,7 +1942,7 @@ fn validate_array_index(
             let sign = if negative { "-" } else { "" };
             issues.push(ValidationIssue::error(format!(
                 "function '{}': array index '{}{}' is out of range for '{}[{}]'",
-                function_name, sign, literal, array, length
+                function_name, sign, literal, written, length
             )));
         }
     }
@@ -2026,9 +1961,9 @@ fn validate_asset_id(
     let txid_type = infer_type(asset_txid, scope);
     if txid_type != ArkType::Bytes32 {
         issues.push(ValidationIssue::error(format!(
-            "function '{}': asset id txid operand {} must be bytes32, got {}",
+            "function '{}': asset id txid operand '{}' must be bytes32, got {}",
             fname,
-            describe_operand(asset_txid),
+            asset_txid.source_text(),
             txid_type.as_str()
         )));
     }
@@ -2051,21 +1986,12 @@ fn validate_asset_id(
         let gidx_type = infer_type(asset_gidx, scope);
         if gidx_type != ArkType::Int {
             issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx operand {} must be int (0..65535), got {}",
+                "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
                 fname,
-                describe_operand(asset_gidx),
+                asset_gidx.source_text(),
                 gidx_type.as_str()
             )));
         }
-    }
-}
-
-fn describe_operand(expr: &Expression) -> String {
-    match expr {
-        Expression::Variable(name) | Expression::Literal(name) | Expression::Property(name) => {
-            format!("'{}'", name)
-        }
-        _ => "<expr>".to_string(),
     }
 }
 
@@ -2148,11 +2074,16 @@ fn check_ctor_assignment(
         let first = issues.len();
         match &stmt.statement {
             Statement::VarAssign { target, .. } => {
+                let access_name;
                 let name = match target {
+                    AssignmentTarget::Access(value) => {
+                        access_name = value.binding_path().unwrap_or_default();
+                        &access_name
+                    }
                     AssignmentTarget::Binding(name) => name,
                     AssignmentTarget::ArrayIndex { array, .. } => array,
                 };
-                let root = name.split('.').next().unwrap_or(name);
+                let root = name.split(['.', '[']).next().unwrap_or(name);
                 if ctor_names.contains(root) {
                     issues.push(ValidationIssue::error(format!(
                         "cannot assign to constructor parameter '{}' in function '{}'; \
@@ -2553,8 +2484,8 @@ contract Demo() {
                     },
                 ],
                 statements: vec![located(Statement::Require(Requirement::CheckSig {
-                    signature: "ownerSig".to_string(),
-                    pubkey: "owner".to_string(),
+                    signature: Expression::Variable("ownerSig".to_string()),
+                    pubkey: Expression::Variable("owner".to_string()),
                 }))],
                 is_private: false,
                 is_static: false,
@@ -2584,8 +2515,8 @@ contract Demo() {
         contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: Expression::Variable("flag".to_string()),
             then_body: vec![located(Statement::Require(Requirement::CheckSig {
-                signature: "ownerSig".to_string(),
-                pubkey: "owner".to_string(),
+                signature: Expression::Variable("ownerSig".to_string()),
+                pubkey: Expression::Variable("owner".to_string()),
             }))],
             else_body: None,
         })];
@@ -2601,8 +2532,8 @@ contract Demo() {
         let mut contract = make_contract("BothPaths");
         let req = || {
             located(Statement::Require(Requirement::CheckSig {
-                signature: "ownerSig".to_string(),
-                pubkey: "owner".to_string(),
+                signature: Expression::Variable("ownerSig".to_string()),
+                pubkey: Expression::Variable("owner".to_string()),
             }))
         };
         contract.functions[0].statements = vec![located(Statement::IfElse {

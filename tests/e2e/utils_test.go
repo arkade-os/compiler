@@ -244,13 +244,13 @@ func flattenInput(name, typeName string, structs []structDefinition) []string {
 		return names
 	}
 
-	_, length := arrayTypeParts(typeName)
+	element, length := arrayTypeParts(typeName)
 	if length == 0 {
 		return []string{name}
 	}
 	names := make([]string, 0, length)
 	for index := range length {
-		names = append(names, fmt.Sprintf("%s.%d", name, index))
+		names = append(names, flattenInput(fmt.Sprintf("%s.%d", name, index), element, structs)...)
 	}
 	return names
 }

@@ -84,7 +84,9 @@ impl ConcatPass {
                 );
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     let (new_index, _) = self.rewrite_expression_concat(
                         std::mem::replace(index.as_mut(), Expression::Literal(String::new())),
                         scope,
@@ -136,7 +138,13 @@ impl ConcatPass {
                     ArkType::Array(inner, _) => *inner,
                     _ => ArkType::Unknown,
                 };
-                loop_scope.insert(value_var.clone(), element_type);
+                crate::typechecker::bind_local_type(
+                    &mut loop_scope,
+                    value_var,
+                    None,
+                    element_type,
+                    &self.structs,
+                );
                 self.rewrite_statements_concat(body, &mut loop_scope);
             }
             Statement::ForCount { count, body } => {
@@ -230,6 +238,14 @@ impl ConcatPass {
                 ),
                 ArkType::Unknown,
             ),
+            expression @ (Expression::FieldAccess { .. } | Expression::IndexAccess { .. }) => {
+                let mut expression = expression;
+                for child in crate::models::child_exprs_mut(&mut expression) {
+                    *child = self.rewrite_expression_concat(child.clone(), scope).0;
+                }
+                let ty = crate::typechecker::infer_type(&expression, scope);
+                (expression, ty)
+            }
             Expression::ArrayIndex { array, index } => {
                 let (index, _) = self.rewrite_expression_concat(*index, scope);
                 let result_type = match scope.get(&array) {

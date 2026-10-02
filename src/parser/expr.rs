@@ -123,6 +123,18 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
     }
 }
 
+/// Parse a crypto-check operand: a binding access or a byte literal.
+pub(crate) fn parse_operand(pair: Pair<Rule>) -> Result<Expression, String> {
+    match pair.as_rule() {
+        Rule::sig_arg | Rule::key_expr => {
+            parse_operand(pair.into_inner().next().ok_or("Missing operand")?)
+        }
+        Rule::named_binding => parse_property_access(pair),
+        Rule::tweak_key => Err("tweak(...) is only available in tapscript functions".to_string()),
+        _ => Ok(Expression::Literal(parse_named_operand(pair)?)),
+    }
+}
+
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         Rule::primary_expr => {
@@ -222,15 +234,15 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
-            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
+            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
+            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
             Ok(Expression::CheckSigExpr { signature, pubkey })
         }
         Rule::check_sig_from_stack => {
             let mut inner = pair.into_inner();
-            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
-            let message = parse_named_operand(inner.next().ok_or("Missing message")?)?;
+            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
+            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
+            let message = Box::new(parse_operand(inner.next().ok_or("Missing message")?)?);
             Ok(Expression::CheckSigFromStackExpr {
                 signature,
                 pubkey,
@@ -345,25 +357,45 @@ pub(crate) fn parse_complex_expression(
 // ─── Byte-string Manipulation Parsing ──────────────────────────────────
 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
-    let mut inner = pair.into_inner().collect::<Vec<_>>();
-    let index = match inner.last() {
-        Some(part) if part.as_rule() == Rule::general_expression => {
-            Some(inner.pop().ok_or("Missing field array index")?)
-        }
-        _ => None,
-    };
-    let path = inner
-        .iter()
-        .map(|part| part.as_str())
-        .collect::<Vec<_>>()
-        .join(".");
-    match index {
-        Some(index) => Ok(Expression::ArrayIndex {
-            array: path,
-            index: Box::new(parse_general_expression(index)?),
-        }),
-        None => Ok(Expression::Property(path)),
+    let mut inner = pair.into_inner();
+    let mut value = Expression::Variable(
+        inner
+            .next()
+            .ok_or("Missing binding name")?
+            .as_str()
+            .to_string(),
+    );
+    for suffix in inner {
+        let part = suffix.into_inner().next().ok_or("Missing binding suffix")?;
+        value = match part.as_rule() {
+            Rule::identifier => {
+                let field = part.as_str().to_string();
+                match value {
+                    Expression::Variable(name) | Expression::Property(name) => {
+                        Expression::Property(format!("{name}.{field}"))
+                    }
+                    value => Expression::FieldAccess {
+                        value: Box::new(value),
+                        field,
+                    },
+                }
+            }
+            Rule::general_expression => {
+                let index = Box::new(parse_general_expression(part)?);
+                match value {
+                    Expression::Variable(array) | Expression::Property(array) => {
+                        Expression::ArrayIndex { array, index }
+                    }
+                    value => Expression::IndexAccess {
+                        value: Box::new(value),
+                        index,
+                    },
+                }
+            }
+            rule => return Err(format!("Unexpected binding suffix: {rule:?}")),
+        };
     }
+    Ok(value)
 }
 
 /// Parse a `byte_value` rule into an Expression. Used wherever the grammar
@@ -384,14 +416,7 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
         Rule::asset_at => parse_asset_at_to_expression(inner),
         Rule::hex_literal | Rule::string_literal => parse_primary_expr(inner),
         Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
-        Rule::named_binding => {
-            let name = inner.as_str().to_string();
-            if name.contains(['.', '[']) {
-                Ok(Expression::Property(name))
-            } else {
-                Ok(Expression::Variable(name))
-            }
-        }
+        Rule::named_binding => parse_property_access(inner),
         r => Err(format!("Unsupported byte_value rule: {:?}", r)),
     }
 }

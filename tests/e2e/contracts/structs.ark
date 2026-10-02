@@ -78,4 +78,32 @@ contract Structs(Account account) {
 
     require(checkSig(ownerSig, account.owner));
   }
+
+  private function copyRules(Rules[2] items) Rules[2] {
+    return items;
+  }
+
+  private function sumFields(Rules item) int {
+    return item.a_b + item.a.b;
+  }
+
+  function arraySpend(Rules[2] provided, int row, int column, int next, int expected) {
+    Rules[2] local = copyRules(provided);
+    local[row].weights[column] = next;
+    require(local[row].weights[column] == next);
+    let selected = provided[row];
+    require(selected.a.b == expected);
+    require(sumFields(local[row]) == local[row].a_b + local[row].a.b);
+    for (i, item) in local {
+      require(item.a_b == provided[i].a_b);
+      require(item.a.b == provided[i].a.b);
+      for (j, weight) in item.weights {
+        if (i == row && j == column) {
+          require(weight == next);
+        } else {
+          require(weight == provided[i].weights[j]);
+        }
+      }
+    }
+  }
 }

@@ -237,3 +237,41 @@ fn test_ir_expands_nested_struct_fields() {
         ]
     );
 }
+
+#[test]
+fn test_ir_expands_struct_arrays_in_source_order() {
+    let artifact = arkade_compiler::compile(
+        r#"
+struct Point { int x; int y; }
+struct State { Point[2] points; }
+contract C(State state) {
+    function spend(Point[2] points) { require(state.points == points); }
+}
+"#,
+    )
+    .unwrap();
+    let ir = build_ir(&artifact).unwrap();
+    assert_eq!(
+        ir.constructor_fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.ark_type.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("state.points.0.x", "int"),
+            ("state.points.0.y", "int"),
+            ("state.points.1.x", "int"),
+            ("state.points.1.y", "int"),
+        ]
+    );
+    assert_eq!(
+        ir.groups[0]
+            .covenant
+            .as_ref()
+            .unwrap()
+            .inputs
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        ["points.0.x", "points.0.y", "points.1.x", "points.1.y"]
+    );
+}

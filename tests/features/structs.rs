@@ -76,10 +76,10 @@ contract C(Node value) { function spend() { require(true); } }
         ),
         (
             r#"
-struct Item { int value; }
-contract C(Item[2] values) { function spend() { require(true); } }
+struct Item { Item[2] values; }
+contract C(Item item) { function spend() { require(true); } }
 "#,
-            "arrays of structs are not supported",
+            "recursive struct layout",
         ),
         (
             r#"
@@ -565,21 +565,21 @@ contract C() { function spend() { Point point = { x: 1, y: 2, z: 3 }; require(tr
 struct Point { int x; int y; }
 contract C() { function spend() { Point point = { x: 1, x: 2, y: 3 }; require(true); } }
 "#,
-            "more than once",
+            "duplicate field 'x'",
         ),
         (
             r#"
 struct Values { int[2] items; }
 contract C() { function spend() { Values values = { items: [1] }; require(true); } }
 "#,
-            "declares 2 elements",
+            "expected 2 array elements",
         ),
         (
             r#"
 struct Point { int x; int y; }
 contract C() { function spend() { Point point = { x: true, y: 2 }; require(true); } }
 "#,
-            "has type 'bool', expected 'int'",
+            "expected 'int', got 'bool'",
         ),
         (
             r#"
