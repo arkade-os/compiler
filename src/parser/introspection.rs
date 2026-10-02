@@ -188,9 +188,9 @@ pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression,
 }
 
 pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    let text = pair.as_str();
+    let text = without_trivia(pair.as_str());
 
-    reject_malformed_asset_call(text)?;
+    reject_malformed_asset_call(&text)?;
 
     // Handle tx.assetGroups.find(txid, gidx)
     if text.starts_with("tx.assetGroups.find(") && text.ends_with(')') {
@@ -223,7 +223,8 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
             .flatten()
             .filter(|p| p.as_rule() == Rule::array_access);
         if let Some(group) = indices.next() {
-            let after_group = &text[group.as_span().end() - pair.as_span().start()..];
+            let after_group =
+                without_trivia(&pair.as_str()[group.as_span().end() - pair.as_span().start()..]);
             let index = parse_array_access_index(group)?;
             let io_source = if after_group.starts_with(".inputs[") {
                 Some(GroupIOSource::Inputs)
@@ -256,7 +257,7 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
                 // The grammar ends the access with `]`, `amount` or `type`.
                 let property = ["amount", "type"]
                     .into_iter()
-                    .find(|property| text.ends_with(property))
+                    .find(|property| text.ends_with(&format!(".{property}")))
                     .map(str::to_string);
                 return Ok(Expression::GroupIOAccess {
                     group_index: Box::new(index),
@@ -301,7 +302,18 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
     }
 
     // Default: treat as a property string
-    Ok(Expression::Property(text.to_string()))
+    Ok(Expression::Property(text))
+}
+
+/// `text` without the whitespace and comments the grammar allows between terms.
+fn without_trivia(text: &str) -> String {
+    text.lines()
+        .flat_map(|line| {
+            line.split_once("//")
+                .map_or(line, |(code, _)| code)
+                .split_whitespace()
+        })
+        .collect()
 }
 
 /// The index inside an `array_access` pair, without surrounding trivia.

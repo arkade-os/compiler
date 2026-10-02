@@ -377,11 +377,12 @@ fn test_group_io_access_output_type() {
 }
 
 #[test]
-fn test_group_indices_ignore_whitespace_and_comments() {
+fn test_group_accesses_ignore_whitespace_and_comments() {
     let compile_body = |body: &str| {
         let code = format!(
-            "contract GroupIOTest(pubkey owner) {{ function spend(signature sig, int g) {{
+            "contract GroupIOTest(pubkey owner) {{ function spend(signature sig, int g, bytes32 t) {{
                 require(checkSig(sig, owner));
+                require(t == t);
                 {body}
             }} }}"
         );
@@ -401,6 +402,26 @@ fn test_group_indices_ignore_whitespace_and_comments() {
         (
             "require(tx.assetGroups[0].sumInputs >= tx.assetGroups[g].numOutputs);",
             "require(tx.assetGroups[ 0 ].sumInputs >= tx.assetGroups[ g ].numOutputs);",
+        ),
+        (
+            "require(tx.assetGroups[g].outputs[1].amount >= 0);",
+            "require(tx . assetGroups // groups\n [g] . outputs [1] . amount >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[0].sumInputs >= tx.assetGroups[g].numOutputs);",
+            "require(tx.assetGroups [0] . sumInputs >= tx.assetGroups[g]\n.numOutputs);",
+        ),
+        (
+            "require(tx.assetGroups.length >= g);",
+            "require(tx . assetGroups . length >= g);",
+        ),
+        (
+            "let x = tx.assetGroups.find(t, g); require(x == x);",
+            "let x = tx.assetGroups . find(t, g); require(x == x);",
+        ),
+        (
+            "require(tx.input.current.value >= g);",
+            "require(tx . input . current . value >= g);",
         ),
     ] {
         assert_eq!(compile_body(plain), compile_body(spaced), "{spaced}");

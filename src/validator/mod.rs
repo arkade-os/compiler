@@ -1610,16 +1610,16 @@ fn validate_binding_expression(
         }
         _ if registered_builtin.is_some() => {
             let (name, operands) = registered_builtin.unwrap();
-            let signature = crate::typechecker::builtins::find(name)
+            let params = crate::typechecker::builtins::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
             assert_eq!(
                 operands.len(),
-                signature.params.len(),
+                params.len(),
                 "{name}: operands() and its signature disagree on arity"
             );
             // Every `[]` operand takes the length of the first one.
             let mut length = None;
-            for (operand, (_, declared)) in operands.iter().zip(signature.params) {
+            for (operand, declared) in operands.iter().zip(params) {
                 let actual = resolved_expression_type(operand, scopes);
                 let expected = match declared.strip_suffix("[]") {
                     Some(element) => {
