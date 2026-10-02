@@ -946,3 +946,67 @@ fn grouped_builtin_operands_reject_implicit_byte_conversion() {
         .to_string();
     assert!(error.contains("cannot concatenate bytes"), "{error}");
 }
+
+#[test]
+fn bitwise_builtins_emit_their_opcodes() {
+    for (expression, expected) in [
+        ("bitAnd(a, 0x0f)", "0x0f OP_AND"),
+        ("bitOr(a, 0x0f)", "0x0f OP_OR"),
+        ("bitXor(a, 0x0f)", "0x0f OP_XOR"),
+        ("bitNot(a)", "OP_INVERT"),
+        (
+            "bitNot(bitXor(substr(a, 0, 1), 0xff))",
+            "OP_SUBSTR 0xff OP_XOR OP_INVERT",
+        ),
+    ] {
+        let source = format!(
+            "contract Bits(bytes a, bytes b) {{ function spend() {{ require({expression} == b); }} }}"
+        );
+        let output = compile(&source).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend").join(" ");
+        assert!(asm.contains(expected), "{expression}: {asm}");
+    }
+}
+
+#[test]
+fn bitwise_builtins_check_operand_types_and_lengths() {
+    for (statement, expected) in [
+        (
+            "require(bitAnd(n, d) == d);",
+            "bitAnd operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "require(bitNot(n) == d);",
+            "bitNot operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "require(bitXor(h, h20) == h);",
+            "bitXor operands must have equal lengths, got 32 and 20 bytes",
+        ),
+        (
+            "require(bitOr(h, 0x0f) == h);",
+            "bitOr operands must have equal lengths, got 32 and 1 bytes",
+        ),
+        (
+            "bytes32 r = bitNot(d); require(r == h);",
+            "declares type 'bytes32' but initializer has type 'bytes'",
+        ),
+    ] {
+        let source = format!(
+            "contract Bits(bytes32 h, bytes20 h20, bytes d, int n) {{ function spend() {{ {statement} }} }}"
+        );
+        let error = compile(&source).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+#[test]
+fn bitwise_results_keep_a_known_operand_width() {
+    let source = "contract Bits(bytes32 h, bytes20 h20, bytes d) { function spend() {
+        bytes32 mixed = bitXor(d, h);
+        bytes20 inverted = bitNot(h20);
+        require(mixed == h);
+        require(inverted == h20);
+    } }";
+    compile(source).expect("a fixed-width operand fixes the result width");
+}

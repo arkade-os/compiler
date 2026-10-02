@@ -355,6 +355,22 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(right, asm);
             asm.push(OP_CAT.to_string());
         }
+        Expression::Bitwise { op, left, right } => {
+            emit_expression_asm(left, asm);
+            emit_expression_asm(right, asm);
+            asm.push(
+                match op {
+                    BitwiseOp::And => OP_AND,
+                    BitwiseOp::Or => OP_OR,
+                    BitwiseOp::Xor => OP_XOR,
+                }
+                .to_string(),
+            );
+        }
+        Expression::BitNot { data } => {
+            emit_expression_asm(data, asm);
+            asm.push(OP_INVERT.to_string());
+        }
         Expression::Bin2Num { data } => {
             emit_expression_asm(data, asm);
             asm.push(OP_BIN2NUM.to_string());

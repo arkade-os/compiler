@@ -856,9 +856,12 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter().collect(),
         Expression::Substr { data, offset, size } => vec![data, offset, size],
-        Expression::Cat { left, right } => vec![left, right],
+        Expression::Cat { left, right } | Expression::Bitwise { left, right, .. } => {
+            vec![left, right]
+        }
         Expression::Bin2Num { data }
         | Expression::ReverseBytes { data }
+        | Expression::BitNot { data }
         | Expression::SizeOf { data }
         | Expression::Cast { data, .. } => vec![data],
         Expression::Num2Bin { value, size } => vec![value, size],
@@ -1643,6 +1646,19 @@ fn validate_binding_expression(
                         actual.as_str(),
                         expected.as_str()
                     )));
+                }
+            }
+            // The VM aborts on operands of different lengths.
+            if let Expression::Bitwise { left, right, .. } = expression {
+                let scope = flattened_types(scopes);
+                let widths = [left, right]
+                    .map(|operand| crate::typechecker::static_byte_width(operand, &scope));
+                if let [Some(left), Some(right)] = widths {
+                    if left != right {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{function_name}': {name} operands must have equal lengths, got {left} and {right} bytes"
+                        )));
+                    }
                 }
             }
             // OP_ECPAIRING bounds its work at 16 pairs.

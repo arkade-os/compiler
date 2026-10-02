@@ -18,6 +18,10 @@ use crate::models::Expression;
 pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("substr", &["bytes", "int", "int"]),
     ("cat", &["bytes", "bytes"]),
+    ("bitAnd", &["bytes", "bytes"]),
+    ("bitOr", &["bytes", "bytes"]),
+    ("bitXor", &["bytes", "bytes"]),
+    ("bitNot", &["bytes"]),
     ("bin2num", &["bytes"]),
     ("num2bin", &["int", "int"]),
     ("reverseBytes", &["bytes"]),
@@ -63,6 +67,8 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
     Some(match expr {
         Expression::Substr { data, offset, size } => ("substr", vec![data, offset, size]),
         Expression::Cat { left, right } => ("cat", vec![left, right]),
+        Expression::Bitwise { op, left, right } => (op.name(), vec![left, right]),
+        Expression::BitNot { data } => ("bitNot", vec![data]),
         Expression::Bin2Num { data } => ("bin2num", vec![data]),
         Expression::Num2Bin { value, size } => ("num2bin", vec![value, size]),
         Expression::ReverseBytes { data } => ("reverseBytes", vec![data]),

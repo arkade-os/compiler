@@ -125,6 +125,10 @@ const arkadeCompletions = [
     S('bin2num', 'Function', 'bin2num(${1:bytes})', 'Bytes to number'),
     S('num2bin', 'Function', 'num2bin(${1:num}, ${2:size})', 'Number to fixed-width bytes'),
     S('reverseBytes', 'Function', 'reverseBytes(${1:bytes})', 'Reverse byte order'),
+    S('bitAnd', 'Function', 'bitAnd(${1:a}, ${2:b})', 'Bytewise AND of equal-length bytes'),
+    S('bitOr', 'Function', 'bitOr(${1:a}, ${2:b})', 'Bytewise OR of equal-length bytes'),
+    S('bitXor', 'Function', 'bitXor(${1:a}, ${2:b})', 'Bytewise XOR of equal-length bytes'),
+    S('bitNot', 'Function', 'bitNot(${1:bytes})', 'Bytewise inversion'),
     S('size', 'Function', 'size(${1:bytes})', 'Byte length'),
 ];
 

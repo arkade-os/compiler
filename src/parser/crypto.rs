@@ -230,6 +230,31 @@ pub(crate) fn parse_cat(pair: Pair<Rule>) -> Result<Expression, String> {
     })
 }
 
+/// Parse bitAnd/bitOr/bitXor(a, b) → Expression::Bitwise
+pub(crate) fn parse_bitwise(pair: Pair<Rule>) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
+    let op = match inner.next().ok_or("Missing bitwise builtin name")?.as_str() {
+        "bitAnd" => BitwiseOp::And,
+        "bitOr" => BitwiseOp::Or,
+        _ => BitwiseOp::Xor,
+    };
+    let left = parse_byte_value(inner.next().ok_or("Missing first bitwise operand")?)?;
+    let right = parse_byte_value(inner.next().ok_or("Missing second bitwise operand")?)?;
+    Ok(Expression::Bitwise {
+        op,
+        left: Box::new(left),
+        right: Box::new(right),
+    })
+}
+
+/// Parse bitNot(data) → Expression::BitNot
+pub(crate) fn parse_bit_not(pair: Pair<Rule>) -> Result<Expression, String> {
+    let data = parse_byte_value(pair.into_inner().next().ok_or("Missing data in bitNot")?)?;
+    Ok(Expression::BitNot {
+        data: Box::new(data),
+    })
+}
+
 /// Parse bin2num(data) → Expression::Bin2Num
 pub(crate) fn parse_bin2num(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
