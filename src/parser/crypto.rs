@@ -87,17 +87,11 @@ pub(crate) fn parse_mod_exp(pair: Pair<Rule>) -> Result<Expression, String> {
 pub(crate) fn parse_ec_add(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::EcAdd {
-        x1: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing x1 in ecAdd")?,
+        point_p: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing point P in ecAdd")?,
         )?),
-        y1: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing y1 in ecAdd")?,
-        )?),
-        x2: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing x2 in ecAdd")?,
-        )?),
-        y2: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing y2 in ecAdd")?,
+        point_q: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing point Q in ecAdd")?,
         )?),
         curve_id: Box::new(parse_general_expression(
             inner.next().ok_or("Missing curve ID in ecAdd")?,
@@ -108,11 +102,8 @@ pub(crate) fn parse_ec_add(pair: Pair<Rule>) -> Result<Expression, String> {
 pub(crate) fn parse_ec_mul(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::EcMul {
-        x: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing x in ecMul")?,
-        )?),
-        y: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing y in ecMul")?,
+        point: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing point P in ecMul")?,
         )?),
         scalar: Box::new(parse_general_expression(
             inner.next().ok_or("Missing scalar in ecMul")?,
@@ -126,23 +117,11 @@ pub(crate) fn parse_ec_mul(pair: Pair<Rule>) -> Result<Expression, String> {
 pub(crate) fn parse_ec_pairing(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     Ok(Expression::EcPairing {
-        g1_x: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing G1 x in ecPairing")?,
+        g1: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing G1 points in ecPairing")?,
         )?),
-        g1_y: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing G1 y in ecPairing")?,
-        )?),
-        g2_x_c1: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing G2 x c1 in ecPairing")?,
-        )?),
-        g2_x_c0: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing G2 x c0 in ecPairing")?,
-        )?),
-        g2_y_c1: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing G2 y c1 in ecPairing")?,
-        )?),
-        g2_y_c0: Box::new(parse_general_expression(
-            inner.next().ok_or("Missing G2 y c0 in ecPairing")?,
+        g2: Box::new(parse_general_expression(
+            inner.next().ok_or("Missing G2 points in ecPairing")?,
         )?),
         curve_id: Box::new(parse_general_expression(
             inner.next().ok_or("Missing curve ID in ecPairing")?,

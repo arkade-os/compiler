@@ -437,7 +437,6 @@ impl Generator {
             OP_SIZE => self.apply(opcode, 1, 2),
             OP_ECADD => self.apply(opcode, 5, 2),
             OP_ECMUL => self.apply(opcode, 4, 2),
-            OP_ECPAIRING => self.apply(opcode, 8, 1),
             OP_ECMULSCALARVERIFY | OP_TWEAKVERIFY => self.apply(opcode, 3, 0),
             OP_INSPECTASSETGROUP => self.apply(opcode, 3, 3),
             _ => Err(format!(
@@ -545,6 +544,8 @@ impl Generator {
                 let value = values.get(index).ok_or("invalid call marker")?;
                 if matches!(value, Expression::Call { .. }) {
                     self.emit_call(value)?;
+                } else if matches!(value, Expression::EcPairing { .. }) {
+                    self.emit_pairing(value)?;
                 } else {
                     let ty = typechecker::infer_type(value, &self.scope).as_str();
                     self.emit_access_value(value, &ty)?;

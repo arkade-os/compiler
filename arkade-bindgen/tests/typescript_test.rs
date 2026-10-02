@@ -34,12 +34,12 @@ fn test_htlc_typescript_generates() {
     assert!(code.contains("ArkContract"));
     assert!(code.contains("type Signature"));
     assert!(code.contains("type Bytes"));
-    assert!(code.contains("type Pubkey"));
+    assert!(!code.contains("type Pubkey"));
 
     // Constructor params interface
     assert!(code.contains("export interface HTLCParams {"));
-    assert!(code.contains("sender: Pubkey;"));
-    assert!(code.contains("receiver: Pubkey;"));
+    assert!(code.contains("sender: Bytes;"));
+    assert!(code.contains("receiver: Bytes;"));
     assert!(code.contains("preimageHash: Bytes20;"));
     assert!(code.contains("refundTime: bigint;"));
 
@@ -75,7 +75,7 @@ fn test_single_sig_typescript() {
 
     let code = &generated.content;
     assert!(code.contains("export interface SingleSigParams {"));
-    assert!(code.contains("user: Pubkey;"));
+    assert!(code.contains("user: Bytes;"));
     assert!(code.contains("export class SingleSig extends ArkContract<SingleSigParams>"));
     assert!(code.contains("spend = {"));
     assert!(code.contains("unilateral = {"));

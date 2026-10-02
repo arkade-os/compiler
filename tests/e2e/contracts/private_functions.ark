@@ -53,22 +53,23 @@ contract PrivateFunctions(Config config) {
     private function same(Result left, Result right) { require(left == right); }
     private function difference(int left, int right) int { return left - right; }
 
-    private function point(int x, int y) ECPoint { return ecMul(x, y, 1, 0); }
+    private function point(ECPoint p) ECPoint { return ecMul(p, 1, 0); }
     private function outpoint() Outpoint { return tx.input.current.outpoint; }
 
-    public function spend(int[3] values, int expected, bool pass, int x, int y) {
-        NativeResults wrapped = { point: point(x, y), previous: outpoint(), result: result(5) };
-        require(wrapped.point.x == x);
-        require(wrapped.point.y == y);
+    public function spend(int[3] values, int expected, bool pass, ECPoint p) {
+        NativeResults wrapped = { point: point(p), previous: outpoint(), result: result(5) };
+        require(wrapped.point.x == p.x);
+        require(wrapped.point.y == p.y);
         require(wrapped.previous.vout == 0);
         require(wrapped.result.selected == 5);
         require(wrapped.result.values[1] == 7);
         Result composed = { selected: 5, values: pair(5) };
         require(composed.values[0] == 5);
         require(composed.values[1] == 6);
-        let native = point(x, y);
-        require(native.x == x);
-        require(native.y == y);
+        let native = point(p);
+        require(native.x == p.x);
+        require(native.y == p.y);
+        require(ecAdd((point(p)), p, 0) == ecMul(p, 2, 0));
         let previous = outpoint();
         let direct = tx.inputs[0].outpoint;
         require(previous.txid == direct.txid);

@@ -8,11 +8,6 @@ struct Rules {
   int[3] weights;
 }
 
-struct Point {
-  int x;
-  int y;
-}
-
 struct Account {
   pubkey owner;
   Rules rules;
@@ -21,7 +16,7 @@ struct Account {
 contract Structs(Account account) {
   function spend(
     Rules supplied,
-    Point generator,
+    ECPoint generator,
     int index,
     int expected,
     signature ownerSig
@@ -66,15 +61,15 @@ contract Structs(Account account) {
     require(groupAssetId.gidx == outputAssetId.gidx, "group asset index");
     require(groupAssetId == outputAssetId, "whole asset id equality");
 
-    let generatorX = generator.x;
-    let generatorY = generator.y;
-    ECPoint added = ecAdd(0, 0, generatorX, generatorY, 0);
-    let multiplied = ecMul(generatorX, generatorY, 1, 0);
-    require(added.x == generator.x, "ecAdd x");
-    require(added.y == generator.y, "ecAdd y");
-    require(multiplied.x == generator.x, "ecMul x");
-    require(multiplied.y == generator.y, "ecMul y");
+    ECPoint added = ecAdd(generator, generator, 0);
+    let multiplied = ecMul(generator, 2, 0);
+    require(added.x == multiplied.x, "ecAdd x");
+    require(added.y == multiplied.y, "ecAdd y");
     require(added == multiplied, "whole ec point equality");
+    require(ecMul(generator, 1, 0) == generator, "ecMul identity");
+    ECPoint identity = { x: 0, y: 0 };
+    require(ecAdd(identity, generator, 0) == generator, "ecAdd identity point");
+    require(ecAdd((ecAdd(generator, generator, 0)), generator, 0) == ecMul(generator, 3, 0), "nested ecAdd");
 
     require(checkSig(ownerSig, account.owner));
   }

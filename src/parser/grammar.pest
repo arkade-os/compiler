@@ -593,16 +593,19 @@ mod_exp_func = {
 
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
 
+// EC point addition: ecAdd(P, Q, curveId) → OP_ECADD, where P and Q are ECPoints
 ec_add = {
-    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
+// EC scalar multiplication: ecMul(P, scalar, curveId) → OP_ECMUL, where P is an ECPoint
 ec_mul = {
-    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
+// Pairing-product check: ecPairing(ECPoint[n] g1, G2Point[n] g2, curveId) → OP_ECPAIRING
 ec_pairing = {
-    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY

@@ -8,7 +8,10 @@ pub(super) fn extract_values(
 ) {
     if matches!(
         expression,
-        Expression::Call { .. } | Expression::FieldAccess { .. } | Expression::IndexAccess { .. }
+        Expression::Call { .. }
+            | Expression::FieldAccess { .. }
+            | Expression::IndexAccess { .. }
+            | Expression::EcPairing { .. }
     ) || (matches!(expression, Expression::ArrayIndex { .. })
         && matches!(
             typechecker::infer_type(expression, scope),

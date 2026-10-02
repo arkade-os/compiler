@@ -315,7 +315,7 @@ Libraries can import other libraries, contracts, and struct files using the same
 
 | Type | Meaning |
 |---|---|
-| `pubkey` | BIP340 x-only public key |
+| `pubkey` | Alias of `bytes` for public keys of any length, e.g. 32-byte x-only or 33-byte compressed |
 | `signature` | 64-byte BIP340 Schnorr signature |
 | `bytes`, `bytes20`, `bytes32` | Byte arrays, unsized or fixed |
 | `int` | CScriptNum integer |
@@ -323,7 +323,7 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `asset` | Asset identifier |
 | `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
-| `AssetId`, `Outpoint`, `ECPoint` | Native result structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}` |
+| `AssetId`, `Outpoint`, `ECPoint`, `G2Point` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}` |
 
 Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Read and assign fields individually; `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
 
@@ -461,7 +461,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Packets.** `tx.packet(type)` and `tx.inputs[i].packet(type)` return the raw extension packet bytes and assert presence.
 
-**Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(x1, y1, x2, y2, curve)` and `ecMul(x, y, k, curve)` returning `ECPoint`, `ecPairing(...)`, `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
+**Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(g1, g2, curve)` over aligned `ECPoint[n]` and `G2Point[n]` arrays (1–16 pairs), `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
 
 **Instantiation.** `new Contract(args...)` on either side of a `scriptPubKey` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array arguments flatten element by element.
 
@@ -518,7 +518,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 
 The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
 
-Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
+Witness `encoding` values: `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
 

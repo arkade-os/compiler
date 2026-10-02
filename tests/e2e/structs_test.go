@@ -21,7 +21,7 @@ func TestStructs(t *testing.T) {
 	if got := contract.ConstructorInputs; len(got) != 1 || got[0].Name != "account" || got[0].Type != "Account" {
 		t.Fatalf("constructor inputs = %+v, want account Account", got)
 	}
-	if got, want := structNames(contract.Structs), []string{"Inner", "Rules", "Point", "Account"}; !slices.Equal(got, want) {
+	if got, want := structNames(contract.Structs), []string{"Inner", "Rules", "Account"}; !slices.Equal(got, want) {
 		t.Fatalf("struct definitions = %v, want %v", got, want)
 	}
 
@@ -48,7 +48,7 @@ func TestStructs(t *testing.T) {
 			t.Fatalf("constructor prologue token %d = %q, want %q", index, got, want)
 		}
 	}
-	if got, want := inputTypes(group.Arkade.Inputs), []string{"Rules", "Point", "int", "int", "signature"}; !slices.Equal(got, want) {
+	if got, want := inputTypes(group.Arkade.Inputs), []string{"Rules", "ECPoint", "int", "int", "signature"}; !slices.Equal(got, want) {
 		t.Fatalf("covenant input types = %v, want %v", got, want)
 	}
 

@@ -29,6 +29,13 @@ pub fn builtin_struct_fields(
         "AssetId" => Some(&[("txid", "bytes32"), ("gidx", "int")]),
         "Outpoint" => Some(&[("txid", "bytes32"), ("vout", "int")]),
         "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
+        // alt_bn128 G2 point; each coordinate is an Fp2 element `c1 * i + c0`.
+        "G2Point" => Some(&[
+            ("xC1", "int"),
+            ("xC0", "int"),
+            ("yC1", "int"),
+            ("yC0", "int"),
+        ]),
         _ => None,
     }
 }
@@ -170,7 +177,6 @@ pub struct FunctionInput {
 ///
 /// | encoding        | description                                   |
 /// |-----------------|-----------------------------------------------|
-/// | `compressed-33` | 33-byte SEC-compressed secp256k1 public key  |
 /// | `schnorr-64`    | 64-byte Schnorr signature (BIP-340)           |
 /// | `raw`           | arbitrary byte array (caller decides length)  |
 /// | `raw-20`        | 20-byte array (e.g., HASH160)                 |
@@ -754,29 +760,22 @@ pub enum Expression {
         modulus: Box<Expression>,
     },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// EC point addition. Produces an `ECPoint`.
+    /// EC point addition: ecAdd(P, Q, curveId). Produces an `ECPoint`.
     EcAdd {
-        x1: Box<Expression>,
-        y1: Box<Expression>,
-        x2: Box<Expression>,
-        y2: Box<Expression>,
+        point_p: Box<Expression>,
+        point_q: Box<Expression>,
         curve_id: Box<Expression>,
     },
-    /// EC scalar multiplication. Produces an `ECPoint`.
+    /// EC scalar multiplication: ecMul(P, scalar, curveId). Produces an `ECPoint`.
     EcMul {
-        x: Box<Expression>,
-        y: Box<Expression>,
+        point: Box<Expression>,
         scalar: Box<Expression>,
         curve_id: Box<Expression>,
     },
-    /// One-pair pairing check. Tuple support can generalize this to multiple pairs.
+    /// Pairing-product check over aligned `ECPoint[n]` and `G2Point[n]` arrays.
     EcPairing {
-        g1_x: Box<Expression>,
-        g1_y: Box<Expression>,
-        g2_x_c1: Box<Expression>,
-        g2_x_c0: Box<Expression>,
-        g2_y_c1: Box<Expression>,
-        g2_y_c0: Box<Expression>,
+        g1: Box<Expression>,
+        g2: Box<Expression>,
         curve_id: Box<Expression>,
     },
     /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
@@ -969,27 +968,16 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             modulus,
         } => vec![base, exponent, modulus],
         Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
+            point_p,
+            point_q,
             curve_id,
-        } => vec![x1, y1, x2, y2, curve_id],
+        } => vec![point_p, point_q, curve_id],
         Expression::EcMul {
-            x,
-            y,
+            point,
             scalar,
             curve_id,
-        } => vec![x, y, scalar, curve_id],
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
+        } => vec![point, scalar, curve_id],
+        Expression::EcPairing { g1, g2, curve_id } => vec![g1, g2, curve_id],
         Expression::EcMulScalarVerify {
             scalar,
             point_p,
