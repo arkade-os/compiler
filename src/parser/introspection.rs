@@ -246,20 +246,34 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
                         index: Box::new(index),
                         source: GroupIOSource::Outputs,
                     });
+                } else if let Some(property) = text[bracket_end + 1..].strip_prefix('.') {
+                    if matches!(
+                        property,
+                        "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
+                    ) {
+                        return Err(format!(
+                            "tx.assetGroups[k].{property} is not supported with an inline index; \
+                             bind the index first: let g = k; g.{property}"
+                        ));
+                    }
                 }
             }
         }
     }
 
-    // Handle tx.input.current
+    // Handle tx.input.current.<property> — same property set as
+    // tx.inputs[i].<property>, since this *is* tx.inputs[i] for the current i.
     if text.starts_with("tx.input.current") {
-        let property = if text == "tx.input.current" {
-            None
-        } else {
-            text.strip_prefix("tx.input.current.")
-                .map(|rest| rest.to_string())
+        return match text.strip_prefix("tx.input.current.") {
+            Some(
+                p @ ("value" | "scriptPubKey" | "sequence" | "outpoint" | "arkadeScriptHash"
+                | "arkadeWitnessHash"),
+            ) => Ok(Expression::CurrentInput(Some(p.to_string()))),
+            _ => Err(format!(
+                "tx.input.current requires one of: value, scriptPubKey, sequence, outpoint, \
+                 arkadeScriptHash, arkadeWitnessHash (got '{text}')"
+            )),
         };
-        return Ok(Expression::CurrentInput(property));
     }
 
     // Default: treat as a property string
