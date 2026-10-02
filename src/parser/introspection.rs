@@ -188,9 +188,9 @@ pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression,
 }
 
 pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    let text = pair.as_str();
+    let text = without_trivia(pair.as_str());
 
-    reject_malformed_asset_call(text)?;
+    reject_malformed_asset_call(&text)?;
 
     // Handle tx.assetGroups.find(txid, gidx)
     if text.starts_with("tx.assetGroups.find(") && text.ends_with(')') {
@@ -217,46 +217,71 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
 
     // Handle tx.assetGroups[idx].sumInputs or tx.assetGroups[idx].sumOutputs
     if text.starts_with("tx.assetGroups[") {
-        if let Some(bracket_start) = text.find('[') {
-            if let Some(bracket_end) = text.find(']') {
-                let idx_str = &text[bracket_start + 1..bracket_end];
-                let index = if idx_str.chars().all(|c| c.is_ascii_digit()) {
-                    Expression::Literal(idx_str.to_string())
-                } else {
-                    Expression::Variable(idx_str.to_string())
-                };
-
-                if text.ends_with(".sumInputs") {
-                    return Ok(Expression::GroupSum {
-                        index: Box::new(index),
-                        source: GroupSumSource::Inputs,
-                    });
-                } else if text.ends_with(".sumOutputs") {
-                    return Ok(Expression::GroupSum {
-                        index: Box::new(index),
-                        source: GroupSumSource::Outputs,
-                    });
-                } else if text.ends_with(".numInputs") {
-                    return Ok(Expression::GroupNumIO {
-                        index: Box::new(index),
-                        source: GroupIOSource::Inputs,
-                    });
-                } else if text.ends_with(".numOutputs") {
-                    return Ok(Expression::GroupNumIO {
-                        index: Box::new(index),
-                        source: GroupIOSource::Outputs,
-                    });
-                } else if let Some(property) = text[bracket_end + 1..].strip_prefix('.') {
-                    if matches!(
-                        property,
+        let mut indices = pair
+            .clone()
+            .into_inner()
+            .flatten()
+            .filter(|p| p.as_rule() == Rule::array_access);
+        if let Some(group) = indices.next() {
+            let after_group =
+                without_trivia(&pair.as_str()[group.as_span().end() - pair.as_span().start()..]);
+            let index = parse_array_access_index(group)?;
+            let io_source = if after_group.starts_with(".inputs[") {
+                Some(GroupIOSource::Inputs)
+            } else if after_group.starts_with(".outputs[") {
+                Some(GroupIOSource::Outputs)
+            } else {
+                None
+            };
+            if text.ends_with(".sumInputs") {
+                return Ok(Expression::GroupSum {
+                    index: Box::new(index),
+                    source: GroupSumSource::Inputs,
+                });
+            } else if text.ends_with(".sumOutputs") {
+                return Ok(Expression::GroupSum {
+                    index: Box::new(index),
+                    source: GroupSumSource::Outputs,
+                });
+            } else if text.ends_with(".numInputs") {
+                return Ok(Expression::GroupNumIO {
+                    index: Box::new(index),
+                    source: GroupIOSource::Inputs,
+                });
+            } else if text.ends_with(".numOutputs") {
+                return Ok(Expression::GroupNumIO {
+                    index: Box::new(index),
+                    source: GroupIOSource::Outputs,
+                });
+            } else if let (Some(source), Some(io)) = (io_source, indices.next()) {
+                // The grammar ends the access with `]`, `amount` or `type`.
+                let property = ["amount", "type"]
+                    .into_iter()
+                    .find(|property| text.ends_with(&format!(".{property}")))
+                    .map(str::to_string);
+                return Ok(Expression::GroupIOAccess {
+                    group_index: Box::new(index),
+                    io_index: Box::new(parse_array_access_index(io)?),
+                    source,
+                    property,
+                });
+            } else if let Some(property) = pair
+                .clone()
+                .into_inner()
+                .flatten()
+                .find(|p| p.as_rule() == Rule::asset_group_property)
+                .map(|p| p.as_str())
+                .filter(|property| {
+                    matches!(
+                        *property,
                         "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
-                    ) {
-                        return Err(format!(
-                            "tx.assetGroups[k].{property} is not supported with an inline index; \
-                             bind the index first: let g = k; g.{property}"
-                        ));
-                    }
-                }
+                    )
+                })
+            {
+                return Err(format!(
+                    "tx.assetGroups[k].{property} is not supported with an inline index; \
+                     bind the index first: let g = k; g.{property}"
+                ));
             }
         }
     }
@@ -277,5 +302,28 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
     }
 
     // Default: treat as a property string
-    Ok(Expression::Property(text.to_string()))
+    Ok(Expression::Property(text))
+}
+
+/// `text` without the whitespace and comments the grammar allows between terms.
+fn without_trivia(text: &str) -> String {
+    text.lines()
+        .flat_map(|line| {
+            line.split_once("//")
+                .map_or(line, |(code, _)| code)
+                .split_whitespace()
+        })
+        .collect()
+}
+
+/// The index inside an `array_access` pair, without surrounding trivia.
+fn parse_array_access_index(array_access: Pair<Rule>) -> Result<Expression, String> {
+    let index = array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing index value")?;
+    Ok(match index.as_rule() {
+        Rule::number_literal => Expression::Literal(index.as_str().to_string()),
+        _ => Expression::Variable(index.as_str().to_string()),
+    })
 }

@@ -1560,6 +1560,8 @@ fn validate_binding_expression(
         )));
     }
 
+    let registered_builtin = crate::typechecker::builtins::operands(expression);
+
     match expression {
         Expression::BinaryOp { left, op, right }
             if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
@@ -1606,118 +1608,45 @@ fn validate_binding_expression(
                 )));
             }
         }
-        Expression::Substr { .. }
-        | Expression::Cat { .. }
-        | Expression::Bin2Num { .. }
-        | Expression::Num2Bin { .. }
-        | Expression::ReverseBytes { .. }
-        | Expression::SizeOf { .. }
-        | Expression::Digest { .. }
-        | Expression::Sighash { .. }
-        | Expression::PacketInspect { .. }
-        | Expression::InputPacketInspect { .. }
-        | Expression::InputIntrospection { .. }
-        | Expression::OutputIntrospection { .. }
-        | Expression::EcAdd { .. }
-        | Expression::EcMul { .. }
-        | Expression::EcPairing { .. }
-        | Expression::EcMulScalarVerify { .. }
-        | Expression::TweakVerify { .. } => {
-            let (bytes, int) = (ArkType::Bytes, ArkType::Int);
-            let bytes32 = ArkType::Bytes32;
-            let point = ArkType::Struct("ECPoint".to_string());
-            // The G2 array must be as long as the G1 array.
-            let pairs = match expression {
-                Expression::EcPairing { g1, .. } => match resolved_expression_type(g1, scopes) {
-                    ArkType::Array(_, pairs) => pairs,
-                    _ => 1,
-                },
-                _ => 0,
-            };
-            let g1_points = ArkType::Array(Box::new(point.clone()), pairs);
-            let g2_points = ArkType::Array(Box::new(ArkType::Struct("G2Point".to_string())), pairs);
-            let (builtin, operands) = match expression {
-                Expression::Substr { data, offset, size } => {
-                    ("substr", vec![(data, &bytes), (offset, &int), (size, &int)])
-                }
-                Expression::Cat { left, right } => ("cat", vec![(left, &bytes), (right, &bytes)]),
-                Expression::Bin2Num { data } => ("bin2num", vec![(data, &bytes)]),
-                Expression::Num2Bin { value, size } => {
-                    ("num2bin", vec![(value, &int), (size, &int)])
-                }
-                Expression::ReverseBytes { data } => ("reverseBytes", vec![(data, &bytes)]),
-                Expression::SizeOf { data } => ("size", vec![(data, &bytes)]),
-                Expression::Digest { data, hash_type } => {
-                    ("digest", vec![(data, &bytes), (hash_type, &int)])
-                }
-                Expression::Sighash { hash_type } => ("sighash", vec![(hash_type, &int)]),
-                Expression::PacketInspect { packet_type } => {
-                    ("tx.packet", vec![(packet_type, &int)])
-                }
-                Expression::InputPacketInspect { index, packet_type } => (
-                    "tx.inputs[].packet",
-                    vec![(index, &int), (packet_type, &int)],
-                ),
-                Expression::InputIntrospection { index, .. } => {
-                    ("tx.inputs[]", vec![(index, &int)])
-                }
-                Expression::OutputIntrospection { index, .. } => {
-                    ("tx.outputs[]", vec![(index, &int)])
-                }
-                Expression::EcAdd {
-                    point_p,
-                    point_q,
-                    curve_id,
-                } => (
-                    "ecAdd",
-                    vec![(point_p, &point), (point_q, &point), (curve_id, &int)],
-                ),
-                Expression::EcMul {
-                    point: value,
-                    scalar,
-                    curve_id,
-                } => (
-                    "ecMul",
-                    vec![(value, &point), (scalar, &int), (curve_id, &int)],
-                ),
-                Expression::EcPairing { g1, g2, curve_id } => (
-                    "ecPairing",
-                    vec![(g1, &g1_points), (g2, &g2_points), (curve_id, &int)],
-                ),
-                // Scalars are 32-byte big-endian; P is x-only for tweakVerify and compressed otherwise.
-                Expression::EcMulScalarVerify {
-                    scalar,
-                    point_p,
-                    point_q,
-                } => (
-                    "ecMulScalarVerify",
-                    vec![(scalar, &bytes32), (point_p, &bytes), (point_q, &bytes)],
-                ),
-                Expression::TweakVerify {
-                    point_p,
-                    tweak,
-                    point_q,
-                } => (
-                    "tweakVerify",
-                    vec![(point_p, &bytes32), (tweak, &bytes32), (point_q, &bytes)],
-                ),
-                _ => unreachable!("matched by the enclosing arm"),
-            };
-            for (operand, expected) in operands {
+        _ if registered_builtin.is_some() => {
+            let (name, operands) = registered_builtin.unwrap();
+            let params = crate::typechecker::builtins::find(name)
+                .unwrap_or_else(|| panic!("{name} has no registered signature"));
+            assert_eq!(
+                operands.len(),
+                params.len(),
+                "{name}: operands() and its signature disagree on arity"
+            );
+            // Every `[]` operand takes the length of the first one.
+            let mut length = None;
+            for (operand, declared) in operands.iter().zip(params) {
                 let actual = resolved_expression_type(operand, scopes);
+                let expected = match declared.strip_suffix("[]") {
+                    Some(element) => {
+                        let length = *length.get_or_insert(match actual {
+                            ArkType::Array(_, length) => length,
+                            _ => 1,
+                        });
+                        ArkType::Array(Box::new(ArkType::parse(element)), length)
+                    }
+                    None => ArkType::parse(declared),
+                };
                 // Composite operands are emitted field by field, so their type must be known.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
-                if known && !binding_types_compatible(expected, &actual) {
+                // A hex literal carries its own width, so 32 bytes need no cast.
+                let literal_bytes32 = expected == ArkType::Bytes32
+                    && matches!(operand, Expression::Literal(value) if value.starts_with("0x") && value.len() == 66);
+                if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': {builtin} operand has type '{}', expected '{}'",
+                        "function '{function_name}': {name} operand has type '{}', expected '{}'",
                         actual.as_str(),
                         expected.as_str()
                     )));
                 }
             }
             // OP_ECPAIRING bounds its work at 16 pairs.
-            if pairs > 16 {
+            if let Some(pairs) = length.filter(|&pairs| name == "ecPairing" && pairs > 16) {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': ecPairing supports at most 16 pairs, got {pairs}"
                 )));

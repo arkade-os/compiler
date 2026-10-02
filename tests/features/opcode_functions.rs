@@ -489,6 +489,85 @@ fn test_ec_pairing_takes_aligned_point_arrays() {
 }
 
 #[test]
+fn modexp_group_index_and_sha256_builtins_reject_mistyped_operands() {
+    for (params, statement, expected) in [
+        (
+            "pubkey owner",
+            "let r = modExp(owner, 2, 3);",
+            "modExp operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "pubkey owner",
+            "let r = tx.assetGroups[owner].sumInputs;",
+            "assetGroups[].sum operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "pubkey owner",
+            "let r = tx.assetGroups[owner].numInputs;",
+            "assetGroups[].numIO operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "pubkey owner",
+            "let r = tx.assetGroups[0].outputs[owner].amount;",
+            "assetGroups[].io operand has type 'bytes', expected 'int'",
+        ),
+        (
+            "int x",
+            "let r = sha256(x);",
+            "sha256 operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "int x",
+            "let r = sha256Initialize(x);",
+            "sha256Initialize operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "bytes32 ctx, int x",
+            "let r = sha256Update(ctx, x);",
+            "sha256Update operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "bytes32 ctx, int x",
+            "let r = sha256Finalize(ctx, x);",
+            "sha256Finalize operand has type 'int', expected 'bytes'",
+        ),
+    ] {
+        let source = format!("contract Grouped({params}) {{ function spend() {{ {statement} }} }}");
+        let error = compile(&source).expect_err(&source).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+#[test]
+fn bytes32_operands_accept_only_32_byte_literals() {
+    let word = format!("0x{}", "01".repeat(32));
+    let short = format!("0x{}", "01".repeat(31));
+    for (params, statement) in [
+        ("bytes d", "let r = sha256Update(LIT, d); require(r == r);"),
+        (
+            "bytes d",
+            "let r = sha256Finalize(LIT, d); require(r == r);",
+        ),
+        (
+            "pubkey p, pubkey q",
+            "require(ecMulScalarVerify(LIT, p, q));",
+        ),
+        ("bytes32 p, pubkey q", "require(tweakVerify(p, LIT, q));"),
+    ] {
+        let source = |literal: &str| {
+            let statement = statement.replace("LIT", literal);
+            format!("contract Grouped({params}) {{ function spend() {{ {statement} }} }}")
+        };
+        compile(&source(&word)).unwrap_or_else(|error| panic!("{statement}: {error}"));
+        let error = compile(&source(&short)).expect_err(statement).to_string();
+        assert!(
+            error.contains("operand has type 'bytes', expected 'bytes32'"),
+            "{statement}: {error}"
+        );
+    }
+}
+
+#[test]
 fn test_ec_mul_scalar_verify_cannot_be_value_bound() {
     let code = r#"
         contract CryptoOps(pubkey owner) {
@@ -775,18 +854,6 @@ fn unary_negation_in_builtin_atom_arguments() {
         (
             "let result = ecPairing(g1s, g2s, -2);",
             "OP_1 2 OP_NEGATE OP_ECPAIRING",
-        ),
-        (
-            "let result = sha256Initialize(-1);",
-            "1 OP_NEGATE OP_SHA256INITIALIZE",
-        ),
-        (
-            "let result = sha256Update(data, -1);",
-            "1 OP_NEGATE OP_SHA256UPDATE",
-        ),
-        (
-            "let result = sha256Finalize(data, -1);",
-            "1 OP_NEGATE OP_SHA256FINALIZE",
         ),
         ("let result = sighash(-1);", "1 OP_NEGATE OP_SIGHASH"),
         ("let result = digest(data, -1);", "1 OP_NEGATE OP_DIGEST"),

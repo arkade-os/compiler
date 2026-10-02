@@ -36,7 +36,7 @@ pub(crate) fn parse_asset_group_id_operands(
             }
             body
         }
-        Rule::tx_property_body | Rule::asset_group_access => pair,
+        Rule::tx_property_body => pair,
         rule => return Err(format!("unexpected asset group operand parent: {rule:?}")),
     };
 

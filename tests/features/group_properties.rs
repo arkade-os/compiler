@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPASSETID,
-    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_SUB, OP_SWAP, OP_TXID,
+    OP_0, OP_1, OP_2DROP, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_SUB, OP_SWAP, OP_TXID,
 };
 
 use crate::common::arkade_asm;
@@ -330,6 +330,164 @@ fn test_group_num_io_together() {
         count,
         asm_str
     );
+}
+
+/// tx.assetGroups[k].outputs[j].amount emits OP_INSPECTASSETGROUP (source=1
+/// for outputs) followed by two OP_NIP to drop type and data, leaving amount.
+#[test]
+fn test_group_io_access_output_amount() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.assetGroups[0].outputs[0].amount >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("group IO access compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let window = asm
+        .windows(4)
+        .find(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_NIP && w[3] == OP_NIP);
+    assert!(
+        window.is_some(),
+        "expected OP_1 {OP_INSPECTASSETGROUP} {OP_NIP} {OP_NIP}: {asm:?}"
+    );
+}
+
+#[test]
+fn test_group_io_access_output_type() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.assetGroups[0].outputs[0].type >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("group IO access compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        asm.windows(3)
+            .any(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_2DROP),
+        "expected OP_1 {OP_INSPECTASSETGROUP} {OP_2DROP}: {asm:?}"
+    );
+}
+
+#[test]
+fn test_group_accesses_ignore_whitespace_and_comments() {
+    let compile_body = |body: &str| {
+        let code = format!(
+            "contract GroupIOTest(pubkey owner) {{ function spend(signature sig, int g, bytes32 t) {{
+                require(checkSig(sig, owner));
+                require(t == t);
+                {body}
+            }} }}"
+        );
+        let output = compile(&code).unwrap_or_else(|error| panic!("{body}: {error}"));
+        crate::common::arkade_asm_tokens(&output, "spend")
+    };
+
+    for (plain, spaced) in [
+        (
+            "require(tx.assetGroups[g].outputs[1].amount >= 0);",
+            "require(tx.assetGroups[ g ].outputs[ 1 // io\n ]. amount >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[g].outputs[g].type >= 0);",
+            "require(tx.assetGroups[ g ].outputs[\tg ]. type >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[0].sumInputs >= tx.assetGroups[g].numOutputs);",
+            "require(tx.assetGroups[ 0 ].sumInputs >= tx.assetGroups[ g ].numOutputs);",
+        ),
+        (
+            "require(tx.assetGroups[g].outputs[1].amount >= 0);",
+            "require(tx . assetGroups // groups\n [g] . outputs [1] . amount >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[0].sumInputs >= tx.assetGroups[g].numOutputs);",
+            "require(tx.assetGroups [0] . sumInputs >= tx.assetGroups[g]\n.numOutputs);",
+        ),
+        (
+            "require(tx.assetGroups.length >= g);",
+            "require(tx . assetGroups . length >= g);",
+        ),
+        (
+            "let x = tx.assetGroups.find(t, g); require(x == x);",
+            "let x = tx.assetGroups . find(t, g); require(x == x);",
+        ),
+        (
+            "require(tx.input.current.value >= g);",
+            "require(tx . input . current . value >= g);",
+        ),
+    ] {
+        assert_eq!(compile_body(plain), compile_body(spaced), "{spaced}");
+    }
+}
+
+/// The input side is rejected as a value: LOCAL and INTENT inputs don't share
+/// a stack shape, so "amount" isn't at a fixed position.
+#[test]
+fn test_group_io_access_input_amount_is_rejected() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let result = tx.assetGroups[0].inputs[0].amount;
+                require(result >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("input-side group IO access must not bind a value")
+        .to_string();
+    assert!(error.contains("variable-width result"), "{error}");
+}
+
+/// Without a property, the raw (type, data..., amount) tuple isn't one
+/// stack item and can't be bound either.
+#[test]
+fn test_group_io_access_without_property_is_rejected() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let result = tx.assetGroups[0].outputs[0];
+                require(result >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("a raw group IO access must not bind a value")
+        .to_string();
+    assert!(error.contains("does not produce one stack item"), "{error}");
+}
+
+#[test]
+fn test_group_access_as_constructor_argument_is_parsed() {
+    let code = r#"
+        contract T(int amount, pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(amount >= 0);
+                require(tx.outputs[0].scriptPubKey == new T(tx.assetGroups[0].sumInputs, owner));
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("computed constructor arguments are rejected")
+        .to_string();
+    assert!(
+        error.contains("computed contract arguments are not supported"),
+        "{error}"
+    );
+    assert!(!error.contains("is undefined"), "{error}");
 }
 
 /// tx.assetGroups[k].delta/.hasControl/.metadataHash/.assetId/.isFresh with an
