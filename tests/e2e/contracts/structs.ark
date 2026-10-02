@@ -67,6 +67,9 @@ contract Structs(Account account) {
     require(added.y == multiplied.y, "ecAdd y");
     require(added == multiplied, "whole ec point equality");
     require(ecMul(generator, 1, 0) == generator, "ecMul identity");
+    ECPoint identity = { x: 0, y: 0 };
+    require(ecAdd(identity, generator, 0) == generator, "ecAdd identity point");
+    require(ecAdd((ecAdd(generator, generator, 0)), generator, 0) == ecMul(generator, 3, 0), "nested ecAdd");
 
     require(checkSig(ownerSig, account.owner));
   }

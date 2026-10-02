@@ -139,4 +139,49 @@ impl Generator {
         self.apply(OP_ADD, 2, 1)?;
         self.apply(OP_PUT, 2, 0)
     }
+
+    /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
+    pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<(), String> {
+        let Expression::EcPairing { g1, g2, curve_id } = pairing else {
+            return Err("expected ecPairing".to_string());
+        };
+        let ArkType::Array(_, pairs) = infer_type(g1, &self.scope) else {
+            return Err("ecPairing G1 points must be an ECPoint array".to_string());
+        };
+        for index in 0..pairs {
+            for (points, ty) in [(g1, "ECPoint"), (g2, "G2Point")] {
+                if points.binding_path().is_none() {
+                    return Err(
+                        "ecPairing points must be array bindings; bind computed arrays with `let` first"
+                            .to_string(),
+                    );
+                }
+                let index = Box::new(Expression::Literal(index.to_string()));
+                let element = match points.as_ref() {
+                    Expression::Variable(array) | Expression::Property(array) => {
+                        Expression::ArrayIndex {
+                            array: array.clone(),
+                            index,
+                        }
+                    }
+                    value => Expression::IndexAccess {
+                        value: Box::new(value.clone()),
+                        index,
+                    },
+                };
+                for (field, field_type) in crate::models::builtin_struct_fields(ty)
+                    .ok_or("internal compiler error: missing native point layout")?
+                {
+                    let leaf = Expression::FieldAccess {
+                        value: Box::new(element.clone()),
+                        field: field.to_string(),
+                    };
+                    self.emit_access_value(&leaf, field_type)?;
+                }
+            }
+        }
+        self.push_integer_temporary(pairs);
+        self.emit_expression(curve_id)?;
+        self.apply(OP_ECPAIRING, 6 * pairs + 2, 1)
+    }
 }

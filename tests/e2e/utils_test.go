@@ -232,6 +232,8 @@ func flattenInput(name, typeName string, structs []structDefinition) []string {
 		return []string{name + ".txid", name + ".vout"}
 	case "ECPoint":
 		return []string{name + ".x", name + ".y"}
+	case "G2Point":
+		return []string{name + ".xC1", name + ".xC0", name + ".yC1", name + ".yC0"}
 	}
 	for _, definition := range structs {
 		if definition.Name != typeName {

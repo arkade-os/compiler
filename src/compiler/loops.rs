@@ -349,29 +349,9 @@ pub(crate) fn substitute_expression(
                 curve_id, index_var, value_var, k, items,
             )),
         },
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => Expression::EcPairing {
-            g1_x: Box::new(substitute_expression(g1_x, index_var, value_var, k, items)),
-            g1_y: Box::new(substitute_expression(g1_y, index_var, value_var, k, items)),
-            g2_x_c1: Box::new(substitute_expression(
-                g2_x_c1, index_var, value_var, k, items,
-            )),
-            g2_x_c0: Box::new(substitute_expression(
-                g2_x_c0, index_var, value_var, k, items,
-            )),
-            g2_y_c1: Box::new(substitute_expression(
-                g2_y_c1, index_var, value_var, k, items,
-            )),
-            g2_y_c0: Box::new(substitute_expression(
-                g2_y_c0, index_var, value_var, k, items,
-            )),
+        Expression::EcPairing { g1, g2, curve_id } => Expression::EcPairing {
+            g1: Box::new(substitute_expression(g1, index_var, value_var, k, items)),
+            g2: Box::new(substitute_expression(g2, index_var, value_var, k, items)),
             curve_id: Box::new(substitute_expression(
                 curve_id, index_var, value_var, k, items,
             )),

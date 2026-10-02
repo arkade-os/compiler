@@ -843,15 +843,7 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             scalar,
             curve_id,
         } => vec![point, scalar, curve_id],
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
+        Expression::EcPairing { g1, g2, curve_id } => vec![g1, g2, curve_id],
         Expression::EcMulScalarVerify {
             scalar,
             point_p,
@@ -1387,7 +1379,7 @@ fn validate_signature_operands(
     );
     validate_operand(
         pubkey,
-        Some(ArkType::Pubkey),
+        Some(ArkType::Bytes),
         "public key",
         function_name,
         scopes,
@@ -1452,7 +1444,7 @@ fn validate_binding_requirement(
             for pubkey in pubkeys {
                 validate_operand(
                     pubkey,
-                    Some(ArkType::Pubkey),
+                    Some(ArkType::Bytes),
                     "multisig public key",
                     function_name,
                     scopes,
@@ -1632,8 +1624,18 @@ fn validate_binding_expression(
         | Expression::EcMulScalarVerify { .. }
         | Expression::TweakVerify { .. } => {
             let (bytes, int) = (ArkType::Bytes, ArkType::Int);
-            let (bytes32, pubkey) = (ArkType::Bytes32, ArkType::Pubkey);
+            let bytes32 = ArkType::Bytes32;
             let point = ArkType::Struct("ECPoint".to_string());
+            // The G2 array must be as long as the G1 array.
+            let pairs = match expression {
+                Expression::EcPairing { g1, .. } => match resolved_expression_type(g1, scopes) {
+                    ArkType::Array(_, pairs) => pairs,
+                    _ => 1,
+                },
+                _ => 0,
+            };
+            let g1_points = ArkType::Array(Box::new(point.clone()), pairs);
+            let g2_points = ArkType::Array(Box::new(ArkType::Struct("G2Point".to_string())), pairs);
             let (builtin, operands) = match expression {
                 Expression::Substr { data, offset, size } => {
                     ("substr", vec![(data, &bytes), (offset, &int), (size, &int)])
@@ -1678,20 +1680,9 @@ fn validate_binding_expression(
                     "ecMul",
                     vec![(value, &point), (scalar, &int), (curve_id, &int)],
                 ),
-                Expression::EcPairing {
-                    g1_x,
-                    g1_y,
-                    g2_x_c1,
-                    g2_x_c0,
-                    g2_y_c1,
-                    g2_y_c0,
-                    curve_id,
-                } => (
+                Expression::EcPairing { g1, g2, curve_id } => (
                     "ecPairing",
-                    [g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id]
-                        .into_iter()
-                        .map(|operand| (operand, &int))
-                        .collect(),
+                    vec![(g1, &g1_points), (g2, &g2_points), (curve_id, &int)],
                 ),
                 // Scalars are 32-byte big-endian; P is x-only for tweakVerify and compressed otherwise.
                 Expression::EcMulScalarVerify {
@@ -1700,7 +1691,7 @@ fn validate_binding_expression(
                     point_q,
                 } => (
                     "ecMulScalarVerify",
-                    vec![(scalar, &bytes32), (point_p, &pubkey), (point_q, &pubkey)],
+                    vec![(scalar, &bytes32), (point_p, &bytes), (point_q, &bytes)],
                 ),
                 Expression::TweakVerify {
                     point_p,
@@ -1708,14 +1699,15 @@ fn validate_binding_expression(
                     point_q,
                 } => (
                     "tweakVerify",
-                    vec![(point_p, &bytes32), (tweak, &bytes32), (point_q, &pubkey)],
+                    vec![(point_p, &bytes32), (tweak, &bytes32), (point_q, &bytes)],
                 ),
                 _ => unreachable!("matched by the enclosing arm"),
             };
             for (operand, expected) in operands {
                 let actual = resolved_expression_type(operand, scopes);
-                // Struct operands are emitted field by field, so their type must be known.
-                let known = actual != ArkType::Unknown || matches!(expected, ArkType::Struct(_));
+                // Composite operands are emitted field by field, so their type must be known.
+                let known = actual != ArkType::Unknown
+                    || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
                 if known && !binding_types_compatible(expected, &actual) {
                     issues.push(ValidationIssue::error(format!(
                         "function '{function_name}': {builtin} operand has type '{}', expected '{}'",
@@ -1723,6 +1715,12 @@ fn validate_binding_expression(
                         expected.as_str()
                     )));
                 }
+            }
+            // OP_ECPAIRING bounds its work at 16 pairs.
+            if pairs > 16 {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': ecPairing supports at most 16 pairs, got {pairs}"
+                )));
             }
         }
         Expression::Cast { target, data } => {
@@ -1918,6 +1916,7 @@ fn validate_binding_expression(
                 | Expression::IndexAccess { .. }
                 | Expression::EcAdd { .. }
                 | Expression::EcMul { .. }
+                | Expression::EcPairing { .. }
         ) {
             validate_value_expression(child, function_name, scopes, issues);
         } else {

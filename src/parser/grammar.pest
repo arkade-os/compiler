@@ -603,8 +603,9 @@ ec_mul = {
     "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
+// Pairing-product check: ecPairing(ECPoint[n] g1, G2Point[n] g2, curveId) → OP_ECPAIRING
 ec_pairing = {
-    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
+    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
 }
 
 // EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY

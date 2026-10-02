@@ -41,7 +41,7 @@ contract Swapped(pubkey owner) {
     // sig is pubkey, ownerSig is signature → arguments are swapped
     let error = compile_error(source);
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "swapped checkSig arguments must be rejected: {error}"
     );
 }
@@ -212,7 +212,7 @@ contract MultiTypeError(pubkey owner, int badHash) {
 }"#;
     let error = compile_error(source);
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "signature argument errors must stop compilation: {error}"
     );
 }
@@ -230,7 +230,7 @@ contract SwappedCsfs(pubkey owner) {
 }"#;
     let error = compile_error(source);
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "swapped checkSigFromStack arguments must be rejected: {error}"
     );
 }
@@ -352,7 +352,7 @@ contract Casts(pubkey owner, int gidx) {
     for (cast, source_type) in [
         ("bytes32(n)", "int"),
         ("bytes20(h)", "bytes32"),
-        ("pubkey(owner)", "pubkey"),
+        ("pubkey(n)", "int"),
     ] {
         let error = compile_error(&format!(
             "contract Casts(pubkey owner, bytes32 h) {{ function spend(int n) {{ let x = {cast}; require(x == x && n == n && h == h && owner == owner); }} }}"
@@ -407,7 +407,7 @@ fn hash_comparisons_expect_the_digest_width() {
 
 #[test]
 fn tapscript_timelocks_must_be_int() {
-    for (ty, ok) in [("int", true), ("pubkey", false), ("bytes32", false)] {
+    for (ty, ok) in [("int", true), ("bytes", false), ("bytes32", false)] {
         let source = format!("contract T(pubkey owner, {ty} delay) {{ function spend() {{ require(delay == delay); }} function exit(signature sig) tapscript {{ require(older(delay)); require(checkSig(sig, owner)); }} }}");
         match compile(&source) {
             Ok(_) => assert!(ok, "{ty} timelock accepted"),
@@ -430,7 +430,7 @@ fn builtin_operands_are_type_checked() {
         ),
         (
             "substr(d, k, 1) == d",
-            "substr operand has type 'pubkey', expected 'int'",
+            "substr operand has type 'bytes', expected 'int'",
         ),
         (
             "cat(i, d) == d",
@@ -454,7 +454,7 @@ fn builtin_operands_are_type_checked() {
         ),
         (
             "sighash(k) == m",
-            "sighash operand has type 'pubkey', expected 'int'",
+            "sighash operand has type 'bytes', expected 'int'",
         ),
         (
             "digest(i, 0) == d",
@@ -462,11 +462,11 @@ fn builtin_operands_are_type_checked() {
         ),
         (
             "size(tx.packet(k)) > 0",
-            "tx.packet operand has type 'pubkey', expected 'int'",
+            "tx.packet operand has type 'bytes', expected 'int'",
         ),
         (
             "tx.inputs[k].value > 0",
-            "tx.inputs[] operand has type 'pubkey', expected 'int'",
+            "tx.inputs[] operand has type 'bytes', expected 'int'",
         ),
         (
             "tx.outputs[d].value > 0",

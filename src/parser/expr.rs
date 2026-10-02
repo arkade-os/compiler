@@ -93,7 +93,7 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "modExp" => Some("modExp(base, exponent, modulus)"),
         "ecAdd" => Some("ecAdd(P, Q, curveId)"),
         "ecMul" => Some("ecMul(P, scalar, curveId)"),
-        "ecPairing" => Some("ecPairing(g1X, g1Y, g2Xc1, g2Xc0, g2Yc1, g2Yc0, curveId)"),
+        "ecPairing" => Some("ecPairing(g1Points, g2Points, curveId)"),
         "reverseBytes" => Some("reverseBytes(data)"),
         "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),

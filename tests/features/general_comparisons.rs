@@ -233,7 +233,7 @@ fn compared_boolean_calls_reject_invalid_signature_types() {
     .to_string();
 
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "comparison-context checkSig must retain argument validation: {error}"
     );
 }

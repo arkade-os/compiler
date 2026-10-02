@@ -309,24 +309,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(curve_id, asm);
             asm.push(OP_ECMUL.to_string());
         }
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => {
-            emit_expression_asm(g1_x, asm);
-            emit_expression_asm(g1_y, asm);
-            emit_expression_asm(g2_x_c1, asm);
-            emit_expression_asm(g2_x_c0, asm);
-            emit_expression_asm(g2_y_c1, asm);
-            emit_expression_asm(g2_y_c0, asm);
-            asm.push(OP_1.to_string());
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECPAIRING.to_string());
+        Expression::EcPairing { .. } => {
+            unreachable!("pairings are extracted before raw emission")
         }
         Expression::EcMulScalarVerify {
             scalar,

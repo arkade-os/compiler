@@ -22,11 +22,9 @@ use crate::models::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArkType {
     // ── Declared types (match grammar data_type rule) ──────────────────────
-    /// 33-byte compressed secp256k1 public key
-    Pubkey,
     /// 64-byte Schnorr signature
     Signature,
-    /// Arbitrary-length byte array
+    /// Arbitrary-length byte array; `pubkey` is an alias
     Bytes,
     /// 20-byte array (e.g., HASH160 output)
     Bytes20,
@@ -58,9 +56,8 @@ impl ArkType {
             return ArkType::Array(Box::new(ArkType::parse(element)), length);
         }
         match s {
-            "pubkey" => ArkType::Pubkey,
             "signature" => ArkType::Signature,
-            "bytes" => ArkType::Bytes,
+            "bytes" | "pubkey" => ArkType::Bytes,
             "bytes20" => ArkType::Bytes20,
             "bytes32" => ArkType::Bytes32,
             "int" => ArkType::Int,
@@ -77,7 +74,6 @@ impl ArkType {
     /// (TypeScript, Go, etc.) can switch on them to pick the right serializer.
     pub fn encoding(&self) -> &'static str {
         match self {
-            ArkType::Pubkey => "compressed-33",
             ArkType::Signature => "schnorr-64",
             ArkType::Bytes => "raw",
             ArkType::Bytes20 => "raw-20",
@@ -94,7 +90,6 @@ impl ArkType {
     /// Canonical string form matching Arkade Script syntax.
     pub fn as_str(&self) -> String {
         match self {
-            ArkType::Pubkey => "pubkey".to_string(),
             ArkType::Signature => "signature".to_string(),
             ArkType::Bytes => "bytes".to_string(),
             ArkType::Bytes20 => "bytes20".to_string(),
@@ -570,7 +565,7 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 expect_type(
                     scope,
                     pk,
-                    &ArkType::Pubkey,
+                    &ArkType::Bytes,
                     errors,
                     fn_name,
                     &format!("checkMultisig() pubkey '{}'", pk.source_text()),
@@ -710,7 +705,7 @@ fn check_signature_expression(
     fn_name: &str,
 ) {
     let (signature_text, pubkey_text) = (signature.source_text(), pubkey.source_text());
-    if infer_type(signature, scope) == ArkType::Pubkey
+    if infer_type(signature, scope) == ArkType::Bytes
         && infer_type(pubkey, scope) == ArkType::Signature
     {
         errors.push(TypeError::new(format!(
@@ -730,7 +725,7 @@ fn check_signature_expression(
     expect_type(
         scope,
         pubkey,
-        &ArkType::Pubkey,
+        &ArkType::Bytes,
         errors,
         fn_name,
         &format!("{call}() arg 2 '{pubkey_text}'"),
@@ -1023,6 +1018,6 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 pub fn is_bytes_like(t: &ArkType) -> bool {
     matches!(
         t,
-        ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Pubkey | ArkType::Signature
+        ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
     )
 }
