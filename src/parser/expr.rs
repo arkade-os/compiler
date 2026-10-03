@@ -89,7 +89,6 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
         "ripemd160" => Some("ripemd160(data)"),
         "older" => Some("older(value)"),
         "after" => Some("after(value)"),
-        "checkTime" => Some("checkTime(timestamp)"),
         "this.tunnel" => Some("this.tunnel(outputIndex, policy?, exceptions?)"),
         _ => None,
     };
@@ -214,13 +213,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let property = pair.into_inner().next().ok_or("Missing this property")?;
             Ok(Expression::Property(format!("this.{}", property.as_str())))
         }
-        Rule::check_time => Ok(Expression::CheckTime {
-            timestamp: Box::new(parse_general_expression(
-                pair.into_inner()
-                    .next()
-                    .ok_or("Missing checkTime timestamp")?,
-            )?),
-        }),
         Rule::tunnel => parse_tunnel(pair),
         Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
         Rule::check_sig => {

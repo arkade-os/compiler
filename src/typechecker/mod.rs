@@ -945,9 +945,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Arithmetic
         Expression::Negate { .. } => ArkType::Int,
-        Expression::Not { .. } | Expression::CheckTime { .. } | Expression::Tunnel { .. } => {
-            ArkType::Bool
-        }
+        Expression::Not { .. } | Expression::Tunnel { .. } => ArkType::Bool,
 
         // Crypto expressions
         Expression::CheckSigExpr { .. }

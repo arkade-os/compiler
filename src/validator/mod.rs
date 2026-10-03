@@ -811,7 +811,6 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             ..
         } => vec![group_index, io_index],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
-        Expression::CheckTime { timestamp } => vec![timestamp],
         Expression::Tunnel {
             output_index,
             policy,
@@ -1611,15 +1610,6 @@ fn validate_binding_expression(
             if actual != ArkType::Bytes && actual != ArkType::Unknown {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': cannot cast '{}' to '{target}'; only bytes can be cast",
-                    actual.as_str()
-                )));
-            }
-        }
-        Expression::CheckTime { timestamp } => {
-            let actual = resolved_expression_type(timestamp, scopes);
-            if actual != ArkType::Int && actual != ArkType::Unknown {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': checkTime timestamp must be int, got '{}'",
                     actual.as_str()
                 )));
             }

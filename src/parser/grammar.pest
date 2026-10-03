@@ -160,7 +160,6 @@ primary_expr = {
     check_sig_from_stack_verify |
     check_sig_from_stack |
     check_sig |
-    check_time |
     tunnel |
     intent_field |
     intent_has |
@@ -212,7 +211,6 @@ div_op = { "/" }
 // Complex expression types (for require statements)
 // PEG ordered choice: first matching alternative wins
 complex_expression = _{
-    check_time |
     tunnel |
     intent_field |
     intent_has |
@@ -333,7 +331,6 @@ identifier_property_access = { identifier ~ binding_suffix+ }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
 
-check_time = { "checkTime" ~ "(" ~ general_expression ~ ")" }
 tunnel = {
     "this" ~ "." ~ "tunnel" ~ "(" ~ general_expression
     ~ ("," ~ struct_literal ~ ("," ~ tunnel_exceptions)?)? ~ ")"

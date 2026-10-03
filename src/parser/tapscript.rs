@@ -39,12 +39,20 @@ pub(crate) fn parse_named_tapscript(
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
             for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
+                let callee = part.clone().into_inner().next();
                 let name = match part.as_rule() {
-                    Rule::check_time => "checkTime(...)",
-                    Rule::tunnel => "this.tunnel(...)",
-                    Rule::intent_field => "tx.intent.field(...)",
-                    Rule::intent_has => "tx.intent.has(...)",
-                    Rule::this_property if part.as_str() == "expiry" => "this.expiry",
+                    Rule::function_call
+                        if callee
+                            .as_ref()
+                            .and_then(|name| crate::builtins::find(name.as_str()))
+                            .is_some() =>
+                    {
+                        format!("{}(...)", callee.map_or("", |name| name.as_str()))
+                    }
+                    Rule::tunnel => "this.tunnel(...)".to_string(),
+                    Rule::intent_field => "tx.intent.field(...)".to_string(),
+                    Rule::intent_has => "tx.intent.has(...)".to_string(),
+                    Rule::this_property if part.as_str() == "expiry" => "this.expiry".to_string(),
                     _ => continue,
                 };
                 return Err(format!("`{name}` is only available in covenant functions"));

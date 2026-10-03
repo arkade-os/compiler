@@ -101,6 +101,12 @@ pub(crate) const BUILTINS: &[Builtin] = &[
     ),
     builtin("sighash", &[("hashType", "int")], "bytes32", &[OP_SIGHASH]),
     builtin(
+        "checkTime",
+        &[("timestamp", "int")],
+        "bool",
+        &[OP_CHECKTIME],
+    ),
+    builtin(
         "modExp",
         &[("base", "int"), ("exponent", "int"), ("modulus", "int")],
         "int",

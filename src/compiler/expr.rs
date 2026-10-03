@@ -37,10 +37,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", var));
         }
         Expression::Literal(lit) => push_literal_asm(lit, asm),
-        Expression::CheckTime { timestamp } => {
-            emit_expression_asm(timestamp, asm);
-            asm.push(OP_CHECKTIME.to_string());
-        }
         Expression::IntentInspect {
             path,
             presence_only,
