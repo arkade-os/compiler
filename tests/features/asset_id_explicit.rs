@@ -163,6 +163,41 @@ fn has_control_is_presence_only() {
 }
 
 #[test]
+fn control_asset_id_asserts_presence_and_binds_an_asset_id() {
+    let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
+            function f(signature sig) {
+                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                AssetId control = g.controlAssetId;
+                require(control.txid == fooTxid);
+                require(control.gidx == fooGidx);
+                require(checkSig(sig, pk));
+            }
+        }";
+    let asm = arkade_asm(src, "f");
+    assert!(asm.contains("OP_INSPECTASSETGROUPCTRL OP_VERIFY"), "{asm}");
+}
+
+#[test]
+fn control_asset_id_is_typed_and_needs_a_bound_group() {
+    for (statement, expected) in [
+        (
+            "let g = tx.assetGroups.find(fooTxid, fooGidx); require(g.controlAssetId == fooTxid);",
+            "comparison '==' is not defined between 'AssetId' and 'bytes32'",
+        ),
+        (
+            "AssetId control = tx.assetGroups[0].controlAssetId; require(control.txid == fooTxid);",
+            "bind the index first: let g = k; g.controlAssetId",
+        ),
+    ] {
+        let src = format!(
+            "contract C(bytes32 fooTxid, int fooGidx) {{ function f() {{ {statement} }} }}"
+        );
+        let error = compile(&src).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+#[test]
 fn legacy_control_property_is_rejected() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {

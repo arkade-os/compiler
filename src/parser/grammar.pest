@@ -437,7 +437,7 @@ tx_property_suffix = {
 
 // Asset group properties
 asset_group_property = {
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "controlAssetId" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
 }
 
 // This property access

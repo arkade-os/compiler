@@ -349,6 +349,7 @@ fn resolve_expression(
                 | "sumOutputs"
                 | "delta"
                 | "hasControl"
+                | "controlAssetId"
                 | "metadataHash"
                 | "assetId"
                 | "isFresh"
@@ -928,7 +929,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,
             "numInputs" | "numOutputs" => ArkType::Int,
             "metadataHash" => ArkType::Bytes32,
-            "assetId" => ArkType::Struct("AssetId".to_string()),
+            "assetId" | "controlAssetId" => ArkType::Struct("AssetId".to_string()),
             "isFresh" | "hasControl" => ArkType::Bool,
             _ => ArkType::Unknown,
         },

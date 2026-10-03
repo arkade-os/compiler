@@ -853,8 +853,9 @@ pub enum Expression {
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match expression {
         Expression::EcAdd { .. } | Expression::EcMul { .. } => Some("ECPoint"),
-        Expression::AssetAt { property, .. } | Expression::GroupProperty { property, .. }
-            if property == "assetId" =>
+        Expression::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
+        Expression::GroupProperty { property, .. }
+            if matches!(property.as_str(), "assetId" | "controlAssetId") =>
         {
             Some("AssetId")
         }

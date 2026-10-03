@@ -63,7 +63,7 @@ const inputProps = [
     prop('arkadeScriptHash', 'Hash of the input\'s Arkade script'),
     prop('arkadeWitnessHash', 'Hash of the input\'s Arkade witness'),
 ];
-const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'metadataHash', 'assetId', 'isFresh']
+const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'controlAssetId', 'metadataHash', 'assetId', 'isFresh']
     .map(name => prop(name, 'Asset group property'));
 
 const arkadeCompletions = [

@@ -453,7 +453,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey`, and `tx.input.current.value | scriptPubKey | sequence | outpoint` for the input being spent.
 
-**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`. Groups: `tx.assetGroups.find(txid, gidx)`, `.has(txid, gidx)`, `.length`, and per group `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `metadataHash`, `assetId`, `isFresh`.
+**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`. Groups: `tx.assetGroups.find(txid, gidx)`, `.has(txid, gidx)`, `.length`, and per group `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`.
 
 **Bytes.** `substr(data, offset, size)`, `cat(a, b)`, `bin2num(bytes)`, `num2bin(value, size)`, `reverseBytes(bytes)`, `size(bytes)`.
 

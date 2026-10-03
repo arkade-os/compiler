@@ -205,6 +205,12 @@ pub(crate) fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec
             asm.push(OP_NIP.to_string());
             asm.push(OP_NIP.to_string());
         }
+        "controlAssetId" => {
+            // [ctrl_txid, ctrl_gidx, flag]: aborts when the group has no control asset.
+            asm.push(format!("<{group}>"));
+            asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
+            asm.push(OP_VERIFY.to_string());
+        }
         "metadataHash" => {
             asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string());

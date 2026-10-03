@@ -274,7 +274,12 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
                 .filter(|property| {
                     matches!(
                         *property,
-                        "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
+                        "delta"
+                            | "hasControl"
+                            | "controlAssetId"
+                            | "metadataHash"
+                            | "assetId"
+                            | "isFresh"
                     )
                 })
             {
