@@ -249,22 +249,13 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 message,
             })
         }
-        Rule::sha256_func => {
-            // sha256(data) → one-shot OP_SHA256 over the inner expression.
-            let inner = pair.into_inner().next().ok_or("Missing sha256 argument")?;
-            let data = parse_general_expression(inner)?;
-            Ok(Expression::Sha256 {
-                data: Box::new(data),
-            })
-        }
-        // Streaming SHA256
-        Rule::sha256_initialize => parse_sha256_initialize(pair),
-        Rule::sha256_update => parse_sha256_update(pair),
-        Rule::sha256_finalize => parse_sha256_finalize(pair),
-        Rule::digest_func => parse_digest(pair),
-        Rule::sighash_func => parse_sighash(pair),
-        // Arithmetic
-        Rule::mod_exp_func => parse_mod_exp(pair),
+        Rule::sha256_func => parse_builtin_call("sha256", pair),
+        Rule::sha256_initialize => parse_builtin_call("sha256Initialize", pair),
+        Rule::sha256_update => parse_builtin_call("sha256Update", pair),
+        Rule::sha256_finalize => parse_builtin_call("sha256Finalize", pair),
+        Rule::digest_func => parse_builtin_call("digest", pair),
+        Rule::sighash_func => parse_builtin_call("sighash", pair),
+        Rule::mod_exp_func => parse_builtin_call("modExp", pair),
         // Crypto Opcodes
         Rule::ec_add => parse_ec_add(pair),
         Rule::ec_mul => parse_ec_mul(pair),
@@ -273,12 +264,12 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
         // Byte-string manipulation
-        Rule::substr_func => parse_substr(pair),
-        Rule::cat_func => parse_cat(pair),
-        Rule::bin2num_func => parse_bin2num(pair),
-        Rule::num2bin_func => parse_num2bin(pair),
-        Rule::reverse_bytes_func => parse_reverse_bytes(pair),
-        Rule::size_func => parse_size(pair),
+        Rule::substr_func => parse_builtin_call("substr", pair),
+        Rule::cat_func => parse_builtin_call("cat", pair),
+        Rule::bin2num_func => parse_builtin_call("bin2num", pair),
+        Rule::num2bin_func => parse_builtin_call("num2bin", pair),
+        Rule::reverse_bytes_func => parse_builtin_call("reverseBytes", pair),
+        Rule::size_func => parse_builtin_call("size", pair),
         Rule::cast_func => parse_cast(pair),
         // Packet introspection
         Rule::packet_inspect => parse_packet_inspect(pair),
@@ -404,11 +395,11 @@ pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
     // byte_value wraps exactly one inner rule.
     let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
     match inner.as_rule() {
-        Rule::substr_func => parse_substr(inner),
+        Rule::substr_func => parse_builtin_call("substr", inner),
         Rule::intent_field => parse_intent_inspect(inner),
-        Rule::cat_func => parse_cat(inner),
-        Rule::num2bin_func => parse_num2bin(inner),
-        Rule::reverse_bytes_func => parse_reverse_bytes(inner),
+        Rule::cat_func => parse_builtin_call("cat", inner),
+        Rule::num2bin_func => parse_builtin_call("num2bin", inner),
+        Rule::reverse_bytes_func => parse_builtin_call("reverseBytes", inner),
         Rule::packet_inspect => parse_packet_inspect(inner),
         Rule::input_packet_inspect => parse_input_packet_inspect(inner),
         Rule::input_introspection => parse_input_introspection_to_expression(inner),

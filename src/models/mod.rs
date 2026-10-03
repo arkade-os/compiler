@@ -574,6 +574,11 @@ pub enum Expression {
         args: Vec<Expression>,
         return_type: Option<String>,
     },
+    /// A builtin function call; its arguments are in parameter order.
+    Builtin {
+        builtin: &'static crate::builtins::Builtin,
+        args: Vec<Expression>,
+    },
     /// Variable reference
     Variable(String),
     /// Decimal integer, boolean, or 0x-prefixed byte data (including empty 0x).
@@ -724,41 +729,11 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
-    // ─── Streaming SHA256 ──────────────────────────────────────────────
-    /// Plain SHA256: sha256(data) → emits `<data> OP_SHA256`.
-    /// One-shot hashing of byte-string expressions like substr; used for
-    /// small fixed messages where streaming would be overkill.
-    Sha256 { data: Box<Expression> },
-    /// Streaming SHA256 initialize: sha256Initialize(data)
-    Sha256Initialize { data: Box<Expression> },
-    /// Streaming SHA256 update: sha256Update(ctx, chunk)
-    Sha256Update {
-        context: Box<Expression>,
-        chunk: Box<Expression>,
-    },
-    /// Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk)
-    Sha256Finalize {
-        context: Box<Expression>,
-        last_chunk: Box<Expression>,
-    },
-    /// Signature hash for the current input under the selected hash type.
-    Sighash { hash_type: Box<Expression> },
-    /// Digest selected at runtime. The result is 20 or 32 bytes depending on the hash type.
-    Digest {
-        data: Box<Expression>,
-        hash_type: Box<Expression>,
-    },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Arithmetic negation: -value
     Negate { value: Box<Expression> },
     /// Boolean negation: !value
     Not { value: Box<Expression> },
-    /// Modular exponentiation: modExp(base, exponent, modulus)
-    ModExp {
-        base: Box<Expression>,
-        exponent: Box<Expression>,
-        modulus: Box<Expression>,
-    },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// EC point addition: ecAdd(P, Q, curveId). Produces an `ECPoint`.
     EcAdd {
@@ -809,28 +784,6 @@ pub enum Expression {
         args: Vec<Expression>,
     },
     // ─── Byte-string Manipulation (introspector extensions) ────────────
-    /// Substring extraction: substr(data, offset, size) → OP_SUBSTR
-    Substr {
-        data: Box<Expression>,
-        offset: Box<Expression>,
-        size: Box<Expression>,
-    },
-    /// Byte concatenation: cat(a, b) → OP_CAT
-    Cat {
-        left: Box<Expression>,
-        right: Box<Expression>,
-    },
-    /// Bytes-to-number (little-endian, leading-zero-stripped BigNum): bin2num(bytes) → OP_BIN2NUM
-    Bin2Num { data: Box<Expression> },
-    /// Number-to-bytes (little-endian, zero-padded): num2bin(num, size) → OP_NUM2BIN
-    Num2Bin {
-        value: Box<Expression>,
-        size: Box<Expression>,
-    },
-    /// Reverse a byte string: reverseBytes(data) → OP_REVERSEBYTES
-    ReverseBytes { data: Box<Expression> },
-    /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
-    SizeOf { data: Box<Expression> },
     /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x)
     Cast {
         target: String,
@@ -896,9 +849,9 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::IndexAccess { value, index } => vec![value, index],
         Expression::ArrayIndex { index, .. } => vec![index],
 
-        Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
-            elements.iter_mut().collect()
-        }
+        Expression::ArrayLiteral(elements)
+        | Expression::Call { args: elements, .. }
+        | Expression::Builtin { args: elements, .. } => elements.iter_mut().collect(),
         Expression::StructLiteral(fields) => fields.iter_mut().map(|(_, value)| value).collect(),
 
         Expression::AssetLookup {
@@ -944,14 +897,6 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             io_index,
             ..
         } => vec![group_index, io_index],
-        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
-        Expression::Sha256Update { context, chunk } => vec![context, chunk],
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => vec![context, last_chunk],
-        Expression::Sighash { hash_type } => vec![hash_type],
-        Expression::Digest { data, hash_type } => vec![data, hash_type],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
         Expression::CheckTime { timestamp } => vec![timestamp],
         Expression::Tunnel {
@@ -962,11 +907,6 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             .chain(policy.iter_mut())
             .chain(exceptions.iter_mut())
             .collect(),
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => vec![base, exponent, modulus],
         Expression::EcAdd {
             point_p,
             point_q,
@@ -989,13 +929,7 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             point_q,
         } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
-        Expression::Substr { data, offset, size } => vec![data, offset, size],
-        Expression::Cat { left, right } => vec![left, right],
-        Expression::Bin2Num { data }
-        | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data }
-        | Expression::Cast { data, .. } => vec![data],
-        Expression::Num2Bin { value, size } => vec![value, size],
+        Expression::Cast { data, .. } => vec![data],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
     }

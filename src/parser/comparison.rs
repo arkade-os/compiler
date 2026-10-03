@@ -64,15 +64,16 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
         ));
     }
     let rhs_expr = match rhs_pair.as_rule() {
-        Rule::substr_func => parse_substr(rhs_pair)?,
-        Rule::cat_func => parse_cat(rhs_pair)?,
-        Rule::num2bin_func => parse_num2bin(rhs_pair)?,
+        Rule::substr_func => parse_builtin_call("substr", rhs_pair)?,
+        Rule::cat_func => parse_builtin_call("cat", rhs_pair)?,
+        Rule::num2bin_func => parse_builtin_call("num2bin", rhs_pair)?,
         _ => parse_operand(rhs_pair)?,
     };
 
     Ok(Requirement::Comparison {
-        left: Expression::Sha256 {
-            data: Box::new(preimage_expr),
+        left: Expression::Builtin {
+            builtin: crate::builtins::find("sha256").expect("sha256 is a builtin"),
+            args: vec![preimage_expr],
         },
         op: "==".to_string(),
         right: rhs_expr,

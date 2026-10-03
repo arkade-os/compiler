@@ -232,36 +232,11 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
-        // Streaming SHA256
-        Expression::Sha256 { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256.to_string());
-        }
-        Expression::Sha256Initialize { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256INITIALIZE.to_string());
-        }
-        Expression::Sha256Update { context, chunk } => {
-            emit_expression_asm(context, asm);
-            emit_expression_asm(chunk, asm);
-            asm.push(OP_SHA256UPDATE.to_string());
-        }
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => {
-            emit_expression_asm(context, asm);
-            emit_expression_asm(last_chunk, asm);
-            asm.push(OP_SHA256FINALIZE.to_string());
-        }
-        Expression::Sighash { hash_type } => {
-            emit_expression_asm(hash_type, asm);
-            asm.push(OP_SIGHASH.to_string());
-        }
-        Expression::Digest { data, hash_type } => {
-            emit_expression_asm(data, asm);
-            emit_expression_asm(hash_type, asm);
-            asm.push(OP_DIGEST.to_string());
+        Expression::Builtin { builtin, args } => {
+            for arg in args {
+                emit_expression_asm(arg, asm);
+            }
+            asm.extend(builtin.opcodes.iter().map(|opcode| opcode.to_string()));
         }
         // Byte-string concatenation: bytes + bytes → OP_CAT
         Expression::Concat { left, right } => {
@@ -277,16 +252,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::Not { value } => {
             emit_expression_asm(value, asm);
             asm.push(OP_NOT.to_string());
-        }
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => {
-            emit_expression_asm(base, asm);
-            emit_expression_asm(exponent, asm);
-            emit_expression_asm(modulus, asm);
-            asm.push(OP_MODEXP.to_string());
         }
         // Elliptic curve operations
         Expression::EcAdd {
@@ -342,36 +307,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
             asm.push(OP_VERIFY.to_string());
-        }
-        // Byte-string manipulation (introspector extensions)
-        Expression::Substr { data, offset, size } => {
-            emit_expression_asm(data, asm);
-            emit_expression_asm(offset, asm);
-            emit_expression_asm(size, asm);
-            asm.push(OP_SUBSTR.to_string());
-        }
-        Expression::Cat { left, right } => {
-            emit_expression_asm(left, asm);
-            emit_expression_asm(right, asm);
-            asm.push(OP_CAT.to_string());
-        }
-        Expression::Bin2Num { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_BIN2NUM.to_string());
-        }
-        Expression::Num2Bin { value, size } => {
-            emit_expression_asm(value, asm);
-            emit_expression_asm(size, asm);
-            asm.push(OP_NUM2BIN.to_string());
-        }
-        Expression::ReverseBytes { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_REVERSEBYTES.to_string());
-        }
-        Expression::SizeOf { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SIZE.to_string());
-            asm.push(OP_NIP.to_string());
         }
         Expression::Cast { target, data } => {
             emit_expression_asm(data, asm);

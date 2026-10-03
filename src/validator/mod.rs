@@ -762,9 +762,9 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::IndexAccess { value, index } => vec![value, index],
         Expression::ArrayIndex { index, .. } => vec![index],
 
-        Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
-            elements.iter().collect()
-        }
+        Expression::ArrayLiteral(elements)
+        | Expression::Call { args: elements, .. }
+        | Expression::Builtin { args: elements, .. } => elements.iter().collect(),
         Expression::StructLiteral(fields) => fields.iter().map(|(_, value)| value).collect(),
 
         Expression::AssetLookup {
@@ -810,14 +810,6 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             io_index,
             ..
         } => vec![group_index, io_index],
-        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
-        Expression::Sha256Update { context, chunk } => vec![context, chunk],
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => vec![context, last_chunk],
-        Expression::Sighash { hash_type } => vec![hash_type],
-        Expression::Digest { data, hash_type } => vec![data, hash_type],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
         Expression::CheckTime { timestamp } => vec![timestamp],
         Expression::Tunnel {
@@ -828,11 +820,6 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             .chain(policy.iter())
             .chain(exceptions.iter())
             .collect(),
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => vec![base, exponent, modulus],
         Expression::EcAdd {
             point_p,
             point_q,
@@ -855,13 +842,7 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             point_q,
         } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter().collect(),
-        Expression::Substr { data, offset, size } => vec![data, offset, size],
-        Expression::Cat { left, right } => vec![left, right],
-        Expression::Bin2Num { data }
-        | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data }
-        | Expression::Cast { data, .. } => vec![data],
-        Expression::Num2Bin { value, size } => vec![value, size],
+        Expression::Cast { data, .. } => vec![data],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
     }

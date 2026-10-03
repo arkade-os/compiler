@@ -835,9 +835,10 @@ contract C() {
         ));
         assert!(matches!(
             &statements[1].statement,
-            Statement::LetBinding { value: Expression::Substr { data, offset, .. }, .. }
-                if matches!(data.as_ref(), Expression::FieldAccess { field, .. } if field == "data")
-                    && matches!(offset.as_ref(), Expression::Property(name) if name == "p.offset")
+            Statement::LetBinding { value: Expression::Builtin { builtin, args }, .. }
+                if builtin.name == "substr"
+                    && matches!(&args[0], Expression::FieldAccess { field, .. } if field == "data")
+                    && matches!(&args[1], Expression::Property(name) if name == "p.offset")
         ));
     }
 

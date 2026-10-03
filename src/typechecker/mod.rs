@@ -938,18 +938,13 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             _ => ArkType::Unknown,
         },
 
-        // SHA256 — all produce a 32-byte digest or midstate
-        Expression::Sha256 { .. }
-        | Expression::Sha256Initialize { .. }
-        | Expression::Sha256Update { .. }
-        | Expression::Sha256Finalize { .. }
-        | Expression::Sighash { .. } => ArkType::Bytes32,
+        Expression::Builtin { builtin, .. } => ArkType::parse(builtin.result),
 
         // Byte-string ops
-        Expression::Concat { .. } | Expression::Digest { .. } => ArkType::Bytes,
+        Expression::Concat { .. } => ArkType::Bytes,
 
         // Arithmetic
-        Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,
+        Expression::Negate { .. } => ArkType::Int,
         Expression::Not { .. } | Expression::CheckTime { .. } | Expression::Tunnel { .. } => {
             ArkType::Bool
         }
@@ -968,14 +963,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,
 
-        // Byte-string manipulation (introspector extensions)
-        Expression::Substr { .. } => ArkType::Bytes,
-        Expression::Cat { .. } => ArkType::Bytes,
-        Expression::Bin2Num { .. } => ArkType::Int,
-        Expression::Num2Bin { .. } => ArkType::Bytes,
-        Expression::ReverseBytes { .. } => ArkType::Bytes,
         Expression::Cast { target, .. } => ArkType::parse(target),
-        Expression::SizeOf { .. } => ArkType::Int,
 
         // Packet introspection — returns raw packet bytes.
         Expression::PacketInspect { .. } => ArkType::Bytes,
