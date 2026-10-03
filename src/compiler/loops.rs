@@ -301,41 +301,6 @@ pub(crate) fn substitute_expression(
             target: target.clone(),
             data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
-        Expression::EcAdd {
-            point_p,
-            point_q,
-            curve_id,
-        } => Expression::EcAdd {
-            point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, items,
-            )),
-            point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, items,
-            )),
-            curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, items,
-            )),
-        },
-        Expression::EcMul {
-            point,
-            scalar,
-            curve_id,
-        } => Expression::EcMul {
-            point: Box::new(substitute_expression(point, index_var, value_var, k, items)),
-            scalar: Box::new(substitute_expression(
-                scalar, index_var, value_var, k, items,
-            )),
-            curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, items,
-            )),
-        },
-        Expression::EcPairing { g1, g2, curve_id } => Expression::EcPairing {
-            g1: Box::new(substitute_expression(g1, index_var, value_var, k, items)),
-            g2: Box::new(substitute_expression(g2, index_var, value_var, k, items)),
-            curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, items,
-            )),
-        },
         Expression::AssetCount { source, index } => Expression::AssetCount {
             source: source.clone(),
             index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
@@ -389,34 +354,6 @@ pub(crate) fn substitute_expression(
         Expression::Concat { left, right } => Expression::Concat {
             left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
             right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
-        },
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => Expression::EcMulScalarVerify {
-            scalar: Box::new(substitute_expression(
-                scalar, index_var, value_var, k, items,
-            )),
-            point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, items,
-            )),
-            point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, items,
-            )),
-        },
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => Expression::TweakVerify {
-            point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, items,
-            )),
-            tweak: Box::new(substitute_expression(tweak, index_var, value_var, k, items)),
-            point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, items,
-            )),
         },
         Expression::PacketInspect { packet_type } => Expression::PacketInspect {
             packet_type: Box::new(substitute_expression(

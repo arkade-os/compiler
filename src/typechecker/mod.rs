@@ -938,7 +938,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             _ => ArkType::Unknown,
         },
 
-        Expression::Builtin { builtin, .. } => ArkType::parse(builtin.result),
+        Expression::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
 
         // Byte-string ops
         Expression::Concat { .. } => ArkType::Bytes,
@@ -952,13 +952,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         // Crypto expressions
         Expression::CheckSigExpr { .. }
         | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. }
-        | Expression::EcPairing { .. }
-        | Expression::EcMulScalarVerify { .. }
-        | Expression::TweakVerify { .. } => ArkType::Bool,
-        Expression::EcAdd { .. } | Expression::EcMul { .. } => {
-            ArkType::Struct("ECPoint".to_string())
-        }
+        | Expression::CheckSigFromStackVerify { .. } => ArkType::Bool,
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,

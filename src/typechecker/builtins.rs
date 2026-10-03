@@ -20,12 +20,6 @@ pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("tx.inputs[].packet", &["int", "int"]),
     ("tx.inputs[]", &["int"]),
     ("tx.outputs[]", &["int"]),
-    ("ecAdd", &["ECPoint", "ECPoint", "int"]),
-    ("ecMul", &["ECPoint", "int", "int"]),
-    ("ecPairing", &["ECPoint[]", "G2Point[]", "int"]),
-    // Scalars are 32-byte big-endian; P is x-only for tweakVerify and compressed otherwise.
-    ("ecMulScalarVerify", &["bytes32", "bytes", "bytes"]),
-    ("tweakVerify", &["bytes32", "bytes32", "bytes"]),
     ("assetGroups[].sum", &["int"]),
     ("assetGroups[].numIO", &["int"]),
     ("assetGroups[].io", &["int", "int"]),
@@ -58,27 +52,6 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
         }
         Expression::InputIntrospection { index, .. } => ("tx.inputs[]", vec![index]),
         Expression::OutputIntrospection { index, .. } => ("tx.outputs[]", vec![index]),
-        Expression::EcAdd {
-            point_p,
-            point_q,
-            curve_id,
-        } => ("ecAdd", vec![point_p, point_q, curve_id]),
-        Expression::EcMul {
-            point,
-            scalar,
-            curve_id,
-        } => ("ecMul", vec![point, scalar, curve_id]),
-        Expression::EcPairing { g1, g2, curve_id } => ("ecPairing", vec![g1, g2, curve_id]),
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => ("ecMulScalarVerify", vec![scalar, point_p, point_q]),
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => ("tweakVerify", vec![point_p, tweak, point_q]),
         Expression::GroupSum { index, .. } => ("assetGroups[].sum", vec![index]),
         Expression::GroupNumIO { index, .. } => ("assetGroups[].numIO", vec![index]),
         Expression::GroupIOAccess {

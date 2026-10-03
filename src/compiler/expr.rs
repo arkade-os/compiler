@@ -10,10 +10,10 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
 }
 
 /// Push a two-field native struct with its first field deepest, as native opcodes expect.
-fn emit_native_pair_asm(value: &Expression, fields: [&str; 2], asm: &mut Vec<String>) {
+fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut Vec<String>) {
     match value {
         Expression::Variable(name) | Expression::Property(name) if !name.starts_with("$call:") => {
-            for field in fields {
+            for (field, _) in fields {
                 asm.push(format!("<{name}.{field}>"));
             }
         }
@@ -64,7 +64,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.push(flags.to_string());
             for exception in exceptions {
-                emit_native_pair_asm(exception, ["txid", "gidx"], asm);
+                let fields = crate::models::builtin_struct_fields("AssetId")
+                    .expect("AssetId is a native struct");
+                emit_native_struct_asm(exception, fields, asm);
             }
             asm.push(exceptions.len().to_string());
             asm.push(OP_TUNNEL.to_string());
@@ -233,10 +235,16 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
         Expression::Builtin { builtin, args } => {
-            for arg in args {
-                emit_expression_asm(arg, asm);
+            let crate::builtins::Lowering::Opcodes(opcodes) = builtin.lowering else {
+                unreachable!("pairings are extracted before raw emission")
+            };
+            for (arg, (_, ty)) in args.iter().zip(builtin.params) {
+                match crate::models::builtin_struct_fields(ty) {
+                    Some(fields) => emit_native_struct_asm(arg, fields, asm),
+                    None => emit_expression_asm(arg, asm),
+                }
             }
-            asm.extend(builtin.opcodes.iter().map(|opcode| opcode.to_string()));
+            asm.extend(opcodes.iter().map(|opcode| opcode.to_string()));
         }
         // Byte-string concatenation: bytes + bytes → OP_CAT
         Expression::Concat { left, right } => {
@@ -252,50 +260,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::Not { value } => {
             emit_expression_asm(value, asm);
             asm.push(OP_NOT.to_string());
-        }
-        // Elliptic curve operations
-        Expression::EcAdd {
-            point_p,
-            point_q,
-            curve_id,
-        } => {
-            emit_native_pair_asm(point_p, ["x", "y"], asm);
-            emit_native_pair_asm(point_q, ["x", "y"], asm);
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECADD.to_string());
-        }
-        Expression::EcMul {
-            point,
-            scalar,
-            curve_id,
-        } => {
-            emit_native_pair_asm(point, ["x", "y"], asm);
-            emit_expression_asm(scalar, asm);
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECMUL.to_string());
-        }
-        Expression::EcPairing { .. } => {
-            unreachable!("pairings are extracted before raw emission")
-        }
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => {
-            emit_expression_asm(scalar, asm);
-            emit_expression_asm(point_p, asm);
-            emit_expression_asm(point_q, asm);
-            asm.push(OP_ECMULSCALARVERIFY.to_string());
-        }
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => {
-            emit_expression_asm(point_p, asm);
-            emit_expression_asm(tweak, asm);
-            emit_expression_asm(point_q, asm);
-            asm.push(OP_TWEAKVERIFY.to_string());
         }
         Expression::CheckSigFromStackVerify {
             signature,

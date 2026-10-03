@@ -735,36 +735,6 @@ pub enum Expression {
     /// Boolean negation: !value
     Not { value: Box<Expression> },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// EC point addition: ecAdd(P, Q, curveId). Produces an `ECPoint`.
-    EcAdd {
-        point_p: Box<Expression>,
-        point_q: Box<Expression>,
-        curve_id: Box<Expression>,
-    },
-    /// EC scalar multiplication: ecMul(P, scalar, curveId). Produces an `ECPoint`.
-    EcMul {
-        point: Box<Expression>,
-        scalar: Box<Expression>,
-        curve_id: Box<Expression>,
-    },
-    /// Pairing-product check over aligned `ECPoint[n]` and `G2Point[n]` arrays.
-    EcPairing {
-        g1: Box<Expression>,
-        g2: Box<Expression>,
-        curve_id: Box<Expression>,
-    },
-    /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
-    EcMulScalarVerify {
-        scalar: Box<Expression>,
-        point_p: Box<Expression>,
-        point_q: Box<Expression>,
-    },
-    /// Tweak verification: tweakVerify(P, k, Q)
-    TweakVerify {
-        point_p: Box<Expression>,
-        tweak: Box<Expression>,
-        point_q: Box<Expression>,
-    },
     /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
     CheckSigFromStackVerify {
         signature: Box<Expression>,
@@ -805,7 +775,9 @@ pub enum Expression {
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match expression {
-        Expression::EcAdd { .. } | Expression::EcMul { .. } => Some("ECPoint"),
+        Expression::Builtin { builtin, .. } => builtin
+            .result
+            .filter(|result| builtin_struct_fields(result).is_some()),
         Expression::AssetAt { property, .. } | Expression::GroupProperty { property, .. }
             if property == "assetId" =>
         {
@@ -907,27 +879,6 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             .chain(policy.iter_mut())
             .chain(exceptions.iter_mut())
             .collect(),
-        Expression::EcAdd {
-            point_p,
-            point_q,
-            curve_id,
-        } => vec![point_p, point_q, curve_id],
-        Expression::EcMul {
-            point,
-            scalar,
-            curve_id,
-        } => vec![point, scalar, curve_id],
-        Expression::EcPairing { g1, g2, curve_id } => vec![g1, g2, curve_id],
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => vec![scalar, point_p, point_q],
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
         Expression::Cast { data, .. } => vec![data],
         Expression::PacketInspect { packet_type } => vec![packet_type],

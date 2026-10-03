@@ -87,11 +87,6 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
         "hash160" => Some("hash160(data)"),
         "hash256" => Some("hash256(data)"),
         "ripemd160" => Some("ripemd160(data)"),
-        "ecAdd" => Some("ecAdd(P, Q, curveId)"),
-        "ecMul" => Some("ecMul(P, scalar, curveId)"),
-        "ecPairing" => Some("ecPairing(g1Points, g2Points, curveId)"),
-        "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
-        "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
         "after" => Some("after(value)"),
         "checkTime" => Some("checkTime(timestamp)"),
@@ -245,12 +240,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 message,
             })
         }
-        // Crypto Opcodes
-        Rule::ec_add => parse_ec_add(pair),
-        Rule::ec_mul => parse_ec_mul(pair),
-        Rule::ec_pairing => parse_ec_pairing(pair),
-        Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
-        Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
         // Byte-string manipulation
         Rule::cast_func => parse_cast(pair),

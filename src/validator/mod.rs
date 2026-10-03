@@ -820,27 +820,6 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             .chain(policy.iter())
             .chain(exceptions.iter())
             .collect(),
-        Expression::EcAdd {
-            point_p,
-            point_q,
-            curve_id,
-        } => vec![point_p, point_q, curve_id],
-        Expression::EcMul {
-            point,
-            scalar,
-            curve_id,
-        } => vec![point, scalar, curve_id],
-        Expression::EcPairing { g1, g2, curve_id } => vec![g1, g2, curve_id],
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => vec![scalar, point_p, point_q],
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter().collect(),
         Expression::Cast { data, .. } => vec![data],
         Expression::PacketInspect { packet_type } => vec![packet_type],
@@ -1386,12 +1365,8 @@ fn validate_binding_requirement(
 ) {
     match requirement {
         Requirement::Expression(expression) => {
-            let produces_value = !matches!(
-                expression,
-                Expression::CheckSigFromStackVerify { .. }
-                    | Expression::EcMulScalarVerify { .. }
-                    | Expression::TweakVerify { .. }
-            );
+            let produces_value = !matches!(expression, Expression::CheckSigFromStackVerify { .. })
+                && !matches!(expression, Expression::Builtin { builtin, .. } if builtin.result.is_none());
             validate_binding_expression(expression, function_name, scopes, issues, produces_value);
         }
         Requirement::CheckSig { signature, pubkey } => {
@@ -1513,13 +1488,11 @@ fn validate_binding_expression(
         )));
     }
     if value_position
-        && matches!(
+        && (matches!(
             expression,
             Expression::GroupIOAccess { property: None, .. }
-                | Expression::EcMulScalarVerify { .. }
-                | Expression::TweakVerify { .. }
                 | Expression::CheckSigFromStackVerify { .. }
-        )
+        ) || matches!(expression, Expression::Builtin { builtin, .. } if builtin.result.is_none()))
     {
         issues.push(ValidationIssue::error(format!(
             "function '{}': expression does not produce one stack item",
@@ -1815,7 +1788,7 @@ fn validate_binding_expression(
         _ => {}
     }
 
-    for child in child_exprs(expression) {
+    for (position, child) in child_exprs(expression).into_iter().enumerate() {
         if matches!(
             expression,
             Expression::Call { .. }
@@ -1824,10 +1797,8 @@ fn validate_binding_expression(
                 | Expression::Tunnel { .. }
                 | Expression::FieldAccess { .. }
                 | Expression::IndexAccess { .. }
-                | Expression::EcAdd { .. }
-                | Expression::EcMul { .. }
-                | Expression::EcPairing { .. }
-        ) {
+        ) || matches!(expression, Expression::Builtin { builtin, .. } if builtin.takes_composite(position))
+        {
             validate_value_expression(child, function_name, scopes, issues);
         } else {
             validate_binding_expression(

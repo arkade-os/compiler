@@ -142,8 +142,11 @@ impl Generator {
 
     /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
     pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<(), String> {
-        let Expression::EcPairing { g1, g2, curve_id } = pairing else {
+        let Expression::Builtin { args, .. } = pairing else {
             return Err("expected ecPairing".to_string());
+        };
+        let [g1, g2, curve_id] = args.as_slice() else {
+            return Err("ecPairing takes three arguments".to_string());
         };
         let ArkType::Array(_, pairs) = infer_type(g1, &self.scope) else {
             return Err("ecPairing G1 points must be an ECPoint array".to_string());
@@ -157,7 +160,7 @@ impl Generator {
                     );
                 }
                 let index = Box::new(Expression::Literal(index.to_string()));
-                let element = match points.as_ref() {
+                let element = match points {
                     Expression::Variable(array) | Expression::Property(array) => {
                         Expression::ArrayIndex {
                             array: array.clone(),

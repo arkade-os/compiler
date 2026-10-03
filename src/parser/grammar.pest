@@ -164,11 +164,6 @@ primary_expr = {
     tunnel |
     intent_field |
     intent_has |
-    ec_add |
-    ec_mul |
-    ec_pairing |
-    ec_mul_scalar_verify |
-    tweak_verify |
     cast_func |
     input_packet_inspect |
     packet_inspect |
@@ -227,11 +222,6 @@ complex_expression = _{
     check_multisig |
     time_comparison |
     hash_comparison |
-    ec_add |
-    ec_mul |
-    ec_pairing |
-    ec_mul_scalar_verify |
-    tweak_verify |
     input_packet_inspect |
     packet_inspect |
     asset_at |
@@ -508,33 +498,6 @@ array = {
 
 // Named operands used by crypto checks: a binding with field and index suffixes.
 named_binding = { identifier ~ binding_suffix* }
-
-// ─── Crypto Opcodes ────────────────────────────────────────────────────
-
-// EC point addition: ecAdd(P, Q, curveId) → OP_ECADD, where P and Q are ECPoints
-ec_add = {
-    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// EC scalar multiplication: ecMul(P, scalar, curveId) → OP_ECMUL, where P is an ECPoint
-ec_mul = {
-    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Pairing-product check: ecPairing(ECPoint[n] g1, G2Point[n] g2, curveId) → OP_ECPAIRING
-ec_pairing = {
-    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY
-ec_mul_scalar_verify = {
-    "ecMulScalarVerify" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Tweak verification: tweakVerify(P, k, Q) → OP_TWEAKVERIFY
-tweak_verify = {
-    "tweakVerify" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
 
 // CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
 check_sig_from_stack_verify = {

@@ -9,9 +9,20 @@ pub struct Builtin {
     pub name: &'static str,
     /// Parameter names and source types, in call order.
     pub params: &'static [(&'static str, &'static str)],
-    pub result: &'static str,
-    /// Emitted after the arguments, which are pushed in call order.
-    pub opcodes: &'static [&'static str],
+    /// None when the opcode is itself the check and leaves nothing, so the
+    /// call is only valid directly inside `require`.
+    pub result: Option<&'static str>,
+    pub lowering: Lowering,
+}
+
+#[derive(Debug)]
+pub enum Lowering {
+    /// Push the arguments in call order, struct arguments field by field,
+    /// then emit these opcodes.
+    Opcodes(&'static [&'static str]),
+    /// Push each (G1, G2) array element field by field, then the pair count
+    /// and the curve.
+    Pairing,
 }
 
 const fn builtin(
@@ -23,8 +34,21 @@ const fn builtin(
     Builtin {
         name,
         params,
-        result,
-        opcodes,
+        result: Some(result),
+        lowering: Lowering::Opcodes(opcodes),
+    }
+}
+
+const fn verify(
+    name: &'static str,
+    params: &'static [(&'static str, &'static str)],
+    opcode: &'static [&'static str],
+) -> Builtin {
+    Builtin {
+        name,
+        params,
+        result: None,
+        lowering: Lowering::Opcodes(opcode),
     }
 }
 
@@ -82,9 +106,49 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "int",
         &[OP_MODEXP],
     ),
+    builtin(
+        "ecAdd",
+        &[("P", "ECPoint"), ("Q", "ECPoint"), ("curveId", "int")],
+        "ECPoint",
+        &[OP_ECADD],
+    ),
+    builtin(
+        "ecMul",
+        &[("P", "ECPoint"), ("scalar", "int"), ("curveId", "int")],
+        "ECPoint",
+        &[OP_ECMUL],
+    ),
+    Builtin {
+        name: "ecPairing",
+        params: &[
+            ("g1Points", "ECPoint[]"),
+            ("g2Points", "G2Point[]"),
+            ("curveId", "int"),
+        ],
+        result: Some("bool"),
+        lowering: Lowering::Pairing,
+    },
+    // Scalars are 32-byte big-endian; P is x-only for tweakVerify and compressed otherwise.
+    verify(
+        "ecMulScalarVerify",
+        &[("k", "bytes32"), ("P", "bytes"), ("Q", "bytes")],
+        &[OP_ECMULSCALARVERIFY],
+    ),
+    verify(
+        "tweakVerify",
+        &[("P", "bytes32"), ("k", "bytes32"), ("Q", "bytes")],
+        &[OP_TWEAKVERIFY],
+    ),
 ];
 
 impl Builtin {
+    /// Whether the argument at `index` is a struct or array, emitted as several items.
+    pub(crate) fn takes_composite(&self, index: usize) -> bool {
+        self.params.get(index).is_some_and(|(_, ty)| {
+            ty.ends_with("[]") || crate::models::builtin_struct_fields(ty).is_some()
+        })
+    }
+
     /// Source form for diagnostics, such as `substr(data, offset, size)`.
     pub(crate) fn signature(&self) -> String {
         let params: Vec<&str> = self.params.iter().map(|(name, _)| *name).collect();
@@ -109,20 +173,18 @@ mod tests {
                 "duplicate builtin '{}'",
                 builtin.name
             );
-            let types = builtin.params.iter().map(|(_, ty)| ty);
-            for ty in types.chain([&builtin.result]) {
-                assert_ne!(
-                    ArkType::parse(ty),
-                    ArkType::Unknown,
-                    "{}: unknown type '{ty}'",
-                    builtin.name
-                );
+            let types = builtin.params.iter().map(|(_, ty)| *ty);
+            for ty in types.chain(builtin.result) {
+                let element = ty.strip_suffix("[]").unwrap_or(ty);
+                let known = match ArkType::parse(element) {
+                    ArkType::Struct(name) => crate::models::builtin_struct_fields(&name).is_some(),
+                    parsed => parsed != ArkType::Unknown,
+                };
+                assert!(known, "{}: unknown type '{ty}'", builtin.name);
             }
-            assert!(
-                !builtin.opcodes.is_empty(),
-                "{} emits nothing",
-                builtin.name
-            );
+            if let Lowering::Opcodes(opcodes) = builtin.lowering {
+                assert!(!opcodes.is_empty(), "{} emits nothing", builtin.name);
+            }
         }
     }
 }
