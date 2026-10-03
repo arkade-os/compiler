@@ -28,6 +28,13 @@ pub(crate) fn emit_script_pubkey_asm(opcode: &str, asm: &mut Vec<String>) {
     asm.push(OP_DROP.to_string());
 }
 
+/// Emit a scriptPubKey inspection opcode and keep only the witness version:
+/// 0-16 for a native witness program, -1 for any other script.
+pub(crate) fn emit_witness_version_asm(opcode: &str, asm: &mut Vec<String>) {
+    asm.push(opcode.to_string());
+    asm.push(OP_NIP.to_string());
+}
+
 /// Emit assembly for input introspection: tx.inputs[i].property
 pub(crate) fn emit_input_introspection_asm(
     index: &Expression,
@@ -41,6 +48,7 @@ pub(crate) fn emit_input_introspection_asm(
     match property {
         "value" => asm.push(OP_INSPECTINPUTVALUE.to_string()),
         "scriptPubKey" => emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm),
+        "witnessVersion" => emit_witness_version_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm),
         "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
         "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
         "arkadeScriptHash" => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
@@ -65,6 +73,7 @@ pub(crate) fn emit_output_introspection_asm(
     match property {
         "value" => asm.push(OP_INSPECTOUTPUTVALUE.to_string()),
         "scriptPubKey" => emit_script_pubkey_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm),
+        "witnessVersion" => emit_witness_version_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm),
         _ => {
             // Unknown property, emit as placeholder
             asm.push(format!("<tx.outputs[?].{}>", property));

@@ -876,7 +876,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::CurrentInput(prop) => match prop.as_deref() {
             Some("value") => ArkType::Int,
             Some("scriptPubKey") => ArkType::Bytes,
-            Some("sequence") => ArkType::Int,
+            Some("sequence") | Some("witnessVersion") => ArkType::Int,
             Some("outpoint") => ArkType::Struct("Outpoint".to_string()),
             Some("arkadeScriptHash") | Some("arkadeWitnessHash") => ArkType::Bytes32,
             _ => ArkType::Unknown,
@@ -894,7 +894,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::InputIntrospection { property, .. } => match property.as_str() {
             "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
-            "sequence" => ArkType::Int,
+            "sequence" | "witnessVersion" => ArkType::Int,
             "outpoint" => ArkType::Struct("Outpoint".to_string()),
             "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
@@ -902,7 +902,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // tx.outputs[o].*
         Expression::OutputIntrospection { property, .. } => match property.as_str() {
-            "value" => ArkType::Int,
+            "value" | "witnessVersion" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
             _ => ArkType::Unknown,
         },
