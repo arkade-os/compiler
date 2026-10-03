@@ -946,3 +946,32 @@ fn grouped_builtin_operands_reject_implicit_byte_conversion() {
         .to_string();
     assert!(error.contains("cannot concatenate bytes"), "{error}");
 }
+
+#[test]
+fn builtin_arguments_are_general_expressions() {
+    for (statement, expected) in [
+        (
+            "require(cat(sha256(a), b) == b);",
+            &["OP_SHA256", "OP_CAT"][..],
+        ),
+        (
+            "require(bin2num(reverseBytes(substr(a, 0, 4))) == 7);",
+            &["OP_SUBSTR", "OP_REVERSEBYTES", "OP_BIN2NUM"],
+        ),
+        (
+            "require(substr(a, n + 1, 2) == a);",
+            &["OP_ADD", "OP_SUBSTR"],
+        ),
+    ] {
+        let source = format!(
+            "contract Calls(bytes a, bytes b, int n) {{ function spend() {{ {statement} }} }}"
+        );
+        let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let mut rest = asm.iter();
+        assert!(
+            expected.iter().all(|op| rest.any(|token| token == op)),
+            "{statement}: expected {expected:?} in order in {asm:?}"
+        );
+    }
+}

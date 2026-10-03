@@ -429,3 +429,25 @@ fn semantic_diagnostics_carry_source_positions() {
         "type error must point at its statement: {error}"
     );
 }
+
+#[test]
+fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
+    for (body, expected) in [
+        (
+            "function spend(bytes a) { require(cat(a) == a); }",
+            "malformed reserved function call `cat(...)`; expected cat(a, b)",
+        ),
+        (
+            "function spend(bytes a) { require(size(a, a) == 1); }",
+            "malformed reserved function call `size(...)`; expected size(data)",
+        ),
+        (
+            "private function size(bytes a) int { return 1; } function spend() { require(true); }",
+            "function name 'size' is reserved",
+        ),
+    ] {
+        let source = format!("contract C() {{ {body} }}");
+        let error = compile(&source).expect_err(body).to_string();
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+}

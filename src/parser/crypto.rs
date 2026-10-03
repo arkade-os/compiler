@@ -4,19 +4,6 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
-/// Parse a builtin call whose grammar rule children are its arguments.
-pub(crate) fn parse_builtin_call(name: &str, pair: Pair<Rule>) -> Result<Expression, String> {
-    let builtin = crate::builtins::find(name).ok_or_else(|| format!("unknown builtin {name}"))?;
-    let args = pair
-        .into_inner()
-        .map(|arg| match arg.as_rule() {
-            Rule::byte_value => parse_byte_value(arg),
-            _ => parse_general_expression(arg),
-        })
-        .collect::<Result<_, _>>()?;
-    Ok(Expression::Builtin { builtin, args })
-}
-
 // ─── Crypto Opcodes Parsing ────────────────────────────────────────────
 
 pub(crate) fn parse_ec_add(pair: Pair<Rule>) -> Result<Expression, String> {

@@ -75,26 +75,21 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
-    match name {
+pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
+    if let Some(builtin) = crate::builtins::find(name) {
+        return Some(builtin.signature());
+    }
+    let signature = match name {
         "checkSig" => Some("checkSig(signature, pubkey)"),
         "checkSigFromStack" => Some("checkSigFromStack(signature, pubkey, message)"),
         "checkSigFromStackVerify" => Some("checkSigFromStackVerify(signature, pubkey, message)"),
         "checkMultisig" => Some("checkMultisig([pubkeys], [sigs], threshold?)"),
-        "sha256" => Some("sha256(data)"),
         "hash160" => Some("hash160(data)"),
         "hash256" => Some("hash256(data)"),
         "ripemd160" => Some("ripemd160(data)"),
-        "sha256Initialize" => Some("sha256Initialize(data)"),
-        "sha256Update" => Some("sha256Update(ctx, chunk)"),
-        "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
-        "digest" => Some("digest(data, hashType)"),
-        "sighash" => Some("sighash(hashType)"),
-        "modExp" => Some("modExp(base, exponent, modulus)"),
         "ecAdd" => Some("ecAdd(P, Q, curveId)"),
         "ecMul" => Some("ecMul(P, scalar, curveId)"),
         "ecPairing" => Some("ecPairing(g1Points, g2Points, curveId)"),
-        "reverseBytes" => Some("reverseBytes(data)"),
         "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
         "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
@@ -102,7 +97,8 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
         "checkTime" => Some("checkTime(timestamp)"),
         "this.tunnel" => Some("this.tunnel(outputIndex, policy?, exceptions?)"),
         _ => None,
-    }
+    };
+    signature.map(str::to_string)
 }
 
 pub(crate) fn parse_string_literal(text: &str) -> Result<String, String> {
@@ -249,13 +245,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 message,
             })
         }
-        Rule::sha256_func => parse_builtin_call("sha256", pair),
-        Rule::sha256_initialize => parse_builtin_call("sha256Initialize", pair),
-        Rule::sha256_update => parse_builtin_call("sha256Update", pair),
-        Rule::sha256_finalize => parse_builtin_call("sha256Finalize", pair),
-        Rule::digest_func => parse_builtin_call("digest", pair),
-        Rule::sighash_func => parse_builtin_call("sighash", pair),
-        Rule::mod_exp_func => parse_builtin_call("modExp", pair),
         // Crypto Opcodes
         Rule::ec_add => parse_ec_add(pair),
         Rule::ec_mul => parse_ec_mul(pair),
@@ -264,12 +253,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
         // Byte-string manipulation
-        Rule::substr_func => parse_builtin_call("substr", pair),
-        Rule::cat_func => parse_builtin_call("cat", pair),
-        Rule::bin2num_func => parse_builtin_call("bin2num", pair),
-        Rule::num2bin_func => parse_builtin_call("num2bin", pair),
-        Rule::reverse_bytes_func => parse_builtin_call("reverseBytes", pair),
-        Rule::size_func => parse_builtin_call("size", pair),
         Rule::cast_func => parse_cast(pair),
         // Packet introspection
         Rule::packet_inspect => parse_packet_inspect(pair),
@@ -285,6 +268,14 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => parse_constructor_to_expression(pair),
         Rule::function_call => {
+            let name = pair
+                .clone()
+                .into_inner()
+                .next()
+                .ok_or("Missing function name")?;
+            if let Some(builtin) = crate::builtins::find(name.as_str()) {
+                return parse_builtin_call(builtin, pair);
+            }
             reject_reserved_function_call(&pair)?;
             let mut inner = pair.into_inner();
             let name = inner
@@ -389,27 +380,24 @@ pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, Stri
     Ok(value)
 }
 
-/// Parse a `byte_value` rule into an Expression. Used wherever the grammar
-/// accepts an arbitrary byte-producing operand (substr/cat/bin2num/size args).
-pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
-    // byte_value wraps exactly one inner rule.
-    let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
-    match inner.as_rule() {
-        Rule::substr_func => parse_builtin_call("substr", inner),
-        Rule::intent_field => parse_intent_inspect(inner),
-        Rule::cat_func => parse_builtin_call("cat", inner),
-        Rule::num2bin_func => parse_builtin_call("num2bin", inner),
-        Rule::reverse_bytes_func => parse_builtin_call("reverseBytes", inner),
-        Rule::packet_inspect => parse_packet_inspect(inner),
-        Rule::input_packet_inspect => parse_input_packet_inspect(inner),
-        Rule::input_introspection => parse_input_introspection_to_expression(inner),
-        Rule::output_introspection => parse_output_introspection_to_expression(inner),
-        Rule::asset_at => parse_asset_at_to_expression(inner),
-        Rule::hex_literal | Rule::string_literal => parse_primary_expr(inner),
-        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
-        Rule::named_binding => parse_property_access(inner),
-        r => Err(format!("Unsupported byte_value rule: {:?}", r)),
+/// Parse a `function_call` whose name is a builtin into a `Builtin` node.
+fn parse_builtin_call(
+    builtin: &'static crate::builtins::Builtin,
+    pair: Pair<Rule>,
+) -> Result<Expression, String> {
+    let args: Vec<Expression> = pair
+        .into_inner()
+        .skip(1)
+        .map(parse_general_expression)
+        .collect::<Result<_, _>>()?;
+    if args.len() != builtin.params.len() {
+        return Err(format!(
+            "malformed reserved function call `{}(...)`; expected {}",
+            builtin.name,
+            builtin.signature()
+        ));
     }
+    Ok(Expression::Builtin { builtin, args })
 }
 
 // ─── Constructor Parsing ───────────────────────────────────────────────────────

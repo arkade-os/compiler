@@ -164,24 +164,11 @@ primary_expr = {
     tunnel |
     intent_field |
     intent_has |
-    sha256_initialize |
-    sha256_update |
-    sha256_finalize |
-    sha256_func |
-    digest_func |
-    sighash_func |
-    mod_exp_func |
     ec_add |
     ec_mul |
     ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
-    substr_func |
-    cat_func |
-    bin2num_func |
-    num2bin_func |
-    reverse_bytes_func |
-    size_func |
     cast_func |
     input_packet_inspect |
     packet_inspect |
@@ -240,23 +227,11 @@ complex_expression = _{
     check_multisig |
     time_comparison |
     hash_comparison |
-    sha256_initialize |
-    sha256_update |
-    sha256_finalize |
-    digest_func |
-    sighash_func |
-    mod_exp_func |
     ec_add |
     ec_mul |
     ec_pairing |
     ec_mul_scalar_verify |
     tweak_verify |
-    substr_func |
-    cat_func |
-    bin2num_func |
-    num2bin_func |
-    reverse_bytes_func |
-    size_func |
     input_packet_inspect |
     packet_inspect |
     asset_at |
@@ -386,13 +361,11 @@ hash_fn_name = { "sha256" | "hash256" | "hash160" | "ripemd160" }
 // Generalized hash function: hashFn(expr)
 hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
 
-// Hash comparison: hashFn(preimage) == hash. The RHS may be a simple
-// identifier (legacy fast path, e.g. htlc), or any byte-producing term so
-// that constructions like `sha256(substr(packet, ...)) == substr(other, ...)`
-// — used by the LayerZero scripts — parse natively.
+// Hash comparison fast path: hashFn(preimage) == hash with a simple RHS.
+// Other RHS forms parse as a general comparison.
 // The fast path must consume the whole require/constructor argument.
 hash_comparison = {
-    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | byte_literal | named_binding) ~ &("," | ")")
+    hash_func ~ "==" ~ (byte_literal | named_binding) ~ &("," | ")")
 }
 
 // Constructor expression: new ContractName(args)
@@ -536,45 +509,6 @@ array = {
 // Named operands used by crypto checks: a binding with field and index suffixes.
 named_binding = { identifier ~ binding_suffix* }
 
-// SHA256 function. Accepts any additive expression so concatenation chains
-// like `sha256(a + b + c)` parse (`additive_expr` cascades down to primary,
-// which still accepts a bare identifier for the legacy `sha256(preimage)` form).
-sha256_func = {
-    "sha256" ~ "(" ~ additive_expr ~ ")"
-}
-
-// ─── Streaming SHA256 ──────────────────────────────────────────────────
-
-// Streaming SHA256 initialize: sha256Initialize(data) → OP_SHA256INITIALIZE
-sha256_initialize = {
-    "sha256Initialize" ~ "(" ~ unary_atom ~ ")"
-}
-
-// Streaming SHA256 update: sha256Update(ctx, chunk) → OP_SHA256UPDATE
-sha256_update = {
-    "sha256Update" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk) → OP_SHA256FINALIZE
-sha256_finalize = {
-    "sha256Finalize" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-sighash_func = {
-    "sighash" ~ "(" ~ unary_atom ~ ")"
-}
-
-digest_func = {
-    "digest" ~ "(" ~ additive_expr ~ "," ~ unary_atom ~ ")"
-}
-
-// ─── Arithmetic ────────────────────────────────────────────────────────
-
-// Modular exponentiation: modExp(base, exponent, modulus) → OP_MODEXP
-mod_exp_func = {
-    "modExp" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
 // ─── Crypto Opcodes ────────────────────────────────────────────────────
 
 // EC point addition: ecAdd(P, Q, curveId) → OP_ECADD, where P and Q are ECPoints
@@ -605,59 +539,6 @@ tweak_verify = {
 // CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
-}
-
-// ─── Byte-string Manipulation ──────────────────────────────────────────
-// These map to the introspector's byte-string opcodes and are used to slice,
-// concat, and parse fixed-width fields out of extension packets.
-
-// A byte-producing operand. Accepted as a child of substr/cat/bin2num/size
-// so packet introspection results can flow directly into slicing:
-//   substr(tx.packet(EndpointState), 1, 32)
-//   sha256(substr(tx.inputs[1].packet(LzReceive), 1, 140))
-byte_value = {
-    intent_field |
-    substr_func |
-    cat_func |
-    num2bin_func |
-    reverse_bytes_func |
-    packet_inspect |
-    input_packet_inspect |
-    input_introspection |
-    output_introspection |
-    asset_at |
-    byte_literal |
-    named_binding
-}
-
-// Substring extraction: substr(data, offset, size) → OP_SUBSTR
-substr_func = {
-    "substr" ~ "(" ~ byte_value ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Byte concatenation: cat(a, b) → OP_CAT
-cat_func = {
-    "cat" ~ "(" ~ byte_value ~ "," ~ byte_value ~ ")"
-}
-
-// Bytes → BigNum: bin2num(bytes) → OP_BIN2NUM
-bin2num_func = {
-    "bin2num" ~ "(" ~ byte_value ~ ")"
-}
-
-// BigNum → fixed-width bytes: num2bin(num, size) → OP_NUM2BIN
-num2bin_func = {
-    "num2bin" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Reverse a byte array: reverseBytes(bytes) → OP_REVERSEBYTES
-reverse_bytes_func = {
-    "reverseBytes" ~ "(" ~ byte_value ~ ")"
-}
-
-// Byte-array length: size(bytes) → OP_SIZE OP_NIP (returns size only)
-size_func = {
-    "size" ~ "(" ~ byte_value ~ ")"
 }
 
 // Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;

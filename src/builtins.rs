@@ -84,6 +84,14 @@ pub(crate) const BUILTINS: &[Builtin] = &[
     ),
 ];
 
+impl Builtin {
+    /// Source form for diagnostics, such as `substr(data, offset, size)`.
+    pub(crate) fn signature(&self) -> String {
+        let params: Vec<&str> = self.params.iter().map(|(name, _)| *name).collect();
+        format!("{}({})", self.name, params.join(", "))
+    }
+}
+
 pub(crate) fn find(name: &str) -> Option<&'static Builtin> {
     BUILTINS.iter().find(|builtin| builtin.name == name)
 }
