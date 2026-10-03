@@ -451,7 +451,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Intent messages.** In covenants, `tx.intent.field("type")` returns the encoded field bytes and asserts presence; `tx.intent.has("type")` returns presence without keeping the value. Paths are quoted literals with dot-separated lowercase keys or canonical decimal indexes, such as `"cosigners.0"`; queries, wildcards, leading-zero indexes, and indexes at or above 1048576 are rejected. Present false, zero, and empty strings still count as present. Integer fields use Script-number encoding: `bin2num(tx.intent.field("expire_at"))`. Require `tx.intent.field("type") == "register"` before relying on register-specific fields. Missing context, null, missing fields, and non-integer numbers are misses; `field` fails on a miss and `has` returns false. Both use the emulator's result-size and compute limits.
 
-**Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey | witnessVersion`, and `tx.input.current.value | scriptPubKey | witnessVersion | sequence | outpoint` for the input being spent. `scriptPubKey` is the witness program, and `witnessVersion` its version (0-16); for a non-witness script they are the SHA-256 of the script and `-1`.
+**Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey | witnessVersion`, and `tx.input.current.value | scriptPubKey | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash` for the input being spent. `scriptPubKey` is the witness program, and `witnessVersion` its version (0-16); for a non-witness script they are the SHA-256 of the script and `-1`.
 
 **Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`. Groups: `tx.assetGroups.find(txid, gidx)`, `.has(txid, gidx)`, `.length`, and per group `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `metadataHash`, `assetId`, `isFresh`.
 
@@ -477,7 +477,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 {
   "formatVersion": 1,
   "contractName": "HTLC",
-  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, ...],
+  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, "..."],
   "structs": [],
   "functions": [
     {
@@ -495,7 +495,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
         }
       ]
     },
-    { "name": "unilateral", "leaves": [ ... ] }
+    { "name": "unilateral", "leaves": [ "..." ] }
   ],
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },

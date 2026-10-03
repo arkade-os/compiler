@@ -28,8 +28,8 @@ pub(crate) fn emit_script_pubkey_asm(opcode: &str, asm: &mut Vec<String>) {
     asm.push(OP_DROP.to_string());
 }
 
-/// Emit a scriptPubKey inspection opcode and keep only the witness version:
-/// 0-16 for a native witness program, -1 for any other script.
+/// Emit a scriptPubKey inspection opcode and keep only the witness version
+/// on top of the program: 0-16 for a native witness program, -1 otherwise.
 pub(crate) fn emit_witness_version_asm(opcode: &str, asm: &mut Vec<String>) {
     asm.push(opcode.to_string());
     asm.push(OP_NIP.to_string());

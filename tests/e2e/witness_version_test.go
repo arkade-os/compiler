@@ -16,6 +16,7 @@ contract WitnessVersion() {
     function spend(int version) {
         require(tx.input.current.witnessVersion == 1);
         require(tx.inputs[0].witnessVersion == 1);
+        require(tx.inputs[1].witnessVersion == -1);
         require(tx.outputs[0].witnessVersion == version);
     }
 }`), 0600)
@@ -42,6 +43,7 @@ contract WitnessVersion() {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, wire.TxWitness{scriptInt(t, tc.version)})
+			spend = withExtraInput(t, spend, fundingTx(p2pkh, 10_000))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
