@@ -120,11 +120,16 @@ impl ArkType {
 pub struct TypeError {
     /// Human-readable description of the problem.
     pub message: String,
-    /// Byte range of the statement that caused it.
+    /// Byte range of the expression, or else the statement, that caused it.
     pub span: Option<crate::diagnostics::Span>,
 }
 
 impl TypeError {
+    fn at(mut self, span: crate::diagnostics::Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
     fn new(msg: impl Into<String>) -> Self {
         TypeError {
             message: msg.into(),
@@ -686,7 +691,15 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
         Requirement::Comparison { left, op, right } => {
             check_expression(left, scope, errors, fn_name);
             check_expression(right, scope, errors, fn_name);
+            let first = errors.len();
             check_comparison(left, *op, right, scope, errors, fn_name);
+            let span = crate::diagnostics::Span {
+                start: left.span.start,
+                end: right.span.end,
+            };
+            for error in &mut errors[first..] {
+                error.span.get_or_insert(span);
+            }
         }
     }
 }
@@ -710,6 +723,7 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
     for child in crate::validator::child_exprs(expr) {
         check_expression(child, scope, errors, fn_name);
     }
+    let first = errors.len();
     match &expr.kind {
         ExprKind::BinaryOp { left, op, right } if op.compares() => {
             check_comparison(left, *op, right, scope, errors, fn_name);
@@ -734,6 +748,9 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         }
         _ => {}
     }
+    for error in &mut errors[first..] {
+        error.span.get_or_insert(expr.span);
+    }
 }
 
 fn check_array_index(
@@ -746,10 +763,13 @@ fn check_array_index(
     check_expression(index, scope, errors, fn_name);
     let index_type = infer_type(index, scope);
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-        errors.push(TypeError::new(format!(
-            "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
-            index_type.as_str()
-        )));
+        errors.push(
+            TypeError::new(format!(
+                "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
+                index_type.as_str()
+            ))
+            .at(index.span),
+        );
     }
     match scope.get(array) {
         Some(ArkType::Array(element, _)) => Some((**element).clone()),

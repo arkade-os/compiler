@@ -1475,6 +1475,7 @@ fn validate_binding_expression(
     issues: &mut Vec<ValidationIssue>,
     value_position: bool,
 ) {
+    let first = issues.len();
     let expression_type = resolved_expression_type(expression, scopes);
     if value_position && matches!(expression_type, ArkType::Array(..) | ArkType::Struct(..)) {
         let kind = if matches!(expression_type, ArkType::Struct(..)) {
@@ -1523,10 +1524,13 @@ fn validate_binding_expression(
                 let actual = resolved_expression_type(operand, scopes);
                 if actual != ArkType::Unknown && !binding_types_compatible(&ArkType::Bytes, &actual)
                 {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': bytewise '{op}' operand has type '{}', expected 'bytes'",
-                        actual.as_str()
-                    )));
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "function '{function_name}': bytewise '{op}' operand has type '{}', expected 'bytes'",
+                            actual.as_str()
+                        ))
+                        .at(operand.span),
+                    );
                 }
             }
             // The VM aborts on operands of different lengths.
@@ -1555,43 +1559,53 @@ fn validate_binding_expression(
             // Bytes-like `+` is concatenation, checked when it is rewritten to OP_CAT.
             let concat =
                 *op == BinaryOperator::Add && types.iter().any(crate::typechecker::is_bytes_like);
-            for actual in types.iter().filter(|_| !concat) {
+            for (operand, actual) in [left, right].iter().zip(&types).filter(|_| !concat) {
                 if *actual != expected && *actual != ArkType::Unknown {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{}': {kind} '{}' operand has type '{}', expected '{}'",
-                        function_name,
-                        op,
-                        actual.as_str(),
-                        expected.as_str()
-                    )));
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "function '{}': {kind} '{}' operand has type '{}', expected '{}'",
+                            function_name,
+                            op,
+                            actual.as_str(),
+                            expected.as_str()
+                        ))
+                        .at(operand.span),
+                    );
                 }
             }
             if *op == BinaryOperator::Div
                 && literal_index(right).is_some_and(|(_, value)| value == "0")
             {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': division by zero"
-                )));
+                issues.push(
+                    ValidationIssue::error(format!("function '{function_name}': division by zero"))
+                        .at(right.span),
+                );
             }
             if op.class() == OperatorClass::Shift
                 && literal_index(right).is_some_and(|(negative, value)| negative && value != "0")
             {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': shift count must not be negative"
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "function '{function_name}': shift count must not be negative"
+                    ))
+                    .at(right.span),
+                );
             }
         }
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
             let actual = resolved_expression_type(value, scopes);
             if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': unary '{}' operand has type '{}', expected '{}'",
-                    function_name,
-                    operator,
-                    actual.as_str(),
-                    expected.as_str()
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "function '{}': unary '{}' operand has type '{}', expected '{}'",
+                        function_name,
+                        operator,
+                        actual.as_str(),
+                        expected.as_str()
+                    ))
+                    .at(value.span),
+                );
             }
         }
         _ if registered_builtin.is_some() => {
@@ -1624,11 +1638,14 @@ fn validate_binding_expression(
                 let literal_bytes32 = expected == ArkType::Bytes32
                     && matches!(&operand.kind, ExprKind::Literal(value) if value.starts_with("0x") && value.len() == 66);
                 if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': {name} operand has type '{}', expected '{}'",
-                        actual.as_str(),
-                        expected.as_str()
-                    )));
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "function '{function_name}': {name} operand has type '{}', expected '{}'",
+                            actual.as_str(),
+                            expected.as_str()
+                        ))
+                        .at(operand.span),
+                    );
                 }
             }
             // OP_ECPAIRING bounds its work at 16 pairs.
@@ -1808,6 +1825,7 @@ fn validate_binding_expression(
         _ => {}
     }
 
+    locate(&mut issues[first..], expression.span);
     for child in child_exprs(expression) {
         if matches!(
             &expression.kind,
@@ -1880,11 +1898,14 @@ fn validate_array_index(
 
     let index_type = resolved_expression_type(index, scopes);
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': array index has type '{}', expected 'int'",
-            function_name,
-            index_type.as_str()
-        )));
+        issues.push(
+            ValidationIssue::error(format!(
+                "function '{}': array index has type '{}', expected 'int'",
+                function_name,
+                index_type.as_str()
+            ))
+            .at(index.span),
+        );
     }
     if let (Some((negative, literal)), Some((_, length, _))) =
         (literal_index(index), array_info.as_ref())

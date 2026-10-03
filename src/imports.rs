@@ -921,11 +921,11 @@ library Fees {
         let span = diagnostic
             .span
             .expect("dependency diagnostics carry a span");
-        assert_eq!(&broken_lib[span.start..span.end], "require(missing);");
+        assert_eq!(&broken_lib[span.start..span.end], "missing");
 
         let error = super::compile_sources("main.ark", &files, Default::default()).unwrap_err();
         assert!(
-            error.starts_with("lib.ark: validation error: line 3, column 5: "),
+            error.starts_with("lib.ark: validation error: line 3, column 13: "),
             "{error}"
         );
     }

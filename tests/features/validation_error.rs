@@ -470,3 +470,33 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
         "{error}"
     );
 }
+
+#[test]
+fn expression_diagnostics_point_at_the_expression() {
+    for (body, expected) in [
+        ("let x = n / 0; require(x == n);", "0"),
+        ("require(!n);", "n"),
+        ("require(xs[a] == n);", "a"),
+        ("require(missing == n);", "missing"),
+        ("let y = cat(a, n); require(y == a);", "n"),
+        ("require(a == n);", "a == n"),
+        ("require((n & a) == a);", "n"),
+        ("require(n << -1 == n);", "-1"),
+    ] {
+        let source =
+            format!("contract C(bytes a, int[2] xs) {{ function spend(int n) {{ {body} }} }}");
+        let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.clone())]);
+        let diagnostics = arkade_compiler::check("main.ark", &files);
+        let error = diagnostics
+            .iter()
+            .find(|d| d.severity == arkade_compiler::Severity::Error)
+            .unwrap_or_else(|| panic!("{body}: no error in {diagnostics:?}"));
+        let span = error.span.unwrap_or_else(|| panic!("{body}: unlocated"));
+        assert_eq!(
+            &source[span.start..span.end],
+            expected,
+            "{body}: {}",
+            error.message
+        );
+    }
+}
