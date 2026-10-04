@@ -396,6 +396,7 @@ fn load(
                     asset_gidx,
                 } = expression
                 {
+                    // Only a bare name can be a library; other groups stay asset groups.
                     let Expression::Variable(group) = group.as_ref() else {
                         return Ok(());
                     };

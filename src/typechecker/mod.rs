@@ -403,7 +403,9 @@ fn resolve_expression(
     }
 }
 
-const GROUP_PROPERTIES: [&str; 10] = [
+/// Each entry also needs an `asset_group_property` grammar alternative and an
+/// `emit_group_property_asm` arm.
+pub(crate) const GROUP_PROPERTIES: [&str; 10] = [
     "numInputs",
     "numOutputs",
     "sumInputs",

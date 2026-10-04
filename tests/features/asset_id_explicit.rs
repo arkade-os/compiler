@@ -178,6 +178,20 @@ fn control_asset_id_asserts_presence_and_binds_an_asset_id() {
 }
 
 #[test]
+fn control_asset_id_binds_without_a_declared_type() {
+    let src = "contract C(bytes32 fooTxid, int fooGidx) {
+            function f() {
+                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let control = g.controlAssetId;
+                require(control.txid == fooTxid);
+                require(control.gidx == fooGidx);
+            }
+        }";
+    let typed = src.replace("let control", "AssetId control");
+    assert_eq!(arkade_asm(src, "f"), arkade_asm(&typed, "f"));
+}
+
+#[test]
 fn control_asset_id_is_typed() {
     let src = "contract C(bytes32 fooTxid, int fooGidx) { function f() {
             let g = tx.assetGroups.find(fooTxid, fooGidx); require(g.controlAssetId == fooTxid);
