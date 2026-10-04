@@ -63,7 +63,7 @@ function inferEncoding(typeStr) {
     const map = {
         pubkey: 'raw', signature: 'schnorr-64',
         bytes: 'raw', bytes20: 'raw-20', bytes32: 'raw-32',
-        int: 'scriptnum', bool: 'scriptnum', asset: 'raw-32',
+        int: 'scriptnum', bool: 'scriptnum', asset: 'raw-32', AssetGroup: 'scriptnum',
     };
     return map[typeStr] || 'raw';
 }
