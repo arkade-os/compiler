@@ -534,7 +534,15 @@ fn parse_statement(
         }
         Rule::function_call_stmt => {
             let call = pair.into_inner().next().ok_or("Missing function call")?;
-            Statement::Call(parse_general_expression(call)?)
+            match parse_general_expression(call)? {
+                Expression::Builtin { builtin, .. } => {
+                    return Err(format!(
+                        "`{}(...)` cannot be a statement; use it inside require()",
+                        builtin.name
+                    ));
+                }
+                call => Statement::Call(call),
+            }
         }
         Rule::return_stmt => {
             let value = pair
@@ -848,9 +856,10 @@ contract C() {
         ));
         assert!(matches!(
             &statements[1].statement,
-            Statement::LetBinding { value: Expression::Substr { data, offset, .. }, .. }
-                if matches!(data.as_ref(), Expression::FieldAccess { field, .. } if field == "data")
-                    && matches!(offset.as_ref(), Expression::Property(name) if name == "p.offset")
+            Statement::LetBinding { value: Expression::Builtin { builtin, args }, .. }
+                if builtin.name == "substr"
+                    && matches!(&args[0], Expression::FieldAccess { field, .. } if field == "data")
+                    && matches!(&args[1], Expression::Property(name) if name == "p.offset")
         ));
     }
 

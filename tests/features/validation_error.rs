@@ -429,3 +429,44 @@ fn semantic_diagnostics_carry_source_positions() {
         "type error must point at its statement: {error}"
     );
 }
+
+#[test]
+fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
+    for (body, expected) in [
+        (
+            "function spend(bytes a) { require(cat(a) == a); }",
+            "malformed reserved function call `cat(...)`; expected cat(a, b)",
+        ),
+        (
+            "function spend(bytes a) { require(size(a, a) == 1); }",
+            "malformed reserved function call `size(...)`; expected size(data)",
+        ),
+        (
+            "private function size(bytes a) int { return 1; } function spend() { require(true); }",
+            "function name 'size' is reserved",
+        ),
+        (
+            "function spend(bytes32 k, bytes q) { tweakVerify(k, k, q); require(true); }",
+            "`tweakVerify(...)` cannot be a statement; use it inside require()",
+        ),
+        (
+            "function spend(bytes a) { require(hash160(a) == substr(a, 0, 20)); }",
+            "`hash160` is only supported as `hash160(preimage) == hash`",
+        ),
+    ] {
+        let source = format!("contract C() {{ {body} }}");
+        let error = compile(&source).expect_err(body).to_string();
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+
+    let error = compile(
+        "contract C(ECPoint p) { function spend() { let r = ecMul(p, p, 1); require(r.x == 1); } }",
+    )
+    .expect_err("struct scalar")
+    .to_string();
+    assert!(
+        error.contains("ecMul operand has type 'ECPoint', expected 'int'")
+            && !error.contains("composite values"),
+        "{error}"
+    );
+}

@@ -214,6 +214,13 @@ pub(crate) fn substitute_expression(
                 .collect(),
             return_type: return_type.clone(),
         },
+        Expression::Builtin { builtin, args } => Expression::Builtin {
+            builtin,
+            args: args
+                .iter()
+                .map(|arg| substitute_expression(arg, index_var, value_var, k, items))
+                .collect(),
+        },
         Expression::Variable(path) | Expression::Property(path) => {
             substitute_path(path, index_var, value_var, k, items).unwrap_or_else(|| expr.clone())
         }
@@ -269,71 +276,9 @@ pub(crate) fn substitute_expression(
         Expression::Not { value } => Expression::Not {
             value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
         },
-        Expression::ReverseBytes { data } => Expression::ReverseBytes {
-            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
-        },
         Expression::Cast { target, data } => Expression::Cast {
             target: target.clone(),
             data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
-        },
-        Expression::Sighash { hash_type } => Expression::Sighash {
-            hash_type: Box::new(substitute_expression(
-                hash_type, index_var, value_var, k, items,
-            )),
-        },
-        Expression::Digest { data, hash_type } => Expression::Digest {
-            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
-            hash_type: Box::new(substitute_expression(
-                hash_type, index_var, value_var, k, items,
-            )),
-        },
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => Expression::ModExp {
-            base: Box::new(substitute_expression(base, index_var, value_var, k, items)),
-            exponent: Box::new(substitute_expression(
-                exponent, index_var, value_var, k, items,
-            )),
-            modulus: Box::new(substitute_expression(
-                modulus, index_var, value_var, k, items,
-            )),
-        },
-        Expression::EcAdd {
-            point_p,
-            point_q,
-            curve_id,
-        } => Expression::EcAdd {
-            point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, items,
-            )),
-            point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, items,
-            )),
-            curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, items,
-            )),
-        },
-        Expression::EcMul {
-            point,
-            scalar,
-            curve_id,
-        } => Expression::EcMul {
-            point: Box::new(substitute_expression(point, index_var, value_var, k, items)),
-            scalar: Box::new(substitute_expression(
-                scalar, index_var, value_var, k, items,
-            )),
-            curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, items,
-            )),
-        },
-        Expression::EcPairing { g1, g2, curve_id } => Expression::EcPairing {
-            g1: Box::new(substitute_expression(g1, index_var, value_var, k, items)),
-            g2: Box::new(substitute_expression(g2, index_var, value_var, k, items)),
-            curve_id: Box::new(substitute_expression(
-                curve_id, index_var, value_var, k, items,
-            )),
         },
         Expression::AssetCount { source, index } => Expression::AssetCount {
             source: source.clone(),
@@ -361,78 +306,6 @@ pub(crate) fn substitute_expression(
         Expression::Concat { left, right } => Expression::Concat {
             left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
             right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
-        },
-        Expression::Sha256 { data } => Expression::Sha256 {
-            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
-        },
-        Expression::Sha256Initialize { data } => Expression::Sha256Initialize {
-            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
-        },
-        Expression::Sha256Update { context, chunk } => Expression::Sha256Update {
-            context: Box::new(substitute_expression(
-                context, index_var, value_var, k, items,
-            )),
-            chunk: Box::new(substitute_expression(chunk, index_var, value_var, k, items)),
-        },
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => Expression::Sha256Finalize {
-            context: Box::new(substitute_expression(
-                context, index_var, value_var, k, items,
-            )),
-            last_chunk: Box::new(substitute_expression(
-                last_chunk, index_var, value_var, k, items,
-            )),
-        },
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => Expression::EcMulScalarVerify {
-            scalar: Box::new(substitute_expression(
-                scalar, index_var, value_var, k, items,
-            )),
-            point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, items,
-            )),
-            point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, items,
-            )),
-        },
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => Expression::TweakVerify {
-            point_p: Box::new(substitute_expression(
-                point_p, index_var, value_var, k, items,
-            )),
-            tweak: Box::new(substitute_expression(tweak, index_var, value_var, k, items)),
-            point_q: Box::new(substitute_expression(
-                point_q, index_var, value_var, k, items,
-            )),
-        },
-        Expression::Substr { data, offset, size } => Expression::Substr {
-            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
-            offset: Box::new(substitute_expression(
-                offset, index_var, value_var, k, items,
-            )),
-            size: Box::new(substitute_expression(size, index_var, value_var, k, items)),
-        },
-        Expression::Cat { left, right } => Expression::Cat {
-            left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
-            right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
-        },
-        Expression::Bin2Num { data } => Expression::Bin2Num {
-            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
-        },
-        Expression::Num2Bin { value, size } => Expression::Num2Bin {
-            value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
-            size: Box::new(substitute_expression(size, index_var, value_var, k, items)),
-        },
-        Expression::SizeOf { data } => Expression::SizeOf {
-            data: Box::new(substitute_expression(data, index_var, value_var, k, items)),
         },
         Expression::PacketInspect { packet_type } => Expression::PacketInspect {
             packet_type: Box::new(substitute_expression(

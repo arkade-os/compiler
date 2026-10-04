@@ -10,10 +10,10 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
 }
 
 /// Push a two-field native struct with its first field deepest, as native opcodes expect.
-fn emit_native_pair_asm(value: &Expression, fields: [&str; 2], asm: &mut Vec<String>) {
+fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut Vec<String>) {
     match value {
         Expression::Variable(name) | Expression::Property(name) if !name.starts_with("$call:") => {
-            for field in fields {
+            for (field, _) in fields {
                 asm.push(format!("<{name}.{field}>"));
             }
         }
@@ -37,10 +37,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(format!("<{}>", var));
         }
         Expression::Literal(lit) => push_literal_asm(lit, asm),
-        Expression::CheckTime { timestamp } => {
-            emit_expression_asm(timestamp, asm);
-            asm.push(OP_CHECKTIME.to_string());
-        }
         Expression::IntentInspect {
             path,
             presence_only,
@@ -64,7 +60,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.push(flags.to_string());
             for exception in exceptions {
-                emit_native_pair_asm(exception, ["txid", "gidx"], asm);
+                let fields = crate::models::builtin_struct_fields("AssetId")
+                    .expect("AssetId is a native struct");
+                emit_native_struct_asm(exception, fields, asm);
             }
             asm.push(exceptions.len().to_string());
             asm.push(OP_TUNNEL.to_string());
@@ -217,36 +215,17 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
-        // Streaming SHA256
-        Expression::Sha256 { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256.to_string());
-        }
-        Expression::Sha256Initialize { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256INITIALIZE.to_string());
-        }
-        Expression::Sha256Update { context, chunk } => {
-            emit_expression_asm(context, asm);
-            emit_expression_asm(chunk, asm);
-            asm.push(OP_SHA256UPDATE.to_string());
-        }
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => {
-            emit_expression_asm(context, asm);
-            emit_expression_asm(last_chunk, asm);
-            asm.push(OP_SHA256FINALIZE.to_string());
-        }
-        Expression::Sighash { hash_type } => {
-            emit_expression_asm(hash_type, asm);
-            asm.push(OP_SIGHASH.to_string());
-        }
-        Expression::Digest { data, hash_type } => {
-            emit_expression_asm(data, asm);
-            emit_expression_asm(hash_type, asm);
-            asm.push(OP_DIGEST.to_string());
+        Expression::Builtin { builtin, args } => {
+            let crate::builtins::Lowering::Opcodes(opcodes) = builtin.lowering else {
+                unreachable!("pairings are extracted before raw emission")
+            };
+            for (arg, (_, ty)) in args.iter().zip(builtin.params) {
+                match crate::models::builtin_struct_fields(ty) {
+                    Some(fields) => emit_native_struct_asm(arg, fields, asm),
+                    None => emit_expression_asm(arg, asm),
+                }
+            }
+            asm.extend(opcodes.iter().map(|opcode| opcode.to_string()));
         }
         // Byte-string concatenation: bytes + bytes → OP_CAT
         Expression::Concat { left, right } => {
@@ -263,60 +242,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(value, asm);
             asm.push(OP_NOT.to_string());
         }
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => {
-            emit_expression_asm(base, asm);
-            emit_expression_asm(exponent, asm);
-            emit_expression_asm(modulus, asm);
-            asm.push(OP_MODEXP.to_string());
-        }
-        // Elliptic curve operations
-        Expression::EcAdd {
-            point_p,
-            point_q,
-            curve_id,
-        } => {
-            emit_native_pair_asm(point_p, ["x", "y"], asm);
-            emit_native_pair_asm(point_q, ["x", "y"], asm);
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECADD.to_string());
-        }
-        Expression::EcMul {
-            point,
-            scalar,
-            curve_id,
-        } => {
-            emit_native_pair_asm(point, ["x", "y"], asm);
-            emit_expression_asm(scalar, asm);
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECMUL.to_string());
-        }
-        Expression::EcPairing { .. } => {
-            unreachable!("pairings are extracted before raw emission")
-        }
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => {
-            emit_expression_asm(scalar, asm);
-            emit_expression_asm(point_p, asm);
-            emit_expression_asm(point_q, asm);
-            asm.push(OP_ECMULSCALARVERIFY.to_string());
-        }
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => {
-            emit_expression_asm(point_p, asm);
-            emit_expression_asm(tweak, asm);
-            emit_expression_asm(point_q, asm);
-            asm.push(OP_TWEAKVERIFY.to_string());
-        }
         Expression::CheckSigFromStackVerify {
             signature,
             pubkey,
@@ -327,36 +252,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
             asm.push(OP_VERIFY.to_string());
-        }
-        // Byte-string manipulation (introspector extensions)
-        Expression::Substr { data, offset, size } => {
-            emit_expression_asm(data, asm);
-            emit_expression_asm(offset, asm);
-            emit_expression_asm(size, asm);
-            asm.push(OP_SUBSTR.to_string());
-        }
-        Expression::Cat { left, right } => {
-            emit_expression_asm(left, asm);
-            emit_expression_asm(right, asm);
-            asm.push(OP_CAT.to_string());
-        }
-        Expression::Bin2Num { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_BIN2NUM.to_string());
-        }
-        Expression::Num2Bin { value, size } => {
-            emit_expression_asm(value, asm);
-            emit_expression_asm(size, asm);
-            asm.push(OP_NUM2BIN.to_string());
-        }
-        Expression::ReverseBytes { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_REVERSEBYTES.to_string());
-        }
-        Expression::SizeOf { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SIZE.to_string());
-            asm.push(OP_NIP.to_string());
         }
         Expression::Cast { target, data } => {
             emit_expression_asm(data, asm);

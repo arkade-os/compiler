@@ -39,8 +39,13 @@ pub(crate) fn parse_named_tapscript(
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
             for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
+                let callee = part.clone().into_inner().next();
                 let name = match part.as_rule() {
-                    Rule::check_time => "checkTime(...)",
+                    Rule::function_call
+                        if callee.is_some_and(|name| name.as_str() == "checkTime") =>
+                    {
+                        "checkTime(...)"
+                    }
                     Rule::tunnel => "this.tunnel(...)",
                     Rule::intent_field => "tx.intent.field(...)",
                     Rule::intent_has => "tx.intent.has(...)",

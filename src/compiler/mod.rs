@@ -546,7 +546,8 @@ impl Generator {
                 let value = values.get(index).ok_or("invalid call marker")?;
                 if matches!(value, Expression::Call { .. }) {
                     self.emit_call(value)?;
-                } else if matches!(value, Expression::EcPairing { .. }) {
+                } else if matches!(value, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+                {
                     self.emit_pairing(value)?;
                 } else {
                     let ty = typechecker::infer_type(value, &self.scope).as_str();
@@ -1182,25 +1183,8 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                Expression::EcMulScalarVerify {
-                    scalar,
-                    point_p,
-                    point_q,
-                } => {
-                    generator.emit_expression(scalar)?;
-                    generator.emit_expression(point_p)?;
-                    generator.emit_expression(point_q)?;
-                    generator.apply(OP_ECMULSCALARVERIFY, 3, 0)?;
-                }
-                Expression::TweakVerify {
-                    point_p,
-                    tweak,
-                    point_q,
-                } => {
-                    generator.emit_expression(point_p)?;
-                    generator.emit_expression(tweak)?;
-                    generator.emit_expression(point_q)?;
-                    generator.apply(OP_TWEAKVERIFY, 3, 0)?;
+                Expression::Builtin { builtin, .. } if builtin.result.is_none() => {
+                    generator.emit_expression_items(expr, 0)?;
                 }
                 _ => {
                     generator.emit_expression(expr)?;

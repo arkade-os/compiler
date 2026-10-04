@@ -8,15 +8,13 @@ pub(super) fn extract_values(
 ) {
     if matches!(
         expression,
-        Expression::Call { .. }
-            | Expression::FieldAccess { .. }
-            | Expression::IndexAccess { .. }
-            | Expression::EcPairing { .. }
-    ) || (matches!(expression, Expression::ArrayIndex { .. })
-        && matches!(
-            typechecker::infer_type(expression, scope),
-            typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
-        ))
+        Expression::Call { .. } | Expression::FieldAccess { .. } | Expression::IndexAccess { .. }
+    ) || matches!(expression, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+        || (matches!(expression, Expression::ArrayIndex { .. })
+            && matches!(
+                typechecker::infer_type(expression, scope),
+                typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
+            ))
     {
         let replacement = Expression::Variable(format!("$call:{}", values.len()));
         values.push(std::mem::replace(expression, replacement));

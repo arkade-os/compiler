@@ -27,27 +27,18 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     let preimage_pair = hash_func_inner.next().ok_or("Missing preimage")?;
     let rhs_pair = inner.next().ok_or("Missing the hash")?;
 
-    // The grammar wraps the hash argument in `additive_expr`, so identifiers
-    // and literals surface as `Variable` / `Literal`, while byte-producing
-    // primitives (substr/cat/…) and arithmetic surface as their own variants.
+    // The grammar keeps the RHS simple, so only the preimage decides between
+    // structured HashEqual emission and an inline sha256 comparison.
     let preimage_expr = parse_general_expression(preimage_pair)?;
-    let rhs_is_simple = matches!(
-        rhs_pair.as_rule(),
-        Rule::named_binding | Rule::hex_literal | Rule::string_literal
-    );
-
-    // Simple operands use structured HashEqual emission.
-    if rhs_is_simple
-        && matches!(
-            preimage_expr,
-            Expression::Variable(_)
-                | Expression::Literal(_)
-                | Expression::Property(_)
-                | Expression::ArrayIndex { .. }
-                | Expression::FieldAccess { .. }
-                | Expression::IndexAccess { .. }
-        )
-    {
+    if matches!(
+        preimage_expr,
+        Expression::Variable(_)
+            | Expression::Literal(_)
+            | Expression::Property(_)
+            | Expression::ArrayIndex { .. }
+            | Expression::FieldAccess { .. }
+            | Expression::IndexAccess { .. }
+    ) {
         return Ok(Requirement::HashEqual {
             hash_fn,
             preimage: preimage_expr,
@@ -55,24 +46,19 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
         });
     }
 
-    // Complex preimage and/or complex RHS: emit via Comparison so byte-producing
-    // primitives expand inline. Only sha256 supports byte-expression operands.
+    // A computed preimage expands inline; only sha256 is a value builtin.
     if !matches!(hash_fn, crate::models::HashFn::Sha256) {
         return Err(format!(
             "{fn_name} with byte-expression operands is not supported; \
              only sha256 allows substr/cat operands"
         ));
     }
-    let rhs_expr = match rhs_pair.as_rule() {
-        Rule::substr_func => parse_substr(rhs_pair)?,
-        Rule::cat_func => parse_cat(rhs_pair)?,
-        Rule::num2bin_func => parse_num2bin(rhs_pair)?,
-        _ => parse_operand(rhs_pair)?,
-    };
+    let rhs_expr = parse_operand(rhs_pair)?;
 
     Ok(Requirement::Comparison {
-        left: Expression::Sha256 {
-            data: Box::new(preimage_expr),
+        left: Expression::Builtin {
+            builtin: crate::builtins::find("sha256").expect("sha256 is a builtin"),
+            args: vec![preimage_expr],
         },
         op: "==".to_string(),
         right: rhs_expr,

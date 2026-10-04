@@ -1016,44 +1016,24 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             _ => ArkType::Unknown,
         },
 
-        // SHA256 — all produce a 32-byte digest or midstate
-        Expression::Sha256 { .. }
-        | Expression::Sha256Initialize { .. }
-        | Expression::Sha256Update { .. }
-        | Expression::Sha256Finalize { .. }
-        | Expression::Sighash { .. } => ArkType::Bytes32,
+        Expression::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
 
         // Byte-string ops
-        Expression::Concat { .. } | Expression::Digest { .. } => ArkType::Bytes,
+        Expression::Concat { .. } => ArkType::Bytes,
 
         // Arithmetic
-        Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,
-        Expression::Not { .. } | Expression::CheckTime { .. } | Expression::Tunnel { .. } => {
-            ArkType::Bool
-        }
+        Expression::Negate { .. } => ArkType::Int,
+        Expression::Not { .. } | Expression::Tunnel { .. } => ArkType::Bool,
 
         // Crypto expressions
         Expression::CheckSigExpr { .. }
         | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. }
-        | Expression::EcPairing { .. }
-        | Expression::EcMulScalarVerify { .. }
-        | Expression::TweakVerify { .. } => ArkType::Bool,
-        Expression::EcAdd { .. } | Expression::EcMul { .. } => {
-            ArkType::Struct("ECPoint".to_string())
-        }
+        | Expression::CheckSigFromStackVerify { .. } => ArkType::Bool,
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
         Expression::ContractInstance { .. } => ArkType::Bytes,
 
-        // Byte-string manipulation (introspector extensions)
-        Expression::Substr { .. } => ArkType::Bytes,
-        Expression::Cat { .. } => ArkType::Bytes,
-        Expression::Bin2Num { .. } => ArkType::Int,
-        Expression::Num2Bin { .. } => ArkType::Bytes,
-        Expression::ReverseBytes { .. } => ArkType::Bytes,
         Expression::Cast { target, .. } => ArkType::parse(target),
-        Expression::SizeOf { .. } => ArkType::Int,
 
         // Packet introspection — returns raw packet bytes.
         Expression::PacketInspect { .. } => ArkType::Bytes,
