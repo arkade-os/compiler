@@ -133,11 +133,13 @@ fn function_symbols(
             Rule::variable_declaration => symbols.push(typed(pair, "variable", scope)?),
             Rule::let_binding => {
                 let name = inner.next().ok_or("Missing let name")?;
-                // Group properties (`group.sumInputs`) resolve on bindings of `tx.assetGroups.find(...)`.
                 let group = inner.next().map(parse_general_expression);
-                let symbol_type =
-                    matches!(group, Some(Ok(crate::models::Expression::GroupFind { .. })))
-                        .then(|| "assetGroup".to_string());
+                let symbol_type = matches!(
+                    group,
+                    Some(Ok(crate::models::Expression::GroupFind { .. }
+                        | crate::models::Expression::AssetGroupAt { .. }))
+                )
+                .then(|| "AssetGroup".to_string());
                 symbols.push(symbol(&name, "variable", symbol_type, scope));
             }
             Rule::for_in_stmt => {

@@ -38,7 +38,7 @@ impl Encoding {
             "bytes" | "pubkey" => Encoding::Raw,
             "bytes20" => Encoding::Raw20,
             "bytes32" => Encoding::Raw32,
-            "int" | "bool" => Encoding::ScriptNum,
+            "int" | "bool" | "AssetGroup" => Encoding::ScriptNum,
             "asset" => Encoding::Raw32,
             _ => Encoding::Unknown(type_str.to_string()),
         }
