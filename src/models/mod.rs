@@ -17,7 +17,15 @@ pub fn array_type_parts(declared_type: &str) -> Option<(&str, usize)> {
 pub fn is_builtin_type(declared_type: &str) -> bool {
     matches!(
         declared_type,
-        "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "int" | "bool" | "asset"
+        "pubkey"
+            | "signature"
+            | "bytes"
+            | "bytes20"
+            | "bytes32"
+            | "int"
+            | "bool"
+            | "asset"
+            | "AssetGroup"
     )
 }
 
@@ -547,15 +555,6 @@ pub enum AssetLookupSource {
     Output,
 }
 
-/// Source of an asset group sum (inputs or outputs)
-#[derive(Debug, Clone, PartialEq)]
-pub enum GroupSumSource {
-    /// sumInputs (source=0)
-    Inputs,
-    /// sumOutputs (source=1)
-    Outputs,
-}
-
 /// Source for per-group input/output access
 #[derive(Debug, Clone, PartialEq)]
 pub enum GroupIOSource {
@@ -662,8 +661,8 @@ pub enum Expression {
         op: String,
         right: Box<Expression>,
     },
-    /// Asset group find: tx.assetGroups.find(txid, gidx) → resolved packet
-    /// position k. Asserts existence (consumes the success flag with OP_VERIFY).
+    /// Asset group find: tx.assetGroups.find(txid, gidx) → the `AssetGroup` with
+    /// that Asset ID. Asserts existence (consumes the success flag with OP_VERIFY).
     GroupFind {
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
@@ -674,33 +673,28 @@ pub enum Expression {
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
     },
+    /// The `AssetGroup` at packet position k: tx.assetGroups[k].
+    AssetGroupAt { index: Box<Expression> },
     /// Asset group property: group.sumInputs, group.delta, etc.
-    GroupProperty { group: String, property: String },
+    GroupProperty {
+        group: Box<Expression>,
+        property: String,
+    },
     /// Boolean equality over the complete canonical control Asset ID:
     /// group.controlIs(txid, gidx). False when control is absent or either
     /// component differs. `group.hasControl` (presence only) is modeled as a
     /// plain `GroupProperty { property: "hasControl" }`.
     GroupControlIs {
-        group: String,
+        group: Box<Expression>,
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
     },
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
-    /// Asset group sum with explicit index: tx.assetGroups[k].sumInputs/sumOutputs
-    GroupSum {
-        index: Box<Expression>,
-        source: GroupSumSource,
-    },
-    /// Asset group input/output count: tx.assetGroups[k].numInputs/numOutputs
-    GroupNumIO {
-        index: Box<Expression>,
-        source: GroupIOSource,
-    },
-    /// Per-group input/output access: tx.assetGroups[k].inputs[j] or tx.assetGroups[k].outputs[j]
+    /// Per-group input/output access: group.inputs[j] or group.outputs[j]
     /// Returns: type_u8, data..., amount_u64 based on input/output type
     GroupIOAccess {
-        group_index: Box<Expression>,
+        group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
         property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
@@ -752,7 +746,8 @@ pub enum Expression {
         args: Vec<Expression>,
     },
     // ─── Byte-string Manipulation (introspector extensions) ────────────
-    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x)
+    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
+    /// or a scalar conversion: int(bool), bool(int)
     Cast {
         target: String,
         data: Box<Expression>,
@@ -776,8 +771,9 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
         Expression::Builtin { builtin, .. } => builtin
             .result
             .filter(|result| builtin_struct_fields(result).is_some()),
-        Expression::AssetAt { property, .. } | Expression::GroupProperty { property, .. }
-            if property == "assetId" =>
+        Expression::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
+        Expression::GroupProperty { property, .. }
+            if matches!(property.as_str(), "assetId" | "controlAssetId") =>
         {
             Some("AssetId")
         }
@@ -800,7 +796,6 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         | Expression::CurrentInput(_)
         | Expression::TxIntrospection { .. }
         | Expression::IntentInspect { .. }
-        | Expression::GroupProperty { .. }
         | Expression::AssetGroupsLength => vec![],
 
         Expression::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
@@ -839,8 +834,8 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::AssetCount { index, .. }
         | Expression::InputIntrospection { index, .. }
         | Expression::OutputIntrospection { index, .. }
-        | Expression::GroupSum { index, .. }
-        | Expression::GroupNumIO { index, .. } => vec![index],
+        | Expression::AssetGroupAt { index }
+        | Expression::GroupProperty { group: index, .. } => vec![index],
         Expression::AssetAt {
             io_index,
             asset_index,
@@ -858,15 +853,13 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             asset_gidx,
         } => vec![asset_txid, asset_gidx],
         Expression::GroupControlIs {
+            group,
             asset_txid,
             asset_gidx,
-            ..
-        } => vec![asset_txid, asset_gidx],
+        } => vec![group, asset_txid, asset_gidx],
         Expression::GroupIOAccess {
-            group_index,
-            io_index,
-            ..
-        } => vec![group_index, io_index],
+            group, io_index, ..
+        } => vec![group, io_index],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
         Expression::Tunnel {
             output_index,

@@ -37,9 +37,7 @@ fn collect_expression<'a>(
         }
         Expression::Variable(name)
         | Expression::Property(name)
-        | Expression::ArrayIndex { array: name, .. }
-        | Expression::GroupProperty { group: name, .. }
-        | Expression::GroupControlIs { group: name, .. } => collect_name(name, names),
+        | Expression::ArrayIndex { array: name, .. } => collect_name(name, names),
         _ => {}
     }
     for child in child_exprs(expression) {

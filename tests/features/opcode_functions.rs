@@ -499,17 +499,12 @@ fn modexp_group_index_and_sha256_builtins_reject_mistyped_operands() {
         (
             "pubkey owner",
             "let r = tx.assetGroups[owner].sumInputs;",
-            "assetGroups[].sum operand has type 'bytes', expected 'int'",
-        ),
-        (
-            "pubkey owner",
-            "let r = tx.assetGroups[owner].numInputs;",
-            "assetGroups[].numIO operand has type 'bytes', expected 'int'",
+            "tx.assetGroups[] operand has type 'bytes', expected 'int'",
         ),
         (
             "pubkey owner",
             "let r = tx.assetGroups[0].outputs[owner].amount;",
-            "assetGroups[].io operand has type 'bytes', expected 'int'",
+            "asset group inputs/outputs operand has type 'bytes', expected 'int'",
         ),
         (
             "int x",

@@ -119,7 +119,7 @@ contract TokenVault(
 }
 ```
 
-An Asset ID is a `(bytes32 txid, int gidx)` pair. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.find(txid, gidx)` returns a group with `sumInputs`, `sumOutputs`, `delta`, `controlIs(txid, gidx)`, and friends (see `examples/controlled_mint`).
+An Asset ID is a `(bytes32 txid, int gidx)` pair. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.find(txid, gidx)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(txid, gidx)`, and friends (see `examples/controlled_mint`).
 
 ### Arrays, structs, loops
 
@@ -321,6 +321,7 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `int` | CScriptNum integer |
 | `bool` | Boolean |
 | `asset` | Asset identifier |
+| `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
 | `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint`, `G2Point` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}` |
@@ -451,13 +452,13 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Intent messages.** In covenants, `tx.intent.field("type")` returns the encoded field bytes and asserts presence; `tx.intent.has("type")` returns presence without keeping the value. Paths are quoted literals with dot-separated lowercase keys or canonical decimal indexes, such as `"cosigners.0"`; queries, wildcards, leading-zero indexes, and indexes at or above 1048576 are rejected. Present false, zero, and empty strings still count as present. Integer fields use Script-number encoding: `bin2num(tx.intent.field("expire_at"))`. Require `tx.intent.field("type") == "register"` before relying on register-specific fields. Missing context, null, missing fields, and non-integer numbers are misses; `field` fails on a miss and `has` returns false. Both use the emulator's result-size and compute limits.
 
-**Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey`, and `tx.input.current.value | scriptPubKey | sequence | outpoint` for the input being spent.
+**Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey | witnessVersion`, and `tx.input.current.value | scriptPubKey | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash` for the input being spent. For native witness programs, `scriptPubKey` is the program and `witnessVersion` is its version (0-16).
 
-**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`. Groups: `tx.assetGroups.find(txid, gidx)`, `.has(txid, gidx)`, `.length`, and per group `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `metadataHash`, `assetId`, `isFresh`.
+**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`. Groups: `tx.assetGroups.find(txid, gidx)` (asserts presence) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(txid, gidx)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`.
 
 **Bytes.** `substr(data, offset, size)`, `cat(a, b)`, `bin2num(bytes)`, `num2bin(value, size)`, `reverseBytes(bytes)`, `size(bytes)`.
 
-**Types and casts.** Type errors are fatal. Equality needs matching types, except that `bytes20`, `bytes32`, `pubkey`, and `signature` widen implicitly to `bytes`, including in bindings, arguments, and `+` concatenation. `bytes20(x)`, `bytes32(x)`, `pubkey(x)`, and `signature(x)` narrow a `bytes` value; the sized casts verify the length at runtime with `OP_SIZE <n> OP_EQUALVERIFY`, while `pubkey` and `signature` add no opcodes because the VM validates keys and signatures when they are consumed. Use `bin2num` and `num2bin` to convert between `int` and `bytes`, and compare `bool` values with `true` or `false`. Byte builtins (`substr`, `cat`, `bin2num`, `reverseBytes`, `size`, `digest`, and the `checkSigFromStack` message) take bytes-like operands; sizes, offsets, indexes, packet types, hash types, and tapscript timelocks take `int`. A hash comparison's expected value matches the digest width: `bytes32` for `sha256` and `hash256`, `bytes20` for `hash160` and `ripemd160`, or unbounded `bytes`.
+**Types and casts.** Type errors are fatal. Equality needs matching types, except that `bytes20`, `bytes32`, `pubkey`, and `signature` widen implicitly to `bytes`, including in bindings, arguments, and `+` concatenation. `bytes20(x)`, `bytes32(x)`, `pubkey(x)`, and `signature(x)` narrow a `bytes` value; the sized casts verify the length at runtime with `OP_SIZE <n> OP_EQUALVERIFY`, while `pubkey` and `signature` add no opcodes because the VM validates keys and signatures when they are consumed. `int(0x...)` reads a hex literal big-endian and folds it to a decimal constant, so `int(0x0100)` is `256`; `int(flag)` and `bool(n)` emit `OP_0NOTEQUAL`, so the result is always `0` or `1`, even for a spender-supplied witness value. Casting a value to its own type, such as `int(42)` or `bytes20(hash)`, is a no-op. Use `bin2num` and `num2bin` to convert between `int` and `bytes`, and compare `bool` values with `true` or `false`. Byte builtins (`substr`, `cat`, `bin2num`, `reverseBytes`, `size`, `digest`, and the `checkSigFromStack` message) take bytes-like operands; sizes, offsets, indexes, packet types, hash types, and tapscript timelocks take `int`. A hash comparison's expected value matches the digest width: `bytes32` for `sha256` and `hash256`, `bytes20` for `hash160` and `ripemd160`, or unbounded `bytes`.
 
 **Packets.** `tx.packet(type)` and `tx.inputs[i].packet(type)` return the raw extension packet bytes and assert presence.
 
@@ -477,7 +478,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 {
   "formatVersion": 1,
   "contractName": "HTLC",
-  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, ...],
+  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, "..."],
   "structs": [],
   "functions": [
     {
@@ -495,7 +496,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
         }
       ]
     },
-    { "name": "unilateral", "leaves": [ ... ] }
+    { "name": "unilateral", "leaves": [ "..." ] }
   ],
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },

@@ -329,7 +329,7 @@ fn test_current_input_rejects_unknown_property() {
         contract V(pubkey owner) {
             function spend(signature sig) {
                 require(checkSig(sig, owner));
-                let x = tx.input.current.witnessVersion;
+                let x = tx.input.current.weight;
                 require(x >= 0);
             }
         }
@@ -364,4 +364,57 @@ fn test_current_input_requires_a_property() {
         error.contains("tx.input.current requires one of"),
         "{error}"
     );
+}
+
+#[test]
+fn witness_version_keeps_the_second_script_pubkey_result() {
+    for (expression, expected) in [
+        (
+            "tx.inputs[1].witnessVersion",
+            format!("1 {OP_INSPECTINPUTSCRIPTPUBKEY} OP_NIP"),
+        ),
+        (
+            "tx.outputs[2].witnessVersion",
+            format!("2 {OP_INSPECTOUTPUTSCRIPTPUBKEY} OP_NIP"),
+        ),
+        (
+            "tx.input.current.witnessVersion",
+            format!("OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTSCRIPTPUBKEY} OP_NIP"),
+        ),
+    ] {
+        let code = format!("contract V() {{ function spend() {{ require({expression} == 1); }} }}");
+        let output = compile(&code).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend").join(" ");
+        assert!(asm.contains(&expected), "{expression}: {asm}");
+    }
+}
+
+#[test]
+fn witness_version_is_an_int() {
+    let code = "contract V(bytes program) { function spend() { require(tx.outputs[0].witnessVersion == program); } }";
+    let error = compile(code)
+        .expect_err("a witness version is not bytes")
+        .to_string();
+    assert!(
+        error.contains("comparison '==' is not defined between 'int' and 'bytes'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn witness_version_is_rejected_in_tapscripts() {
+    for expression in [
+        "tx.input.current.witnessVersion",
+        "tx.inputs[0].witnessVersion",
+        "tx.outputs[0].witnessVersion",
+    ] {
+        let code = format!("contract V(pubkey owner) {{ function exit(signature sig) tapscript {{ require({expression} == 1); require(checkSig(sig, owner)); }} }}");
+        let error = compile(&code)
+            .expect_err("introspection must not compile into an L1 leaf")
+            .to_string();
+        assert!(
+            error.contains("unsupported compound expression in tapscript"),
+            "{expression}: {error}"
+        );
+    }
 }

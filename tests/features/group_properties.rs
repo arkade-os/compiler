@@ -490,29 +490,104 @@ fn test_group_access_as_constructor_argument_is_parsed() {
     assert!(!error.contains("is undefined"), "{error}");
 }
 
-/// tx.assetGroups[k].delta/.hasControl/.metadataHash/.assetId/.isFresh with an
-/// inline index used to fall through to "binding '...' is undefined" instead
-/// of a message pointing at the working bound-variable form.
 #[test]
-fn test_indexed_group_property_names_the_workaround() {
-    for property in ["delta", "hasControl", "metadataHash", "assetId", "isFresh"] {
-        let code = format!(
-            r#"
-            contract V(pubkey owner) {{
-                function spend(signature sig) {{
-                    require(checkSig(sig, owner));
-                    let x = tx.assetGroups[0].{property};
-                    require(x == x);
-                }}
-            }}
-        "#
-        );
-        let error = compile(&code)
-            .expect_err(&format!("indexed {property} must be rejected"))
-            .to_string();
-        assert!(
-            error.contains("not supported with an inline index") && error.contains(property),
-            "{property}: {error}"
-        );
+fn inline_group_properties_emit_their_opcode() {
+    for (property, opcode) in [
+        ("numInputs", "OP_INSPECTASSETGROUPNUM"),
+        ("numOutputs", "OP_INSPECTASSETGROUPNUM"),
+        ("sumInputs", "OP_INSPECTASSETGROUPSUM"),
+        ("sumOutputs", "OP_INSPECTASSETGROUPSUM"),
+        (
+            "delta",
+            "OP_DUP OP_1 OP_INSPECTASSETGROUPSUM OP_SWAP OP_0 OP_INSPECTASSETGROUPSUM OP_SUB",
+        ),
+        ("hasControl", "OP_INSPECTASSETGROUPCTRL OP_NIP OP_NIP"),
+        ("controlAssetId", "OP_INSPECTASSETGROUPCTRL OP_VERIFY"),
+        ("metadataHash", "OP_INSPECTASSETGROUPMETADATAHASH"),
+        ("assetId", "OP_INSPECTASSETGROUPASSETID"),
+        (
+            "isFresh",
+            "OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL",
+        ),
+    ] {
+        for group in ["tx.assetGroups[0]", "tx.assetGroups.find(t, 0)"] {
+            let code = format!(
+                "contract V(bytes32 t) {{ function spend() {{ let x = {group}.{property}; require(x == x); }} }}"
+            );
+            let output = compile(&code).unwrap_or_else(|error| panic!("{code}: {error}"));
+            let asm = arkade_asm(&output, "spend");
+            assert!(asm.contains(opcode), "{group}.{property}: {asm}");
+        }
+    }
+}
+
+#[test]
+fn asset_groups_bind_pass_index_and_nest_like_other_values() {
+    let code = r#"
+        struct Watch { AssetGroup group; int floor; }
+        contract V(bytes32 t) {
+            function spend(AssetGroup g, AssetGroup[2] gs, int i, Watch w) {
+                require(g.outputs[0].amount >= 0);
+                require(gs[i].delta >= 0);
+                require(gs[i].controlIs(t, 0));
+                AssetGroup found = tx.assetGroups.find(t, 0);
+                require(found.outputs[0].type >= 0);
+                require(tx.assetGroups.find(t, 1).isFresh);
+                require(tx.assetGroups[i].controlIs(t, 2));
+                require(w.group.sumOutputs >= w.floor);
+                for (k, h) in gs {
+                    require(h.sumOutputs >= h.sumInputs);
+                }
+            }
+        }
+    "#;
+    let output = compile(code).unwrap_or_else(|error| panic!("{error}"));
+    let covenant = crate::common::group(&output, "spend")
+        .arkade
+        .as_ref()
+        .unwrap();
+    let types: Vec<_> = covenant
+        .inputs
+        .iter()
+        .map(|input| input.param_type.as_str())
+        .collect();
+    assert_eq!(types, ["AssetGroup", "AssetGroup[2]", "int", "Watch"]);
+    let asm = arkade_asm(&output, "spend");
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUPCTRL").count(), 2, "{asm}");
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUP ").count(), 2, "{asm}");
+    assert_eq!(
+        asm.matches("OP_FINDASSETGROUPBYASSETID").count(),
+        2,
+        "{asm}"
+    );
+}
+
+#[test]
+fn asset_groups_are_typed() {
+    for (statement, expected) in [
+        (
+            "AssetGroup g = 0; require(g.delta == 0);",
+            "binding 'g' declares type 'AssetGroup' but initializer has type 'int'",
+        ),
+        (
+            "int k = tx.assetGroups.find(t, 0); require(k == 0);",
+            "binding 'k' declares type 'int' but initializer has type 'AssetGroup'",
+        ),
+        (
+            "AssetGroup g = tx.assetGroups[0]; require(g + 1 > 0);",
+            "arithmetic '+' operand has type 'AssetGroup', expected 'int'",
+        ),
+        (
+            "AssetGroup g = tx.assetGroups[0]; require(g > g);",
+            "comparison '>' is not defined between 'AssetGroup' and 'AssetGroup'",
+        ),
+        (
+            "AssetGroup g = tx.assetGroups[0]; require(tx.assetGroups[g].delta == 0);",
+            "tx.assetGroups[] operand has type 'AssetGroup', expected 'int'",
+        ),
+    ] {
+        let code = format!("contract V(bytes32 t) {{ function spend() {{ {statement} }} }}");
+        let error = compile(&code).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
     }
 }

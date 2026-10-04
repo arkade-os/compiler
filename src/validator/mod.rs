@@ -743,7 +743,6 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         | Expression::CurrentInput(_)
         | Expression::TxIntrospection { .. }
         | Expression::IntentInspect { .. }
-        | Expression::GroupProperty { .. }
         | Expression::AssetGroupsLength => vec![],
 
         Expression::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
@@ -782,8 +781,8 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::AssetCount { index, .. }
         | Expression::InputIntrospection { index, .. }
         | Expression::OutputIntrospection { index, .. }
-        | Expression::GroupSum { index, .. }
-        | Expression::GroupNumIO { index, .. } => vec![index],
+        | Expression::AssetGroupAt { index }
+        | Expression::GroupProperty { group: index, .. } => vec![index],
         Expression::AssetAt {
             io_index,
             asset_index,
@@ -801,15 +800,13 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
             asset_gidx,
         } => vec![asset_txid, asset_gidx],
         Expression::GroupControlIs {
+            group,
             asset_txid,
             asset_gidx,
-            ..
-        } => vec![asset_txid, asset_gidx],
+        } => vec![group, asset_txid, asset_gidx],
         Expression::GroupIOAccess {
-            group_index,
-            io_index,
-            ..
-        } => vec![group_index, io_index],
+            group, io_index, ..
+        } => vec![group, io_index],
         Expression::Negate { value } | Expression::Not { value } => vec![value],
         Expression::Tunnel {
             output_index,
@@ -1607,9 +1604,18 @@ fn validate_binding_expression(
         }
         Expression::Cast { target, data } => {
             let actual = resolved_expression_type(data, scopes);
-            if actual != ArkType::Bytes && actual != ArkType::Unknown {
+            let (source, hint) = match target.as_str() {
+                "int" => (
+                    ArkType::Bool,
+                    "only bool converts to int; use int(0x..) for a hex constant or bin2num for bytes",
+                ),
+                "bool" => (ArkType::Int, "only int converts to bool"),
+                _ => (ArkType::Bytes, "only bytes can be cast"),
+            };
+            // Same-type casts are no-ops, elided by the concat rewrite pass.
+            if actual != source && actual != ArkType::parse(target) && actual != ArkType::Unknown {
                 issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': cannot cast '{}' to '{target}'; only bytes can be cast",
+                    "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
                     actual.as_str()
                 )));
             }
@@ -1717,18 +1723,6 @@ fn validate_binding_expression(
             if name.contains('.') && find_binding(scopes, root).is_some() {
                 validate_named_binding(name, None, "field", function_name, scopes, issues);
             }
-        }
-        Expression::GroupProperty { group, .. } | Expression::GroupControlIs { group, .. }
-            if group.parse::<usize>().is_err() =>
-        {
-            validate_named_binding(
-                group,
-                Some(ArkType::Int),
-                "asset group",
-                function_name,
-                scopes,
-                issues,
-            );
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);

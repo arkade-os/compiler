@@ -124,7 +124,9 @@ fn rule_term(rule: &Rule) -> Option<String> {
         }
         Rule::input_introspection_property => "an input property",
         Rule::output_introspection_property => "an output property",
-        Rule::asset_group_property => "an asset group property",
+        Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
+            "an asset group property"
+        }
         Rule::asset_at_property => "an asset property",
         Rule::this_property => "a contract property",
         Rule::identifier => "a name",
@@ -348,7 +350,18 @@ fn parse_function(
         && (expr::reserved_function_signature(&name).is_some()
             || matches!(
                 name.as_str(),
-                "require" | "return" | "negate" | "neg64" | "le64ToScriptNum" | "le32ToLe64"
+                "require"
+                    | "return"
+                    | "negate"
+                    | "neg64"
+                    | "le64ToScriptNum"
+                    | "le32ToLe64"
+                    | "pubkey"
+                    | "signature"
+                    | "bytes20"
+                    | "bytes32"
+                    | "int"
+                    | "bool"
             ))
     {
         return Err(format!("function name '{name}' is reserved"));

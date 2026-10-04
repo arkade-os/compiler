@@ -165,29 +165,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetGroupsLength => {
             asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
         }
-        Expression::GroupSum { index, source } => {
-            emit_expression_asm(index, asm);
-            match source {
-                GroupSumSource::Inputs => asm.push(OP_0.to_string()),
-                GroupSumSource::Outputs => asm.push(OP_1.to_string()),
-            }
-            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-        }
-        Expression::GroupNumIO { index, source } => {
-            emit_expression_asm(index, asm);
-            match source {
-                GroupIOSource::Inputs => asm.push(OP_0.to_string()),
-                GroupIOSource::Outputs => asm.push(OP_1.to_string()),
-            }
-            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
-        }
+        Expression::AssetGroupAt { index } => emit_expression_asm(index, asm),
         Expression::GroupIOAccess {
-            group_index,
+            group,
             io_index,
             source,
             property,
         } => {
-            emit_expression_asm(group_index, asm);
+            emit_expression_asm(group, asm);
             emit_expression_asm(io_index, asm);
             match source {
                 GroupIOSource::Inputs => asm.push(OP_0.to_string()),
@@ -270,13 +255,12 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         Expression::Cast { target, data } => {
             emit_expression_asm(data, asm);
-            let size = match target.as_str() {
-                "bytes20" => Some("20"),
-                "bytes32" => Some("32"),
-                _ => None,
-            };
-            if let Some(size) = size {
-                asm.extend([OP_SIZE, size, OP_EQUALVERIFY].map(String::from));
+            match target.as_str() {
+                "bytes20" => asm.extend([OP_SIZE, "20", OP_EQUALVERIFY].map(String::from)),
+                "bytes32" => asm.extend([OP_SIZE, "32", OP_EQUALVERIFY].map(String::from)),
+                // Witness bools are spender-supplied scriptnums; normalize to 0/1.
+                "int" | "bool" => asm.push(OP_0NOTEQUAL.to_string()),
+                _ => {}
             }
         }
         // Packet introspection
@@ -302,6 +286,10 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
         Some("scriptPubKey") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
             emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
+        }
+        Some("witnessVersion") => {
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            emit_witness_version_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
         }
         Some("value") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());

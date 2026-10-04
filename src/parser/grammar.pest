@@ -304,7 +304,7 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "sequence" | "outpoint" |
+    "value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash"
 }
 
@@ -314,16 +314,19 @@ output_introspection = {
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" }
+output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
 // Group control predicates compare explicit AssetId components:
 //   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
 //   group.hasControl            → Bool (handled as a plain group property)
+// Inline `tx.assetGroups...controlIs(...)` is an asset_group_member instead.
 group_control_is = {
-    identifier ~ "." ~ "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
+    group_binding ~ "." ~ asset_group_control_is
 }
+group_binding = { !("tx" ~ ".") ~ identifier ~ (!("." ~ "controlIs" ~ "(") ~ binding_suffix)* }
+asset_group_control_is = { "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" }
 
 // Field and index suffixes may alternate for arrays of structs.
 binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
@@ -378,13 +381,11 @@ tx_property_body = {
     // Same property set as tx.inputs[i].property (this *is* tx.inputs[i] for
     // the current i); a property is required, there is no bare form.
     ("input" ~ "." ~ "current" ~ "." ~ input_introspection_property) |
-    // Asset groups access: find, has, length, or indexed property access
+    // Asset groups access: has, length, or an AssetGroup with an optional member
     ("assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
-        array_access ~ "." ~ ("inputs" | "outputs") ~ array_access ~ ("." ~ ("amount" | "type"))? |
-        array_access ~ ("." ~ asset_group_property)?
+        asset_group_ref ~ asset_group_member?
     )?) |
     // Standard property access
     (tx_property_part ~ tx_property_suffix*)
@@ -395,9 +396,25 @@ tx_property_suffix = {
     array_access | ("." ~ tx_property_part)
 }
 
+// An AssetGroup value: tx.assetGroups.find(txid, gidx) or tx.assetGroups[k]
+asset_group_ref = {
+    "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" | array_access
+}
+
+// Member access on an AssetGroup value
+asset_group_member = {
+    "." ~ (
+        asset_group_control_is |
+        asset_group_io_source ~ array_access ~ ("." ~ asset_group_io_property)? |
+        asset_group_property
+    )
+}
+asset_group_io_source = { "inputs" | "outputs" }
+asset_group_io_property = { "amount" | "type" }
+
 // Asset group properties
 asset_group_property = {
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "controlAssetId" | "metadataHash" | "assetId" | "isFresh"
 }
 
 // This property access
@@ -503,7 +520,8 @@ check_sig_from_stack_verify = {
 
 // Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
 // pubkey/signature are semantic because the VM validates them when consumed.
-cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32") ~ !(ASCII_ALPHANUMERIC | "_") }
+// int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
+cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
 cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 
 // ─── Packet Introspection ──────────────────────────────────────────────

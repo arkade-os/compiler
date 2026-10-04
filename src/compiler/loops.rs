@@ -194,23 +194,6 @@ fn substitute_path(
     )
 }
 
-/// Substitute a named group index; loop values resolve only over named arrays.
-fn substitute_group(
-    group: &str,
-    index_var: &str,
-    value_var: &str,
-    k: usize,
-    items: &Expression,
-) -> String {
-    match items {
-        _ if group == index_var => k.to_string(),
-        Expression::Variable(array) | Expression::Property(array) if group == value_var => {
-            format!("{array}[{k}]")
-        }
-        _ => group.to_string(),
-    }
-}
-
 pub(crate) fn substitute_expression(
     expr: &Expression,
     index_var: &str,
@@ -271,10 +254,6 @@ pub(crate) fn substitute_expression(
                 },
             }
         }
-        Expression::GroupProperty { group, property } => Expression::GroupProperty {
-            group: substitute_group(group, index_var, value_var, k, items),
-            property: property.clone(),
-        },
         // Recursively substitute in binary operations
         Expression::BinaryOp { left, op, right } => Expression::BinaryOp {
             left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
@@ -305,10 +284,6 @@ pub(crate) fn substitute_expression(
             source: source.clone(),
             index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
         },
-        Expression::GroupSum { source, index } => Expression::GroupSum {
-            source: source.clone(),
-            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
-        },
         Expression::AssetAt {
             source,
             property,
@@ -326,29 +301,6 @@ pub(crate) fn substitute_expression(
                 value_var,
                 k,
                 items,
-            )),
-        },
-        Expression::GroupNumIO { source, index } => Expression::GroupNumIO {
-            source: source.clone(),
-            index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
-        },
-        Expression::GroupIOAccess {
-            source,
-            property,
-            group_index,
-            io_index,
-        } => Expression::GroupIOAccess {
-            source: source.clone(),
-            property: property.clone(),
-            group_index: Box::new(substitute_expression(
-                group_index,
-                index_var,
-                value_var,
-                k,
-                items,
-            )),
-            io_index: Box::new(substitute_expression(
-                io_index, index_var, value_var, k, items,
             )),
         },
         Expression::Concat { left, right } => Expression::Concat {
@@ -432,19 +384,6 @@ pub(crate) fn substitute_expression(
             asset_txid,
             asset_gidx,
         } => Expression::GroupHas {
-            asset_txid: Box::new(substitute_expression(
-                asset_txid, index_var, value_var, k, items,
-            )),
-            asset_gidx: Box::new(substitute_expression(
-                asset_gidx, index_var, value_var, k, items,
-            )),
-        },
-        Expression::GroupControlIs {
-            group,
-            asset_txid,
-            asset_gidx,
-        } => Expression::GroupControlIs {
-            group: substitute_group(group, index_var, value_var, k, items),
             asset_txid: Box::new(substitute_expression(
                 asset_txid, index_var, value_var, k, items,
             )),

@@ -365,6 +365,89 @@ contract Casts(pubkey owner, int gidx) {
 }
 
 #[test]
+fn int_casts_fold_hex_literals_and_convert_bools() {
+    let output = compile_ok(
+        r#"
+contract HexCasts(pubkey owner) {
+    const int MAX = int(0x7fffffffffffffff);
+    function spend(signature sig, int n, bool flag) {
+        require(n <= MAX && n >= int(0x0100) && n != int(0x00));
+        require(n * 2 < int(0xffffffffffffffffff));
+        require(int(flag) == 1);
+        require(bool(n) == flag);
+        require(checkSig(sig, owner));
+    }
+}"#,
+    );
+    let asm = crate::common::arkade_asm(&output, "spend");
+    for expected in [
+        "9223372036854775807 OP_LESSTHANOREQUAL",
+        "4722366482869645213695 OP_LESSTHAN",
+        "256 OP_GREATERTHANOREQUAL",
+        "0 OP_EQUAL OP_NOT",
+    ] {
+        assert!(asm.contains(expected), "{expected}: {asm}");
+    }
+    assert_eq!(
+        asm.matches("OP_0NOTEQUAL").count(),
+        2,
+        "int(bool) and bool(int) normalize: {asm}"
+    );
+    assert!(!asm.contains("0x"), "hex casts fold away: {asm}");
+
+    for (source, message) in [
+        ("require(int(data) == n);", "cannot cast 'bytes' to 'int'"),
+        ("require(int(\"ab\") == n);", "cannot cast 'bytes' to 'int'"),
+        (
+            "require(bool(data) == flag);",
+            "cannot cast 'bytes' to 'bool'",
+        ),
+    ] {
+        let error = compile_error(&format!(
+            "contract E() {{ function spend(bytes data, int n, bool flag) {{ {source} require(data == data && n == n && flag == flag); }} }}"
+        ));
+        assert!(error.contains(message), "{source}: {error}");
+    }
+    let error = compile_error(
+        "contract F() { function spend(int n) { require(n == n); } private function int(int a) int { return a; } }",
+    );
+    assert!(error.contains("function name 'int' is reserved"), "{error}");
+    let error = compile_error(
+        "contract G() { const int TOO_BIG = int(0x8000000000000000); function spend(int n) { require(n < TOO_BIG); } }",
+    );
+    assert!(
+        error.contains("expected a signed 64-bit integer"),
+        "{error}"
+    );
+}
+
+#[test]
+fn same_type_casts_are_no_ops() {
+    let output = compile_ok(
+        r#"
+contract SameType(pubkey owner) {
+    function spend(signature sig, int n, bool flag, bytes20 h) {
+        let x = int(42);
+        require(int(n) + x == 43);
+        require(bool(flag) && bool(2));
+        require(bytes20(h) == h);
+        require(checkSig(sig, owner));
+    }
+}"#,
+    );
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert_eq!(
+        asm.matches("OP_0NOTEQUAL").count(),
+        1,
+        "only bool(2) converts: {asm}"
+    );
+    assert!(
+        !asm.contains("OP_SIZE"),
+        "bytes20(bytes20) is unchecked: {asm}"
+    );
+}
+
+#[test]
 fn pubkeys_and_signatures_widen_to_bytes_in_bindings_and_arguments() {
     compile_ok(
         "contract Widen(pubkey owner) { function spend(signature sig, bytes data) { bytes key = owner; require(same(sig, data) || key == data || owner + sig == data); require(checkSig(sig, owner)); } private function same(bytes a, bytes b) bool { return a == b; } }",

@@ -8,7 +8,7 @@ const BEACON_LOOP_CODE: &str = r#"
 contract PriceBeacon(
   bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
   pubkey oraclePk,
-  int[3] watchedGroups
+  AssetGroup[3] watchedGroups
 ) {
   function passthrough() {
     require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, watchedGroups), "broken");

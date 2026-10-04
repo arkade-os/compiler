@@ -192,13 +192,20 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
 
     reject_malformed_asset_call(&text)?;
 
-    // Handle tx.assetGroups.find(txid, gidx)
-    if text.starts_with("tx.assetGroups.find(") && text.ends_with(')') {
-        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
-        return Ok(Expression::GroupFind {
-            asset_txid: Box::new(asset_txid),
-            asset_gidx: Box::new(asset_gidx),
-        });
+    // tx.assetGroups.find(txid, gidx) or tx.assetGroups[k], with an optional member
+    if let Some(body) = pair
+        .clone()
+        .into_inner()
+        .next()
+        .filter(|body| body.as_rule() == Rule::tx_property_body)
+    {
+        let mut parts = body.into_inner();
+        if let Some(group) = parts
+            .next()
+            .filter(|p| p.as_rule() == Rule::asset_group_ref)
+        {
+            return parse_asset_group_access(group, parts.next());
+        }
     }
 
     // Handle tx.assetGroups.has(txid, gidx)
@@ -215,94 +222,65 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
         return Ok(Expression::AssetGroupsLength);
     }
 
-    // Handle tx.assetGroups[idx].sumInputs or tx.assetGroups[idx].sumOutputs
-    if text.starts_with("tx.assetGroups[") {
-        let mut indices = pair
-            .clone()
-            .into_inner()
-            .flatten()
-            .filter(|p| p.as_rule() == Rule::array_access);
-        if let Some(group) = indices.next() {
-            let after_group =
-                without_trivia(&pair.as_str()[group.as_span().end() - pair.as_span().start()..]);
-            let index = parse_array_access_index(group)?;
-            let io_source = if after_group.starts_with(".inputs[") {
-                Some(GroupIOSource::Inputs)
-            } else if after_group.starts_with(".outputs[") {
-                Some(GroupIOSource::Outputs)
-            } else {
-                None
-            };
-            if text.ends_with(".sumInputs") {
-                return Ok(Expression::GroupSum {
-                    index: Box::new(index),
-                    source: GroupSumSource::Inputs,
-                });
-            } else if text.ends_with(".sumOutputs") {
-                return Ok(Expression::GroupSum {
-                    index: Box::new(index),
-                    source: GroupSumSource::Outputs,
-                });
-            } else if text.ends_with(".numInputs") {
-                return Ok(Expression::GroupNumIO {
-                    index: Box::new(index),
-                    source: GroupIOSource::Inputs,
-                });
-            } else if text.ends_with(".numOutputs") {
-                return Ok(Expression::GroupNumIO {
-                    index: Box::new(index),
-                    source: GroupIOSource::Outputs,
-                });
-            } else if let (Some(source), Some(io)) = (io_source, indices.next()) {
-                // The grammar ends the access with `]`, `amount` or `type`.
-                let property = ["amount", "type"]
-                    .into_iter()
-                    .find(|property| text.ends_with(&format!(".{property}")))
-                    .map(str::to_string);
-                return Ok(Expression::GroupIOAccess {
-                    group_index: Box::new(index),
-                    io_index: Box::new(parse_array_access_index(io)?),
-                    source,
-                    property,
-                });
-            } else if let Some(property) = pair
-                .clone()
-                .into_inner()
-                .flatten()
-                .find(|p| p.as_rule() == Rule::asset_group_property)
-                .map(|p| p.as_str())
-                .filter(|property| {
-                    matches!(
-                        *property,
-                        "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
-                    )
-                })
-            {
-                return Err(format!(
-                    "tx.assetGroups[k].{property} is not supported with an inline index; \
-                     bind the index first: let g = k; g.{property}"
-                ));
-            }
-        }
-    }
-
     // Handle tx.input.current.<property> — same property set as
     // tx.inputs[i].<property>, since this *is* tx.inputs[i] for the current i.
     if text.starts_with("tx.input.current") {
         return match text.strip_prefix("tx.input.current.") {
             Some(
-                p @ ("value" | "scriptPubKey" | "sequence" | "outpoint" | "arkadeScriptHash"
-                | "arkadeWitnessHash"),
+                p @ ("value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint"
+                | "arkadeScriptHash" | "arkadeWitnessHash"),
             ) => Ok(Expression::CurrentInput(Some(p.to_string()))),
             _ => Err(format!(
-                "tx.input.current requires one of: value, scriptPubKey, sequence, outpoint, \
-                 arkadeScriptHash, arkadeWitnessHash (got '{text}')"
+                "tx.input.current requires one of: value, scriptPubKey, witnessVersion, sequence, \
+                 outpoint, arkadeScriptHash, arkadeWitnessHash (got '{text}')"
             )),
         };
     }
 
     // Default: treat as a property string
     Ok(Expression::Property(text))
+}
+
+/// An `AssetGroup` reference and the member accessed on it, if any.
+fn parse_asset_group_access(
+    group: Pair<Rule>,
+    member: Option<Pair<Rule>>,
+) -> Result<Expression, String> {
+    let mut operands = group.into_inner();
+    let first = operands.next().ok_or("Missing asset group")?;
+    let group = Box::new(if first.as_rule() == Rule::array_access {
+        Expression::AssetGroupAt {
+            index: Box::new(parse_array_access_index(first)?),
+        }
+    } else {
+        Expression::GroupFind {
+            asset_txid: Box::new(parse_asset_id_txid(first)?),
+            asset_gidx: Box::new(parse_asset_id_gidx(
+                operands.next().ok_or("Missing asset group gidx")?,
+            )?),
+        }
+    });
+    let Some(member) = member else {
+        return Ok(*group);
+    };
+    let mut parts = member.into_inner();
+    let part = parts.next().ok_or("Missing asset group member")?;
+    Ok(match part.as_rule() {
+        Rule::asset_group_control_is => parse_group_control_is(group, part)?,
+        Rule::asset_group_io_source => Expression::GroupIOAccess {
+            group,
+            source: crate::typechecker::group_io_source(part.as_str())
+                .ok_or("Invalid asset group io source")?,
+            io_index: Box::new(parse_array_access_index(
+                parts.next().ok_or("Missing asset group io index")?,
+            )?),
+            property: parts.next().map(|p| p.as_str().to_string()),
+        },
+        _ => Expression::GroupProperty {
+            group,
+            property: part.as_str().to_string(),
+        },
+    })
 }
 
 /// `text` without the whitespace and comments the grammar allows between terms.

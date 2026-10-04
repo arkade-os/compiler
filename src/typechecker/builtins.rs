@@ -20,9 +20,10 @@ pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("tx.inputs[].packet", &["int", "int"]),
     ("tx.inputs[]", &["int"]),
     ("tx.outputs[]", &["int"]),
-    ("assetGroups[].sum", &["int"]),
-    ("assetGroups[].numIO", &["int"]),
-    ("assetGroups[].io", &["int", "int"]),
+    ("tx.assetGroups[]", &["int"]),
+    ("asset group property", &["AssetGroup"]),
+    ("controlIs", &["AssetGroup"]),
+    ("asset group inputs/outputs", &["AssetGroup", "int"]),
     ("tx.inputs[].assets", &["int"]),
     ("tx.inputs[].assets[]", &["int", "int"]),
     ("tx.inputs[].assets.lookup", &["int"]),
@@ -52,13 +53,12 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
         }
         Expression::InputIntrospection { index, .. } => ("tx.inputs[]", vec![index]),
         Expression::OutputIntrospection { index, .. } => ("tx.outputs[]", vec![index]),
-        Expression::GroupSum { index, .. } => ("assetGroups[].sum", vec![index]),
-        Expression::GroupNumIO { index, .. } => ("assetGroups[].numIO", vec![index]),
+        Expression::AssetGroupAt { index } => ("tx.assetGroups[]", vec![index]),
+        Expression::GroupProperty { group, .. } => ("asset group property", vec![group]),
+        Expression::GroupControlIs { group, .. } => ("controlIs", vec![group]),
         Expression::GroupIOAccess {
-            group_index,
-            io_index,
-            ..
-        } => ("assetGroups[].io", vec![group_index, io_index]),
+            group, io_index, ..
+        } => ("asset group inputs/outputs", vec![group, io_index]),
         Expression::AssetCount { index, .. } => ("tx.inputs[].assets", vec![index]),
         Expression::AssetAt {
             io_index,
