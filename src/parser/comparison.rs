@@ -8,7 +8,7 @@ pub(crate) fn parse_time_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     let mut inner = pair.into_inner();
     Ok(Requirement::Comparison {
         left: Expression::Property("tx.time".to_string()),
-        op: ">=".to_string(),
+        op: crate::operators::BinaryOperator::Ge,
         right: parse_general_expression(inner.next().ok_or("Missing timelock")?)?,
     })
 }
@@ -60,7 +60,7 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
             builtin: crate::builtins::find("sha256").expect("sha256 is a builtin"),
             args: vec![preimage_expr],
         },
-        op: "==".to_string(),
+        op: crate::operators::BinaryOperator::Eq,
         right: rhs_expr,
     })
 }

@@ -1,4 +1,5 @@
 use crate::models::*;
+use crate::operators::{BinaryOperator, OperatorClass};
 use crate::typechecker::ArkType;
 
 // ─── Concat rewrite pass ────────────────────────────────────────────────────
@@ -263,7 +264,7 @@ impl ConcatPass {
             Expression::BinaryOp { left, op, right } => {
                 let (new_l, lt) = self.rewrite_expression_concat(*left, scope);
                 let (new_r, rt) = self.rewrite_expression_concat(*right, scope);
-                if op == "+" && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
+                if op == BinaryOperator::Add && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
                     for (side, t) in [("left", &lt), ("right", &rt)] {
                         if is_numeric(t) {
                             self.errors.push(format!(
@@ -283,11 +284,12 @@ impl ConcatPass {
                         ArkType::Bytes,
                     )
                 } else {
-                    let result_type = match op.as_str() {
-                        "+" | "-" | "*" | "/" | "<<" | ">>" => ArkType::Int,
-                        "&" | "|" | "^" => ArkType::Bytes,
-                        "==" | "!=" | ">=" | "<=" | ">" | "<" | "&&" | "||" => ArkType::Bool,
-                        _ => ArkType::Unknown,
+                    let result_type = match op.class() {
+                        OperatorClass::Arithmetic | OperatorClass::Shift => ArkType::Int,
+                        OperatorClass::Bytewise => ArkType::Bytes,
+                        OperatorClass::Ordering
+                        | OperatorClass::Equality
+                        | OperatorClass::Logical => ArkType::Bool,
                     };
                     (
                         Expression::BinaryOp {

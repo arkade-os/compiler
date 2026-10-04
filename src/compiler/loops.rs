@@ -117,7 +117,7 @@ pub(crate) fn substitute_requirement(
         }
         Requirement::Comparison { left, op, right } => Requirement::Comparison {
             left: substitute_expression(left, index_var, value_var, k, items),
-            op: op.clone(),
+            op: *op,
             right: substitute_expression(right, index_var, value_var, k, items),
         },
         Requirement::CheckSig { signature, pubkey } => Requirement::CheckSig {
@@ -257,7 +257,7 @@ pub(crate) fn substitute_expression(
         // Recursively substitute in binary operations
         Expression::BinaryOp { left, op, right } => Expression::BinaryOp {
             left: Box::new(substitute_expression(left, index_var, value_var, k, items)),
-            op: op.clone(),
+            op: *op,
             right: Box::new(substitute_expression(right, index_var, value_var, k, items)),
         },
         // Handle InputIntrospection - substitute index if it matches loop variable
@@ -270,13 +270,8 @@ pub(crate) fn substitute_expression(
             index: Box::new(substitute_expression(index, index_var, value_var, k, items)),
             property: property.clone(),
         },
-        Expression::Negate { value } => Expression::Negate {
-            value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
-        },
-        Expression::Not { value } => Expression::Not {
-            value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
-        },
-        Expression::Invert { value } => Expression::Invert {
+        Expression::Unary { op, value } => Expression::Unary {
+            op: *op,
             value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
         },
         Expression::Cast { target, data } => Expression::Cast {

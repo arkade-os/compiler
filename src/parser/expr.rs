@@ -21,9 +21,11 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
             let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
             while let Some(op) = inner.next() {
                 let right = parse_general_expression(inner.next().ok_or("Missing right operand")?)?;
+                let op = crate::operators::BinaryOperator::from_symbol(op.as_str())
+                    .ok_or_else(|| format!("unknown operator '{}'", op.as_str()))?;
                 result = Expression::BinaryOp {
                     left: Box::new(result),
-                    op: op.as_str().to_string(),
+                    op,
                     right: Box::new(right),
                 };
             }
@@ -147,17 +149,16 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let operand = inner.next_back().ok_or("Empty unary expression")?;
             let mut value = parse_primary_expr(operand)?;
             for operator in inner.rev() {
-                value = match operator.as_rule() {
-                    Rule::sub_op => Expression::Negate {
-                        value: Box::new(value),
-                    },
-                    Rule::not_op => Expression::Not {
-                        value: Box::new(value),
-                    },
-                    Rule::invert_op => Expression::Invert {
-                        value: Box::new(value),
-                    },
+                use crate::operators::UnaryOperator;
+                let op = match operator.as_rule() {
+                    Rule::sub_op => UnaryOperator::Neg,
+                    Rule::not_op => UnaryOperator::Not,
+                    Rule::invert_op => UnaryOperator::Invert,
                     _ => return Err("Unexpected unary operator".to_string()),
+                };
+                value = Expression::Unary {
+                    op,
+                    value: Box::new(value),
                 };
             }
             Ok(value)
@@ -307,7 +308,7 @@ pub(crate) fn parse_complex_expression(
         Rule::general_expression => {
             let expression = parse_general_expression(pair)?;
             if let Expression::BinaryOp { left, op, right } = expression {
-                if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
+                if op.compares() {
                     return Ok(Requirement::Comparison {
                         left: *left,
                         op,

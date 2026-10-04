@@ -649,6 +649,7 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 mod tests {
     use super::parse;
     use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+    use crate::operators::UnaryOperator;
 
     #[test]
     fn parses_version_pragmas_without_enforcing_compatibility() {
@@ -713,7 +714,7 @@ mod tests {
             matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
         );
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "-"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "-"))
         );
         for size in ["", "0", "-1", "1 2", "N + 1"] {
             assert!(
@@ -777,7 +778,7 @@ mod tests {
         assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
         assert!(!contract.functions[3].is_private);
         assert!(
-            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op == "+"))
+            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op.symbol() == "+"))
         );
         assert!(matches!(
             &contract.functions[1].statements[1].statement,
@@ -799,21 +800,21 @@ mod tests {
         else {
             panic!("expected logical expression");
         };
-        assert_eq!(op, "||");
+        assert_eq!(op.symbol(), "||");
         assert!(
             matches!(left.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op == "==" && matches!(left.as_ref(), Expression::Not { .. }))
+            if op.symbol() == "==" && matches!(left.as_ref(), Expression::Unary { op: UnaryOperator::Not, .. }))
         );
         assert!(
             matches!(right.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "&&"))
+            if op.symbol() == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "&&"))
         );
         assert!(matches!(&contract.functions[0].statements[1].statement,
             Statement::Require(Requirement::Expression(Expression::BinaryOp { left, op, right }))
-            if op == "&&"
-                && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "||")
-                && matches!(right.as_ref(), Expression::Not { value }
-                    if matches!(value.as_ref(), Expression::BinaryOp { op, .. } if op == "<"))));
+            if op.symbol() == "&&"
+                && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "||")
+                && matches!(right.as_ref(), Expression::Unary { op: UnaryOperator::Not, value }
+                    if matches!(value.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "<"))));
     }
 
     #[test]
@@ -826,17 +827,25 @@ mod tests {
         else {
             panic!("comparison must be the outer expression");
         };
-        assert_eq!(op, "!=");
-        let Expression::Negate { value } = left.as_ref() else {
+        assert_eq!(op.symbol(), "!=");
+        let Expression::Unary {
+            op: UnaryOperator::Neg,
+            value,
+        } = left.as_ref()
+        else {
             panic!("minus must be the outer prefix");
         };
-        let Expression::Not { value } = value.as_ref() else {
+        let Expression::Unary {
+            op: UnaryOperator::Not,
+            value,
+        } = value.as_ref()
+        else {
             panic!("not must be the inner prefix");
         };
         assert!(matches!(value.as_ref(), Expression::Literal(value) if value == "true"));
         assert!(matches!(right.as_ref(), Expression::Literal(value) if value == "false"));
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression::Not { value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression::Unary { op: UnaryOperator::Not, value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
         );
     }
 
@@ -903,7 +912,7 @@ contract Demo() {
                 target: AssignmentTarget::ArrayIndex { array, index },
                 ..
             } if array == "state.values"
-                && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "+")
+                && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "+")
         ));
         assert!(matches!(
             &statements[2].statement,

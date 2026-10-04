@@ -2,6 +2,7 @@ use crate::models::{
     AssignmentTarget, Constant, Contract, Expression, KeyExpr, LocatedStatement, Requirement,
     Statement, TapItem,
 };
+use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
 
 /// Validate constant declarations and fold every reference to them into a literal.
@@ -177,15 +178,22 @@ fn validate_expression(
             Ok(kind(text))
         }
         Expression::Variable(name) | Expression::Property(name) => Ok(kind(&resolve(name)?)),
-        Expression::Negate { value } | Expression::Not { value } => {
-            let expected = if matches!(expression, Expression::Not { .. }) {
-                "bool"
-            } else {
-                if let Expression::Literal(text) = value.as_ref() {
-                    integer(&format!("-{text}"))?;
-                    return Ok("int");
+        Expression::Unary { op, value } => {
+            let expected = match op {
+                UnaryOperator::Invert => {
+                    return Err(format!(
+                        "operator '{}' is not supported in constant expressions",
+                        op.symbol()
+                    ))
                 }
-                "int"
+                UnaryOperator::Not => "bool",
+                UnaryOperator::Neg => {
+                    if let Expression::Literal(text) = value.as_ref() {
+                        integer(&format!("-{text}"))?;
+                        return Ok("int");
+                    }
+                    "int"
+                }
             };
             if validate_expression(value, resolve)? != expected {
                 return Err(if expected == "bool" {
@@ -199,20 +207,29 @@ fn validate_expression(
         Expression::BinaryOp { left, op, right } => {
             let left = validate_expression(left, resolve)?;
             let right = validate_expression(right, resolve)?;
-            let valid = match op.as_str() {
-                "&&" | "||" => left == "bool" && right == "bool",
-                "==" | "!=" => left == right,
-                _ => left == "int" && right == "int",
+            let valid = match op.class() {
+                OperatorClass::Logical => left == "bool" && right == "bool",
+                OperatorClass::Equality => left == right,
+                OperatorClass::Bytewise => {
+                    return Err(format!(
+                        "operator '{op}' is not supported in constant expressions"
+                    ))
+                }
+                OperatorClass::Arithmetic | OperatorClass::Shift | OperatorClass::Ordering => {
+                    left == "int" && right == "int"
+                }
             };
             if !valid {
-                return Err(match op.as_str() {
-                    "&&" | "||" => format!("operator '{op}' requires bool constants"),
-                    "==" | "!=" => format!("operator '{op}' requires constants of the same type"),
+                return Err(match op.class() {
+                    OperatorClass::Logical => format!("operator '{op}' requires bool constants"),
+                    OperatorClass::Equality => {
+                        format!("operator '{op}' requires constants of the same type")
+                    }
                     _ => "expected a signed 64-bit integer".to_string(),
                 });
             }
             Ok(
-                if matches!(op.as_str(), "+" | "-" | "*" | "/" | "<<" | ">>") {
+                if matches!(op.class(), OperatorClass::Arithmetic | OperatorClass::Shift) {
                     "int"
                 } else {
                     "bool"
@@ -234,7 +251,10 @@ fn evaluate(
             _ => Ok(text.clone()),
         },
         Expression::Variable(name) | Expression::Property(name) => resolve(name),
-        Expression::Negate { value } => {
+        Expression::Unary {
+            op: UnaryOperator::Neg,
+            value,
+        } => {
             if let Expression::Literal(text) = value.as_ref() {
                 return Ok(integer(&format!("-{text}"))?.to_string());
             }
@@ -244,7 +264,10 @@ fn evaluate(
                 .ok_or_else(overflow)?
                 .to_string())
         }
-        Expression::Not { value } => {
+        Expression::Unary {
+            op: UnaryOperator::Not,
+            value,
+        } => {
             let value = evaluate(value, resolve)?;
             match value.as_str() {
                 "true" => Ok("false".to_string()),
@@ -254,44 +277,48 @@ fn evaluate(
         }
         Expression::BinaryOp { left, op, right } => {
             let left = evaluate(left, resolve)?;
-            if matches!(op.as_str(), "&&" | "||") {
-                if (op == "&&" && left == "false") || (op == "||" && left == "true") {
+            if op.class() == OperatorClass::Logical {
+                if (*op == BinaryOperator::And && left == "false")
+                    || (*op == BinaryOperator::Or && left == "true")
+                {
                     return Ok(left);
                 }
                 return evaluate(right, resolve);
             }
             let right = evaluate(right, resolve)?;
-            if matches!(op.as_str(), "==" | "!=") {
+            if op.class() == OperatorClass::Equality {
                 if kind(&left) != kind(&right) {
                     return Err(format!(
                         "operator '{op}' requires constants of the same type"
                     ));
                 }
                 // Hex literals carry whole byte pairs in either case.
-                return Ok((left.eq_ignore_ascii_case(&right) == (op == "==")).to_string());
+                return Ok(
+                    (left.eq_ignore_ascii_case(&right) == (*op == BinaryOperator::Eq)).to_string(),
+                );
             }
             let (left, right) = (integer(&left)?, integer(&right)?);
-            let value = match op.as_str() {
-                "+" => left.checked_add(right),
-                "-" => left.checked_sub(right),
-                "*" => left.checked_mul(right),
-                "/" if right == 0 => {
+            let value = match op {
+                BinaryOperator::Add => left.checked_add(right),
+                BinaryOperator::Sub => left.checked_sub(right),
+                BinaryOperator::Mul => left.checked_mul(right),
+                BinaryOperator::Div if right == 0 => {
                     return Err("division by zero in constant expression".to_string())
                 }
-                "/" => left.checked_div(right),
-                "<<" | ">>" if right < 0 => {
+                BinaryOperator::Div => left.checked_div(right),
+                BinaryOperator::Shl | BinaryOperator::Shr if right < 0 => {
                     return Err("negative shift count in constant expression".to_string())
                 }
-                "<<" => u32::try_from(right)
+                BinaryOperator::Shl => u32::try_from(right)
                     .ok()
                     .and_then(|count| 2i64.checked_pow(count))
                     .and_then(|factor| left.checked_mul(factor)),
                 // Arithmetic shift rounds toward negative infinity, as OP_RSHIFT does.
-                ">>" => Some(left >> right.min(63)),
-                "<" => return Ok((left < right).to_string()),
-                "<=" => return Ok((left <= right).to_string()),
-                ">" => return Ok((left > right).to_string()),
-                ">=" => return Ok((left >= right).to_string()),
+                BinaryOperator::Shr => Some(left >> right.min(63)),
+                BinaryOperator::Lt => return Ok((left < right).to_string()),
+                BinaryOperator::Le => return Ok((left <= right).to_string()),
+                BinaryOperator::Gt => return Ok((left > right).to_string()),
+                BinaryOperator::Ge => return Ok((left >= right).to_string()),
                 _ => return Err(format!("unsupported constant operator '{op}'")),
             };
             Ok(value.ok_or_else(overflow)?.to_string())

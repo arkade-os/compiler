@@ -1,5 +1,6 @@
 use super::*;
 use crate::models::*;
+use crate::operators::{BinaryOperator, OperatorClass};
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
     match lit {
@@ -133,13 +134,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::OutputIntrospection { index, property } => {
             emit_output_introspection_asm(index, property, asm);
         }
-        Expression::BinaryOp { left, op, right } => {
-            if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
-                emit_comparison_asm(left, op, right, asm);
-            } else {
-                emit_binary_op_asm(left, op, right, asm);
-            }
-        }
+        Expression::BinaryOp { left, op, right } => emit_binary_op_asm(left, *op, right, asm),
         Expression::GroupFind {
             asset_txid,
             asset_gidx,
@@ -233,18 +228,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(right, asm);
             asm.push(OP_CAT.to_string());
         }
-        // Arithmetic
-        Expression::Negate { value } => {
+        Expression::Unary { op, value } => {
             emit_expression_asm(value, asm);
-            asm.push(OP_NEGATE.to_string());
-        }
-        Expression::Invert { value } => {
-            emit_expression_asm(value, asm);
-            asm.push(OP_INVERT.to_string());
-        }
-        Expression::Not { value } => {
-            emit_expression_asm(value, asm);
-            asm.push(OP_NOT.to_string());
+            asm.push(op.opcode().to_string());
         }
         Expression::CheckSigFromStackVerify {
             signature,
@@ -367,20 +353,20 @@ pub(crate) fn emit_contract_instance_asm(
 /// Emit assembly for arithmetic or a short-circuit logical operation.
 pub(crate) fn emit_binary_op_asm(
     left: &Expression,
-    op: &str,
+    op: BinaryOperator,
     right: &Expression,
     asm: &mut Vec<String>,
 ) {
     emit_expression_asm(left, asm);
-    if matches!(op, "&&" | "||") {
+    if op.class() == OperatorClass::Logical {
         asm.push(OP_IF.to_string());
-        if op == "&&" {
+        if op == BinaryOperator::And {
             emit_expression_asm(right, asm);
         } else {
             asm.push(OP_1.to_string());
         }
         asm.push(OP_ELSE.to_string());
-        if op == "||" {
+        if op == BinaryOperator::Or {
             emit_expression_asm(right, asm);
         } else {
             asm.push(OP_0.to_string());
@@ -389,17 +375,5 @@ pub(crate) fn emit_binary_op_asm(
         return;
     }
     emit_expression_asm(right, asm);
-
-    match op {
-        "+" => asm.push(OP_ADD.to_string()),
-        "-" => asm.push(OP_SUB.to_string()),
-        "*" => asm.push(OP_MUL.to_string()),
-        "/" => asm.push(OP_DIV.to_string()),
-        "&" => asm.push(OP_AND.to_string()),
-        "|" => asm.push(OP_OR.to_string()),
-        "^" => asm.push(OP_XOR.to_string()),
-        "<<" => asm.push(OP_LSHIFT.to_string()),
-        ">>" => asm.push(OP_RSHIFT.to_string()),
-        _ => asm.push(format!("OP_{}", op.to_uppercase())),
-    }
+    asm.extend(op.opcodes().iter().map(|opcode| opcode.to_string()));
 }

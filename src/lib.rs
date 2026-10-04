@@ -6,6 +6,7 @@ pub mod diagnostics;
 mod imports;
 pub mod models;
 pub mod opcodes;
+pub mod operators;
 mod parser;
 mod typechecker;
 mod validator;

@@ -44,7 +44,6 @@ mod loops;
 mod optimization;
 
 pub(crate) use asset::*;
-pub(crate) use comparison::*;
 pub(crate) use concat::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
@@ -1281,14 +1280,12 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 .composite_type(left)
                 .or_else(|| generator.composite_type(right))
             {
-                return generator.emit_composite_requirement(left, op, right, &ty);
+                return generator.emit_composite_requirement(left, *op, right, &ty);
             }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;
-            let mut raw = Vec::new();
-            emit_comparison_op(op, &mut raw);
-            for token in raw {
-                generator.lower_raw_opcode(&token)?;
+            for opcode in op.opcodes() {
+                generator.lower_raw_opcode(opcode)?;
             }
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1421,7 +1418,7 @@ mod symbolic_stack_tests {
                 array: "values".to_string(),
                 index: Box::new(Expression::BinaryOp {
                     left: Box::new(Expression::Variable("i".to_string())),
-                    op: "+".to_string(),
+                    op: crate::operators::BinaryOperator::Add,
                     right: Box::new(Expression::Literal("1".to_string())),
                 }),
             })
