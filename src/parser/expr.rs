@@ -4,22 +4,36 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
+/// Whether `rule` is one of the grammar's binary-operator precedence levels.
+pub(crate) fn is_operator_level(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::general_expression
+            | Rule::logical_or_expr
+            | Rule::logical_and_expr
+            | Rule::comparison_expr
+            | Rule::bit_or_expr
+            | Rule::bit_xor_expr
+            | Rule::bit_and_expr
+            | Rule::shift_expr
+            | Rule::additive_expr
+            | Rule::multiplicative_expr
+    )
+}
+
 // Parse general expression (with operator precedence)
 pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr => {
+        rule if is_operator_level(rule) => {
             let mut inner = pair.into_inner();
             let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
             while let Some(op) = inner.next() {
                 let right = parse_general_expression(inner.next().ok_or("Missing right operand")?)?;
+                let op = crate::operators::BinaryOperator::from_symbol(op.as_str())
+                    .ok_or_else(|| format!("unknown operator '{}'", op.as_str()))?;
                 result = Expression::BinaryOp {
                     left: Box::new(result),
-                    op: op.as_str().to_string(),
+                    op,
                     right: Box::new(right),
                 };
             }
@@ -143,24 +157,21 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let operand = inner.next_back().ok_or("Empty unary expression")?;
             let mut value = parse_primary_expr(operand)?;
             for operator in inner.rev() {
-                value = match operator.as_rule() {
-                    Rule::sub_op => Expression::Negate {
-                        value: Box::new(value),
-                    },
-                    Rule::not_op => Expression::Not {
-                        value: Box::new(value),
-                    },
+                use crate::operators::UnaryOperator;
+                let op = match operator.as_rule() {
+                    Rule::sub_op => UnaryOperator::Neg,
+                    Rule::not_op => UnaryOperator::Not,
+                    Rule::invert_op => UnaryOperator::Invert,
                     _ => return Err("Unexpected unary operator".to_string()),
+                };
+                value = Expression::Unary {
+                    op,
+                    value: Box::new(value),
                 };
             }
             Ok(value)
         }
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr => {
+        rule if is_operator_level(rule) => {
             // Parenthesized expression
             parse_general_expression(pair)
         }
@@ -296,7 +307,7 @@ pub(crate) fn parse_complex_expression(
         Rule::general_expression => {
             let expression = parse_general_expression(pair)?;
             if let Expression::BinaryOp { left, op, right } = expression {
-                if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
+                if op.compares() {
                     return Ok(Requirement::Comparison {
                         left: *left,
                         op,

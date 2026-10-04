@@ -970,3 +970,84 @@ fn builtin_arguments_are_general_expressions() {
         );
     }
 }
+
+#[test]
+fn bitwise_and_shift_operators_emit_their_opcodes_by_precedence() {
+    for (params, statement, expected) in [
+        (
+            "bytes f",
+            "require(f & 0x0f == 0x01);",
+            &["OP_AND", "OP_EQUAL"][..],
+        ),
+        (
+            "bytes a, bytes b, bytes c",
+            "require((a | b ^ c & a) == b);",
+            &["OP_AND", "OP_XOR", "OP_OR", "OP_EQUAL"],
+        ),
+        ("bytes a", "require(~a == a);", &["OP_INVERT", "OP_EQUAL"]),
+        (
+            "int n, int k",
+            "require(n + 1 << 2 > k >> 1);",
+            &["OP_ADD", "OP_LSHIFT", "OP_RSHIFT", "OP_GREATERTHAN"],
+        ),
+    ] {
+        let source = format!("contract Ops({params}) {{ function spend() {{ {statement} }} }}");
+        let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let mut rest = asm.iter();
+        assert!(
+            expected.iter().all(|op| rest.any(|token| token == op)),
+            "{statement}: expected {expected:?} in order in {asm:?}"
+        );
+    }
+}
+
+#[test]
+fn bitwise_and_shift_operators_check_operands() {
+    for (statement, expected) in [
+        (
+            "require((n & d) == d);",
+            "bytewise '&' operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "require(~n == d);",
+            "unary '~' operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "require((h ^ h20) == h);",
+            "bytewise '^' operands must have equal lengths, got 32 and 20 bytes",
+        ),
+        (
+            "require((h | 0x0f) == h);",
+            "bytewise '|' operands must have equal lengths, got 32 and 1 bytes",
+        ),
+        (
+            "require(d << 1 == d);",
+            "shift '<<' operand has type 'bytes', expected 'int'",
+        ),
+        ("require(n >> -1 == n);", "shift count must not be negative"),
+        (
+            "bytes32 r = ~d; require(r == h);",
+            "declares type 'bytes32' but initializer has type 'bytes'",
+        ),
+    ] {
+        let source = format!(
+            "contract Ops(bytes32 h, bytes20 h20, bytes d, int n) {{ function spend() {{ {statement} }} }}"
+        );
+        let error = compile(&source).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+#[test]
+fn bytewise_results_keep_a_known_operand_width() {
+    compile(
+        "contract Ops(bytes32 h, bytes20 h20, bytes d) { function spend() {
+            bytes32 mixed = d ^ h;
+            bytes20 inverted = ~h20;
+            require(mixed == h);
+            require(inverted == h20);
+        } }",
+    )
+    .expect("a fixed-width operand fixes the result width");
+}

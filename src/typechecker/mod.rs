@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use crate::models::{
     AssignmentTarget, Contract, Expression, Function, LocatedStatement, Requirement, Statement,
 };
+use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 
 pub(crate) mod builtins;
 
@@ -683,7 +684,7 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
         Requirement::Comparison { left, op, right } => {
             check_expression(left, scope, errors, fn_name);
             check_expression(right, scope, errors, fn_name);
-            check_comparison(left, op, right, scope, errors, fn_name);
+            check_comparison(left, *op, right, scope, errors, fn_name);
         }
     }
 }
@@ -708,10 +709,8 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         check_expression(child, scope, errors, fn_name);
     }
     match expr {
-        Expression::BinaryOp { left, op, right }
-            if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=") =>
-        {
-            check_comparison(left, op, right, scope, errors, fn_name);
+        Expression::BinaryOp { left, op, right } if op.compares() => {
+            check_comparison(left, *op, right, scope, errors, fn_name);
         }
         Expression::CheckSigExpr { signature, pubkey } => {
             check_signature_expression(signature, pubkey, "checkSig", scope, errors, fn_name);
@@ -758,7 +757,11 @@ fn check_array_index(
 
 pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
     let mut negative = false;
-    while let Expression::Negate { value } = expression {
+    while let Expression::Unary {
+        op: UnaryOperator::Neg,
+        value,
+    } = expression
+    {
         negative = !negative;
         expression = value;
     }
@@ -809,7 +812,7 @@ fn check_signature_expression(
 
 fn check_comparison(
     left: &Expression,
-    op: &str,
+    op: BinaryOperator,
     right: &Expression,
     scope: &Scope,
     errors: &mut Vec<TypeError>,
@@ -823,7 +826,7 @@ fn check_comparison(
     if matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
         || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..))
     {
-        if !matches!(op, "==" | "!=") || left_type != right_type {
+        if op.class() != OperatorClass::Equality || left_type != right_type {
             errors.push(TypeError::new(format!(
                 "fn {}: comparison '{}' is not defined between '{}' and '{}'",
                 fn_name,
@@ -835,13 +838,13 @@ fn check_comparison(
         return;
     }
 
-    let compatible = match op {
-        "==" | "!=" => {
+    let compatible = match op.class() {
+        OperatorClass::Equality => {
             left_type == right_type
                 || (is_bytes_like(&left_type) && right_type == ArkType::Bytes)
                 || (is_bytes_like(&right_type) && left_type == ArkType::Bytes)
         }
-        ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
+        OperatorClass::Ordering => is_numeric(&left_type) && is_numeric(&right_type),
         _ => true,
     };
 
@@ -1022,8 +1025,12 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::Concat { .. } => ArkType::Bytes,
 
         // Arithmetic
-        Expression::Negate { .. } => ArkType::Int,
-        Expression::Not { .. } | Expression::Tunnel { .. } => ArkType::Bool,
+        Expression::Unary {
+            op: UnaryOperator::Invert,
+            ..
+        } => bytes_of_width(static_byte_width(expr, scope)),
+        Expression::Unary { op, .. } => ArkType::parse(op.operand_type()),
+        Expression::Tunnel { .. } => ArkType::Bool,
 
         // Crypto expressions
         Expression::CheckSigExpr { .. }
@@ -1050,20 +1057,48 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         Expression::BinaryOp { left, op, right } => {
             let lt = infer_type(left, scope);
             let rt = infer_type(right, scope);
-            match op.as_str() {
-                "+" => {
-                    // bytes-like on either side → concatenation (result Bytes).
-                    if is_bytes_like(&lt) || is_bytes_like(&rt) {
-                        ArkType::Bytes
-                    } else {
-                        ArkType::Int
-                    }
+            match op.class() {
+                // bytes-like on either side → concatenation (result Bytes).
+                OperatorClass::Arithmetic
+                    if *op == BinaryOperator::Add && (is_bytes_like(&lt) || is_bytes_like(&rt)) =>
+                {
+                    ArkType::Bytes
                 }
-                "-" | "*" | "/" => ArkType::Int,
-                "==" | "!=" | ">=" | "<=" | ">" | "<" | "&&" | "||" => ArkType::Bool,
-                _ => ArkType::Unknown,
+                OperatorClass::Arithmetic | OperatorClass::Shift => ArkType::Int,
+                OperatorClass::Bytewise => bytes_of_width(static_byte_width(expr, scope)),
+                OperatorClass::Ordering | OperatorClass::Equality | OperatorClass::Logical => {
+                    ArkType::Bool
+                }
             }
         }
+    }
+}
+
+/// Byte length of `expr` when it is known at compile time.
+pub(crate) fn static_byte_width(expr: &Expression, scope: &Scope) -> Option<usize> {
+    match expr {
+        Expression::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
+        // Bytewise operands share one length, so either side's known width is the result's.
+        Expression::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
+            static_byte_width(left, scope).or_else(|| static_byte_width(right, scope))
+        }
+        Expression::Unary {
+            op: UnaryOperator::Invert,
+            value,
+        } => static_byte_width(value, scope),
+        _ => match infer_type(expr, scope) {
+            ArkType::Bytes20 => Some(20),
+            ArkType::Bytes32 => Some(32),
+            _ => None,
+        },
+    }
+}
+
+fn bytes_of_width(width: Option<usize>) -> ArkType {
+    match width {
+        Some(20) => ArkType::Bytes20,
+        Some(32) => ArkType::Bytes32,
+        _ => ArkType::Bytes,
     }
 }
 

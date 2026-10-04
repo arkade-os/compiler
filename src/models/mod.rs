@@ -425,7 +425,7 @@ pub enum Requirement {
     /// Comparison requirement
     Comparison {
         left: Expression,
-        op: String,
+        op: crate::operators::BinaryOperator,
         right: Expression,
     },
 }
@@ -658,7 +658,7 @@ pub enum Expression {
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
         left: Box<Expression>,
-        op: String,
+        op: crate::operators::BinaryOperator,
         right: Box<Expression>,
     },
     /// Asset group find: tx.assetGroups.find(txid, gidx) → the `AssetGroup` with
@@ -722,10 +722,11 @@ pub enum Expression {
         right: Box<Expression>,
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
-    /// Arithmetic negation: -value
-    Negate { value: Box<Expression> },
-    /// Boolean negation: !value
-    Not { value: Box<Expression> },
+    /// Prefix operator: -value, !value or ~value
+    Unary {
+        op: crate::operators::UnaryOperator,
+        value: Box<Expression>,
+    },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
     CheckSigFromStackVerify {
@@ -860,7 +861,7 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::GroupIOAccess {
             group, io_index, ..
         } => vec![group, io_index],
-        Expression::Negate { value } | Expression::Not { value } => vec![value],
+        Expression::Unary { value, .. } => vec![value],
         Expression::Tunnel {
             output_index,
             policy,

@@ -74,14 +74,9 @@ pub(crate) fn parse_tap_item(
 ) -> Result<crate::models::TapItem, String> {
     use crate::models::{HashFn, TapItem};
     match pair.as_rule() {
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr
-        | Rule::unary_expr
-        | Rule::primary_expr => {
+        rule if is_operator_level(rule)
+            || matches!(rule, Rule::unary_expr | Rule::primary_expr) =>
+        {
             let mut inner = pair.into_inner();
             let item = inner
                 .next()

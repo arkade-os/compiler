@@ -4,22 +4,23 @@ use crate::models::{
     FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
-    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
-    OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP, OP_ECADD, OP_ECMUL,
-    OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
-    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME,
-    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
-    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL,
-    OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PICK,
-    OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES, OP_ROLL, OP_SHA256,
-    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB,
-    OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_AND, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP,
+    OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL,
+    OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
+    OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
+    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTOUTPOINT,
+    OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
+    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_INVERT, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_LSHIFT,
+    OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_OR, OP_PICK,
+    OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES, OP_ROLL, OP_RSHIFT,
+    OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE,
+    OP_SUB, OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY, OP_XOR,
 };
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
@@ -43,7 +44,6 @@ mod loops;
 mod optimization;
 
 pub(crate) use asset::*;
-pub(crate) use comparison::*;
 pub(crate) use concat::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
@@ -387,6 +387,7 @@ impl Generator {
             | OP_SIGHASH
             | OP_BIN2NUM
             | OP_REVERSEBYTES
+            | OP_INVERT
             | OP_INSPECTINPUTVALUE
             | OP_INSPECTINPUTSEQUENCE
             | OP_INSPECTINPUTARKADESCRIPTHASH
@@ -397,6 +398,11 @@ impl Generator {
             | OP_INSPECTASSETGROUPMETADATAHASH => self.apply(opcode, 1, 1),
             OP_ADD
             | OP_SUB
+            | OP_AND
+            | OP_OR
+            | OP_XOR
+            | OP_LSHIFT
+            | OP_RSHIFT
             | OP_MUL
             | OP_DIV
             | OP_EQUAL
@@ -1274,14 +1280,12 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 .composite_type(left)
                 .or_else(|| generator.composite_type(right))
             {
-                return generator.emit_composite_requirement(left, op, right, &ty);
+                return generator.emit_composite_requirement(left, *op, right, &ty);
             }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;
-            let mut raw = Vec::new();
-            emit_comparison_op(op, &mut raw);
-            for token in raw {
-                generator.lower_raw_opcode(&token)?;
+            for opcode in op.opcodes() {
+                generator.lower_raw_opcode(opcode)?;
             }
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1414,7 +1418,7 @@ mod symbolic_stack_tests {
                 array: "values".to_string(),
                 index: Box::new(Expression::BinaryOp {
                     left: Box::new(Expression::Variable("i".to_string())),
-                    op: "+".to_string(),
+                    op: crate::operators::BinaryOperator::Add,
                     right: Box::new(Expression::Literal("1".to_string())),
                 }),
             })

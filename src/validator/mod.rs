@@ -23,6 +23,7 @@ use crate::models::{
     AssignmentTarget, Contract, ContractJson, Expression, KeyExpr, LocatedStatement, Requirement,
     Statement, TapItem,
 };
+use crate::operators::{BinaryOperator, OperatorClass};
 use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
@@ -807,7 +808,7 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::GroupIOAccess {
             group, io_index, ..
         } => vec![group, io_index],
-        Expression::Negate { value } | Expression::Not { value } => vec![value],
+        Expression::Unary { value, .. } => vec![value],
         Expression::Tunnel {
             output_index,
             policy,
@@ -1424,7 +1425,7 @@ fn validate_binding_requirement(
             let composite = matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
                 || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..));
             if composite {
-                if !matches!(op.as_str(), "==" | "!=") {
+                if op.class() != OperatorClass::Equality {
                     issues.push(ValidationIssue::error(format!(
                         "function '{}': '{}' is not defined for composite values",
                         function_name, op
@@ -1513,17 +1514,44 @@ fn validate_binding_expression(
     let registered_builtin = crate::typechecker::builtins::operands(expression);
 
     match expression {
+        Expression::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
+            let scope = flattened_types(scopes);
+            for operand in [left, right] {
+                let actual = resolved_expression_type(operand, scopes);
+                if actual != ArkType::Unknown && !binding_types_compatible(&ArkType::Bytes, &actual)
+                {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': bytewise '{op}' operand has type '{}', expected 'bytes'",
+                        actual.as_str()
+                    )));
+                }
+            }
+            // The VM aborts on operands of different lengths.
+            let widths =
+                [left, right].map(|operand| crate::typechecker::static_byte_width(operand, &scope));
+            if let [Some(left), Some(right)] = widths {
+                if left != right {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': bytewise '{op}' operands must have equal lengths, got {left} and {right} bytes"
+                    )));
+                }
+            }
+        }
         Expression::BinaryOp { left, op, right }
-            if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
+            if matches!(
+                op.class(),
+                OperatorClass::Logical | OperatorClass::Arithmetic | OperatorClass::Shift
+            ) =>
         {
-            let (kind, expected) = if matches!(op.as_str(), "&&" | "||") {
-                ("logical", ArkType::Bool)
-            } else {
-                ("arithmetic", ArkType::Int)
+            let (kind, expected) = match op.class() {
+                OperatorClass::Logical => ("logical", ArkType::Bool),
+                OperatorClass::Shift => ("shift", ArkType::Int),
+                _ => ("arithmetic", ArkType::Int),
             };
             let types = [left, right].map(|operand| resolved_expression_type(operand, scopes));
             // Bytes-like `+` is concatenation, checked when it is rewritten to OP_CAT.
-            let concat = op == "+" && types.iter().any(crate::typechecker::is_bytes_like);
+            let concat =
+                *op == BinaryOperator::Add && types.iter().any(crate::typechecker::is_bytes_like);
             for actual in types.iter().filter(|_| !concat) {
                 if *actual != expected && *actual != ArkType::Unknown {
                     issues.push(ValidationIssue::error(format!(
@@ -1535,20 +1563,25 @@ fn validate_binding_expression(
                     )));
                 }
             }
-            if op == "/" && literal_index(right).is_some_and(|(_, value)| value == "0") {
+            if *op == BinaryOperator::Div
+                && literal_index(right).is_some_and(|(_, value)| value == "0")
+            {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': division by zero"
                 )));
             }
+            if op.class() == OperatorClass::Shift
+                && literal_index(right).is_some_and(|(negative, value)| negative && value != "0")
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': shift count must not be negative"
+                )));
+            }
         }
-        Expression::Negate { value } | Expression::Not { value } => {
-            let (operator, expected) = if matches!(expression, Expression::Negate { .. }) {
-                ("-", ArkType::Int)
-            } else {
-                ("!", ArkType::Bool)
-            };
+        Expression::Unary { op, value } => {
+            let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
             let actual = resolved_expression_type(value, scopes);
-            if actual != expected && actual != ArkType::Unknown {
+            if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
                 issues.push(ValidationIssue::error(format!(
                     "function '{}': unary '{}' operand has type '{}', expected '{}'",
                     function_name,
