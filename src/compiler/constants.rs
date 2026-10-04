@@ -160,6 +160,8 @@ fn kind(value: &str) -> &'static str {
     }
 }
 
+// ponytail: constants are i64 while the VM allows 520-byte numbers, so results past i64
+// (e.g. 1 << 63) are rejected; widen to a bignum here if contracts need them.
 fn integer(text: &str) -> Result<i64, String> {
     text.parse()
         .map_err(|_| format!("expected a signed 64-bit integer, got '{text}'"))
@@ -309,10 +311,17 @@ fn evaluate(
                 BinaryOperator::Shl | BinaryOperator::Shr if right < 0 => {
                     return Err("negative shift count in constant expression".to_string())
                 }
-                BinaryOperator::Shl => u32::try_from(right)
-                    .ok()
-                    .and_then(|count| 2i64.checked_pow(count))
-                    .and_then(|factor| left.checked_mul(factor)),
+                // OP_LSHIFT and OP_RSHIFT read the count as a 4-byte script number.
+                BinaryOperator::Shl | BinaryOperator::Shr if right > i64::from(i32::MAX) => {
+                    return Err("shift count exceeds 4-byte script number".to_string())
+                }
+                // OP_LSHIFT leaves zero as zero for any count.
+                BinaryOperator::Shl if left == 0 => Some(0),
+                // The shift overflowed if shifting back does not restore the operand.
+                BinaryOperator::Shl => u32::try_from(right).ok().and_then(|count| {
+                    left.checked_shl(count)
+                        .filter(|value| value >> count == left)
+                }),
                 // Arithmetic shift rounds toward negative infinity, as OP_RSHIFT does.
                 BinaryOperator::Shr => Some(left >> right.min(63)),
                 BinaryOperator::Lt => return Ok((left < right).to_string()),
