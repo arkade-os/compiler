@@ -58,7 +58,7 @@ const assetIdArgs = '${1:assetTxid}, ${2:assetGidx}';
 const inputProps = [
     prop('value', 'Input value (sats)'),
     prop('scriptPubKey', 'Input scriptPubKey'),
-    prop('witnessVersion', 'Input witness version (-1 if not a witness program)'),
+    prop('witnessVersion', 'Input witness version'),
     prop('sequence', 'Input nSequence'),
     prop('outpoint', 'Input outpoint'),
     prop('arkadeScriptHash', 'Hash of the input\'s Arkade script'),
@@ -184,7 +184,7 @@ const arkadeMembers = {
     'tx.input': [prop('current', 'Input being spent')],
     'tx.input.current': inputProps,
     'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the previous Arkade transaction')],
-    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version (-1 if not a witness program)'), prop('assets', 'Output assets')],
+    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
     'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],

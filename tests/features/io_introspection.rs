@@ -400,3 +400,21 @@ fn witness_version_is_an_int() {
         "{error}"
     );
 }
+
+#[test]
+fn witness_version_is_rejected_in_tapscripts() {
+    for expression in [
+        "tx.input.current.witnessVersion",
+        "tx.inputs[0].witnessVersion",
+        "tx.outputs[0].witnessVersion",
+    ] {
+        let code = format!("contract V(pubkey owner) {{ function exit(signature sig) tapscript {{ require({expression} == 1); require(checkSig(sig, owner)); }} }}");
+        let error = compile(&code)
+            .expect_err("introspection must not compile into an L1 leaf")
+            .to_string();
+        assert!(
+            error.contains("unsupported compound expression in tapscript"),
+            "{expression}: {error}"
+        );
+    }
+}
