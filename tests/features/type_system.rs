@@ -399,8 +399,8 @@ contract HexCasts(pubkey owner) {
         ("require(int(data) == n);", "cannot cast 'bytes' to 'int'"),
         ("require(int(\"ab\") == n);", "cannot cast 'bytes' to 'int'"),
         (
-            "require(bool(flag) == flag);",
-            "cannot cast 'bool' to 'bool'",
+            "require(bool(data) == flag);",
+            "cannot cast 'bytes' to 'bool'",
         ),
     ] {
         let error = compile_error(&format!(
@@ -418,6 +418,32 @@ contract HexCasts(pubkey owner) {
     assert!(
         error.contains("expected a signed 64-bit integer"),
         "{error}"
+    );
+}
+
+#[test]
+fn same_type_casts_are_no_ops() {
+    let output = compile_ok(
+        r#"
+contract SameType(pubkey owner) {
+    function spend(signature sig, int n, bool flag, bytes20 h) {
+        let x = int(42);
+        require(int(n) + x == 43);
+        require(bool(flag) && bool(2));
+        require(bytes20(h) == h);
+        require(checkSig(sig, owner));
+    }
+}"#,
+    );
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert_eq!(
+        asm.matches("OP_0NOTEQUAL").count(),
+        1,
+        "only bool(2) converts: {asm}"
+    );
+    assert!(
+        !asm.contains("OP_SIZE"),
+        "bytes20(bytes20) is unchecked: {asm}"
     );
 }
 

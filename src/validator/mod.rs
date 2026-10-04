@@ -1728,12 +1728,13 @@ fn validate_binding_expression(
             let (source, hint) = match target.as_str() {
                 "int" => (
                     ArkType::Bool,
-                    "only bool or a hex literal can be cast; use bin2num for bytes",
+                    "only bool converts to int; use int(0x..) for a hex constant or bin2num for bytes",
                 ),
-                "bool" => (ArkType::Int, "only int can be cast"),
+                "bool" => (ArkType::Int, "only int converts to bool"),
                 _ => (ArkType::Bytes, "only bytes can be cast"),
             };
-            if actual != source && actual != ArkType::Unknown {
+            // Same-type casts are no-ops, elided by the concat rewrite pass.
+            if actual != source && actual != ArkType::parse(target) && actual != ArkType::Unknown {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
                     actual.as_str()

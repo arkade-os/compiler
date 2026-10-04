@@ -298,6 +298,16 @@ impl ConcatPass {
                     )
                 }
             }
+            Expression::Cast { target, data } => {
+                let (data, ty) = self.rewrite_expression_concat(*data, scope);
+                let target_type = ArkType::parse(&target);
+                if ty == target_type {
+                    (data, ty)
+                } else {
+                    let data = Box::new(data);
+                    (Expression::Cast { target, data }, target_type)
+                }
+            }
             mut other => {
                 let children = crate::models::child_exprs_mut(&mut other);
                 for child in children {
