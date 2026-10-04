@@ -4,19 +4,27 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
+/// Whether `rule` is one of the grammar's binary-operator precedence levels.
+pub(crate) fn is_operator_level(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::general_expression
+            | Rule::logical_or_expr
+            | Rule::logical_and_expr
+            | Rule::comparison_expr
+            | Rule::bit_or_expr
+            | Rule::bit_xor_expr
+            | Rule::bit_and_expr
+            | Rule::shift_expr
+            | Rule::additive_expr
+            | Rule::multiplicative_expr
+    )
+}
+
 // Parse general expression (with operator precedence)
 pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::bit_or_expr
-        | Rule::bit_xor_expr
-        | Rule::bit_and_expr
-        | Rule::shift_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr => {
+        rule if is_operator_level(rule) => {
             let mut inner = pair.into_inner();
             let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
             while let Some(op) = inner.next() {
@@ -163,16 +171,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             }
             Ok(value)
         }
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::bit_or_expr
-        | Rule::bit_xor_expr
-        | Rule::bit_and_expr
-        | Rule::shift_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr => {
+        rule if is_operator_level(rule) => {
             // Parenthesized expression
             parse_general_expression(pair)
         }
