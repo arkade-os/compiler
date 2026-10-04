@@ -358,6 +358,7 @@ impl Generator {
                 Ok(())
             }
             OP_DROP => self.apply(opcode, 1, 0),
+            OP_DUP => self.apply(opcode, 1, 2),
             OP_NIP => self.nip(),
             OP_SWAP => self.swap(),
             OP_VERIFY => self.apply(opcode, 1, 0),

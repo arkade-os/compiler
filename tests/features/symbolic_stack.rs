@@ -201,7 +201,7 @@ fn array_loop_values_remain_runtime_group_indices() {
     let covenant = covenant(
         r#"
 contract GroupIndices() {
-    function spend(int[3] groups) {
+    function spend(AssetGroup[3] groups) {
         let total = 0;
         for (i, group) in groups {
             total = total + group.sumInputs + i;
@@ -485,7 +485,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
         ("bytes32 digest, int deadline", "bytes preimage",
          "require(sha256(preimage) == digest); require(tx.time >= deadline);",
          vec!["<deadline>", "<digest>"]),
-        ("int groupIndex, bytes32 txid, int gidx", "",
+        ("AssetGroup groupIndex, bytes32 txid, int gidx", "",
          "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
          vec!["<gidx>", "<txid>", "<groupIndex>"]),
         ("Policy policy", "",

@@ -178,23 +178,15 @@ fn control_asset_id_asserts_presence_and_binds_an_asset_id() {
 }
 
 #[test]
-fn control_asset_id_is_typed_and_needs_a_bound_group() {
-    for (statement, expected) in [
-        (
-            "let g = tx.assetGroups.find(fooTxid, fooGidx); require(g.controlAssetId == fooTxid);",
-            "comparison '==' is not defined between 'AssetId' and 'bytes32'",
-        ),
-        (
-            "AssetId control = tx.assetGroups[0].controlAssetId; require(control.txid == fooTxid);",
-            "bind the index first: let g = k; g.controlAssetId",
-        ),
-    ] {
-        let src = format!(
-            "contract C(bytes32 fooTxid, int fooGidx) {{ function f() {{ {statement} }} }}"
-        );
-        let error = compile(&src).expect_err(statement).to_string();
-        assert!(error.contains(expected), "{statement}: {error}");
-    }
+fn control_asset_id_is_typed() {
+    let src = "contract C(bytes32 fooTxid, int fooGidx) { function f() {
+            let g = tx.assetGroups.find(fooTxid, fooGidx); require(g.controlAssetId == fooTxid);
+        } }";
+    let error = compile(src).expect_err(src).to_string();
+    assert!(
+        error.contains("comparison '==' is not defined between 'AssetId' and 'bytes32'"),
+        "{error}"
+    );
 }
 
 #[test]

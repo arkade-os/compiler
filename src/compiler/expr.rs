@@ -167,29 +167,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::AssetGroupsLength => {
             asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
         }
-        Expression::GroupSum { index, source } => {
-            emit_expression_asm(index, asm);
-            match source {
-                GroupSumSource::Inputs => asm.push(OP_0.to_string()),
-                GroupSumSource::Outputs => asm.push(OP_1.to_string()),
-            }
-            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-        }
-        Expression::GroupNumIO { index, source } => {
-            emit_expression_asm(index, asm);
-            match source {
-                GroupIOSource::Inputs => asm.push(OP_0.to_string()),
-                GroupIOSource::Outputs => asm.push(OP_1.to_string()),
-            }
-            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
-        }
+        Expression::AssetGroupAt { index } => emit_expression_asm(index, asm),
         Expression::GroupIOAccess {
-            group_index,
+            group,
             io_index,
             source,
             property,
         } => {
-            emit_expression_asm(group_index, asm);
+            emit_expression_asm(group, asm);
             emit_expression_asm(io_index, asm);
             match source {
                 GroupIOSource::Inputs => asm.push(OP_0.to_string()),

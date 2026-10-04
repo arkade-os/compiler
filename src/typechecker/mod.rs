@@ -38,6 +38,8 @@ pub enum ArkType {
     Bool,
     /// Taproot Asset identifier
     Asset,
+    /// Position of an asset group in the transaction's asset packet
+    AssetGroup,
 
     // ── Internal / introspection types ─────────────────────────────────────
 
@@ -65,6 +67,7 @@ impl ArkType {
             "int" => ArkType::Int,
             "bool" => ArkType::Bool,
             "asset" => ArkType::Asset,
+            "AssetGroup" => ArkType::AssetGroup,
             _ if !s.is_empty() => ArkType::Struct(s.to_string()),
             _ => ArkType::Unknown,
         }
@@ -83,6 +86,7 @@ impl ArkType {
             ArkType::Int => "scriptnum",
             ArkType::Bool => "scriptnum",
             ArkType::Asset => "raw-32",
+            ArkType::AssetGroup => "scriptnum",
             ArkType::Array(..) => "array",
             ArkType::Struct(..) => "struct",
             ArkType::Unknown => "unknown",
@@ -99,6 +103,7 @@ impl ArkType {
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
             ArkType::Asset => "asset".to_string(),
+            ArkType::AssetGroup => "AssetGroup".to_string(),
             ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
             ArkType::Struct(name) => name.clone(),
             ArkType::Unknown => "unknown".to_string(),
@@ -334,34 +339,106 @@ fn resolve_expression(
         *return_type = returns.get(name).cloned().flatten();
     }
 
-    let Expression::Property(path) = expression else {
-        return;
+    let resolved = match expression {
+        // `g.delta`, `s.group.delta`
+        Expression::Property(path) => path.rsplit_once('.').and_then(|(base, property)| {
+            Some(Expression::GroupProperty {
+                group: Box::new(group_binding(base, scope)?),
+                property: GROUP_PROPERTIES
+                    .contains(&property)
+                    .then(|| property.to_string())?,
+            })
+        }),
+        // `g.inputs[j]`
+        Expression::ArrayIndex { array, index } => {
+            array.rsplit_once('.').and_then(|(base, source)| {
+                Some(Expression::GroupIOAccess {
+                    group: Box::new(group_binding(base, scope)?),
+                    io_index: index.clone(),
+                    source: group_io_source(source)?,
+                    property: None,
+                })
+            })
+        }
+        // `gs[i].inputs[j]`
+        Expression::IndexAccess { value, index } => match value.as_ref() {
+            Expression::FieldAccess {
+                value: group,
+                field,
+            } if !is_struct(group, scope) => {
+                group_io_source(field).map(|source| Expression::GroupIOAccess {
+                    group: group.clone(),
+                    io_index: index.clone(),
+                    source,
+                    property: None,
+                })
+            }
+            _ => None,
+        },
+        // `g.inputs[j].amount`, `gs[i].delta`
+        Expression::FieldAccess { value, field } => match value.as_ref() {
+            Expression::GroupIOAccess {
+                group,
+                io_index,
+                source,
+                property: None,
+            } if matches!(field.as_str(), "amount" | "type") => Some(Expression::GroupIOAccess {
+                group: group.clone(),
+                io_index: io_index.clone(),
+                source: source.clone(),
+                property: Some(field.clone()),
+            }),
+            group if GROUP_PROPERTIES.contains(&field.as_str()) && !is_struct(group, scope) => {
+                Some(Expression::GroupProperty {
+                    group: Box::new(group.clone()),
+                    property: field.clone(),
+                })
+            }
+            _ => None,
+        },
+        _ => None,
     };
-    let Some((group, property)) = path.split_once('.') else {
-        return;
-    };
-    if property.contains('.')
-        || !matches!(
-            property,
-            "numInputs"
-                | "numOutputs"
-                | "sumInputs"
-                | "sumOutputs"
-                | "delta"
-                | "hasControl"
-                | "controlAssetId"
-                | "metadataHash"
-                | "assetId"
-                | "isFresh"
-        )
-        || matches!(scope.get(group), Some(ArkType::Struct(_)))
-    {
-        return;
+    if let Some(resolved) = resolved {
+        *expression = resolved;
     }
-    *expression = Expression::GroupProperty {
-        group: group.to_string(),
-        property: property.to_string(),
-    };
+}
+
+const GROUP_PROPERTIES: [&str; 10] = [
+    "numInputs",
+    "numOutputs",
+    "sumInputs",
+    "sumOutputs",
+    "delta",
+    "hasControl",
+    "controlAssetId",
+    "metadataHash",
+    "assetId",
+    "isFresh",
+];
+
+/// Group members apply to any non-struct value; the builtin table rejects
+/// operands that aren't `AssetGroup`, while struct fields keep their names.
+fn is_struct(value: &Expression, scope: &Scope) -> bool {
+    matches!(infer_type(value, scope), ArkType::Struct(_))
+}
+
+/// The binding named by `path`, when a group member can apply to it.
+fn group_binding(path: &str, scope: &Scope) -> Option<Expression> {
+    (!matches!(scope.get(path), Some(ArkType::Struct(_)))).then(|| {
+        if path.contains('.') {
+            Expression::Property(path.to_string())
+        } else {
+            Expression::Variable(path.to_string())
+        }
+    })
+}
+
+pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource> {
+    match name {
+        "inputs" => Some(crate::models::GroupIOSource::Inputs),
+        "outputs" => Some(crate::models::GroupIOSource::Outputs),
+        _ => None,
+    }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -919,11 +996,9 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         },
 
         // Asset group introspection
-        Expression::GroupFind { .. } => ArkType::Int,
+        Expression::GroupFind { .. } | Expression::AssetGroupAt { .. } => ArkType::AssetGroup,
         Expression::GroupHas { .. } => ArkType::Bool,
         Expression::GroupControlIs { .. } => ArkType::Bool,
-        Expression::GroupSum { .. } => ArkType::Int,
-        Expression::GroupNumIO { .. } => ArkType::Int,
         Expression::AssetGroupsLength => ArkType::Int,
         Expression::GroupProperty { property, .. } => match property.as_str() {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,

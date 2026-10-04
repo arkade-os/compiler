@@ -14,11 +14,11 @@ func TestGroupControlAssetId(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "group_control.ark")
 	err := os.WriteFile(source, []byte(`
 contract GroupControl() {
-    function spend(bytes32 ctrlTxid, int ctrlGidx) {
-        let g = 0;
+    function spend(AssetGroup g, bytes32 ctrlTxid, int ctrlGidx) {
         AssetId control = g.controlAssetId;
         require(control.txid == ctrlTxid);
         require(control.gidx == ctrlGidx);
+        require(g.delta == 5);
     }
 }`), 0600)
 	if err != nil {
@@ -64,6 +64,7 @@ contract GroupControl() {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{
+				"g":        scriptInt(t, 0),
 				"ctrlTxid": tc.want.Txid[:],
 				"ctrlGidx": scriptInt(t, int64(tc.want.Index)),
 			}

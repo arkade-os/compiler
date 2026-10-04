@@ -396,6 +396,9 @@ fn load(
                     asset_gidx,
                 } = expression
                 {
+                    let Expression::Variable(group) = group.as_ref() else {
+                        return Ok(());
+                    };
                     if group == &contract.name || visible_contracts.contains_key(group) {
                         *expression = Expression::Call {
                             name: format!("{group}.controlIs"),
@@ -753,7 +756,7 @@ library Fees {
                 { "name": "spend", "kind": "function", "position": [4, 14] },
                 { "name": "sig", "kind": "parameter", "type": "signature", "position": [4, 30], "scope": [4, 10] },
                 { "name": "txid", "kind": "parameter", "type": "bytes32", "position": [4, 43], "scope": [4, 10] },
-                { "name": "group", "kind": "variable", "type": "assetGroup", "position": [5, 13], "scope": [4, 10] },
+                { "name": "group", "kind": "variable", "type": "AssetGroup", "position": [5, 13], "scope": [4, 10] },
                 { "name": "i", "kind": "variable", "type": "int", "position": [6, 14], "scope": [4, 10] },
                 { "name": "point", "kind": "variable", "type": "Point", "position": [6, 17], "scope": [4, 10] },
                 { "name": "total", "kind": "variable", "type": "int", "position": [7, 17], "scope": [4, 10] },
