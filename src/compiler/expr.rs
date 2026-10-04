@@ -407,6 +407,10 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
             emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
         }
+        Some("witnessVersion") => {
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            emit_witness_version_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
+        }
         Some("value") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
             asm.push(OP_INSPECTINPUTVALUE.to_string());
