@@ -135,8 +135,15 @@ logical_and_expr = { comparison_expr ~ (and_op ~ comparison_expr)* }
 
 // Comparisons bind tighter than logical operators.
 comparison_expr = {
-    additive_expr ~ (comparison_operator ~ additive_expr)?
+    bit_or_expr ~ (comparison_operator ~ bit_or_expr)?
 }
+
+// Bytewise operators bind tighter than comparisons, so `a & mask == b` is
+// `(a & mask) == b`; shifts bind looser than `+` and `-`.
+bit_or_expr = { bit_xor_expr ~ (bit_or_op ~ bit_xor_expr)* }
+bit_xor_expr = { bit_and_expr ~ (bit_xor_op ~ bit_and_expr)* }
+bit_and_expr = { shift_expr ~ (bit_and_op ~ shift_expr)* }
+shift_expr = { additive_expr ~ (shift_op ~ additive_expr)* }
 
 // Additive expressions (+ and -)
 additive_expr = {
@@ -149,7 +156,7 @@ multiplicative_expr = {
 }
 
 // Prefix operators bind tighter than multiplication and apply right to left.
-unary_expr = { (sub_op | not_op)* ~ primary_expr }
+unary_expr = { (sub_op | not_op | invert_op)* ~ primary_expr }
 
 // Built-in operands accept prefixes on literals, bindings, and grouped expressions.
 unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | identifier_property_access | qualified_name | number_literal) }
@@ -205,6 +212,11 @@ sub_op = { "-" }
 not_op = { "!" ~ !"=" }
 and_op = { "&&" }
 or_op = { "||" }
+bit_and_op = @{ "&" ~ !"&" }
+bit_or_op = @{ "|" ~ !"|" }
+bit_xor_op = { "^" }
+shift_op = { "<<" | ">>" }
+invert_op = { "~" }
 mul_op = { "*" }
 div_op = { "/" }
 

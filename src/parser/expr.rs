@@ -11,6 +11,10 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
         | Rule::logical_or_expr
         | Rule::logical_and_expr
         | Rule::comparison_expr
+        | Rule::bit_or_expr
+        | Rule::bit_xor_expr
+        | Rule::bit_and_expr
+        | Rule::shift_expr
         | Rule::additive_expr
         | Rule::multiplicative_expr => {
             let mut inner = pair.into_inner();
@@ -150,6 +154,9 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                     Rule::not_op => Expression::Not {
                         value: Box::new(value),
                     },
+                    Rule::invert_op => Expression::Invert {
+                        value: Box::new(value),
+                    },
                     _ => return Err("Unexpected unary operator".to_string()),
                 };
             }
@@ -159,6 +166,10 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         | Rule::logical_or_expr
         | Rule::logical_and_expr
         | Rule::comparison_expr
+        | Rule::bit_or_expr
+        | Rule::bit_xor_expr
+        | Rule::bit_and_expr
+        | Rule::shift_expr
         | Rule::additive_expr
         | Rule::multiplicative_expr => {
             // Parenthesized expression

@@ -807,7 +807,9 @@ pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
         Expression::GroupIOAccess {
             group, io_index, ..
         } => vec![group, io_index],
-        Expression::Negate { value } | Expression::Not { value } => vec![value],
+        Expression::Negate { value } | Expression::Not { value } | Expression::Invert { value } => {
+            vec![value]
+        }
         Expression::Tunnel {
             output_index,
             policy,
@@ -1513,11 +1515,39 @@ fn validate_binding_expression(
     let registered_builtin = crate::typechecker::builtins::operands(expression);
 
     match expression {
+        Expression::BinaryOp { left, op, right } if matches!(op.as_str(), "&" | "|" | "^") => {
+            let scope = flattened_types(scopes);
+            for operand in [left, right] {
+                let actual = resolved_expression_type(operand, scopes);
+                if actual != ArkType::Unknown && !binding_types_compatible(&ArkType::Bytes, &actual)
+                {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': bytewise '{op}' operand has type '{}', expected 'bytes'",
+                        actual.as_str()
+                    )));
+                }
+            }
+            // The VM aborts on operands of different lengths.
+            let widths =
+                [left, right].map(|operand| crate::typechecker::static_byte_width(operand, &scope));
+            if let [Some(left), Some(right)] = widths {
+                if left != right {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': bytewise '{op}' operands must have equal lengths, got {left} and {right} bytes"
+                    )));
+                }
+            }
+        }
         Expression::BinaryOp { left, op, right }
-            if matches!(op.as_str(), "&&" | "||" | "+" | "-" | "*" | "/") =>
+            if matches!(
+                op.as_str(),
+                "&&" | "||" | "+" | "-" | "*" | "/" | "<<" | ">>"
+            ) =>
         {
             let (kind, expected) = if matches!(op.as_str(), "&&" | "||") {
                 ("logical", ArkType::Bool)
+            } else if matches!(op.as_str(), "<<" | ">>") {
+                ("shift", ArkType::Int)
             } else {
                 ("arithmetic", ArkType::Int)
             };
@@ -1540,15 +1570,22 @@ fn validate_binding_expression(
                     "function '{function_name}': division by zero"
                 )));
             }
+            if matches!(op.as_str(), "<<" | ">>")
+                && literal_index(right).is_some_and(|(negative, value)| negative && value != "0")
+            {
+                issues.push(ValidationIssue::error(format!(
+                    "function '{function_name}': shift count must not be negative"
+                )));
+            }
         }
-        Expression::Negate { value } | Expression::Not { value } => {
-            let (operator, expected) = if matches!(expression, Expression::Negate { .. }) {
-                ("-", ArkType::Int)
-            } else {
-                ("!", ArkType::Bool)
+        Expression::Negate { value } | Expression::Not { value } | Expression::Invert { value } => {
+            let (operator, expected) = match expression {
+                Expression::Negate { .. } => ("-", ArkType::Int),
+                Expression::Not { .. } => ("!", ArkType::Bool),
+                _ => ("~", ArkType::Bytes),
             };
             let actual = resolved_expression_type(value, scopes);
-            if actual != expected && actual != ArkType::Unknown {
+            if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
                 issues.push(ValidationIssue::error(format!(
                     "function '{}': unary '{}' operand has type '{}', expected '{}'",
                     function_name,

@@ -680,3 +680,21 @@ fn logical_constants_short_circuit_and_validate_skipped_operands() {
         compile(&format!("contract C() {{ const bool VALUE = {expression}; static function helper() bool {{ return true; }} function spend() {{ require(true); }} }}")).expect_err("invalid skipped constant operand");
     }
 }
+
+#[test]
+fn shifts_fold_in_constants_like_the_vm() {
+    let source = "contract C() {
+        const int X = 1 << 8;
+        const int Y = -9 >> 1;
+        function spend(int n) { require(n == X); require(n != Y); }
+    }";
+    let output = arkade_compiler::compile(source).expect("constant shifts fold");
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert!(asm.contains("256") && asm.contains("-5"), "{asm}");
+    let error = arkade_compiler::compile(
+        "contract C() { const int Z = 1 << -1; function spend(int n) { require(n == Z); } }",
+    )
+    .expect_err("negative constant shift")
+    .to_string();
+    assert!(error.contains("negative shift count"), "{error}");
+}

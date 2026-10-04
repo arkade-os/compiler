@@ -276,6 +276,9 @@ pub(crate) fn substitute_expression(
         Expression::Not { value } => Expression::Not {
             value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
         },
+        Expression::Invert { value } => Expression::Invert {
+            value: Box::new(substitute_expression(value, index_var, value_var, k, items)),
+        },
         Expression::Cast { target, data } => Expression::Cast {
             target: target.clone(),
             data: Box::new(substitute_expression(data, index_var, value_var, k, items)),

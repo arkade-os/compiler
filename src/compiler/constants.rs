@@ -211,11 +211,13 @@ fn validate_expression(
                     _ => "expected a signed 64-bit integer".to_string(),
                 });
             }
-            Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/") {
-                "int"
-            } else {
-                "bool"
-            })
+            Ok(
+                if matches!(op.as_str(), "+" | "-" | "*" | "/" | "<<" | ">>") {
+                    "int"
+                } else {
+                    "bool"
+                },
+            )
         }
         _ => Err("initializer must be a constant expression".to_string()),
     }
@@ -277,6 +279,15 @@ fn evaluate(
                     return Err("division by zero in constant expression".to_string())
                 }
                 "/" => left.checked_div(right),
+                "<<" | ">>" if right < 0 => {
+                    return Err("negative shift count in constant expression".to_string())
+                }
+                "<<" => u32::try_from(right)
+                    .ok()
+                    .and_then(|count| 2i64.checked_pow(count))
+                    .and_then(|factor| left.checked_mul(factor)),
+                // Arithmetic shift rounds toward negative infinity, as OP_RSHIFT does.
+                ">>" => Some(left >> right.min(63)),
                 "<" => return Ok((left < right).to_string()),
                 "<=" => return Ok((left <= right).to_string()),
                 ">" => return Ok((left > right).to_string()),

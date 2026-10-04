@@ -238,6 +238,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(value, asm);
             asm.push(OP_NEGATE.to_string());
         }
+        Expression::Invert { value } => {
+            emit_expression_asm(value, asm);
+            asm.push(OP_INVERT.to_string());
+        }
         Expression::Not { value } => {
             emit_expression_asm(value, asm);
             asm.push(OP_NOT.to_string());
@@ -391,6 +395,11 @@ pub(crate) fn emit_binary_op_asm(
         "-" => asm.push(OP_SUB.to_string()),
         "*" => asm.push(OP_MUL.to_string()),
         "/" => asm.push(OP_DIV.to_string()),
+        "&" => asm.push(OP_AND.to_string()),
+        "|" => asm.push(OP_OR.to_string()),
+        "^" => asm.push(OP_XOR.to_string()),
+        "<<" => asm.push(OP_LSHIFT.to_string()),
+        ">>" => asm.push(OP_RSHIFT.to_string()),
         _ => asm.push(format!("OP_{}", op.to_uppercase())),
     }
 }

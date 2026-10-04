@@ -78,6 +78,10 @@ pub(crate) fn parse_tap_item(
         | Rule::logical_or_expr
         | Rule::logical_and_expr
         | Rule::comparison_expr
+        | Rule::bit_or_expr
+        | Rule::bit_xor_expr
+        | Rule::bit_and_expr
+        | Rule::shift_expr
         | Rule::additive_expr
         | Rule::multiplicative_expr
         | Rule::unary_expr

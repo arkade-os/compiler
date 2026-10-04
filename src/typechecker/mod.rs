@@ -1023,6 +1023,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Arithmetic
         Expression::Negate { .. } => ArkType::Int,
+        Expression::Invert { .. } => bytes_of_width(static_byte_width(expr, scope)),
         Expression::Not { .. } | Expression::Tunnel { .. } => ArkType::Bool,
 
         // Crypto expressions
@@ -1059,7 +1060,8 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                         ArkType::Int
                     }
                 }
-                "-" | "*" | "/" => ArkType::Int,
+                "-" | "*" | "/" | "<<" | ">>" => ArkType::Int,
+                "&" | "|" | "^" => bytes_of_width(static_byte_width(expr, scope)),
                 "==" | "!=" | ">=" | "<=" | ">" | "<" | "&&" | "||" => ArkType::Bool,
                 _ => ArkType::Unknown,
             }
@@ -1069,6 +1071,31 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
 /// Returns true when the type widens to `bytes`: it can be concatenated with
 /// `+` and compared or bound to `bytes`, but never to another sized type.
+/// Byte length of `expr` when it is known at compile time.
+pub(crate) fn static_byte_width(expr: &Expression, scope: &Scope) -> Option<usize> {
+    match expr {
+        Expression::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
+        // Bytewise operands share one length, so either side's known width is the result's.
+        Expression::BinaryOp { left, op, right } if matches!(op.as_str(), "&" | "|" | "^") => {
+            static_byte_width(left, scope).or_else(|| static_byte_width(right, scope))
+        }
+        Expression::Invert { value } => static_byte_width(value, scope),
+        _ => match infer_type(expr, scope) {
+            ArkType::Bytes20 => Some(20),
+            ArkType::Bytes32 => Some(32),
+            _ => None,
+        },
+    }
+}
+
+fn bytes_of_width(width: Option<usize>) -> ArkType {
+    match width {
+        Some(20) => ArkType::Bytes20,
+        Some(32) => ArkType::Bytes32,
+        _ => ArkType::Bytes,
+    }
+}
+
 pub fn is_bytes_like(t: &ArkType) -> bool {
     matches!(
         t,

@@ -284,7 +284,8 @@ impl ConcatPass {
                     )
                 } else {
                     let result_type = match op.as_str() {
-                        "+" | "-" | "*" | "/" => ArkType::Int,
+                        "+" | "-" | "*" | "/" | "<<" | ">>" => ArkType::Int,
+                        "&" | "|" | "^" => ArkType::Bytes,
                         "==" | "!=" | ">=" | "<=" | ">" | "<" | "&&" | "||" => ArkType::Bool,
                         _ => ArkType::Unknown,
                     };

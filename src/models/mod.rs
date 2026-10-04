@@ -726,6 +726,8 @@ pub enum Expression {
     Negate { value: Box<Expression> },
     /// Boolean negation: !value
     Not { value: Box<Expression> },
+    /// Bytewise inversion: ~value
+    Invert { value: Box<Expression> },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
     /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
     CheckSigFromStackVerify {
@@ -860,7 +862,9 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::GroupIOAccess {
             group, io_index, ..
         } => vec![group, io_index],
-        Expression::Negate { value } | Expression::Not { value } => vec![value],
+        Expression::Negate { value } | Expression::Not { value } | Expression::Invert { value } => {
+            vec![value]
+        }
         Expression::Tunnel {
             output_index,
             policy,
