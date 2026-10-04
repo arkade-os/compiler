@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use super::child_exprs;
 use crate::models::{
-    AssignmentTarget, Expression, Function, LocatedStatement, Requirement, Statement,
+    AssignmentTarget, ExprKind, Expression, Function, LocatedStatement, Requirement, Statement,
 };
 
 // Parameters are retained whole; pruning individual composite fields needs a sparse stack layout.
@@ -25,8 +25,8 @@ fn collect_expression<'a>(
     functions: &'a [Function],
     visited: &mut HashSet<&'a str>,
 ) {
-    match expression {
-        Expression::Call { name, .. } if visited.insert(name) => {
+    match &expression.kind {
+        ExprKind::Call { name, .. } if visited.insert(name) => {
             // Static helpers cannot capture constructor state and are validated independently.
             if let Some(function) = functions
                 .iter()
@@ -35,9 +35,9 @@ fn collect_expression<'a>(
                 collect_statements(&function.statements, names, functions, visited);
             }
         }
-        Expression::Variable(name)
-        | Expression::Property(name)
-        | Expression::ArrayIndex { array: name, .. } => collect_name(name, names),
+        ExprKind::Variable(name)
+        | ExprKind::Property(name)
+        | ExprKind::ArrayIndex { array: name, .. } => collect_name(name, names),
         _ => {}
     }
     for child in child_exprs(expression) {

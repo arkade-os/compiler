@@ -10,6 +10,15 @@ pub struct Span {
     pub end: usize,
 }
 
+impl From<pest::Span<'_>> for Span {
+    fn from(span: pest::Span<'_>) -> Self {
+        Self {
+            start: span.start(),
+            end: span.end(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,

@@ -13,7 +13,7 @@
 //! `tunnel`, `checkSig`, ...) aren't here; they keep their own hand-written
 //! check in the validator.
 
-use crate::models::Expression;
+use crate::models::{ExprKind, Expression};
 
 pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("tx.packet", &["int"]),
@@ -45,28 +45,28 @@ pub(crate) fn find(name: &str) -> Option<Vec<&'static str>> {
 /// belongs to which builtin, no type information — the table is the only
 /// place expected types live.
 pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expression>)> {
-    Some(match expr {
-        Expression::Builtin { builtin, args } => (builtin.name, args.iter().collect()),
-        Expression::PacketInspect { packet_type } => ("tx.packet", vec![packet_type]),
-        Expression::InputPacketInspect { index, packet_type } => {
+    Some(match &expr.kind {
+        ExprKind::Builtin { builtin, args } => (builtin.name, args.iter().collect()),
+        ExprKind::PacketInspect { packet_type } => ("tx.packet", vec![packet_type]),
+        ExprKind::InputPacketInspect { index, packet_type } => {
             ("tx.inputs[].packet", vec![index, packet_type])
         }
-        Expression::InputIntrospection { index, .. } => ("tx.inputs[]", vec![index]),
-        Expression::OutputIntrospection { index, .. } => ("tx.outputs[]", vec![index]),
-        Expression::AssetGroupAt { index } => ("tx.assetGroups[]", vec![index]),
-        Expression::GroupProperty { group, .. } => ("asset group property", vec![group]),
-        Expression::GroupControlIs { group, .. } => ("controlIs", vec![group]),
-        Expression::GroupIOAccess {
+        ExprKind::InputIntrospection { index, .. } => ("tx.inputs[]", vec![index]),
+        ExprKind::OutputIntrospection { index, .. } => ("tx.outputs[]", vec![index]),
+        ExprKind::AssetGroupAt { index } => ("tx.assetGroups[]", vec![index]),
+        ExprKind::GroupProperty { group, .. } => ("asset group property", vec![group]),
+        ExprKind::GroupControlIs { group, .. } => ("controlIs", vec![group]),
+        ExprKind::GroupIOAccess {
             group, io_index, ..
         } => ("asset group inputs/outputs", vec![group, io_index]),
-        Expression::AssetCount { index, .. } => ("tx.inputs[].assets", vec![index]),
-        Expression::AssetAt {
+        ExprKind::AssetCount { index, .. } => ("tx.inputs[].assets", vec![index]),
+        ExprKind::AssetAt {
             io_index,
             asset_index,
             ..
         } => ("tx.inputs[].assets[]", vec![io_index, asset_index]),
-        Expression::AssetLookup { index, .. } => ("tx.inputs[].assets.lookup", vec![index]),
-        Expression::AssetHas { index, .. } => ("tx.inputs[].assets.has", vec![index]),
+        ExprKind::AssetLookup { index, .. } => ("tx.inputs[].assets.lookup", vec![index]),
+        ExprKind::AssetHas { index, .. } => ("tx.inputs[].assets.has", vec![index]),
         _ => return None,
     })
 }
