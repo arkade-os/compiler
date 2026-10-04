@@ -66,6 +66,13 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         ));
     }
 
+    if matches!(name.as_str(), "hash160" | "hash256" | "ripemd160") {
+        return Err(format!(
+            "`{name}` is only supported as `{name}(preimage) == hash` with a named or literal hash; \
+             only sha256 accepts computed operands"
+        ));
+    }
+
     if let Some(signature) = reserved_function_signature(&name) {
         return Err(format!(
             "malformed reserved function call `{name}(...)`; expected {signature}"

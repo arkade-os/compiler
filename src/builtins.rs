@@ -148,13 +148,6 @@ pub(crate) const BUILTINS: &[Builtin] = &[
 ];
 
 impl Builtin {
-    /// Whether the argument at `index` is a struct or array, emitted as several items.
-    pub(crate) fn takes_composite(&self, index: usize) -> bool {
-        self.params.get(index).is_some_and(|(_, ty)| {
-            ty.ends_with("[]") || crate::models::builtin_struct_fields(ty).is_some()
-        })
-    }
-
     /// Source form for diagnostics, such as `substr(data, offset, size)`.
     pub(crate) fn signature(&self) -> String {
         let params: Vec<&str> = self.params.iter().map(|(name, _)| *name).collect();

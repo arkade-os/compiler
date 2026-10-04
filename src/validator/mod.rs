@@ -1778,17 +1778,17 @@ fn validate_binding_expression(
         _ => {}
     }
 
-    for (position, child) in child_exprs(expression).into_iter().enumerate() {
+    for child in child_exprs(expression) {
         if matches!(
             expression,
             Expression::Call { .. }
+                | Expression::Builtin { .. }
                 | Expression::StructLiteral(_)
                 | Expression::ArrayLiteral(_)
                 | Expression::Tunnel { .. }
                 | Expression::FieldAccess { .. }
                 | Expression::IndexAccess { .. }
-        ) || matches!(expression, Expression::Builtin { builtin, .. } if builtin.takes_composite(position))
-        {
+        ) {
             validate_value_expression(child, function_name, scopes, issues);
         } else {
             validate_binding_expression(

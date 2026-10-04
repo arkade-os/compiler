@@ -10,8 +10,8 @@
 //! operand, so every `[]` operand of a call must have the same length.
 //!
 //! Builtins whose check isn't a fixed positional-type comparison (`cast`,
-//! `checkTime`, `tunnel`, `checkSig`, ...) aren't here; they keep their own
-//! hand-written check in the validator.
+//! `tunnel`, `checkSig`, ...) aren't here; they keep their own hand-written
+//! check in the validator.
 
 use crate::models::Expression;
 

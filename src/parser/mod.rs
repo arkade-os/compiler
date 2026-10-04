@@ -521,7 +521,15 @@ fn parse_statement(
         }
         Rule::function_call_stmt => {
             let call = pair.into_inner().next().ok_or("Missing function call")?;
-            Statement::Call(parse_general_expression(call)?)
+            match parse_general_expression(call)? {
+                Expression::Builtin { builtin, .. } => {
+                    return Err(format!(
+                        "`{}(...)` cannot be a statement; use it inside require()",
+                        builtin.name
+                    ));
+                }
+                call => Statement::Call(call),
+            }
         }
         Rule::return_stmt => {
             let value = pair
