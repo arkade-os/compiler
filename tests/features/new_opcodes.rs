@@ -336,10 +336,17 @@ fn check_time_uses_the_emulator_clock_and_preserves_operand_order() {
         let source = format!("contract Bad() {{ function spend() {{ {body} }} }}");
         assert!(compile(&source).is_err(), "{source}");
     }
-    assert!(
-        compile("contract Bad() { function spend() tapscript { require(checkTime(0)); } }")
-            .is_err()
-    );
+    let tapscript = |body: &str| {
+        compile(&format!(
+            "contract Bad(bytes a) {{ function spend() tapscript {{ {body} }} }}"
+        ))
+        .expect_err(body)
+        .to_string()
+    };
+    assert!(tapscript("require(checkTime(0));")
+        .contains("`checkTime(...)` is only available in covenant functions"));
+    assert!(tapscript("require(cat(a, a) == a);")
+        .contains("unsupported compound expression in tapscript require()"));
 }
 
 #[test]

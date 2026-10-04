@@ -1181,16 +1181,8 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                Expression::Builtin { builtin, args } if builtin.result.is_none() => {
-                    let crate::builtins::Lowering::Opcodes(opcodes) = builtin.lowering else {
-                        return Err(format!("{} cannot be lowered as a check", builtin.name));
-                    };
-                    for arg in args {
-                        generator.emit_expression(arg)?;
-                    }
-                    for opcode in opcodes {
-                        generator.lower_raw_opcode(opcode)?;
-                    }
+                Expression::Builtin { builtin, .. } if builtin.result.is_none() => {
+                    generator.emit_expression_items(expr, 0)?;
                 }
                 _ => {
                     generator.emit_expression(expr)?;
