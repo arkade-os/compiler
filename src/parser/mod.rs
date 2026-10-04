@@ -348,7 +348,18 @@ fn parse_function(
         && (expr::reserved_function_signature(&name).is_some()
             || matches!(
                 name.as_str(),
-                "require" | "return" | "negate" | "neg64" | "le64ToScriptNum" | "le32ToLe64"
+                "require"
+                    | "return"
+                    | "negate"
+                    | "neg64"
+                    | "le64ToScriptNum"
+                    | "le32ToLe64"
+                    | "pubkey"
+                    | "signature"
+                    | "bytes20"
+                    | "bytes32"
+                    | "int"
+                    | "bool"
             ))
     {
         return Err(format!("function name '{name}' is reserved"));

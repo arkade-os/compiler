@@ -296,12 +296,12 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
     if text.starts_with("tx.input.current") {
         return match text.strip_prefix("tx.input.current.") {
             Some(
-                p @ ("value" | "scriptPubKey" | "sequence" | "outpoint" | "arkadeScriptHash"
-                | "arkadeWitnessHash"),
+                p @ ("value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint"
+                | "arkadeScriptHash" | "arkadeWitnessHash"),
             ) => Ok(Expression::CurrentInput(Some(p.to_string()))),
             _ => Err(format!(
-                "tx.input.current requires one of: value, scriptPubKey, sequence, outpoint, \
-                 arkadeScriptHash, arkadeWitnessHash (got '{text}')"
+                "tx.input.current requires one of: value, scriptPubKey, witnessVersion, sequence, \
+                 outpoint, arkadeScriptHash, arkadeWitnessHash (got '{text}')"
             )),
         };
     }

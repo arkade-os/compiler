@@ -341,7 +341,7 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "sequence" | "outpoint" |
+    "value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash"
 }
 
@@ -351,7 +351,7 @@ output_introspection = {
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" }
+output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
@@ -662,7 +662,8 @@ size_func = {
 
 // Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
 // pubkey/signature are semantic because the VM validates them when consumed.
-cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32") ~ !(ASCII_ALPHANUMERIC | "_") }
+// int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
+cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
 cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 
 // ─── Packet Introspection ──────────────────────────────────────────────

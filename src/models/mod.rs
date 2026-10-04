@@ -831,7 +831,8 @@ pub enum Expression {
     ReverseBytes { data: Box<Expression> },
     /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
     SizeOf { data: Box<Expression> },
-    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x)
+    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
+    /// or a scalar conversion: int(bool), bool(int)
     Cast {
         target: String,
         data: Box<Expression>,
