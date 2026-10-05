@@ -720,7 +720,7 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         }
         _ => {}
     }
-    for child in crate::validator::child_exprs(expr) {
+    for child in crate::models::child_exprs(expr) {
         check_expression(child, scope, errors, fn_name);
     }
     let first = errors.len();
