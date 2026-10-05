@@ -1,5 +1,11 @@
 # Arkade Compiler
 
+[![Build](https://github.com/arkade-os/compiler/actions/workflows/build.yml/badge.svg)](https://github.com/arkade-os/compiler/actions/workflows/build.yml)
+[![Release](https://github.com/arkade-os/compiler/actions/workflows/release.yml/badge.svg)](https://github.com/arkade-os/compiler/actions/workflows/release.yml)
+[![GitHub release](https://img.shields.io/github/v/release/arkade-os/compiler?sort=semver)](https://github.com/arkade-os/compiler/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/arkade-compiler)](https://crates.io/crates/arkade-compiler)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Arkade Language is a contract language for Bitcoin. You write a contract as a set of spend functions over constructor state. The compiler, `arkadec`, turns it into a JSON artifact with two kinds of script: Arkade covenants, which the Arkade VM executes offchain, and L1 tapscript leaves, which give every party a unilateral exit on Bitcoin. Arkade libraries consume the artifact directly, and `arkade-bindgen` turns it into typed TypeScript or Go stubs.
 
 The language covers signature and multisig checks, absolute and relative timelocks, transaction introspection, Arkade Assets and asset groups, byte-string parsing, fixed-size arrays, structs, and recursive contract instantiation with `new`.
@@ -181,13 +187,15 @@ The `.md` files next to those contracts explain the economics and transaction la
 
 ## Install and run
 
-Requires a Rust toolchain ([rustup.rs](https://rustup.rs/)).
+Prebuilt `arkadec` and `arkade-bindgen` binaries for Linux, macOS, and Windows are attached to each [GitHub release](https://github.com/arkade-os/compiler/releases) with a `SHA256SUMS` file. With a Rust toolchain ([rustup.rs](https://rustup.rs/)), install from crates.io or a checkout instead:
 
 ```bash
-cargo install --path .              # installs arkadec
-arkadec contract.ark                # writes contract.json in the current directory
+cargo install arkade-compiler --locked   # installs arkadec
+cargo install arkade-bindgen --locked
+cargo install --path . --locked          # installs arkadec from a checkout
+arkadec contract.ark                     # writes contract.json in the current directory
 arkadec contract.ark -o out.json
-arkadec contract.ark --no-optimize  # skips peephole optimization of Arkade covenants
+arkadec contract.ark --no-optimize       # skips peephole optimization of Arkade covenants
 ```
 
 Warnings go to stderr; type and validation errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
@@ -226,6 +234,12 @@ cp ./scripts/pre-commit .git/hooks                       # fmt + test before eve
 
 The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator checkout is needed.
 
+### Releasing
+
+`arkade-compiler` and `arkade-bindgen` share the version in the root `Cargo.toml` `[workspace.package]` table. To release, bump it in a PR (on a minor bump, also raise `arkade-bindgen`'s `arkade-compiler` requirement), merge, and push `v<version>` from the merge commit. `.github/workflows/release.yml` checks the tag against the version, builds binaries for five targets, creates a GitHub release with `SHA256SUMS`, and publishes both crates to crates.io through trusted publishing. A tag with a suffix such as `v0.1.0-test` creates a GitHub pre-release and skips crates.io; remove it with `gh release delete <tag> --cleanup-tag`.
+
+Trusted publishing can only be configured on existing crates, so the first crates.io release is manual: a crate owner runs `cargo publish --locked -p arkade-compiler && cargo publish --locked -p arkade-bindgen` from the commit to be tagged, enables trusted publishing for both crates (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`), and then pushes the tag. The workflow skips crates whose version is already published.
+
 ## Language reference
 
 ### File layout
@@ -249,7 +263,7 @@ Each source file may start with one `pragma arkade <constraint>;` directive, inc
 
 Use three-component versions such as `0.1.0`, with optional `=`, `^`, `~`, `>`, `>=`, `<`, or `<=` operators. Multiple constraints form a range (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
 
-`0.1.0` is a placeholder while compiler versioning is being established. For now, pragmas validate syntax only: even a constraint for a future version compiles. Compatibility checks are deferred. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
+Pragmas currently validate syntax only: even a constraint for a future compiler version compiles. Compatibility checks are deferred. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
 
 ### Imports
 

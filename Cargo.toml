@@ -2,13 +2,22 @@
 members = [".", "arkade-bindgen"]
 resolver = "2"
 
-[package]
-name = "arkade-compiler"
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "A compiler for Arkade Script - a language for creating Bitcoin Taproot scripts"
-authors = ["tiero"]
+authors = ["tiero", "msinkec", "d4rp4t"]
 license = "MIT"
+repository = "https://github.com/arkade-os/compiler"
+
+[package]
+name = "arkade-compiler"
+version.workspace = true
+edition.workspace = true
+description = "A compiler for Arkade Script - a language for creating Bitcoin Taproot scripts"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+include = ["src/**/*.rs", "src/**/*.pest", "LICENSE"]
 
 [dependencies]
 pest = "2.7.8"
