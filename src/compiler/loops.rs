@@ -231,6 +231,7 @@ pub(crate) fn substitute_expression(
                 },
             )
         }
+        // child_exprs_mut has no wildcard arm, so every variant's children are visited.
         _ => {
             let mut expression = expr.clone();
             for child in crate::models::child_exprs_mut(&mut expression) {
