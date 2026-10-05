@@ -313,7 +313,7 @@ fn parse_asset_group_access(
     let mut parts = member.into_inner();
     let part = parts.next().ok_or("Missing asset group member")?;
     Ok(match part.as_rule() {
-        Rule::asset_group_control_is => parse_group_control_is(group, part)?,
+        Rule::asset_group_control_is => parse_group_control_is(group, part, span)?,
         Rule::asset_group_io_source => Expression::new(
             ExprKind::GroupIOAccess {
                 group,

@@ -668,6 +668,7 @@ mod tests {
             let mask = ~a ^ a;
             let flipped = -~n;
             let sum = tx.assetGroups[n].sumInputs;
+            let owned = tx.assetGroups.find(h, n).controlIs(h, n);
             require(total > 0);
         } }";
         let contract = parse(source).expect("parses");
@@ -707,6 +708,7 @@ mod tests {
             "-~n",
             "~n",
             "tx.assetGroups[n].sumInputs",
+            "tx.assetGroups.find(h, n).controlIs(h, n)",
             "total",
             "0",
         ] {

@@ -1085,6 +1085,10 @@ fn loop_bodies_substitute_the_index_and_value_in_every_expression_kind() {
             "OP_FINDASSETGROUPBYASSETID",
         ),
         (
+            "require(tx.assetGroups.find(t, i).controlIs(t, x));",
+            "OP_INSPECTASSETGROUPCTRL",
+        ),
+        (
             "require(bytes32(tx.inputs[i].scriptPubKey) == t);",
             "OP_INSPECTINPUTSCRIPTPUBKEY",
         ),
