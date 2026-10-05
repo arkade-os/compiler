@@ -163,6 +163,47 @@ fn has_control_is_presence_only() {
 }
 
 #[test]
+fn control_asset_id_asserts_presence_and_binds_an_asset_id() {
+    let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
+            function f(signature sig) {
+                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                AssetId control = g.controlAssetId;
+                require(control.txid == fooTxid);
+                require(control.gidx == fooGidx);
+                require(checkSig(sig, pk));
+            }
+        }";
+    let asm = arkade_asm(src, "f");
+    assert!(asm.contains("OP_INSPECTASSETGROUPCTRL OP_VERIFY"), "{asm}");
+}
+
+#[test]
+fn control_asset_id_binds_without_a_declared_type() {
+    let src = "contract C(bytes32 fooTxid, int fooGidx) {
+            function f() {
+                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let control = g.controlAssetId;
+                require(control.txid == fooTxid);
+                require(control.gidx == fooGidx);
+            }
+        }";
+    let typed = src.replace("let control", "AssetId control");
+    assert_eq!(arkade_asm(src, "f"), arkade_asm(&typed, "f"));
+}
+
+#[test]
+fn control_asset_id_is_typed() {
+    let src = "contract C(bytes32 fooTxid, int fooGidx) { function f() {
+            let g = tx.assetGroups.find(fooTxid, fooGidx); require(g.controlAssetId == fooTxid);
+        } }";
+    let error = compile(src).expect_err(src).to_string();
+    assert!(
+        error.contains("comparison '==' is not defined between 'AssetId' and 'bytes32'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn legacy_control_property_is_rejected() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {

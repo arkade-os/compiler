@@ -125,7 +125,7 @@ contract TokenVault(
 }
 ```
 
-An Asset ID is a `(bytes32 txid, int gidx)` pair. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.find(txid, gidx)` returns a group with `sumInputs`, `sumOutputs`, `delta`, `controlIs(txid, gidx)`, and friends (see `examples/controlled_mint`).
+An Asset ID is a `(bytes32 txid, int gidx)` pair. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.find(txid, gidx)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(txid, gidx)`, and friends (see `examples/controlled_mint`).
 
 ### Arrays, structs, loops
 
@@ -329,17 +329,18 @@ Libraries can import other libraries, contracts, and struct files using the same
 
 | Type | Meaning |
 |---|---|
-| `pubkey` | BIP340 x-only public key |
+| `pubkey` | Alias of `bytes` for public keys of any length, e.g. 32-byte x-only or 33-byte compressed |
 | `signature` | 64-byte BIP340 Schnorr signature |
 | `bytes`, `bytes20`, `bytes32` | Byte arrays, unsized or fixed |
 | `int` | CScriptNum integer |
 | `bool` | Boolean |
 | `asset` | Asset identifier |
-| `T[n]` | Fixed-size array of a scalar type, `n` a positive integer literal or `int` constant |
-| `struct` | User-declared, nested structs and scalar arrays allowed |
-| `AssetId`, `Outpoint`, `ECPoint` | Native result structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}` |
+| `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
+| `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
+| `struct` | User-declared, nested structs and fixed-size arrays allowed |
+| `AssetId`, `Outpoint`, `ECPoint`, `G2Point` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalar elements; structs contain scalars, arrays, and nested structs. Read and assign fields individually; `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
+Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Read and assign fields individually; `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
 
 ### Functions
 
@@ -400,7 +401,7 @@ const int KEY_COUNT = 2;
 const bool STRICT = HALF_DELAY > 0;
 ```
 
-Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); `bytes` constants accept a literal or another `bytes` constant. Integer arithmetic uses checked signed 64-bit values; division truncates toward zero. Cycles, runtime values, type mismatches, and out-of-range literals are rejected even in skipped operands. Division by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
+Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, `<<`, `>>`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); `bytes` constants accept a literal or another `bytes` constant. Integer arithmetic uses checked signed 64-bit values; division truncates toward zero. Cycles, runtime values, type mismatches, and out-of-range literals are rejected even in skipped operands. Division by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
 A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
 
@@ -447,7 +448,7 @@ Each live binding has a unique name. Constructor parameters are immutable.
 
 ### Expressions
 
-Arithmetic `+ - * /` and unary `-` on `int`. Comparison `== != < <= > >=`. Boolean `!`, `&&`, and `||` on `bool` in covenant functions. Precedence from highest to lowest is unary operators, multiplication/division, addition/subtraction, comparisons, `&&`, then `||`; parentheses override it. Logical operators evaluate left to right and short-circuit: `&&` skips the right operand when the left is false, and `||` skips it when the left is true. Both operands must be valid boolean expressions even when one is skipped. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you widen it with `num2bin(value, width)`, because the width is consensus-visible. `arr.length` folds to the declared size. Array reads and writes accept `int` index expressions; runtime indices emit bounds checks.
+Arithmetic `+ - * /` and unary `-` on `int`. Shifts `<<` and `>>` on `int`: the count must not be negative, and `>>` is arithmetic, rounding toward negative infinity. Bytewise `&`, `|`, `^` and unary `~` on bytes; the two-operand forms need operands of equal length, checked at compile time when both lengths are known and by the VM otherwise. Comparison `== != < <= > >=`. Boolean `!`, `&&`, and `||` on `bool` in covenant functions. Precedence from highest to lowest is unary operators, multiplication/division, addition/subtraction, shifts, `&`, `^`, `|`, comparisons, `&&`, then `||`; parentheses override it, and `a & mask == b` means `(a & mask) == b`. Logical operators evaluate left to right and short-circuit: `&&` skips the right operand when the left is false, and `||` skips it when the left is true. Both operands must be valid boolean expressions even when one is skipped. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you widen it with `num2bin(value, width)`, because the width is consensus-visible. `arr.length` folds to the declared size. Array reads and writes accept `int` index expressions; runtime indices emit bounds checks.
 
 ### Built-ins
 
@@ -465,17 +466,17 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Intent messages.** In covenants, `tx.intent.field("type")` returns the encoded field bytes and asserts presence; `tx.intent.has("type")` returns presence without keeping the value. Paths are quoted literals with dot-separated lowercase keys or canonical decimal indexes, such as `"cosigners.0"`; queries, wildcards, leading-zero indexes, and indexes at or above 1048576 are rejected. Present false, zero, and empty strings still count as present. Integer fields use Script-number encoding: `bin2num(tx.intent.field("expire_at"))`. Require `tx.intent.field("type") == "register"` before relying on register-specific fields. Missing context, null, missing fields, and non-integer numbers are misses; `field` fails on a miss and `has` returns false. Both use the emulator's result-size and compute limits.
 
-**Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey`, and `tx.input.current.value | scriptPubKey | sequence | outpoint` for the input being spent.
+**Inputs and outputs.** `tx.inputs[i].value | scriptPubKey | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash`, `tx.outputs[o].value | scriptPubKey | witnessVersion`, and `tx.input.current.value | scriptPubKey | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash` for the input being spent. For native witness programs, `scriptPubKey` is the program and `witnessVersion` is its version (0-16).
 
-**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`. Groups: `tx.assetGroups.find(txid, gidx)`, `.has(txid, gidx)`, `.length`, and per group `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `metadataHash`, `assetId`, `isFresh`.
+**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`. Groups: `tx.assetGroups.find(txid, gidx)` (asserts presence) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(txid, gidx)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`.
 
 **Bytes.** `substr(data, offset, size)`, `cat(a, b)`, `bin2num(bytes)`, `num2bin(value, size)`, `reverseBytes(bytes)`, `size(bytes)`.
 
-**Types and casts.** Type errors are fatal. Equality needs matching types, except that `bytes20`, `bytes32`, `pubkey`, and `signature` widen implicitly to `bytes`, including in bindings, arguments, and `+` concatenation. `bytes20(x)`, `bytes32(x)`, `pubkey(x)`, and `signature(x)` narrow a `bytes` value; the sized casts verify the length at runtime with `OP_SIZE <n> OP_EQUALVERIFY`, while `pubkey` and `signature` add no opcodes because the VM validates keys and signatures when they are consumed. Use `bin2num` and `num2bin` to convert between `int` and `bytes`, and compare `bool` values with `true` or `false`. Byte builtins (`substr`, `cat`, `bin2num`, `reverseBytes`, `size`, `digest`, and the `checkSigFromStack` message) take bytes-like operands; sizes, offsets, indexes, packet types, hash types, and tapscript timelocks take `int`. A hash comparison's expected value matches the digest width: `bytes32` for `sha256` and `hash256`, `bytes20` for `hash160` and `ripemd160`, or unbounded `bytes`.
+**Types and casts.** Type errors are fatal. Equality needs matching types, except that `bytes20`, `bytes32`, `pubkey`, and `signature` widen implicitly to `bytes`, including in bindings, arguments, and `+` concatenation. `bytes20(x)`, `bytes32(x)`, `pubkey(x)`, and `signature(x)` narrow a `bytes` value; the sized casts verify the length at runtime with `OP_SIZE <n> OP_EQUALVERIFY`, while `pubkey` and `signature` add no opcodes because the VM validates keys and signatures when they are consumed. `int(0x...)` reads a hex literal big-endian and folds it to a decimal constant, so `int(0x0100)` is `256`; `int(flag)` and `bool(n)` emit `OP_0NOTEQUAL`, so the result is always `0` or `1`, even for a spender-supplied witness value. Casting a value to its own type, such as `int(42)` or `bytes20(hash)`, is a no-op. Use `bin2num` and `num2bin` to convert between `int` and `bytes`, and compare `bool` values with `true` or `false`. Byte builtins (`substr`, `cat`, `bin2num`, `reverseBytes`, `size`, `digest`, and the `checkSigFromStack` message) take bytes-like operands; sizes, offsets, indexes, packet types, hash types, and tapscript timelocks take `int`. A hash comparison's expected value matches the digest width: `bytes32` for `sha256` and `hash256`, `bytes20` for `hash160` and `ripemd160`, or unbounded `bytes`.
 
 **Packets.** `tx.packet(type)` and `tx.inputs[i].packet(type)` return the raw extension packet bytes and assert presence.
 
-**Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(x1, y1, x2, y2, curve)` and `ecMul(x, y, k, curve)` returning `ECPoint`, `ecPairing(...)`, `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
+**Arithmetic and curves.** `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(g1, g2, curve)` over aligned `ECPoint[n]` and `G2Point[n]` arrays (1–16 pairs), `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
 
 **Instantiation.** `new Contract(args...)` on either side of a `scriptPubKey` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array arguments flatten element by element.
 
@@ -491,7 +492,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 {
   "formatVersion": 1,
   "contractName": "HTLC",
-  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, ...],
+  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, "..."],
   "structs": [],
   "functions": [
     {
@@ -509,7 +510,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
         }
       ]
     },
-    { "name": "unilateral", "leaves": [ ... ] }
+    { "name": "unilateral", "leaves": [ "..." ] }
   ],
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },
@@ -532,7 +533,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 
 The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
 
-Witness `encoding` values: `compressed-33`, `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
+Witness `encoding` values: `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
 

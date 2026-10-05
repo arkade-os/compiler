@@ -1,10 +1,12 @@
 // Compilation entry points, data models, and opcode constants are public.
 // Pipeline stages are crate-internal.
+mod builtins;
 mod compiler;
 pub mod diagnostics;
 mod imports;
 pub mod models;
 pub mod opcodes;
+pub mod operators;
 mod parser;
 mod typechecker;
 mod validator;

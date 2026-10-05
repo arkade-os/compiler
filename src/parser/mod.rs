@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Function, LocatedStatement, Parameter, Statement,
-    StructDefinition,
+    AssignmentTarget, Constant, Contract, Expression, Function, LocatedStatement, Parameter,
+    Statement, StructDefinition,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -117,6 +117,11 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::not_op
         | Rule::and_op
         | Rule::or_op
+        | Rule::bit_and_op
+        | Rule::bit_or_op
+        | Rule::bit_xor_op
+        | Rule::shift_op
+        | Rule::invert_op
         | Rule::mul_op
         | Rule::div_op => "an operator",
         Rule::asset_lookup_source | Rule::tx_introspection_property | Rule::tx_property_part => {
@@ -124,7 +129,9 @@ fn rule_term(rule: &Rule) -> Option<String> {
         }
         Rule::input_introspection_property => "an input property",
         Rule::output_introspection_property => "an output property",
-        Rule::asset_group_property | Rule::group_property => "an asset group property",
+        Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
+            "an asset group property"
+        }
         Rule::asset_at_property => "an asset property",
         Rule::this_property => "a contract property",
         Rule::identifier => "a name",
@@ -348,7 +355,18 @@ fn parse_function(
         && (expr::reserved_function_signature(&name).is_some()
             || matches!(
                 name.as_str(),
-                "require" | "return" | "negate" | "neg64" | "le64ToScriptNum" | "le32ToLe64"
+                "require"
+                    | "return"
+                    | "negate"
+                    | "neg64"
+                    | "le64ToScriptNum"
+                    | "le32ToLe64"
+                    | "pubkey"
+                    | "signature"
+                    | "bytes20"
+                    | "bytes32"
+                    | "int"
+                    | "bool"
             ))
     {
         return Err(format!("function name '{name}' is reserved"));
@@ -521,7 +539,15 @@ fn parse_statement(
         }
         Rule::function_call_stmt => {
             let call = pair.into_inner().next().ok_or("Missing function call")?;
-            Statement::Call(parse_general_expression(call)?)
+            match parse_general_expression(call)? {
+                Expression::Builtin { builtin, .. } => {
+                    return Err(format!(
+                        "`{}(...)` cannot be a statement; use it inside require()",
+                        builtin.name
+                    ));
+                }
+                call => Statement::Call(call),
+            }
         }
         Rule::return_stmt => {
             let value = pair
@@ -560,25 +586,10 @@ fn parse_statement(
 }
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
-    let mut path = Vec::new();
-    let mut index = None;
-    for part in pair.into_inner() {
-        match part.as_rule() {
-            Rule::identifier => path.push(part.as_str().to_string()),
-            Rule::general_expression => index = Some(parse_general_expression(part)?),
-            rule => return Err(format!("Unexpected rule in assignment target: {rule:?}")),
-        }
-    }
-    let name = path.join(".");
-    if name.is_empty() {
-        return Err("Parse error: Missing assignment target".to_string());
-    }
-    Ok(match index {
-        Some(index) => AssignmentTarget::ArrayIndex {
-            array: name,
-            index: Box::new(index),
-        },
-        None => AssignmentTarget::Binding(name),
+    Ok(match expr::parse_property_access(pair)? {
+        Expression::Variable(name) | Expression::Property(name) => AssignmentTarget::Binding(name),
+        Expression::ArrayIndex { array, index } => AssignmentTarget::ArrayIndex { array, index },
+        value => AssignmentTarget::Access(Box::new(value)),
     })
 }
 
@@ -638,6 +649,7 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 mod tests {
     use super::parse;
     use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+    use crate::operators::UnaryOperator;
 
     #[test]
     fn parses_version_pragmas_without_enforcing_compatibility() {
@@ -702,7 +714,7 @@ mod tests {
             matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
         );
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "-"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "-"))
         );
         for size in ["", "0", "-1", "1 2", "N + 1"] {
             assert!(
@@ -766,7 +778,7 @@ mod tests {
         assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
         assert!(!contract.functions[3].is_private);
         assert!(
-            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op == "+"))
+            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op.symbol() == "+"))
         );
         assert!(matches!(
             &contract.functions[1].statements[1].statement,
@@ -788,21 +800,21 @@ mod tests {
         else {
             panic!("expected logical expression");
         };
-        assert_eq!(op, "||");
+        assert_eq!(op.symbol(), "||");
         assert!(
             matches!(left.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op == "==" && matches!(left.as_ref(), Expression::Not { .. }))
+            if op.symbol() == "==" && matches!(left.as_ref(), Expression::Unary { op: UnaryOperator::Not, .. }))
         );
         assert!(
             matches!(right.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "&&"))
+            if op.symbol() == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "&&"))
         );
         assert!(matches!(&contract.functions[0].statements[1].statement,
             Statement::Require(Requirement::Expression(Expression::BinaryOp { left, op, right }))
-            if op == "&&"
-                && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "||")
-                && matches!(right.as_ref(), Expression::Not { value }
-                    if matches!(value.as_ref(), Expression::BinaryOp { op, .. } if op == "<"))));
+            if op.symbol() == "&&"
+                && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "||")
+                && matches!(right.as_ref(), Expression::Unary { op: UnaryOperator::Not, value }
+                    if matches!(value.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "<"))));
     }
 
     #[test]
@@ -815,18 +827,54 @@ mod tests {
         else {
             panic!("comparison must be the outer expression");
         };
-        assert_eq!(op, "!=");
-        let Expression::Negate { value } = left.as_ref() else {
+        assert_eq!(op.symbol(), "!=");
+        let Expression::Unary {
+            op: UnaryOperator::Neg,
+            value,
+        } = left.as_ref()
+        else {
             panic!("minus must be the outer prefix");
         };
-        let Expression::Not { value } = value.as_ref() else {
+        let Expression::Unary {
+            op: UnaryOperator::Not,
+            value,
+        } = value.as_ref()
+        else {
             panic!("not must be the inner prefix");
         };
         assert!(matches!(value.as_ref(), Expression::Literal(value) if value == "true"));
         assert!(matches!(right.as_ref(), Expression::Literal(value) if value == "false"));
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression::Not { value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression::Unary { op: UnaryOperator::Not, value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
         );
+    }
+
+    #[test]
+    fn parses_operand_paths_as_structured_accesses() {
+        let contract = parse(
+            r#"
+contract C() {
+    function spend(signature sig) {
+        require(checkSig(sig, signers[i + 1].keys[0]));
+        let part = substr(rows[0].data, p.offset, 1);
+    }
+}
+"#,
+        )
+        .unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(matches!(
+            &statements[0].statement,
+            Statement::Require(Requirement::CheckSig { pubkey: pubkey @ Expression::IndexAccess { .. }, .. })
+                if pubkey.source_text() == "signers[i + 1].keys[0]"
+        ));
+        assert!(matches!(
+            &statements[1].statement,
+            Statement::LetBinding { value: Expression::Builtin { builtin, args }, .. }
+                if builtin.name == "substr"
+                    && matches!(&args[0], Expression::FieldAccess { field, .. } if field == "data")
+                    && matches!(&args[1], Expression::Property(name) if name == "p.offset")
+        ));
     }
 
     #[test]
@@ -864,7 +912,7 @@ contract Demo() {
                 target: AssignmentTarget::ArrayIndex { array, index },
                 ..
             } if array == "state.values"
-                && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "+")
+                && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "+")
         ));
         assert!(matches!(
             &statements[2].statement,
@@ -913,7 +961,8 @@ contract Demo(pubkey first, pubkey second) {
                 pubkeys,
                 signatures,
                 threshold: 2,
-            }) if pubkeys == &["first", "second"] && signatures == &["firstSig", "secondSig"]
+            }) if pubkeys.iter().map(Expression::source_text).eq(["first", "second"])
+                && signatures.iter().map(Expression::source_text).eq(["firstSig", "secondSig"])
         ));
     }
 

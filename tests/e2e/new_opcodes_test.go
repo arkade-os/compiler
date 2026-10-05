@@ -1,11 +1,14 @@
 package e2e
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/consensys/gnark-crypto/ecc/bn254"
+	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 )
 
 func TestTunnel(t *testing.T) {
@@ -89,6 +92,60 @@ func TestOpcodeExecutionContext(t *testing.T) {
 			ptx := spendingPSBTWithWitness(t, deployment, instance, 10000, instance.pkScript,
 				covenantWitness(t, contract, group, test.inputs))
 			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr, test.options...)
+		})
+	}
+}
+
+func TestECPairing(t *testing.T) {
+	contract := compileArtifact(t, "contracts/new_opcodes.ark")
+	serverKey := fixedPrivateKey(1)
+	emulatorKey := fixedPrivateKey(2)
+	_, _, g1, g2 := bn254.Generators()
+	var negG1 bn254.G1Affine
+	negG1.Neg(&g1)
+	coordinate := func(element fp.Element) []byte {
+		bytes := element.Bytes()
+		return scriptPositiveBigInt(t, bytes[:])
+	}
+	// e(first, G2) * e(second, G2) == 1 exactly when second == -first.
+	pairs := func(prefix string, first, second bn254.G1Affine) map[string][]byte {
+		inputs := map[string][]byte{}
+		for i, point := range []bn254.G1Affine{first, second} {
+			inputs[fmt.Sprintf("%sg1.%d.x", prefix, i)] = coordinate(point.X)
+			inputs[fmt.Sprintf("%sg1.%d.y", prefix, i)] = coordinate(point.Y)
+			inputs[fmt.Sprintf("%sg2.%d.xC1", prefix, i)] = coordinate(g2.X.A1)
+			inputs[fmt.Sprintf("%sg2.%d.xC0", prefix, i)] = coordinate(g2.X.A0)
+			inputs[fmt.Sprintf("%sg2.%d.yC1", prefix, i)] = coordinate(g2.Y.A1)
+			inputs[fmt.Sprintf("%sg2.%d.yC0", prefix, i)] = coordinate(g2.Y.A0)
+		}
+		return inputs
+	}
+	proofs := func(selected bn254.G1Affine) map[string][]byte {
+		inputs := pairs("proofs.0.", g1, g1)
+		for name, value := range pairs("proofs.1.", g1, selected) {
+			inputs[name] = value
+		}
+		inputs["index"] = scriptInt(t, 1)
+		return inputs
+	}
+	for _, test := range []struct {
+		name     string
+		function string
+		inputs   map[string][]byte
+		wantErr  string
+	}{
+		{name: "balanced pairs", function: "pairing", inputs: pairs("", g1, negG1)},
+		{name: "unbalanced pairs", function: "pairing", inputs: pairs("", g1, g1), wantErr: "false stack entry"},
+		{name: "selected balanced proof", function: "pairingProof", inputs: proofs(negG1)},
+		{name: "selected unbalanced proof", function: "pairingProof", inputs: proofs(g1), wantErr: "false stack entry"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			group := covenantGroup(t, contract, test.function)
+			instance := instantiateGroup(t, contract, test.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
+			deployment := fundingTx(instance.pkScript, 10000)
+			ptx := spendingPSBTWithWitness(t, deployment, instance, 10000, instance.pkScript,
+				covenantWitness(t, contract, group, test.inputs))
+			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr)
 		})
 	}
 }

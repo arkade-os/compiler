@@ -40,9 +40,9 @@ fn test_ir_constructor_field_encoding() {
 
     let fields = &ir.constructor_fields;
     assert_eq!(fields[0].name, "sender");
-    assert_eq!(fields[0].encoding, Encoding::Compressed33);
+    assert_eq!(fields[0].encoding, Encoding::Raw);
     assert_eq!(fields[1].name, "receiver");
-    assert_eq!(fields[1].encoding, Encoding::Compressed33);
+    assert_eq!(fields[1].encoding, Encoding::Raw);
     assert_eq!(fields[2].name, "preimageHash");
     assert_eq!(fields[2].encoding, Encoding::Raw20);
     assert_eq!(fields[3].name, "refundTime");
@@ -102,7 +102,6 @@ fn test_ir_single_sig_contract() {
 #[test]
 fn test_encoding_roundtrip() {
     let encodings = vec![
-        ("compressed-33", Encoding::Compressed33),
         ("schnorr-64", Encoding::Schnorr64),
         ("raw", Encoding::Raw),
         ("raw-20", Encoding::Raw20),
@@ -149,7 +148,7 @@ fn test_ir_expands_grouped_array_fields() {
     assert!(ir
         .constructor_fields
         .iter()
-        .all(|f| f.encoding == Encoding::Compressed33));
+        .all(|f| f.encoding == Encoding::Raw));
 
     let group = &ir.groups[0];
     let inputs: Vec<&str> = group
@@ -214,7 +213,7 @@ fn test_ir_expands_nested_struct_fields() {
     assert_eq!(
         constructor,
         [
-            ("policy.primary.key", &Encoding::Compressed33),
+            ("policy.primary.key", &Encoding::Raw),
             ("policy.primary.weight", &Encoding::ScriptNum),
             ("policy.limits.0", &Encoding::ScriptNum),
             ("policy.limits.1", &Encoding::ScriptNum),
@@ -235,5 +234,43 @@ fn test_ir_expands_nested_struct_fields() {
             "candidate.limits.0",
             "candidate.limits.1",
         ]
+    );
+}
+
+#[test]
+fn test_ir_expands_struct_arrays_in_source_order() {
+    let artifact = arkade_compiler::compile(
+        r#"
+struct Point { int x; int y; }
+struct State { Point[2] points; }
+contract C(State state) {
+    function spend(Point[2] points) { require(state.points == points); }
+}
+"#,
+    )
+    .unwrap();
+    let ir = build_ir(&artifact).unwrap();
+    assert_eq!(
+        ir.constructor_fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.ark_type.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("state.points.0.x", "int"),
+            ("state.points.0.y", "int"),
+            ("state.points.1.x", "int"),
+            ("state.points.1.y", "int"),
+        ]
+    );
+    assert_eq!(
+        ir.groups[0]
+            .covenant
+            .as_ref()
+            .unwrap()
+            .inputs
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        ["points.0.x", "points.0.y", "points.1.x", "points.1.y"]
     );
 }

@@ -41,7 +41,7 @@ contract Swapped(pubkey owner) {
     // sig is pubkey, ownerSig is signature → arguments are swapped
     let error = compile_error(source);
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "swapped checkSig arguments must be rejected: {error}"
     );
 }
@@ -212,7 +212,7 @@ contract MultiTypeError(pubkey owner, int badHash) {
 }"#;
     let error = compile_error(source);
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "signature argument errors must stop compilation: {error}"
     );
 }
@@ -230,7 +230,7 @@ contract SwappedCsfs(pubkey owner) {
 }"#;
     let error = compile_error(source);
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "swapped checkSigFromStack arguments must be rejected: {error}"
     );
 }
@@ -352,7 +352,7 @@ contract Casts(pubkey owner, int gidx) {
     for (cast, source_type) in [
         ("bytes32(n)", "int"),
         ("bytes20(h)", "bytes32"),
-        ("pubkey(owner)", "pubkey"),
+        ("pubkey(n)", "int"),
     ] {
         let error = compile_error(&format!(
             "contract Casts(pubkey owner, bytes32 h) {{ function spend(int n) {{ let x = {cast}; require(x == x && n == n && h == h && owner == owner); }} }}"
@@ -362,6 +362,89 @@ contract Casts(pubkey owner, int gidx) {
             "{cast}: {error}"
         );
     }
+}
+
+#[test]
+fn int_casts_fold_hex_literals_and_convert_bools() {
+    let output = compile_ok(
+        r#"
+contract HexCasts(pubkey owner) {
+    const int MAX = int(0x7fffffffffffffff);
+    function spend(signature sig, int n, bool flag) {
+        require(n <= MAX && n >= int(0x0100) && n != int(0x00));
+        require(n * 2 < int(0xffffffffffffffffff));
+        require(int(flag) == 1);
+        require(bool(n) == flag);
+        require(checkSig(sig, owner));
+    }
+}"#,
+    );
+    let asm = crate::common::arkade_asm(&output, "spend");
+    for expected in [
+        "9223372036854775807 OP_LESSTHANOREQUAL",
+        "4722366482869645213695 OP_LESSTHAN",
+        "256 OP_GREATERTHANOREQUAL",
+        "0 OP_EQUAL OP_NOT",
+    ] {
+        assert!(asm.contains(expected), "{expected}: {asm}");
+    }
+    assert_eq!(
+        asm.matches("OP_0NOTEQUAL").count(),
+        2,
+        "int(bool) and bool(int) normalize: {asm}"
+    );
+    assert!(!asm.contains("0x"), "hex casts fold away: {asm}");
+
+    for (source, message) in [
+        ("require(int(data) == n);", "cannot cast 'bytes' to 'int'"),
+        ("require(int(\"ab\") == n);", "cannot cast 'bytes' to 'int'"),
+        (
+            "require(bool(data) == flag);",
+            "cannot cast 'bytes' to 'bool'",
+        ),
+    ] {
+        let error = compile_error(&format!(
+            "contract E() {{ function spend(bytes data, int n, bool flag) {{ {source} require(data == data && n == n && flag == flag); }} }}"
+        ));
+        assert!(error.contains(message), "{source}: {error}");
+    }
+    let error = compile_error(
+        "contract F() { function spend(int n) { require(n == n); } private function int(int a) int { return a; } }",
+    );
+    assert!(error.contains("function name 'int' is reserved"), "{error}");
+    let error = compile_error(
+        "contract G() { const int TOO_BIG = int(0x8000000000000000); function spend(int n) { require(n < TOO_BIG); } }",
+    );
+    assert!(
+        error.contains("expected a signed 64-bit integer"),
+        "{error}"
+    );
+}
+
+#[test]
+fn same_type_casts_are_no_ops() {
+    let output = compile_ok(
+        r#"
+contract SameType(pubkey owner) {
+    function spend(signature sig, int n, bool flag, bytes20 h) {
+        let x = int(42);
+        require(int(n) + x == 43);
+        require(bool(flag) && bool(2));
+        require(bytes20(h) == h);
+        require(checkSig(sig, owner));
+    }
+}"#,
+    );
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert_eq!(
+        asm.matches("OP_0NOTEQUAL").count(),
+        1,
+        "only bool(2) converts: {asm}"
+    );
+    assert!(
+        !asm.contains("OP_SIZE"),
+        "bytes20(bytes20) is unchecked: {asm}"
+    );
 }
 
 #[test]
@@ -407,7 +490,7 @@ fn hash_comparisons_expect_the_digest_width() {
 
 #[test]
 fn tapscript_timelocks_must_be_int() {
-    for (ty, ok) in [("int", true), ("pubkey", false), ("bytes32", false)] {
+    for (ty, ok) in [("int", true), ("bytes", false), ("bytes32", false)] {
         let source = format!("contract T(pubkey owner, {ty} delay) {{ function spend() {{ require(delay == delay); }} function exit(signature sig) tapscript {{ require(older(delay)); require(checkSig(sig, owner)); }} }}");
         match compile(&source) {
             Ok(_) => assert!(ok, "{ty} timelock accepted"),
@@ -430,7 +513,7 @@ fn builtin_operands_are_type_checked() {
         ),
         (
             "substr(d, k, 1) == d",
-            "substr operand has type 'pubkey', expected 'int'",
+            "substr operand has type 'bytes', expected 'int'",
         ),
         (
             "cat(i, d) == d",
@@ -454,7 +537,7 @@ fn builtin_operands_are_type_checked() {
         ),
         (
             "sighash(k) == m",
-            "sighash operand has type 'pubkey', expected 'int'",
+            "sighash operand has type 'bytes', expected 'int'",
         ),
         (
             "digest(i, 0) == d",
@@ -462,11 +545,11 @@ fn builtin_operands_are_type_checked() {
         ),
         (
             "size(tx.packet(k)) > 0",
-            "tx.packet operand has type 'pubkey', expected 'int'",
+            "tx.packet operand has type 'bytes', expected 'int'",
         ),
         (
             "tx.inputs[k].value > 0",
-            "tx.inputs[] operand has type 'pubkey', expected 'int'",
+            "tx.inputs[] operand has type 'bytes', expected 'int'",
         ),
         (
             "tx.outputs[d].value > 0",

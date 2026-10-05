@@ -3,8 +3,6 @@ use arkade_compiler::ContractJson;
 /// Wire-encoding descriptor, matching the compiler's `WitnessElement.encoding` field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Encoding {
-    /// 33-byte SEC-compressed secp256k1 public key
-    Compressed33,
     /// 64-byte BIP-340 Schnorr signature
     Schnorr64,
     /// Arbitrary-length byte array
@@ -23,7 +21,6 @@ impl Encoding {
     /// Parse an encoding string from the artifact.
     pub fn parse(s: &str) -> Self {
         match s {
-            "compressed-33" => Encoding::Compressed33,
             "schnorr-64" => Encoding::Schnorr64,
             "raw" => Encoding::Raw,
             "raw-20" => Encoding::Raw20,
@@ -37,12 +34,11 @@ impl Encoding {
     /// and covenant inputs carry only a type, not an explicit encoding.
     pub fn from_ark_type(type_str: &str) -> Self {
         match type_str {
-            "pubkey" => Encoding::Compressed33,
             "signature" => Encoding::Schnorr64,
-            "bytes" => Encoding::Raw,
+            "bytes" | "pubkey" => Encoding::Raw,
             "bytes20" => Encoding::Raw20,
             "bytes32" => Encoding::Raw32,
-            "int" | "bool" => Encoding::ScriptNum,
+            "int" | "bool" | "AssetGroup" => Encoding::ScriptNum,
             "asset" => Encoding::Raw32,
             _ => Encoding::Unknown(type_str.to_string()),
         }
@@ -51,7 +47,6 @@ impl Encoding {
     /// The encoding string as it appears in the artifact JSON.
     pub fn as_str(&self) -> &str {
         match self {
-            Encoding::Compressed33 => "compressed-33",
             Encoding::Schnorr64 => "schnorr-64",
             Encoding::Raw => "raw",
             Encoding::Raw20 => "raw-20",

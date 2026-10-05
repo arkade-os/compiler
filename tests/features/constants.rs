@@ -680,3 +680,36 @@ fn logical_constants_short_circuit_and_validate_skipped_operands() {
         compile(&format!("contract C() {{ const bool VALUE = {expression}; static function helper() bool {{ return true; }} function spend() {{ require(true); }} }}")).expect_err("invalid skipped constant operand");
     }
 }
+
+#[test]
+fn shifts_fold_in_constants_like_the_vm() {
+    let source = "contract C() {
+        const int X = 1 << 8;
+        const int Y = -9 >> 1;
+        function spend(int n) { require(n == X); require(n != Y); }
+    }";
+    let output = arkade_compiler::compile(source).expect("constant shifts fold");
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert!(asm.contains("256") && asm.contains("-5"), "{asm}");
+    let fold = |expr: &str| {
+        arkade_compiler::compile(&format!(
+            "contract C() {{ const int Z = {expr}; function spend(int n) {{ require(n == Z); }} }}"
+        ))
+        .map(|output| crate::common::arkade_asm(&output, "spend"))
+        .map_err(|error| error.to_string())
+    };
+    assert_eq!(fold("0 << 63"), fold("0"));
+    assert_eq!(fold("0 << 2147483647"), fold("0"));
+    assert_eq!(fold("-8 >> 2147483647"), fold("-1"));
+    assert_eq!(fold("-1 << 63"), fold("-9223372036854775808"));
+    for (expr, message) in [
+        ("1 << -1", "negative shift count"),
+        ("1 << 63", "integer overflow"),
+        ("3 << 62", "integer overflow"),
+        ("0 << 2147483648", "shift count exceeds"),
+        ("-8 >> 2147483648", "shift count exceeds"),
+    ] {
+        let error = fold(expr).expect_err(expr);
+        assert!(error.contains(message), "{expr}: {error}");
+    }
+}

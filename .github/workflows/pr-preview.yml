@@ -41,7 +41,7 @@ jobs:
       - name: Install wasm-pack
         uses: taiki-e/install-action@v2
         with:
-          tool: wasm-pack
+          tool: wasm-pack@0.15.0
 
       - name: Generate contracts.js
         run: ./playground/generate_contracts.sh

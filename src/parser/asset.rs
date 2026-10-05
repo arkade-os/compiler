@@ -36,7 +36,7 @@ pub(crate) fn parse_asset_group_id_operands(
             }
             body
         }
-        Rule::tx_property_body | Rule::asset_group_access => pair,
+        Rule::tx_property_body => pair,
         rule => return Err(format!("unexpected asset group operand parent: {rule:?}")),
     };
 
@@ -201,11 +201,19 @@ pub(crate) fn parse_asset_at_to_expression(pair: Pair<Rule>) -> Result<Expressio
 /// Parse a group_control_is pair: `group.controlIs(txid, gidx)` → GroupControlIs.
 pub(crate) fn parse_group_control_is_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
-    let group = inner
-        .next()
-        .ok_or("Missing group in controlIs")?
-        .as_str()
-        .to_string();
+    let group = parse_property_access(inner.next().ok_or("Missing group in controlIs")?)?;
+    parse_group_control_is(
+        Box::new(group),
+        inner.next().ok_or("Missing controlIs operands")?,
+    )
+}
+
+/// Parse an asset_group_control_is pair applied to `group`.
+pub(crate) fn parse_group_control_is(
+    group: Box<Expression>,
+    pair: Pair<Rule>,
+) -> Result<Expression, String> {
+    let mut inner = pair.into_inner();
     let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing controlIs txid")?)?;
     let asset_gidx = parse_asset_id_gidx(inner.next().ok_or("Missing controlIs gidx")?)?;
     Ok(Expression::GroupControlIs {

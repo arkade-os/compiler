@@ -17,7 +17,15 @@ pub fn array_type_parts(declared_type: &str) -> Option<(&str, usize)> {
 pub fn is_builtin_type(declared_type: &str) -> bool {
     matches!(
         declared_type,
-        "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "int" | "bool" | "asset"
+        "pubkey"
+            | "signature"
+            | "bytes"
+            | "bytes20"
+            | "bytes32"
+            | "int"
+            | "bool"
+            | "asset"
+            | "AssetGroup"
     )
 }
 
@@ -29,6 +37,13 @@ pub fn builtin_struct_fields(
         "AssetId" => Some(&[("txid", "bytes32"), ("gidx", "int")]),
         "Outpoint" => Some(&[("txid", "bytes32"), ("vout", "int")]),
         "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
+        // alt_bn128 G2 point; each coordinate is an Fp2 element `c1 * i + c0`.
+        "G2Point" => Some(&[
+            ("xC1", "int"),
+            ("xC0", "int"),
+            ("yC1", "int"),
+            ("yC0", "int"),
+        ]),
         _ => None,
     }
 }
@@ -93,17 +108,15 @@ fn flatten_type(
     leaves: &mut Vec<TypeLeaf>,
 ) -> Result<(), String> {
     if let Some((element_type, length)) = array_type_parts(declared_type) {
-        if !is_builtin_type(element_type) {
-            return Err(format!(
-                "arrays of structs are not supported: '{declared_type}'"
-            ));
-        }
         for index in 0..length {
-            leaves.push(TypeLeaf {
-                access_name: format!("{access_name}[{index}]"),
-                emitted_name: format!("{emitted_name}.{index}"),
-                leaf_type: element_type.to_string(),
-            });
+            flatten_type(
+                &format!("{access_name}[{index}]"),
+                &format!("{emitted_name}.{index}"),
+                element_type,
+                structs,
+                stack,
+                leaves,
+            )?;
         }
         return Ok(());
     }
@@ -172,7 +185,6 @@ pub struct FunctionInput {
 ///
 /// | encoding        | description                                   |
 /// |-----------------|-----------------------------------------------|
-/// | `compressed-33` | 33-byte SEC-compressed secp256k1 public key  |
 /// | `schnorr-64`    | 64-byte Schnorr signature (BIP-340)           |
 /// | `raw`           | arbitrary byte array (caller decides length)  |
 /// | `raw-20`        | 20-byte array (e.g., HASH160)                 |
@@ -374,6 +386,7 @@ pub enum Statement {
 /// A binding or array element on the left-hand side of an assignment.
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
+    Access(Box<Expression>),
     Binding(String),
     ArrayIndex {
         array: String,
@@ -387,29 +400,32 @@ pub enum Requirement {
     /// Expression that must evaluate to true
     Expression(Expression),
     /// Check signature requirement
-    CheckSig { signature: String, pubkey: String },
+    CheckSig {
+        signature: Expression,
+        pubkey: Expression,
+    },
     /// Check signature from stack requirement (signature verified against a message)
     CheckSigFromStack {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Expression,
+        pubkey: Expression,
+        message: Expression,
     },
     /// Check multisig requirement
     CheckMultisig {
-        pubkeys: Vec<String>,
-        signatures: Vec<String>,
+        pubkeys: Vec<Expression>,
+        signatures: Vec<Expression>,
         threshold: u16,
     },
     /// Hash equal requirement
     HashEqual {
         hash_fn: HashFn,
-        preimage: String,
-        hash: String,
+        preimage: Expression,
+        hash: Expression,
     },
     /// Comparison requirement
     Comparison {
         left: Expression,
-        op: String,
+        op: crate::operators::BinaryOperator,
         right: Expression,
     },
 }
@@ -539,15 +555,6 @@ pub enum AssetLookupSource {
     Output,
 }
 
-/// Source of an asset group sum (inputs or outputs)
-#[derive(Debug, Clone, PartialEq)]
-pub enum GroupSumSource {
-    /// sumInputs (source=0)
-    Inputs,
-    /// sumOutputs (source=1)
-    Outputs,
-}
-
 /// Source for per-group input/output access
 #[derive(Debug, Clone, PartialEq)]
 pub enum GroupIOSource {
@@ -566,14 +573,17 @@ pub enum Expression {
         args: Vec<Expression>,
         return_type: Option<String>,
     },
+    /// A builtin function call; its arguments are in parameter order.
+    Builtin {
+        builtin: &'static crate::builtins::Builtin,
+        args: Vec<Expression>,
+    },
     /// Variable reference
     Variable(String),
     /// Decimal integer, boolean, or 0x-prefixed byte data (including empty 0x).
     Literal(String),
     /// Property access (e.g., tx.time)
     Property(String),
-    /// Whether the emulator's clock has reached a Unix timestamp.
-    CheckTime { timestamp: Box<Expression> },
     /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
     IntentInspect { path: String, presence_only: bool },
     /// Continue the current input at an output; policy order is script, value, assets.
@@ -586,6 +596,16 @@ pub enum Expression {
     ArrayLiteral(Vec<Expression>),
     /// Named struct literal; only valid as the initializer of a typed declaration.
     StructLiteral(Vec<(String, Expression)>),
+    /// A field of a statically laid-out value.
+    FieldAccess {
+        value: Box<Expression>,
+        field: String,
+    },
+    /// An array nested inside an indexed value.
+    IndexAccess {
+        value: Box<Expression>,
+        index: Box<Expression>,
+    },
     /// Array element selected by an integer expression.
     ArrayIndex {
         array: String,
@@ -638,11 +658,11 @@ pub enum Expression {
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
         left: Box<Expression>,
-        op: String,
+        op: crate::operators::BinaryOperator,
         right: Box<Expression>,
     },
-    /// Asset group find: tx.assetGroups.find(txid, gidx) → resolved packet
-    /// position k. Asserts existence (consumes the success flag with OP_VERIFY).
+    /// Asset group find: tx.assetGroups.find(txid, gidx) → the `AssetGroup` with
+    /// that Asset ID. Asserts existence (consumes the success flag with OP_VERIFY).
     GroupFind {
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
@@ -653,44 +673,42 @@ pub enum Expression {
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
     },
+    /// The `AssetGroup` at packet position k: tx.assetGroups[k].
+    AssetGroupAt { index: Box<Expression> },
     /// Asset group property: group.sumInputs, group.delta, etc.
-    GroupProperty { group: String, property: String },
+    GroupProperty {
+        group: Box<Expression>,
+        property: String,
+    },
     /// Boolean equality over the complete canonical control Asset ID:
     /// group.controlIs(txid, gidx). False when control is absent or either
     /// component differs. `group.hasControl` (presence only) is modeled as a
     /// plain `GroupProperty { property: "hasControl" }`.
     GroupControlIs {
-        group: String,
+        group: Box<Expression>,
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
     },
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
-    /// Asset group sum with explicit index: tx.assetGroups[k].sumInputs/sumOutputs
-    GroupSum {
-        index: Box<Expression>,
-        source: GroupSumSource,
-    },
-    /// Asset group input/output count: tx.assetGroups[k].numInputs/numOutputs
-    GroupNumIO {
-        index: Box<Expression>,
-        source: GroupIOSource,
-    },
-    /// Per-group input/output access: tx.assetGroups[k].inputs[j] or tx.assetGroups[k].outputs[j]
+    /// Per-group input/output access: group.inputs[j] or group.outputs[j]
     /// Returns: type_u8, data..., amount_u64 based on input/output type
     GroupIOAccess {
-        group_index: Box<Expression>,
+        group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<String>, // Optional property like "amount", "type", "inputIndex", "outputIndex"
+        property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
     /// CheckSig expression result (for use in if conditions)
-    CheckSigExpr { signature: String, pubkey: String },
+    CheckSigExpr {
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+    },
     /// CheckSigFromStack expression result
     CheckSigFromStackExpr {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     // ─── Byte-string operations ────────────────────────────────────────
     /// Byte-string concatenation: produced by the rewrite pass when `+` has at
@@ -703,84 +721,18 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
-    // ─── Streaming SHA256 ──────────────────────────────────────────────
-    /// Plain SHA256: sha256(data) → emits `<data> OP_SHA256`.
-    /// One-shot hashing of byte-string expressions like substr; used for
-    /// small fixed messages where streaming would be overkill.
-    Sha256 { data: Box<Expression> },
-    /// Streaming SHA256 initialize: sha256Initialize(data)
-    Sha256Initialize { data: Box<Expression> },
-    /// Streaming SHA256 update: sha256Update(ctx, chunk)
-    Sha256Update {
-        context: Box<Expression>,
-        chunk: Box<Expression>,
-    },
-    /// Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk)
-    Sha256Finalize {
-        context: Box<Expression>,
-        last_chunk: Box<Expression>,
-    },
-    /// Signature hash for the current input under the selected hash type.
-    Sighash { hash_type: Box<Expression> },
-    /// Digest selected at runtime. The result is 20 or 32 bytes depending on the hash type.
-    Digest {
-        data: Box<Expression>,
-        hash_type: Box<Expression>,
-    },
     // ─── Arithmetic ────────────────────────────────────────────────────
-    /// Arithmetic negation: -value
-    Negate { value: Box<Expression> },
-    /// Boolean negation: !value
-    Not { value: Box<Expression> },
-    /// Modular exponentiation: modExp(base, exponent, modulus)
-    ModExp {
-        base: Box<Expression>,
-        exponent: Box<Expression>,
-        modulus: Box<Expression>,
+    /// Prefix operator: -value, !value or ~value
+    Unary {
+        op: crate::operators::UnaryOperator,
+        value: Box<Expression>,
     },
     // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// EC point addition. Produces an `ECPoint`.
-    EcAdd {
-        x1: Box<Expression>,
-        y1: Box<Expression>,
-        x2: Box<Expression>,
-        y2: Box<Expression>,
-        curve_id: Box<Expression>,
-    },
-    /// EC scalar multiplication. Produces an `ECPoint`.
-    EcMul {
-        x: Box<Expression>,
-        y: Box<Expression>,
-        scalar: Box<Expression>,
-        curve_id: Box<Expression>,
-    },
-    /// One-pair pairing check. Tuple support can generalize this to multiple pairs.
-    EcPairing {
-        g1_x: Box<Expression>,
-        g1_y: Box<Expression>,
-        g2_x_c1: Box<Expression>,
-        g2_x_c0: Box<Expression>,
-        g2_y_c1: Box<Expression>,
-        g2_y_c0: Box<Expression>,
-        curve_id: Box<Expression>,
-    },
-    /// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q)
-    EcMulScalarVerify {
-        scalar: Box<Expression>,
-        point_p: Box<Expression>,
-        point_q: Box<Expression>,
-    },
-    /// Tweak verification: tweakVerify(P, k, Q)
-    TweakVerify {
-        point_p: Box<Expression>,
-        tweak: Box<Expression>,
-        point_q: Box<Expression>,
-    },
     /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
     CheckSigFromStackVerify {
-        signature: String,
-        pubkey: String,
-        message: String,
+        signature: Box<Expression>,
+        pubkey: Box<Expression>,
+        message: Box<Expression>,
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
@@ -795,29 +747,8 @@ pub enum Expression {
         args: Vec<Expression>,
     },
     // ─── Byte-string Manipulation (introspector extensions) ────────────
-    /// Substring extraction: substr(data, offset, size) → OP_SUBSTR
-    Substr {
-        data: Box<Expression>,
-        offset: Box<Expression>,
-        size: Box<Expression>,
-    },
-    /// Byte concatenation: cat(a, b) → OP_CAT
-    Cat {
-        left: Box<Expression>,
-        right: Box<Expression>,
-    },
-    /// Bytes-to-number (little-endian, leading-zero-stripped BigNum): bin2num(bytes) → OP_BIN2NUM
-    Bin2Num { data: Box<Expression> },
-    /// Number-to-bytes (little-endian, zero-padded): num2bin(num, size) → OP_NUM2BIN
-    Num2Bin {
-        value: Box<Expression>,
-        size: Box<Expression>,
-    },
-    /// Reverse a byte string: reverseBytes(data) → OP_REVERSEBYTES
-    ReverseBytes { data: Box<Expression> },
-    /// Byte-string length: size(bytes) → OP_SIZE OP_NIP
-    SizeOf { data: Box<Expression> },
-    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x)
+    /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
+    /// or a scalar conversion: int(bool), bool(int)
     Cast {
         target: String,
         data: Box<Expression>,
@@ -838,9 +769,12 @@ pub enum Expression {
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match expression {
-        Expression::EcAdd { .. } | Expression::EcMul { .. } => Some("ECPoint"),
-        Expression::AssetAt { property, .. } | Expression::GroupProperty { property, .. }
-            if property == "assetId" =>
+        Expression::Builtin { builtin, .. } => builtin
+            .result
+            .filter(|result| builtin_struct_fields(result).is_some()),
+        Expression::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
+        Expression::GroupProperty { property, .. }
+            if matches!(property.as_str(), "assetId" | "controlAssetId") =>
         {
             Some("AssetId")
         }
@@ -863,17 +797,27 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         | Expression::CurrentInput(_)
         | Expression::TxIntrospection { .. }
         | Expression::IntentInspect { .. }
-        | Expression::GroupProperty { .. }
-        | Expression::AssetGroupsLength
-        | Expression::CheckSigExpr { .. }
-        | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. } => vec![],
+        | Expression::AssetGroupsLength => vec![],
 
+        Expression::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
+        Expression::CheckSigFromStackExpr {
+            signature,
+            pubkey,
+            message,
+        }
+        | Expression::CheckSigFromStackVerify {
+            signature,
+            pubkey,
+            message,
+        } => vec![signature, pubkey, message],
+
+        Expression::FieldAccess { value, .. } => vec![value],
+        Expression::IndexAccess { value, index } => vec![value, index],
         Expression::ArrayIndex { index, .. } => vec![index],
 
-        Expression::ArrayLiteral(elements) | Expression::Call { args: elements, .. } => {
-            elements.iter_mut().collect()
-        }
+        Expression::ArrayLiteral(elements)
+        | Expression::Call { args: elements, .. }
+        | Expression::Builtin { args: elements, .. } => elements.iter_mut().collect(),
         Expression::StructLiteral(fields) => fields.iter_mut().map(|(_, value)| value).collect(),
 
         Expression::AssetLookup {
@@ -891,8 +835,8 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
         Expression::AssetCount { index, .. }
         | Expression::InputIntrospection { index, .. }
         | Expression::OutputIntrospection { index, .. }
-        | Expression::GroupSum { index, .. }
-        | Expression::GroupNumIO { index, .. } => vec![index],
+        | Expression::AssetGroupAt { index }
+        | Expression::GroupProperty { group: index, .. } => vec![index],
         Expression::AssetAt {
             io_index,
             asset_index,
@@ -910,25 +854,14 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             asset_gidx,
         } => vec![asset_txid, asset_gidx],
         Expression::GroupControlIs {
+            group,
             asset_txid,
             asset_gidx,
-            ..
-        } => vec![asset_txid, asset_gidx],
+        } => vec![group, asset_txid, asset_gidx],
         Expression::GroupIOAccess {
-            group_index,
-            io_index,
-            ..
-        } => vec![group_index, io_index],
-        Expression::Sha256 { data } | Expression::Sha256Initialize { data } => vec![data],
-        Expression::Sha256Update { context, chunk } => vec![context, chunk],
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => vec![context, last_chunk],
-        Expression::Sighash { hash_type } => vec![hash_type],
-        Expression::Digest { data, hash_type } => vec![data, hash_type],
-        Expression::Negate { value } | Expression::Not { value } => vec![value],
-        Expression::CheckTime { timestamp } => vec![timestamp],
+            group, io_index, ..
+        } => vec![group, io_index],
+        Expression::Unary { value, .. } => vec![value],
         Expression::Tunnel {
             output_index,
             policy,
@@ -937,52 +870,48 @@ pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
             .chain(policy.iter_mut())
             .chain(exceptions.iter_mut())
             .collect(),
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => vec![base, exponent, modulus],
-        Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
-            curve_id,
-        } => vec![x1, y1, x2, y2, curve_id],
-        Expression::EcMul {
-            x,
-            y,
-            scalar,
-            curve_id,
-        } => vec![x, y, scalar, curve_id],
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => vec![g1_x, g1_y, g2_x_c1, g2_x_c0, g2_y_c1, g2_y_c0, curve_id],
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => vec![scalar, point_p, point_q],
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => vec![point_p, tweak, point_q],
         Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
-        Expression::Substr { data, offset, size } => vec![data, offset, size],
-        Expression::Cat { left, right } => vec![left, right],
-        Expression::Bin2Num { data }
-        | Expression::ReverseBytes { data }
-        | Expression::SizeOf { data }
-        | Expression::Cast { data, .. } => vec![data],
-        Expression::Num2Bin { value, size } => vec![value, size],
+        Expression::Cast { data, .. } => vec![data],
         Expression::PacketInspect { packet_type } => vec![packet_type],
         Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+    }
+}
+
+impl Expression {
+    /// Resolve the layout path, using element zero for runtime indexes.
+    pub(crate) fn binding_path(&self) -> Option<String> {
+        self.access_path(&|index| match index {
+            Self::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
+            _ => "0".to_string(),
+        })
+    }
+
+    /// Spell an operand as written, for diagnostics.
+    pub(crate) fn source_text(&self) -> String {
+        match self {
+            Self::Literal(value) => value.clone(),
+            Self::BinaryOp { left, op, right } => {
+                format!("{} {op} {}", left.source_text(), right.source_text())
+            }
+            _ => self
+                .access_path(&Self::source_text)
+                .unwrap_or_else(|| "<expr>".to_string()),
+        }
+    }
+
+    fn access_path(&self, index_text: &dyn Fn(&Self) -> String) -> Option<String> {
+        match self {
+            Self::Variable(name) | Self::Property(name) => Some(name.clone()),
+            Self::ArrayIndex { array, index } => Some(format!("{array}[{}]", index_text(index))),
+            Self::IndexAccess { value, index } => Some(format!(
+                "{}[{}]",
+                value.access_path(index_text)?,
+                index_text(index)
+            )),
+            Self::FieldAccess { value, field } => {
+                Some(format!("{}.{field}", value.access_path(index_text)?))
+            }
+            _ => None,
+        }
     }
 }

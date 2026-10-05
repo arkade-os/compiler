@@ -188,17 +188,24 @@ pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression,
 }
 
 pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    let text = pair.as_str();
+    let text = without_trivia(pair.as_str());
 
-    reject_malformed_asset_call(text)?;
+    reject_malformed_asset_call(&text)?;
 
-    // Handle tx.assetGroups.find(txid, gidx)
-    if text.starts_with("tx.assetGroups.find(") && text.ends_with(')') {
-        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
-        return Ok(Expression::GroupFind {
-            asset_txid: Box::new(asset_txid),
-            asset_gidx: Box::new(asset_gidx),
-        });
+    // tx.assetGroups.find(txid, gidx) or tx.assetGroups[k], with an optional member
+    if let Some(body) = pair
+        .clone()
+        .into_inner()
+        .next()
+        .filter(|body| body.as_rule() == Rule::tx_property_body)
+    {
+        let mut parts = body.into_inner();
+        if let Some(group) = parts
+            .next()
+            .filter(|p| p.as_rule() == Rule::asset_group_ref)
+        {
+            return parse_asset_group_access(group, parts.next());
+        }
     }
 
     // Handle tx.assetGroups.has(txid, gidx)
@@ -215,53 +222,86 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
         return Ok(Expression::AssetGroupsLength);
     }
 
-    // Handle tx.assetGroups[idx].sumInputs or tx.assetGroups[idx].sumOutputs
-    if text.starts_with("tx.assetGroups[") {
-        if let Some(bracket_start) = text.find('[') {
-            if let Some(bracket_end) = text.find(']') {
-                let idx_str = &text[bracket_start + 1..bracket_end];
-                let index = if idx_str.chars().all(|c| c.is_ascii_digit()) {
-                    Expression::Literal(idx_str.to_string())
-                } else {
-                    Expression::Variable(idx_str.to_string())
-                };
-
-                if text.ends_with(".sumInputs") {
-                    return Ok(Expression::GroupSum {
-                        index: Box::new(index),
-                        source: GroupSumSource::Inputs,
-                    });
-                } else if text.ends_with(".sumOutputs") {
-                    return Ok(Expression::GroupSum {
-                        index: Box::new(index),
-                        source: GroupSumSource::Outputs,
-                    });
-                } else if text.ends_with(".numInputs") {
-                    return Ok(Expression::GroupNumIO {
-                        index: Box::new(index),
-                        source: GroupIOSource::Inputs,
-                    });
-                } else if text.ends_with(".numOutputs") {
-                    return Ok(Expression::GroupNumIO {
-                        index: Box::new(index),
-                        source: GroupIOSource::Outputs,
-                    });
-                }
-            }
-        }
-    }
-
-    // Handle tx.input.current
+    // Handle tx.input.current.<property> — same property set as
+    // tx.inputs[i].<property>, since this *is* tx.inputs[i] for the current i.
     if text.starts_with("tx.input.current") {
-        let property = if text == "tx.input.current" {
-            None
-        } else {
-            text.strip_prefix("tx.input.current.")
-                .map(|rest| rest.to_string())
+        return match text.strip_prefix("tx.input.current.") {
+            Some(
+                p @ ("value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint"
+                | "arkadeScriptHash" | "arkadeWitnessHash"),
+            ) => Ok(Expression::CurrentInput(Some(p.to_string()))),
+            _ => Err(format!(
+                "tx.input.current requires one of: value, scriptPubKey, witnessVersion, sequence, \
+                 outpoint, arkadeScriptHash, arkadeWitnessHash (got '{text}')"
+            )),
         };
-        return Ok(Expression::CurrentInput(property));
     }
 
     // Default: treat as a property string
-    Ok(Expression::Property(text.to_string()))
+    Ok(Expression::Property(text))
+}
+
+/// An `AssetGroup` reference and the member accessed on it, if any.
+fn parse_asset_group_access(
+    group: Pair<Rule>,
+    member: Option<Pair<Rule>>,
+) -> Result<Expression, String> {
+    let mut operands = group.into_inner();
+    let first = operands.next().ok_or("Missing asset group")?;
+    let group = Box::new(if first.as_rule() == Rule::array_access {
+        Expression::AssetGroupAt {
+            index: Box::new(parse_array_access_index(first)?),
+        }
+    } else {
+        Expression::GroupFind {
+            asset_txid: Box::new(parse_asset_id_txid(first)?),
+            asset_gidx: Box::new(parse_asset_id_gidx(
+                operands.next().ok_or("Missing asset group gidx")?,
+            )?),
+        }
+    });
+    let Some(member) = member else {
+        return Ok(*group);
+    };
+    let mut parts = member.into_inner();
+    let part = parts.next().ok_or("Missing asset group member")?;
+    Ok(match part.as_rule() {
+        Rule::asset_group_control_is => parse_group_control_is(group, part)?,
+        Rule::asset_group_io_source => Expression::GroupIOAccess {
+            group,
+            source: crate::typechecker::group_io_source(part.as_str())
+                .ok_or("Invalid asset group io source")?,
+            io_index: Box::new(parse_array_access_index(
+                parts.next().ok_or("Missing asset group io index")?,
+            )?),
+            property: parts.next().map(|p| p.as_str().to_string()),
+        },
+        _ => Expression::GroupProperty {
+            group,
+            property: part.as_str().to_string(),
+        },
+    })
+}
+
+/// `text` without the whitespace and comments the grammar allows between terms.
+fn without_trivia(text: &str) -> String {
+    text.lines()
+        .flat_map(|line| {
+            line.split_once("//")
+                .map_or(line, |(code, _)| code)
+                .split_whitespace()
+        })
+        .collect()
+}
+
+/// The index inside an `array_access` pair, without surrounding trivia.
+fn parse_array_access_index(array_access: Pair<Rule>) -> Result<Expression, String> {
+    let index = array_access
+        .into_inner()
+        .next()
+        .ok_or("Missing index value")?;
+    Ok(match index.as_rule() {
+        Rule::number_literal => Expression::Literal(index.as_str().to_string()),
+        _ => Expression::Variable(index.as_str().to_string()),
+    })
 }
