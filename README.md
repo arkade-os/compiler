@@ -190,12 +190,12 @@ The `.md` files next to those contracts explain the economics and transaction la
 Prebuilt `arkadec` and `arkade-bindgen` binaries for Linux, macOS, and Windows are attached to each [GitHub release](https://github.com/arkade-os/compiler/releases) with a `SHA256SUMS` file. With a Rust toolchain ([rustup.rs](https://rustup.rs/)), install from crates.io or a checkout instead:
 
 ```bash
-cargo install arkade-compiler       # installs arkadec
-cargo install arkade-bindgen
-cargo install --path .              # installs arkadec from a checkout
-arkadec contract.ark                # writes contract.json in the current directory
+cargo install arkade-compiler --locked   # installs arkadec
+cargo install arkade-bindgen --locked
+cargo install --path . --locked          # installs arkadec from a checkout
+arkadec contract.ark                     # writes contract.json in the current directory
 arkadec contract.ark -o out.json
-arkadec contract.ark --no-optimize  # skips peephole optimization of Arkade covenants
+arkadec contract.ark --no-optimize       # skips peephole optimization of Arkade covenants
 ```
 
 Warnings go to stderr; type and validation errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
@@ -238,7 +238,7 @@ The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator
 
 `arkade-compiler` and `arkade-bindgen` share the version in the root `Cargo.toml` `[workspace.package]` table. To release, bump it in a PR (on a minor bump, also raise `arkade-bindgen`'s `arkade-compiler` requirement), merge, and push `v<version>` from the merge commit. `.github/workflows/release.yml` checks the tag against the version, builds binaries for five targets, creates a GitHub release with `SHA256SUMS`, and publishes both crates to crates.io through trusted publishing. A tag with a suffix such as `v0.1.0-test` creates a GitHub pre-release and skips crates.io; remove it with `gh release delete <tag> --cleanup-tag`.
 
-Trusted publishing can only be configured on existing crates, so the first crates.io release is manual: a crate owner runs `cargo publish -p arkade-compiler && cargo publish -p arkade-bindgen` from the commit to be tagged, enables trusted publishing for both crates (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`), and then pushes the tag. The workflow skips crates whose version is already published.
+Trusted publishing can only be configured on existing crates, so the first crates.io release is manual: a crate owner runs `cargo publish --locked -p arkade-compiler && cargo publish --locked -p arkade-bindgen` from the commit to be tagged, enables trusted publishing for both crates (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`), and then pushes the tag. The workflow skips crates whose version is already published.
 
 ## Language reference
 

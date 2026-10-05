@@ -14,16 +14,18 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Check tag matches workspace version
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - name: Check tag matches every crate version
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "arkade-compiler") | .version')
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].version] | unique | join(" ")')
           case "$GITHUB_REF_NAME" in
             "v$version" | "v$version"-*) ;;
-            *) echo "::error::Tag $GITHUB_REF_NAME does not match workspace version $version"; exit 1 ;;
+            *) echo "::error::Tag $GITHUB_REF_NAME does not match crate versions $version"; exit 1 ;;
           esac
       - name: Test
         run: cargo test --workspace --locked
@@ -48,11 +50,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
@@ -66,12 +69,17 @@ jobs:
           [[ "$TARGET" == *windows* ]] && ext=.exe
           mkdir "$name"
           cp README.md LICENSE "target/$TARGET/release/arkadec$ext" "target/$TARGET/release/arkade-bindgen$ext" "$name/"
+          # x86_64-apple-darwin is cross-compiled on an arm64 runner and is not executed.
+          if [[ "$TARGET" != x86_64-apple-darwin ]]; then
+            "$name/arkadec$ext" --version
+            "$name/arkade-bindgen$ext" --version
+          fi
           if [[ "$TARGET" == *windows* ]]; then
             7z a "$name.zip" "$name"
           else
             tar czf "$name.tar.gz" "$name"
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.target }}
           path: |
@@ -84,7 +92,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           merge-multiple: true
@@ -107,11 +115,13 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: rust-lang/crates-io-auth-action@v1
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
       - name: Publish crates
         env:
