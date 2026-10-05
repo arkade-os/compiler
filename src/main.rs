@@ -19,6 +19,7 @@ use arkade_compiler::{compile_file_with_options, CompileOptions};
 // CLI arguments
 #[derive(ClapParser, Debug)]
 #[command(name = "arkadec")]
+#[command(version)]
 #[command(about = "Arkade Compiler for Bitcoin Taproot scripts", long_about = None)]
 struct Args {
     /// Source file path (.ark)
