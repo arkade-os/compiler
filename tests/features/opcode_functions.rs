@@ -1116,3 +1116,34 @@ fn loop_bodies_substitute_the_index_and_value_in_every_expression_kind() {
         );
     }
 }
+
+#[test]
+fn merkle_root_pushes_operands_in_vm_order() {
+    let output = compile(
+        r#"contract M(bytes32 root) { function spend(bytes leaf, bytes proof) {
+            require(merkleRoot("leaf", "branch", proof, leaf) == root);
+        } }"#,
+    )
+    .expect("merkleRoot compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let position = |token: &str| asm.iter().position(|t| t == token).unwrap_or(usize::MAX);
+    // OP_MERKLEBRANCHVERIFY pops leaf, proof, branch tag, leaf tag: tags go in first.
+    assert!(
+        position("0x6c656166") < position("0x6272616e6368"),
+        "{asm:?}"
+    );
+    assert!(
+        position("0x6272616e6368") < position("OP_MERKLEBRANCHVERIFY"),
+        "{asm:?}"
+    );
+
+    let error = compile(
+        "contract M(bytes32 root) { function spend(bytes proof) { require(merkleRoot(\"\", \"b\", proof, 5) == root); } }",
+    )
+    .expect_err("an int leaf")
+    .to_string();
+    assert!(
+        error.contains("merkleRoot operand has type 'int', expected 'bytes'"),
+        "{error}"
+    );
+}

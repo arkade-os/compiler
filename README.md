@@ -456,6 +456,8 @@ Arithmetic `+ - * /` and unary `-` on `int`. Shifts `<<` and `>>` on `int`: the 
 
 **Hashes.** `sha256`, `hash160`, `hash256`, `ripemd160` as `require(hashFn(preimage) == hash)`. `sha256(expr)` also works as a value, including over concatenations and `substr` results. Streaming: `sha256Initialize`, `sha256Update`, `sha256Finalize`. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
+**Merkle proofs.** `merkleRoot(leafTag, branchTag, proof, leaf)` returns the `bytes32` root that `OP_MERKLEBRANCHVERIFY` computes with BIP-341 tagged hashes: the leaf is `tagged_hash(leafTag, leaf)`, and each 32-byte sibling in `proof` is combined in sorted order as `tagged_hash(branchTag, min || max)`. An empty `leafTag` (`""`) takes a 32-byte `leaf` as already hashed. Compare the result yourself, e.g. `require(merkleRoot("leaf", "branch", proof, leaf) == root)`; the VM fails the spend when `proof` is not a multiple of 32 bytes or `branchTag` is empty.
+
 **Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts.
 
 In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
