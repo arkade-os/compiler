@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -26,7 +26,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -37,9 +37,9 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
+        uses: taiki-e/install-action@v2
         with:
-          version: 'latest'
+          tool: wasm-pack
 
       - name: Generate contracts.js
         run: ./playground/generate_contracts.sh
