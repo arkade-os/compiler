@@ -340,3 +340,52 @@ fn accepts_loop_index_as_gidx() {
         compile(src).err()
     );
 }
+
+// ─── Computed indexes and gidx operands ─────────────────────────────────────
+
+#[test]
+fn computed_indexes_unroll_in_nested_loops() {
+    let asm = arkade_asm(
+        "contract C(bytes32 fooTxid, int packetType) {
+            function f(int[2] xs, int[2] ys) {
+                for (i, x) in xs {
+                    for (j, y) in ys {
+                        require(tx.inputs[i + j].value >= tx.outputs[i * 2 + j].value);
+                        require(tx.outputs[j].assets.lookup(fooTxid, i + j) >= x + y);
+                        require(tx.assetGroups[i + j].delta >= 0);
+                        require(size(tx.inputs[i].packet(packetType + j)) > 0);
+                    }
+                }
+            }
+        }",
+        "f",
+    );
+    for fragment in [
+        "1 1 OP_ADD OP_INSPECTINPUTVALUE 1 2 OP_MUL 1 OP_ADD OP_INSPECTOUTPUTVALUE",
+        "1 OP_1 OP_PICK 1 1 OP_ADD OP_INSPECTOUTASSETLOOKUP",
+        "1 1 OP_ADD OP_DUP OP_1 OP_INSPECTASSETGROUPSUM",
+        "1 OP_ADD 1 OP_INSPECTINPUTPACKET",
+    ] {
+        assert!(asm.contains(fragment), "missing `{fragment}` in:\n{asm}");
+    }
+}
+
+#[test]
+fn rejects_invalid_constant_gidx_expression() {
+    for gidx in [
+        "G + 1",
+        "-1",
+        "0 - 1",
+        "99999999999999999999",
+        "9223372036854775807 + 1",
+    ] {
+        let src = format!(
+            "contract C(bytes32 fooTxid) {{
+                const int G = 65535;
+                function f() {{ require(tx.outputs[0].assets.lookup(fooTxid, {gidx}) >= 1); }}
+            }}"
+        );
+        let err = compile(&src).expect_err(gidx).to_string();
+        assert!(err.contains("asset id gidx"), "{gidx}: {err}");
+    }
+}

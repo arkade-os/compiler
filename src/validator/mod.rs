@@ -1868,18 +1868,26 @@ fn validate_asset_id(
         )));
     }
 
-    // gidx: a numeric literal is range-checked directly; anything else must
+    // gidx: a constant expression is range-checked directly; anything else must
     // resolve to Int through the scope.
-    if let ExprKind::Literal(lit) = &asset_gidx.kind {
-        match lit.parse::<i64>() {
+    if is_constant(asset_gidx) {
+        let value = crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into()))
+            .and_then(|value| {
+                value
+                    .parse::<i64>()
+                    .map_err(|_| format!("'{value}' is not a valid integer"))
+            });
+        match value {
             Ok(v) if (0..=65535).contains(&v) => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx literal {} is out of range 0..65535",
+                "function '{}': asset id gidx {} is out of range 0..65535",
                 fname, v
             ))),
-            Err(_) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx literal '{}' is not a valid integer",
-                fname, lit
+            Err(error) => issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx '{}': {}",
+                fname,
+                asset_gidx.source_text(),
+                error
             ))),
         }
     } else {
@@ -1892,6 +1900,17 @@ fn validate_asset_id(
                 gidx_type.as_str()
             )));
         }
+    }
+}
+
+/// Built only from literals and operators; constants are folded to literals before validation.
+fn is_constant(expr: &Expression) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(_) => true,
+        ExprKind::Unary { .. } | ExprKind::BinaryOp { .. } => {
+            child_exprs(expr).into_iter().all(is_constant)
+        }
+        _ => false,
     }
 }
 
