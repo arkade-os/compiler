@@ -681,7 +681,7 @@ mod tests {
         let text = |e: &Expression| &source[e.span.start..e.span.end];
         fn walk<'a>(e: &'a Expression, out: &mut Vec<&'a Expression>) {
             out.push(e);
-            for child in crate::validator::child_exprs(e) {
+            for child in crate::models::child_exprs(e) {
                 assert!(
                     e.span.start <= child.span.start && child.span.end <= e.span.end,
                     "{child:?} escapes {e:?}"
