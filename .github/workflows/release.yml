@@ -33,6 +33,7 @@ jobs:
   build:
     needs: verify
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
@@ -43,6 +44,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       TARGET: ${{ matrix.target }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,7 +60,6 @@ jobs:
       - name: Build
         run: cargo build --release --locked --workspace --bins --target "$TARGET"
       - name: Package
-        shell: bash
         run: |
           name="arkade-compiler-$GITHUB_REF_NAME-$TARGET"
           ext=""
