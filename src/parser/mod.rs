@@ -666,6 +666,7 @@ mod tests {
             require(sha256(cat(a, a)) == h);
             let total = xs[n] + -n * 2;
             let mask = ~a ^ a;
+            let flipped = -~n;
             let sum = tx.assetGroups[n].sumInputs;
             require(total > 0);
         } }";
@@ -703,6 +704,8 @@ mod tests {
             "-n",
             "~a ^ a",
             "~a",
+            "-~n",
+            "~n",
             "tx.assetGroups[n].sumInputs",
             "total",
             "0",

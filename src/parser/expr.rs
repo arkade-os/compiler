@@ -184,6 +184,10 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                     Rule::invert_op => UnaryOperator::Invert,
                     _ => return Err("Unexpected unary operator".to_string()),
                 };
+                let span = crate::diagnostics::Span {
+                    start: operator.as_span().start(),
+                    end: value.span.end,
+                };
                 value = Expression::new(
                     ExprKind::Unary {
                         op,
