@@ -255,7 +255,7 @@ fn parse_asset_group_access(
     } else {
         Expression::GroupFind {
             asset_txid: Box::new(parse_asset_id_txid(first)?),
-            asset_gidx: Box::new(parse_asset_id_gidx(
+            asset_gidx: Box::new(parse_general_expression(
                 operands.next().ok_or("Missing asset group gidx")?,
             )?),
         }
@@ -296,12 +296,10 @@ fn without_trivia(text: &str) -> String {
 
 /// The index inside an `array_access` pair, without surrounding trivia.
 fn parse_array_access_index(array_access: Pair<Rule>) -> Result<Expression, String> {
-    let index = array_access
-        .into_inner()
-        .next()
-        .ok_or("Missing index value")?;
-    Ok(match index.as_rule() {
-        Rule::number_literal => Expression::Literal(index.as_str().to_string()),
-        _ => Expression::Variable(index.as_str().to_string()),
-    })
+    parse_general_expression(
+        array_access
+            .into_inner()
+            .next()
+            .ok_or("Missing index value")?,
+    )
 }
