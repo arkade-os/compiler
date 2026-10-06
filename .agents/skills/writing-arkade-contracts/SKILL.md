@@ -18,7 +18,7 @@ cargo run -- path/to/contract.ark -o /tmp/contract.json
 ## Model state and spend paths
 
 - Put committed state in constructor parameters and per-spend data in function parameters. Declare those parameters in source order. A covenant witness is that list reversed; a tapscript witness follows the tapscript parameter list.
-- Constructor parameters are placeholders until instantiation, then constants in the script. Spend paths assume the agreed values. Do not re-check an enum such as `kind` or `side` inside a spend. There is no constructor-hook syntax.
+- Constructor parameters are placeholders until instantiation, then constants in the script. Spend paths assume the agreed values. There is no constructor hook, so a domain check inside a spend does not run at compile time and does not see a different value than the one already committed.
 - Propagate immutable constructor fields unchanged when recreating a state-bearing contract.
 - Construct the next state with `new ContractName(...)` and assert its output script and minimum value. `tx.outputs[i].scriptPubKey` is the 32-byte Taproot witness program, not the `5120…` script. `new` compiles to that same output key.
 - Use covenant `function name(...) { ... }` bodies for introspection and state-transition rules.
@@ -67,7 +67,7 @@ Do not mix time domains:
 require(checkTime(oracleTime), "future-dated oracle");
 ```
 
-For multi-input covenant checks, compare `this.activeInputIndex` with the witness-selected sibling index and verify the sibling input script before using its values. A second copy of the same script can satisfy each input's checks against one shared output set. When one funding input must not be another copy of this script, require this coin at input 0, `tx.numInputs == 2`, and that other input's script different from this one. A path that needs no outside funds requires `tx.numInputs == 1`. `cancel` and `finalize` that share a deadline must be opposite `checkTime` checks.
+For multi-input covenant checks, compare `this.activeInputIndex` with the witness-selected sibling index and verify the sibling input script before using its values. Checks written against `tx.outputs` are transaction-wide: a second input that carries the same script can satisfy them without adding a second set of outputs. Name the input set the path allows. A path that spends only this coin requires `tx.numInputs == 1`. A path that needs other coins must identify those inputs by index and by script, not only by value.
 
 ## Keep arithmetic bounded
 
@@ -124,29 +124,24 @@ One contract or library per file. `import "./other.ark";` is relative to the imp
 
 A contract instantiates itself, with no import, to continue state (`examples/fuji_safe`). Copy every field that must not change. A field omitted from `new` is not preserved.
 
-## Keep a recursive beacon upgradeable
+## Continue state
 
-A beacon is a covenant UTXO whose script survives and whose reading moves. The reading is an asset amount, not a constructor integer. Constructor integers are fixed for that script.
+Two places hold state, and they upgrade differently.
 
-Follow `tests/features/beacon.rs`:
+Script state is the constructor. Continuing it is `new SameContract(...)` on the output, copying every field that must stay and passing a new value only for a field this function is allowed to change. A changed constructor is a different script. Anything that pinned the old script stops matching.
 
-- `update` checks the oracle signature, bounds the new reading, and requires the clock asset not to move backwards.
-- Output 0 is `new PriceBeacon(...)` with the same constructor arguments, and its ticker and clock asset amounts are the new reading and the new clock.
-- `passthrough` is the same continuation with each watched asset `output >= input`, so another contract can spend the beacon in the same transaction without draining it.
+A reading that must move without changing the script is an asset amount. The function continues the same constructor, then sets `tx.outputs[0].assets.lookup(...)` to the new amount. A clock is a second asset that the function requires not to move backwards. A passthrough function is the same continuation with each watched amount `output >= input`, so another contract can spend this coin in the same transaction without draining it. `tests/features/beacon.rs` is that pattern for an oracle. `examples/token_vault` is the control asset, amount 1, that has to be present on the way in and on the way out.
 
-Another contract cannot see a beacon that is not an input of this transaction. Spend the beacon as a sibling input, check its script or its control asset, read `tx.inputs[i].assets.lookup(txid, gidx)`, and require the passthrough output.
+Another contract sees that coin only when it is an input of this transaction. Check the sibling script, or the control asset, read the amount, and require the continuation output. A signer copied into the constructor is fixed for that script. Rotating it is a new script. Consumers that must follow the rotation recognize the control asset on the new script, not the previous constructor.
 
-The oracle pubkey copied into `new PriceBeacon` is fixed for that script. Replacing it produces a different script, and every consumer that pins the old `new PriceBeacon(oldKey)` stops matching. Rotation is a separate authorized function that continues into `new PriceBeacon(..., nextOracle, ...)` and moves a control asset of amount 1 onto that output (`examples/token_vault`). Consumers that must follow a rotating signer recognize the beacon by that control asset, not by the previous oracle key.
-
-Several signatures over one print must use distinct keys. Rebuild the signed message in the signer's field order and width. Bound each price before arithmetic, and interleave multiply and divide. A tapscript has one timelock. `older(n)` is that CSV; the compiler pushes `n` without the BIP68 seconds bit, and the counter starts when the output is mined. It is not a unix timestamp, so it cannot be compared with `expiry`.
+An attestation is a signature over a message the contract rebuilds in the signer's field order. Several signatures over one message require distinct keys. Bound the attested values before arithmetic.
 
 ## Validate the contract
 
 1. Sketch constructor state, witness inputs, authorizers, and output positions before writing the body.
 2. Adapt the closest example instead of inventing a new pattern.
 3. Compile after each structural change.
-4. Add focused assertions for spend groups, witnesses, placeholders, and critical opcodes when behavior is non-trivial.
-5. Run the targeted integration test, then the workspace checks from `AGENTS.md`.
-6. Run `./playground/build.sh` when a playground example changes.
+4. Do not add a unit test. One functional end-to-end test against a running regtest stack is the proof, written as the `arkade-regtest` skill describes. Helpers in that file go at the end.
+5. Run `./playground/build.sh` when a playground example changes.
 
 Spending that artifact, building the product UI, and running a regtest stack are the `arkade-contract`, `arkade-product-ui`, and `arkade-regtest` skills in the ts-sdk repo.
