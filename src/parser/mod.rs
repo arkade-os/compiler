@@ -123,7 +123,8 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::shift_op
         | Rule::invert_op
         | Rule::mul_op
-        | Rule::div_op => "an operator",
+        | Rule::div_op
+        | Rule::rem_op => "an operator",
         Rule::asset_lookup_source | Rule::tx_introspection_property | Rule::tx_property_part => {
             "a transaction property"
         }

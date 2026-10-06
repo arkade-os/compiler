@@ -150,9 +150,9 @@ additive_expr = {
     multiplicative_expr ~ ((add_op | sub_op) ~ multiplicative_expr)*
 }
 
-// Multiplicative expressions (* and /)
+// Multiplicative expressions (* / %)
 multiplicative_expr = {
-    unary_expr ~ ((mul_op | div_op) ~ unary_expr)*
+    unary_expr ~ ((mul_op | div_op | rem_op) ~ unary_expr)*
 }
 
 // Prefix operators bind tighter than multiplication and apply right to left.
@@ -219,6 +219,7 @@ shift_op = { "<<" | ">>" }
 invert_op = { "~" }
 mul_op = { "*" }
 div_op = { "/" }
+rem_op = { "%" }
 
 // Complex expression types (for require statements)
 // PEG ordered choice: first matching alternative wins

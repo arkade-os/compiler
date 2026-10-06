@@ -25,6 +25,7 @@ pub enum OperatorClass {
 pub enum BinaryOperator {
     Mul,
     Div,
+    Rem,
     Add,
     Sub,
     Shl,
@@ -43,9 +44,10 @@ pub enum BinaryOperator {
 }
 
 impl BinaryOperator {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Mul,
         Self::Div,
+        Self::Rem,
         Self::Add,
         Self::Sub,
         Self::Shl,
@@ -70,6 +72,8 @@ impl BinaryOperator {
         match self {
             Self::Mul => ("*", Arithmetic, &[OP_MUL]),
             Self::Div => ("/", Arithmetic, &[OP_DIV]),
+            // Truncated: the result takes the sign of the dividend.
+            Self::Rem => ("%", Arithmetic, &[OP_MOD]),
             Self::Add => ("+", Arithmetic, &[OP_ADD]),
             Self::Sub => ("-", Arithmetic, &[OP_SUB]),
             Self::Shl => ("<<", Shift, &[OP_LSHIFT]),
