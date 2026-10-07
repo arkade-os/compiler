@@ -35,7 +35,6 @@ pub mod tapscript;
 mod access;
 mod asset;
 mod comparison;
-mod concat;
 pub(crate) mod constants;
 pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
 mod expr;
@@ -45,7 +44,6 @@ mod loops;
 mod optimization;
 
 pub(crate) use asset::*;
-pub(crate) use concat::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
 pub(crate) use loops::*;
@@ -835,9 +833,6 @@ pub(crate) fn prepare(
             })
             .collect());
     }
-
-    // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
     let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
@@ -1057,7 +1052,13 @@ fn generate_asm_from_statements_recursive(
                     return Err("unsupported loop iterable".to_string());
                 };
                 for k in 0..length {
-                    let substituted = substitute_loop_body(body, index_var, value_var, k, iterable);
+                    let mut substituted =
+                        substitute_loop_body(body, index_var, value_var, k, iterable);
+                    typechecker::annotate_statements(
+                        &mut substituted,
+                        &mut generator.scope.clone(),
+                        &generator.structs,
+                    );
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
                     if k > 0 && functions::contains_return(body) {

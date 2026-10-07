@@ -672,7 +672,6 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
 
         // Byte-string ops
-        ExprKind::Concat { .. } => ArkType::Bytes,
 
         // Arithmetic
         ExprKind::Unary {

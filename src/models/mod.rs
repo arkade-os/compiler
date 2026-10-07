@@ -608,12 +608,6 @@ impl Expression {
     pub(crate) fn with_kind(&self, kind: ExprKind) -> Self {
         Self::new(kind, self.span)
     }
-
-    /// Move the expression out, leaving an empty literal at its position.
-    pub(crate) fn take(&mut self) -> Self {
-        let placeholder = self.with_kind(ExprKind::Literal(String::new()));
-        std::mem::replace(self, placeholder)
-    }
 }
 
 #[cfg(test)]
@@ -769,17 +763,6 @@ pub enum ExprKind {
         pubkey: Box<Expression>,
         message: Box<Expression>,
     },
-    // ─── Byte-string operations ────────────────────────────────────────
-    /// Byte-string concatenation: produced by the rewrite pass when `+` has at
-    /// least one bytes-like operand. Both operands must already be bytes; a
-    /// numeric operand is a compile error telling the author to convert it with
-    /// `num2bin(value, width)`. The compiler never picks a width on its own,
-    /// because the width and byte order are consensus-visible: they decide what
-    /// an off-chain signer must hash to match.
-    Concat {
-        left: Box<Expression>,
-        right: Box<Expression>,
-    },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
     Unary {
@@ -905,7 +888,7 @@ macro_rules! expression_children {
                     asset_index,
                     ..
                 } => vec![io_index, asset_index],
-                ExprKind::BinaryOp { left, right, .. } | ExprKind::Concat { left, right, .. } => {
+                ExprKind::BinaryOp { left, right, .. } => {
                     vec![left, right]
                 }
                 ExprKind::GroupFind {

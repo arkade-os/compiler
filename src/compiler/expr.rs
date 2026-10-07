@@ -222,12 +222,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.extend(opcodes.iter().map(|opcode| opcode.to_string()));
         }
-        // Byte-string concatenation: bytes + bytes → OP_CAT
-        ExprKind::Concat { left, right } => {
-            emit_expression_asm(left, asm);
-            emit_expression_asm(right, asm);
-            asm.push(OP_CAT.to_string());
-        }
         ExprKind::Unary { op, value } => {
             emit_expression_asm(value, asm);
             asm.push(op.opcode().to_string());
@@ -245,6 +239,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         ExprKind::Cast { target, data } => {
             emit_expression_asm(data, asm);
+            if data.ty == crate::typechecker::ArkType::parse(target) {
+                return;
+            }
             match target.as_str() {
                 "bytes20" => asm.extend([OP_SIZE, "20", OP_EQUALVERIFY].map(String::from)),
                 "bytes32" => asm.extend([OP_SIZE, "32", OP_EQUALVERIFY].map(String::from)),
@@ -375,5 +372,13 @@ pub(crate) fn emit_binary_op_asm(
         return;
     }
     emit_expression_asm(right, asm);
-    asm.extend(op.opcodes().iter().map(|opcode| opcode.to_string()));
+    let concat = op == BinaryOperator::Add
+        && [left, right]
+            .iter()
+            .any(|operand| crate::typechecker::is_bytes_like(&operand.ty));
+    if concat {
+        asm.push(OP_CAT.to_string());
+    } else {
+        asm.extend(op.opcodes().iter().map(|opcode| opcode.to_string()));
+    }
 }

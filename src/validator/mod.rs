@@ -1486,9 +1486,27 @@ fn validate_binding_expression(
                 _ => ("arithmetic", ArkType::Int),
             };
             let types = [left, right].map(|operand| operand.ty.clone());
-            // Bytes-like `+` is concatenation, checked when it is rewritten to OP_CAT.
+            // Bytes-like `+` is concatenation.
             let concat =
                 *op == BinaryOperator::Add && types.iter().any(crate::typechecker::is_bytes_like);
+            if concat {
+                // The width and byte order of a converted number are consensus-visible, so the author picks them.
+                for ((side, operand), actual) in
+                    [("left", left), ("right", right)].iter().zip(&types)
+                {
+                    if matches!(actual, ArkType::Int | ArkType::Bool) {
+                        issues.push(
+                            ValidationIssue::type_error(format!(
+                                "function '{function_name}': cannot concatenate bytes with the {side} `{}` operand of `+`; \
+                                 convert it explicitly with num2bin(value, width) — \
+                                 the compiler will not choose a width for you",
+                                actual.as_str()
+                            ))
+                            .at(operand.span),
+                        );
+                    }
+                }
+            }
             for (operand, actual) in [left, right].iter().zip(&types).filter(|_| !concat) {
                 if *actual != expected && *actual != ArkType::Unknown {
                     issues.push(
@@ -1604,7 +1622,7 @@ fn validate_binding_expression(
                 "bool" => (ArkType::Int, "only int converts to bool"),
                 _ => (ArkType::Bytes, "only bytes can be cast"),
             };
-            // Same-type casts are no-ops, elided by the concat rewrite pass.
+            // Same-type casts are no-ops; emission drops them.
             if actual != source && actual != ArkType::parse(target) && actual != ArkType::Unknown {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
