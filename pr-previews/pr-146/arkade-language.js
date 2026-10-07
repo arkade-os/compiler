@@ -99,6 +99,7 @@ const arkadeCompletions = [
     S('this', 'Variable', 'this', 'Current contract'),
     S('server', 'Variable', 'server', 'Arkade server key'),
     S('emulator', 'Variable', 'emulator', 'Arkade emulator key'),
+    S('serverExitDelay', 'Variable', 'serverExitDelay', 'Arkade server unilateral exit delay'),
 
     // Functions
     S('checkSig', 'Function', 'checkSig(${1:sig}, ${2:pubkey})', 'Verify signature against pubkey'),
@@ -116,6 +117,7 @@ const arkadeCompletions = [
     S('sha256Finalize', 'Function', 'sha256Finalize(${1:ctx}, ${2:lastChunk})', 'Finish a streaming SHA256'),
     S('digest', 'Function', 'digest(${1:data}, ${2:hashType})', 'Hash selected by hash type (20 or 32 bytes)'),
     S('sighash', 'Function', 'sighash(${1:hashType})', 'Transaction sighash'),
+    S('merkleRoot', 'Function', 'merkleRoot(${1:leafTag}, ${2:branchTag}, ${3:proof}, ${4:leaf})', 'Merkle root from a tagged-hash proof'),
     S('modExp', 'Function', 'modExp(${1:base}, ${2:exponent}, ${3:modulus})', 'Modular exponentiation'),
     S('ecAdd', 'Function', 'ecAdd(${1:P}, ${2:Q}, ${3:curveId})', 'EC point addition'),
     S('ecMul', 'Function', 'ecMul(${1:P}, ${2:scalar}, ${3:curveId})', 'EC scalar multiplication'),
