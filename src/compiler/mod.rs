@@ -525,7 +525,7 @@ impl Generator {
         let mut raw = Vec::new();
         let mut expression = expression.clone();
         let mut values = Vec::new();
-        functions::extract_values(&mut expression, &mut values, &self.scope);
+        functions::extract_values(&mut expression, &mut values);
         emit_expression_asm(&expression, &mut raw);
         // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
         let preserved = self.preserve_bindings;
@@ -557,7 +557,7 @@ impl Generator {
                 {
                     self.emit_pairing(value)?;
                 } else {
-                    let ty = typechecker::infer_type(value, &self.scope).as_str();
+                    let ty = value.ty.as_str();
                     self.emit_access_value(value, &ty)?;
                 }
             } else {
@@ -1046,9 +1046,7 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let typechecker::ArkType::Array(_, length) =
-                    typechecker::infer_type(iterable, &generator.scope)
-                else {
+                let typechecker::ArkType::Array(_, length) = iterable.ty else {
                     return Err("unsupported loop iterable".to_string());
                 };
                 for k in 0..length {
@@ -1120,7 +1118,7 @@ fn generate_asm_from_statements_recursive(
                 } else {
                     generator.emit_expression(value)?;
                     generator.bind_local(name)?;
-                    let ty = typechecker::infer_type(value, &generator.scope);
+                    let ty = value.ty.clone();
                     generator.scope.insert(name.clone(), ty);
                 }
             }

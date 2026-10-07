@@ -1,5 +1,5 @@
 use super::*;
-use crate::typechecker::{infer_type, ArkType};
+use crate::typechecker::ArkType;
 
 impl Generator {
     /// Resolve an access to its layout path, collecting runtime indexes.
@@ -109,10 +109,7 @@ impl Generator {
     }
 
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<(), String> {
-        if matches!(
-            infer_type(value, &self.scope),
-            ArkType::Array(..) | ArkType::Struct(_)
-        ) {
+        if matches!(value.ty, ArkType::Array(..) | ArkType::Struct(_)) {
             return Err("assignment requires a scalar field".to_string());
         }
         let mut indices = Vec::new();
@@ -146,7 +143,7 @@ impl Generator {
         let [g1, g2, curve_id] = args.as_slice() else {
             return Err("ecPairing takes three arguments".to_string());
         };
-        let ArkType::Array(_, pairs) = infer_type(g1, &self.scope) else {
+        let ArkType::Array(_, pairs) = g1.ty else {
             return Err("ecPairing G1 points must be an ECPoint array".to_string());
         };
         for index in 0..pairs {

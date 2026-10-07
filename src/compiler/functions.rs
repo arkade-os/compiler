@@ -1,18 +1,14 @@
 use super::*;
 use crate::models::{child_exprs_mut, flatten_parameter, is_builtin_type, TypeLeaf};
 
-pub(super) fn extract_values(
-    expression: &mut Expression,
-    values: &mut Vec<Expression>,
-    scope: &typechecker::Scope,
-) {
+pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expression>) {
     if matches!(
         &expression.kind,
         ExprKind::Call { .. } | ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
     ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
         || (matches!(&expression.kind, ExprKind::ArrayIndex { .. })
             && matches!(
-                typechecker::infer_type(expression, scope),
+                expression.ty,
                 typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
             ))
     {
@@ -21,7 +17,7 @@ pub(super) fn extract_values(
         values.push(std::mem::replace(expression, replacement));
     } else {
         for child in child_exprs_mut(expression) {
-            extract_values(child, values, scope);
+            extract_values(child, values);
         }
     }
 }
