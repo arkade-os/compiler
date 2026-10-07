@@ -1485,11 +1485,16 @@ fn validate_binding_expression(
                     );
                 }
             }
-            if *op == BinaryOperator::Div
+            if matches!(op, BinaryOperator::Div | BinaryOperator::Rem)
                 && literal_index(right).is_some_and(|(_, value)| value == "0")
             {
+                let what = if *op == BinaryOperator::Rem {
+                    "modulo"
+                } else {
+                    "division"
+                };
                 issues.push(
-                    ValidationIssue::error(format!("function '{function_name}': division by zero"))
+                    ValidationIssue::error(format!("function '{function_name}': {what} by zero"))
                         .at(right.span),
                 );
             }

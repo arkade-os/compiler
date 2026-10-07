@@ -990,6 +990,11 @@ fn bitwise_and_shift_operators_emit_their_opcodes_by_precedence() {
             "require(n + 1 << 2 > k >> 1);",
             &["OP_ADD", "OP_LSHIFT", "OP_RSHIFT", "OP_GREATERTHAN"],
         ),
+        (
+            "int n, int k",
+            "require(n + k % 2 == 1);",
+            &["OP_MOD", "OP_ADD", "OP_EQUAL"],
+        ),
     ] {
         let source = format!("contract Ops({params}) {{ function spend() {{ {statement} }} }}");
         let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));

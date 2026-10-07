@@ -308,6 +308,10 @@ fn evaluate(
                     return Err("division by zero in constant expression".to_string())
                 }
                 BinaryOperator::Div => left.checked_div(right),
+                BinaryOperator::Rem if right == 0 => {
+                    return Err("modulo by zero in constant expression".to_string())
+                }
+                BinaryOperator::Rem => Some(left.wrapping_rem(right)),
                 BinaryOperator::Shl | BinaryOperator::Shr if right < 0 => {
                     return Err("negative shift count in constant expression".to_string())
                 }
