@@ -12,8 +12,7 @@ pragma arkade ^0.1.0;
 contract NFTMint(
     bytes32 collectionCtrlIdTxid,
     int collectionCtrlIdGidx,
-    pubkey issuerPk,
-    int exit
+    pubkey issuerPk
 ) {
     // Mint a new NFT: must be fresh with delta=1
     function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes recipientScriptPubKey, signature issuerSig) {

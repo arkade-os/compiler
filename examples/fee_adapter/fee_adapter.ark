@@ -16,8 +16,7 @@ contract FeeAdapter(
   pubkey recipientPk,
   bytes32 paymentAssetIdTxid,
   int paymentAssetIdGidx,
-  int minFee,
-  int exit
+  int minFee
 ) {
   // Execute: process payment with fee deduction
   // Verifies that the output asset balance reflects the fee deduction
@@ -43,7 +42,7 @@ contract FeeAdapter(
 
   // Unilateral exit (CSV): sender recovers after exit delay.
   function unilateral(signature senderSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(senderSig, senderPk));
   }
 }

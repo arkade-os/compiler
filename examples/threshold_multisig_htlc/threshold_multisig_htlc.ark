@@ -4,8 +4,7 @@ contract HTLC(
   pubkey sender,
   pubkey receiver,
   bytes hash,
-  int refundTime,
-  int exit
+  int refundTime
 ) {
   // Cooperative close path: both parties agree
   function together(signature senderSig, signature receiverSig) {
@@ -26,7 +25,7 @@ contract HTLC(
 
   // Unilateral exit (CSV): sender recovers after exit delay.
   function unilateral(signature senderSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(senderSig, sender));
   }
 }

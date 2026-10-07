@@ -15,8 +15,7 @@ contract TokenVault(
   bytes32 tokenAssetIdTxid,
   int tokenAssetIdGidx,
   bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx,
-  int exit
+  int ctrlAssetIdGidx
 ) {
   // Deposit: ensure the control asset stays in the output
   // and output token balance >= input token balance
@@ -49,7 +48,7 @@ contract TokenVault(
 
   // Unilateral exit (CSV): owner recovers after exit delay.
   function unilateral(signature ownerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(ownerSig, ownerPk));
   }
 }

@@ -32,12 +32,14 @@ Add unilateral exit as a separate CSV tapscript when required:
 
 ```ark
 function unilateral(signature ownerSig) tapscript {
-  require(older(exit));
+  require(older(serverExitDelay));
   require(checkSig(ownerSig, owner));
 }
 ```
 
-Keep `server` and `emulator` out of constructors and covenant bodies. Use them only as reserved key operands in tapscript signature checks. Declare the corresponding signature witnesses on author-written tapscripts.
+`serverExitDelay` is arkd's unilateral exit delay and needs no constructor parameter. Take a constructor `int` only when the contract needs a different delay.
+
+Keep `server`, `emulator`, and `serverExitDelay` out of constructors and covenant bodies. Use them only as reserved key operands in tapscript signature checks. Declare the corresponding signature witnesses on author-written tapscripts.
 
 Do not use the removed `options { ... }` syntax.
 

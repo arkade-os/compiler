@@ -32,19 +32,19 @@ Every pull request gets its own build at `https://arkade-os.github.io/compiler/p
 ### One key, one exit
 
 ```solidity
-contract SingleSig(pubkey user, int exit) {
+contract SingleSig(pubkey user) {
   function spend(signature userSig) {
     require(checkSig(userSig, user));
   }
 
   function unilateral(signature userSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(userSig, user));
   }
 }
 ```
 
-`spend` has no modifier, so it is an Arkade covenant: the body compiles to covenant ASM that the Arkade VM runs. Because `spend` declares no tapscript of its own, the compiler synthesizes the collaborative L1 leaf `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG` for it. `unilateral` is marked `tapscript`, so it is a pure L1 leaf: a CSV delay followed by the user's key.
+`spend` has no modifier, so it is an Arkade covenant: the body compiles to covenant ASM that the Arkade VM runs. Because `spend` declares no tapscript of its own, the compiler synthesizes the collaborative L1 leaf `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG` for it. `unilateral` is marked `tapscript`, so it is a pure L1 leaf: a CSV delay followed by the user's key. `serverExitDelay` is arkd's unilateral exit delay; it lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config, so it is not a constructor input.
 
 ### Hash and time locks
 
@@ -53,8 +53,7 @@ contract HTLC(
   pubkey sender,
   pubkey receiver,
   bytes20 preimageHash,
-  int refundTime,
-  int exit
+  int refundTime
 ) {
   function claim() {
     require(tx.outputs[0].value >= tx.inputs[0].value);
@@ -73,7 +72,7 @@ contract HTLC(
   }
 
   function unilateral(signature senderSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(senderSig, sender));
   }
 }
@@ -86,15 +85,15 @@ A covenant and a tapscript with the same name form one spend group. The covenant
 ```solidity
 import "single_sig.ark";
 
-contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
+contract Splitter(pubkey alicePk, pubkey bobPk) {
   function split() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk, exit));
-    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk, exit));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk));
+    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk));
   }
 }
 ```
 
-`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<CONTRACT:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's 32-byte Taproot output key (witness program) at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk)` compiles to the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`. The Arkade runtime resolves it to the child contract's 32-byte Taproot output key (witness program) at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -104,8 +103,7 @@ contract TokenVault(
   bytes32 tokenAssetIdTxid,
   int tokenAssetIdGidx,
   bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx,
-  int exit
+  int ctrlAssetIdGidx
 ) {
   function deposit(signature ownerSig) {
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in input");
@@ -119,7 +117,7 @@ contract TokenVault(
   }
 
   function unilateral(signature ownerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(ownerSig, ownerPk));
   }
 }

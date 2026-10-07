@@ -33,8 +33,7 @@ contract StabilityOffer(
   int     maxExposureBTC,
   int     collateralRatioPct,  // min 100 logically; offer guards 50%+ here
   int     seekerExitFee,       // basis points; propagated into every vault
-  int     takeFee,             // basis points; takeFee × userBTC / 1e4 sats paid to provider on take
-  int     exit
+  int     takeFee              // basis points; takeFee × userBTC / 1e4 sats paid to provider on take
 ) {
 
   // Taking an offer needs dynamic taproot reconstruction. Restore this
@@ -90,19 +89,19 @@ contract StabilityOffer(
 //         tx.outputs[0].scriptPubKey == new StabilityVault(
 //           seekerPk, providerPk, oraclePk, ticker,
 //           targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
-//           collateralRatioPct, seekerExitFee, exit
+//           collateralRatioPct, seekerExitFee
 //         ),
 //         "invalid vault output"
 //       );
 //       require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
-//       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk, exit), "output 1 not provider");
+//       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
 //       require(tx.outputs[1].value >= takeFeeSats, "provider underpaid take fee");
 //       if (remainingCapacity > 0) {
 //         require(
 //           tx.outputs[2].scriptPubKey == new StabilityOffer(
 //             providerPk, oraclePk, ticker,
 //             fundingRatePerSec, remainingCapacity, collateralRatioPct,
-//             seekerExitFee, takeFee, exit
+//             seekerExitFee, takeFee
 //           ),
 //           "invalid remaining offer"
 //         );
@@ -113,7 +112,7 @@ contract StabilityOffer(
 //         tx.outputs[0].scriptPubKey == new StabilityVault(
 //           seekerPk, providerPk, oraclePk, ticker,
 //           targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
-//           collateralRatioPct, seekerExitFee, exit
+//           collateralRatioPct, seekerExitFee
 //         ),
 //         "invalid vault output"
 //       );
@@ -124,7 +123,7 @@ contract StabilityOffer(
 //           tx.outputs[1].scriptPubKey == new StabilityOffer(
 //             providerPk, oraclePk, ticker,
 //             fundingRatePerSec, remainingCapacity, collateralRatioPct,
-//             seekerExitFee, takeFee, exit
+//             seekerExitFee, takeFee
 //           ),
 //           "invalid remaining offer"
 //         );
@@ -145,7 +144,7 @@ contract StabilityOffer(
   // Provider recovers locked collateral after exit delay (Arkade operator offline).
   // -------------------------------------------------------------------------
   function unilateral(signature providerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(providerSig, providerPk));
   }
 }
