@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, compile_sources } from './pkg/arkade_compiler.js';
+import { initSync, compile_sources, compile_sources_with_diagnostics } from './pkg/arkade_compiler.js';
 
 initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
 const context = vm.createContext({
-    contracts, compile_sources,
+    contracts, compile_sources, compile_sources_with_diagnostics,
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
@@ -17,6 +17,15 @@ const context = vm.createContext({
 });
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
+
+const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
+const detailed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ 'main.ark': warningSource }), false));
+const warningArtifact = JSON.parse(detailed.artifact);
+assert(detailed.warnings.some(warning => warning.startsWith('warning[validation]')));
+assert(!Object.hasOwn(warningArtifact, 'warnings'));
+assert.equal(warningArtifact.compiler.options.optimize, false);
+assert.equal(warningArtifact.formatVersion, 1);
+assert.match(warningArtifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
 
 const selections = vm.runInContext(`[
     ...Object.entries(projects).flatMap(([id, project]) => Object.keys(project.files).map(file => [id, file])),
@@ -163,5 +172,41 @@ const vaultAgain = vm.runInContext('resolveSharedBundle(bundle)', context);
 assert.equal(vaultAgain.project, 'shared');
 assert.equal(vaultAgain.file, 'vault/main.ark');
 assert.equal(sharedFolderCount(), foldersBefore + 1);
+
+const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status'].map(id => {
+    const classes = new Set();
+    return [id, {
+        textContent: '',
+        classList: {
+            add: (...names) => names.forEach(name => classes.add(name)),
+            remove: (...names) => names.forEach(name => classes.delete(name)),
+            contains: name => classes.has(name),
+        },
+    }];
+}));
+elements['optimize-toggle'] = { checked: false };
+context.document.getElementById = id => elements[id];
+context.warningSource = warningSource;
+context.renderedArtifact = null;
+vm.runInContext(`
+    wasmReady = true;
+    editor = { getValue: () => warningSource };
+    compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
+    displayJson = json => { renderedArtifact = JSON.parse(json); };
+    displayAsm = () => {};
+    displayBindings = () => {};
+    markCompiled = () => {};
+    doCompile();
+`, context);
+assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
+assert.equal(elements['errors-output'].textContent, detailed.warnings.join('\n'));
+assert(elements['error-count'].classList.contains('warning'));
+assert.equal(elements['error-count'].textContent, String(detailed.warnings.length));
+assert.equal(elements['compile-status'].className, 'compile-status warning');
+context.warningSource = 'contract Clean() { function spend() { require(true); } }';
+vm.runInContext('doCompile()', context);
+assert.equal(elements['errors-output'].textContent, '');
+assert(!elements['error-count'].classList.contains('visible'));
+assert.equal(elements['compile-status'].className, 'compile-status success');
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);
