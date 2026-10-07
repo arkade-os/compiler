@@ -268,9 +268,10 @@ impl ConcatPass {
                 }
             }
             ExprKind::Cast { target, data } => {
-                let (data, ty) = self.rewrite_expression_concat(*data, scope);
+                let (mut data, ty) = self.rewrite_expression_concat(*data, scope);
                 let target_type = ArkType::parse(&target);
                 if ty == target_type {
+                    data.span = span;
                     return (data, ty);
                 } else {
                     let data = Box::new(data);

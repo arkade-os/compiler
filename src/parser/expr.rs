@@ -172,6 +172,12 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
             parse_primary_expr(inner)
         }
+        Rule::parenthesized_expr => {
+            let inner = pair.into_inner().next().ok_or("Empty grouped expression")?;
+            let mut value = parse_primary_expr(inner)?;
+            value.span = span;
+            Ok(value)
+        }
         Rule::unary_expr | Rule::unary_atom => {
             let mut inner = pair.into_inner();
             let operand = inner.next_back().ok_or("Empty unary expression")?;
