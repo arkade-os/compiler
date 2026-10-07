@@ -371,21 +371,45 @@ fn computed_indexes_unroll_in_nested_loops() {
 }
 
 #[test]
-fn rejects_invalid_constant_gidx_expression() {
-    for gidx in [
-        "G + 1",
-        "-1",
-        "0 - 1",
-        "99999999999999999999",
-        "9223372036854775807 + 1",
-    ] {
-        let src = format!(
+fn constant_gidx_expressions_are_typed_and_range_checked() {
+    let gidx_error = |gidx: &str| {
+        compile(&format!(
             "contract C(bytes32 fooTxid) {{
                 const int G = 65535;
                 function f() {{ require(tx.outputs[0].assets.lookup(fooTxid, {gidx}) >= 1); }}
             }}"
-        );
-        let err = compile(&src).expect_err(gidx).to_string();
-        assert!(err.contains("asset id gidx"), "{gidx}: {err}");
+        ))
+        .err()
+        .map(|err| err.to_string())
+    };
+    assert_eq!(gidx_error("G - 1"), None);
+    for (gidx, expected) in [
+        ("G + 1", "gidx 65536 is out of range"),
+        ("-1", "gidx -1 is out of range"),
+        ("0 - 1", "gidx -1 is out of range"),
+        ("99999999999999999999", "expected a signed 64-bit integer"),
+        ("9223372036854775807 + 1", "integer overflow"),
+        ("~0x0001", "must be int (0..65535), got bytes"),
+        ("1 == 1", "must be int (0..65535), got bool"),
+    ] {
+        let err = gidx_error(gidx).unwrap_or_else(|| panic!("{gidx} must be rejected"));
+        assert!(err.contains(expected), "{gidx}: {err}");
     }
+}
+
+#[test]
+fn control_is_accepts_computed_gidx() {
+    let asm = arkade_asm(
+        "contract C(bytes32 fooTxid) {
+            function f(int k) {
+                let g = tx.assetGroups[k];
+                require(g.controlIs(fooTxid, k + 1));
+            }
+        }",
+        "f",
+    );
+    assert!(
+        asm.contains("OP_INSPECTASSETGROUPCTRL OP_DROP") && asm.contains("1 OP_ADD OP_EQUAL"),
+        "{asm}"
+    );
 }
