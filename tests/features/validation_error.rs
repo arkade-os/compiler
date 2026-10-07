@@ -207,6 +207,22 @@ contract Reserved(pubkey {role}) {{
 }
 
 #[test]
+fn server_exit_delay_as_tapscript_input_is_rejected() {
+    let source = r#"
+contract Reserved(pubkey owner) {
+    function exit(int serverExitDelay, signature ownerSig) tapscript {
+        require(older(serverExitDelay));
+        require(checkSig(ownerSig, owner));
+    }
+}"#;
+    let error = compile(source).unwrap_err().to_string();
+    assert!(
+        error.contains("input 'serverExitDelay' collides with a reserved arkd name"),
+        "got: {error}"
+    );
+}
+
+#[test]
 fn internal_server_key_placeholder_name_is_rejected() {
     let source = r#"
 contract Reserved(pubkey SERVER_KEY) {
