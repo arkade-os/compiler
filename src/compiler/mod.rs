@@ -818,6 +818,7 @@ pub(crate) fn prepare(
     file: &str,
 ) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
     typechecker::resolve_group_properties(contract);
+    typechecker::annotate(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
     // Catch errors the PEG grammar cannot express (duplicate names, missing

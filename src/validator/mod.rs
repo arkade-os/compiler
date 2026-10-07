@@ -25,7 +25,7 @@ use crate::models::{
     Requirement, Statement, TapItem,
 };
 use crate::operators::{BinaryOperator, OperatorClass};
-use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
+use crate::typechecker::{build_scope_with_structs, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
 mod functions;
@@ -571,118 +571,55 @@ fn check_unused_locals(
 /// - `asset_gidx` must resolve to `Int` (rejects `Unknown`); a numeric literal
 ///   must additionally be in `0..=65535`.
 ///
-/// Scope-aware: seeds constructor + function params, infers `let`/assignment
-/// values, binds a `for` loop's index variable as `Int`. The loop value
-/// variable stays `Unknown` (no iterable-element typing yet) and is therefore
-/// not accepted as an Asset ID component.
 fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    let ctor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
-        let mut scope = ctor_scope.clone();
-        scope.extend(build_scope_with_structs(
-            &func.parameters,
-            &contract.structs,
-        ));
-        walk_asset_id_stmts(
-            &func.statements,
-            &mut scope,
-            &func.name,
-            &contract.structs,
-            issues,
-        );
+        walk_asset_id_stmts(&func.statements, &func.name, issues);
     }
 }
 
-fn walk_asset_id_stmts(
-    stmts: &[LocatedStatement],
-    scope: &mut Scope,
-    fname: &str,
-    structs: &[crate::models::StructDefinition],
-    issues: &mut Vec<ValidationIssue>,
-) {
+fn walk_asset_id_stmts(stmts: &[LocatedStatement], fname: &str, issues: &mut Vec<ValidationIssue>) {
     for stmt in stmts {
         let first = issues.len();
         match &stmt.statement {
-            Statement::Call(expression) | Statement::Return(Some(expression)) => {
-                check_asset_id_expr(expression, scope, fname, issues)
+            Statement::Call(expression)
+            | Statement::Return(Some(expression))
+            | Statement::LetBinding {
+                value: expression, ..
             }
-            Statement::Return(None) => {}
-            Statement::Require(req) => match req {
-                Requirement::Expression(expr) => {
-                    check_asset_id_expr(expr, scope, fname, issues);
-                }
-                Requirement::Comparison { left, right, .. } => {
-                    check_asset_id_expr(left, scope, fname, issues);
-                    check_asset_id_expr(right, scope, fname, issues);
-                }
-                _ => {}
-            },
-            Statement::LetBinding {
-                name,
-                declared_type,
-                value,
-            } => {
-                check_asset_id_expr(value, scope, fname, issues);
-                let binding_type = declared_type
-                    .as_deref()
-                    .map(ArkType::parse)
-                    .unwrap_or_else(|| infer_type(value, scope));
-                crate::typechecker::bind_local_type(
-                    scope,
-                    name,
-                    declared_type.as_deref(),
-                    binding_type,
-                    structs,
-                );
+            | Statement::Require(Requirement::Expression(expression)) => {
+                check_asset_id_expr(expression, fname, issues)
             }
+            Statement::Require(Requirement::Comparison { left, right, .. }) => {
+                check_asset_id_expr(left, fname, issues);
+                check_asset_id_expr(right, fname, issues);
+            }
+            Statement::Return(None) | Statement::Require(_) => {}
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }
                 | AssignmentTarget::Access(index) = target
                 {
-                    check_asset_id_expr(index, scope, fname, issues);
+                    check_asset_id_expr(index, fname, issues);
                 }
-                check_asset_id_expr(value, scope, fname, issues);
-                if let AssignmentTarget::Binding(name) = target {
-                    let t = infer_type(value, scope);
-                    scope.insert(name.clone(), t);
-                }
+                check_asset_id_expr(value, fname, issues);
             }
             Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
             } => {
-                check_asset_id_expr(condition, scope, fname, issues);
-                walk_asset_id_stmts(then_body, &mut scope.clone(), fname, structs, issues);
+                check_asset_id_expr(condition, fname, issues);
+                walk_asset_id_stmts(then_body, fname, issues);
                 if let Some(eb) = else_body {
-                    walk_asset_id_stmts(eb, &mut scope.clone(), fname, structs, issues);
+                    walk_asset_id_stmts(eb, fname, issues);
                 }
             }
-            Statement::ForIn {
-                index_var,
-                value_var,
-                iterable,
-                body,
-            } => {
-                check_asset_id_expr(iterable, scope, fname, issues);
-                let element = match infer_type(iterable, scope) {
-                    ArkType::Array(element, _) => *element,
-                    _ => ArkType::Unknown,
-                };
-                let mut loop_scope = scope.clone();
-                loop_scope.insert(index_var.clone(), ArkType::Int);
-                crate::typechecker::bind_local_type(
-                    &mut loop_scope,
-                    value_var,
-                    None,
-                    element,
-                    structs,
-                );
-                walk_asset_id_stmts(body, &mut loop_scope, fname, structs, issues);
+            Statement::ForIn { iterable, body, .. } => {
+                check_asset_id_expr(iterable, fname, issues);
+                walk_asset_id_stmts(body, fname, issues);
             }
             Statement::ForCount { count, body } => {
-                check_asset_id_expr(count, scope, fname, issues);
-                walk_asset_id_stmts(body, &mut scope.clone(), fname, structs, issues);
+                check_asset_id_expr(count, fname, issues);
+                walk_asset_id_stmts(body, fname, issues);
             }
         }
         locate(&mut issues[first..], stmt.span);
@@ -698,12 +635,7 @@ fn walk_asset_id_stmts(
 /// exhaustive match with no wildcard, any future `Expression` variant forces a
 /// decision there and can never silently bypass this validation by falling
 /// through a catch-all.
-fn check_asset_id_expr(
-    expr: &Expression,
-    scope: &Scope,
-    fname: &str,
-    issues: &mut Vec<ValidationIssue>,
-) {
+fn check_asset_id_expr(expr: &Expression, fname: &str, issues: &mut Vec<ValidationIssue>) {
     // Variant-specific Asset ID operand validation.
     match &expr.kind {
         ExprKind::AssetLookup {
@@ -729,14 +661,14 @@ fn check_asset_id_expr(
             asset_gidx,
             ..
         } => {
-            validate_asset_id(asset_txid, asset_gidx, scope, fname, issues);
+            validate_asset_id(asset_txid, asset_gidx, fname, issues);
         }
         _ => {}
     }
 
     // Generic recursion through every sub-expression.
     for child in child_exprs(expr) {
-        check_asset_id_expr(child, scope, fname, issues);
+        check_asset_id_expr(child, fname, issues);
     }
 }
 
@@ -788,15 +720,6 @@ fn flattened_types(scopes: &BindingScopes) -> Scope {
         );
     }
     result
-}
-
-fn resolved_expression_type(expression: &Expression, scopes: &BindingScopes) -> ArkType {
-    match &expression.kind {
-        ExprKind::Variable(name) | ExprKind::Property(name) => find_binding(scopes, name)
-            .map(|binding| binding.binding_type.clone())
-            .unwrap_or_else(|| infer_type(expression, &flattened_types(scopes))),
-        _ => infer_type(expression, &flattened_types(scopes)),
-    }
 }
 
 pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
@@ -890,7 +813,7 @@ fn validate_binding_statements(
                             && !matches!(&value.kind, ExprKind::Call { .. }),
                     ),
                 }
-                let inferred = resolved_expression_type(value, scopes);
+                let inferred = value.ty.clone();
                 let binding_type = declared_type
                     .as_deref()
                     .map(ArkType::parse)
@@ -960,14 +883,14 @@ fn validate_binding_statements(
             }
             Statement::VarAssign { target, value } => {
                 validate_binding_expression(value, function_name, scopes, issues, true);
-                let inferred = resolved_expression_type(value, scopes);
+                let inferred = value.ty.clone();
                 match target {
                     AssignmentTarget::Access(access) => {
                         let before = issues.len();
                         validate_binding_expression(access, function_name, scopes, issues, true);
                         // An invalid access already explains the target.
                         if issues.len() == before {
-                            let expected = resolved_expression_type(access, scopes);
+                            let expected = access.ty.clone();
                             if expected != ArkType::Unknown
                                 && inferred != ArkType::Unknown
                                 && !binding_types_compatible(&expected, &inferred)
@@ -1042,7 +965,7 @@ fn validate_binding_statements(
                 else_body,
             } => {
                 validate_binding_expression(condition, function_name, scopes, issues, true);
-                let condition_type = resolved_expression_type(condition, scopes);
+                let condition_type = condition.ty.clone();
                 if condition_type != ArkType::Bool {
                     issues.push(ValidationIssue::error(format!(
                         "function '{}': if condition has type '{}', expected bool; use an explicit comparison",
@@ -1106,7 +1029,7 @@ fn validate_binding_statements(
                     | ExprKind::IndexAccess { .. } => {
                         let before = issues.len();
                         validate_value_expression(iterable, function_name, scopes, issues);
-                        match resolved_expression_type(iterable, scopes) {
+                        match iterable.ty.clone() {
                             ArkType::Array(element, _) => *element,
                             actual => {
                                 if issues.len() == before {
@@ -1223,7 +1146,7 @@ fn validate_operand(
     }
     let before = issues.len();
     validate_binding_expression(value, function_name, scopes, issues, true);
-    let actual = resolved_expression_type(value, scopes);
+    let actual = value.ty.clone();
     if let Some(expected) = expected.filter(|expected| {
         issues.len() == before
             && actual != ArkType::Unknown
@@ -1291,7 +1214,7 @@ fn validate_binding_requirement(
             ) && !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             let before = issues.len();
             validate_binding_expression(expression, function_name, scopes, issues, produces_value);
-            let condition = resolved_expression_type(expression, scopes);
+            let condition = expression.ty.clone();
             // A bare find verifies the asset group exists; its index is dropped.
             if issues.len() == before
                 && produces_value
@@ -1361,7 +1284,7 @@ fn validate_binding_requirement(
             validate_operand(preimage, None, "preimage", function_name, scopes, issues);
             let before = issues.len();
             validate_operand(hash, None, "hash", function_name, scopes, issues);
-            let actual = resolved_expression_type(hash, scopes);
+            let actual = hash.ty.clone();
             if issues.len() == before
                 && !matches!(&hash.kind, ExprKind::Literal(_))
                 && !crate::typechecker::digest_accepts(hash_fn, &actual)
@@ -1376,8 +1299,8 @@ fn validate_binding_requirement(
             }
         }
         Requirement::Comparison { left, op, right } => {
-            let left_type = resolved_expression_type(left, scopes);
-            let right_type = resolved_expression_type(right, scopes);
+            let left_type = left.ty.clone();
+            let right_type = right.ty.clone();
             let composite = matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
                 || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..));
             if composite {
@@ -1465,7 +1388,7 @@ fn validate_value_expression(
     issues: &mut Vec<ValidationIssue>,
 ) {
     let scalar = !matches!(
-        resolved_expression_type(expression, scopes),
+        expression.ty.clone(),
         ArkType::Array(..) | ArkType::Struct(..)
     ) && !matches!(
         &expression.kind,
@@ -1482,7 +1405,7 @@ fn validate_binding_expression(
     value_position: bool,
 ) {
     let first = issues.len();
-    let expression_type = resolved_expression_type(expression, scopes);
+    let expression_type = expression.ty.clone();
     if value_position && matches!(expression_type, ArkType::Array(..) | ArkType::Struct(..)) {
         let kind = if matches!(expression_type, ArkType::Struct(..)) {
             "struct"
@@ -1528,7 +1451,7 @@ fn validate_binding_expression(
         ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
             let scope = flattened_types(scopes);
             for operand in [left, right] {
-                let actual = resolved_expression_type(operand, scopes);
+                let actual = operand.ty.clone();
                 if actual != ArkType::Unknown && !binding_types_compatible(&ArkType::Bytes, &actual)
                 {
                     issues.push(
@@ -1562,7 +1485,7 @@ fn validate_binding_expression(
                 OperatorClass::Shift => ("shift", ArkType::Int),
                 _ => ("arithmetic", ArkType::Int),
             };
-            let types = [left, right].map(|operand| resolved_expression_type(operand, scopes));
+            let types = [left, right].map(|operand| operand.ty.clone());
             // Bytes-like `+` is concatenation, checked when it is rewritten to OP_CAT.
             let concat =
                 *op == BinaryOperator::Add && types.iter().any(crate::typechecker::is_bytes_like);
@@ -1605,12 +1528,12 @@ fn validate_binding_expression(
             }
         }
         ExprKind::BinaryOp { left, op, right } if op.compares() => {
-            let types = [left, right].map(|operand| resolved_expression_type(operand, scopes));
+            let types = [left, right].map(|operand| operand.ty.clone());
             validate_scalar_comparison(*op, types, expression.span, function_name, issues);
         }
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
-            let actual = resolved_expression_type(value, scopes);
+            let actual = value.ty.clone();
             if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
                 issues.push(
                     ValidationIssue::error(format!(
@@ -1636,7 +1559,7 @@ fn validate_binding_expression(
             // Every `[]` operand takes the length of the first one.
             let mut length = None;
             for (operand, declared) in operands.iter().zip(params) {
-                let actual = resolved_expression_type(operand, scopes);
+                let actual = operand.ty.clone();
                 let expected = match declared.strip_suffix("[]") {
                     Some(element) => {
                         let length = *length.get_or_insert(match actual {
@@ -1672,7 +1595,7 @@ fn validate_binding_expression(
             }
         }
         ExprKind::Cast { target, data } => {
-            let actual = resolved_expression_type(data, scopes);
+            let actual = data.ty.clone();
             let (source, hint) = match target.as_str() {
                 "int" => (
                     ArkType::Bool,
@@ -1694,7 +1617,7 @@ fn validate_binding_expression(
             policy,
             exceptions,
         } => {
-            let actual = resolved_expression_type(output_index, scopes);
+            let actual = output_index.ty.clone();
             if actual != ArkType::Int {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': tunnel output index must be int, got '{}'",
@@ -1720,9 +1643,7 @@ fn validate_binding_expression(
                 ));
             }
             for exception in exceptions {
-                if resolved_expression_type(exception, scopes)
-                    != ArkType::Struct("AssetId".to_string())
-                {
+                if exception.ty != ArkType::Struct("AssetId".to_string()) {
                     issues.push(ValidationIssue::error(
                         "tunnel exceptions must be AssetId values",
                     ));
@@ -1915,7 +1836,7 @@ fn validate_array_index(
         }
     };
 
-    let index_type = resolved_expression_type(index, scopes);
+    let index_type = index.ty.clone();
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
         issues.push(
             ValidationIssue::error(format!(
@@ -1953,12 +1874,11 @@ fn validate_array_index(
 fn validate_asset_id(
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    scope: &Scope,
     fname: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let txid_type = infer_type(asset_txid, scope);
-    if txid_type != ArkType::Bytes32 {
+    let txid_type = &asset_txid.ty;
+    if *txid_type != ArkType::Bytes32 {
         issues.push(ValidationIssue::error(format!(
             "function '{}': asset id txid operand '{}' must be bytes32, got {}",
             fname,
@@ -1968,8 +1888,8 @@ fn validate_asset_id(
     }
 
     // gidx must resolve to Int; a constant one must also be in range.
-    let gidx_type = infer_type(asset_gidx, scope);
-    if gidx_type != ArkType::Int {
+    let gidx_type = &asset_gidx.ty;
+    if *gidx_type != ArkType::Int {
         issues.push(ValidationIssue::error(format!(
             "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
             fname,
@@ -2372,10 +2292,13 @@ mod tests {
     }
 
     fn parse_and_validate(source: &str) -> Vec<ValidationIssue> {
-        validate_ast(
-            &crate::parser::parse(source).expect("contract should parse"),
-            true,
-        )
+        validate(&crate::parser::parse(source).expect("contract should parse"))
+    }
+
+    fn validate(contract: &Contract) -> Vec<ValidationIssue> {
+        let mut contract = contract.clone();
+        crate::typechecker::annotate(&mut contract);
+        validate_ast(&contract, true)
     }
 
     #[test]
@@ -2518,7 +2441,7 @@ contract Demo() {
         let mut contract = make_contract("Simple");
         // `flag` is only read by the branch tests.
         contract.functions[0].parameters.pop();
-        let issues = validate_ast(&contract, true);
+        let issues = validate(&contract);
         assert!(!has_errors(&issues));
     }
 
@@ -2535,7 +2458,7 @@ contract Demo() {
             }))],
             else_body: None,
         })];
-        let issues = validate_ast(&contract, true);
+        let issues = validate(&contract);
         assert!(has_errors(&issues));
         assert!(issues
             .iter()
@@ -2556,13 +2479,13 @@ contract Demo() {
             then_body: vec![req()],
             else_body: Some(vec![req()]),
         })];
-        assert!(!has_errors(&validate_ast(&contract, true)));
+        assert!(!has_errors(&validate(&contract)));
     }
 
     #[test]
     fn empty_contract_name_is_error() {
         let contract = make_contract("");
-        let issues = validate_ast(&contract, true);
+        let issues = validate(&contract);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("name")));
     }
@@ -2571,7 +2494,7 @@ contract Demo() {
     fn no_functions_is_error() {
         let mut contract = make_contract("Empty");
         contract.functions.clear();
-        let issues = validate_ast(&contract, true);
+        let issues = validate(&contract);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("public function")));
     }
@@ -2580,7 +2503,7 @@ contract Demo() {
     fn only_private_functions_is_error() {
         let mut contract = make_contract("AllInternal");
         contract.functions[0].is_private = true;
-        let issues = validate_ast(&contract, true);
+        let issues = validate(&contract);
         assert!(has_errors(&issues));
     }
 
@@ -2588,7 +2511,7 @@ contract Demo() {
     fn duplicate_function_name_is_error() {
         let mut contract = make_contract("Dup");
         contract.functions.push(contract.functions[0].clone());
-        let issues = validate_ast(&contract, true);
+        let issues = validate(&contract);
         assert!(has_errors(&issues));
         assert!(issues.iter().any(|i| i.message.contains("spend")));
     }
@@ -2597,7 +2520,7 @@ contract Demo() {
     fn duplicate_constructor_param_is_error() {
         let mut contract = make_contract("Dup");
         contract.parameters.push(contract.parameters[0].clone());
-        let issues = validate_ast(&contract, true);
+        let issues = validate(&contract);
         assert!(has_errors(&issues));
     }
 

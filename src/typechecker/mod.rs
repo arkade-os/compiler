@@ -3,9 +3,9 @@
 /// Provides:
 /// - `ArkType`: the canonical type enum for all Arkade Script values,
 ///   including wire-encoding metadata used by client stub generators
-/// - `infer_type`: expression-level type inference
-///
-/// The validator applies the type rules.
+/// - `annotate`: stores every expression's type on it before validation;
+///   the validator and code generation read `Expression::ty`
+/// - `infer_type`: the inference rule `annotate` applies to each node
 use std::collections::HashMap;
 
 use crate::models::{
@@ -204,6 +204,98 @@ pub(crate) fn bind_local_type(
             scope.insert(name.to_string(), inferred);
         }
     }
+}
+
+/// Type every expression of the contract's own functions.
+pub(crate) fn annotate(contract: &mut Contract) {
+    let constructor = build_scope_with_structs(&contract.parameters, &contract.structs);
+    for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
+        let mut scope = constructor.clone();
+        scope.extend(build_scope_with_structs(
+            &function.parameters,
+            &contract.structs,
+        ));
+        annotate_statements(&mut function.statements, &mut scope, &contract.structs);
+    }
+}
+
+/// Type `statements`, binding their locals into `scope`.
+pub(crate) fn annotate_statements(
+    statements: &mut [LocatedStatement],
+    scope: &mut Scope,
+    structs: &[crate::models::StructDefinition],
+) {
+    for statement in statements {
+        match &mut statement.statement {
+            Statement::Call(value) | Statement::Return(Some(value)) => {
+                annotate_expression(value, scope)
+            }
+            Statement::Return(None) => {}
+            Statement::Require(requirement) => {
+                for value in requirement.expressions_mut() {
+                    annotate_expression(value, scope);
+                }
+            }
+            Statement::LetBinding {
+                name,
+                declared_type,
+                value,
+            } => {
+                annotate_expression(value, scope);
+                let ty = declared_type
+                    .as_deref()
+                    .map(ArkType::parse)
+                    .unwrap_or_else(|| value.ty.clone());
+                bind_local_type(scope, name, declared_type.as_deref(), ty, structs);
+            }
+            Statement::VarAssign { target, value } => {
+                if let AssignmentTarget::Access(index)
+                | AssignmentTarget::ArrayIndex { index, .. } = target
+                {
+                    annotate_expression(index, scope);
+                }
+                annotate_expression(value, scope);
+            }
+            Statement::IfElse {
+                condition,
+                then_body,
+                else_body,
+            } => {
+                annotate_expression(condition, scope);
+                annotate_statements(then_body, &mut scope.clone(), structs);
+                if let Some(else_body) = else_body {
+                    annotate_statements(else_body, &mut scope.clone(), structs);
+                }
+            }
+            Statement::ForIn {
+                index_var,
+                value_var,
+                iterable,
+                body,
+            } => {
+                annotate_expression(iterable, scope);
+                let mut body_scope = scope.clone();
+                body_scope.insert(index_var.clone(), ArkType::Int);
+                let element = match &iterable.ty {
+                    ArkType::Array(element, _) => (**element).clone(),
+                    _ => ArkType::Unknown,
+                };
+                bind_local_type(&mut body_scope, value_var, None, element, structs);
+                annotate_statements(body, &mut body_scope, structs);
+            }
+            Statement::ForCount { count, body } => {
+                annotate_expression(count, scope);
+                annotate_statements(body, &mut scope.clone(), structs);
+            }
+        }
+    }
+}
+
+fn annotate_expression(expression: &mut Expression, scope: &Scope) {
+    for child in crate::models::child_exprs_mut(expression) {
+        annotate_expression(child, scope);
+    }
+    expression.ty = infer_type(expression, scope);
 }
 
 pub(crate) fn resolve_group_properties(contract: &mut Contract) {

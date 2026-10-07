@@ -394,6 +394,27 @@ pub enum AssignmentTarget {
     },
 }
 
+impl Requirement {
+    pub(crate) fn expressions_mut(&mut self) -> Vec<&mut Expression> {
+        match self {
+            Requirement::Expression(expression) => vec![expression],
+            Requirement::CheckSig { signature, pubkey } => vec![signature, pubkey],
+            Requirement::CheckSigFromStack {
+                signature,
+                pubkey,
+                message,
+            } => vec![signature, pubkey, message],
+            Requirement::CheckMultisig {
+                pubkeys,
+                signatures,
+                ..
+            } => pubkeys.iter_mut().chain(signatures.iter_mut()).collect(),
+            Requirement::HashEqual { preimage, hash, .. } => vec![preimage, hash],
+            Requirement::Comparison { left, right, .. } => vec![left, right],
+        }
+    }
+}
+
 /// Requirement AST
 #[derive(Debug, Clone)]
 pub enum Requirement {
@@ -570,11 +591,17 @@ pub enum GroupIOSource {
 pub struct Expression {
     pub kind: ExprKind,
     pub span: crate::diagnostics::Span,
+    /// Set by `typechecker::annotate`; `Unknown` until then.
+    pub ty: crate::typechecker::ArkType,
 }
 
 impl Expression {
     pub fn new(kind: ExprKind, span: crate::diagnostics::Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            ty: crate::typechecker::ArkType::Unknown,
+        }
     }
 
     /// A node replacing this one, at the same source position.
