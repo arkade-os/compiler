@@ -591,8 +591,8 @@ pub enum GroupIOSource {
 pub struct Expression {
     pub kind: ExprKind,
     pub span: crate::diagnostics::Span,
-    /// Set by `typechecker::annotate`; `Unknown` until then.
-    pub(crate) ty: crate::typechecker::ArkType,
+    /// Set by `types::annotate`; `Unknown` until then.
+    pub(crate) ty: crate::types::ArkType,
 }
 
 impl Expression {
@@ -600,7 +600,7 @@ impl Expression {
         Self {
             kind,
             span,
-            ty: crate::typechecker::ArkType::Unknown,
+            ty: crate::types::ArkType::Unknown,
         }
     }
 

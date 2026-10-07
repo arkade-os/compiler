@@ -74,7 +74,7 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typechecker::ArkType;
+    use crate::types::ArkType;
 
     #[test]
     fn every_signature_is_unique_with_known_types() {

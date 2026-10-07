@@ -239,7 +239,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         }
         ExprKind::Cast { target, data } => {
             emit_expression_asm(data, asm);
-            if data.ty == crate::typechecker::ArkType::parse(target) {
+            if data.ty == crate::types::ArkType::parse(target) {
                 return;
             }
             match target.as_str() {
@@ -375,7 +375,7 @@ pub(crate) fn emit_binary_op_asm(
     let concat = op == BinaryOperator::Add
         && [left, right]
             .iter()
-            .any(|operand| crate::typechecker::is_bytes_like(&operand.ty));
+            .any(|operand| crate::types::is_bytes_like(&operand.ty));
     if concat {
         asm.push(OP_CAT.to_string());
     } else {

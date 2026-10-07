@@ -25,7 +25,7 @@ use crate::models::{
     Requirement, Statement, TapItem,
 };
 use crate::operators::{BinaryOperator, OperatorClass};
-use crate::typechecker::{build_scope_with_structs, literal_index, ArkType, Scope};
+use crate::types::{build_scope_with_structs, literal_index, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
 mod functions;
@@ -111,7 +111,7 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Tapscript inputs do not collide with reserved arkd names.
 /// - Asset ID operands have the expected txid/gidx types.
 ///
-/// Reads `Expression::ty`, so `typechecker::annotate` must run first; on an
+/// Reads `Expression::ty`, so `types::annotate` must run first; on an
 /// unannotated contract every type is `Unknown` and type checks pass vacuously.
 pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
@@ -715,7 +715,7 @@ fn find_binding<'a>(scopes: &'a BindingScopes, name: &str) -> Option<&'a Binding
 
 pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
     expected == actual
-        || *expected == ArkType::Bytes && crate::typechecker::is_bytes_like(actual)
+        || *expected == ArkType::Bytes && crate::types::is_bytes_like(actual)
         || matches!(
             (expected, actual),
             (ArkType::Array(expected, expected_len), ArkType::Array(actual, actual_len))
@@ -855,7 +855,7 @@ fn validate_binding_statements(
                     .last_mut()
                     .expect("binding validation always has a scope");
                 let mut local = Scope::new();
-                crate::typechecker::bind_local_type(
+                crate::types::bind_local_type(
                     &mut local,
                     name,
                     declared_type.as_deref(),
@@ -1046,13 +1046,7 @@ fn validate_binding_statements(
                 let mut frame = HashMap::new();
                 for (name, binding_type) in [(index_var, ArkType::Int), (value_var, element_type)] {
                     let mut local = Scope::new();
-                    crate::typechecker::bind_local_type(
-                        &mut local,
-                        name,
-                        None,
-                        binding_type,
-                        structs,
-                    );
+                    crate::types::bind_local_type(&mut local, name, None, binding_type, structs);
                     frame.extend(local.into_iter().map(|(name, binding_type)| {
                         (
                             name,
@@ -1278,7 +1272,7 @@ fn validate_binding_requirement(
             let actual = hash.ty.clone();
             if issues.len() == before
                 && !matches!(&hash.kind, ExprKind::Literal(_))
-                && !crate::typechecker::digest_accepts(hash_fn, &actual)
+                && !crate::types::digest_accepts(hash_fn, &actual)
             {
                 issues.push(ValidationIssue::type_error(format!(
                     "function '{function_name}': {} comparison: '{}' has type '{}', expected {}",
@@ -1350,7 +1344,7 @@ fn validate_scalar_comparison(
     if !scalar(&left) || !scalar(&right) {
         return;
     }
-    let bytes_like = crate::typechecker::is_bytes_like;
+    let bytes_like = crate::types::is_bytes_like;
     let compatible = match op.class() {
         OperatorClass::Equality => {
             left == right
@@ -1436,7 +1430,7 @@ fn validate_binding_expression(
         )));
     }
 
-    let registered_builtin = crate::typechecker::builtins::operands(expression);
+    let registered_builtin = crate::types::builtins::operands(expression);
     let mut children_checked = false;
 
     match &expression.kind {
@@ -1455,8 +1449,7 @@ fn validate_binding_expression(
                 }
             }
             // The VM aborts on operands of different lengths.
-            let widths =
-                [left, right].map(|operand| crate::typechecker::static_byte_width(operand));
+            let widths = [left, right].map(|operand| crate::types::static_byte_width(operand));
             if let [Some(left), Some(right)] = widths {
                 if left != right {
                     issues.push(ValidationIssue::error(format!(
@@ -1479,7 +1472,7 @@ fn validate_binding_expression(
             let types = [left, right].map(|operand| operand.ty.clone());
             // Bytes-like `+` is concatenation.
             let concat =
-                *op == BinaryOperator::Add && types.iter().any(crate::typechecker::is_bytes_like);
+                *op == BinaryOperator::Add && types.iter().any(crate::types::is_bytes_like);
             if concat {
                 // The width and byte order of a converted number are consensus-visible, so the author picks them.
                 for ((side, operand), actual) in
@@ -1558,7 +1551,7 @@ fn validate_binding_expression(
         }
         _ if registered_builtin.is_some() => {
             let (name, operands) = registered_builtin.unwrap();
-            let params = crate::typechecker::builtins::find(name)
+            let params = crate::types::builtins::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
             assert_eq!(
                 operands.len(),
@@ -2306,7 +2299,7 @@ mod tests {
 
     fn validate(contract: &Contract) -> Vec<ValidationIssue> {
         let mut contract = contract.clone();
-        crate::typechecker::annotate(&mut contract);
+        crate::types::annotate(&mut contract);
         validate_ast(&contract, true)
     }
 

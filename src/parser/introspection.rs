@@ -317,7 +317,7 @@ fn parse_asset_group_access(
         Rule::asset_group_io_source => Expression::new(
             ExprKind::GroupIOAccess {
                 group,
-                source: crate::typechecker::group_io_source(part.as_str())
+                source: crate::types::group_io_source(part.as_str())
                     .ok_or("Invalid asset group io source")?,
                 io_index: Box::new(parse_array_access_index(
                     parts.next().ok_or("Missing asset group io index")?,

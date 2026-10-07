@@ -174,7 +174,7 @@ pub(crate) fn find(name: &str) -> Option<&'static Builtin> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typechecker::ArkType;
+    use crate::types::ArkType;
 
     #[test]
     fn every_builtin_is_unique_with_known_types() {

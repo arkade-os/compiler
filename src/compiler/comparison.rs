@@ -2,7 +2,7 @@ use super::*;
 use crate::models::*;
 use crate::opcodes::OP_ROLL;
 use crate::operators::{BinaryOperator, OperatorClass};
-use crate::typechecker::{bind_local_type, ArkType};
+use crate::types::{bind_local_type, ArkType};
 
 impl Generator {
     pub(super) fn composite_type(&self, expression: &Expression) -> Option<String> {

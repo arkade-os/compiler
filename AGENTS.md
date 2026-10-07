@@ -31,7 +31,7 @@ This is a Cargo workspace containing the compiler crate at the repository root a
 - `src/parser/` maps source text into the AST.
 - `src/models/mod.rs` contains AST and public artifact models.
 - `src/compiler/` emits Arkade covenant and tapscript assembly.
-- `src/typechecker/` and `src/validator/` enforce semantic and artifact invariants.
+- `src/types/` types every expression once; `src/validator/` enforces semantic and artifact invariants.
 - `src/main.rs`, `src/lib.rs`, and `src/wasm.rs` expose the CLI, Rust API, and optional WASM API.
 - `tests/` contains integration and regression coverage.
 - `examples/` contains source contracts used by tests and the playground.
@@ -42,7 +42,7 @@ Source and tests are authoritative when README examples or generated output disa
 
 ## Working rules
 
-Language changes commonly cross the grammar, parser, models, typechecker or validator, compiler emission, and tests. Trace the actual flow and change only the layers the behavior needs.
+Language changes commonly cross the grammar, parser, models, types or validator, compiler emission, and tests. Trace the actual flow and change only the layers the behavior needs.
 
 PEG alternative order changes parsing behavior. Review nearby alternatives and add focused parser coverage when editing `src/parser/grammar.pest`.
 

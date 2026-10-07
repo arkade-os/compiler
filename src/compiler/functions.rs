@@ -9,7 +9,7 @@ pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expre
         || (matches!(&expression.kind, ExprKind::ArrayIndex { .. })
             && matches!(
                 expression.ty,
-                typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
+                types::ArkType::Array(..) | types::ArkType::Struct(_)
             ))
     {
         let mut replacement =

@@ -1,5 +1,5 @@
 use super::*;
-use crate::typechecker::ArkType;
+use crate::types::ArkType;
 
 impl Generator {
     /// Resolve an access to its layout path, collecting runtime indexes.

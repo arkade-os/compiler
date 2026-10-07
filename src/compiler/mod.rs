@@ -23,7 +23,7 @@ use crate::opcodes::{
     OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID,
     OP_TXWEIGHT, OP_VERIFY, OP_XOR,
 };
-use crate::typechecker::{self};
+use crate::types::{self};
 use crate::validator::{self, Severity};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -72,10 +72,10 @@ fn internal_array_binding_name(array: &str, index: &str) -> String {
 struct Generator {
     asm: Vec<String>,
     stack: Vec<StackItem>,
-    scopes: Vec<(usize, typechecker::Scope)>,
+    scopes: Vec<(usize, types::Scope)>,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
-    scope: typechecker::Scope,
+    scope: types::Scope,
     functions: Vec<Function>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<String, usize>,
@@ -138,8 +138,8 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        let mut scope = typechecker::build_scope_with_structs(constructor_parameters, structs);
-        scope.extend(typechecker::build_scope_with_structs(
+        let mut scope = types::build_scope_with_structs(constructor_parameters, structs);
+        scope.extend(types::build_scope_with_structs(
             function_parameters,
             structs,
         ));
@@ -179,7 +179,7 @@ impl Generator {
     /// Declared element count, independent of the flattened element width.
     fn array_length(&self, array: &str) -> usize {
         match self.scope.get(array) {
-            Some(typechecker::ArkType::Array(_, length)) => *length,
+            Some(types::ArkType::Array(_, length)) => *length,
             _ => 0,
         }
     }
@@ -815,7 +815,7 @@ pub(crate) fn prepare(
     require_entrypoint: bool,
     file: &str,
 ) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
-    typechecker::annotate(contract);
+    types::annotate(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
     // Catch errors the PEG grammar cannot express (duplicate names, missing
@@ -1045,7 +1045,7 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let typechecker::ArkType::Array(_, length) = iterable.ty else {
+                let types::ArkType::Array(_, length) = iterable.ty else {
                     return Err("unsupported loop iterable".to_string());
                 };
                 for k in 0..length {
@@ -1053,7 +1053,7 @@ fn generate_asm_from_statements_recursive(
                         substitute_loop_body(body, index_var, value_var, k, iterable);
                     // Substitution builds untyped nodes; return types and group members
                     // were resolved on the original body and survive the copy.
-                    typechecker::annotate_statements(
+                    types::annotate_statements(
                         &mut substituted,
                         &mut generator.scope.clone(),
                         &generator.structs,
