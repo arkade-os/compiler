@@ -819,94 +819,104 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
     }
 }
 
-pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
-    match &mut expr.kind {
-        // Leaf nodes: no nested expressions.
-        ExprKind::Variable(_)
-        | ExprKind::Literal(_)
-        | ExprKind::Property(_)
-        | ExprKind::CurrentInput(_)
-        | ExprKind::TxIntrospection { .. }
-        | ExprKind::IntentInspect { .. }
-        | ExprKind::AssetGroupsLength => vec![],
+/// Generates the shared and mutable traversals from one list of each variant's
+/// direct sub-expressions, so the two cannot drift apart. The match has no `_`
+/// arm: a new variant does not compile until its children are declared here.
+macro_rules! expression_children {
+    ($name:ident, $expr:ty, ($($borrow:tt)*), $iter:ident, $as_box:ident) => {
+        pub(crate) fn $name(expr: $expr) -> Vec<$expr> {
+            match $($borrow)* expr.kind {
+                // Leaf nodes: no nested expressions.
+                ExprKind::Variable(_)
+                | ExprKind::Literal(_)
+                | ExprKind::Property(_)
+                | ExprKind::CurrentInput(_)
+                | ExprKind::TxIntrospection { .. }
+                | ExprKind::IntentInspect { .. }
+                | ExprKind::AssetGroupsLength => vec![],
 
-        ExprKind::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
-        ExprKind::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | ExprKind::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => vec![signature, pubkey, message],
+                ExprKind::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
+                ExprKind::CheckSigFromStackExpr {
+                    signature,
+                    pubkey,
+                    message,
+                }
+                | ExprKind::CheckSigFromStackVerify {
+                    signature,
+                    pubkey,
+                    message,
+                } => vec![signature, pubkey, message],
 
-        ExprKind::FieldAccess { value, .. } => vec![value],
-        ExprKind::IndexAccess { value, index } => vec![value, index],
-        ExprKind::ArrayIndex { index, .. } => vec![index],
+                ExprKind::FieldAccess { value, .. } => vec![value],
+                ExprKind::IndexAccess { value, index } => vec![value, index],
+                ExprKind::ArrayIndex { index, .. } => vec![index],
 
-        ExprKind::ArrayLiteral(elements)
-        | ExprKind::Call { args: elements, .. }
-        | ExprKind::Builtin { args: elements, .. } => elements.iter_mut().collect(),
-        ExprKind::StructLiteral(fields) => fields.iter_mut().map(|(_, value)| value).collect(),
+                ExprKind::ArrayLiteral(elements)
+                | ExprKind::Call { args: elements, .. }
+                | ExprKind::Builtin { args: elements, .. } => elements.$iter().collect(),
+                ExprKind::StructLiteral(fields) => fields.$iter().map(|(_, value)| value).collect(),
 
-        ExprKind::AssetLookup {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
+                ExprKind::AssetLookup {
+                    index,
+                    asset_txid,
+                    asset_gidx,
+                    ..
+                }
+                | ExprKind::AssetHas {
+                    index,
+                    asset_txid,
+                    asset_gidx,
+                    ..
+                } => vec![index, asset_txid, asset_gidx],
+                ExprKind::AssetCount { index, .. }
+                | ExprKind::InputIntrospection { index, .. }
+                | ExprKind::OutputIntrospection { index, .. }
+                | ExprKind::AssetGroupAt { index }
+                | ExprKind::GroupProperty { group: index, .. } => vec![index],
+                ExprKind::AssetAt {
+                    io_index,
+                    asset_index,
+                    ..
+                } => vec![io_index, asset_index],
+                ExprKind::BinaryOp { left, right, .. } | ExprKind::Concat { left, right, .. } => {
+                    vec![left, right]
+                }
+                ExprKind::GroupFind {
+                    asset_txid,
+                    asset_gidx,
+                }
+                | ExprKind::GroupHas {
+                    asset_txid,
+                    asset_gidx,
+                } => vec![asset_txid, asset_gidx],
+                ExprKind::GroupControlIs {
+                    group,
+                    asset_txid,
+                    asset_gidx,
+                } => vec![group, asset_txid, asset_gidx],
+                ExprKind::GroupIOAccess {
+                    group, io_index, ..
+                } => vec![group, io_index],
+                ExprKind::Unary { value, .. } => vec![value],
+                ExprKind::Tunnel {
+                    output_index,
+                    policy,
+                    exceptions,
+                } => std::iter::once(output_index.$as_box())
+                    .chain(policy.$iter())
+                    .chain(exceptions.$iter())
+                    .collect(),
+                ExprKind::ContractInstance { args, .. } => args.$iter().collect(),
+                ExprKind::Cast { data, .. } => vec![data],
+                ExprKind::PacketInspect { packet_type } => vec![packet_type],
+                ExprKind::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+            }
         }
-        | ExprKind::AssetHas {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        } => vec![index, asset_txid, asset_gidx],
-        ExprKind::AssetCount { index, .. }
-        | ExprKind::InputIntrospection { index, .. }
-        | ExprKind::OutputIntrospection { index, .. }
-        | ExprKind::AssetGroupAt { index }
-        | ExprKind::GroupProperty { group: index, .. } => vec![index],
-        ExprKind::AssetAt {
-            io_index,
-            asset_index,
-            ..
-        } => vec![io_index, asset_index],
-        ExprKind::BinaryOp { left, right, .. } | ExprKind::Concat { left, right, .. } => {
-            vec![left, right]
-        }
-        ExprKind::GroupFind {
-            asset_txid,
-            asset_gidx,
-        }
-        | ExprKind::GroupHas {
-            asset_txid,
-            asset_gidx,
-        } => vec![asset_txid, asset_gidx],
-        ExprKind::GroupControlIs {
-            group,
-            asset_txid,
-            asset_gidx,
-        } => vec![group, asset_txid, asset_gidx],
-        ExprKind::GroupIOAccess {
-            group, io_index, ..
-        } => vec![group, io_index],
-        ExprKind::Unary { value, .. } => vec![value],
-        ExprKind::Tunnel {
-            output_index,
-            policy,
-            exceptions,
-        } => std::iter::once(output_index.as_mut())
-            .chain(policy.iter_mut())
-            .chain(exceptions.iter_mut())
-            .collect(),
-        ExprKind::ContractInstance { args, .. } => args.iter_mut().collect(),
-        ExprKind::Cast { data, .. } => vec![data],
-        ExprKind::PacketInspect { packet_type } => vec![packet_type],
-        ExprKind::InputPacketInspect { index, packet_type } => vec![index, packet_type],
-    }
+    };
 }
+
+expression_children!(child_exprs, &Expression, (&), iter, as_ref);
+expression_children!(child_exprs_mut, &mut Expression, (&mut), iter_mut, as_mut);
 
 impl Expression {
     /// Resolve the layout path, using element zero for runtime indexes.

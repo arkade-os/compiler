@@ -19,6 +19,7 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
+use crate::models::child_exprs;
 use crate::models::{
     AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
     Requirement, Statement, TapItem,
@@ -725,102 +726,6 @@ fn check_asset_id_expr(
     // Generic recursion through every sub-expression.
     for child in child_exprs(expr) {
         check_asset_id_expr(child, scope, fname, issues);
-    }
-}
-
-/// Return the direct sub-expressions of `expr`.
-///
-/// This is the single source of truth for expression-tree traversal in the
-/// validator. The match is intentionally exhaustive (no `_` arm): adding a new
-/// [`Expression`] variant will fail to compile here until its nested
-/// expressions — if any — are declared, guaranteeing that walkers built on top
-/// of this (e.g. [`check_asset_id_expr`]) cover every new construct.
-pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
-    match &expr.kind {
-        // Leaf nodes: no nested expressions.
-        ExprKind::Variable(_)
-        | ExprKind::Literal(_)
-        | ExprKind::Property(_)
-        | ExprKind::CurrentInput(_)
-        | ExprKind::TxIntrospection { .. }
-        | ExprKind::IntentInspect { .. }
-        | ExprKind::AssetGroupsLength => vec![],
-
-        ExprKind::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
-        ExprKind::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | ExprKind::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => vec![signature, pubkey, message],
-
-        ExprKind::FieldAccess { value, .. } => vec![value],
-        ExprKind::IndexAccess { value, index } => vec![value, index],
-        ExprKind::ArrayIndex { index, .. } => vec![index],
-
-        ExprKind::ArrayLiteral(elements)
-        | ExprKind::Call { args: elements, .. }
-        | ExprKind::Builtin { args: elements, .. } => elements.iter().collect(),
-        ExprKind::StructLiteral(fields) => fields.iter().map(|(_, value)| value).collect(),
-
-        ExprKind::AssetLookup {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        }
-        | ExprKind::AssetHas {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        } => vec![index, asset_txid, asset_gidx],
-        ExprKind::AssetCount { index, .. }
-        | ExprKind::InputIntrospection { index, .. }
-        | ExprKind::OutputIntrospection { index, .. }
-        | ExprKind::AssetGroupAt { index }
-        | ExprKind::GroupProperty { group: index, .. } => vec![index],
-        ExprKind::AssetAt {
-            io_index,
-            asset_index,
-            ..
-        } => vec![io_index, asset_index],
-        ExprKind::BinaryOp { left, right, .. } | ExprKind::Concat { left, right, .. } => {
-            vec![left, right]
-        }
-        ExprKind::GroupFind {
-            asset_txid,
-            asset_gidx,
-        }
-        | ExprKind::GroupHas {
-            asset_txid,
-            asset_gidx,
-        } => vec![asset_txid, asset_gidx],
-        ExprKind::GroupControlIs {
-            group,
-            asset_txid,
-            asset_gidx,
-        } => vec![group, asset_txid, asset_gidx],
-        ExprKind::GroupIOAccess {
-            group, io_index, ..
-        } => vec![group, io_index],
-        ExprKind::Unary { value, .. } => vec![value],
-        ExprKind::Tunnel {
-            output_index,
-            policy,
-            exceptions,
-        } => std::iter::once(output_index.as_ref())
-            .chain(policy.iter())
-            .chain(exceptions.iter())
-            .collect(),
-        ExprKind::ContractInstance { args, .. } => args.iter().collect(),
-        ExprKind::Cast { data, .. } => vec![data],
-        ExprKind::PacketInspect { packet_type } => vec![packet_type],
-        ExprKind::InputPacketInspect { index, packet_type } => vec![index, packet_type],
     }
 }
 
