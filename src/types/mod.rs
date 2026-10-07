@@ -12,8 +12,6 @@ use crate::models::{
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 
-pub(crate) mod builtins;
-
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
 /// All possible types in Arkade Script.
@@ -444,25 +442,6 @@ pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource
     match name {
         "inputs" => Some(crate::models::GroupIOSource::Inputs),
         "outputs" => Some(crate::models::GroupIOSource::Outputs),
-        _ => None,
-    }
-}
-
-pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
-    let mut negative = false;
-    while let ExprKind::Unary {
-        op: UnaryOperator::Neg,
-        value,
-    } = &expression.kind
-    {
-        negative = !negative;
-        expression = value;
-    }
-    match &expression.kind {
-        ExprKind::Literal(value) => Some(match value.strip_prefix('-') {
-            Some(magnitude) => (!negative, magnitude),
-            None => (negative, value),
-        }),
         _ => None,
     }
 }

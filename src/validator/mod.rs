@@ -25,13 +25,14 @@ use crate::models::{
     Requirement, Statement, TapItem,
 };
 use crate::operators::{BinaryOperator, OperatorClass};
-use crate::types::{build_scope_with_structs, literal_index, ArkType, Scope};
+use crate::types::{build_scope_with_structs, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
 
 mod assets;
 mod bindings;
 mod expressions;
 mod functions;
+mod operands;
 mod output;
 pub(crate) mod references;
 mod shadowing;

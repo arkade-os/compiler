@@ -324,7 +324,7 @@ pub(super) fn validate_binding_expression(
         )));
     }
 
-    let registered_builtin = crate::types::builtins::operands(expression);
+    let registered_builtin = operands::operands(expression);
     let mut children_checked = false;
 
     match &expression.kind {
@@ -445,7 +445,7 @@ pub(super) fn validate_binding_expression(
         }
         _ if registered_builtin.is_some() => {
             let (name, operands) = registered_builtin.unwrap();
-            let params = crate::types::builtins::find(name)
+            let params = operands::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
             assert_eq!(
                 operands.len(),
@@ -764,4 +764,23 @@ pub(super) fn validate_array_index(
     }
 
     array_info.map(|(element_type, _, source)| (element_type, source))
+}
+
+fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
+    let mut negative = false;
+    while let ExprKind::Unary {
+        op: crate::operators::UnaryOperator::Neg,
+        value,
+    } = &expression.kind
+    {
+        negative = !negative;
+        expression = value;
+    }
+    match &expression.kind {
+        ExprKind::Literal(value) => Some(match value.strip_prefix('-') {
+            Some(magnitude) => (!negative, magnitude),
+            None => (negative, value),
+        }),
+        _ => None,
+    }
 }

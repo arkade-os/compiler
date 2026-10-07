@@ -5,7 +5,7 @@
 //! compare — the alternative to declaring "digest expects (bytes, int)"
 //! again at every checking site.
 //!
-//! Parameter types use source syntax and parse with [`super::ArkType::parse`].
+//! Parameter types use source syntax and parse with [`crate::types::ArkType::parse`].
 //! `T[]` is an array of `T` whose length is taken from the first `[]`
 //! operand, so every `[]` operand of a call must have the same length.
 //!
