@@ -24,9 +24,7 @@ contract NonInteractiveSwap(
   // Amount of want asset required for the swap
   int wantAmount,
   // Expiration timestamp (block height) after which maker can cancel
-  int expirationTime,
-  // Exit timelock in blocks
-  int exit
+  int expirationTime
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
   function swap(pubkey takerPk, signature takerSig, bytes takerScriptPubKey) {
@@ -40,7 +38,7 @@ contract NonInteractiveSwap(
       "insufficient want asset for maker"
     );
     require(
-      tx.outputs[0].scriptPubKey == new SingleSig(makerPk, exit),
+      tx.outputs[0].scriptPubKey == new SingleSig(makerPk),
       "output 0 not spendable by maker"
     );
 
@@ -63,7 +61,7 @@ contract NonInteractiveSwap(
 
   // Unilateral exit (CSV): maker recovers after exit delay.
   function unilateral(signature makerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(makerSig, makerPk));
   }
 }

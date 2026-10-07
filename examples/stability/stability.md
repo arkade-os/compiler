@@ -98,7 +98,7 @@ Provider deploys an offer with their collateral locked. No signature is required
 
 ## StabilityVault
 
-Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, totalCollateral, fundingRatePerSec, lastUpdate, collateralRatioPct, seekerExitFee, exit`
+Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, totalCollateral, fundingRatePerSec, lastUpdate, collateralRatioPct, seekerExitFee`
 
 `oraclePk`, `ticker`, `collateralRatioPct`, and `seekerExitFee` are invariant across all state transitions. `targetUSD`, `totalCollateral`, `fundingRatePerSec`, and `lastUpdate` evolve as the Provider settles funding or adjusts collateral.
 
@@ -108,7 +108,7 @@ Constructor parameters: `seekerPk, providerPk, oraclePk, ticker, targetUSD, tota
 
 **`split(seekerSig, amountUSD, newSeekerPk)`** — divides the USD claim proportionally into two independent vaults. Both halves must be above the 330-sat Taproot dust threshold.
 
-**`merge(seekerSig, otherIdx, …)`** — combines two of the Seeker's own vaults into one. Both must share `seekerPk`, `providerPk`, `oraclePk`, `ticker`, `collateralRatioPct`, and `exit`. The merged vault receives:
+**`merge(seekerSig, otherIdx, …)`** — combines two of the Seeker's own vaults into one. Both must share `seekerPk`, `providerPk`, `oraclePk`, `ticker`, and `collateralRatioPct`. The merged vault receives:
 - `targetUSD` = sum of both sides' accrued targetUSD (funding rolled in per side at each side's own rate)
 - `totalCollateral` = sum of both collaterals
 - `fundingRatePerSec` = `max(rateA, rateB)` — the higher rate prevails
@@ -168,7 +168,7 @@ Every function compiles to two tapleaves:
 | Path | How it unlocks | Notes |
 |---|---|---|
 | Cooperative | Arkade Operator co-signs (instant) | Normal flow |
-| Exit | CLTV after `exit` blocks, no operator needed | Fallback for operator offline |
+| Exit | CSV after arkd's exit delay, no operator needed | Fallback for operator offline |
 
 Both paths enforce identical settlement math. The exit path is not a challenge window — it exists only so unilateral close is always possible.
 

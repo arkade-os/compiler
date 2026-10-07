@@ -6,7 +6,7 @@ Party A locks coins. An oracle releases `amount` to party B, or the timeout retu
 flowchart TD
   complete["complete<br/>server + emulator<br/>oracle attestation"]
   cancel["cancel<br/>server + emulator<br/>checkTime(timeoutAt)"]
-  unilateral["unilateral<br/>party A and party B<br/>older(exit)"]
+  unilateral["unilateral<br/>party A and party B<br/>older(serverExitDelay)"]
 
   complete --> b0["0 · partyBScript · raw script parameter · ≥ amount"]
   complete --> a1["1 · partyAScript · raw script parameter · surplus above 330"]

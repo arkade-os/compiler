@@ -9,7 +9,7 @@ fn fuji_safe_rejects_the_old_constructor_layout() {
         .replace(",\n        treasuryBurnScript, borrowerBurnScript\n", "\n");
     let error = compile(&source).unwrap_err().to_string();
     assert!(
-        error.contains("constructor 'FujiSafe' expects 12 arguments, got 10"),
+        error.contains("constructor 'FujiSafe' expects 11 arguments, got 9"),
         "{error}"
     );
 }
@@ -27,11 +27,11 @@ fn test_fuji_safe_contract() {
     assert_eq!(output.name, "FujiSafe");
 
     // Verify parameters
-    assert_eq!(output.parameters.len(), 12);
-    assert_eq!(output.parameters[10].name, "treasuryBurnScript");
+    assert_eq!(output.parameters.len(), 11);
+    assert_eq!(output.parameters[9].name, "treasuryBurnScript");
+    assert_eq!(output.parameters[9].param_type, "bytes32");
+    assert_eq!(output.parameters[10].name, "borrowerBurnScript");
     assert_eq!(output.parameters[10].param_type, "bytes32");
-    assert_eq!(output.parameters[11].name, "borrowerBurnScript");
-    assert_eq!(output.parameters[11].param_type, "bytes32");
     assert_eq!(output.parameters[0].name, "assetCommitmentHash");
     assert_eq!(output.parameters[0].param_type, "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
@@ -93,7 +93,7 @@ fn test_fuji_safe_contract() {
             "<borrowerBurnScript>",
             concat!(
                 "<CONTRACT:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
-                "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,<exit>,",
+                "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,",
                 "<treasuryBurnScript>,<borrowerBurnScript>)>"
             ),
             "OP_SWAP",

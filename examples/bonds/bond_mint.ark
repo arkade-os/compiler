@@ -70,7 +70,7 @@ pragma arkade ^0.1.0;
 //   `test_pool_retains_debit_ctrl_in_every_function` enforces this at the
 //   ASM level — do not delete it.
 //
-// UNILATERAL EXIT (Arkade operator offline, after `<exit>` blocks)
+// UNILATERAL EXIT (Arkade operator offline, after arkd's exit delay)
 //   Exit signers come from the function's pubkey parameters. In practice the
 //   borrower is the only relevant signer for unilateral collateral recovery.
 //   See docs/bonds.md §"Unilateral exits".
@@ -86,8 +86,7 @@ contract BondMint(
   int     mintedAmount,
   int     collateral,
   int     maturity,
-  int     auctionWindow,
-  int     exit
+  int     auctionWindow
 ) {
 
   // REPAY — pre-maturity, atomic with RepaymentPool.acceptRepayment.
@@ -103,7 +102,7 @@ contract BondMint(
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value >= collateral, "collateral not returned");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk, exit), "output 1 not borrower");
+    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
   }
 
   // LIQUIDATE — pre-maturity MARGIN CALL, permissionless. The pool's liquidate
@@ -175,7 +174,7 @@ contract BondMint(
   // UNILATERAL EXIT (CSV)
   // Borrower recovers collateral after exit delay (Arkade operator offline).
   function unilateral(signature borrowerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(borrowerSig, borrowerPk));
   }
 }

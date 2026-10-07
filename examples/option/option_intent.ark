@@ -2,7 +2,7 @@ pragma arkade ^0.1.0;
 
 // 30-second RFQ lock. Same shape as NonInteractiveSwap: the maker locks coins,
 // a taker finalizes by funding the named outputs, and the maker cancels once
-// the emulator clock passes `deadline`. `older(exit)` is the operator-down path.
+// the emulator clock passes `deadline`. `older(serverExitDelay)` is the operator-down path.
 //
 // side 0, user is the writer: the coin is the notional Q. Finalize pays the
 // premium plus any sats above Q back to `userScript`, and at least Q to the
@@ -25,8 +25,7 @@ contract OptionIntent(
   int side,
   int collateral,
   int premium,
-  int deadline,
-  int exit
+  int deadline
 ) {
   const int DUST = 330;
 
@@ -66,7 +65,7 @@ contract OptionIntent(
   }
 
   function unilateral(signature userSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(userSig, userPk));
   }
 }

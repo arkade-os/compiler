@@ -36,8 +36,7 @@ contract OptionVault(
   int strike,
   int collateral,
   int expiry,
-  pubkey[5] oracles,
-  int exit
+  pubkey[5] oracles
 ) {
   const int DUST = 330;
   const int PRICE_MAX = 1000000000;
@@ -168,7 +167,7 @@ contract OptionVault(
   }
 
   function unilateral(signature writerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(writerSig, writerPk));
   }
 }
