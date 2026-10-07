@@ -1921,9 +1921,16 @@ fn validate_asset_id(
         )));
     }
 
-    // gidx: a constant expression is range-checked directly; anything else must
-    // resolve to Int through the scope.
-    if is_constant(asset_gidx) {
+    // gidx must resolve to Int; a constant one must also be in range.
+    let gidx_type = infer_type(asset_gidx, scope);
+    if gidx_type != ArkType::Int {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
+            fname,
+            asset_gidx.source_text(),
+            gidx_type.as_str()
+        )));
+    } else if is_constant(asset_gidx) {
         let value = crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into()))
             .and_then(|value| {
                 value
@@ -1942,16 +1949,6 @@ fn validate_asset_id(
                 asset_gidx.source_text(),
                 error
             ))),
-        }
-    } else {
-        let gidx_type = infer_type(asset_gidx, scope);
-        if gidx_type != ArkType::Int {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
-                fname,
-                asset_gidx.source_text(),
-                gidx_type.as_str()
-            )));
         }
     }
 }
