@@ -1051,3 +1051,68 @@ fn bytewise_results_keep_a_known_operand_width() {
     )
     .expect("a fixed-width operand fixes the result width");
 }
+
+#[test]
+fn merkle_root_pushes_operands_in_vm_order() {
+    let output = compile(
+        r#"contract M(bytes32 root) { function spend(bytes leaf, bytes proof) {
+            require(merkleRoot("leaf", "branch", proof, leaf) == root);
+        } }"#,
+    )
+    .expect("merkleRoot compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert_eq!(
+        asm,
+        "<root> 0x6c656166 0x6272616e6368 OP_4 OP_ROLL OP_4 OP_ROLL OP_MERKLEBRANCHVERIFY OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1"
+            .split_whitespace().collect::<Vec<_>>()
+    );
+
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["leaf", "proof"]
+    );
+    assert_eq!(
+        crate::common::leaf_asm_tokens(&output, "spend", "spend"),
+        [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:spend>",
+            "OP_CHECKSIG"
+        ]
+    );
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+
+    for (args, expected) in [
+        (
+            "5, \"b\", proof, leaf",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", 5, proof, leaf",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", \"b\", 5, leaf",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", \"b\", proof, 5",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", \"b\", proof",
+            "expected merkleRoot(leafTag, branchTag, proof, leaf)",
+        ),
+        (
+            "\"\", \"b\", proof, leaf, leaf",
+            "expected merkleRoot(leafTag, branchTag, proof, leaf)",
+        ),
+    ] {
+        let source = format!("contract M(bytes32 root) {{ function spend(bytes leaf, bytes proof) {{ require(merkleRoot({args}) == root); }} }}");
+        let error = compile(&source).expect_err(args).to_string();
+        assert!(error.contains(expected), "{args}: {error}");
+    }
+}
