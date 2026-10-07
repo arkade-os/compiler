@@ -581,7 +581,9 @@ fn validate_scope(
                         ));
                     }
                     for (arg, param) in args.iter().zip(&target.parameters) {
-                        let actual = typechecker::infer_type(arg, &scope);
+                        let mut arg = arg.clone();
+                        typechecker::annotate_expression(&mut arg, &scope);
+                        let actual = arg.ty;
                         if actual != typechecker::ArkType::Unknown
                             && !crate::validator::binding_types_compatible(
                                 &typechecker::ArkType::parse(&param.param_type),

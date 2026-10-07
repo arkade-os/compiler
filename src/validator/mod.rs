@@ -710,18 +710,6 @@ fn find_binding<'a>(scopes: &'a BindingScopes, name: &str) -> Option<&'a Binding
     scopes.iter().rev().find_map(|frame| frame.get(name))
 }
 
-fn flattened_types(scopes: &BindingScopes) -> Scope {
-    let mut result = Scope::new();
-    for frame in scopes {
-        result.extend(
-            frame
-                .iter()
-                .map(|(name, info)| (name.clone(), info.binding_type.clone())),
-        );
-    }
-    result
-}
-
 pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
     expected == actual
         || *expected == ArkType::Bytes && crate::typechecker::is_bytes_like(actual)
@@ -1449,7 +1437,6 @@ fn validate_binding_expression(
 
     match &expression.kind {
         ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
-            let scope = flattened_types(scopes);
             for operand in [left, right] {
                 let actual = operand.ty.clone();
                 if actual != ArkType::Unknown && !binding_types_compatible(&ArkType::Bytes, &actual)
@@ -1465,7 +1452,7 @@ fn validate_binding_expression(
             }
             // The VM aborts on operands of different lengths.
             let widths =
-                [left, right].map(|operand| crate::typechecker::static_byte_width(operand, &scope));
+                [left, right].map(|operand| crate::typechecker::static_byte_width(operand));
             if let [Some(left), Some(right)] = widths {
                 if left != right {
                     issues.push(ValidationIssue::error(format!(

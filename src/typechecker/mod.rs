@@ -5,7 +5,6 @@
 ///   including wire-encoding metadata used by client stub generators
 /// - `annotate`: stores every expression's type on it before validation;
 ///   the validator and code generation read `Expression::ty`
-/// - `infer_type`: the inference rule `annotate` applies to each node
 use std::collections::HashMap;
 
 use crate::models::{
@@ -243,6 +242,15 @@ pub(crate) fn annotate_statements(
     .statements(statements, scope);
 }
 
+/// Type one expression of code that has not been annotated.
+pub(crate) fn annotate_expression(expression: &mut Expression, scope: &Scope) {
+    Typing {
+        structs: &[],
+        returns: None,
+    }
+    .expression(expression, scope);
+}
+
 struct Typing<'a> {
     structs: &'a [crate::models::StructDefinition],
     /// Present on the first pass, which also resolves names.
@@ -466,11 +474,12 @@ pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bo
 
 // ─── Type Inference ───────────────────────────────────────────────────────────
 
-/// Infer the `ArkType` of an expression given the current variable scope.
+/// Infer the `ArkType` of an expression given the current variable scope and
+/// the types already stored on its children.
 ///
 /// Returns `ArkType::Unknown` for expressions whose type cannot be determined
 /// statically (e.g., unresolved variables, not-yet-implemented forms).
-pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
+fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     match &expr.kind {
         ExprKind::Call { return_type, .. } => return_type
             .as_deref()
@@ -487,7 +496,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             Box::new(
                 elements
                     .first()
-                    .map(|element| infer_type(element, scope))
+                    .map(|element| element.ty.clone())
                     .unwrap_or(ArkType::Unknown),
             ),
             elements.len(),
@@ -497,8 +506,8 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .binding_path()
             .map(|name| infer_type(&expr.with_kind(ExprKind::Property(name)), scope))
             .unwrap_or(ArkType::Unknown),
-        ExprKind::IndexAccess { value, .. } => match infer_type(value, scope) {
-            ArkType::Array(element, _) => *element,
+        ExprKind::IndexAccess { value, .. } => match &value.ty {
+            ArkType::Array(element, _) => (**element).clone(),
             _ => ArkType::Unknown,
         },
         ExprKind::ArrayIndex { array, .. } => match scope.get(array) {
@@ -594,13 +603,11 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         ExprKind::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
 
-        // Byte-string ops
-
         // Arithmetic
         ExprKind::Unary {
             op: UnaryOperator::Invert,
             ..
-        } => bytes_of_width(static_byte_width(expr, scope)),
+        } => bytes_of_width(static_byte_width(expr)),
         ExprKind::Unary { op, .. } => ArkType::parse(op.operand_type()),
         ExprKind::Tunnel { .. } => ArkType::Bool,
 
@@ -627,17 +634,16 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         // Binary operations — type is determined by operand types and operator.
         ExprKind::BinaryOp { left, op, right } => {
-            let lt = infer_type(left, scope);
-            let rt = infer_type(right, scope);
             match op.class() {
                 // bytes-like on either side → concatenation (result Bytes).
                 OperatorClass::Arithmetic
-                    if *op == BinaryOperator::Add && (is_bytes_like(&lt) || is_bytes_like(&rt)) =>
+                    if *op == BinaryOperator::Add
+                        && (is_bytes_like(&left.ty) || is_bytes_like(&right.ty)) =>
                 {
                     ArkType::Bytes
                 }
                 OperatorClass::Arithmetic | OperatorClass::Shift => ArkType::Int,
-                OperatorClass::Bytewise => bytes_of_width(static_byte_width(expr, scope)),
+                OperatorClass::Bytewise => bytes_of_width(static_byte_width(expr)),
                 OperatorClass::Ordering | OperatorClass::Equality | OperatorClass::Logical => {
                     ArkType::Bool
                 }
@@ -647,18 +653,18 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 }
 
 /// Byte length of `expr` when it is known at compile time.
-pub(crate) fn static_byte_width(expr: &Expression, scope: &Scope) -> Option<usize> {
+pub(crate) fn static_byte_width(expr: &Expression) -> Option<usize> {
     match &expr.kind {
         ExprKind::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
         // Bytewise operands share one length, so either side's known width is the result's.
         ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
-            static_byte_width(left, scope).or_else(|| static_byte_width(right, scope))
+            static_byte_width(left).or_else(|| static_byte_width(right))
         }
         ExprKind::Unary {
             op: UnaryOperator::Invert,
             value,
-        } => static_byte_width(value, scope),
-        _ => match infer_type(expr, scope) {
+        } => static_byte_width(value),
+        _ => match expr.ty {
             ArkType::Bytes20 => Some(20),
             ArkType::Bytes32 => Some(32),
             _ => None,
