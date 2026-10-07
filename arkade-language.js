@@ -99,6 +99,7 @@ const arkadeCompletions = [
     S('this', 'Variable', 'this', 'Current contract'),
     S('server', 'Variable', 'server', 'Arkade server key'),
     S('emulator', 'Variable', 'emulator', 'Arkade emulator key'),
+    S('serverExitDelay', 'Variable', 'serverExitDelay', 'Arkade server unilateral exit delay'),
 
     // Functions
     S('checkSig', 'Function', 'checkSig(${1:sig}, ${2:pubkey})', 'Verify signature against pubkey'),
