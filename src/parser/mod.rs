@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Expression, Function, LocatedStatement, Parameter,
-    Statement, StructDefinition,
+    AssignmentTarget, Constant, Contract, ExprKind, Expression, Function, LocatedStatement,
+    Parameter, Statement, StructDefinition,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -139,7 +139,10 @@ fn rule_term(rule: &Rule) -> Option<String> {
         Rule::function_visibility | Rule::function => "a function",
         Rule::data_type => "a type",
         Rule::block => "a block",
-        Rule::unary_expr | Rule::primary_expr | Rule::general_expression => "an expression",
+        Rule::unary_expr
+        | Rule::primary_expr
+        | Rule::parenthesized_expr
+        | Rule::general_expression => "an expression",
         Rule::number_literal => "a number",
         Rule::string_literal => "a string",
         // ponytail: unmapped rules fall back to their grammar name with spaces;
@@ -540,7 +543,10 @@ fn parse_statement(
         Rule::function_call_stmt => {
             let call = pair.into_inner().next().ok_or("Missing function call")?;
             match parse_general_expression(call)? {
-                Expression::Builtin { builtin, .. } => {
+                Expression {
+                    kind: ExprKind::Builtin { builtin, .. },
+                    ..
+                } => {
                     return Err(format!(
                         "`{}(...)` cannot be a statement; use it inside require()",
                         builtin.name
@@ -587,8 +593,14 @@ fn parse_statement(
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
     Ok(match expr::parse_property_access(pair)? {
-        Expression::Variable(name) | Expression::Property(name) => AssignmentTarget::Binding(name),
-        Expression::ArrayIndex { array, index } => AssignmentTarget::ArrayIndex { array, index },
+        Expression {
+            kind: ExprKind::Variable(name) | ExprKind::Property(name),
+            ..
+        } => AssignmentTarget::Binding(name),
+        Expression {
+            kind: ExprKind::ArrayIndex { array, index },
+            ..
+        } => AssignmentTarget::ArrayIndex { array, index },
         value => AssignmentTarget::Access(Box::new(value)),
     })
 }
@@ -648,8 +660,76 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+    use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
     use crate::operators::UnaryOperator;
+
+    #[test]
+    fn expression_spans_cover_their_source_and_nest() {
+        let source = "contract C(bytes a, bytes32 h, int[2] xs) { function spend(int n) {
+            require(sha256(cat(a, a)) == h);
+            let total = xs[n] + -n * 2;
+            let mask = ~a ^ a;
+            let flipped = -~n;
+            let grouped = (n) + ((2));
+            let prefixed = -!(n);
+            let packet = tx.packet(-!(n));
+            let sum = tx.assetGroups[n].sumInputs;
+            let owned = tx.assetGroups.find(h, n).controlIs(h, n);
+            require(total > 0);
+        } }";
+        let contract = parse(source).expect("parses");
+        let text = |e: &Expression| &source[e.span.start..e.span.end];
+        fn walk<'a>(e: &'a Expression, out: &mut Vec<&'a Expression>) {
+            out.push(e);
+            for child in crate::validator::child_exprs(e) {
+                assert!(
+                    e.span.start <= child.span.start && child.span.end <= e.span.end,
+                    "{child:?} escapes {e:?}"
+                );
+                walk(child, out);
+            }
+        }
+        let mut nodes = Vec::new();
+        for statement in &contract.functions[0].statements {
+            match &statement.statement {
+                Statement::Require(Requirement::Comparison { left, right, .. }) => {
+                    walk(left, &mut nodes);
+                    walk(right, &mut nodes);
+                }
+                Statement::LetBinding { value, .. } => walk(value, &mut nodes),
+                other => panic!("unexpected statement {other:?}"),
+            }
+        }
+        let texts: Vec<&str> = nodes.iter().map(|e| text(e)).collect();
+        for expected in [
+            "sha256(cat(a, a))",
+            "cat(a, a)",
+            "h",
+            "xs[n] + -n * 2",
+            "xs[n]",
+            "-n * 2",
+            "-n",
+            "~a ^ a",
+            "~a",
+            "-~n",
+            "~n",
+            "(n) + ((2))",
+            "(n)",
+            "((2))",
+            "-!(n)",
+            "!(n)",
+            "tx.packet(-!(n))",
+            "tx.assetGroups[n].sumInputs",
+            "tx.assetGroups.find(h, n).controlIs(h, n)",
+            "total",
+            "0",
+        ] {
+            assert!(
+                texts.contains(&expected),
+                "no node spans {expected:?} in {texts:?}"
+            );
+        }
+    }
 
     #[test]
     fn parses_version_pragmas_without_enforcing_compatibility() {
@@ -714,7 +794,7 @@ mod tests {
             matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
         );
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "-"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "-"))
         );
         for size in ["", "0", "-1", "1 2", "N + 1"] {
             assert!(
@@ -736,13 +816,13 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xDEADbeef")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xDEADbeef")
         );
         assert!(
-            matches!(&statements[1].statement, Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xc5be0a")
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xc5be0a")
         );
         assert!(
-            matches!(&statements[2].statement, Statement::Require(Requirement::Comparison { left: Expression::Literal(left), right: Expression::Literal(right), .. }) if left == "0x68656c6c6f" && left == right)
+            matches!(&statements[2].statement, Statement::Require(Requirement::Comparison { left: Expression { kind: ExprKind::Literal(left), .. }, right: Expression { kind: ExprKind::Literal(right), .. }, .. }) if left == "0x68656c6c6f" && left == right)
         );
     }
 
@@ -754,16 +834,16 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::LetBinding { value: Expression::Property(name), .. } if name == "x.field")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Property(name), .. }, .. } if name == "x.field")
         );
         assert!(
-            matches!(&statements[1].statement, Statement::LetBinding { value: Expression::Call { name, args, .. }, .. } if name == "Helper.value" && args.is_empty())
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Call { name, args, .. }, .. }, .. } if name == "Helper.value" && args.is_empty())
         );
     }
 
     #[test]
     fn parses_private_visibility_return_types_and_call_arguments() {
-        use crate::models::Expression;
+        use crate::models::{ExprKind, Expression};
         let contract = parse(
             r#"contract C() {
             public function spend(int amount) { check(amount + 1 * 2); }
@@ -778,7 +858,7 @@ mod tests {
         assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
         assert!(!contract.functions[3].is_private);
         assert!(
-            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op.symbol() == "+"))
+            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression { kind: ExprKind::Call { name, args, .. }, .. }) if name == "check" && matches!(&args[0].kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+"))
         );
         assert!(matches!(
             &contract.functions[1].statements[1].statement,
@@ -794,58 +874,62 @@ mod tests {
     fn parses_logical_precedence_and_grouping() {
         let contract = parse("contract C() { function spend() { let value = !a == b || c && d && e; require((a || b) && !(c < d)); } }").unwrap();
         let Statement::LetBinding {
-            value: Expression::BinaryOp { left, op, right },
+            value:
+                Expression {
+                    kind: ExprKind::BinaryOp { left, op, right },
+                    ..
+                },
             ..
         } = &contract.functions[0].statements[0].statement
         else {
             panic!("expected logical expression");
         };
         assert_eq!(op.symbol(), "||");
-        assert!(
-            matches!(left.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op.symbol() == "==" && matches!(left.as_ref(), Expression::Unary { op: UnaryOperator::Not, .. }))
-        );
-        assert!(
-            matches!(right.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op.symbol() == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "&&"))
-        );
+        assert!(matches!(&left.kind, ExprKind::BinaryOp { left, op, .. }
+            if op.symbol() == "==" && matches!(&left.kind, ExprKind::Unary { op: UnaryOperator::Not, .. })));
+        assert!(matches!(&right.kind, ExprKind::BinaryOp { left, op, .. }
+            if op.symbol() == "&&" && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "&&")));
         assert!(matches!(&contract.functions[0].statements[1].statement,
-            Statement::Require(Requirement::Expression(Expression::BinaryOp { left, op, right }))
+            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::BinaryOp { left, op, right }, .. }))
             if op.symbol() == "&&"
-                && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "||")
-                && matches!(right.as_ref(), Expression::Unary { op: UnaryOperator::Not, value }
-                    if matches!(value.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "<"))));
+                && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "||")
+                && matches!(&right.kind, ExprKind::Unary { op: UnaryOperator::Not, value }
+                    if matches!(&value.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "<"))));
     }
 
     #[test]
     fn parses_unary_prefix_order_and_boolean_boundaries() {
         let contract = parse("contract Unary() { function spend() { let result = -!true != false; let truth = !trueValue; } }").unwrap();
         let Statement::LetBinding {
-            value: Expression::BinaryOp { left, op, right },
+            value:
+                Expression {
+                    kind: ExprKind::BinaryOp { left, op, right },
+                    ..
+                },
             ..
         } = &contract.functions[0].statements[0].statement
         else {
             panic!("comparison must be the outer expression");
         };
         assert_eq!(op.symbol(), "!=");
-        let Expression::Unary {
+        let ExprKind::Unary {
             op: UnaryOperator::Neg,
             value,
-        } = left.as_ref()
+        } = &left.kind
         else {
             panic!("minus must be the outer prefix");
         };
-        let Expression::Unary {
+        let ExprKind::Unary {
             op: UnaryOperator::Not,
             value,
-        } = value.as_ref()
+        } = &value.kind
         else {
             panic!("not must be the inner prefix");
         };
-        assert!(matches!(value.as_ref(), Expression::Literal(value) if value == "true"));
-        assert!(matches!(right.as_ref(), Expression::Literal(value) if value == "false"));
+        assert!(matches!(&value.kind, ExprKind::Literal(value) if value == "true"));
+        assert!(matches!(&right.kind, ExprKind::Literal(value) if value == "false"));
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression::Unary { op: UnaryOperator::Not, value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Unary { op: UnaryOperator::Not, value }, .. }, .. } if matches!(&value.kind, ExprKind::Variable(name) if name == "trueValue"))
         );
     }
 
@@ -865,15 +949,15 @@ contract C() {
         let statements = &contract.functions[0].statements;
         assert!(matches!(
             &statements[0].statement,
-            Statement::Require(Requirement::CheckSig { pubkey: pubkey @ Expression::IndexAccess { .. }, .. })
+            Statement::Require(Requirement::CheckSig { pubkey: pubkey @ Expression { kind: ExprKind::IndexAccess { .. }, .. }, .. })
                 if pubkey.source_text() == "signers[i + 1].keys[0]"
         ));
         assert!(matches!(
             &statements[1].statement,
-            Statement::LetBinding { value: Expression::Builtin { builtin, args }, .. }
+            Statement::LetBinding { value: Expression { kind: ExprKind::Builtin { builtin, args }, .. }, .. }
                 if builtin.name == "substr"
-                    && matches!(&args[0], Expression::FieldAccess { field, .. } if field == "data")
-                    && matches!(&args[1], Expression::Property(name) if name == "p.offset")
+                    && matches!(&args[0].kind, ExprKind::FieldAccess { field, .. } if field == "data")
+                    && matches!(&args[1].kind, ExprKind::Property(name) if name == "p.offset")
         ));
     }
 
@@ -912,7 +996,7 @@ contract Demo() {
                 target: AssignmentTarget::ArrayIndex { array, index },
                 ..
             } if array == "state.values"
-                && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op.symbol() == "+")
+                && matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+")
         ));
         assert!(matches!(
             &statements[2].statement,
