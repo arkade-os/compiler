@@ -807,7 +807,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
-/// Runs semantic validation and type checking on `contract`. Returns every
+/// Runs semantic validation, including type checking, on `contract`. Returns every
 /// warning on success, every error (each its own diagnostic, not joined into
 /// one message) on failure. Diagnostic messages carry no location prefix —
 /// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
@@ -829,7 +829,7 @@ pub(crate) fn prepare(
             .filter(|i| matches!(i.severity, Severity::Error))
             .map(|i| {
                 Diagnostic::error(file, i.message.clone())
-                    .with_code("validation")
+                    .with_code(i.code)
                     .with_span(i.span)
             })
             .collect());
@@ -837,19 +837,6 @@ pub(crate) fn prepare(
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
     rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
-
-    // ── Type checking ──────────────────────────────────────────────────────
-    let type_errors = typechecker::check_contract(contract);
-    if !type_errors.is_empty() {
-        return Err(type_errors
-            .iter()
-            .map(|e| {
-                Diagnostic::error(file, e.message.clone())
-                    .with_code("type")
-                    .with_span(e.span)
-            })
-            .collect());
-    }
     let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)

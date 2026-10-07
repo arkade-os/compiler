@@ -49,6 +49,8 @@ pub struct ValidationIssue {
     pub message: String,
     /// Byte range of the expression, statement or function that caused it.
     pub span: Option<crate::diagnostics::Span>,
+    /// Diagnostic code: `validation`, or `type` for operand type mismatches.
+    pub code: &'static str,
 }
 
 impl ValidationIssue {
@@ -57,6 +59,7 @@ impl ValidationIssue {
             severity: Severity::Error,
             message: message.into(),
             span: None,
+            code: "validation",
         }
     }
 
@@ -65,12 +68,20 @@ impl ValidationIssue {
             severity: Severity::Warning,
             message: message.into(),
             span: None,
+            code: "validation",
         }
     }
 
     fn at(mut self, span: crate::diagnostics::Span) -> Self {
         self.span = Some(span);
         self
+    }
+
+    fn type_error(message: impl Into<String>) -> Self {
+        Self {
+            code: "type",
+            ..Self::error(message)
+        }
     }
 }
 
@@ -1278,7 +1289,20 @@ fn validate_binding_requirement(
                 &expression.kind,
                 ExprKind::CheckSigFromStackVerify { .. }
             ) && !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
+            let before = issues.len();
             validate_binding_expression(expression, function_name, scopes, issues, produces_value);
+            let condition = resolved_expression_type(expression, scopes);
+            // A bare find verifies the asset group exists; its index is dropped.
+            if issues.len() == before
+                && produces_value
+                && !matches!(&expression.kind, ExprKind::GroupFind { .. })
+                && !matches!(condition, ArkType::Bool | ArkType::Unknown)
+            {
+                issues.push(ValidationIssue::type_error(format!(
+                    "function '{function_name}': require condition has type '{}', expected bool",
+                    condition.as_str()
+                )));
+            }
         }
         Requirement::CheckSig { signature, pubkey } => {
             validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
@@ -1329,9 +1353,27 @@ fn validate_binding_requirement(
                 );
             }
         }
-        Requirement::HashEqual { preimage, hash, .. } => {
+        Requirement::HashEqual {
+            hash_fn,
+            preimage,
+            hash,
+        } => {
             validate_operand(preimage, None, "preimage", function_name, scopes, issues);
+            let before = issues.len();
             validate_operand(hash, None, "hash", function_name, scopes, issues);
+            let actual = resolved_expression_type(hash, scopes);
+            if issues.len() == before
+                && !matches!(&hash.kind, ExprKind::Literal(_))
+                && !crate::typechecker::digest_accepts(hash_fn, &actual)
+            {
+                issues.push(ValidationIssue::type_error(format!(
+                    "function '{function_name}': {} comparison: '{}' has type '{}', expected {}",
+                    hash_fn.name(),
+                    hash.source_text(),
+                    actual.as_str(),
+                    hash_fn.digest_type()
+                )));
+            }
         }
         Requirement::Comparison { left, op, right } => {
             let left_type = resolved_expression_type(left, scopes);
@@ -1357,9 +1399,62 @@ fn validate_binding_requirement(
                     )));
                 }
             }
+            let before = issues.len();
             validate_binding_expression(left, function_name, scopes, issues, !composite);
             validate_binding_expression(right, function_name, scopes, issues, !composite);
+            if issues.len() == before {
+                let span = crate::diagnostics::Span {
+                    start: left.span.start,
+                    end: right.span.end,
+                };
+                validate_scalar_comparison(
+                    *op,
+                    [left_type, right_type],
+                    span,
+                    function_name,
+                    issues,
+                );
+            }
         }
+    }
+}
+
+/// Scalar operand types of a comparison; composite operands are checked where they are bound.
+fn validate_scalar_comparison(
+    op: BinaryOperator,
+    [left, right]: [ArkType; 2],
+    span: crate::diagnostics::Span,
+    function_name: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let scalar = |t: &ArkType| {
+        !matches!(
+            t,
+            ArkType::Unknown | ArkType::Array(..) | ArkType::Struct(..)
+        )
+    };
+    if !scalar(&left) || !scalar(&right) {
+        return;
+    }
+    let bytes_like = crate::typechecker::is_bytes_like;
+    let compatible = match op.class() {
+        OperatorClass::Equality => {
+            left == right
+                || (bytes_like(&left) && right == ArkType::Bytes)
+                || (bytes_like(&right) && left == ArkType::Bytes)
+        }
+        OperatorClass::Ordering => left == ArkType::Int && right == ArkType::Int,
+        _ => true,
+    };
+    if !compatible {
+        issues.push(
+            ValidationIssue::type_error(format!(
+                "function '{function_name}': comparison '{op}' is not defined between '{}' and '{}'",
+                left.as_str(),
+                right.as_str()
+            ))
+            .at(span),
+        );
     }
 }
 
@@ -1508,6 +1603,10 @@ fn validate_binding_expression(
                     .at(right.span),
                 );
             }
+        }
+        ExprKind::BinaryOp { left, op, right } if op.compares() => {
+            let types = [left, right].map(|operand| resolved_expression_type(operand, scopes));
+            validate_scalar_comparison(*op, types, expression.span, function_name, issues);
         }
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
