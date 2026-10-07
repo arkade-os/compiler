@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { compile_sources, compile_sources_with_diagnostics, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -24,12 +24,12 @@ const projects = {
             'send_marker.ark': contracts.send_marker,
         }
     },
-    options: {
-        name: 'Options',
-        description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
+    option: {
+        name: 'Option',
+        description: 'Cash-settled covered call and limited put. Settlement price is a three-median oracle TWAP',
         files: {
-            'covered_call.ark': contracts.covered_call,
-            'cash_secured_put.ark': contracts.cash_secured_put,
+            'option_vault.ark': contracts.option_vault,
+            'option_intent.ark': contracts.option_intent,
         }
     },
     bonds: {
@@ -1336,18 +1336,22 @@ function doCompile() {
     const source = editor.getValue();
     clearErrors();
 
+    let entry;
     try {
-        const { entry, files } = compilationSources();
+        const sources = compilationSources();
+        entry = sources.entry;
+        const files = sources.files;
         const optimize = document.getElementById('optimize-toggle').checked;
-        const result = compile_sources(entry, JSON.stringify(files), optimize);
+        const { artifact: result, warnings } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
         displayBindings(result);
-        showSuccess(result);
+        showSuccess(result, warnings.length);
+        showWarnings(warnings);
         markCompiled();
     } catch (err) {
-        showError(err.toString());
+        showError(err.toString(), entry);
     }
 }
 
@@ -1485,7 +1489,7 @@ function highlightAsm(asm) {
 }
 
 // Show compilation success
-function showSuccess(jsonStr) {
+function showSuccess(jsonStr, warningCount = 0) {
     const statusEl = document.getElementById('compile-status');
     let funcCount = '';
     try {
@@ -1493,12 +1497,23 @@ function showSuccess(jsonStr) {
         const count = data.functions?.length || 0;
         funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
     } catch (e) {}
-    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}`;
-    statusEl.className = 'compile-status success';
+    const warningLabel = warningCount ? ` &mdash; ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : '';
+    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}${warningLabel}`;
+    statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
+}
+
+function showWarnings(warnings) {
+    if (!warnings.length) return;
+    const output = document.getElementById('errors-output');
+    const count = document.getElementById('error-count');
+    output.textContent = warnings.join('\n');
+    output.classList.add('warning');
+    count.textContent = String(warnings.length);
+    count.classList.add('visible', 'warning');
 }
 
 // Show error
-function showError(message) {
+function showError(message, entry) {
     const statusEl = document.getElementById('compile-status');
     statusEl.innerHTML = `<i class="fas fa-times-circle"></i> Error`;
     statusEl.className = 'compile-status error';
@@ -1507,14 +1522,17 @@ function showError(message) {
     const errorCount = document.getElementById('error-count');
 
     errorsTab.textContent = message;
+    errorsTab.classList.remove('warning');
     errorCount.textContent = '1';
+    errorCount.classList.remove('warning');
     errorCount.classList.add('visible');
 
     // Switch to errors tab
     switchTab('errors');
 
-    // Highlight line if possible
-    const lineMatch = message.match(/line (\d+)/i);
+    // Highlight the line only when the error is located in the entry, the file in the editor.
+    const lineMatch = entry && message.startsWith(`${entry}: `)
+        && message.slice(entry.length + 2).match(/^(?:\w+ error: )?line (\d+)/);
     if (lineMatch && editor) {
         const lineNumber = parseInt(lineMatch[1], 10);
         editor.revealLineInCenter(lineNumber);
@@ -1529,9 +1547,12 @@ function showError(message) {
 
 // Clear errors
 function clearErrors() {
-    document.getElementById('errors-output').textContent = '';
-    document.getElementById('error-count').textContent = '';
-    document.getElementById('error-count').classList.remove('visible');
+    const output = document.getElementById('errors-output');
+    const count = document.getElementById('error-count');
+    output.textContent = '';
+    output.classList.remove('warning');
+    count.textContent = '';
+    count.classList.remove('visible', 'warning');
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';

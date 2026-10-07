@@ -1,82 +1,9 @@
 // Arkade Language Definition for Monaco Editor
 
-// Monarch tokenizer definition (for setMonarchTokensProvider)
-const arkadeMonarch = {
-    defaultToken: 'invalid',
-
-    keywords: [
-        'contract', 'library', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
-        'for', 'in', 'let', 'private', 'public', 'static', 'const', 'return', 'new', 'import'
-    ],
-
-    typeKeywords: [
-        'pubkey', 'signature', 'bytes32', 'bytes20', 'bytes',
-        'asset', 'int', 'bool'
-    ],
-
-    builtinFunctions: [
-        'checkSig', 'checkMultisig', 'checkSigFromStack', 'checkSigFromStackVerify',
-        'sha256', 'sha256Initialize', 'sha256Update', 'sha256Finalize',
-        'digest', 'sighash', 'modExp', 'reverseBytes',
-        'ecAdd', 'ecMul', 'ecPairing', 'ecMulScalarVerify', 'tweakVerify',
-        'older', 'after', 'tweak'
-    ],
-
-    operators: [
-        '>=', '<=', '==', '!=', '>', '<', '+', '-', '*', '/', '='
-    ],
-
-    tokenizer: {
-        root: [
-            // Comments
-            [/\/\/.*$/, 'comment'],
-            [/\/\*/, 'comment', '@comment'],
-
-            // Whitespace
-            [/\s+/, 'white'],
-
-            // Keywords
-            [/\b(contract|library|struct|function|tapscript|require|if|else|for|in|let|private|public|static|const|return|new|import)\b/, 'keyword'],
-
-            // Types
-            [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
-
-            // Built-in functions
-            [/\b(checkSig|checkMultisig|checkSigFromStack|checkSigFromStackVerify|sha256|sha256Initialize|sha256Update|sha256Finalize|digest|sighash|modExp|reverseBytes|ecAdd|ecMul|ecPairing|ecMulScalarVerify|tweakVerify|older|after|tweak)\b/, 'predefined'],
-
-            // Transaction/this keywords
-            [/\b(tx|this)\b/, 'variable.predefined'],
-
-            // Numbers
-            [/\b\d+\b/, 'number'],
-
-            // Strings
-            [/"[^"]*"/, 'string'],
-
-            // Operators
-            [/[>=<!=]+/, 'operator'],
-            [/[+\-*/]/, 'operator'],
-
-            // Delimiters
-            [/[{}()\[\];,.]/, 'delimiter'],
-
-            // Identifiers
-            [/[a-zA-Z_]\w*/, 'identifier'],
-        ],
-
-        comment: [
-            [/[^/*]+/, 'comment'],
-            [/\*\//, 'comment', '@pop'],
-            [/[/*]/, 'comment']
-        ]
-    }
-};
-
 // Language configuration (for setLanguageConfiguration)
 const arkadeLanguageConfig = {
     comments: {
-        lineComment: '//',
-        blockComment: ['/*', '*/']
+        lineComment: '//'
     },
     brackets: [
         ['{', '}'],
@@ -131,13 +58,15 @@ const assetIdArgs = '${1:assetTxid}, ${2:assetGidx}';
 const inputProps = [
     prop('value', 'Input value (sats)'),
     prop('scriptPubKey', 'Input scriptPubKey'),
+    prop('witnessVersion', 'Input witness version'),
     prop('sequence', 'Input nSequence'),
     prop('outpoint', 'Input outpoint'),
     prop('arkadeScriptHash', 'Hash of the input\'s Arkade script'),
     prop('arkadeWitnessHash', 'Hash of the input\'s Arkade witness'),
 ];
-const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'metadataHash', 'assetId', 'isFresh']
+const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'controlAssetId', 'metadataHash', 'assetId', 'isFresh']
     .map(name => prop(name, 'Asset group property'));
+const groupMembers = [...groupProps, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
 
 const arkadeCompletions = [
     // Keywords
@@ -163,7 +92,7 @@ const arkadeCompletions = [
     S('false', 'Keyword', 'false'),
 
     // Types
-    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset'].map(t => S(t, 'TypeParameter', t)),
+    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup'].map(t => S(t, 'TypeParameter', t)),
 
     // Implicit bindings
     S('tx', 'Variable', 'tx', 'Spending transaction'),
@@ -188,9 +117,9 @@ const arkadeCompletions = [
     S('digest', 'Function', 'digest(${1:data}, ${2:hashType})', 'Hash selected by hash type (20 or 32 bytes)'),
     S('sighash', 'Function', 'sighash(${1:hashType})', 'Transaction sighash'),
     S('modExp', 'Function', 'modExp(${1:base}, ${2:exponent}, ${3:modulus})', 'Modular exponentiation'),
-    S('ecAdd', 'Function', 'ecAdd(${1:x1}, ${2:y1}, ${3:x2}, ${4:y2}, ${5:curveId})', 'EC point addition'),
-    S('ecMul', 'Function', 'ecMul(${1:x}, ${2:y}, ${3:scalar}, ${4:curveId})', 'EC scalar multiplication'),
-    S('ecPairing', 'Function', 'ecPairing(${1:g1X}, ${2:g1Y}, ${3:g2Xc1}, ${4:g2Xc0}, ${5:g2Yc1}, ${6:g2Yc0}, ${7:curveId})', 'EC pairing check'),
+    S('ecAdd', 'Function', 'ecAdd(${1:P}, ${2:Q}, ${3:curveId})', 'EC point addition'),
+    S('ecMul', 'Function', 'ecMul(${1:P}, ${2:scalar}, ${3:curveId})', 'EC scalar multiplication'),
+    S('ecPairing', 'Function', 'ecPairing(${1:g1Points}, ${2:g2Points}, ${3:curveId})', 'EC pairing check'),
     S('ecMulScalarVerify', 'Function', 'ecMulScalarVerify(${1:k}, ${2:P}, ${3:Q})', 'Verify Q = k·P'),
     S('tweakVerify', 'Function', 'tweakVerify(${1:P}, ${2:k}, ${3:Q})', 'Verify Q = P + k·G'),
     S('substr', 'Function', 'substr(${1:data}, ${2:offset}, ${3:size})', 'Byte slice'),
@@ -200,6 +129,41 @@ const arkadeCompletions = [
     S('reverseBytes', 'Function', 'reverseBytes(${1:bytes})', 'Reverse byte order'),
     S('size', 'Function', 'size(${1:bytes})', 'Byte length'),
 ];
+
+// Monarch tokenizer definition (for setMonarchTokensProvider); word lists come from the completions.
+const completionLabels = kind => arkadeCompletions.filter(item => item.kind === kind).map(item => item.label);
+const arkadeMonarch = {
+    defaultToken: 'invalid',
+    keywords: [...completionLabels('Keyword'), 'in'],
+    typeKeywords: completionLabels('TypeParameter'),
+    // Tapscript-only timelocks are highlighted but not offered as completions.
+    builtinFunctions: [...completionLabels('Function'), 'older', 'after'],
+    implicitBindings: completionLabels('Variable'),
+
+    tokenizer: {
+        root: [
+            [/\/\/.*$/, 'comment'],
+            [/\s+/, 'white'],
+            [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
+            [/\d+\.\d+\.\d+/, 'number'],
+            [/0x[0-9a-fA-F]*/, 'number.hex'],
+            [/\d+/, 'number'],
+            [/"(?:[^"\\]|\\.)*"/, 'string'],
+            [/[a-zA-Z]\w*/, {
+                cases: {
+                    '@keywords': 'keyword',
+                    '@typeKeywords': 'type',
+                    '@builtinFunctions': 'predefined',
+                    '@implicitBindings': 'variable.predefined',
+                    '@default': 'identifier'
+                }
+            }],
+            [/[{}()\[\]]/, '@brackets'],
+            [/[;,.:]/, 'delimiter'],
+            [/[=<>!&|^~+\-*\/]+/, 'operator'],
+        ]
+    }
+};
 
 // Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
 const arkadeMembers = {
@@ -221,11 +185,11 @@ const arkadeMembers = {
     'tx.input': [prop('current', 'Input being spent')],
     'tx.input.current': inputProps,
     'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the previous Arkade transaction')],
-    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('assets', 'Output assets')],
+    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
     'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
-    'tx.assetGroups[]': groupProps,
+    'tx.assetGroups[]': groupMembers,
     'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),
@@ -261,7 +225,7 @@ function arkadeComplete(before, table, line) {
     if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
     const [, name, indexed] = path.match(/^(\w+)(\[\])?$/) || [];
     const type = visible.get(name)?.type || '';
-    if (type === 'assetGroup' && !indexed) return [...groupProps, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
+    if (type === 'AssetGroup' && !indexed) return groupMembers;
     if (type.endsWith(']') && !indexed) return [prop('length', 'Array length')];
     const struct = structs.find(s => s.name === type.replace(/\[.*$/, ''));
     return struct ? struct.fields.map(field => prop(field.name, field.type)) : [];

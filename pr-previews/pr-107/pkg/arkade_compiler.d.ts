@@ -19,6 +19,11 @@ export function compile(source: string): string;
 export function compile_sources(entry: string, files: string, optimize?: boolean | null): string;
 
 /**
+ * Compile a virtual project with warnings alongside the artifact.
+ */
+export function compile_sources_with_diagnostics(entry: string, files: string, optimize?: boolean | null): string;
+
+/**
  * Initialize panic hook for better error messages in the browser console
  */
 export function init(): void;
@@ -51,10 +56,11 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly init: () => void;
+    readonly compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly symbols: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate: (a: number, b: number) => [number, number, number];
     readonly version: () => [number, number];
+    readonly init: () => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
