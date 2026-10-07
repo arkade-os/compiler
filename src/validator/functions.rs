@@ -204,6 +204,7 @@ fn validate_calls(
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    let first = issues.len();
     if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
             None => issues.push(ValidationIssue::error(format!(
@@ -250,6 +251,7 @@ fn validate_calls(
             }
         }
     }
+    locate(&mut issues[first..], expression.span);
     for child in child_exprs(expression) {
         validate_calls(child, true, caller, scope, contract, issues);
     }
@@ -263,6 +265,7 @@ fn validate_value(
     context: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    let first = issues.len();
     let expected_type = ArkType::parse(expected);
     match (&value.kind, &expected_type) {
         (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) => {
@@ -341,6 +344,7 @@ fn validate_value(
             }
         }
     }
+    locate(&mut issues[first..], value.span);
 }
 
 fn statement_expressions(statement: &Statement) -> Vec<&Expression> {

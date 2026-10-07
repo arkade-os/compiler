@@ -159,11 +159,13 @@ multiplicative_expr = {
 unary_expr = { (sub_op | not_op | invert_op)* ~ primary_expr }
 
 // Built-in operands accept prefixes on literals, bindings, and grouped expressions.
-unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | identifier_property_access | qualified_name | number_literal) }
+unary_atom = { (sub_op | not_op)* ~ (parenthesized_expr | byte_literal | bool_literal | identifier_property_access | qualified_name | number_literal) }
+
+parenthesized_expr = { "(" ~ general_expression ~ ")" }
 
 // Primary expressions (atoms)
 primary_expr = {
-    "(" ~ general_expression ~ ")" |
+    parenthesized_expr |
     check_sig_from_stack_verify |
     check_sig_from_stack |
     check_sig |

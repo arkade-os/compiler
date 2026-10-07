@@ -169,24 +169,22 @@ pub(crate) fn substitute_requirement(
 
 /// Resolve a dotted binding path, rooting `value_var` paths at element `k` of `items`.
 fn substitute_path(
-    path: &Expression,
+    path: &str,
+    at: &Expression,
     index_var: &str,
     value_var: &str,
     k: usize,
     items: &Expression,
 ) -> Option<Expression> {
-    let (ExprKind::Variable(name) | ExprKind::Property(name)) = &path.kind else {
-        return None;
-    };
-    if name == index_var {
-        return Some(path.with_kind(ExprKind::Literal(k.to_string())));
+    if path == index_var {
+        return Some(at.with_kind(ExprKind::Literal(k.to_string())));
     }
-    let mut fields = name.split('.');
+    let mut fields = path.split('.');
     if fields.next() != Some(value_var) {
         return None;
     }
-    let index = Box::new(path.with_kind(ExprKind::Literal(k.to_string())));
-    let element = path.with_kind(match &items.kind {
+    let index = Box::new(at.with_kind(ExprKind::Literal(k.to_string())));
+    let element = at.with_kind(match &items.kind {
         ExprKind::Variable(array) | ExprKind::Property(array) => ExprKind::ArrayIndex {
             array: array.clone(),
             index,
@@ -197,7 +195,7 @@ fn substitute_path(
         },
     });
     Some(fields.fold(element, |value, field| {
-        path.with_kind(ExprKind::FieldAccess {
+        at.with_kind(ExprKind::FieldAccess {
             value: Box::new(value),
             field: field.to_string(),
         })
@@ -212,14 +210,14 @@ pub(crate) fn substitute_expression(
     items: &Expression,
 ) -> Expression {
     match &expr.kind {
-        ExprKind::Variable(_) | ExprKind::Property(_) => {
-            substitute_path(expr, index_var, value_var, k, items).unwrap_or_else(|| expr.clone())
+        ExprKind::Variable(path) | ExprKind::Property(path) => {
+            substitute_path(path, expr, index_var, value_var, k, items)
+                .unwrap_or_else(|| expr.clone())
         }
         ExprKind::ArrayIndex { array, index } => {
             let index = Box::new(substitute_expression(index, index_var, value_var, k, items));
-            let array_path = expr.with_kind(ExprKind::Variable(array.clone()));
             expr.with_kind(
-                match substitute_path(&array_path, index_var, value_var, k, items) {
+                match substitute_path(array, expr, index_var, value_var, k, items) {
                     Some(value) => ExprKind::IndexAccess {
                         value: Box::new(value),
                         index,
@@ -231,13 +229,54 @@ pub(crate) fn substitute_expression(
                 },
             )
         }
-        // child_exprs_mut has no wildcard arm, so every variant's children are visited.
         _ => {
             let mut expression = expr.clone();
             for child in crate::models::child_exprs_mut(&mut expression) {
                 *child = substitute_expression(child, index_var, value_var, k, items);
             }
             expression
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostics::Span;
+
+    #[test]
+    fn loop_substitution_preserves_spans() {
+        let span = Span { start: 10, end: 20 };
+        let index = Expression::new(ExprKind::Variable("i".into()), Span { start: 12, end: 13 });
+        let items = ExprKind::Variable("xs".into()).into();
+        for (kind, expected) in [
+            (ExprKind::Variable("i".into()), ["0", "1"]),
+            (ExprKind::Variable("x".into()), ["xs[0]", "xs[1]"]),
+            (
+                ExprKind::Property("x.amount".into()),
+                ["xs[0].amount", "xs[1].amount"],
+            ),
+            (
+                ExprKind::ArrayIndex {
+                    array: "x".into(),
+                    index: Box::new(index.clone()),
+                },
+                ["xs[0][0]", "xs[1][1]"],
+            ),
+        ] {
+            let expression = Expression::new(kind, span);
+            for (k, expected) in expected.iter().enumerate() {
+                let replaced = substitute_expression(&expression, "i", "x", k, &items);
+                assert_eq!(replaced.span, span);
+                assert_eq!(replaced.source_text(), *expected);
+                if let ExprKind::IndexAccess {
+                    index: replaced_index,
+                    ..
+                } = &replaced.kind
+                {
+                    assert_eq!(replaced_index.span, index.span);
+                }
+            }
         }
     }
 }

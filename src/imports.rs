@@ -401,11 +401,11 @@ fn load(
                         return Ok(());
                     };
                     if group == &contract.name || visible_contracts.contains_key(group) {
-                        *expression = expression.with_kind(ExprKind::Call {
+                        expression.kind = ExprKind::Call {
                             name: format!("{group}.controlIs"),
                             args: vec![*asset_txid.clone(), *asset_gidx.clone()],
                             return_type: None,
-                        });
+                        };
                     }
                 }
                 Ok(())

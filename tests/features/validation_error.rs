@@ -407,8 +407,8 @@ fn semantic_diagnostics_carry_source_positions() {
     .expect_err("mistyped helper argument must fail")
     .to_string();
     assert!(
-        error.contains("validation error: line 7, column 13: argument 'x' to 'helper'"),
-        "error must point at the faulty call: {error}"
+        error.contains("validation error: line 7, column 20: argument 'x' to 'helper'"),
+        "error must point at the faulty argument: {error}"
     );
     assert!(
         error.starts_with("main.ark: "),
@@ -482,9 +482,41 @@ fn expression_diagnostics_point_at_the_expression() {
         ("require(a == n);", "a == n"),
         ("require((n & a) == a);", "n"),
         ("require(n << -1 == n);", "-1"),
+        ("require((a) == (n));", "(a) == (n)"),
+        ("require(((a)) == ((n)));", "((a)) == ((n))"),
+        ("require(bytes32(h) == n);", "bytes32(h) == n"),
+        ("require(n == bytes32(h));", "n == bytes32(h)"),
+        (
+            "require(bytes32(bytes32(h)) == n);",
+            "bytes32(bytes32(h)) == n",
+        ),
+        ("require((bytes32(h) == n) || true);", "(bytes32(h) == n)"),
+        ("require(rows[0].missing == n);", "rows[0].missing"),
+        ("require(rows[0].values[4] == n);", "4"),
+        ("require(rows[4].values[0] == n);", "4"),
+        ("require(xs[4] == n);", "4"),
+        ("require(unknown(n) == n);", "unknown(n)"),
+        ("require(id(a) == n);", "a"),
+        ("require(first([1, a]) == n);", "a"),
+        ("require(checkSig(missing, owner));", "missing"),
+        ("require(checkSig(missing, owner) && true);", "missing"),
+        ("require(checkSig(n, owner));", "n"),
+        ("require(checkSigFromStack(sig, owner, n));", "n"),
+        ("require(checkSigFromStackVerify(sig, owner, n));", "n"),
+        ("require(checkMultisig([owner], [n]));", "n"),
     ] {
-        let source =
-            format!("contract C(bytes a, int[2] xs) {{ function spend(int n) {{ {body} }} }}");
+        let source = format!(
+            "struct S {{ int[2] values; }}
+            contract C(bytes a, bytes32 h, int[2] xs, S[2] rows, pubkey owner) {{
+                private function id(int value) int {{ return value; }}
+                private function first(int[2] values) int {{ return values[0]; }}
+                function spend(int n, signature sig) {{
+                    {body}
+                    require(n == n);
+                    require(checkSig(sig, owner));
+                }}
+            }}"
+        );
         let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.clone())]);
         let diagnostics = arkade_compiler::check("main.ark", &files);
         let error = diagnostics

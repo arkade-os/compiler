@@ -139,7 +139,10 @@ fn rule_term(rule: &Rule) -> Option<String> {
         Rule::function_visibility | Rule::function => "a function",
         Rule::data_type => "a type",
         Rule::block => "a block",
-        Rule::unary_expr | Rule::primary_expr | Rule::general_expression => "an expression",
+        Rule::unary_expr
+        | Rule::primary_expr
+        | Rule::parenthesized_expr
+        | Rule::general_expression => "an expression",
         Rule::number_literal => "a number",
         Rule::string_literal => "a string",
         // ponytail: unmapped rules fall back to their grammar name with spaces;
@@ -667,6 +670,9 @@ mod tests {
             let total = xs[n] + -n * 2;
             let mask = ~a ^ a;
             let flipped = -~n;
+            let grouped = (n) + ((2));
+            let prefixed = -!(n);
+            let packet = tx.packet(-!(n));
             let sum = tx.assetGroups[n].sumInputs;
             let owned = tx.assetGroups.find(h, n).controlIs(h, n);
             require(total > 0);
@@ -675,7 +681,7 @@ mod tests {
         let text = |e: &Expression| &source[e.span.start..e.span.end];
         fn walk<'a>(e: &'a Expression, out: &mut Vec<&'a Expression>) {
             out.push(e);
-            for child in crate::validator::child_exprs(e) {
+            for child in crate::models::child_exprs(e) {
                 assert!(
                     e.span.start <= child.span.start && child.span.end <= e.span.end,
                     "{child:?} escapes {e:?}"
@@ -707,6 +713,12 @@ mod tests {
             "~a",
             "-~n",
             "~n",
+            "(n) + ((2))",
+            "(n)",
+            "((2))",
+            "-!(n)",
+            "!(n)",
+            "tx.packet(-!(n))",
             "tx.assetGroups[n].sumInputs",
             "tx.assetGroups.find(h, n).controlIs(h, n)",
             "total",

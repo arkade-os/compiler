@@ -23,7 +23,6 @@ pub(crate) fn is_operator_level(rule: Rule) -> bool {
 
 // Parse general expression (with operator precedence)
 pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
     match pair.as_rule() {
         rule if is_operator_level(rule) => {
             let mut inner = pair.into_inner();
@@ -47,25 +46,7 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
             }
             Ok(result)
         }
-        Rule::unary_expr | Rule::primary_expr => parse_primary_expr(pair),
-        Rule::identifier | Rule::qualified_name => Ok(Expression::new(
-            ExprKind::Variable(pair.as_str().to_string()),
-            span,
-        )),
-        Rule::bool_literal => Ok(Expression::new(
-            ExprKind::Literal(pair.as_str().to_string()),
-            span,
-        )),
-        Rule::number_literal => Ok(Expression::new(
-            ExprKind::Literal(pair.as_str().to_string()),
-            span,
-        )),
-        Rule::tx_property_access => parse_tx_property_to_expr(pair),
-        Rule::this_property_access => parse_primary_expr(pair),
-        _ => {
-            // Try to parse as a primary expression
-            parse_primary_expr(pair)
-        }
+        _ => parse_primary_expr(pair),
     }
 }
 
@@ -172,6 +153,12 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
             parse_primary_expr(inner)
         }
+        Rule::parenthesized_expr => {
+            let inner = pair.into_inner().next().ok_or("Empty grouped expression")?;
+            let mut value = parse_primary_expr(inner)?;
+            value.span = span;
+            Ok(value)
+        }
         Rule::unary_expr | Rule::unary_atom => {
             let mut inner = pair.into_inner();
             let operand = inner.next_back().ok_or("Empty unary expression")?;
@@ -206,11 +193,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             ExprKind::Variable(pair.as_str().to_string()),
             span,
         )),
-        Rule::bool_literal => Ok(Expression::new(
-            ExprKind::Literal(pair.as_str().to_string()),
-            span,
-        )),
-        Rule::number_literal => Ok(Expression::new(
+        Rule::bool_literal | Rule::number_literal => Ok(Expression::new(
             ExprKind::Literal(pair.as_str().to_string()),
             span,
         )),

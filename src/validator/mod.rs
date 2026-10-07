@@ -19,6 +19,7 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
+use crate::models::child_exprs;
 use crate::models::{
     AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
     Requirement, Statement, TapItem,
@@ -46,7 +47,7 @@ pub enum Severity {
 pub struct ValidationIssue {
     pub severity: Severity,
     pub message: String,
-    /// Byte range of the statement or function that caused it.
+    /// Byte range of the expression, statement or function that caused it.
     pub span: Option<crate::diagnostics::Span>,
 }
 
@@ -728,102 +729,6 @@ fn check_asset_id_expr(
     }
 }
 
-/// Return the direct sub-expressions of `expr`.
-///
-/// This is the single source of truth for expression-tree traversal in the
-/// validator. The match is intentionally exhaustive (no `_` arm): adding a new
-/// [`Expression`] variant will fail to compile here until its nested
-/// expressions — if any — are declared, guaranteeing that walkers built on top
-/// of this (e.g. [`check_asset_id_expr`]) cover every new construct.
-pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
-    match &expr.kind {
-        // Leaf nodes: no nested expressions.
-        ExprKind::Variable(_)
-        | ExprKind::Literal(_)
-        | ExprKind::Property(_)
-        | ExprKind::CurrentInput(_)
-        | ExprKind::TxIntrospection { .. }
-        | ExprKind::IntentInspect { .. }
-        | ExprKind::AssetGroupsLength => vec![],
-
-        ExprKind::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
-        ExprKind::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | ExprKind::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => vec![signature, pubkey, message],
-
-        ExprKind::FieldAccess { value, .. } => vec![value],
-        ExprKind::IndexAccess { value, index } => vec![value, index],
-        ExprKind::ArrayIndex { index, .. } => vec![index],
-
-        ExprKind::ArrayLiteral(elements)
-        | ExprKind::Call { args: elements, .. }
-        | ExprKind::Builtin { args: elements, .. } => elements.iter().collect(),
-        ExprKind::StructLiteral(fields) => fields.iter().map(|(_, value)| value).collect(),
-
-        ExprKind::AssetLookup {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        }
-        | ExprKind::AssetHas {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        } => vec![index, asset_txid, asset_gidx],
-        ExprKind::AssetCount { index, .. }
-        | ExprKind::InputIntrospection { index, .. }
-        | ExprKind::OutputIntrospection { index, .. }
-        | ExprKind::AssetGroupAt { index }
-        | ExprKind::GroupProperty { group: index, .. } => vec![index],
-        ExprKind::AssetAt {
-            io_index,
-            asset_index,
-            ..
-        } => vec![io_index, asset_index],
-        ExprKind::BinaryOp { left, right, .. } | ExprKind::Concat { left, right, .. } => {
-            vec![left, right]
-        }
-        ExprKind::GroupFind {
-            asset_txid,
-            asset_gidx,
-        }
-        | ExprKind::GroupHas {
-            asset_txid,
-            asset_gidx,
-        } => vec![asset_txid, asset_gidx],
-        ExprKind::GroupControlIs {
-            group,
-            asset_txid,
-            asset_gidx,
-        } => vec![group, asset_txid, asset_gidx],
-        ExprKind::GroupIOAccess {
-            group, io_index, ..
-        } => vec![group, io_index],
-        ExprKind::Unary { value, .. } => vec![value],
-        ExprKind::Tunnel {
-            output_index,
-            policy,
-            exceptions,
-        } => std::iter::once(output_index.as_ref())
-            .chain(policy.iter())
-            .chain(exceptions.iter())
-            .collect(),
-        ExprKind::ContractInstance { args, .. } => args.iter().collect(),
-        ExprKind::Cast { data, .. } => vec![data],
-        ExprKind::PacketInspect { packet_type } => vec![packet_type],
-        ExprKind::InputPacketInspect { index, packet_type } => vec![index, packet_type],
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BindingSource {
     Constructor,
@@ -1296,9 +1201,12 @@ fn validate_operand(
 ) {
     if let ExprKind::Variable(name) | ExprKind::Property(name) = &value.kind {
         if find_binding(scopes, name).is_none() {
-            issues.push(ValidationIssue::error(format!(
-                "function '{function_name}': {label} '{name}' is undefined"
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "function '{function_name}': {label} '{name}' is undefined"
+                ))
+                .at(value.span),
+            );
             return;
         }
     }
@@ -1310,12 +1218,15 @@ fn validate_operand(
             && actual != ArkType::Unknown
             && !binding_types_compatible(expected, &actual)
     }) {
-        issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': {label} '{}' has type '{}', expected '{}'",
-            value.source_text(),
-            actual.as_str(),
-            expected.as_str()
-        )));
+        issues.push(
+            ValidationIssue::error(format!(
+                "function '{function_name}': {label} '{}' has type '{}', expected '{}'",
+                value.source_text(),
+                actual.as_str(),
+                expected.as_str()
+            ))
+            .at(value.span),
+        );
     }
 }
 
@@ -1516,6 +1427,7 @@ fn validate_binding_expression(
     }
 
     let registered_builtin = crate::typechecker::builtins::operands(expression);
+    let mut children_checked = false;
 
     match &expression.kind {
         ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
@@ -1742,7 +1654,7 @@ fn validate_binding_expression(
                     }
                 }
             }
-            return;
+            children_checked = true;
         }
         ExprKind::IndexAccess { value, index } => {
             let before = issues.len();
@@ -1760,7 +1672,7 @@ fn validate_binding_expression(
                     );
                 }
             }
-            return;
+            children_checked = true;
         }
         ExprKind::ArrayIndex { array, index } => {
             validate_array_index(array, array, index, function_name, scopes, issues);
@@ -1779,7 +1691,7 @@ fn validate_binding_expression(
         }
         ExprKind::CheckSigExpr { signature, pubkey } => {
             validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
-            return;
+            children_checked = true;
         }
         ExprKind::CheckSigFromStackExpr {
             signature,
@@ -1799,7 +1711,7 @@ fn validate_binding_expression(
                 scopes,
                 issues,
             );
-            return;
+            children_checked = true;
         }
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
@@ -1826,6 +1738,9 @@ fn validate_binding_expression(
     }
 
     locate(&mut issues[first..], expression.span);
+    if children_checked {
+        return;
+    }
     for child in child_exprs(expression) {
         if matches!(
             &expression.kind,
@@ -1917,10 +1832,13 @@ fn validate_array_index(
         };
         if !in_bounds {
             let sign = if negative { "-" } else { "" };
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': array index '{}{}' is out of range for '{}[{}]'",
-                function_name, sign, literal, written, length
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "function '{}': array index '{}{}' is out of range for '{}[{}]'",
+                    function_name, sign, literal, written, length
+                ))
+                .at(index.span),
+            );
         }
     }
 

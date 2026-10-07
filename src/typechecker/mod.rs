@@ -125,11 +125,6 @@ pub struct TypeError {
 }
 
 impl TypeError {
-    fn at(mut self, span: crate::diagnostics::Span) -> Self {
-        self.span = Some(span);
-        self
-    }
-
     fn new(msg: impl Into<String>) -> Self {
         TypeError {
             message: msg.into(),
@@ -406,7 +401,7 @@ fn resolve_expression(
         _ => None,
     };
     if let Some(resolved) = resolved {
-        *expression = expression.with_kind(resolved);
+        expression.kind = resolved;
     }
 }
 
@@ -720,7 +715,7 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         }
         _ => {}
     }
-    for child in crate::validator::child_exprs(expr) {
+    for child in crate::models::child_exprs(expr) {
         check_expression(child, scope, errors, fn_name);
     }
     let first = errors.len();
@@ -763,13 +758,13 @@ fn check_array_index(
     check_expression(index, scope, errors, fn_name);
     let index_type = infer_type(index, scope);
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-        errors.push(
-            TypeError::new(format!(
+        errors.push(TypeError {
+            message: format!(
                 "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
                 index_type.as_str()
-            ))
-            .at(index.span),
-        );
+            ),
+            span: Some(index.span),
+        });
     }
     match scope.get(array) {
         Some(ArkType::Array(element, _)) => Some((**element).clone()),
