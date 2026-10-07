@@ -184,7 +184,7 @@ contract DupFuncs(pubkey owner) {
 
 #[test]
 fn reserved_role_as_constructor_param_is_rejected() {
-    for role in ["server", "emulator"] {
+    for role in ["server", "emulator", "serverExitDelay"] {
         let source = format!(
             r#"
 contract Reserved(pubkey {role}) {{
@@ -204,6 +204,22 @@ contract Reserved(pubkey {role}) {{
             "error must flag reserved role '{role}'; got: {msg}"
         );
     }
+}
+
+#[test]
+fn server_exit_delay_as_tapscript_input_is_rejected() {
+    let source = r#"
+contract Reserved(pubkey owner) {
+    function exit(int serverExitDelay, signature ownerSig) tapscript {
+        require(older(serverExitDelay));
+        require(checkSig(ownerSig, owner));
+    }
+}"#;
+    let error = compile(source).unwrap_err().to_string();
+    assert!(
+        error.contains("input 'serverExitDelay' collides with a reserved arkd name"),
+        "got: {error}"
+    );
 }
 
 #[test]

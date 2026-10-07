@@ -64,7 +64,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         } = constant;
         if matches!(
             name.as_str(),
-            "true" | "false" | "server" | "emulator" | "SERVER_KEY"
+            "true" | "false" | "server" | "emulator" | "serverExitDelay" | "SERVER_KEY"
         ) {
             return Err(format!("constant name '{name}' is reserved"));
         }

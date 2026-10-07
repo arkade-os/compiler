@@ -61,3 +61,30 @@ fn unilateral_matches_csv_multisig_closure() {
         "<exit> OP_CHECKSEQUENCEVERIFY OP_DROP <sender> OP_CHECKSIG"
     );
 }
+
+const SERVER_EXIT: &str = r#"
+contract Exit(pubkey owner) {
+    function exit(signature ownerSig) tapscript {
+        require(older(serverExitDelay));
+        require(checkSig(ownerSig, owner));
+    }
+}
+"#;
+
+#[test]
+fn server_exit_delay_lowers_to_reserved_placeholder() {
+    let out = compile(SERVER_EXIT).unwrap();
+    assert_eq!(
+        crate::common::leaf_asm(&out, "exit", "exit"),
+        "<SERVER_EXIT_DELAY> OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
+    );
+    let inputs: Vec<_> = out.parameters.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(inputs, ["owner"]);
+}
+
+#[test]
+fn server_exit_delay_is_not_an_absolute_locktime() {
+    let source = SERVER_EXIT.replace("older(serverExitDelay)", "after(serverExitDelay)");
+    let error = compile(&source).unwrap_err().to_string();
+    assert!(error.contains("serverExitDelay"), "got: {error}");
+}
