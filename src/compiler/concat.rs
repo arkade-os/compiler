@@ -164,28 +164,6 @@ impl ConcatPass {
     ) -> (Expression, ArkType) {
         let span = expr.span;
         let (kind, ty) = match expr.kind {
-            ExprKind::Call {
-                name,
-                args,
-                return_type,
-            } => {
-                let args = args
-                    .into_iter()
-                    .map(|arg| self.rewrite_expression_concat(arg, scope).0)
-                    .collect();
-                let ty = return_type
-                    .as_deref()
-                    .map(ArkType::parse)
-                    .unwrap_or(ArkType::Unknown);
-                (
-                    ExprKind::Call {
-                        name,
-                        args,
-                        return_type,
-                    },
-                    ty,
-                )
-            }
             ExprKind::ArrayLiteral(elements) => {
                 let mut element_type = ArkType::Unknown;
                 let rewritten = elements
@@ -202,29 +180,6 @@ impl ConcatPass {
                 (
                     ExprKind::ArrayLiteral(rewritten),
                     ArkType::Array(Box::new(element_type), length),
-                )
-            }
-            ExprKind::StructLiteral(fields) => (
-                ExprKind::StructLiteral(
-                    fields
-                        .into_iter()
-                        .map(|(name, value)| (name, self.rewrite_expression_concat(value, scope).0))
-                        .collect(),
-                ),
-                ArkType::Unknown,
-            ),
-            ExprKind::ArrayIndex { array, index } => {
-                let (index, _) = self.rewrite_expression_concat(*index, scope);
-                let result_type = match scope.get(&array) {
-                    Some(ArkType::Array(element, _)) => (**element).clone(),
-                    _ => ArkType::Unknown,
-                };
-                (
-                    ExprKind::ArrayIndex {
-                        array,
-                        index: Box::new(index),
-                    },
-                    result_type,
                 )
             }
             ExprKind::BinaryOp { left, op, right } => {

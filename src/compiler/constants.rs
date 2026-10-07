@@ -106,9 +106,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
 pub(crate) fn resolve(contract: &mut Contract) -> Result<(), String> {
     let values = collect(contract)?;
     for constant in &mut contract.constants {
-        constant.value = constant
-            .value
-            .with_kind(ExprKind::Literal(values[&constant.name].clone()));
+        constant.value.kind = ExprKind::Literal(values[&constant.name].clone());
     }
     Ok(())
 }
@@ -402,7 +400,7 @@ fn fold_statements(
             Statement::ForCount { count, body } => {
                 fold_expression(count, values);
                 if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
-                    *count = count.with_kind(ExprKind::Literal(value));
+                    count.kind = ExprKind::Literal(value);
                 }
                 fold_statements(body, values)?;
             }
@@ -451,7 +449,7 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
 fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
     if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
         if let Some(value) = values.get(name) {
-            *expression = expression.with_kind(ExprKind::Literal(value.clone()));
+            expression.kind = ExprKind::Literal(value.clone());
             return;
         }
     }
@@ -463,7 +461,7 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
                     .cloned()
                     .ok_or_else(|| format!("unknown constant '{name}'"))
             }) {
-                *value = value.with_kind(ExprKind::Literal(literal));
+                value.kind = ExprKind::Literal(literal);
             }
         }
     }

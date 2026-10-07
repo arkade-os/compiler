@@ -833,8 +833,6 @@ pub(crate) fn prepare(
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    // No span available: this rewrites the AST after parsing, not a lookup
-    // against a specific source node.
     rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
