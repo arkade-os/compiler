@@ -7,16 +7,17 @@ pub(super) fn extract_values(
     scope: &typechecker::Scope,
 ) {
     if matches!(
-        expression,
-        Expression::Call { .. } | Expression::FieldAccess { .. } | Expression::IndexAccess { .. }
-    ) || matches!(expression, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
-        || (matches!(expression, Expression::ArrayIndex { .. })
+        &expression.kind,
+        ExprKind::Call { .. } | ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
+    ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+        || (matches!(&expression.kind, ExprKind::ArrayIndex { .. })
             && matches!(
                 typechecker::infer_type(expression, scope),
                 typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
             ))
     {
-        let replacement = Expression::Variable(format!("$call:{}", values.len()));
+        let replacement =
+            expression.with_kind(ExprKind::Variable(format!("$call:{}", values.len())));
         values.push(std::mem::replace(expression, replacement));
     } else {
         for child in child_exprs_mut(expression) {
@@ -105,28 +106,28 @@ impl Generator {
         expression: &Expression,
         ty: &str,
     ) -> Result<(), String> {
-        if matches!(expression, Expression::Call { .. }) {
+        if matches!(&expression.kind, ExprKind::Call { .. }) {
             return self.emit_call(expression);
         }
         if is_builtin_type(ty) {
             return self.emit_expression(expression);
         }
         if matches!(
-            expression,
-            Expression::ArrayIndex { .. }
-                | Expression::FieldAccess { .. }
-                | Expression::IndexAccess { .. }
+            &expression.kind,
+            ExprKind::ArrayIndex { .. }
+                | ExprKind::FieldAccess { .. }
+                | ExprKind::IndexAccess { .. }
         ) {
             return self.emit_access_value(expression, ty);
         }
-        if let Expression::Variable(name) | Expression::Property(name) = expression {
+        if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
             for leaf in self.value_leaves(name, ty)?.iter().rev() {
                 self.read_binding(&leaf.access_name)?;
             }
             return Ok(());
         }
         if let Some((element, length)) = crate::models::array_type_parts(ty) {
-            let Expression::ArrayLiteral(elements) = expression else {
+            let ExprKind::ArrayLiteral(elements) = &expression.kind else {
                 return Err(format!("expected array value of type '{ty}'"));
             };
             if elements.len() != length {
@@ -148,7 +149,7 @@ impl Generator {
             // Native results are first deepest; wider native structs need a general reversal.
             return self.swap();
         }
-        let Expression::StructLiteral(values) = expression else {
+        let ExprKind::StructLiteral(values) = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'"));
         };
         let fields = if let Some(fields) = crate::models::builtin_struct_fields(ty) {
@@ -178,7 +179,7 @@ impl Generator {
     }
 
     pub(super) fn emit_call(&mut self, expression: &Expression) -> Result<(), String> {
-        let Expression::Call { name, args, .. } = expression else {
+        let ExprKind::Call { name, args, .. } = &expression.kind else {
             return Err("expected private function call".to_string());
         };
         let function = self
@@ -202,10 +203,10 @@ impl Generator {
             if is_builtin_type(&parameter.param_type)
                 && !assigns_parameter(&function.statements, &parameter.name)
             {
-                let source = match argument {
-                    Expression::Variable(name) => Some(Self::internal_binding_name(name)),
-                    Expression::ArrayIndex { array, index } => match index.as_ref() {
-                        Expression::Literal(index) => {
+                let source = match &argument.kind {
+                    ExprKind::Variable(name) => Some(Self::internal_binding_name(name)),
+                    ExprKind::ArrayIndex { array, index } => match &index.as_ref().kind {
+                        ExprKind::Literal(index) => {
                             Some(Self::internal_binding_name(&format!("{array}[{index}]")))
                         }
                         _ => None,

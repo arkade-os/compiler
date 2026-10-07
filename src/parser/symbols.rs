@@ -136,8 +136,11 @@ fn function_symbols(
                 let group = inner.next().map(parse_general_expression);
                 let symbol_type = matches!(
                     group,
-                    Some(Ok(crate::models::Expression::GroupFind { .. }
-                        | crate::models::Expression::AssetGroupAt { .. }))
+                    Some(Ok(crate::models::Expression {
+                        kind: crate::models::ExprKind::GroupFind { .. }
+                            | crate::models::ExprKind::AssetGroupAt { .. },
+                        ..
+                    }))
                 )
                 .then(|| "AssetGroup".to_string());
                 symbols.push(symbol(&name, "variable", symbol_type, scope));

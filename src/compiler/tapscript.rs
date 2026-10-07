@@ -430,6 +430,7 @@ pub fn validate_arkd_rules(
                     ));
                 }
             }
+            TapItem::Older { value } if value == "serverExitDelay" => {}
             TapItem::Older { value } | TapItem::After { value } => {
                 if value.parse::<u64>().is_err() && !name_declared(value) {
                     return Err(format!(
@@ -491,9 +492,12 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
     }
 }
 
-/// Emit a timelock operand: literal as-is, else a `<param>` placeholder.
+/// Emit a timelock operand: literal as-is, `serverExitDelay` as arkd's
+/// unilateral exit delay, else a `<param>` placeholder.
 fn timelock_operand(value: &str) -> String {
-    if value.parse::<u64>().is_ok() {
+    if value == "serverExitDelay" {
+        "<SERVER_EXIT_DELAY>".to_string()
+    } else if value.parse::<u64>().is_ok() {
         value.to_string()
     } else {
         format!("<{value}>")

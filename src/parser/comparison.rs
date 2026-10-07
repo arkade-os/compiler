@@ -5,9 +5,14 @@ use crate::models::*;
 use pest::iterators::Pair;
 
 pub(crate) fn parse_time_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
+    let start = pair.as_span().start();
+    let span = crate::diagnostics::Span {
+        start,
+        end: start + "tx.time".len(),
+    };
     let mut inner = pair.into_inner();
     Ok(Requirement::Comparison {
-        left: Expression::Property("tx.time".to_string()),
+        left: Expression::new(ExprKind::Property("tx.time".to_string()), span),
         op: crate::operators::BinaryOperator::Ge,
         right: parse_general_expression(inner.next().ok_or("Missing timelock")?)?,
     })
@@ -17,6 +22,7 @@ pub(crate) fn parse_time_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
 pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
     let hash_func = inner.next().ok_or("Missing hash function")?;
+    let span: crate::diagnostics::Span = hash_func.as_span().into();
     let mut hash_func_inner = hash_func.into_inner();
     let fn_name = hash_func_inner
         .next()
@@ -31,13 +37,13 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     // structured HashEqual emission and an inline sha256 comparison.
     let preimage_expr = parse_general_expression(preimage_pair)?;
     if matches!(
-        preimage_expr,
-        Expression::Variable(_)
-            | Expression::Literal(_)
-            | Expression::Property(_)
-            | Expression::ArrayIndex { .. }
-            | Expression::FieldAccess { .. }
-            | Expression::IndexAccess { .. }
+        &preimage_expr.kind,
+        ExprKind::Variable(_)
+            | ExprKind::Literal(_)
+            | ExprKind::Property(_)
+            | ExprKind::ArrayIndex { .. }
+            | ExprKind::FieldAccess { .. }
+            | ExprKind::IndexAccess { .. }
     ) {
         return Ok(Requirement::HashEqual {
             hash_fn,
@@ -56,10 +62,13 @@ pub(crate) fn parse_hash_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     let rhs_expr = parse_operand(rhs_pair)?;
 
     Ok(Requirement::Comparison {
-        left: Expression::Builtin {
-            builtin: crate::builtins::find("sha256").expect("sha256 is a builtin"),
-            args: vec![preimage_expr],
-        },
+        left: Expression::new(
+            ExprKind::Builtin {
+                builtin: crate::builtins::find("sha256").expect("sha256 is a builtin"),
+                args: vec![preimage_expr],
+            },
+            span,
+        ),
         op: crate::operators::BinaryOperator::Eq,
         right: rhs_expr,
     })

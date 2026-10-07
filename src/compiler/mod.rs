@@ -1,7 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::models::{
-    ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
-    FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
+    ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
+    Function, FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
     OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_AND, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG,
@@ -17,10 +17,11 @@ use crate::opcodes::{
     OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
     OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
     OP_INSPECTPACKET, OP_INSPECTVERSION, OP_INVERT, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_LSHIFT,
-    OP_MOD, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_OR, OP_PICK,
-    OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES, OP_ROLL, OP_RSHIFT,
-    OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE,
-    OP_SUB, OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY, OP_XOR,
+    OP_MERKLEBRANCHVERIFY, OP_MOD, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN,
+    OP_NUMEQUAL, OP_OR, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES,
+    OP_ROLL, OP_RSHIFT, OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE,
+    OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID,
+    OP_TXWEIGHT, OP_VERIFY, OP_XOR,
 };
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
@@ -424,6 +425,7 @@ impl Generator {
             OP_MODEXP | OP_SUBSTR | OP_CHECKSIGADD | OP_CHECKSIGFROMSTACK => {
                 self.apply(opcode, 3, 1)
             }
+            OP_MERKLEBRANCHVERIFY => self.apply(opcode, 4, 1),
             OP_INSPECTINPUTSCRIPTPUBKEY | OP_INSPECTOUTPUTSCRIPTPUBKEY => self.apply(opcode, 1, 2),
             OP_INSPECTINPUTOUTPOINT => self.apply(opcode, 1, 2),
             OP_INSPECTINASSETLOOKUP | OP_INSPECTOUTASSETLOOKUP => self.apply(opcode, 3, 2),
@@ -482,21 +484,21 @@ impl Generator {
     }
 
     fn emit_expression(&mut self, expression: &Expression) -> Result<(), String> {
-        if matches!(expression, Expression::ArrayLiteral(_)) {
+        if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
             return Err(
                 "array literals may only initialize an array declaration; composite values are not supported"
                     .to_string(),
             );
         }
-        if matches!(expression, Expression::StructLiteral(_)) {
+        if matches!(&expression.kind, ExprKind::StructLiteral(_)) {
             return Err(
                 "struct literals may only initialize a typed struct declaration; composite values are not supported"
                     .to_string(),
             );
         }
         if matches!(
-            expression,
-            Expression::GroupIOAccess {
+            &expression.kind,
+            ExprKind::GroupIOAccess {
                 source: crate::models::GroupIOSource::Inputs,
                 ..
             }
@@ -551,9 +553,9 @@ impl Generator {
             {
                 let index = index.parse::<usize>().map_err(|_| "invalid call marker")?;
                 let value = values.get(index).ok_or("invalid call marker")?;
-                if matches!(value, Expression::Call { .. }) {
+                if matches!(&value.kind, ExprKind::Call { .. }) {
                     self.emit_call(value)?;
-                } else if matches!(value, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+                } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
                 {
                     self.emit_pairing(value)?;
                 } else {
@@ -609,12 +611,12 @@ impl Generator {
         match target {
             AssignmentTarget::Access(value) => self.assign_access(value),
             AssignmentTarget::Binding(name) => self.assign_static_binding(name, name),
-            AssignmentTarget::ArrayIndex { array, index } => match index.as_ref() {
-                Expression::Literal(index) => self.assign_static_binding(
-                    &internal_array_binding_name(array, index),
-                    &format!("{array}[{index}]"),
+            AssignmentTarget::ArrayIndex { array, index } => match &index.kind {
+                ExprKind::Literal(literal) => self.assign_static_binding(
+                    &internal_array_binding_name(array, literal),
+                    &format!("{array}[{literal}]"),
                 ),
-                index => self.assign_indexed_binding(array, index),
+                _ => self.assign_indexed_binding(array, index),
             },
         }
     }
@@ -834,8 +836,6 @@ pub(crate) fn prepare(
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    // No span available: this rewrites the AST after parsing, not a lookup
-    // against a specific source node.
     rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
@@ -1086,7 +1086,7 @@ fn generate_asm_from_statements_recursive(
                 }
             }
             Statement::ForCount { count, body } => {
-                let Expression::Literal(count) = count else {
+                let ExprKind::Literal(count) = &count.kind else {
                     return Err(
                         "loop count must be a non-negative integer compile-time constant"
                             .to_string(),
@@ -1119,8 +1119,8 @@ fn generate_asm_from_statements_recursive(
                 let composite_type = generator.composite_type(value);
                 let result_type = declared_type
                     .as_deref()
-                    .or_else(|| match value {
-                        Expression::Call { return_type, .. } => return_type.as_deref(),
+                    .or_else(|| match &value.kind {
+                        ExprKind::Call { return_type, .. } => return_type.as_deref(),
                         _ => crate::models::expression_result_struct(value),
                     })
                     .or(composite_type.as_deref());
@@ -1172,14 +1172,14 @@ fn generate_asm_from_statements_recursive(
 fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<(), String> {
     match req {
         Requirement::Expression(expr) => {
-            match expr {
-                Expression::GroupFind { .. } => {
+            match &expr.kind {
+                ExprKind::GroupFind { .. } => {
                     generator.emit_expression(expr)?;
                     generator.apply(OP_DROP, 1, 0)?;
                     generator.push_temporary(OP_1);
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                Expression::CheckSigFromStackVerify {
+                ExprKind::CheckSigFromStackVerify {
                     signature,
                     pubkey,
                     message,
@@ -1190,7 +1190,7 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                Expression::Builtin { builtin, .. } if builtin.result.is_none() => {
+                ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {
                     generator.emit_expression_items(expr, 0)?;
                 }
                 _ => {
@@ -1374,7 +1374,7 @@ mod symbolic_stack_tests {
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: "values".into(),
-                index: Box::new(Expression::Variable("i".into())),
+                index: Box::new(ExprKind::Variable("i".into()).into()),
             })
             .expect("indexed assignment");
         assert_eq!(
@@ -1417,11 +1417,14 @@ mod symbolic_stack_tests {
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: "values".to_string(),
-                index: Box::new(Expression::BinaryOp {
-                    left: Box::new(Expression::Variable("i".to_string())),
-                    op: crate::operators::BinaryOperator::Add,
-                    right: Box::new(Expression::Literal("1".to_string())),
-                }),
+                index: Box::new(
+                    ExprKind::BinaryOp {
+                        left: Box::new(ExprKind::Variable("i".to_string()).into()),
+                        op: crate::operators::BinaryOperator::Add,
+                        right: Box::new(ExprKind::Literal("1".to_string()).into()),
+                    }
+                    .into(),
+                ),
             })
             .expect("expression index assignment");
 

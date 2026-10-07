@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::diagnostics::Diagnostic;
 use crate::models::{
-    self, Contract, ContractJson, Expression, LocatedStatement, SourceBundle, Statement,
+    self, Contract, ContractJson, ExprKind, Expression, LocatedStatement, SourceBundle, Statement,
 };
 use crate::{compiler, parser, typechecker};
 
@@ -390,18 +390,18 @@ fn load(
         }
         for function in &mut contract.functions {
             visit_statements(&mut function.statements, &mut |expression| {
-                if let Expression::GroupControlIs {
+                if let ExprKind::GroupControlIs {
                     group,
                     asset_txid,
                     asset_gidx,
-                } = expression
+                } = &expression.kind
                 {
                     // Only a bare name can be a library; other groups stay asset groups.
-                    let Expression::Variable(group) = group.as_ref() else {
+                    let ExprKind::Variable(group) = &group.as_ref().kind else {
                         return Ok(());
                     };
                     if group == &contract.name || visible_contracts.contains_key(group) {
-                        *expression = Expression::Call {
+                        expression.kind = ExprKind::Call {
                             name: format!("{group}.controlIs"),
                             args: vec![*asset_txid.clone(), *asset_gidx.clone()],
                             return_type: None,
@@ -428,7 +428,7 @@ fn load(
                 if !function.is_imported() {
                     function.name = format!("{}.{}", imported.name, function.name);
                     visit_statements(&mut function.statements, &mut |expression| {
-                        if let Expression::Call { name, .. } = expression {
+                        if let ExprKind::Call { name, .. } = &mut expression.kind {
                             if !name.contains('.') {
                                 *name = format!("{}.{}", imported.name, name);
                             }
@@ -449,7 +449,7 @@ fn load(
         let owner = contract.name.clone();
         for function in &mut contract.functions {
             visit_statements(&mut function.statements, &mut |expression| {
-                if let Expression::Call { name, .. } = expression {
+                if let ExprKind::Call { name, .. } = &mut expression.kind {
                     if let Some(local) = name.strip_prefix(&format!("{owner}.")) {
                         *name = local.to_string();
                     }
@@ -537,8 +537,8 @@ fn validate_scope(
         let mut body = function.statements.clone();
         validate_local_types(&body, &check_type, &check_binding)?;
         visit_statements(&mut body, &mut |expression| {
-            match expression {
-                Expression::Call { name, .. } if name.contains('.') => {
+            match &expression.kind {
+                ExprKind::Call { name, .. } if name.contains('.') => {
                     let (owner, member) = name.split_once('.').expect("qualified name");
                     let target = contracts.get(owner).ok_or_else(|| {
                         format!("unknown contract '{owner}'; import its defining file")
@@ -556,14 +556,14 @@ fn validate_scope(
                         return Err(format!("library function '{name}' is private"));
                     }
                 }
-                Expression::Property(name) => {
+                ExprKind::Property(name) => {
                     if let Some((owner, _)) = name.split_once('.') {
                         if contracts.contains_key(owner) {
                             return Err(format!("unknown constant '{name}'"));
                         }
                     }
                 }
-                Expression::ContractInstance {
+                ExprKind::ContractInstance {
                     contract_name,
                     args,
                 } => {
@@ -921,11 +921,11 @@ library Fees {
         let span = diagnostic
             .span
             .expect("dependency diagnostics carry a span");
-        assert_eq!(&broken_lib[span.start..span.end], "require(missing);");
+        assert_eq!(&broken_lib[span.start..span.end], "missing");
 
         let error = super::compile_sources("main.ark", &files, Default::default()).unwrap_err();
         assert!(
-            error.starts_with("lib.ark: validation error: line 3, column 5: "),
+            error.starts_with("lib.ark: validation error: line 3, column 13: "),
             "{error}"
         );
     }

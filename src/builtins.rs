@@ -100,6 +100,18 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[OP_SHA256FINALIZE],
     ),
     builtin("sighash", &[("hashType", "int")], "bytes32", &[OP_SIGHASH]),
+    // An empty leafTag takes a 32-byte leaf as already hashed.
+    builtin(
+        "merkleRoot",
+        &[
+            ("leafTag", "bytes"),
+            ("branchTag", "bytes"),
+            ("proof", "bytes"),
+            ("leaf", "bytes"),
+        ],
+        "bytes32",
+        &[OP_MERKLEBRANCHVERIFY],
+    ),
     builtin(
         "checkTime",
         &[("timestamp", "int")],

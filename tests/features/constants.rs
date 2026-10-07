@@ -244,7 +244,14 @@ fn multisig_threshold_rejects_non_constants_and_invalid_values() {
 
 #[test]
 fn reserved_names_cannot_be_constants() {
-    for name in ["true", "false", "server", "emulator", "SERVER_KEY"] {
+    for name in [
+        "true",
+        "false",
+        "server",
+        "emulator",
+        "serverExitDelay",
+        "SERVER_KEY",
+    ] {
         let source = format!(
             "contract Vault() {{ const int {name} = 10; function spend() {{ require(true); }} }}"
         );
