@@ -81,12 +81,22 @@ pub enum Signer {
     Tweaked { base: String, func: String },
 }
 
-/// CSV or CLTV operand. A placeholder is the flattened constructor name.
+/// CLTV operand. A placeholder is the flattened constructor name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LockValue {
     Param(String),
     Number(u64),
+}
+
+/// CSV operand. A placeholder stays a name. A literal is a BIP68 sequence
+/// decoded to blocks, or to seconds (512-second units, bit 22 set).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CsvValue {
+    Param(String),
+    Blocks(u64),
+    Seconds(u64),
 }
 
 /// One token of a condition or covenant script.
@@ -107,10 +117,9 @@ pub struct Tapscript {
     /// Hash condition (`OP_SHA256` / `OP_HASH160` / `OP_HASH256` / `OP_RIPEMD160`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub condition: Vec<AsmToken>,
-    /// Relative lock. The operand is the CSV number as emitted; this reader does
-    /// not split out the BIP68 seconds bit.
+    /// Relative lock. A literal is decoded from its BIP68 sequence.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub csv: Option<LockValue>,
+    pub csv: Option<CsvValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cltv: Option<LockValue>,
     /// Non-signature witness values the caller supplies (a preimage, for example).
@@ -412,6 +421,52 @@ fn decode_hex(hex: &str) -> Result<Vec<u8>, ()> {
         .collect()
 }
 
+const BIP68_SECONDS_FLAG: u64 = 1 << 22;
+const BIP68_DISABLE_FLAG: u64 = 1 << 31;
+const BIP68_VALUE_MASK: u64 = 0xffff;
+const BIP68_SECONDS_GRANULARITY: u64 = 512;
+
+/// Decode a CSV literal the way the TypeScript reader does: the lower 16 bits
+/// are the count, bit 22 selects 512-second units, and any other bit (including
+/// the disable flag) means the sequence would not round-trip through BIP68.
+fn decode_bip68(operand: u64) -> Option<CsvValue> {
+    if operand >= BIP68_DISABLE_FLAG {
+        return None;
+    }
+    let count = operand & BIP68_VALUE_MASK;
+    let seconds = operand & BIP68_SECONDS_FLAG != 0;
+    let canonical = if seconds {
+        count | BIP68_SECONDS_FLAG
+    } else {
+        count
+    };
+    if canonical != operand {
+        return None;
+    }
+    if seconds {
+        Some(CsvValue::Seconds(count * BIP68_SECONDS_GRANULARITY))
+    } else {
+        Some(CsvValue::Blocks(count))
+    }
+}
+
+fn csv_value(leaf: &str, token: &str) -> Result<CsvValue, String> {
+    if let Some(inner) = placeholder(token) {
+        if inner.is_empty() {
+            return Err(err(format!("unrecognized timelock '{token}'")));
+        }
+        return Ok(CsvValue::Param(inner.to_string()));
+    }
+    let operand = token
+        .parse::<u64>()
+        .map_err(|_| err(format!("unrecognized timelock '{token}'")))?;
+    decode_bip68(operand).ok_or_else(|| {
+        err(format!(
+            "leaf '{leaf}': CSV literal {operand} is not a canonical BIP68 sequence"
+        ))
+    })
+}
+
 fn lock_value(token: &str) -> Result<LockValue, String> {
     if let Some(inner) = placeholder(token) {
         if inner.is_empty() {
@@ -459,10 +514,9 @@ fn parse_leaf(
     let mut csv = None;
     let mut cltv = None;
     if asm.len() >= index + 3 && asm[index + 2] == opcodes::OP_DROP {
-        let value = lock_value(&asm[index])?;
         match asm[index + 1].as_str() {
-            opcodes::OP_CHECKSEQUENCEVERIFY => csv = Some(value),
-            opcodes::OP_CHECKLOCKTIMEVERIFY => cltv = Some(value),
+            opcodes::OP_CHECKSEQUENCEVERIFY => csv = Some(csv_value(&leaf.name, &asm[index])?),
+            opcodes::OP_CHECKLOCKTIMEVERIFY => cltv = Some(lock_value(&asm[index])?),
             other => {
                 return Err(err(format!(
                     "leaf '{}': unexpected timelock opcode {other}",
@@ -616,7 +670,7 @@ mod tests {
         assert!(exit.arkade.is_none());
         assert_eq!(exit.tapscript.signers, vec![Signer::Param("user".into())]);
         assert_eq!(exit.tapscript.emulator, None);
-        assert_eq!(exit.tapscript.csv, Some(LockValue::Param("exit".into())));
+        assert_eq!(exit.tapscript.csv, Some(CsvValue::Param("exit".into())));
     }
 
     #[test]
@@ -661,7 +715,7 @@ mod tests {
         assert_eq!(refund.tapscript.emulator.as_deref(), Some("refund"));
 
         let exit = program.function("unilateral").unwrap();
-        assert_eq!(exit.tapscript.csv, Some(LockValue::Param("exit".into())));
+        assert_eq!(exit.tapscript.csv, Some(CsvValue::Param("exit".into())));
         assert_eq!(exit.tapscript.signers, vec![Signer::Param("sender".into())]);
         assert!(exit.tapscript.emulator.is_none());
 
@@ -727,7 +781,7 @@ mod tests {
         let exit = program.function("unilateral").unwrap();
         assert_eq!(
             exit.tapscript.csv,
-            Some(LockValue::Param("policy.exitDelay".into()))
+            Some(CsvValue::Param("policy.exitDelay".into()))
         );
         assert_eq!(
             exit.tapscript.signers,
@@ -799,6 +853,39 @@ mod tests {
                 }}]
             }}"#
         )
+    }
+
+    #[test]
+    fn csv_literals_decode_bip68_blocks_and_seconds() {
+        for (literal, expected) in [
+            ("144", CsvValue::Blocks(144)),
+            ("4194314", CsvValue::Seconds(5120)),
+        ] {
+            let program = program_from_json(&leaf(&[
+                literal,
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                "<SERVER_KEY>",
+                "OP_CHECKSIG",
+            ]))
+            .unwrap();
+            assert_eq!(
+                program.function("spend").unwrap().tapscript.csv,
+                Some(expected)
+            );
+        }
+
+        let rejected = program_from_json(&leaf(&[
+            "70000",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<SERVER_KEY>",
+            "OP_CHECKSIG",
+        ]));
+        assert_eq!(
+            rejected.unwrap_err(),
+            "program_from_artifact: leaf 'spend': CSV literal 70000 is not a canonical BIP68 sequence"
+        );
     }
 
     #[test]
