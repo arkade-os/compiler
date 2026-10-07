@@ -242,7 +242,7 @@ fn validate_expression(
     }
 }
 
-fn evaluate(
+pub(crate) fn evaluate(
     expression: &Expression,
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<String, String> {

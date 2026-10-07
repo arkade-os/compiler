@@ -36,7 +36,7 @@ mod access;
 mod asset;
 mod comparison;
 mod concat;
-mod constants;
+pub(crate) mod constants;
 pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
 mod expr;
 mod functions;
