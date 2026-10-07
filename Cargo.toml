@@ -2,13 +2,22 @@
 members = [".", "arkade-bindgen"]
 resolver = "2"
 
-[package]
-name = "arkade-compiler"
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "A compiler for Arkade Script - a language for creating Bitcoin Taproot scripts"
-authors = ["tiero"]
+authors = ["tiero", "msinkec", "d4rp4t"]
 license = "MIT"
+repository = "https://github.com/arkade-os/compiler"
+
+[package]
+name = "arkade-compiler"
+version.workspace = true
+edition.workspace = true
+description = "A compiler for Arkade Script - a language for creating Bitcoin Taproot scripts"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+include = ["src/**/*.rs", "src/**/*.pest", "LICENSE"]
 
 [dependencies]
 pest = "2.7.8"
@@ -17,6 +26,7 @@ serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 clap = { version = "4.5.3", features = ["derive"] }
 chrono = "0.4.34"
+sha2 = "0.10.9"
 
 # WASM support (optional, for web playground)
 wasm-bindgen = { version = "0.2", optional = true }
@@ -42,4 +52,4 @@ predicates = "3.1.0"
 
 [[bin]]
 name = "arkadec"
-path = "src/main.rs" 
+path = "src/main.rs"

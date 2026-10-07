@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
 	"maps"
 	"slices"
 	"testing"
@@ -20,7 +21,7 @@ func TestStructs(t *testing.T) {
 	if got := contract.ConstructorInputs; len(got) != 1 || got[0].Name != "account" || got[0].Type != "Account" {
 		t.Fatalf("constructor inputs = %+v, want account Account", got)
 	}
-	if got, want := structNames(contract.Structs), []string{"Inner", "Rules", "Point", "Account"}; !slices.Equal(got, want) {
+	if got, want := structNames(contract.Structs), []string{"Inner", "Rules", "Account"}; !slices.Equal(got, want) {
 		t.Fatalf("struct definitions = %v, want %v", got, want)
 	}
 
@@ -47,7 +48,7 @@ func TestStructs(t *testing.T) {
 			t.Fatalf("constructor prologue token %d = %q, want %q", index, got, want)
 		}
 	}
-	if got, want := inputTypes(group.Arkade.Inputs), []string{"Rules", "Point", "int", "int", "signature"}; !slices.Equal(got, want) {
+	if got, want := inputTypes(group.Arkade.Inputs), []string{"Rules", "ECPoint", "int", "int", "signature"}; !slices.Equal(got, want) {
 		t.Fatalf("covenant input types = %v, want %v", got, want)
 	}
 
@@ -97,11 +98,11 @@ func TestStructs(t *testing.T) {
 		wantErr string
 	}{
 		{name: "valid"},
-		{name: "underscore field is distinct from nested path", key: "supplied.a_b", value: 37, wantErr: "OP_VERIFY failed"},
-		{name: "nested field is distinct from underscore path", key: "supplied.a.b", value: 29, wantErr: "OP_VERIFY failed"},
-		{name: "nested array field", key: "supplied.weights.1", value: 44, wantErr: "OP_VERIFY failed"},
+		{name: "underscore field is distinct from nested path", key: "supplied.a_b", value: 37, wantErr: "OP_EQUALVERIFY failed"},
+		{name: "nested field is distinct from underscore path", key: "supplied.a.b", value: 29, wantErr: "OP_EQUALVERIFY failed"},
+		{name: "nested array field", key: "supplied.weights.1", value: 44, wantErr: "OP_EQUALVERIFY failed"},
 		{name: "runtime array bound", key: "index", value: 3, wantErr: "OP_VERIFY failed"},
-		{name: "local struct mutation result", key: "expected", value: 394, wantErr: "OP_VERIFY failed"},
+		{name: "local struct mutation result", key: "expected", value: 394, wantErr: "OP_EQUALVERIFY failed"},
 	}
 
 	for _, testCase := range testCases {
@@ -171,4 +172,48 @@ func scriptPositiveBigInt(t *testing.T, bigEndian []byte) []byte {
 		t.Fatalf("encode positive big integer: %v", err)
 	}
 	return encoded
+}
+
+func TestStructArrays(t *testing.T) {
+	contract := compileArtifact(t, "contracts/structs.ark")
+	group := covenantGroup(t, contract, "arraySpend")
+	serverKey := fixedPrivateKey(1)
+	emulatorKey := fixedPrivateKey(2)
+	instance := instantiateGroup(t, contract, "arraySpend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+
+	cases := []struct {
+		name                  string
+		row, column, expected int64
+		wantErr               string
+	}{
+		{name: "row 0 column 0", row: 0, column: 0, expected: 12},
+		{name: "row 0 column 1", row: 0, column: 1, expected: 12},
+		{name: "row 0 column 2", row: 0, column: 2, expected: 12},
+		{name: "row 1 column 0", row: 1, column: 0, expected: 22},
+		{name: "row 1 column 1", row: 1, column: 1, expected: 22},
+		{name: "row 1 column 2", row: 1, column: 2, expected: 22},
+		{name: "negative row", row: -1, wantErr: "OP_VERIFY failed"},
+		{name: "row past array", row: 2, wantErr: "OP_VERIFY failed"},
+		{name: "negative column", column: -1, wantErr: "OP_VERIFY failed"},
+		{name: "column past array", column: 3, wantErr: "OP_VERIFY failed"},
+		{name: "wrong selected field", expected: 13, wantErr: "OP_EQUALVERIFY failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{
+				"row": scriptInt(t, tc.row), "column": scriptInt(t, tc.column),
+				"next": scriptInt(t, 99), "expected": scriptInt(t, tc.expected),
+			}
+			for row := range 2 {
+				values[fmt.Sprintf("provided.%d.a_b", row)] = scriptInt(t, 11+int64(row)*10)
+				values[fmt.Sprintf("provided.%d.a.b", row)] = scriptInt(t, 12+int64(row)*10)
+				for column := range 3 {
+					values[fmt.Sprintf("provided.%d.weights.%d", row, column)] = scriptInt(t, 13+int64(row)*10+int64(column))
+				}
+			}
+			deployment := fundingTx(instance.pkScript, 10_000)
+			spending := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spending, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
 }

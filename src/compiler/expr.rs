@@ -1,5 +1,6 @@
 use super::*;
 use crate::models::*;
+use crate::operators::{BinaryOperator, OperatorClass};
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
     match lit {
@@ -9,21 +10,35 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
     }
 }
 
+/// Push a two-field native struct with its first field deepest, as native opcodes expect.
+fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut Vec<String>) {
+    match &value.kind {
+        ExprKind::Variable(name) | ExprKind::Property(name) if !name.starts_with("$call:") => {
+            for (field, _) in fields {
+                asm.push(format!("<{name}.{field}>"));
+            }
+        }
+        _ => {
+            emit_expression_asm(value, asm);
+            // Helpers return structs first-field-on-top.
+            if matches!(&value.kind, ExprKind::Variable(name) if name.starts_with("$call:")) {
+                asm.push(OP_SWAP.to_string());
+            }
+        }
+    }
+}
+
 /// Emit assembly for an expression (push its value onto the stack)
 pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
-    match expr {
-        Expression::Call { .. } => {
+    match &expr.kind {
+        ExprKind::Call { .. } => {
             unreachable!("private calls are extracted before raw expression emission")
         }
-        Expression::Variable(var) => {
+        ExprKind::Variable(var) => {
             asm.push(format!("<{}>", var));
         }
-        Expression::Literal(lit) => push_literal_asm(lit, asm),
-        Expression::CheckTime { timestamp } => {
-            emit_expression_asm(timestamp, asm);
-            asm.push(OP_CHECKTIME.to_string());
-        }
-        Expression::IntentInspect {
+        ExprKind::Literal(lit) => push_literal_asm(lit, asm),
+        ExprKind::IntentInspect {
             path,
             presence_only,
         } => {
@@ -32,7 +47,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             // The opcode leaves the value below its presence flag.
             asm.push(if *presence_only { OP_NIP } else { OP_VERIFY }.to_string());
         }
-        Expression::Tunnel {
+        ExprKind::Tunnel {
             output_index,
             policy,
             exceptions,
@@ -40,45 +55,35 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_expression_asm(output_index, asm);
             let mut flags = 0;
             for (index, value) in policy.iter().enumerate() {
-                if matches!(value, Expression::Literal(literal) if literal == "true") {
+                if matches!(&value.kind, ExprKind::Literal(literal) if literal == "true") {
                     flags |= 1 << index;
                 }
             }
             asm.push(flags.to_string());
             for exception in exceptions {
-                match exception {
-                    Expression::Variable(name) | Expression::Property(name)
-                        if !name.starts_with("$call:") =>
-                    {
-                        asm.push(format!("<{name}.txid>"));
-                        asm.push(format!("<{name}.gidx>"));
-                    }
-                    _ => {
-                        emit_expression_asm(exception, asm);
-                        // Helpers return structs first-field-on-top; native opcodes push it deepest.
-                        if matches!(exception, Expression::Variable(name) if name.starts_with("$call:"))
-                        {
-                            asm.push(OP_SWAP.to_string());
-                        }
-                    }
-                }
+                let fields = crate::models::builtin_struct_fields("AssetId")
+                    .expect("AssetId is a native struct");
+                emit_native_struct_asm(exception, fields, asm);
             }
             asm.push(exceptions.len().to_string());
             asm.push(OP_TUNNEL.to_string());
         }
         // Rejected before emission; array declarations emit their elements directly.
-        Expression::ArrayLiteral(_) => {}
+        ExprKind::ArrayLiteral(_) => {}
         // Rejected before emission; typed struct declarations emit scalar leaves directly.
-        Expression::StructLiteral(_) => {}
-        Expression::ArrayIndex { array, index } => {
-            if let Expression::Literal(index) = index.as_ref() {
+        ExprKind::StructLiteral(_) => {}
+        ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. } => {
+            unreachable!("binding accesses are extracted before emission")
+        }
+        ExprKind::ArrayIndex { array, index } => {
+            if let ExprKind::Literal(index) = &index.as_ref().kind {
                 asm.push(format!("<{array}[{index}]>"));
             } else {
                 emit_expression_asm(index, asm);
                 asm.push(format!("{INTERNAL_ARRAY_INDEX_PREFIX}{array}"));
             }
         }
-        Expression::Property(prop) => {
+        ExprKind::Property(prop) => {
             // Map the introspector "this" properties to their dedicated opcodes
             // (the parser stores them as Property strings; resolving them here
             // keeps the placeholder pipeline untouched for everything else).
@@ -90,10 +95,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 property => asm.push(format!("<{}>", property)),
             }
         }
-        Expression::CurrentInput(property) => {
+        ExprKind::CurrentInput(property) => {
             emit_current_input_asm(property.as_deref(), asm);
         }
-        Expression::AssetLookup {
+        ExprKind::AssetLookup {
             source,
             index,
             asset_txid,
@@ -101,7 +106,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_asset_lookup_asm(source, index, asset_txid, asset_gidx, asm);
         }
-        Expression::AssetHas {
+        ExprKind::AssetHas {
             source,
             index,
             asset_txid,
@@ -109,10 +114,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
         }
-        Expression::AssetCount { source, index } => {
+        ExprKind::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
         }
-        Expression::AssetAt {
+        ExprKind::AssetAt {
             source,
             io_index,
             asset_index,
@@ -120,70 +125,49 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_asset_at_asm(source, io_index, asset_index, property, asm);
         }
-        Expression::TxIntrospection { property } => {
+        ExprKind::TxIntrospection { property } => {
             emit_tx_introspection_asm(property, asm);
         }
-        Expression::InputIntrospection { index, property } => {
+        ExprKind::InputIntrospection { index, property } => {
             emit_input_introspection_asm(index, property, asm);
         }
-        Expression::OutputIntrospection { index, property } => {
+        ExprKind::OutputIntrospection { index, property } => {
             emit_output_introspection_asm(index, property, asm);
         }
-        Expression::BinaryOp { left, op, right } => {
-            if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
-                emit_comparison_asm(left, op, right, asm);
-            } else {
-                emit_binary_op_asm(left, op, right, asm);
-            }
-        }
-        Expression::GroupFind {
+        ExprKind::BinaryOp { left, op, right } => emit_binary_op_asm(left, *op, right, asm),
+        ExprKind::GroupFind {
             asset_txid,
             asset_gidx,
         } => {
             emit_group_find_asm(asset_txid, asset_gidx, asm);
         }
-        Expression::GroupHas {
+        ExprKind::GroupHas {
             asset_txid,
             asset_gidx,
         } => {
             emit_group_has_asm(asset_txid, asset_gidx, asm);
         }
-        Expression::GroupControlIs {
+        ExprKind::GroupControlIs {
             group,
             asset_txid,
             asset_gidx,
         } => {
             emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
         }
-        Expression::GroupProperty { group, property } => {
+        ExprKind::GroupProperty { group, property } => {
             emit_group_property_asm(group, property, asm);
         }
-        Expression::AssetGroupsLength => {
+        ExprKind::AssetGroupsLength => {
             asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
         }
-        Expression::GroupSum { index, source } => {
-            emit_expression_asm(index, asm);
-            match source {
-                GroupSumSource::Inputs => asm.push(OP_0.to_string()),
-                GroupSumSource::Outputs => asm.push(OP_1.to_string()),
-            }
-            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-        }
-        Expression::GroupNumIO { index, source } => {
-            emit_expression_asm(index, asm);
-            match source {
-                GroupIOSource::Inputs => asm.push(OP_0.to_string()),
-                GroupIOSource::Outputs => asm.push(OP_1.to_string()),
-            }
-            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
-        }
-        Expression::GroupIOAccess {
-            group_index,
+        ExprKind::AssetGroupAt { index } => emit_expression_asm(index, asm),
+        ExprKind::GroupIOAccess {
+            group,
             io_index,
             source,
             property,
         } => {
-            emit_expression_asm(group_index, asm);
+            emit_expression_asm(group, asm);
             emit_expression_asm(io_index, asm);
             match source {
                 GroupIOSource::Inputs => asm.push(OP_0.to_string()),
@@ -201,202 +185,82 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                         asm.push(OP_DROP.to_string()); // amount
                         asm.push(OP_DROP.to_string()); // data
                     }
-                    _ => {}
+                    _ => unreachable!("the parser only yields amount or type, got '{prop}'"),
                 }
             }
         }
-        Expression::ContractInstance {
+        ExprKind::ContractInstance {
             contract_name,
             args,
         } => {
             emit_contract_instance_asm(contract_name, args, asm);
         }
-        Expression::CheckSigExpr { signature, pubkey } => {
-            asm.push(format!("<{}>", signature));
-            asm.push(format!("<{}>", pubkey));
+        ExprKind::CheckSigExpr { signature, pubkey } => {
+            emit_expression_asm(signature, asm);
+            emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIG.to_string());
         }
-        Expression::CheckSigFromStackExpr {
+        ExprKind::CheckSigFromStackExpr {
             signature,
             pubkey,
             message,
         } => {
-            asm.push(format!("<{}>", signature));
-            asm.push(format!("<{}>", message));
-            asm.push(format!("<{}>", pubkey));
+            emit_expression_asm(signature, asm);
+            emit_expression_asm(message, asm);
+            emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
         }
-        // Streaming SHA256
-        Expression::Sha256 { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256.to_string());
-        }
-        Expression::Sha256Initialize { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SHA256INITIALIZE.to_string());
-        }
-        Expression::Sha256Update { context, chunk } => {
-            emit_expression_asm(context, asm);
-            emit_expression_asm(chunk, asm);
-            asm.push(OP_SHA256UPDATE.to_string());
-        }
-        Expression::Sha256Finalize {
-            context,
-            last_chunk,
-        } => {
-            emit_expression_asm(context, asm);
-            emit_expression_asm(last_chunk, asm);
-            asm.push(OP_SHA256FINALIZE.to_string());
-        }
-        Expression::Sighash { hash_type } => {
-            emit_expression_asm(hash_type, asm);
-            asm.push(OP_SIGHASH.to_string());
-        }
-        Expression::Digest { data, hash_type } => {
-            emit_expression_asm(data, asm);
-            emit_expression_asm(hash_type, asm);
-            asm.push(OP_DIGEST.to_string());
+        ExprKind::Builtin { builtin, args } => {
+            let crate::builtins::Lowering::Opcodes(opcodes) = builtin.lowering else {
+                unreachable!("pairings are extracted before raw emission")
+            };
+            for (arg, (_, ty)) in args.iter().zip(builtin.params) {
+                match crate::models::builtin_struct_fields(ty) {
+                    Some(fields) => emit_native_struct_asm(arg, fields, asm),
+                    None => emit_expression_asm(arg, asm),
+                }
+            }
+            asm.extend(opcodes.iter().map(|opcode| opcode.to_string()));
         }
         // Byte-string concatenation: bytes + bytes → OP_CAT
-        Expression::Concat { left, right } => {
+        ExprKind::Concat { left, right } => {
             emit_expression_asm(left, asm);
             emit_expression_asm(right, asm);
             asm.push(OP_CAT.to_string());
         }
-        // Arithmetic
-        Expression::Negate { value } => {
+        ExprKind::Unary { op, value } => {
             emit_expression_asm(value, asm);
-            asm.push(OP_NEGATE.to_string());
+            asm.push(op.opcode().to_string());
         }
-        Expression::Not { value } => {
-            emit_expression_asm(value, asm);
-            asm.push(OP_NOT.to_string());
-        }
-        Expression::ModExp {
-            base,
-            exponent,
-            modulus,
-        } => {
-            emit_expression_asm(base, asm);
-            emit_expression_asm(exponent, asm);
-            emit_expression_asm(modulus, asm);
-            asm.push(OP_MODEXP.to_string());
-        }
-        // Elliptic curve operations
-        Expression::EcAdd {
-            x1,
-            y1,
-            x2,
-            y2,
-            curve_id,
-        } => {
-            emit_expression_asm(x1, asm);
-            emit_expression_asm(y1, asm);
-            emit_expression_asm(x2, asm);
-            emit_expression_asm(y2, asm);
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECADD.to_string());
-        }
-        Expression::EcMul {
-            x,
-            y,
-            scalar,
-            curve_id,
-        } => {
-            emit_expression_asm(x, asm);
-            emit_expression_asm(y, asm);
-            emit_expression_asm(scalar, asm);
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECMUL.to_string());
-        }
-        Expression::EcPairing {
-            g1_x,
-            g1_y,
-            g2_x_c1,
-            g2_x_c0,
-            g2_y_c1,
-            g2_y_c0,
-            curve_id,
-        } => {
-            emit_expression_asm(g1_x, asm);
-            emit_expression_asm(g1_y, asm);
-            emit_expression_asm(g2_x_c1, asm);
-            emit_expression_asm(g2_x_c0, asm);
-            emit_expression_asm(g2_y_c1, asm);
-            emit_expression_asm(g2_y_c0, asm);
-            asm.push(OP_1.to_string());
-            emit_expression_asm(curve_id, asm);
-            asm.push(OP_ECPAIRING.to_string());
-        }
-        Expression::EcMulScalarVerify {
-            scalar,
-            point_p,
-            point_q,
-        } => {
-            emit_expression_asm(scalar, asm);
-            emit_expression_asm(point_p, asm);
-            emit_expression_asm(point_q, asm);
-            asm.push(OP_ECMULSCALARVERIFY.to_string());
-        }
-        Expression::TweakVerify {
-            point_p,
-            tweak,
-            point_q,
-        } => {
-            emit_expression_asm(point_p, asm);
-            emit_expression_asm(tweak, asm);
-            emit_expression_asm(point_q, asm);
-            asm.push(OP_TWEAKVERIFY.to_string());
-        }
-        Expression::CheckSigFromStackVerify {
+        ExprKind::CheckSigFromStackVerify {
             signature,
             pubkey,
             message,
         } => {
-            asm.push(format!("<{}>", signature));
-            asm.push(format!("<{}>", message));
-            asm.push(format!("<{}>", pubkey));
+            emit_expression_asm(signature, asm);
+            emit_expression_asm(message, asm);
+            emit_expression_asm(pubkey, asm);
             asm.push(OP_CHECKSIGFROMSTACK.to_string());
             asm.push(OP_VERIFY.to_string());
         }
-        // Byte-string manipulation (introspector extensions)
-        Expression::Substr { data, offset, size } => {
+        ExprKind::Cast { target, data } => {
             emit_expression_asm(data, asm);
-            emit_expression_asm(offset, asm);
-            emit_expression_asm(size, asm);
-            asm.push(OP_SUBSTR.to_string());
-        }
-        Expression::Cat { left, right } => {
-            emit_expression_asm(left, asm);
-            emit_expression_asm(right, asm);
-            asm.push(OP_CAT.to_string());
-        }
-        Expression::Bin2Num { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_BIN2NUM.to_string());
-        }
-        Expression::Num2Bin { value, size } => {
-            emit_expression_asm(value, asm);
-            emit_expression_asm(size, asm);
-            asm.push(OP_NUM2BIN.to_string());
-        }
-        Expression::ReverseBytes { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_REVERSEBYTES.to_string());
-        }
-        Expression::SizeOf { data } => {
-            emit_expression_asm(data, asm);
-            asm.push(OP_SIZE.to_string());
-            asm.push(OP_NIP.to_string());
+            match target.as_str() {
+                "bytes20" => asm.extend([OP_SIZE, "20", OP_EQUALVERIFY].map(String::from)),
+                "bytes32" => asm.extend([OP_SIZE, "32", OP_EQUALVERIFY].map(String::from)),
+                // Witness bools are spender-supplied scriptnums; normalize to 0/1.
+                "int" | "bool" => asm.push(OP_0NOTEQUAL.to_string()),
+                _ => {}
+            }
         }
         // Packet introspection
-        Expression::PacketInspect { packet_type } => {
+        ExprKind::PacketInspect { packet_type } => {
             emit_expression_asm(packet_type, asm);
             asm.push(OP_INSPECTPACKET.to_string());
             asm.push(OP_1.to_string());
             asm.push(OP_EQUALVERIFY.to_string());
         }
-        Expression::InputPacketInspect { index, packet_type } => {
+        ExprKind::InputPacketInspect { index, packet_type } => {
             emit_expression_asm(packet_type, asm);
             emit_expression_asm(index, asm);
             asm.push(OP_INSPECTINPUTPACKET.to_string());
@@ -413,6 +277,10 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
             emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
         }
+        Some("witnessVersion") => {
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            emit_witness_version_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
+        }
         Some("value") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
             asm.push(OP_INSPECTINPUTVALUE.to_string());
@@ -425,16 +293,23 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
             asm.push(OP_INSPECTINPUTOUTPOINT.to_string());
         }
-        _ => {
+        Some("arkadeScriptHash") => {
             asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
+            asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string());
         }
+        Some("arkadeWitnessHash") => {
+            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
+            asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string());
+        }
+        // The grammar restricts tx.input.current.* to input_introspection_property,
+        // so every valid parse matches one of the arms above.
+        _ => unreachable!("unrecognized tx.input.current property: {property:?}"),
     }
 }
 
 /// Emit assembly for a contract instantiation: `new ContractName(arg1, arg2, ...)`
 ///
-/// Produces a single placeholder token `<VTXO:ContractName(<arg1>,<arg2>)>` that
+/// Produces a single placeholder token `<CONTRACT:ContractName(<arg1>,<arg2>)>` that
 /// the runtime resolves to the 32-byte Taproot witness program (the output key)
 /// of the named contract instantiated with the given constructor arguments.
 /// It is compared against a witness program, not a serialized 34-byte P2TR
@@ -450,7 +325,7 @@ pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<Strin
 /// ```
 /// compiles to:
 /// ```text
-/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <VTXO:SingleSig(<ownerPk>)> OP_EQUAL
+/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <CONTRACT:SingleSig(<ownerPk>)> OP_EQUAL
 /// ```
 pub(crate) fn emit_contract_instance_asm(
     contract_name: &str,
@@ -459,9 +334,9 @@ pub(crate) fn emit_contract_instance_asm(
 ) {
     let args_str = args
         .iter()
-        .map(|a| match a {
-            Expression::Variable(v) => format!("<{}>", v),
-            Expression::Literal(l) => l.clone(),
+        .map(|a| match &a.kind {
+            ExprKind::Variable(v) => format!("<{}>", v),
+            ExprKind::Literal(l) => l.clone(),
             _ => {
                 // For complex arg expressions, emit a nested representation
                 let mut nested = Vec::new();
@@ -472,26 +347,26 @@ pub(crate) fn emit_contract_instance_asm(
         .collect::<Vec<_>>()
         .join(",");
 
-    asm.push(format!("<VTXO:{}({})>", contract_name, args_str));
+    asm.push(format!("<CONTRACT:{}({})>", contract_name, args_str));
 }
 
 /// Emit assembly for arithmetic or a short-circuit logical operation.
 pub(crate) fn emit_binary_op_asm(
     left: &Expression,
-    op: &str,
+    op: BinaryOperator,
     right: &Expression,
     asm: &mut Vec<String>,
 ) {
     emit_expression_asm(left, asm);
-    if matches!(op, "&&" | "||") {
+    if op.class() == OperatorClass::Logical {
         asm.push(OP_IF.to_string());
-        if op == "&&" {
+        if op == BinaryOperator::And {
             emit_expression_asm(right, asm);
         } else {
             asm.push(OP_1.to_string());
         }
         asm.push(OP_ELSE.to_string());
-        if op == "||" {
+        if op == BinaryOperator::Or {
             emit_expression_asm(right, asm);
         } else {
             asm.push(OP_0.to_string());
@@ -500,12 +375,5 @@ pub(crate) fn emit_binary_op_asm(
         return;
     }
     emit_expression_asm(right, asm);
-
-    match op {
-        "+" => asm.push(OP_ADD.to_string()),
-        "-" => asm.push(OP_SUB.to_string()),
-        "*" => asm.push(OP_MUL.to_string()),
-        "/" => asm.push(OP_DIV.to_string()),
-        _ => asm.push(format!("OP_{}", op.to_uppercase())),
-    }
+    asm.extend(op.opcodes().iter().map(|opcode| opcode.to_string()));
 }

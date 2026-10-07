@@ -65,7 +65,7 @@ fn test_packet_inspect_emits_op_inspectpacket_with_presence_check() {
         r#"{}
 contract PacketDemo(int exit) {{
   function probe(int packetType) {{
-    require(tx.packet(packetType));
+    require(size(tx.packet(packetType)) > 0);
   }}
 }}"#,
         PROLOGUE
@@ -94,7 +94,7 @@ fn test_input_packet_inspect_emits_op_inspectinputpacket() {
         r#"{}
 contract InputPacketDemo(int exit) {{
   function probe(int packetType, int i) {{
-    require(tx.inputs[i].packet(packetType));
+    require(size(tx.inputs[i].packet(packetType)) > 0);
   }}
 }}"#,
         PROLOGUE
@@ -114,7 +114,7 @@ fn test_substr_emits_op_substr() {
         r#"{}
 contract SubstrDemo(int exit) {{
   function probe(bytes data, int offset, int length) {{
-    require(substr(data, offset, length));
+    require(substr(data, offset, length) == data);
   }}
 }}"#,
         PROLOGUE
@@ -134,7 +134,7 @@ fn test_cat_emits_op_cat() {
         r#"{}
 contract CatDemo(int exit) {{
   function probe(bytes a, bytes b) {{
-    require(cat(a, b));
+    require(cat(a, b) == a);
   }}
 }}"#,
         PROLOGUE
@@ -154,7 +154,7 @@ fn test_bin2num_emits_op_bin2num() {
         r#"{}
 contract Bin2NumDemo(int exit) {{
   function probe(bytes data) {{
-    require(bin2num(data));
+    require(bin2num(data) > 0);
   }}
 }}"#,
         PROLOGUE
@@ -174,7 +174,7 @@ fn test_num2bin_emits_op_num2bin() {
         r#"{}
 contract Num2BinDemo(int exit) {{
   function probe(int value, int size) {{
-    require(num2bin(value, size));
+    require(num2bin(value, size) == 0x00);
   }}
 }}"#,
         PROLOGUE
@@ -193,7 +193,7 @@ fn test_reverse_bytes_emits_op_reversebytes() {
     let src = r#"
 contract ReverseBytesDemo(bytes data) {
   function probe() {
-    require(reverseBytes(data));
+    require(reverseBytes(data) == data);
   }
 }"#;
 
@@ -210,7 +210,7 @@ fn test_size_emits_op_size_and_op_nip() {
         r#"{}
 contract SizeDemo(int exit) {{
   function probe(bytes data) {{
-    require(size(data));
+    require(size(data) > 0);
   }}
 }}"#,
         PROLOGUE

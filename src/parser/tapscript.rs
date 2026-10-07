@@ -39,8 +39,13 @@ pub(crate) fn parse_named_tapscript(
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
             for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
+                let callee = part.clone().into_inner().next();
                 let name = match part.as_rule() {
-                    Rule::check_time => "checkTime(...)",
+                    Rule::function_call
+                        if callee.is_some_and(|name| name.as_str() == "checkTime") =>
+                    {
+                        "checkTime(...)"
+                    }
                     Rule::tunnel => "this.tunnel(...)",
                     Rule::intent_field => "tx.intent.field(...)",
                     Rule::intent_has => "tx.intent.has(...)",
@@ -69,14 +74,9 @@ pub(crate) fn parse_tap_item(
 ) -> Result<crate::models::TapItem, String> {
     use crate::models::{HashFn, TapItem};
     match pair.as_rule() {
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr
-        | Rule::unary_expr
-        | Rule::primary_expr => {
+        rule if is_operator_level(rule)
+            || matches!(rule, Rule::unary_expr | Rule::primary_expr) =>
+        {
             let mut inner = pair.into_inner();
             let item = inner
                 .next()

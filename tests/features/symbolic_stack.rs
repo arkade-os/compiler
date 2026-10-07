@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
     OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
@@ -19,6 +19,47 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
             .map(String::as_str)
             .eq(expected.iter().copied())
     })
+}
+
+#[test]
+fn optimization_can_be_disabled_for_assembly_checks() {
+    let source = r#"
+contract Shape(int limit) {
+    function read() { require(limit == limit); }
+    function write(int amount) {
+        int[2] weights = [1, 2];
+        weights[0] = 4;
+        require(amount >= weights[0]);
+    }
+}
+"#;
+    let raw = compile(source).unwrap();
+    assert_eq!(raw.format_version, Some(1));
+    assert_eq!(
+        serde_json::to_value(&raw).unwrap()["compiler"]["options"]["optimize"],
+        false
+    );
+    let raw_read = crate::common::arkade_asm_tokens(&raw, "read");
+    assert!(contains_tokens(&raw_read, &["OP_0", OP_PICK]));
+    assert!(raw_read.ends_with(&[OP_VERIFY.to_string(), "OP_1".to_string()]));
+    assert!(contains_tokens(
+        &crate::common::arkade_asm_tokens(&raw, "write"),
+        &["4", "OP_0", OP_PUT]
+    ));
+
+    let optimized = arkade_compiler::compile(source).unwrap();
+    assert_eq!(
+        serde_json::to_value(&optimized).unwrap()["compiler"]["options"]["optimize"],
+        true
+    );
+    assert_eq!(
+        crate::common::arkade_asm(&optimized, "read"),
+        "<limit> OP_DUP OP_EQUAL"
+    );
+    assert_eq!(
+        crate::common::arkade_asm(&optimized, "write"),
+        "2 1 4 OP_NIP OP_ROT OP_OVER OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
+    );
 }
 
 #[test]
@@ -160,7 +201,7 @@ fn array_loop_values_remain_runtime_group_indices() {
     let covenant = covenant(
         r#"
 contract GroupIndices() {
-    function spend(int[3] groups) {
+    function spend(AssetGroup[3] groups) {
         let total = 0;
         for (i, group) in groups {
             total = total + group.sumInputs + i;
@@ -350,19 +391,19 @@ contract RuntimeIndex() {
 fn constructor_parameters_are_filtered_per_spending_path() {
     let output = compile(
         r#"
-contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
+contract Paths(int unused, int left, int right, pubkey exitKey) {
     function first(int value) { require(value == left); }
     function second(int value) { require(value == right); }
     function neither() { require(true); }
     function exit(signature ownerSig) tapscript {
-        require(older(delay));
+        require(older(serverExitDelay));
         require(checkSig(ownerSig, exitKey));
     }
 }
 "#,
     )
     .expect("compile");
-    assert_eq!(output.parameters.len(), 5);
+    assert_eq!(output.parameters.len(), 4);
     assert_eq!(output.functions.len(), 4);
     for (name, parameter) in [("first", "left"), ("second", "right")] {
         let group = crate::common::group(&output, name);
@@ -396,7 +437,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
     );
     assert_eq!(
         crate::common::leaf_asm(&output, "exit", "exit"),
-        "<seconds:delay> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
+        "<SERVER_EXIT_DELAY> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
     );
 }
 
@@ -444,7 +485,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
         ("bytes32 digest, int deadline", "bytes preimage",
          "require(sha256(preimage) == digest); require(tx.time >= deadline);",
          vec!["<deadline>", "<digest>"]),
-        ("int groupIndex, bytes32 txid, int gidx", "",
+        ("AssetGroup groupIndex, bytes32 txid, int gidx", "",
          "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
          vec!["<gidx>", "<txid>", "<groupIndex>"]),
         ("Policy policy", "",
@@ -460,7 +501,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
         let baseline = covenant(&source.replace("int unused, Policy unusedPolicy, ", "").replace(", int unusedTail", ""), "spend");
         assert_eq!(actual.asm, baseline.asm, "{body}");
         if body.contains("new Child") {
-            assert!(actual.asm.contains(&"<VTXO:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
+            assert!(actual.asm.contains(&"<CONTRACT:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
         }
     }
 }

@@ -32,8 +32,8 @@ fn test_htlc_go_generates() {
 
     // Constructor params struct
     assert!(code.contains("type HTLCParams struct {"));
-    assert!(code.contains("Sender [33]byte"));
-    assert!(code.contains("Receiver [33]byte"));
+    assert!(code.contains("Sender []byte"));
+    assert!(code.contains("Receiver []byte"));
     assert!(code.contains("PreimageHash [20]byte"));
     assert!(code.contains("RefundTime int64"));
 
@@ -50,8 +50,8 @@ fn test_htlc_go_generates() {
     assert!(code.contains("*ark.Contract"));
     assert!(code.contains("func NewHTLC(params HTLCParams) (*HTLC, error)"));
     assert!(code.contains("ark.NewContract(htlcArtifact"));
-    assert!(code.contains("params.Sender[:]"));
-    assert!(code.contains("Encoding: ark.Compressed33"));
+    assert!(code.contains("params.Sender,"));
+    assert!(!code.contains("ark.Compressed33"));
     assert!(code.contains("ark.EncodeScriptNum(params.RefundTime)"));
 
     // Per-leaf methods calling BuildWitness(group, leaf, ...)
@@ -71,7 +71,7 @@ fn test_single_sig_go() {
 
     let code = &generated.content;
     assert!(code.contains("type SingleSigParams struct {"));
-    assert!(code.contains("User [33]byte"));
+    assert!(code.contains("User []byte"));
     assert!(code.contains("func NewSingleSig(params SingleSigParams)"));
     assert!(code.contains("func (s *SingleSig) Spend(w SingleSigSpendWitness)"));
     assert!(code.contains("func (s *SingleSig) Unilateral(w SingleSigUnilateralWitness)"));
@@ -101,7 +101,7 @@ fn test_go_embed_mode() {
 #[test]
 fn test_go_fixed_array_types() {
     let code = gen("htlc", &Options::default());
-    assert!(code.contains("[33]byte")); // pubkey
+    assert!(code.contains("Sender []byte")); // pubkey is an alias of bytes
     assert!(code.contains("[64]byte")); // signature
     assert!(code.contains("PreimageHash [20]byte")); // bytes20
     assert!(code.contains("RefundTime int64")); // int

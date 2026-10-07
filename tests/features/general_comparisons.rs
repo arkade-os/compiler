@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_EQUALVERIFY,
     OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PICK,
@@ -117,9 +117,9 @@ fn active_input_index_comparison_preserves_operand_order() {
 fn require_accepts_direct_boolean_expressions() {
     let asm = compile_asm(
         "contract Compare(pubkey owner, bool enabled) {
-            function compare(signature signature) {
+            function compare(signature sig) {
                 require(enabled);
-                require(checkSig(signature, owner));
+                require(checkSig(sig, owner));
             }
         }",
     );
@@ -170,13 +170,13 @@ fn true_on_comparison_rhs_is_not_treated_as_a_bare_requirement() {
     let asm = compile_asm(
         "contract Compare() {
             function compare() {
-                require(2 == true);
+                require(false == true);
             }
         }",
     );
 
     assert!(
-        contains_tokens(&asm, &["2", OP_1, OP_EQUAL]),
+        contains_tokens(&asm, &[OP_0, OP_1, OP_EQUAL]),
         "explicit comparison must emit both operands and OP_EQUAL: {asm:?}"
     );
 }
@@ -185,11 +185,11 @@ fn true_on_comparison_rhs_is_not_treated_as_a_bare_requirement() {
 fn boolean_calls_can_be_compared_or_required_directly() {
     let asm = compile_asm(
         "contract Compare(pubkey owner, bytes32 message, bool expected) {
-            function compare(signature signature) {
-                require(checkSig(signature, owner) == expected);
-                require(checkSigFromStack(signature, owner, message) != expected);
-                require(checkSig(signature, owner));
-                require(checkSigFromStack(signature, owner, message));
+            function compare(signature sig) {
+                require(checkSig(sig, owner) == expected);
+                require(checkSigFromStack(sig, owner, message) != expected);
+                require(checkSig(sig, owner));
+                require(checkSigFromStack(sig, owner, message));
             }
         }",
     );
@@ -233,7 +233,7 @@ fn compared_boolean_calls_reject_invalid_signature_types() {
     .to_string();
 
     assert!(
-        error.contains("expected 'signature'") && error.contains("expected 'pubkey'"),
+        error.contains("expected 'signature'"),
         "comparison-context checkSig must retain argument validation: {error}"
     );
 }
@@ -278,7 +278,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
     }
 }
 "#;
-    let output = arkade_compiler::compile_sources(
+    let output = arkade_compiler::compile_sources_with_options(
         "main.ark",
         &[
             ("main.ark".into(), source.into()),
@@ -289,6 +289,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
         ]
         .into_iter()
         .collect(),
+        arkade_compiler::CompileOptions { optimize: false },
     )
     .unwrap();
     let asm = crate::common::arkade_asm_tokens(&output, "compare");
@@ -297,7 +298,7 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
         asm.windows(4).any(|window| {
             window[0] == OP_1
                 && window[1] == OP_ROLL
-                && window[2].contains("VTXO:SingleSig(")
+                && window[2].contains("CONTRACT:SingleSig(")
                 && window[3] == OP_EQUAL
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"
@@ -309,42 +310,36 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
 }
 
 #[test]
-fn non_boolean_requirements_warn() {
-    let non_boolean = compile(
+fn non_boolean_requirements_are_rejected() {
+    let error = compile(
         "contract Invalid() {
             function compare() {
                 require(1);
             }
         }",
     )
-    .expect("type errors remain non-fatal");
+    .unwrap_err()
+    .to_string();
     assert!(
-        non_boolean
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("warning[type]") && warning.contains("bool")),
-        "require must warn for a known non-boolean expression: {:?}",
-        non_boolean.warnings
+        error.contains("type error") && error.contains("expected bool"),
+        "{error}"
     );
 }
 
 #[test]
-fn mismatched_comparisons_warn() {
-    let mismatch = compile(
+fn mismatched_comparisons_are_rejected() {
+    let error = compile(
         "contract Invalid(int count, bytes payload) {
             function compare() {
                 require(count == payload);
             }
         }",
     )
-    .expect("type errors remain non-fatal");
+    .unwrap_err()
+    .to_string();
     assert!(
-        mismatch.warnings.iter().any(|warning| {
-            warning.contains("warning[type]")
-                && (warning.contains("comparison") || warning.contains("compatible"))
-        }),
-        "comparison must warn for known incompatible operand types: {:?}",
-        mismatch.warnings
+        error.contains("type error") && error.contains("comparison '=='"),
+        "{error}"
     );
 }
 
@@ -526,10 +521,10 @@ fn logical_expressions_short_circuit_and_match_truth_tables() {
         }
     }
     for expression in [
-        "!(false && 1 / 0 > 0)",
-        "true || 1 / 0 > 0",
-        "!(false && (true || 1 / 0 > 0))",
-        "true || (false && 1 / 0 > 0)",
+        "!(false && 1 / (1 - 1) > 0)",
+        "true || 1 / (1 - 1) > 0",
+        "!(false && (true || 1 / (1 - 1) > 0))",
+        "true || (false && 1 / (1 - 1) > 0)",
         "(1 < 2 && 3 > 2) || false",
         "true || guarded()",
         "!(false && guarded())",
@@ -627,13 +622,13 @@ fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
         "skip || guarded()",
         "skip || (skip && guarded())",
     ] {
-        let error = compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; }} private function guarded() bool {{ require(true); return true; }} }}")).expect_err("skippable requirement").to_string();
+        let error = compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).expect_err("skippable requirement").to_string();
         assert!(
             error.contains("spend path with no require"),
             "{expression}: {error}"
         );
     }
     for expression in ["guarded() && skip", "guarded() || skip"] {
-        compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
     }
 }

@@ -1,6 +1,8 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Expression, KeyExpr, Requirement, Statement, TapItem,
+    AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr, LocatedStatement,
+    Requirement, Statement, TapItem,
 };
+use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
 
 /// Validate constant declarations and fold every reference to them into a literal.
@@ -62,7 +64,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         } = constant;
         if matches!(
             name.as_str(),
-            "true" | "false" | "server" | "emulator" | "SERVER_KEY"
+            "true" | "false" | "server" | "emulator" | "serverExitDelay" | "SERVER_KEY"
         ) {
             return Err(format!("constant name '{name}' is reserved"));
         }
@@ -104,7 +106,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
 pub(crate) fn resolve(contract: &mut Contract) -> Result<(), String> {
     let values = collect(contract)?;
     for constant in &mut contract.constants {
-        constant.value = Expression::Literal(values[&constant.name].clone());
+        constant.value.kind = ExprKind::Literal(values[&constant.name].clone());
     }
     Ok(())
 }
@@ -158,6 +160,8 @@ fn kind(value: &str) -> &'static str {
     }
 }
 
+// ponytail: constants are i64 while the VM allows 520-byte numbers, so results past i64
+// (e.g. 1 << 63) are rejected; widen to a bignum here if contracts need them.
 fn integer(text: &str) -> Result<i64, String> {
     text.parse()
         .map_err(|_| format!("expected a signed 64-bit integer, got '{text}'"))
@@ -168,23 +172,30 @@ fn validate_expression(
     expression: &Expression,
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<&'static str, String> {
-    match expression {
-        Expression::Literal(text) => {
+    match &expression.kind {
+        ExprKind::Literal(text) => {
             if kind(text) == "int" {
                 integer(text)?;
             }
             Ok(kind(text))
         }
-        Expression::Variable(name) | Expression::Property(name) => Ok(kind(&resolve(name)?)),
-        Expression::Negate { value } | Expression::Not { value } => {
-            let expected = if matches!(expression, Expression::Not { .. }) {
-                "bool"
-            } else {
-                if let Expression::Literal(text) = value.as_ref() {
-                    integer(&format!("-{text}"))?;
-                    return Ok("int");
+        ExprKind::Variable(name) | ExprKind::Property(name) => Ok(kind(&resolve(name)?)),
+        ExprKind::Unary { op, value } => {
+            let expected = match op {
+                UnaryOperator::Invert => {
+                    return Err(format!(
+                        "operator '{}' is not supported in constant expressions",
+                        op.symbol()
+                    ))
                 }
-                "int"
+                UnaryOperator::Not => "bool",
+                UnaryOperator::Neg => {
+                    if let ExprKind::Literal(text) = &value.as_ref().kind {
+                        integer(&format!("-{text}"))?;
+                        return Ok("int");
+                    }
+                    "int"
+                }
             };
             if validate_expression(value, resolve)? != expected {
                 return Err(if expected == "bool" {
@@ -195,44 +206,58 @@ fn validate_expression(
             }
             Ok(expected)
         }
-        Expression::BinaryOp { left, op, right } => {
+        ExprKind::BinaryOp { left, op, right } => {
             let left = validate_expression(left, resolve)?;
             let right = validate_expression(right, resolve)?;
-            let valid = match op.as_str() {
-                "&&" | "||" => left == "bool" && right == "bool",
-                "==" | "!=" => left == right,
-                _ => left == "int" && right == "int",
+            let valid = match op.class() {
+                OperatorClass::Logical => left == "bool" && right == "bool",
+                OperatorClass::Equality => left == right,
+                OperatorClass::Bytewise => {
+                    return Err(format!(
+                        "operator '{op}' is not supported in constant expressions"
+                    ))
+                }
+                OperatorClass::Arithmetic | OperatorClass::Shift | OperatorClass::Ordering => {
+                    left == "int" && right == "int"
+                }
             };
             if !valid {
-                return Err(match op.as_str() {
-                    "&&" | "||" => format!("operator '{op}' requires bool constants"),
-                    "==" | "!=" => format!("operator '{op}' requires constants of the same type"),
+                return Err(match op.class() {
+                    OperatorClass::Logical => format!("operator '{op}' requires bool constants"),
+                    OperatorClass::Equality => {
+                        format!("operator '{op}' requires constants of the same type")
+                    }
                     _ => "expected a signed 64-bit integer".to_string(),
                 });
             }
-            Ok(if matches!(op.as_str(), "+" | "-" | "*" | "/") {
-                "int"
-            } else {
-                "bool"
-            })
+            Ok(
+                if matches!(op.class(), OperatorClass::Arithmetic | OperatorClass::Shift) {
+                    "int"
+                } else {
+                    "bool"
+                },
+            )
         }
         _ => Err("initializer must be a constant expression".to_string()),
     }
 }
 
-fn evaluate(
+pub(crate) fn evaluate(
     expression: &Expression,
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<String, String> {
     let overflow = || "integer overflow in constant expression".to_string();
-    match expression {
-        Expression::Literal(text) => match kind(text) {
+    match &expression.kind {
+        ExprKind::Literal(text) => match kind(text) {
             "int" => Ok(integer(text)?.to_string()),
             _ => Ok(text.clone()),
         },
-        Expression::Variable(name) | Expression::Property(name) => resolve(name),
-        Expression::Negate { value } => {
-            if let Expression::Literal(text) = value.as_ref() {
+        ExprKind::Variable(name) | ExprKind::Property(name) => resolve(name),
+        ExprKind::Unary {
+            op: UnaryOperator::Neg,
+            value,
+        } => {
+            if let ExprKind::Literal(text) = &value.as_ref().kind {
                 return Ok(integer(&format!("-{text}"))?.to_string());
             }
             let value = evaluate(value, resolve)?;
@@ -241,7 +266,10 @@ fn evaluate(
                 .ok_or_else(overflow)?
                 .to_string())
         }
-        Expression::Not { value } => {
+        ExprKind::Unary {
+            op: UnaryOperator::Not,
+            value,
+        } => {
             let value = evaluate(value, resolve)?;
             match value.as_str() {
                 "true" => Ok("false".to_string()),
@@ -249,37 +277,61 @@ fn evaluate(
                 _ => Err("operator '!' requires a bool constant".to_string()),
             }
         }
-        Expression::BinaryOp { left, op, right } => {
+        ExprKind::BinaryOp { left, op, right } => {
             let left = evaluate(left, resolve)?;
-            if matches!(op.as_str(), "&&" | "||") {
-                if (op == "&&" && left == "false") || (op == "||" && left == "true") {
+            if op.class() == OperatorClass::Logical {
+                if (*op == BinaryOperator::And && left == "false")
+                    || (*op == BinaryOperator::Or && left == "true")
+                {
                     return Ok(left);
                 }
                 return evaluate(right, resolve);
             }
             let right = evaluate(right, resolve)?;
-            if matches!(op.as_str(), "==" | "!=") {
+            if op.class() == OperatorClass::Equality {
                 if kind(&left) != kind(&right) {
                     return Err(format!(
                         "operator '{op}' requires constants of the same type"
                     ));
                 }
                 // Hex literals carry whole byte pairs in either case.
-                return Ok((left.eq_ignore_ascii_case(&right) == (op == "==")).to_string());
+                return Ok(
+                    (left.eq_ignore_ascii_case(&right) == (*op == BinaryOperator::Eq)).to_string(),
+                );
             }
             let (left, right) = (integer(&left)?, integer(&right)?);
-            let value = match op.as_str() {
-                "+" => left.checked_add(right),
-                "-" => left.checked_sub(right),
-                "*" => left.checked_mul(right),
-                "/" if right == 0 => {
+            let value = match op {
+                BinaryOperator::Add => left.checked_add(right),
+                BinaryOperator::Sub => left.checked_sub(right),
+                BinaryOperator::Mul => left.checked_mul(right),
+                BinaryOperator::Div if right == 0 => {
                     return Err("division by zero in constant expression".to_string())
                 }
-                "/" => left.checked_div(right),
-                "<" => return Ok((left < right).to_string()),
-                "<=" => return Ok((left <= right).to_string()),
-                ">" => return Ok((left > right).to_string()),
-                ">=" => return Ok((left >= right).to_string()),
+                BinaryOperator::Div => left.checked_div(right),
+                BinaryOperator::Rem if right == 0 => {
+                    return Err("modulo by zero in constant expression".to_string())
+                }
+                BinaryOperator::Rem => Some(left.wrapping_rem(right)),
+                BinaryOperator::Shl | BinaryOperator::Shr if right < 0 => {
+                    return Err("negative shift count in constant expression".to_string())
+                }
+                // OP_LSHIFT and OP_RSHIFT read the count as a 4-byte script number.
+                BinaryOperator::Shl | BinaryOperator::Shr if right > i64::from(i32::MAX) => {
+                    return Err("shift count exceeds 4-byte script number".to_string())
+                }
+                // OP_LSHIFT leaves zero as zero for any count.
+                BinaryOperator::Shl if left == 0 => Some(0),
+                // The shift overflowed if shifting back does not restore the operand.
+                BinaryOperator::Shl => u32::try_from(right).ok().and_then(|count| {
+                    left.checked_shl(count)
+                        .filter(|value| value >> count == left)
+                }),
+                // Arithmetic shift rounds toward negative infinity, as OP_RSHIFT does.
+                BinaryOperator::Shr => Some(left >> right.min(63)),
+                BinaryOperator::Lt => return Ok((left < right).to_string()),
+                BinaryOperator::Le => return Ok((left <= right).to_string()),
+                BinaryOperator::Gt => return Ok((left > right).to_string()),
+                BinaryOperator::Ge => return Ok((left >= right).to_string()),
                 _ => return Err(format!("unsupported constant operator '{op}'")),
             };
             Ok(value.ok_or_else(overflow)?.to_string())
@@ -307,11 +359,11 @@ fn fold_type(declared_type: &mut String, values: &HashMap<String, String>) -> Re
 }
 
 fn fold_statements(
-    statements: &mut [Statement],
+    statements: &mut [LocatedStatement],
     values: &HashMap<String, String>,
 ) -> Result<(), String> {
     for statement in statements {
-        match statement {
+        match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 fold_expression(expression, values)
             }
@@ -326,7 +378,9 @@ fn fold_statements(
                 fold_expression(value, values);
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     fold_expression(index, values);
                 }
                 fold_expression(value, values);
@@ -350,7 +404,7 @@ fn fold_statements(
             Statement::ForCount { count, body } => {
                 fold_expression(count, values);
                 if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
-                    *count = Expression::Literal(value);
+                    count.kind = ExprKind::Literal(value);
                 }
                 fold_statements(body, values)?;
             }
@@ -368,72 +422,52 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
             fold_expression(right, values);
         }
         Requirement::CheckSig { signature, pubkey } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
+            fold_expression(signature, values);
+            fold_expression(pubkey, values);
         }
         Requirement::CheckSigFromStack {
             signature,
             pubkey,
             message,
         } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
-            fold_named_index(message, values);
+            for operand in [signature, pubkey, message] {
+                fold_expression(operand, values);
+            }
         }
         Requirement::CheckMultisig {
             pubkeys,
             signatures,
             ..
         } => {
-            for name in pubkeys.iter_mut().chain(signatures) {
-                fold_named_index(name, values);
+            for operand in pubkeys.iter_mut().chain(signatures) {
+                fold_expression(operand, values);
             }
         }
         Requirement::HashEqual { preimage, hash, .. } => {
-            fold_named_index(preimage, values);
-            fold_named_index(hash, values);
+            fold_expression(preimage, values);
+            fold_expression(hash, values);
         }
     }
 }
 
 fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
-    match expression {
-        Expression::Variable(name) | Expression::Property(name) if values.contains_key(name) => {
-            *expression = Expression::Literal(values[name].clone());
+    if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
+        if let Some(value) = values.get(name) {
+            expression.kind = ExprKind::Literal(value.clone());
             return;
         }
-        Expression::Property(name) => fold_named_index(name, values),
-        Expression::Tunnel { policy, .. } => {
-            for value in policy.iter_mut() {
-                if let Ok(literal) = evaluate(value, &mut |name| {
-                    values
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| format!("unknown constant '{name}'"))
-                }) {
-                    *value = Expression::Literal(literal);
-                }
+    }
+    if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {
+        for value in policy.iter_mut() {
+            if let Ok(literal) = evaluate(value, &mut |name| {
+                values
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown constant '{name}'"))
+            }) {
+                value.kind = ExprKind::Literal(literal);
             }
         }
-        Expression::CheckSigExpr { signature, pubkey } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
-        }
-        Expression::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | Expression::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => {
-            fold_named_index(signature, values);
-            fold_named_index(pubkey, values);
-            fold_named_index(message, values);
-        }
-        _ => {}
     }
     for child in crate::models::child_exprs_mut(expression) {
         fold_expression(child, values);
@@ -445,9 +479,16 @@ fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
         *name = value.clone();
         return;
     }
-    if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
-        if let Some(value) = values.get(index) {
-            *name = format!("{array}[{value}]");
-        }
+    let mut cursor = 0;
+    while let Some(open) = name[cursor..].find('[').map(|offset| cursor + offset + 1) {
+        let Some(close) = name[open..].find(']').map(|offset| open + offset) else {
+            break;
+        };
+        cursor = if let Some(value) = values.get(&name[open..close]) {
+            name.replace_range(open..close, value);
+            open + value.len() + 1
+        } else {
+            close + 1
+        };
     }
 }

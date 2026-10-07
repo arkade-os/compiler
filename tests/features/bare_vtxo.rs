@@ -11,8 +11,7 @@ use crate::common::{group, leaf_asm, witness_names};
 fn test_bare_vtxo_contract() {
     let vtxo_code = r#"
 contract SingleSig(
-  pubkey user,
-  int exitDelay
+  pubkey user
 ) {
   // Collaborative path: server + user (N-of-N forfeit closure).
   function cooperative(signature serverSig, signature userSig) tapscript {
@@ -21,7 +20,7 @@ contract SingleSig(
 
   // Unilateral exit: user alone after a CSV delay (exit closure).
   function unilateral(signature userSig) tapscript {
-    require(older(exitDelay));
+    require(older(serverExitDelay));
     require(checkSig(userSig, user));
   }
 }"#;
@@ -32,12 +31,10 @@ contract SingleSig(
 
     assert_eq!(output.name, "SingleSig");
 
-    // Parameters: user pubkey + exitDelay int (no serverPk — server is a reserved role).
-    assert_eq!(output.parameters.len(), 2);
+    // Parameters: user pubkey only (server and serverExitDelay are reserved).
+    assert_eq!(output.parameters.len(), 1);
     assert_eq!(output.parameters[0].name, "user");
     assert_eq!(output.parameters[0].param_type, "pubkey");
-    assert_eq!(output.parameters[1].name, "exitDelay");
-    assert_eq!(output.parameters[1].param_type, "int");
 
     assert_eq!(output.functions.len(), 2);
 
@@ -76,8 +73,8 @@ contract SingleSig(
 
     let uni_leaf = leaf_asm(&output, "unilateral", "unilateral");
     assert!(
-        uni_leaf.contains("<seconds:exitDelay>"),
-        "unilateral: missing <seconds:exitDelay> CSV operand: {uni_leaf}"
+        uni_leaf.contains("<SERVER_EXIT_DELAY>"),
+        "unilateral: missing <SERVER_EXIT_DELAY> CSV operand: {uni_leaf}"
     );
     assert!(
         uni_leaf.contains(OP_CHECKSEQUENCEVERIFY),

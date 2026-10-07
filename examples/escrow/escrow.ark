@@ -19,9 +19,7 @@ contract Escrow(
   int     amount,
   // Unix seconds. `cancel` requires the emulator clock to reach this. tx.time cannot
   // gate it: arkd rebuilds offchain spends of this leaf with nLockTime 0.
-  int     timeoutAt,
-  // Seconds, a positive multiple of 512. `unilateral` requires older(exit).
-  int     exit
+  int     timeoutAt
 ) {
   const int DUST = 330;
 
@@ -52,7 +50,7 @@ contract Escrow(
   }
 
   function unilateral(signature partyASig, signature partyBSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig], 2));
   }
 }

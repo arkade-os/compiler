@@ -141,7 +141,16 @@ fn constant_indices_fold_in_named_operands() {
         "require(size(messages[FIRST]) == 32);",
         "if (checkSig(sigs[FIRST], keys[FIRST])) { require(true); } else { require(false); }",
     ] {
-        let source = format!("contract Vault(pubkey[2] keys, bytes32[2] messages) {{ const int FIRST = 0; function spend(signature[2] sigs, bytes32 message) {{ {body} }} }}");
+        let params = [
+            ("sigs", "signature[2] sigs"),
+            ("(message)", "bytes32 message"),
+        ]
+        .iter()
+        .filter(|(name, _)| body.contains(name))
+        .map(|(_, param)| *param)
+        .collect::<Vec<_>>()
+        .join(", ");
+        let source = format!("contract Vault(pubkey[2] keys, bytes32[2] messages) {{ const int FIRST = 0; function spend({params}) {{ {body} }} }}");
         let output = compile(&source).unwrap_or_else(|e| panic!("{body}: {e}"));
         let literal = compile(&source.replace("[FIRST]", "[0]")).unwrap();
         assert_eq!(
@@ -236,7 +245,14 @@ fn multisig_threshold_rejects_non_constants_and_invalid_values() {
 
 #[test]
 fn reserved_names_cannot_be_constants() {
-    for name in ["true", "false", "server", "emulator", "SERVER_KEY"] {
+    for name in [
+        "true",
+        "false",
+        "server",
+        "emulator",
+        "serverExitDelay",
+        "SERVER_KEY",
+    ] {
         let source = format!(
             "contract Vault() {{ const int {name} = 10; function spend() {{ require(true); }} }}"
         );
@@ -351,6 +367,7 @@ fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic
         ("int", "tx.time", "unknown constant 'tx.time'"),
         ("int", "helper()", "constant expression"),
         ("int", "1 / 0", "division by zero"),
+        ("int", "1 % 0", "modulo by zero"),
         ("int", "9223372036854775807 + 1", "overflow"),
         ("int", "-9223372036854775808 - 1", "overflow"),
         ("int", "9223372036854775807 * 2", "overflow"),
@@ -672,4 +689,52 @@ fn logical_constants_short_circuit_and_validate_skipped_operands() {
     ] {
         compile(&format!("contract C() {{ const bool VALUE = {expression}; static function helper() bool {{ return true; }} function spend() {{ require(true); }} }}")).expect_err("invalid skipped constant operand");
     }
+}
+
+#[test]
+fn shifts_fold_in_constants_like_the_vm() {
+    let source = "contract C() {
+        const int X = 1 << 8;
+        const int Y = -9 >> 1;
+        function spend(int n) { require(n == X); require(n != Y); }
+    }";
+    let output = arkade_compiler::compile(source).expect("constant shifts fold");
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert!(asm.contains("256") && asm.contains("-5"), "{asm}");
+    let fold = |expr: &str| {
+        arkade_compiler::compile(&format!(
+            "contract C() {{ const int Z = {expr}; function spend(int n) {{ require(n == Z); }} }}"
+        ))
+        .map(|output| crate::common::arkade_asm(&output, "spend"))
+        .map_err(|error| error.to_string())
+    };
+    assert_eq!(fold("0 << 63"), fold("0"));
+    assert_eq!(fold("0 << 2147483647"), fold("0"));
+    assert_eq!(fold("-8 >> 2147483647"), fold("-1"));
+    assert_eq!(fold("-1 << 63"), fold("-9223372036854775808"));
+    for (expr, message) in [
+        ("1 << -1", "negative shift count"),
+        ("1 << 63", "integer overflow"),
+        ("3 << 62", "integer overflow"),
+        ("0 << 2147483648", "shift count exceeds"),
+        ("-8 >> 2147483648", "shift count exceeds"),
+    ] {
+        let error = fold(expr).expect_err(expr);
+        assert!(error.contains(message), "{expr}: {error}");
+    }
+}
+
+#[test]
+fn remainder_folds_with_the_sign_of_the_dividend() {
+    let fold = |expr: &str| {
+        let output = arkade_compiler::compile(&format!(
+            "contract C() {{ const int Z = {expr}; function spend(int n) {{ require(n == Z); }} }}"
+        ))
+        .expect(expr);
+        crate::common::arkade_asm(&output, "spend")
+    };
+    assert_eq!(fold("7 % 3"), fold("1"));
+    assert_eq!(fold("-7 % 2"), fold("-1"));
+    assert_eq!(fold("7 % -2"), fold("1"));
+    assert_eq!(fold("-9223372036854775808 % -1"), fold("0"));
 }

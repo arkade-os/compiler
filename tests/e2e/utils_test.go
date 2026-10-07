@@ -91,7 +91,11 @@ func compileArtifact(t *testing.T, source string) artifact {
 		}
 	}
 	output := filepath.Join(t.TempDir(), "artifact.json")
-	cmd := exec.Command(compiler, source, "-o", output)
+	args := []string{source, "-o", output}
+	if os.Getenv("ARKADEC_NO_OPTIMIZE") != "" {
+		args = append(args, "--no-optimize")
+	}
+	cmd := exec.Command(compiler, args...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile %s: %v\n%s", source, err, combined)
 	}
@@ -228,6 +232,8 @@ func flattenInput(name, typeName string, structs []structDefinition) []string {
 		return []string{name + ".txid", name + ".vout"}
 	case "ECPoint":
 		return []string{name + ".x", name + ".y"}
+	case "G2Point":
+		return []string{name + ".xC1", name + ".xC0", name + ".yC1", name + ".yC0"}
 	}
 	for _, definition := range structs {
 		if definition.Name != typeName {
@@ -240,13 +246,13 @@ func flattenInput(name, typeName string, structs []structDefinition) []string {
 		return names
 	}
 
-	_, length := arrayTypeParts(typeName)
+	element, length := arrayTypeParts(typeName)
 	if length == 0 {
 		return []string{name}
 	}
 	names := make([]string, 0, length)
 	for index := range length {
-		names = append(names, fmt.Sprintf("%s.%d", name, index))
+		names = append(names, flattenInput(fmt.Sprintf("%s.%d", name, index), element, structs)...)
 	}
 	return names
 }
@@ -296,18 +302,6 @@ func assemble(t *testing.T, tokens []string, values map[string][]byte) []byte {
 		var data []byte
 		if strings.HasPrefix(token, "<") && strings.HasSuffix(token, ">") {
 			name := token[1 : len(token)-1]
-			if secondsName, ok := strings.CutPrefix(name, "seconds:"); ok {
-				seconds, ok := values[secondsName]
-				if !ok {
-					t.Fatalf("ASM token %d: unresolved placeholder %s", index, token)
-				}
-				sequence, err := csvSecondsSequence(seconds)
-				if err != nil {
-					t.Fatalf("ASM token %d: %s: %v", index, token, err)
-				}
-				builder.AddInt64(sequence)
-				continue
-			}
 			var ok bool
 			data, ok = values[name]
 			if !ok {
@@ -494,7 +488,15 @@ func requireVMResult(
 	if err == nil {
 		t.Fatal("VM accepted invalid transaction")
 	}
-	if !strings.Contains(err.Error(), wantErr) {
+	if strings.Contains(err.Error(), wantErr) {
+		return
+	}
+	// Unoptimized covenants verify with an unfused OP_VERIFY where the optimizer
+	// emits OP_EQUALVERIFY or leaves the result for the final stack check.
+	unfused := os.Getenv("ARKADEC_NO_OPTIMIZE") != "" &&
+		(strings.HasSuffix(wantErr, "VERIFY failed") || wantErr == "false stack entry") &&
+		strings.Contains(err.Error(), "failed to execute arkade script: OP_VERIFY failed")
+	if !unfused {
 		t.Fatalf("VM error %q does not contain %q", err, wantErr)
 	}
 }
@@ -688,20 +690,6 @@ func signBIP340(t *testing.T, privateKey *btcec.PrivateKey, digest []byte) []byt
 		t.Fatalf("sign BIP340 digest: %v", err)
 	}
 	return signature.Serialize()
-}
-
-// csvSecondsSequence encodes a <seconds:name> value. The artifact stores the
-// delay in seconds; the script pushes the BIP68 sequence.
-func csvSecondsSequence(encoded []byte) (int64, error) {
-	seconds, err := arkade.BigNumFromBytes(encoded)
-	if err != nil {
-		return 0, err
-	}
-	n := seconds.BigInt().Int64()
-	if n <= 0 || n%512 != 0 || n/512 > 0xffff {
-		return 0, fmt.Errorf("%d is not a positive multiple of 512 seconds within BIP68", n)
-	}
-	return (n / 512) | (1 << 22), nil
 }
 
 func scriptInt(t *testing.T, value int64) []byte {

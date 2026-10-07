@@ -1,3 +1,5 @@
+struct PairingProof { ECPoint[2] g1; G2Point[2] g2; }
+
 contract Continuation() {
     private function identity(AssetId id) AssetId { return id; }
 
@@ -40,5 +42,13 @@ contract Continuation() {
         require(this.tunnel(outputIndex, {
             scriptPubKey: true, value: true, assets: true
         }, [tx.inputs[0].assets[0].assetId]));
+    }
+
+    function pairing(ECPoint[2] g1, G2Point[2] g2) {
+        require(ecPairing(g1, g2, 2));
+    }
+
+    function pairingProof(PairingProof[2] proofs, int index) {
+        require(ecPairing(proofs[index].g1, proofs[index].g2, 2));
     }
 }

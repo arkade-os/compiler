@@ -8,7 +8,6 @@ struct Signer {
 struct Policy {
   Signer primary;
   int[2] limits;
-  int exitDelay;
 }
 
 contract StructVault(Policy policy) {
@@ -26,14 +25,13 @@ contract StructVault(Policy policy) {
         key: next.primary.key,
         weight: total
       },
-      limits: [next.limits[0], next.limits[1]],
-      exitDelay: policy.exitDelay
+      limits: [next.limits[0], next.limits[1]]
     };
     require(local.primary.weight == total);
   }
 
   function unilateral(signature sig) tapscript {
-    require(older(policy.exitDelay));
+    require(older(serverExitDelay));
     require(checkSig(sig, policy.primary.key));
   }
 }

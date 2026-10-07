@@ -12,15 +12,14 @@ pragma arkade ^0.1.0;
 contract NFTMint(
     bytes32 collectionCtrlIdTxid,
     int collectionCtrlIdGidx,
-    pubkey issuerPk,
-    int exit
+    pubkey issuerPk
 ) {
     // Mint a new NFT: must be fresh with delta=1
     function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes recipientScriptPubKey, signature issuerSig) {
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must be a brand new asset (genesis in this tx)
-        require(nftGroup.isFresh == 1, "must be fresh");
+        require(nftGroup.isFresh == true, "must be fresh");
 
         // Must mint exactly 1 (NFT)
         require(nftGroup.delta == 1, "must mint exactly 1");
@@ -44,7 +43,7 @@ contract NFTMint(
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must NOT be fresh (existing asset)
-        require(nftGroup.isFresh == 0, "cannot be fresh");
+        require(nftGroup.isFresh == false, "cannot be fresh");
 
         // Must be a transfer (delta == 0)
         require(nftGroup.delta == 0, "must be transfer");
@@ -64,7 +63,7 @@ contract NFTMint(
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must be existing asset
-        require(nftGroup.isFresh == 0, "cannot burn fresh asset");
+        require(nftGroup.isFresh == false, "cannot burn fresh asset");
 
         // Must burn exactly 1 (negative delta)
         require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, "must burn exactly 1");

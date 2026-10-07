@@ -102,7 +102,7 @@ func TestStaticArrays(t *testing.T) {
 			index:   1,
 			samples: [5]int64{1, 2, 3, 4, 5},
 			total:   1,
-			wantErr: "OP_VERIFY failed",
+			wantErr: "OP_EQUALVERIFY failed",
 		},
 	}
 

@@ -138,9 +138,9 @@ contract Endpoint(
     require(size(tx.packet(18)) == 228, "dvn attestation packet size");
 
     // Packet versions.
-    require(substr(tx.packet(16), 0, 1) == 1, "endpoint state version");
-    require(substr(tx.packet(17), 0, 1) == 1, "lz receive version");
-    require(substr(tx.packet(18), 0, 1) == 1, "dvn attestation version");
+    require(substr(tx.packet(16), 0, 1) == 0x01, "endpoint state version");
+    require(substr(tx.packet(17), 0, 1) == 0x01, "lz receive version");
+    require(substr(tx.packet(18), 0, 1) == 0x01, "dvn attestation version");
 
     // Endpoint state route fields are fixed by this contract's configuration.
     require(substr(tx.packet(16), 1, 32)  == endpointID, "wrong endpointID");
@@ -227,9 +227,9 @@ contract Endpoint(
     require(size(tx.packet(19)) == 181, "lz send packet size");
     require(size(tx.inputs[1].packet(20)) == 175, "send invocation packet size");
 
-    require(substr(tx.packet(16), 0, 1) == 1, "endpoint state version");
-    require(substr(tx.packet(19), 0, 1) == 1, "lz send version");
-    require(substr(tx.inputs[1].packet(20), 0, 1) == 1, "send invocation version");
+    require(substr(tx.packet(16), 0, 1) == 0x01, "endpoint state version");
+    require(substr(tx.packet(19), 0, 1) == 0x01, "lz send version");
+    require(substr(tx.inputs[1].packet(20), 0, 1) == 0x01, "send invocation version");
 
     // Route preservation.
     require(substr(tx.packet(16), 1, 32)  == endpointID, "wrong endpointID");

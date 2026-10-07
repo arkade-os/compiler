@@ -44,10 +44,11 @@ func TestPrivateFunctions(t *testing.T) {
 			}
 			expected := 100 + (selected+5)*2 + selected + nested
 			wantErr := ""
-			if !tc.pass || tc.wrongResult {
+			if !tc.pass {
 				wantErr = "OP_VERIFY failed"
 			}
 			if tc.wrongResult {
+				wantErr = "OP_EQUALVERIFY failed"
 				expected++
 			}
 			pass := int64(0)
@@ -57,8 +58,8 @@ func TestPrivateFunctions(t *testing.T) {
 			inputs := map[string][]byte{
 				"expected": scriptInt(t, expected),
 				"pass":     scriptInt(t, pass),
-				"x":        scriptPositiveBigInt(t, point[1:33]),
-				"y":        scriptPositiveBigInt(t, point[33:]),
+				"p.x":      scriptPositiveBigInt(t, point[1:33]),
+				"p.y":      scriptPositiveBigInt(t, point[33:]),
 			}
 			for i, value := range tc.values {
 				inputs[fmt.Sprintf("values.%d", i)] = scriptInt(t, value)

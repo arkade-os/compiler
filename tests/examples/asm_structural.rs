@@ -84,14 +84,14 @@ fn local_check_placeholder_consistency(
         if !(tok.starts_with('<') && tok.ends_with('>') && tok.len() > 2) {
             continue;
         }
-        let raw = &tok[1..tok.len() - 1];
-        let inner = raw.strip_prefix("seconds:").unwrap_or(raw);
+        let inner = &tok[1..tok.len() - 1];
         // Built-in / runtime-injected names that are always resolved.
         if inner == "SERVER_KEY"
+            || inner == "SERVER_EXIT_DELAY"
             || inner == "serverSig"
             || inner == "emulatorSig"
             || inner.starts_with("EMULATOR_KEY:")
-            || inner.starts_with("VTXO:")
+            || inner.starts_with("CONTRACT:")
             || inner.starts_with("checkMultisig(")
         {
             continue;
@@ -527,14 +527,17 @@ fn server_key_placeholder_is_always_resolved() {
 #[test]
 fn vtxo_placeholder_is_always_resolved() {
     let asm = vec![
-        "<VTXO:SomeContract(x,y)>".to_string(),
+        "<CONTRACT:SomeContract(x,y)>".to_string(),
         "OP_EQUAL".to_string(),
     ];
     let warnings = local_check_placeholder_consistency(&asm, &[], &[]);
-    let orphan: Vec<_> = warnings.iter().filter(|w| w.contains("VTXO:")).collect();
+    let orphan: Vec<_> = warnings
+        .iter()
+        .filter(|w| w.contains("CONTRACT:"))
+        .collect();
     assert!(
         orphan.is_empty(),
-        "<VTXO:...> placeholders must never be flagged as unresolvable"
+        "<CONTRACT:...> placeholders must never be flagged as unresolvable"
     );
 }
 

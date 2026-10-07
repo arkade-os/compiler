@@ -43,7 +43,7 @@ contract Bytes(bytes zero) {
 		wantErr string
 	}{
 		{"exact bytes", append([]byte("ž🙂"), 0, 0, 1), ""},
-		{"missing zero byte", append([]byte("ž🙂"), 0, 1), "OP_VERIFY failed"},
+		{"missing zero byte", append([]byte("ž🙂"), 0, 1), "false stack entry"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, group.pkScript, wire.TxWitness{tc.value})

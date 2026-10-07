@@ -1,55 +1,75 @@
 use super::*;
 use crate::models::{child_exprs_mut, flatten_parameter, is_builtin_type, TypeLeaf};
 
-pub(super) fn extract_calls(expression: &mut Expression, calls: &mut Vec<Expression>) {
-    if matches!(expression, Expression::Call { .. }) {
-        let replacement = Expression::Variable(format!("$call:{}", calls.len()));
-        calls.push(std::mem::replace(expression, replacement));
+pub(super) fn extract_values(
+    expression: &mut Expression,
+    values: &mut Vec<Expression>,
+    scope: &typechecker::Scope,
+) {
+    if matches!(
+        &expression.kind,
+        ExprKind::Call { .. } | ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
+    ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+        || (matches!(&expression.kind, ExprKind::ArrayIndex { .. })
+            && matches!(
+                typechecker::infer_type(expression, scope),
+                typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
+            ))
+    {
+        let replacement =
+            expression.with_kind(ExprKind::Variable(format!("$call:{}", values.len())));
+        values.push(std::mem::replace(expression, replacement));
     } else {
         for child in child_exprs_mut(expression) {
-            extract_calls(child, calls);
+            extract_values(child, values, scope);
         }
     }
 }
 
-pub(super) fn contains_return(statements: &[Statement]) -> bool {
-    statements.iter().any(|statement| match statement {
-        Statement::Return(_) => true,
-        Statement::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            contains_return(then_body)
-                || else_body.as_ref().is_some_and(|body| contains_return(body))
-        }
-        Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => contains_return(body),
-        _ => false,
-    })
+pub(super) fn contains_return(statements: &[LocatedStatement]) -> bool {
+    statements
+        .iter()
+        .any(|statement| match &statement.statement {
+            Statement::Return(_) => true,
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                contains_return(then_body)
+                    || else_body.as_ref().is_some_and(|body| contains_return(body))
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                contains_return(body)
+            }
+            _ => false,
+        })
 }
 
 // This scans each helper body per argument; cache assigned names if call counts grow.
-fn assigns_parameter(statements: &[Statement], name: &str) -> bool {
-    statements.iter().any(|statement| match statement {
-        Statement::VarAssign {
-            target: AssignmentTarget::Binding(target),
-            ..
-        } => target == name,
-        Statement::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            assigns_parameter(then_body, name)
-                || else_body
-                    .as_ref()
-                    .is_some_and(|body| assigns_parameter(body, name))
-        }
-        Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-            assigns_parameter(body, name)
-        }
-        _ => false,
-    })
+fn assigns_parameter(statements: &[LocatedStatement], name: &str) -> bool {
+    statements
+        .iter()
+        .any(|statement| match &statement.statement {
+            Statement::VarAssign {
+                target: AssignmentTarget::Binding(target),
+                ..
+            } => target == name,
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                assigns_parameter(then_body, name)
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|body| assigns_parameter(body, name))
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                assigns_parameter(body, name)
+            }
+            _ => false,
+        })
 }
 
 impl Generator {
@@ -86,20 +106,28 @@ impl Generator {
         expression: &Expression,
         ty: &str,
     ) -> Result<(), String> {
-        if matches!(expression, Expression::Call { .. }) {
+        if matches!(&expression.kind, ExprKind::Call { .. }) {
             return self.emit_call(expression);
         }
         if is_builtin_type(ty) {
             return self.emit_expression(expression);
         }
-        if let Expression::Variable(name) | Expression::Property(name) = expression {
+        if matches!(
+            &expression.kind,
+            ExprKind::ArrayIndex { .. }
+                | ExprKind::FieldAccess { .. }
+                | ExprKind::IndexAccess { .. }
+        ) {
+            return self.emit_access_value(expression, ty);
+        }
+        if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
             for leaf in self.value_leaves(name, ty)?.iter().rev() {
                 self.read_binding(&leaf.access_name)?;
             }
             return Ok(());
         }
         if let Some((element, length)) = crate::models::array_type_parts(ty) {
-            let Expression::ArrayLiteral(elements) = expression else {
+            let ExprKind::ArrayLiteral(elements) = &expression.kind else {
                 return Err(format!("expected array value of type '{ty}'"));
             };
             if elements.len() != length {
@@ -121,7 +149,7 @@ impl Generator {
             // Native results are first deepest; wider native structs need a general reversal.
             return self.swap();
         }
-        let Expression::StructLiteral(values) = expression else {
+        let ExprKind::StructLiteral(values) = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'"));
         };
         let fields = if let Some(fields) = crate::models::builtin_struct_fields(ty) {
@@ -151,7 +179,7 @@ impl Generator {
     }
 
     pub(super) fn emit_call(&mut self, expression: &Expression) -> Result<(), String> {
-        let Expression::Call { name, args, .. } = expression else {
+        let ExprKind::Call { name, args, .. } = &expression.kind else {
             return Err("expected private function call".to_string());
         };
         let function = self
@@ -175,13 +203,22 @@ impl Generator {
             if is_builtin_type(&parameter.param_type)
                 && !assigns_parameter(&function.statements, &parameter.name)
             {
-                if let Expression::Variable(source) = argument {
-                    if let Some(source_index) = self.binding_index(source).filter(|&i| i < baseline)
+                let source = match &argument.kind {
+                    ExprKind::Variable(name) => Some(Self::internal_binding_name(name)),
+                    ExprKind::ArrayIndex { array, index } => match &index.as_ref().kind {
+                        ExprKind::Literal(index) => {
+                            Some(Self::internal_binding_name(&format!("{array}[{index}]")))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(source) = source {
+                    if let Some(source_index) =
+                        self.binding_index(&source).filter(|&i| i < baseline)
                     {
                         if self.read_cursor.is_none() {
-                            if let Some(previous) =
-                                self.last_reads.get(&(source.clone(), source_index))
-                            {
+                            if let Some(previous) = self.last_reads.get(&(source, source_index)) {
                                 self.final_reads[*previous] = false;
                             }
                         }
@@ -233,7 +270,7 @@ impl Generator {
         let previous_return = self.return_type.replace(function.return_type.clone());
         // Nested returns need shared slots until their control flow can be lowered directly.
         let direct_return = !function.statements.iter().any(|statement| {
-            !matches!(statement, Statement::Return(_))
+            !matches!(statement.statement, Statement::Return(_))
                 && contains_return(std::slice::from_ref(statement))
         });
         let previous_direct_return = std::mem::replace(&mut self.direct_return, direct_return);
@@ -314,7 +351,10 @@ impl Generator {
         }
     }
 
-    pub(super) fn emit_unless_returned(&mut self, statements: &[Statement]) -> Result<(), String> {
+    pub(super) fn emit_unless_returned(
+        &mut self,
+        statements: &[LocatedStatement],
+    ) -> Result<(), String> {
         self.read_binding("$returned")?;
         self.apply(OP_NOT, 1, 1)?;
         self.apply(OP_IF, 1, 0)?;

@@ -12,6 +12,14 @@
 
 use arkade_compiler::models::{AbiFunctionGroup, AbiLeaf, ContractJson};
 
+pub fn compile_unoptimized(source: &str) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    arkade_compiler::compile_sources_with_options(
+        "main.ark",
+        &[("main.ark".to_string(), source.to_string())].into(),
+        arkade_compiler::CompileOptions { optimize: false },
+    )
+}
+
 /// Locate a spend group by name or panic with a descriptive message.
 pub fn group<'a>(out: &'a ContractJson, name: &str) -> &'a AbiFunctionGroup {
     out.functions

@@ -138,3 +138,17 @@ fn test_tx_weight() {
         asm_str
     );
 }
+
+#[test]
+fn unknown_tx_properties_reach_name_resolution() {
+    for property in ["timestamp", "currentInput"] {
+        let code = format!(
+            "contract C(pubkey pk) {{ function f(signature s) {{ require(tx.{property} == 0); require(checkSig(s, pk)); }} }}"
+        );
+        let err = compile(&code).unwrap_err().to_string();
+        assert!(
+            err.contains(&format!("undefined binding 'tx.{property}'")),
+            "{err}"
+        );
+    }
+}

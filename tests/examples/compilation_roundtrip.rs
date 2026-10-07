@@ -89,6 +89,35 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
     );
 }
 
+#[test]
+fn fingerprint_identifies_artifact_content() {
+    let source = "contract Ident(int x) { function spend() { require(x == 1); } }";
+    let first = arkade_compiler::compile(source).unwrap();
+    let second = arkade_compiler::compile(source).unwrap();
+    assert_eq!(first.compiler.as_ref().unwrap().name, "arkadec");
+    let fingerprint = first.fingerprint.as_deref().unwrap();
+    assert!(fingerprint.starts_with("sha256:") && fingerprint.len() == 71);
+    // This value pins the artifact's exact serialization, including field order.
+    assert_eq!(
+        fingerprint,
+        "sha256:64fc308645fcfd1da22b7f8930a509c0f1d30785e82969459e1d81826c07ce2b"
+    );
+    assert_eq!(first.fingerprint, second.fingerprint);
+    assert_ne!(
+        first.fingerprint,
+        arkade_compiler::compile(&format!("{source}\n"))
+            .unwrap()
+            .fingerprint
+    );
+    let unoptimized = arkade_compiler::compile_sources_with_options(
+        "main.ark",
+        &[("main.ark".to_string(), source.to_string())].into(),
+        arkade_compiler::CompileOptions { optimize: false },
+    )
+    .unwrap();
+    assert_ne!(first.fingerprint, unoptimized.fingerprint);
+}
+
 // ─── One test per example contract ───────────────────────────────────────────
 
 #[test]
@@ -134,7 +163,10 @@ fn roundtrip_nft_mint() {
             .inputs
             .iter()
             .any(|input| input.name == destination && input.param_type == "bytes"));
-        assert!(!arkade.asm.iter().any(|op| op.contains("VTXO:SingleSig")));
+        assert!(!arkade
+            .asm
+            .iter()
+            .any(|op| op.contains("CONTRACT:SingleSig")));
     }
 }
 

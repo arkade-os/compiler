@@ -1,4 +1,5 @@
 use crate::models::*;
+use crate::operators::{BinaryOperator, OperatorClass};
 use crate::typechecker::ArkType;
 
 // ─── Concat rewrite pass ────────────────────────────────────────────────────
@@ -51,9 +52,9 @@ pub(crate) fn rewrite_concat_ops(contract: &mut crate::models::Contract) -> Resu
 }
 
 impl ConcatPass {
-    fn rewrite_statements_concat(&mut self, stmts: &mut [Statement], scope: &mut Scope) {
+    fn rewrite_statements_concat(&mut self, stmts: &mut [LocatedStatement], scope: &mut Scope) {
         for stmt in stmts {
-            self.rewrite_statement_concat(stmt, scope);
+            self.rewrite_statement_concat(&mut stmt.statement, scope);
         }
     }
 
@@ -70,10 +71,7 @@ impl ConcatPass {
                 declared_type,
                 value,
             } => {
-                let (new_expr, t) = self.rewrite_expression_concat(
-                    std::mem::replace(value, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (new_expr, t) = self.rewrite_expression_concat(value.take(), scope);
                 *value = new_expr;
                 crate::typechecker::bind_local_type(
                     scope,
@@ -84,17 +82,13 @@ impl ConcatPass {
                 );
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
-                    let (new_index, _) = self.rewrite_expression_concat(
-                        std::mem::replace(index.as_mut(), Expression::Literal(String::new())),
-                        scope,
-                    );
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
+                    let (new_index, _) = self.rewrite_expression_concat(index.take(), scope);
                     **index = new_index;
                 }
-                let (new_expr, t) = self.rewrite_expression_concat(
-                    std::mem::replace(value, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (new_expr, t) = self.rewrite_expression_concat(value.take(), scope);
                 *value = new_expr;
                 if let AssignmentTarget::Binding(name) = target {
                     scope.insert(name.clone(), t);
@@ -105,10 +99,7 @@ impl ConcatPass {
                 then_body,
                 else_body,
             } => {
-                let (new_cond, _) = self.rewrite_expression_concat(
-                    std::mem::replace(condition, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (new_cond, _) = self.rewrite_expression_concat(condition.take(), scope);
                 *condition = new_cond;
                 let mut then_scope = scope.clone();
                 self.rewrite_statements_concat(then_body, &mut then_scope);
@@ -123,10 +114,7 @@ impl ConcatPass {
                 iterable,
                 body,
             } => {
-                let (new_iter, iter_type) = self.rewrite_expression_concat(
-                    std::mem::replace(iterable, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (new_iter, iter_type) = self.rewrite_expression_concat(iterable.take(), scope);
                 *iterable = new_iter;
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
@@ -136,14 +124,17 @@ impl ConcatPass {
                     ArkType::Array(inner, _) => *inner,
                     _ => ArkType::Unknown,
                 };
-                loop_scope.insert(value_var.clone(), element_type);
+                crate::typechecker::bind_local_type(
+                    &mut loop_scope,
+                    value_var,
+                    None,
+                    element_type,
+                    &self.structs,
+                );
                 self.rewrite_statements_concat(body, &mut loop_scope);
             }
             Statement::ForCount { count, body } => {
-                let (new_count, _) = self.rewrite_expression_concat(
-                    std::mem::replace(count, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (new_count, _) = self.rewrite_expression_concat(count.take(), scope);
                 *count = new_count;
                 self.rewrite_statements_concat(body, &mut scope.clone());
             }
@@ -153,22 +144,13 @@ impl ConcatPass {
     fn rewrite_requirement_concat(&mut self, req: &mut Requirement, scope: &Scope) {
         match req {
             Requirement::Expression(expr) => {
-                let (rewritten, _) = self.rewrite_expression_concat(
-                    std::mem::replace(expr, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (rewritten, _) = self.rewrite_expression_concat(expr.take(), scope);
                 *expr = rewritten;
             }
             Requirement::Comparison { left, right, .. } => {
-                let (nl, _) = self.rewrite_expression_concat(
-                    std::mem::replace(left, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (nl, _) = self.rewrite_expression_concat(left.take(), scope);
                 *left = nl;
-                let (nr, _) = self.rewrite_expression_concat(
-                    std::mem::replace(right, Expression::Literal(String::new())),
-                    scope,
-                );
+                let (nr, _) = self.rewrite_expression_concat(right.take(), scope);
                 *right = nr;
             }
             _ => {}
@@ -180,30 +162,9 @@ impl ConcatPass {
         expr: Expression,
         scope: &Scope,
     ) -> (Expression, ArkType) {
-        match expr {
-            Expression::Call {
-                name,
-                args,
-                return_type,
-            } => {
-                let args = args
-                    .into_iter()
-                    .map(|arg| self.rewrite_expression_concat(arg, scope).0)
-                    .collect();
-                let ty = return_type
-                    .as_deref()
-                    .map(ArkType::parse)
-                    .unwrap_or(ArkType::Unknown);
-                (
-                    Expression::Call {
-                        name,
-                        args,
-                        return_type,
-                    },
-                    ty,
-                )
-            }
-            Expression::ArrayLiteral(elements) => {
+        let span = expr.span;
+        let (kind, ty) = match expr.kind {
+            ExprKind::ArrayLiteral(elements) => {
                 let mut element_type = ArkType::Unknown;
                 let rewritten = elements
                     .into_iter()
@@ -217,37 +178,14 @@ impl ConcatPass {
                     .collect::<Vec<_>>();
                 let length = rewritten.len();
                 (
-                    Expression::ArrayLiteral(rewritten),
+                    ExprKind::ArrayLiteral(rewritten),
                     ArkType::Array(Box::new(element_type), length),
                 )
             }
-            Expression::StructLiteral(fields) => (
-                Expression::StructLiteral(
-                    fields
-                        .into_iter()
-                        .map(|(name, value)| (name, self.rewrite_expression_concat(value, scope).0))
-                        .collect(),
-                ),
-                ArkType::Unknown,
-            ),
-            Expression::ArrayIndex { array, index } => {
-                let (index, _) = self.rewrite_expression_concat(*index, scope);
-                let result_type = match scope.get(&array) {
-                    Some(ArkType::Array(element, _)) => (**element).clone(),
-                    _ => ArkType::Unknown,
-                };
-                (
-                    Expression::ArrayIndex {
-                        array,
-                        index: Box::new(index),
-                    },
-                    result_type,
-                )
-            }
-            Expression::BinaryOp { left, op, right } => {
+            ExprKind::BinaryOp { left, op, right } => {
                 let (new_l, lt) = self.rewrite_expression_concat(*left, scope);
                 let (new_r, rt) = self.rewrite_expression_concat(*right, scope);
-                if op == "+" && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
+                if op == BinaryOperator::Add && (is_bytes_like(&lt) || is_bytes_like(&rt)) {
                     for (side, t) in [("left", &lt), ("right", &rt)] {
                         if is_numeric(t) {
                             self.errors.push(format!(
@@ -260,20 +198,22 @@ impl ConcatPass {
                         }
                     }
                     (
-                        Expression::Concat {
+                        ExprKind::Concat {
                             left: Box::new(new_l),
                             right: Box::new(new_r),
                         },
                         ArkType::Bytes,
                     )
                 } else {
-                    let result_type = match op.as_str() {
-                        "+" | "-" | "*" | "/" => ArkType::Int,
-                        "==" | "!=" | ">=" | "<=" | ">" | "<" | "&&" | "||" => ArkType::Bool,
-                        _ => ArkType::Unknown,
+                    let result_type = match op.class() {
+                        OperatorClass::Arithmetic | OperatorClass::Shift => ArkType::Int,
+                        OperatorClass::Bytewise => ArkType::Bytes,
+                        OperatorClass::Ordering
+                        | OperatorClass::Equality
+                        | OperatorClass::Logical => ArkType::Bool,
                     };
                     (
-                        Expression::BinaryOp {
+                        ExprKind::BinaryOp {
                             left: Box::new(new_l),
                             op,
                             right: Box::new(new_r),
@@ -282,19 +222,26 @@ impl ConcatPass {
                     )
                 }
             }
-            mut other => {
-                let children = crate::models::child_exprs_mut(&mut other);
-                for child in children {
-                    *child = self
-                        .rewrite_expression_concat(
-                            std::mem::replace(child, Expression::Literal(String::new())),
-                            scope,
-                        )
-                        .0;
+            ExprKind::Cast { target, data } => {
+                let (mut data, ty) = self.rewrite_expression_concat(*data, scope);
+                let target_type = ArkType::parse(&target);
+                if ty == target_type {
+                    data.span = span;
+                    return (data, ty);
+                } else {
+                    let data = Box::new(data);
+                    (ExprKind::Cast { target, data }, target_type)
+                }
+            }
+            kind => {
+                let mut other = Expression::new(kind, span);
+                for child in crate::models::child_exprs_mut(&mut other) {
+                    *child = self.rewrite_expression_concat(child.take(), scope).0;
                 }
                 let t = crate::typechecker::infer_type(&other, scope);
-                (other, t)
+                return (other, t);
             }
-        }
+        };
+        (Expression::new(kind, span), ty)
     }
 }

@@ -1,45 +1,50 @@
+use crate::diagnostics::Diagnostic;
 use crate::models::{
-    ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, Expression, Function,
-    FunctionInput, Parameter, Requirement, Statement,
+    ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
+    Function, FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
-    OP_0, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
-    OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP, OP_ECADD, OP_ECMUL,
-    OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
-    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME,
-    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
-    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL,
-    OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_PICK,
-    OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES, OP_ROLL, OP_SHA256,
-    OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB,
-    OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_AND, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG,
+    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP,
+    OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL,
+    OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
+    OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
+    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
+    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTOUTPOINT,
+    OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
+    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_INVERT, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_LSHIFT,
+    OP_MERKLEBRANCHVERIFY, OP_MOD, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN,
+    OP_NUMEQUAL, OP_OR, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES,
+    OP_ROLL, OP_RSHIFT, OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE,
+    OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID,
+    OP_TXWEIGHT, OP_VERIFY, OP_XOR,
 };
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 pub mod tapscript;
 
 // ASM codegen and rewrite passes split into submodules;
 // siblings reach each other via `use super::*`.
+mod access;
 mod asset;
 mod comparison;
 mod concat;
-mod constants;
+pub(crate) mod constants;
 pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
 mod expr;
 mod functions;
 mod introspection;
 mod loops;
+mod optimization;
 
 pub(crate) use asset::*;
-pub(crate) use comparison::*;
 pub(crate) use concat::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
@@ -173,15 +178,12 @@ impl Generator {
         })
     }
 
-    /// Element count of an array binding, read off the symbolic stack: its
-    /// elements are bound as `$array:name:0 … $array:name:N-1`.
+    /// Declared element count, independent of the flattened element width.
     fn array_length(&self, array: &str) -> usize {
-        (0..)
-            .take_while(|i| {
-                self.binding_index(&internal_array_binding_name(array, &i.to_string()))
-                    .is_some()
-            })
-            .count()
+        match self.scope.get(array) {
+            Some(typechecker::ArkType::Array(_, length)) => *length,
+            _ => 0,
+        }
     }
 
     fn internal_binding_name(name: &str) -> String {
@@ -189,7 +191,10 @@ impl Generator {
         if name.starts_with(INTERNAL_ARRAY_BINDING_PREFIX) {
             return name.to_string();
         }
-        if let Some((array, index)) = name.strip_suffix(']').and_then(|name| name.split_once('[')) {
+        if let Some((array, index)) = name
+            .strip_suffix(']')
+            .and_then(|name| name.rsplit_once('['))
+        {
             if index.parse::<usize>().is_ok() {
                 return internal_array_binding_name(array, index);
             }
@@ -213,15 +218,6 @@ impl Generator {
             }
             self.push_integer_temporary(length);
             return Ok(());
-        }
-        if let Some((array, index)) = name
-            .trim()
-            .strip_suffix(']')
-            .and_then(|name| name.split_once('['))
-        {
-            if index.parse::<usize>().is_err() {
-                return self.read_indexed_binding(array, index);
-            }
         }
         let name = Self::internal_binding_name(name);
         self.read_static_binding(&name, false)
@@ -251,6 +247,7 @@ impl Generator {
                 take || (!self.preserve_bindings
                     && index >= self.pinned_stack_len
                     && !name.starts_with('$')
+                    && !name.contains('[')
                     && (self
                         .scopes
                         .last()
@@ -277,19 +274,14 @@ impl Generator {
         });
     }
 
-    fn read_indexed_binding(&mut self, array: &str, index: &str) -> Result<(), String> {
-        self.read_binding(index)?;
-        self.select_indexed_value(array)
-    }
-
-    fn check_array_index(&mut self, array: &str) -> Result<(), String> {
+    fn check_array_index(&mut self, length: usize) -> Result<(), String> {
         self.apply(OP_DUP, 1, 2)?;
         self.push_integer_temporary(0);
         self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)?;
 
         self.apply(OP_DUP, 1, 2)?;
-        self.push_integer_temporary(self.array_length(array));
+        self.push_integer_temporary(length);
         self.apply(OP_LESSTHAN, 2, 1)?;
         self.apply(OP_VERIFY, 1, 0)
     }
@@ -309,21 +301,12 @@ impl Generator {
                     )
                 })?;
 
-        self.check_array_index(array)?;
+        self.check_array_index(self.array_length(array))?;
         if first_depth_without_index != 0 {
             self.push_integer_temporary(first_depth_without_index);
             self.apply(OP_ADD, 2, 1)?;
         }
         self.apply(OP_PICK, 1, 1)
-    }
-
-    fn read_binding_or_integer(&mut self, value: &str) -> Result<(), String> {
-        if value.parse::<i64>().is_ok() {
-            self.push_temporary(value);
-            Ok(())
-        } else {
-            self.read_binding(value)
-        }
     }
 
     fn pop_temporaries(&mut self, count: usize, opcode: &str) -> Result<(), String> {
@@ -376,6 +359,7 @@ impl Generator {
                 Ok(())
             }
             OP_DROP => self.apply(opcode, 1, 0),
+            OP_DUP => self.apply(opcode, 1, 2),
             OP_NIP => self.nip(),
             OP_SWAP => self.swap(),
             OP_VERIFY => self.apply(opcode, 1, 0),
@@ -395,6 +379,7 @@ impl Generator {
             OP_NEGATE
             | OP_CHECKTIME
             | OP_NOT
+            | OP_0NOTEQUAL
             | OP_SHA256
             | "OP_HASH160"
             | "OP_HASH256"
@@ -403,6 +388,7 @@ impl Generator {
             | OP_SIGHASH
             | OP_BIN2NUM
             | OP_REVERSEBYTES
+            | OP_INVERT
             | OP_INSPECTINPUTVALUE
             | OP_INSPECTINPUTSEQUENCE
             | OP_INSPECTINPUTARKADESCRIPTHASH
@@ -413,8 +399,14 @@ impl Generator {
             | OP_INSPECTASSETGROUPMETADATAHASH => self.apply(opcode, 1, 1),
             OP_ADD
             | OP_SUB
+            | OP_AND
+            | OP_OR
+            | OP_XOR
+            | OP_LSHIFT
+            | OP_RSHIFT
             | OP_MUL
             | OP_DIV
+            | OP_MOD
             | OP_EQUAL
             | OP_GREATERTHAN
             | OP_GREATERTHANOREQUAL
@@ -433,6 +425,7 @@ impl Generator {
             OP_MODEXP | OP_SUBSTR | OP_CHECKSIGADD | OP_CHECKSIGFROMSTACK => {
                 self.apply(opcode, 3, 1)
             }
+            OP_MERKLEBRANCHVERIFY => self.apply(opcode, 4, 1),
             OP_INSPECTINPUTSCRIPTPUBKEY | OP_INSPECTOUTPUTSCRIPTPUBKEY => self.apply(opcode, 1, 2),
             OP_INSPECTINPUTOUTPOINT => self.apply(opcode, 1, 2),
             OP_INSPECTINASSETLOOKUP | OP_INSPECTOUTASSETLOOKUP => self.apply(opcode, 3, 2),
@@ -455,7 +448,6 @@ impl Generator {
             OP_SIZE => self.apply(opcode, 1, 2),
             OP_ECADD => self.apply(opcode, 5, 2),
             OP_ECMUL => self.apply(opcode, 4, 2),
-            OP_ECPAIRING => self.apply(opcode, 8, 1),
             OP_ECMULSCALARVERIFY | OP_TWEAKVERIFY => self.apply(opcode, 3, 0),
             OP_INSPECTASSETGROUP => self.apply(opcode, 3, 3),
             _ => Err(format!(
@@ -468,7 +460,7 @@ impl Generator {
         if let Some(array) = token.strip_prefix(INTERNAL_ARRAY_INDEX_PREFIX) {
             return self.select_indexed_value(array);
         }
-        if token.starts_with("<VTXO:") {
+        if token.starts_with("<CONTRACT:") {
             let mut token = token.to_string();
             for (array, elements) in &self.constructor_array_expansions {
                 token = token.replace(array, elements);
@@ -492,21 +484,21 @@ impl Generator {
     }
 
     fn emit_expression(&mut self, expression: &Expression) -> Result<(), String> {
-        if matches!(expression, Expression::ArrayLiteral(_)) {
+        if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
             return Err(
                 "array literals may only initialize an array declaration; composite values are not supported"
                     .to_string(),
             );
         }
-        if matches!(expression, Expression::StructLiteral(_)) {
+        if matches!(&expression.kind, ExprKind::StructLiteral(_)) {
             return Err(
                 "struct literals may only initialize a typed struct declaration; composite values are not supported"
                     .to_string(),
             );
         }
         if matches!(
-            expression,
-            Expression::GroupIOAccess {
+            &expression.kind,
+            ExprKind::GroupIOAccess {
                 source: crate::models::GroupIOSource::Inputs,
                 ..
             }
@@ -534,8 +526,8 @@ impl Generator {
             .count();
         let mut raw = Vec::new();
         let mut expression = expression.clone();
-        let mut calls = Vec::new();
-        functions::extract_calls(&mut expression, &mut calls);
+        let mut values = Vec::new();
+        functions::extract_values(&mut expression, &mut values, &self.scope);
         emit_expression_asm(&expression, &mut raw);
         // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
         let preserved = self.preserve_bindings;
@@ -560,7 +552,16 @@ impl Generator {
                 .and_then(|s| s.strip_suffix('>'))
             {
                 let index = index.parse::<usize>().map_err(|_| "invalid call marker")?;
-                self.emit_call(calls.get(index).ok_or("invalid call marker")?)?;
+                let value = values.get(index).ok_or("invalid call marker")?;
+                if matches!(&value.kind, ExprKind::Call { .. }) {
+                    self.emit_call(value)?;
+                } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+                {
+                    self.emit_pairing(value)?;
+                } else {
+                    let ty = typechecker::infer_type(value, &self.scope).as_str();
+                    self.emit_access_value(value, &ty)?;
+                }
             } else {
                 self.lower_raw_token(&token)?;
             }
@@ -608,13 +609,14 @@ impl Generator {
 
     fn assign(&mut self, target: &AssignmentTarget) -> Result<(), String> {
         match target {
+            AssignmentTarget::Access(value) => self.assign_access(value),
             AssignmentTarget::Binding(name) => self.assign_static_binding(name, name),
-            AssignmentTarget::ArrayIndex { array, index } => match index.as_ref() {
-                Expression::Literal(index) => self.assign_static_binding(
-                    &internal_array_binding_name(array, index),
-                    &format!("{array}[{index}]"),
+            AssignmentTarget::ArrayIndex { array, index } => match &index.kind {
+                ExprKind::Literal(literal) => self.assign_static_binding(
+                    &internal_array_binding_name(array, literal),
+                    &format!("{array}[{literal}]"),
                 ),
-                index => self.assign_indexed_binding(array, index),
+                _ => self.assign_indexed_binding(array, index),
             },
         }
     }
@@ -714,7 +716,7 @@ impl Generator {
                         "internal compiler error: array assignment operands for '{array}' are not on the stack"
                     )
                 })?;
-        self.check_array_index(array)?;
+        self.check_array_index(self.array_length(array))?;
         if first_depth_without_operands != 0 {
             self.push_integer_temporary(first_depth_without_operands);
             self.apply(OP_ADD, 2, 1)?;
@@ -801,13 +803,20 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     crate::imports::compile_sources(
         "main.ark",
         &std::collections::BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
+        crate::CompileOptions::default(),
     )
 }
 
+/// Runs semantic validation and type checking on `contract`. Returns every
+/// warning on success, every error (each its own diagnostic, not joined into
+/// one message) on failure. Diagnostic messages carry no location prefix —
+/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
+/// `"line N, column M: "` prefix only when rendering the legacy joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
-) -> Result<Vec<String>, String> {
+    file: &str,
+) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
     typechecker::resolve_group_properties(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -815,30 +824,42 @@ pub(crate) fn prepare(
     // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if validator::has_errors(&ast_issues) {
-        let errors: Vec<String> = ast_issues
+        return Err(ast_issues
             .iter()
             .filter(|i| matches!(i.severity, Severity::Error))
-            .map(|i| format!("validation error: {}", i.message))
-            .collect();
-        return Err(errors.join("; "));
+            .map(|i| {
+                Diagnostic::error(file, i.message.clone())
+                    .with_code("validation")
+                    .with_span(i.span)
+            })
+            .collect());
     }
 
     // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(contract)?;
+    rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
 
     // ── Type checking ──────────────────────────────────────────────────────
-    // Run the type checker. Errors are non-fatal and returned as warnings on
-    // ContractJson so callers (CLI, WASM, tests) can surface them as they see fit.
     let type_errors = typechecker::check_contract(contract);
-    let mut warnings: Vec<String> = type_errors
-        .iter()
-        .map(|e| format!("warning[type]: {}", e.message))
-        .collect();
+    if !type_errors.is_empty() {
+        return Err(type_errors
+            .iter()
+            .map(|e| {
+                Diagnostic::error(file, e.message.clone())
+                    .with_code("type")
+                    .with_span(e.span)
+            })
+            .collect());
+    }
+    let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)
     for issue in &ast_issues {
         if matches!(issue.severity, Severity::Warning) {
-            warnings.push(format!("warning[validation]: {}", issue.message));
+            warnings.push(
+                Diagnostic::warning(file, issue.message.clone())
+                    .with_code("validation")
+                    .with_span(issue.span),
+            );
         }
     }
 
@@ -849,20 +870,24 @@ pub(crate) fn emit(
     contract: &Contract,
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
+    options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
+        format_version: Some(crate::models::ARTIFACT_FORMAT_VERSION),
         name: contract.name.clone(),
         structs: contract.structs.clone(),
         parameters,
         functions: Vec::new(),
         source: Some(source),
         compiler: Some(CompilerInfo {
-            name: "arkade-compiler".to_string(),
+            name: "arkadec".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            options: Some(options),
         }),
-        updated_at: Some(Utc::now().to_rfc3339()),
+        updated_at: None,
+        fingerprint: None,
         warnings,
     };
 
@@ -883,6 +908,14 @@ pub(crate) fn emit(
 
     json.functions = tapscript::build_function_groups(contract, covenants)?;
 
+    if options.optimize {
+        for group in &mut json.functions {
+            if let Some(covenant) = &mut group.arkade {
+                covenant.asm = optimization::optimize(std::mem::take(&mut covenant.asm));
+            }
+        }
+    }
+
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
     let output_issues = validator::validate_output(&json);
@@ -898,6 +931,11 @@ pub(crate) fn emit(
         json.warnings
             .push(format!("warning[output-invariant]: {}", issue.message));
     }
+
+    // Serialized field order is part of the fingerprint; reordering artifact fields changes it.
+    let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
+    json.fingerprint = Some(format!("sha256:{:x}", Sha256::digest(bytes)));
+    json.updated_at = Some(Utc::now().to_rfc3339());
 
     Ok(json)
 }
@@ -975,11 +1013,11 @@ fn for_each_expanded_param(
 
 /// Recursively generate assembly from statements
 fn generate_asm_from_statements_recursive(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     generator: &mut Generator,
 ) -> Result<(), String> {
     for (index, stmt) in statements.iter().enumerate() {
-        match stmt {
+        match &stmt.statement {
             Statement::Call(expression) => generator.emit_call(expression)?,
             Statement::Return(value) => {
                 generator.emit_return(value.as_ref())?;
@@ -1025,14 +1063,13 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let array_name = match iterable {
-                    Expression::Variable(name) | Expression::Property(name) => name,
-                    _ => return Err("unsupported loop iterable".to_string()),
+                let typechecker::ArkType::Array(_, length) =
+                    typechecker::infer_type(iterable, &generator.scope)
+                else {
+                    return Err("unsupported loop iterable".to_string());
                 };
-                let array_name = array_name.as_str();
-                for k in 0..generator.array_length(array_name) {
-                    let substituted =
-                        substitute_loop_body(body, index_var, value_var, k, array_name);
+                for k in 0..length {
+                    let substituted = substitute_loop_body(body, index_var, value_var, k, iterable);
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
                     if k > 0 && functions::contains_return(body) {
@@ -1049,7 +1086,7 @@ fn generate_asm_from_statements_recursive(
                 }
             }
             Statement::ForCount { count, body } => {
-                let Expression::Literal(count) = count else {
+                let ExprKind::Literal(count) = &count.kind else {
                     return Err(
                         "loop count must be a non-negative integer compile-time constant"
                             .to_string(),
@@ -1079,10 +1116,14 @@ fn generate_asm_from_statements_recursive(
                 declared_type,
                 value,
             } => {
-                let result_type = declared_type.as_deref().or_else(|| match value {
-                    Expression::Call { return_type, .. } => return_type.as_deref(),
-                    _ => crate::models::expression_result_struct(value),
-                });
+                let composite_type = generator.composite_type(value);
+                let result_type = declared_type
+                    .as_deref()
+                    .or_else(|| match &value.kind {
+                        ExprKind::Call { return_type, .. } => return_type.as_deref(),
+                        _ => crate::models::expression_result_struct(value),
+                    })
+                    .or(composite_type.as_deref());
                 if let Some(ty) = result_type {
                     generator.emit_typed_value(value, ty)?;
                     generator.bind_value(name, ty)?;
@@ -1131,43 +1172,26 @@ fn generate_asm_from_statements_recursive(
 fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<(), String> {
     match req {
         Requirement::Expression(expr) => {
-            match expr {
-                Expression::GroupFind { .. } => {
+            match &expr.kind {
+                ExprKind::GroupFind { .. } => {
                     generator.emit_expression(expr)?;
                     generator.apply(OP_DROP, 1, 0)?;
                     generator.push_temporary(OP_1);
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                Expression::CheckSigFromStackVerify {
+                ExprKind::CheckSigFromStackVerify {
                     signature,
                     pubkey,
                     message,
                 } => {
-                    generator.read_binding(signature)?;
-                    generator.read_binding(message)?;
-                    generator.read_binding(pubkey)?;
+                    generator.emit_expression(signature)?;
+                    generator.emit_expression(message)?;
+                    generator.emit_expression(pubkey)?;
                     generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                Expression::EcMulScalarVerify {
-                    scalar,
-                    point_p,
-                    point_q,
-                } => {
-                    generator.emit_expression(scalar)?;
-                    generator.emit_expression(point_p)?;
-                    generator.emit_expression(point_q)?;
-                    generator.apply(OP_ECMULSCALARVERIFY, 3, 0)?;
-                }
-                Expression::TweakVerify {
-                    point_p,
-                    tweak,
-                    point_q,
-                } => {
-                    generator.emit_expression(point_p)?;
-                    generator.emit_expression(tweak)?;
-                    generator.emit_expression(point_q)?;
-                    generator.apply(OP_TWEAKVERIFY, 3, 0)?;
+                ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {
+                    generator.emit_expression_items(expr, 0)?;
                 }
                 _ => {
                     generator.emit_expression(expr)?;
@@ -1177,8 +1201,8 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             Ok(())
         }
         Requirement::CheckSig { signature, pubkey } => {
-            generator.read_binding(signature)?;
-            generator.read_binding(pubkey)?;
+            generator.emit_expression(signature)?;
+            generator.emit_expression(pubkey)?;
             generator.apply(OP_CHECKSIG, 2, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1188,9 +1212,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             pubkey,
             message,
         } => {
-            generator.read_binding(signature)?;
-            generator.read_binding(message)?;
-            generator.read_binding(pubkey)?;
+            generator.emit_expression(signature)?;
+            generator.emit_expression(message)?;
+            generator.emit_expression(pubkey)?;
             generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1223,12 +1247,12 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 return Err("checkMultisig key and signature counts must match".to_string());
             }
             for signature in signatures.iter().rev() {
-                generator.read_binding(signature)?;
+                generator.emit_expression(signature)?;
             }
-            generator.read_binding(&pubkeys[0])?;
+            generator.emit_expression(&pubkeys[0])?;
             generator.apply(OP_CHECKSIG, 2, 1)?;
             for pubkey in pubkeys.iter().skip(1) {
-                generator.read_binding(pubkey)?;
+                generator.emit_expression(pubkey)?;
                 generator.apply(OP_CHECKSIGADD, 3, 1)?;
             }
             if threshold <= &16 {
@@ -1245,9 +1269,9 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             preimage,
             hash,
         } => {
-            generator.read_binding_or_integer(preimage)?;
+            generator.emit_expression(preimage)?;
             generator.lower_raw_opcode(hash_fn.opcode())?;
-            generator.read_binding_or_integer(hash)?;
+            generator.emit_expression(hash)?;
             generator.apply(OP_EQUAL, 2, 1)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1257,14 +1281,12 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 .composite_type(left)
                 .or_else(|| generator.composite_type(right))
             {
-                return generator.emit_composite_requirement(left, op, right, &ty);
+                return generator.emit_composite_requirement(left, *op, right, &ty);
             }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;
-            let mut raw = Vec::new();
-            emit_comparison_op(op, &mut raw);
-            for token in raw {
-                generator.lower_raw_opcode(&token)?;
+            for opcode in op.opcodes() {
+                generator.lower_raw_opcode(opcode)?;
             }
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
@@ -1352,7 +1374,7 @@ mod symbolic_stack_tests {
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: "values".into(),
-                index: Box::new(Expression::Variable("i".into())),
+                index: Box::new(ExprKind::Variable("i".into()).into()),
             })
             .expect("indexed assignment");
         assert_eq!(
@@ -1395,11 +1417,14 @@ mod symbolic_stack_tests {
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: "values".to_string(),
-                index: Box::new(Expression::BinaryOp {
-                    left: Box::new(Expression::Variable("i".to_string())),
-                    op: "+".to_string(),
-                    right: Box::new(Expression::Literal("1".to_string())),
-                }),
+                index: Box::new(
+                    ExprKind::BinaryOp {
+                        left: Box::new(ExprKind::Variable("i".to_string()).into()),
+                        op: crate::operators::BinaryOperator::Add,
+                        right: Box::new(ExprKind::Literal("1".to_string()).into()),
+                    }
+                    .into(),
+                ),
             })
             .expect("expression index assignment");
 

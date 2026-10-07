@@ -5,11 +5,16 @@
 ///   including wire-encoding metadata used by client stub generators
 /// - `infer_type`: expression-level type inference
 /// - `check_contract` / `check_function`: requirement-level type checking
-///   that returns a list of `TypeError`s (currently non-fatal — the caller
-///   decides how to surface them)
+///   that returns a list of `TypeError`s; the compiler rejects any of them
 use std::collections::HashMap;
 
-use crate::models::{AssignmentTarget, Contract, Expression, Function, Requirement, Statement};
+use crate::models::{
+    AssignmentTarget, Contract, ExprKind, Expression, Function, LocatedStatement, Requirement,
+    Statement,
+};
+use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
+
+pub(crate) mod builtins;
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
@@ -21,11 +26,9 @@ use crate::models::{AssignmentTarget, Contract, Expression, Function, Requiremen
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArkType {
     // ── Declared types (match grammar data_type rule) ──────────────────────
-    /// 33-byte compressed secp256k1 public key
-    Pubkey,
     /// 64-byte Schnorr signature
     Signature,
-    /// Arbitrary-length byte array
+    /// Arbitrary-length byte array; `pubkey` is an alias
     Bytes,
     /// 20-byte array (e.g., HASH160 output)
     Bytes20,
@@ -37,6 +40,8 @@ pub enum ArkType {
     Bool,
     /// Taproot Asset identifier
     Asset,
+    /// Position of an asset group in the transaction's asset packet
+    AssetGroup,
 
     // ── Internal / introspection types ─────────────────────────────────────
 
@@ -57,14 +62,14 @@ impl ArkType {
             return ArkType::Array(Box::new(ArkType::parse(element)), length);
         }
         match s {
-            "pubkey" => ArkType::Pubkey,
             "signature" => ArkType::Signature,
-            "bytes" => ArkType::Bytes,
+            "bytes" | "pubkey" => ArkType::Bytes,
             "bytes20" => ArkType::Bytes20,
             "bytes32" => ArkType::Bytes32,
             "int" => ArkType::Int,
             "bool" => ArkType::Bool,
             "asset" => ArkType::Asset,
+            "AssetGroup" => ArkType::AssetGroup,
             _ if !s.is_empty() => ArkType::Struct(s.to_string()),
             _ => ArkType::Unknown,
         }
@@ -76,7 +81,6 @@ impl ArkType {
     /// (TypeScript, Go, etc.) can switch on them to pick the right serializer.
     pub fn encoding(&self) -> &'static str {
         match self {
-            ArkType::Pubkey => "compressed-33",
             ArkType::Signature => "schnorr-64",
             ArkType::Bytes => "raw",
             ArkType::Bytes20 => "raw-20",
@@ -84,6 +88,7 @@ impl ArkType {
             ArkType::Int => "scriptnum",
             ArkType::Bool => "scriptnum",
             ArkType::Asset => "raw-32",
+            ArkType::AssetGroup => "scriptnum",
             ArkType::Array(..) => "array",
             ArkType::Struct(..) => "struct",
             ArkType::Unknown => "unknown",
@@ -93,7 +98,6 @@ impl ArkType {
     /// Canonical string form matching Arkade Script syntax.
     pub fn as_str(&self) -> String {
         match self {
-            ArkType::Pubkey => "pubkey".to_string(),
             ArkType::Signature => "signature".to_string(),
             ArkType::Bytes => "bytes".to_string(),
             ArkType::Bytes20 => "bytes20".to_string(),
@@ -101,6 +105,7 @@ impl ArkType {
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
             ArkType::Asset => "asset".to_string(),
+            ArkType::AssetGroup => "AssetGroup".to_string(),
             ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
             ArkType::Struct(name) => name.clone(),
             ArkType::Unknown => "unknown".to_string(),
@@ -115,12 +120,15 @@ impl ArkType {
 pub struct TypeError {
     /// Human-readable description of the problem.
     pub message: String,
+    /// Byte range of the expression, or else the statement, that caused it.
+    pub span: Option<crate::diagnostics::Span>,
 }
 
 impl TypeError {
     fn new(msg: impl Into<String>) -> Self {
         TypeError {
             message: msg.into(),
+            span: None,
         }
     }
 }
@@ -154,7 +162,7 @@ fn insert_type_bindings(
             ArkType::Array(Box::new(element_type.clone()), length),
         );
         for index in 0..length {
-            scope.insert(format!("{name}[{index}]"), element_type.clone());
+            insert_type_bindings(scope, &format!("{name}[{index}]"), base, structs, stack);
         }
         return;
     }
@@ -242,13 +250,13 @@ pub(crate) fn resolve_group_properties(contract: &mut Contract) {
 }
 
 fn resolve_statements(
-    statements: &mut [Statement],
+    statements: &mut [LocatedStatement],
     scope: &mut Scope,
     structs: &[crate::models::StructDefinition],
     returns: &HashMap<String, Option<String>>,
 ) {
     for statement in statements {
-        match statement {
+        match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 resolve_expression(expression, scope, returns)
             }
@@ -276,7 +284,9 @@ fn resolve_statements(
                 bind_local_type(scope, name, declared_type.as_deref(), binding_type, structs);
             }
             Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let AssignmentTarget::ArrayIndex { index, .. }
+                | AssignmentTarget::Access(index) = target
+                {
                     resolve_expression(index, scope, returns);
                 }
                 resolve_expression(value, scope, returns);
@@ -305,7 +315,7 @@ fn resolve_statements(
                 };
                 let mut loop_scope = scope.clone();
                 loop_scope.insert(index_var.clone(), ArkType::Int);
-                loop_scope.insert(value_var.clone(), element_type);
+                bind_local_type(&mut loop_scope, value_var, None, element_type, structs);
                 resolve_statements(body, &mut loop_scope, structs, returns);
             }
             Statement::ForCount { count, body } => {
@@ -324,40 +334,116 @@ fn resolve_expression(
     for child in crate::models::child_exprs_mut(expression) {
         resolve_expression(child, scope, returns);
     }
-    if let Expression::Call {
+    if let ExprKind::Call {
         name, return_type, ..
-    } = expression
+    } = &mut expression.kind
     {
         *return_type = returns.get(name).cloned().flatten();
     }
 
-    let Expression::Property(path) = expression else {
-        return;
+    let resolved = match &expression.kind {
+        // `g.delta`, `s.group.delta`
+        ExprKind::Property(path) => path.rsplit_once('.').and_then(|(base, property)| {
+            Some(ExprKind::GroupProperty {
+                group: Box::new(group_binding(base, expression, scope)?),
+                property: GROUP_PROPERTIES
+                    .contains(&property)
+                    .then(|| property.to_string())?,
+            })
+        }),
+        // `g.inputs[j]`
+        ExprKind::ArrayIndex { array, index } => {
+            array.rsplit_once('.').and_then(|(base, source)| {
+                Some(ExprKind::GroupIOAccess {
+                    group: Box::new(group_binding(base, expression, scope)?),
+                    io_index: index.clone(),
+                    source: group_io_source(source)?,
+                    property: None,
+                })
+            })
+        }
+        // `gs[i].inputs[j]`
+        ExprKind::IndexAccess { value, index } => match &value.as_ref().kind {
+            ExprKind::FieldAccess {
+                value: group,
+                field,
+            } if !is_struct(group, scope) => {
+                group_io_source(field).map(|source| ExprKind::GroupIOAccess {
+                    group: group.clone(),
+                    io_index: index.clone(),
+                    source,
+                    property: None,
+                })
+            }
+            _ => None,
+        },
+        // `g.inputs[j].amount`, `gs[i].delta`
+        ExprKind::FieldAccess { value, field } => match &value.as_ref().kind {
+            ExprKind::GroupIOAccess {
+                group,
+                io_index,
+                source,
+                property: None,
+            } if matches!(field.as_str(), "amount" | "type") => Some(ExprKind::GroupIOAccess {
+                group: group.clone(),
+                io_index: io_index.clone(),
+                source: source.clone(),
+                property: Some(field.clone()),
+            }),
+            _ if GROUP_PROPERTIES.contains(&field.as_str()) && !is_struct(value, scope) => {
+                Some(ExprKind::GroupProperty {
+                    group: value.clone(),
+                    property: field.clone(),
+                })
+            }
+            _ => None,
+        },
+        _ => None,
     };
-    let Some((group, property)) = path.split_once('.') else {
-        return;
-    };
-    if property.contains('.')
-        || !matches!(
-            property,
-            "numInputs"
-                | "numOutputs"
-                | "sumInputs"
-                | "sumOutputs"
-                | "delta"
-                | "hasControl"
-                | "metadataHash"
-                | "assetId"
-                | "isFresh"
-        )
-        || matches!(scope.get(group), Some(ArkType::Struct(_)))
-    {
-        return;
+    if let Some(resolved) = resolved {
+        expression.kind = resolved;
     }
-    *expression = Expression::GroupProperty {
-        group: group.to_string(),
-        property: property.to_string(),
-    };
+}
+
+/// Each entry also needs an `asset_group_property` grammar alternative and an
+/// `emit_group_property_asm` arm.
+pub(crate) const GROUP_PROPERTIES: [&str; 10] = [
+    "numInputs",
+    "numOutputs",
+    "sumInputs",
+    "sumOutputs",
+    "delta",
+    "hasControl",
+    "controlAssetId",
+    "metadataHash",
+    "assetId",
+    "isFresh",
+];
+
+/// Group members apply to any non-struct value; the builtin table rejects
+/// operands that aren't `AssetGroup`, while struct fields keep their names.
+fn is_struct(value: &Expression, scope: &Scope) -> bool {
+    matches!(infer_type(value, scope), ArkType::Struct(_))
+}
+
+/// The binding named by `path`, when a group member can apply to it; it takes
+/// the span of the access `at`, which has none narrower for the binding alone.
+fn group_binding(path: &str, at: &Expression, scope: &Scope) -> Option<Expression> {
+    (!matches!(scope.get(path), Some(ArkType::Struct(_)))).then(|| {
+        at.with_kind(if path.contains('.') {
+            ExprKind::Property(path.to_string())
+        } else {
+            ExprKind::Variable(path.to_string())
+        })
+    })
+}
+
+pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource> {
+    match name {
+        "inputs" => Some(crate::models::GroupIOSource::Inputs),
+        "outputs" => Some(crate::models::GroupIOSource::Outputs),
+        _ => None,
+    }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -365,7 +451,6 @@ fn resolve_expression(
 /// Type-check an entire contract.
 ///
 /// Returns all type errors found across all functions.
-/// Currently non-fatal — the compiler emits these as warnings.
 pub fn check_contract(contract: &Contract) -> Vec<TypeError> {
     let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
     contract
@@ -397,14 +482,19 @@ fn check_function(
 }
 
 fn check_statements(
-    stmts: &[Statement],
+    stmts: &[LocatedStatement],
     scope: &mut Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
     structs: &[crate::models::StructDefinition],
 ) {
     for stmt in stmts {
-        check_statement(stmt, scope, errors, fn_name, structs);
+        let first = errors.len();
+        check_statement(&stmt.statement, scope, errors, fn_name, structs);
+        // Nested statements have already claimed their own errors.
+        for error in &mut errors[first..] {
+            error.span.get_or_insert(stmt.span);
+        }
     }
 }
 
@@ -438,6 +528,10 @@ fn check_statement(
         }
         Statement::VarAssign { target, value } => {
             let (target_name, original_type) = match target {
+                AssignmentTarget::Access(value) => {
+                    check_expression(value, scope, errors, fn_name);
+                    ("indexed field".to_string(), Some(infer_type(value, scope)))
+                }
                 AssignmentTarget::Binding(name) => {
                     let original_type = scope.get(name.as_str()).cloned();
                     if original_type.is_none() {
@@ -505,7 +599,7 @@ fn check_statement(
                 ArkType::Array(element, _) => *element,
                 _ => ArkType::Unknown,
             };
-            loop_scope.insert(value_var.clone(), element);
+            bind_local_type(&mut loop_scope, value_var, None, element, structs);
             check_statements(body, &mut loop_scope, errors, fn_name, structs);
         }
         Statement::ForCount { count, body } => {
@@ -520,7 +614,11 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
         Requirement::Expression(expr) => {
             check_expression(expr, scope, errors, fn_name);
             let condition_type = infer_type(expr, scope);
-            if condition_type != ArkType::Bool && condition_type != ArkType::Unknown {
+            // A bare find verifies the asset group exists; its index is dropped.
+            if !matches!(&expr.kind, ExprKind::GroupFind { .. })
+                && condition_type != ArkType::Bool
+                && condition_type != ArkType::Unknown
+            {
                 errors.push(TypeError::new(format!(
                     "fn {}: require condition has type '{}', expected bool",
                     fn_name,
@@ -552,10 +650,10 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                 expect_type(
                     scope,
                     pk,
-                    &ArkType::Pubkey,
+                    &ArkType::Bytes,
                     errors,
                     fn_name,
-                    &format!("checkMultisig() pubkey '{}'", pk),
+                    &format!("checkMultisig() pubkey '{}'", pk.source_text()),
                 );
             }
             for signature in signatures {
@@ -565,63 +663,73 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
                     &ArkType::Signature,
                     errors,
                     fn_name,
-                    &format!("checkMultisig() signature '{}'", signature),
+                    &format!("checkMultisig() signature '{}'", signature.source_text()),
                 );
             }
         }
-        Requirement::HashEqual { hash, .. } => {
-            // The hash value should be bytes32.
-            if let Some(t) = scope.get(hash.as_str()) {
-                if *t != ArkType::Bytes32 && *t != ArkType::Bytes && *t != ArkType::Unknown {
-                    errors.push(TypeError::new(format!(
-                        "fn {}: sha256 comparison: '{}' has type '{}', expected bytes32",
-                        fn_name,
-                        hash,
-                        t.as_str()
-                    )));
-                }
+        Requirement::HashEqual { hash_fn, hash, .. } => {
+            let t = infer_type(hash, scope);
+            if !matches!(&hash.kind, ExprKind::Literal(_))
+                && t != ArkType::Unknown
+                && !digest_accepts(hash_fn, &t)
+            {
+                errors.push(TypeError::new(format!(
+                    "fn {}: {} comparison: '{}' has type '{}', expected {}",
+                    fn_name,
+                    hash_fn.name(),
+                    hash.source_text(),
+                    t.as_str(),
+                    hash_fn.digest_type()
+                )));
             }
         }
         Requirement::Comparison { left, op, right } => {
             check_expression(left, scope, errors, fn_name);
             check_expression(right, scope, errors, fn_name);
-            check_comparison(left, op, right, scope, errors, fn_name);
+            let first = errors.len();
+            check_comparison(left, *op, right, scope, errors, fn_name);
+            let span = crate::diagnostics::Span {
+                start: left.span.start,
+                end: right.span.end,
+            };
+            for error in &mut errors[first..] {
+                error.span.get_or_insert(span);
+            }
         }
     }
 }
 
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
-    match expr {
-        Expression::Call { args, .. } | Expression::ArrayLiteral(args) => {
-            for argument in args {
-                check_expression(argument, scope, errors, fn_name);
-            }
-        }
-        Expression::StructLiteral(fields) => {
-            for (_, value) in fields {
-                check_expression(value, scope, errors, fn_name);
-            }
-        }
-        Expression::Negate { value } | Expression::Not { value } => {
-            check_expression(value, scope, errors, fn_name);
-        }
-        Expression::ArrayIndex { array, index } => {
+    // check_array_index recurses into the index itself.
+    match &expr.kind {
+        ExprKind::ArrayIndex { array, index } => {
             check_array_index(array, index, scope, errors, fn_name);
+            return;
         }
-        Expression::BinaryOp { left, op, right } => {
-            check_expression(left, scope, errors, fn_name);
-            check_expression(right, scope, errors, fn_name);
-            if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=") {
-                check_comparison(left, op, right, scope, errors, fn_name);
+        ExprKind::IndexAccess { value, index } => {
+            if let Some(array) = value.binding_path() {
+                check_expression(value, scope, errors, fn_name);
+                check_array_index(&array, index, scope, errors, fn_name);
+                return;
             }
         }
-        Expression::CheckSigExpr { signature, pubkey } => {
+        _ => {}
+    }
+    for child in crate::models::child_exprs(expr) {
+        check_expression(child, scope, errors, fn_name);
+    }
+    let first = errors.len();
+    match &expr.kind {
+        ExprKind::BinaryOp { left, op, right } if op.compares() => {
+            check_comparison(left, *op, right, scope, errors, fn_name);
+        }
+        ExprKind::CheckSigExpr { signature, pubkey } => {
             check_signature_expression(signature, pubkey, "checkSig", scope, errors, fn_name);
         }
-        Expression::CheckSigFromStackExpr {
+        ExprKind::CheckSigFromStackExpr {
             signature, pubkey, ..
         }
-        | Expression::CheckSigFromStackVerify {
+        | ExprKind::CheckSigFromStackVerify {
             signature, pubkey, ..
         } => {
             check_signature_expression(
@@ -635,6 +743,9 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         }
         _ => {}
     }
+    for error in &mut errors[first..] {
+        error.span.get_or_insert(expr.span);
+    }
 }
 
 fn check_array_index(
@@ -647,10 +758,13 @@ fn check_array_index(
     check_expression(index, scope, errors, fn_name);
     let index_type = infer_type(index, scope);
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-        errors.push(TypeError::new(format!(
-            "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
-            index_type.as_str()
-        )));
+        errors.push(TypeError {
+            message: format!(
+                "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
+                index_type.as_str()
+            ),
+            span: Some(index.span),
+        });
     }
     match scope.get(array) {
         Some(ArkType::Array(element, _)) => Some((**element).clone()),
@@ -660,12 +774,16 @@ fn check_array_index(
 
 pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
     let mut negative = false;
-    while let Expression::Negate { value } = expression {
+    while let ExprKind::Unary {
+        op: UnaryOperator::Neg,
+        value,
+    } = &expression.kind
+    {
         negative = !negative;
         expression = value;
     }
-    match expression {
-        Expression::Literal(value) => Some(match value.strip_prefix('-') {
+    match &expression.kind {
+        ExprKind::Literal(value) => Some(match value.strip_prefix('-') {
             Some(magnitude) => (!negative, magnitude),
             None => (negative, value),
         }),
@@ -674,19 +792,20 @@ pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)>
 }
 
 fn check_signature_expression(
-    signature: &str,
-    pubkey: &str,
+    signature: &Expression,
+    pubkey: &Expression,
     call: &str,
     scope: &Scope,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
 ) {
-    if scope.get(signature) == Some(&ArkType::Pubkey)
-        && scope.get(pubkey) == Some(&ArkType::Signature)
+    let (signature_text, pubkey_text) = (signature.source_text(), pubkey.source_text());
+    if infer_type(signature, scope) == ArkType::Bytes
+        && infer_type(pubkey, scope) == ArkType::Signature
     {
         errors.push(TypeError::new(format!(
             "fn {}: {}({}, {}) — arguments appear swapped: expected (signature, pubkey)",
-            fn_name, call, signature, pubkey
+            fn_name, call, signature_text, pubkey_text
         )));
         return;
     }
@@ -696,21 +815,21 @@ fn check_signature_expression(
         &ArkType::Signature,
         errors,
         fn_name,
-        &format!("{call}() arg 1 '{signature}'"),
+        &format!("{call}() arg 1 '{signature_text}'"),
     );
     expect_type(
         scope,
         pubkey,
-        &ArkType::Pubkey,
+        &ArkType::Bytes,
         errors,
         fn_name,
-        &format!("{call}() arg 2 '{pubkey}'"),
+        &format!("{call}() arg 2 '{pubkey_text}'"),
     );
 }
 
 fn check_comparison(
     left: &Expression,
-    op: &str,
+    op: BinaryOperator,
     right: &Expression,
     scope: &Scope,
     errors: &mut Vec<TypeError>,
@@ -724,7 +843,7 @@ fn check_comparison(
     if matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
         || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..))
     {
-        if !matches!(op, "==" | "!=") || left_type != right_type {
+        if op.class() != OperatorClass::Equality || left_type != right_type {
             errors.push(TypeError::new(format!(
                 "fn {}: comparison '{}' is not defined between '{}' and '{}'",
                 fn_name,
@@ -736,13 +855,13 @@ fn check_comparison(
         return;
     }
 
-    let compatible = match op {
-        "==" | "!=" => {
+    let compatible = match op.class() {
+        OperatorClass::Equality => {
             left_type == right_type
-                || (is_bytes_like(&left_type) && is_bytes_like(&right_type))
-                || (is_numeric(&left_type) && is_numeric(&right_type))
+                || (is_bytes_like(&left_type) && right_type == ArkType::Bytes)
+                || (is_bytes_like(&right_type) && left_type == ArkType::Bytes)
         }
-        ">" | ">=" | "<" | "<=" => is_numeric(&left_type) && is_numeric(&right_type),
+        OperatorClass::Ordering => is_numeric(&left_type) && is_numeric(&right_type),
         _ => true,
     };
 
@@ -757,20 +876,27 @@ fn check_comparison(
     }
 }
 
+/// Whether a value of type `t` can be compared with `hash_fn`'s digest.
+pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bool {
+    matches!(t, ArkType::Bytes | ArkType::Unknown) || *t == ArkType::parse(hash_fn.digest_type())
+}
+
 fn is_numeric(t: &ArkType) -> bool {
     matches!(t, ArkType::Int)
 }
 
 fn expect_type(
     scope: &Scope,
-    name: &str,
+    value: &Expression,
     expected: &ArkType,
     errors: &mut Vec<TypeError>,
     fn_name: &str,
     label: &str,
 ) {
-    if let Some(actual) = scope.get(name) {
-        if actual != expected && *actual != ArkType::Unknown {
+    // Literal operands are checked by the validator.
+    if !matches!(&value.kind, ExprKind::Literal(_)) {
+        let actual = infer_type(value, scope);
+        if actual != *expected && actual != ArkType::Unknown {
             errors.push(TypeError::new(format!(
                 "fn {}: {} has type '{}', expected '{}'",
                 fn_name,
@@ -789,19 +915,19 @@ fn expect_type(
 /// Returns `ArkType::Unknown` for expressions whose type cannot be determined
 /// statically (e.g., unresolved variables, not-yet-implemented forms).
 pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
-    match expr {
-        Expression::Call { return_type, .. } => return_type
+    match &expr.kind {
+        ExprKind::Call { return_type, .. } => return_type
             .as_deref()
             .map(ArkType::parse)
             .unwrap_or(ArkType::Unknown),
-        Expression::Variable(name) => scope
+        ExprKind::Variable(name) => scope
             .get(name.as_str())
             .cloned()
             .unwrap_or(ArkType::Unknown),
-        Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
-        Expression::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
-        Expression::Literal(_) => ArkType::Int,
-        Expression::ArrayLiteral(elements) => ArkType::Array(
+        ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
+        ExprKind::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
+        ExprKind::Literal(_) => ArkType::Int,
+        ExprKind::ArrayLiteral(elements) => ArkType::Array(
             Box::new(
                 elements
                     .first()
@@ -810,12 +936,20 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ),
             elements.len(),
         ),
-        Expression::StructLiteral(_) => ArkType::Unknown,
-        Expression::ArrayIndex { array, .. } => match scope.get(array) {
+        ExprKind::StructLiteral(_) => ArkType::Unknown,
+        ExprKind::FieldAccess { .. } => expr
+            .binding_path()
+            .map(|name| infer_type(&expr.with_kind(ExprKind::Property(name)), scope))
+            .unwrap_or(ArkType::Unknown),
+        ExprKind::IndexAccess { value, .. } => match infer_type(value, scope) {
+            ArkType::Array(element, _) => *element,
+            _ => ArkType::Unknown,
+        },
+        ExprKind::ArrayIndex { array, .. } => match scope.get(array) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,
         },
-        Expression::Property(property) => scope
+        ExprKind::Property(property) => scope
             .get(property.trim())
             .cloned()
             .or_else(|| {
@@ -839,16 +973,17 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             }),
 
         // tx.input.current.*
-        Expression::CurrentInput(prop) => match prop.as_deref() {
+        ExprKind::CurrentInput(prop) => match prop.as_deref() {
             Some("value") => ArkType::Int,
             Some("scriptPubKey") => ArkType::Bytes,
-            Some("sequence") => ArkType::Int,
+            Some("sequence") | Some("witnessVersion") => ArkType::Int,
             Some("outpoint") => ArkType::Struct("Outpoint".to_string()),
+            Some("arkadeScriptHash") | Some("arkadeWitnessHash") => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // tx-level introspection
-        Expression::TxIntrospection { property } => match property.as_str() {
+        ExprKind::TxIntrospection { property } => match property.as_str() {
             "version" | "locktime" => ArkType::Int,
             "numInputs" | "numOutputs" | "weight" => ArkType::Int,
             "id" => ArkType::Bytes32,
@@ -856,125 +991,139 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         },
 
         // tx.inputs[i].*
-        Expression::InputIntrospection { property, .. } => match property.as_str() {
+        ExprKind::InputIntrospection { property, .. } => match property.as_str() {
             "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
-            "sequence" => ArkType::Int,
+            "sequence" | "witnessVersion" => ArkType::Int,
             "outpoint" => ArkType::Struct("Outpoint".to_string()),
             "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
             _ => ArkType::Unknown,
         },
 
         // tx.outputs[o].*
-        Expression::OutputIntrospection { property, .. } => match property.as_str() {
-            "value" => ArkType::Int,
+        ExprKind::OutputIntrospection { property, .. } => match property.as_str() {
+            "value" | "witnessVersion" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
             _ => ArkType::Unknown,
         },
 
         // Asset introspection
-        Expression::AssetLookup { .. } => ArkType::Int,
-        Expression::AssetHas { .. } => ArkType::Bool,
-        Expression::AssetCount { .. } => ArkType::Int,
-        Expression::AssetAt { property, .. } => match property.as_str() {
+        ExprKind::AssetLookup { .. } => ArkType::Int,
+        ExprKind::AssetHas { .. } => ArkType::Bool,
+        ExprKind::AssetCount { .. } => ArkType::Int,
+        ExprKind::AssetAt { property, .. } => match property.as_str() {
             "amount" => ArkType::Int,
             "assetId" => ArkType::Struct("AssetId".to_string()),
             _ => ArkType::Unknown,
         },
 
         // Asset group introspection
-        Expression::GroupFind { .. } => ArkType::Int,
-        Expression::GroupHas { .. } => ArkType::Bool,
-        Expression::GroupControlIs { .. } => ArkType::Bool,
-        Expression::GroupSum { .. } => ArkType::Int,
-        Expression::GroupNumIO { .. } => ArkType::Int,
-        Expression::AssetGroupsLength => ArkType::Int,
-        Expression::GroupProperty { property, .. } => match property.as_str() {
+        ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
+        ExprKind::GroupHas { .. } => ArkType::Bool,
+        ExprKind::GroupControlIs { .. } => ArkType::Bool,
+        ExprKind::AssetGroupsLength => ArkType::Int,
+        ExprKind::GroupProperty { property, .. } => match property.as_str() {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,
             "numInputs" | "numOutputs" => ArkType::Int,
             "metadataHash" => ArkType::Bytes32,
-            "assetId" => ArkType::Struct("AssetId".to_string()),
+            "assetId" | "controlAssetId" => ArkType::Struct("AssetId".to_string()),
             "isFresh" | "hasControl" => ArkType::Bool,
             _ => ArkType::Unknown,
         },
-        Expression::GroupIOAccess { property, .. } => match property.as_deref() {
+        ExprKind::GroupIOAccess { property, .. } => match property.as_deref() {
             Some("amount") => ArkType::Int,
             Some("type") => ArkType::Int,
             _ => ArkType::Unknown,
         },
 
-        // SHA256 — all produce a 32-byte digest or midstate
-        Expression::Sha256 { .. }
-        | Expression::Sha256Initialize { .. }
-        | Expression::Sha256Update { .. }
-        | Expression::Sha256Finalize { .. }
-        | Expression::Sighash { .. } => ArkType::Bytes32,
+        ExprKind::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
 
         // Byte-string ops
-        Expression::Concat { .. } | Expression::Digest { .. } => ArkType::Bytes,
+        ExprKind::Concat { .. } => ArkType::Bytes,
 
         // Arithmetic
-        Expression::Negate { .. } | Expression::ModExp { .. } => ArkType::Int,
-        Expression::Not { .. } | Expression::CheckTime { .. } | Expression::Tunnel { .. } => {
-            ArkType::Bool
-        }
+        ExprKind::Unary {
+            op: UnaryOperator::Invert,
+            ..
+        } => bytes_of_width(static_byte_width(expr, scope)),
+        ExprKind::Unary { op, .. } => ArkType::parse(op.operand_type()),
+        ExprKind::Tunnel { .. } => ArkType::Bool,
 
         // Crypto expressions
-        Expression::CheckSigExpr { .. }
-        | Expression::CheckSigFromStackExpr { .. }
-        | Expression::CheckSigFromStackVerify { .. }
-        | Expression::EcPairing { .. }
-        | Expression::EcMulScalarVerify { .. }
-        | Expression::TweakVerify { .. } => ArkType::Bool,
-        Expression::EcAdd { .. } | Expression::EcMul { .. } => {
-            ArkType::Struct("ECPoint".to_string())
-        }
+        ExprKind::CheckSigExpr { .. }
+        | ExprKind::CheckSigFromStackExpr { .. }
+        | ExprKind::CheckSigFromStackVerify { .. } => ArkType::Bool,
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
-        Expression::ContractInstance { .. } => ArkType::Bytes,
+        ExprKind::ContractInstance { .. } => ArkType::Bytes,
 
-        // Byte-string manipulation (introspector extensions)
-        Expression::Substr { .. } => ArkType::Bytes,
-        Expression::Cat { .. } => ArkType::Bytes,
-        Expression::Bin2Num { .. } => ArkType::Int,
-        Expression::Num2Bin { .. } => ArkType::Bytes,
-        Expression::ReverseBytes { .. } => ArkType::Bytes,
-        Expression::SizeOf { .. } => ArkType::Int,
+        ExprKind::Cast { target, .. } => ArkType::parse(target),
 
         // Packet introspection — returns raw packet bytes.
-        Expression::PacketInspect { .. } => ArkType::Bytes,
-        Expression::IntentInspect { presence_only, .. } => {
+        ExprKind::PacketInspect { .. } => ArkType::Bytes,
+        ExprKind::IntentInspect { presence_only, .. } => {
             if *presence_only {
                 ArkType::Bool
             } else {
                 ArkType::Bytes
             }
         }
-        Expression::InputPacketInspect { .. } => ArkType::Bytes,
+        ExprKind::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.
-        Expression::BinaryOp { left, op, right } => {
+        ExprKind::BinaryOp { left, op, right } => {
             let lt = infer_type(left, scope);
             let rt = infer_type(right, scope);
-            match op.as_str() {
-                "+" => {
-                    // bytes-like on either side → concatenation (result Bytes).
-                    if is_bytes_like(&lt) || is_bytes_like(&rt) {
-                        ArkType::Bytes
-                    } else {
-                        ArkType::Int
-                    }
+            match op.class() {
+                // bytes-like on either side → concatenation (result Bytes).
+                OperatorClass::Arithmetic
+                    if *op == BinaryOperator::Add && (is_bytes_like(&lt) || is_bytes_like(&rt)) =>
+                {
+                    ArkType::Bytes
                 }
-                "-" | "*" | "/" => ArkType::Int,
-                "==" | "!=" | ">=" | "<=" | ">" | "<" | "&&" | "||" => ArkType::Bool,
-                _ => ArkType::Unknown,
+                OperatorClass::Arithmetic | OperatorClass::Shift => ArkType::Int,
+                OperatorClass::Bytewise => bytes_of_width(static_byte_width(expr, scope)),
+                OperatorClass::Ordering | OperatorClass::Equality | OperatorClass::Logical => {
+                    ArkType::Bool
+                }
             }
         }
     }
 }
 
-/// Returns true when the type is a raw byte string (eligible as a `+`
-/// operand for concatenation via OP_CAT).
+/// Byte length of `expr` when it is known at compile time.
+pub(crate) fn static_byte_width(expr: &Expression, scope: &Scope) -> Option<usize> {
+    match &expr.kind {
+        ExprKind::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
+        // Bytewise operands share one length, so either side's known width is the result's.
+        ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
+            static_byte_width(left, scope).or_else(|| static_byte_width(right, scope))
+        }
+        ExprKind::Unary {
+            op: UnaryOperator::Invert,
+            value,
+        } => static_byte_width(value, scope),
+        _ => match infer_type(expr, scope) {
+            ArkType::Bytes20 => Some(20),
+            ArkType::Bytes32 => Some(32),
+            _ => None,
+        },
+    }
+}
+
+fn bytes_of_width(width: Option<usize>) -> ArkType {
+    match width {
+        Some(20) => ArkType::Bytes20,
+        Some(32) => ArkType::Bytes32,
+        _ => ArkType::Bytes,
+    }
+}
+
+/// Returns true when the type widens to `bytes`: it can be concatenated with
+/// `+` and compared or bound to `bytes`, but never to another sized type.
 pub fn is_bytes_like(t: &ArkType) -> bool {
-    matches!(t, ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32)
+    matches!(
+        t,
+        ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
+    )
 }

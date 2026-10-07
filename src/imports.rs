@@ -1,28 +1,92 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use crate::models::{self, Contract, ContractJson, Expression, SourceBundle, Statement};
+use crate::diagnostics::Diagnostic;
+use crate::models::{
+    self, Contract, ContractJson, ExprKind, Expression, LocatedStatement, SourceBundle, Statement,
+};
 use crate::{compiler, parser, typechecker};
 
 // Dependency definitions are copied per module; use a shared symbol table if quadratic copying becomes costly.
 struct Module {
     contract: Contract,
     structs: HashSet<String>,
-    warnings: Vec<String>,
+    warnings: Vec<Diagnostic>,
+}
+
+/// `load()`'s failure: either a single fail-fast message (I/O, cycle, unknown
+/// import, internal invariant) or the diagnostics `compiler::prepare`
+/// collected for one file, with that file's source.
+pub(crate) enum LoadError {
+    Message(String),
+    Diagnostics(Vec<Diagnostic>, String),
+}
+
+impl From<String> for LoadError {
+    fn from(message: String) -> Self {
+        LoadError::Message(message)
+    }
+}
+
+/// Every parse, validation and type diagnostic for `entry`, without writing
+/// an artifact. `entry` may be a library file, checked directly rather than
+/// through a synthetic importer. Unlike `compile_sources`, independent
+/// problems in `entry` each get their own diagnostic instead of being joined
+/// into one message. Diagnostics from imports name the imported file.
+pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
+    let entry = match relative_path(entry) {
+        Ok(entry) => entry,
+        Err(e) => return vec![Diagnostic::error(entry, e)],
+    };
+    let normalized = match normalize_files(files) {
+        Ok(normalized) => normalized,
+        Err(e) => return vec![Diagnostic::error(entry, e)],
+    };
+    let Some(source) = normalized.get(&entry) else {
+        let message = format!(
+            "source file '{entry}' not found; imports require source files supplied through compile_sources or compile_file"
+        );
+        return vec![Diagnostic::error(entry, message)];
+    };
+    if let Err(error) = parser::try_parse(source) {
+        return vec![parser::parse_error_diagnostic(&error, &entry, source)];
+    }
+
+    let mut modules = BTreeMap::new();
+    let mut loaded_files = BTreeMap::new();
+    let result = load(
+        &entry,
+        &entry,
+        &mut |path| {
+            normalized.get(path).cloned().ok_or_else(|| {
+            format!("source file '{path}' not found; imports require source files supplied through compile_sources or compile_file")
+        })
+        },
+        &mut modules,
+        &mut loaded_files,
+        &mut Vec::new(),
+        &mut HashMap::new(),
+    );
+
+    match result {
+        Ok(()) => modules.into_values().flat_map(|m| m.warnings).collect(),
+        Err(LoadError::Diagnostics(diagnostics, _)) => diagnostics,
+        Err(LoadError::Message(message)) => {
+            let message = message
+                .strip_prefix(&format!("{entry}: "))
+                .unwrap_or(&message);
+            vec![Diagnostic::error(entry, message)]
+        }
+    }
 }
 
 pub(crate) fn compile_sources(
     entry: &str,
     files: &BTreeMap<String, String>,
+    options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let entry = relative_path(entry)?;
-    let mut normalized = BTreeMap::new();
-    for (path, source) in files {
-        let path = relative_path(path)?;
-        if normalized.insert(path.clone(), source.clone()).is_some() {
-            return Err(format!("duplicate source path '{path}'"));
-        }
-    }
+    let normalized = normalize_files(files)?;
     compile_with_loader(
         &entry,
         |path| {
@@ -31,16 +95,75 @@ pub(crate) fn compile_sources(
             ))
         },
         false,
+        options,
     )
 }
 
-pub(crate) fn compile_file(path: &Path) -> Result<ContractJson, String> {
+#[cfg(any(feature = "wasm", test))]
+/// Completion symbols for `entry`: its own declarations, plus the structs,
+/// contracts, libraries, constants and exported functions of its direct imports.
+pub(crate) fn source_symbols(
+    entry: &str,
+    files: &BTreeMap<String, String>,
+) -> Result<serde_json::Value, String> {
+    let entry = relative_path(entry)?;
+    let files = normalize_files(files)?;
+    let source = files
+        .get(&entry)
+        .ok_or_else(|| format!("source file '{entry}' not found"))?;
+    let (mut symbols, mut structs) = parser::symbols(source)?;
+    let mut members: BTreeMap<String, Vec<parser::Symbol>> = BTreeMap::new();
+    for import in parser::imports(source)? {
+        // Imports that are rejected, missing or do not parse contribute nothing.
+        let Ok(path) = import_path(&entry, &import) else {
+            continue;
+        };
+        let Some(Ok((imported, imported_structs))) = files.get(&path).map(|s| parser::symbols(s))
+        else {
+            continue;
+        };
+        structs.extend(imported_structs);
+        let owner = imported
+            .iter()
+            .find(|s| matches!(s.kind, "contract" | "library"))
+            .map(|s| s.name.clone());
+        for mut symbol in imported {
+            symbol.file = Some(path.clone());
+            match (symbol.kind, &owner) {
+                ("struct" | "contract" | "library", _) => symbols.push(symbol),
+                ("constant", Some(owner)) => members.entry(owner.clone()).or_default().push(symbol),
+                ("function", Some(owner)) if symbol.exported => {
+                    members.entry(owner.clone()).or_default().push(symbol)
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(serde_json::json!({ "symbols": symbols, "structs": structs, "members": members }))
+}
+
+fn normalize_files(files: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    let mut normalized = BTreeMap::new();
+    for (path, source) in files {
+        let path = relative_path(path)?;
+        if normalized.insert(path.clone(), source.clone()).is_some() {
+            return Err(format!("duplicate source path '{path}'"));
+        }
+    }
+    Ok(normalized)
+}
+
+pub(crate) fn compile_file(
+    path: &Path,
+    options: crate::CompileOptions,
+) -> Result<ContractJson, String> {
     let absolute = std::path::absolute(path).map_err(|e| e.to_string())?;
     let entry = normalize(&absolute)?;
     compile_with_loader(
         &entry,
         |path| std::fs::read_to_string(path).map_err(|e| format!("cannot read '{path}': {e}")),
         true,
+        options,
     )
 }
 
@@ -99,6 +222,7 @@ fn compile_with_loader(
     entry: &str,
     mut read: impl FnMut(&str) -> Result<String, String>,
     filesystem: bool,
+    options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let mut modules = BTreeMap::new();
     let mut files = BTreeMap::new();
@@ -110,8 +234,21 @@ fn compile_with_loader(
         &mut files,
         &mut Vec::new(),
         &mut HashMap::new(),
-    )?;
+    )
+    .map_err(|e| match e {
+        LoadError::Message(message) => message,
+        LoadError::Diagnostics(diagnostics, source) => format!(
+            "{}: {}",
+            diagnostics.first().map_or(entry, |d| d.file.as_str()),
+            crate::diagnostics::render_errors(&diagnostics, &source)
+        ),
+    })?;
     let root = &modules[entry];
+    if root.contract.is_library {
+        return Err(format!(
+            "{entry}: entry file must declare a contract, not a library"
+        ));
+    }
     let mut bundle = SourceBundle {
         entry: entry.to_string(),
         files,
@@ -155,13 +292,15 @@ fn compile_with_loader(
                 .expect("common root")
                 .to_string_lossy()
                 .replace('\\', "/");
-            module
-                .warnings
-                .iter()
-                .map(move |warning| format!("{warning} ({path})"))
+            let source = bundle.files.get(&path).map(String::as_str).unwrap_or("");
+            module.warnings.iter().map(move |warning| {
+                let tag = warning.code.as_deref().unwrap_or("general");
+                let message = crate::diagnostics::located(&warning.message, warning.span, source);
+                format!("warning[{tag}]: {message} ({path})")
+            })
         })
         .collect();
-    compiler::emit(&root.contract, bundle, warnings)
+    compiler::emit(&root.contract, bundle, warnings, options)
 }
 
 fn load(
@@ -172,19 +311,21 @@ fn load(
     files: &mut BTreeMap<String, String>,
     active: &mut Vec<String>,
     declarations: &mut HashMap<String, String>,
-) -> Result<(), String> {
+) -> Result<(), LoadError> {
     if modules.contains_key(path) {
         return Ok(());
     }
     if active.iter().any(|p| p == path) {
-        return Err(format!(
+        return Err(LoadError::Message(format!(
             "circular import: {} -> {path}",
             active.join(" -> ")
-        ));
+        )));
     }
     // Recursive loading is bounded; use an iterative traversal for deeper projects.
     if active.len() >= 128 {
-        return Err("import depth exceeds 128 files".to_string());
+        return Err(LoadError::Message(
+            "import depth exceeds 128 files".to_string(),
+        ));
     }
     active.push(path.to_string());
     let result = (|| {
@@ -216,15 +357,15 @@ fn load(
             }
         }
         let mut contract = parser::parse_with_constants(&source, &constants)?;
-        if path == entry && contract.is_library {
-            return Err("entry file must declare a contract, not a library".to_string());
-        }
         let own_structs: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
         if models::is_builtin_type(&contract.name)
             || models::is_builtin_struct(&contract.name)
             || matches!(contract.name.as_str(), "tx" | "this")
         {
-            return Err(format!("contract name '{}' is reserved", contract.name));
+            return Err(LoadError::Message(format!(
+                "contract name '{}' is reserved",
+                contract.name
+            )));
         }
         for name in contract
             .structs
@@ -233,9 +374,9 @@ fn load(
             .chain((!contract.name.is_empty()).then_some(&contract.name))
         {
             if let Some(previous) = declarations.insert(name.clone(), path.to_string()) {
-                return Err(format!(
+                return Err(LoadError::Message(format!(
                     "duplicate declaration '{name}' in '{previous}' and '{path}'"
-                ));
+                )));
             }
         }
         let mut visible_structs = own_structs.clone();
@@ -249,14 +390,18 @@ fn load(
         }
         for function in &mut contract.functions {
             visit_statements(&mut function.statements, &mut |expression| {
-                if let Expression::GroupControlIs {
+                if let ExprKind::GroupControlIs {
                     group,
                     asset_txid,
                     asset_gidx,
-                } = expression
+                } = &expression.kind
                 {
+                    // Only a bare name can be a library; other groups stay asset groups.
+                    let ExprKind::Variable(group) = &group.as_ref().kind else {
+                        return Ok(());
+                    };
                     if group == &contract.name || visible_contracts.contains_key(group) {
-                        *expression = Expression::Call {
+                        expression.kind = ExprKind::Call {
                             name: format!("{group}.controlIs"),
                             args: vec![*asset_txid.clone(), *asset_gidx.clone()],
                             return_type: None,
@@ -283,7 +428,7 @@ fn load(
                 if !function.is_imported() {
                     function.name = format!("{}.{}", imported.name, function.name);
                     visit_statements(&mut function.statements, &mut |expression| {
-                        if let Expression::Call { name, .. } = expression {
+                        if let ExprKind::Call { name, .. } = &mut expression.kind {
                             if !name.contains('.') {
                                 *name = format!("{}.{}", imported.name, name);
                             }
@@ -304,7 +449,7 @@ fn load(
         let owner = contract.name.clone();
         for function in &mut contract.functions {
             visit_statements(&mut function.statements, &mut |expression| {
-                if let Expression::Call { name, .. } = expression {
+                if let ExprKind::Call { name, .. } = &mut expression.kind {
                     if let Some(local) = name.strip_prefix(&format!("{owner}.")) {
                         *name = local.to_string();
                     }
@@ -313,7 +458,9 @@ fn load(
             })?;
         }
         contract.functions.extend(helpers.into_values());
-        let warnings = compiler::prepare(&mut contract, path == entry)?;
+        let require_entrypoint = path == entry && !contract.is_library;
+        let warnings = compiler::prepare(&mut contract, require_entrypoint, path)
+            .map_err(|diagnostics| LoadError::Diagnostics(diagnostics, source.clone()))?;
         files.insert(path.to_string(), source);
         modules.insert(
             path.to_string(),
@@ -326,7 +473,10 @@ fn load(
         Ok(())
     })();
     active.pop();
-    result.map_err(|error: String| format!("{path}: {error}"))
+    result.map_err(|error| match error {
+        LoadError::Message(message) => LoadError::Message(format!("{path}: {message}")),
+        diagnostics @ LoadError::Diagnostics(..) => diagnostics,
+    })
 }
 
 fn validate_scope(
@@ -387,8 +537,8 @@ fn validate_scope(
         let mut body = function.statements.clone();
         validate_local_types(&body, &check_type, &check_binding)?;
         visit_statements(&mut body, &mut |expression| {
-            match expression {
-                Expression::Call { name, .. } if name.contains('.') => {
+            match &expression.kind {
+                ExprKind::Call { name, .. } if name.contains('.') => {
                     let (owner, member) = name.split_once('.').expect("qualified name");
                     let target = contracts.get(owner).ok_or_else(|| {
                         format!("unknown contract '{owner}'; import its defining file")
@@ -406,14 +556,14 @@ fn validate_scope(
                         return Err(format!("library function '{name}' is private"));
                     }
                 }
-                Expression::Property(name) => {
+                ExprKind::Property(name) => {
                     if let Some((owner, _)) = name.split_once('.') {
                         if contracts.contains_key(owner) {
                             return Err(format!("unknown constant '{name}'"));
                         }
                     }
                 }
-                Expression::ContractInstance {
+                ExprKind::ContractInstance {
                     contract_name,
                     args,
                 } => {
@@ -456,12 +606,12 @@ fn validate_scope(
 }
 
 fn validate_local_types(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     check: &impl Fn(&str) -> Result<(), String>,
     binding: &impl Fn(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     for statement in statements {
-        match statement {
+        match &statement.statement {
             Statement::LetBinding {
                 name,
                 declared_type,
@@ -502,11 +652,11 @@ fn validate_local_types(
 }
 
 fn visit_statements(
-    statements: &mut [Statement],
+    statements: &mut [LocatedStatement],
     visit: &mut impl FnMut(&mut Expression) -> Result<(), String>,
 ) -> Result<(), String> {
     for statement in statements {
-        match statement {
+        match &mut statement.statement {
             Statement::Call(expr)
             | Statement::Return(Some(expr))
             | Statement::LetBinding { value: expr, .. } => visit_expression(expr, visit)?,
@@ -519,7 +669,9 @@ fn visit_statements(
                 _ => {}
             },
             Statement::VarAssign { target, value } => {
-                if let models::AssignmentTarget::ArrayIndex { index, .. } = target {
+                if let models::AssignmentTarget::ArrayIndex { index, .. }
+                | models::AssignmentTarget::Access(index) = target
+                {
                     visit_expression(index, visit)?;
                 }
                 visit_expression(value, visit)?;
@@ -557,4 +709,224 @@ fn visit_expression(
         visit_expression(child, visit)?;
     }
     visit(expr)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn source_symbols_scope_locals_and_expose_direct_imports() {
+        let main = r#"import "fees.ark"; import "/absolute.ark";
+struct Point { int x; }
+contract Vault(Point[2] points, pubkey owner) {
+    function spend(signature sig, bytes32 txid) {
+        let group = tx.assetGroups.find(txid, 0);
+        for (i, point) in points {
+            int total = point.x;
+        }
+        require(checkSig(sig, owner));
+    }
+    function exit() {
+        require(tx.time >= Fees.DELAY);
+    }
+}"#;
+        let fees = r#"import "deep.ark";
+struct Policy { int maximum; }
+library Fees {
+    const int DELAY = 144;
+    function calculate(int amount) int { return amount * 2; }
+    private function hidden(int amount) int { return amount; }
+}"#;
+        let files = [
+            ("./main.ark", main),
+            ("fees.ark", fees),
+            ("deep.ark", "struct Hidden { int x; }"),
+        ]
+        .into_iter()
+        .map(|(path, source)| (path.to_string(), source.to_string()))
+        .collect();
+        let output = super::source_symbols("main.ark", &files).unwrap();
+        assert_eq!(
+            output["symbols"],
+            json!([
+                { "name": "Point", "kind": "struct", "position": [2, 8] },
+                { "name": "Vault", "kind": "contract", "position": [3, 10] },
+                { "name": "points", "kind": "parameter", "type": "Point[2]", "position": [3, 25] },
+                { "name": "owner", "kind": "parameter", "type": "pubkey", "position": [3, 40] },
+                { "name": "spend", "kind": "function", "position": [4, 14] },
+                { "name": "sig", "kind": "parameter", "type": "signature", "position": [4, 30], "scope": [4, 10] },
+                { "name": "txid", "kind": "parameter", "type": "bytes32", "position": [4, 43], "scope": [4, 10] },
+                { "name": "group", "kind": "variable", "type": "AssetGroup", "position": [5, 13], "scope": [4, 10] },
+                { "name": "i", "kind": "variable", "type": "int", "position": [6, 14], "scope": [4, 10] },
+                { "name": "point", "kind": "variable", "type": "Point", "position": [6, 17], "scope": [4, 10] },
+                { "name": "total", "kind": "variable", "type": "int", "position": [7, 17], "scope": [4, 10] },
+                { "name": "exit", "kind": "function", "position": [11, 14] },
+                { "name": "Policy", "kind": "struct", "position": [2, 8], "file": "fees.ark" },
+                { "name": "Fees", "kind": "library", "position": [3, 9], "file": "fees.ark" },
+            ])
+        );
+        assert_eq!(
+            output["members"],
+            json!({ "Fees": [
+                { "name": "DELAY", "kind": "constant", "type": "int", "position": [4, 15], "file": "fees.ark" },
+                { "name": "calculate", "kind": "function", "type": "int", "position": [5, 14], "file": "fees.ark" },
+            ] })
+        );
+        assert_eq!(
+            output["structs"],
+            json!([
+                { "name": "Point", "fields": [{ "name": "x", "type": "int" }] },
+                { "name": "Policy", "fields": [{ "name": "maximum", "type": "int" }] },
+            ])
+        );
+        let broken = [("main.ark".to_string(), "contract A( {".to_string())].into();
+        assert!(super::source_symbols("main.ark", &broken).is_err());
+    }
+
+    use crate::diagnostics::Severity;
+    use std::collections::BTreeMap;
+
+    fn check_one(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let files: BTreeMap<_, _> = [("main.ark".to_string(), source.to_string())].into();
+        super::check_sources("main.ark", &files)
+    }
+
+    #[test]
+    fn valid_contract_has_no_diagnostics() {
+        let source = "contract Vault(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        assert_eq!(check_one(source), vec![]);
+    }
+
+    #[test]
+    fn three_independent_errors_yield_three_diagnostics() {
+        let source = "contract Bad(pubkey owner, pubkey owner) {\n  function spend(signature sig, signature sig) { require(checkSig(sig, owner)); }\n  function spend(signature s) { require(checkSig(s, owner)); }\n}\n";
+        let diagnostics = check_one(source);
+        assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
+        assert!(diagnostics.iter().all(|d| d.severity == Severity::Error));
+        assert!(diagnostics.iter().any(|d| d
+            .message
+            .contains("duplicate constructor parameter 'owner'")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("duplicate function name 'spend'")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("duplicate parameter 'sig'")));
+    }
+
+    #[test]
+    fn semantic_diagnostics_carry_a_precise_byte_span() {
+        let source = "contract V(pubkey owner) {\n  function spend(signature sig) { require(checkSig(sig, owner)); }\n  function spend(signature s) { require(checkSig(s, owner)); }\n}\n";
+        let diagnostics = check_one(source);
+        let duplicate = diagnostics
+            .iter()
+            .find(|d| d.message.contains("duplicate function name"))
+            .expect("duplicate function name diagnostic");
+        let span = duplicate.span.expect("semantic diagnostics carry a span");
+        assert!(
+            span.start < span.end,
+            "span must be a real range, not a point"
+        );
+        assert_eq!(&source[span.start..span.end], "spend");
+    }
+
+    #[test]
+    fn syntax_error_has_a_span_and_a_plain_message() {
+        let source = "contract Vault(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner))\n  }\n}\n";
+        let [diagnostic]: [_; 1] = check_one(source).try_into().unwrap();
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.message, "expected ';'");
+        let span = diagnostic.span.expect("syntax errors carry a span");
+        assert!(span.start < span.end, "span must cover at least one byte");
+        assert!(span.end <= source.len());
+    }
+
+    #[test]
+    fn syntax_error_spans_cover_a_whole_character_even_at_end_of_input() {
+        for (source, expected) in [
+            ("contract V(pubkey o) {\n  function f(signature s) {\n    require(checkSig(s, o)) é\n  }\n}\n", "é"),
+            ("contract A(pubkey o) {\n", "{"),
+        ] {
+            let [diagnostic]: [_; 1] = check_one(source).try_into().unwrap();
+            let span = diagnostic.span.expect("syntax errors carry a span");
+            assert_eq!(source.get(span.start..span.end), Some(expected), "{source:?}");
+        }
+    }
+
+    #[test]
+    fn a_library_is_checked_directly_without_a_wrapper() {
+        let library = "library Rules {\n  function preservesValue() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n}\n";
+        let files: BTreeMap<_, _> = [("lib/rules.ark".to_string(), library.to_string())].into();
+        assert_eq!(super::check_sources("lib/rules.ark", &files), vec![]);
+
+        let broken = library.replace("tx.inputs[0].value", "missing");
+        let files: BTreeMap<_, _> = [("lib/rules.ark".to_string(), broken)].into();
+        let [diagnostic]: [_; 1] = super::check_sources("lib/rules.ark", &files)
+            .try_into()
+            .unwrap();
+        assert_eq!(diagnostic.file, "lib/rules.ark");
+        assert!(
+            !diagnostic.message.contains("__arkade_lsp_check__"),
+            "{}",
+            diagnostic.message
+        );
+    }
+
+    #[test]
+    fn check_reports_an_entry_not_present_in_files_instead_of_going_silent() {
+        let files: BTreeMap<_, _> = [("main.ark".to_string(), "irrelevant".to_string())].into();
+        let [diagnostic]: [_; 1] = super::check_sources("missing.ark", &files)
+            .try_into()
+            .unwrap();
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert!(
+            diagnostic.message.contains("missing.ark"),
+            "{}",
+            diagnostic.message
+        );
+    }
+
+    #[test]
+    fn dependency_warnings_are_reported_in_the_dependency() {
+        let main = "import \"other.ark\";\ncontract V(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        let other = "contract Other(pubkey owner, int unused) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        let files: BTreeMap<_, _> = [
+            ("main.ark".to_string(), main.to_string()),
+            ("other.ark".to_string(), other.to_string()),
+        ]
+        .into();
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.severity, Severity::Warning);
+        assert_eq!(diagnostic.file, "other.ark");
+        assert!(
+            diagnostic.message.contains("'unused'"),
+            "{}",
+            diagnostic.message
+        );
+    }
+
+    #[test]
+    fn a_dependency_failure_is_located_in_the_dependency() {
+        let main = "import \"lib.ark\";\ncontract V(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n}\n";
+        let broken_lib = "library L {\n  function helper() {\n    require(missing);\n  }\n}\n";
+        let files: BTreeMap<_, _> = [
+            ("main.ark".to_string(), main.to_string()),
+            ("lib.ark".to_string(), broken_lib.to_string()),
+        ]
+        .into();
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.file, "lib.ark");
+        let span = diagnostic
+            .span
+            .expect("dependency diagnostics carry a span");
+        assert_eq!(&broken_lib[span.start..span.end], "missing");
+
+        let error = super::compile_sources("main.ark", &files, Default::default()).unwrap_err();
+        assert!(
+            error.starts_with("lib.ark: validation error: line 3, column 13: "),
+            "{error}"
+        );
+    }
 }

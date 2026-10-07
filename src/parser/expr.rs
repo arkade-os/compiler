@@ -4,39 +4,49 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
+/// Whether `rule` is one of the grammar's binary-operator precedence levels.
+pub(crate) fn is_operator_level(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::general_expression
+            | Rule::logical_or_expr
+            | Rule::logical_and_expr
+            | Rule::comparison_expr
+            | Rule::bit_or_expr
+            | Rule::bit_xor_expr
+            | Rule::bit_and_expr
+            | Rule::shift_expr
+            | Rule::additive_expr
+            | Rule::multiplicative_expr
+    )
+}
+
 // Parse general expression (with operator precedence)
 pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr => {
+        rule if is_operator_level(rule) => {
             let mut inner = pair.into_inner();
             let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
             while let Some(op) = inner.next() {
                 let right = parse_general_expression(inner.next().ok_or("Missing right operand")?)?;
-                result = Expression::BinaryOp {
-                    left: Box::new(result),
-                    op: op.as_str().to_string(),
-                    right: Box::new(right),
+                let op = crate::operators::BinaryOperator::from_symbol(op.as_str())
+                    .ok_or_else(|| format!("unknown operator '{}'", op.as_str()))?;
+                let span = crate::diagnostics::Span {
+                    start: result.span.start,
+                    end: right.span.end,
                 };
+                result = Expression::new(
+                    ExprKind::BinaryOp {
+                        left: Box::new(result),
+                        op,
+                        right: Box::new(right),
+                    },
+                    span,
+                );
             }
             Ok(result)
         }
-        Rule::unary_expr | Rule::primary_expr => parse_primary_expr(pair),
-        Rule::identifier | Rule::qualified_name => {
-            Ok(Expression::Variable(pair.as_str().to_string()))
-        }
-        Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
-        Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
-        Rule::tx_property_access => parse_tx_property_to_expr(pair),
-        Rule::this_property_access => parse_primary_expr(pair),
-        _ => {
-            // Try to parse as a primary expression
-            parse_primary_expr(pair)
-        }
+        _ => parse_primary_expr(pair),
     }
 }
 
@@ -66,6 +76,13 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         ));
     }
 
+    if matches!(name.as_str(), "hash160" | "hash256" | "ripemd160") {
+        return Err(format!(
+            "`{name}` is only supported as `{name}(preimage) == hash` with a named or literal hash; \
+             only sha256 accepts computed operands"
+        ));
+    }
+
     if let Some(signature) = reserved_function_signature(&name) {
         return Err(format!(
             "malformed reserved function call `{name}(...)`; expected {signature}"
@@ -75,34 +92,24 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) fn reserved_function_signature(name: &str) -> Option<&'static str> {
-    match name {
+pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
+    if let Some(builtin) = crate::builtins::find(name) {
+        return Some(builtin.signature());
+    }
+    let signature = match name {
         "checkSig" => Some("checkSig(signature, pubkey)"),
         "checkSigFromStack" => Some("checkSigFromStack(signature, pubkey, message)"),
         "checkSigFromStackVerify" => Some("checkSigFromStackVerify(signature, pubkey, message)"),
         "checkMultisig" => Some("checkMultisig([pubkeys], [sigs], threshold?)"),
-        "sha256" => Some("sha256(data)"),
         "hash160" => Some("hash160(data)"),
         "hash256" => Some("hash256(data)"),
         "ripemd160" => Some("ripemd160(data)"),
-        "sha256Initialize" => Some("sha256Initialize(data)"),
-        "sha256Update" => Some("sha256Update(ctx, chunk)"),
-        "sha256Finalize" => Some("sha256Finalize(ctx, lastChunk)"),
-        "digest" => Some("digest(data, hashType)"),
-        "sighash" => Some("sighash(hashType)"),
-        "modExp" => Some("modExp(base, exponent, modulus)"),
-        "ecAdd" => Some("ecAdd(x1, y1, x2, y2, curveId)"),
-        "ecMul" => Some("ecMul(x, y, scalar, curveId)"),
-        "ecPairing" => Some("ecPairing(g1X, g1Y, g2Xc1, g2Xc0, g2Yc1, g2Yc0, curveId)"),
-        "reverseBytes" => Some("reverseBytes(data)"),
-        "ecMulScalarVerify" => Some("ecMulScalarVerify(k, P, Q)"),
-        "tweakVerify" => Some("tweakVerify(P, k, Q)"),
         "older" => Some("older(value)"),
         "after" => Some("after(value)"),
-        "checkTime" => Some("checkTime(timestamp)"),
         "this.tunnel" => Some("this.tunnel(outputIndex, policy?, exceptions?)"),
         _ => None,
-    }
+    };
+    signature.map(str::to_string)
 }
 
 pub(crate) fn parse_string_literal(text: &str) -> Result<String, String> {
@@ -123,46 +130,77 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
     }
 }
 
+/// Parse a crypto-check operand: a binding access or a byte literal.
+pub(crate) fn parse_operand(pair: Pair<Rule>) -> Result<Expression, String> {
+    let span: crate::diagnostics::Span = pair.as_span().into();
+    match pair.as_rule() {
+        Rule::sig_arg | Rule::key_expr => {
+            parse_operand(pair.into_inner().next().ok_or("Missing operand")?)
+        }
+        Rule::named_binding => parse_property_access(pair),
+        Rule::tweak_key => Err("tweak(...) is only available in tapscript functions".to_string()),
+        _ => Ok(Expression::new(
+            ExprKind::Literal(parse_named_operand(pair)?),
+            span,
+        )),
+    }
+}
+
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
+    let span: crate::diagnostics::Span = pair.as_span().into();
     match pair.as_rule() {
         Rule::primary_expr => {
             let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
             parse_primary_expr(inner)
+        }
+        Rule::parenthesized_expr => {
+            let inner = pair.into_inner().next().ok_or("Empty grouped expression")?;
+            let mut value = parse_primary_expr(inner)?;
+            value.span = span;
+            Ok(value)
         }
         Rule::unary_expr | Rule::unary_atom => {
             let mut inner = pair.into_inner();
             let operand = inner.next_back().ok_or("Empty unary expression")?;
             let mut value = parse_primary_expr(operand)?;
             for operator in inner.rev() {
-                value = match operator.as_rule() {
-                    Rule::sub_op => Expression::Negate {
-                        value: Box::new(value),
-                    },
-                    Rule::not_op => Expression::Not {
-                        value: Box::new(value),
-                    },
+                use crate::operators::UnaryOperator;
+                let op = match operator.as_rule() {
+                    Rule::sub_op => UnaryOperator::Neg,
+                    Rule::not_op => UnaryOperator::Not,
+                    Rule::invert_op => UnaryOperator::Invert,
                     _ => return Err("Unexpected unary operator".to_string()),
                 };
+                let span = crate::diagnostics::Span {
+                    start: operator.as_span().start(),
+                    end: value.span.end,
+                };
+                value = Expression::new(
+                    ExprKind::Unary {
+                        op,
+                        value: Box::new(value),
+                    },
+                    span,
+                );
             }
             Ok(value)
         }
-        Rule::general_expression
-        | Rule::logical_or_expr
-        | Rule::logical_and_expr
-        | Rule::comparison_expr
-        | Rule::additive_expr
-        | Rule::multiplicative_expr => {
+        rule if is_operator_level(rule) => {
             // Parenthesized expression
             parse_general_expression(pair)
         }
-        Rule::identifier | Rule::qualified_name => {
-            Ok(Expression::Variable(pair.as_str().to_string()))
-        }
-        Rule::bool_literal => Ok(Expression::Literal(pair.as_str().to_string())),
-        Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
-        Rule::hex_literal | Rule::string_literal => {
-            Ok(Expression::Literal(parse_named_operand(pair)?))
-        }
+        Rule::identifier | Rule::qualified_name => Ok(Expression::new(
+            ExprKind::Variable(pair.as_str().to_string()),
+            span,
+        )),
+        Rule::bool_literal | Rule::number_literal => Ok(Expression::new(
+            ExprKind::Literal(pair.as_str().to_string()),
+            span,
+        )),
+        Rule::hex_literal | Rule::string_literal => Ok(Expression::new(
+            ExprKind::Literal(parse_named_operand(pair)?),
+            span,
+        )),
         Rule::array_index_access => {
             let mut inner = pair.into_inner();
             let array = inner
@@ -171,31 +209,40 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 .as_str()
                 .to_string();
             let index = inner.next().ok_or("Missing array index")?;
-            Ok(Expression::ArrayIndex {
-                array,
-                index: Box::new(parse_general_expression(index)?),
-            })
+            Ok(Expression::new(
+                ExprKind::ArrayIndex {
+                    array,
+                    index: Box::new(parse_general_expression(index)?),
+                },
+                span,
+            ))
         }
-        Rule::array_literal => Ok(Expression::ArrayLiteral(
-            pair.into_inner()
-                .map(parse_general_expression)
-                .collect::<Result<Vec<_>, _>>()?,
+        Rule::array_literal => Ok(Expression::new(
+            ExprKind::ArrayLiteral(
+                pair.into_inner()
+                    .map(parse_general_expression)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            span,
         )),
-        Rule::struct_literal => Ok(Expression::StructLiteral(
-            pair.into_inner()
-                .map(|field| {
-                    let mut field = field.into_inner();
-                    let name = field
-                        .next()
-                        .ok_or("Missing struct literal field name")?
-                        .as_str()
-                        .to_string();
-                    let value = parse_general_expression(
-                        field.next().ok_or("Missing struct literal field value")?,
-                    )?;
-                    Ok((name, value))
-                })
-                .collect::<Result<Vec<_>, String>>()?,
+        Rule::struct_literal => Ok(Expression::new(
+            ExprKind::StructLiteral(
+                pair.into_inner()
+                    .map(|field| {
+                        let mut field = field.into_inner();
+                        let name = field
+                            .next()
+                            .ok_or("Missing struct literal field name")?
+                            .as_str()
+                            .to_string();
+                        let value = parse_general_expression(
+                            field.next().ok_or("Missing struct literal field value")?,
+                        )?;
+                        Ok((name, value))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?,
+            ),
+            span,
         )),
         Rule::array_length_access => {
             let array = pair
@@ -204,69 +251,47 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 .ok_or("Missing array name")?
                 .as_str()
                 .to_string();
-            Ok(Expression::Property(format!("{array}.length")))
+            Ok(Expression::new(
+                ExprKind::Property(format!("{array}.length")),
+                span,
+            ))
         }
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
         Rule::this_property_access => {
             let property = pair.into_inner().next().ok_or("Missing this property")?;
-            Ok(Expression::Property(format!("this.{}", property.as_str())))
+            Ok(Expression::new(
+                ExprKind::Property(format!("this.{}", property.as_str())),
+                span,
+            ))
         }
-        Rule::check_time => Ok(Expression::CheckTime {
-            timestamp: Box::new(parse_general_expression(
-                pair.into_inner()
-                    .next()
-                    .ok_or("Missing checkTime timestamp")?,
-            )?),
-        }),
         Rule::tunnel => parse_tunnel(pair),
         Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
-            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
-            Ok(Expression::CheckSigExpr { signature, pubkey })
+            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
+            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
+            Ok(Expression::new(
+                ExprKind::CheckSigExpr { signature, pubkey },
+                span,
+            ))
         }
         Rule::check_sig_from_stack => {
             let mut inner = pair.into_inner();
-            let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-            let pubkey = parse_named_operand(inner.next().ok_or("Missing pubkey")?)?;
-            let message = parse_named_operand(inner.next().ok_or("Missing message")?)?;
-            Ok(Expression::CheckSigFromStackExpr {
-                signature,
-                pubkey,
-                message,
-            })
+            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
+            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
+            let message = Box::new(parse_operand(inner.next().ok_or("Missing message")?)?);
+            Ok(Expression::new(
+                ExprKind::CheckSigFromStackExpr {
+                    signature,
+                    pubkey,
+                    message,
+                },
+                span,
+            ))
         }
-        Rule::sha256_func => {
-            // sha256(data) → one-shot OP_SHA256 over the inner expression.
-            let inner = pair.into_inner().next().ok_or("Missing sha256 argument")?;
-            let data = parse_general_expression(inner)?;
-            Ok(Expression::Sha256 {
-                data: Box::new(data),
-            })
-        }
-        // Streaming SHA256
-        Rule::sha256_initialize => parse_sha256_initialize(pair),
-        Rule::sha256_update => parse_sha256_update(pair),
-        Rule::sha256_finalize => parse_sha256_finalize(pair),
-        Rule::digest_func => parse_digest(pair),
-        Rule::sighash_func => parse_sighash(pair),
-        // Arithmetic
-        Rule::mod_exp_func => parse_mod_exp(pair),
-        // Crypto Opcodes
-        Rule::ec_add => parse_ec_add(pair),
-        Rule::ec_mul => parse_ec_mul(pair),
-        Rule::ec_pairing => parse_ec_pairing(pair),
-        Rule::ec_mul_scalar_verify => parse_ec_mul_scalar_verify(pair),
-        Rule::tweak_verify => parse_tweak_verify(pair),
         Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
         // Byte-string manipulation
-        Rule::substr_func => parse_substr(pair),
-        Rule::cat_func => parse_cat(pair),
-        Rule::bin2num_func => parse_bin2num(pair),
-        Rule::num2bin_func => parse_num2bin(pair),
-        Rule::reverse_bytes_func => parse_reverse_bytes(pair),
-        Rule::size_func => parse_size(pair),
+        Rule::cast_func => parse_cast(pair),
         // Packet introspection
         Rule::packet_inspect => parse_packet_inspect(pair),
         Rule::input_packet_inspect => parse_input_packet_inspect(pair),
@@ -281,6 +306,14 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => parse_constructor_to_expression(pair),
         Rule::function_call => {
+            let name = pair
+                .clone()
+                .into_inner()
+                .next()
+                .ok_or("Missing function name")?;
+            if let Some(builtin) = crate::builtins::find(name.as_str()) {
+                return parse_builtin_call(builtin, pair);
+            }
             reject_reserved_function_call(&pair)?;
             let mut inner = pair.into_inner();
             let name = inner
@@ -291,15 +324,21 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let args = inner
                 .map(parse_general_expression)
                 .collect::<Result<_, _>>()?;
-            Ok(Expression::Call {
-                name,
-                args,
-                return_type: None,
-            })
+            Ok(Expression::new(
+                ExprKind::Call {
+                    name,
+                    args,
+                    return_type: None,
+                },
+                span,
+            ))
         }
         _ => {
             // Default to treating as a property string
-            Ok(Expression::Property(pair.as_str().to_string()))
+            Ok(Expression::new(
+                ExprKind::Property(pair.as_str().to_string()),
+                span,
+            ))
         }
     }
 }
@@ -312,19 +351,19 @@ pub(crate) fn parse_complex_expression(
     match pair.as_rule() {
         Rule::general_expression => {
             let expression = parse_general_expression(pair)?;
-            if let Expression::BinaryOp { left, op, right } = expression {
-                if matches!(op.as_str(), "==" | "!=" | ">=" | "<=" | ">" | "<") {
+            let span = expression.span;
+            if let ExprKind::BinaryOp { left, op, right } = expression.kind {
+                if op.compares() {
                     return Ok(Requirement::Comparison {
                         left: *left,
                         op,
                         right: *right,
                     });
                 }
-                return Ok(Requirement::Expression(Expression::BinaryOp {
-                    left,
-                    op,
-                    right,
-                }));
+                return Ok(Requirement::Expression(Expression::new(
+                    ExprKind::BinaryOp { left, op, right },
+                    span,
+                )));
             }
             Ok(Requirement::Expression(expression))
         }
@@ -344,65 +383,83 @@ pub(crate) fn parse_complex_expression(
 // ─── Byte-string Manipulation Parsing ──────────────────────────────────
 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
-    let mut inner = pair.into_inner().collect::<Vec<_>>();
-    let index = match inner.last() {
-        Some(part) if part.as_rule() == Rule::general_expression => {
-            Some(inner.pop().ok_or("Missing field array index")?)
-        }
-        _ => None,
-    };
-    let path = inner
-        .iter()
-        .map(|part| part.as_str())
-        .collect::<Vec<_>>()
-        .join(".");
-    match index {
-        Some(index) => Ok(Expression::ArrayIndex {
-            array: path,
-            index: Box::new(parse_general_expression(index)?),
-        }),
-        None => Ok(Expression::Property(path)),
+    let mut inner = pair.into_inner();
+    let name = inner.next().ok_or("Missing binding name")?;
+    let start = name.as_span().start();
+    let mut value = Expression::new(
+        ExprKind::Variable(name.as_str().to_string()),
+        name.as_span().into(),
+    );
+    for suffix in inner {
+        let span = crate::diagnostics::Span {
+            start,
+            end: suffix.as_span().end(),
+        };
+        let part = suffix.into_inner().next().ok_or("Missing binding suffix")?;
+        let kind = match part.as_rule() {
+            Rule::identifier => {
+                let field = part.as_str().to_string();
+                match value {
+                    Expression {
+                        kind: ExprKind::Variable(name) | ExprKind::Property(name),
+                        ..
+                    } => ExprKind::Property(format!("{name}.{field}")),
+                    value => ExprKind::FieldAccess {
+                        value: Box::new(value),
+                        field,
+                    },
+                }
+            }
+            Rule::general_expression => {
+                let index = Box::new(parse_general_expression(part)?);
+                match value {
+                    Expression {
+                        kind: ExprKind::Variable(array) | ExprKind::Property(array),
+                        ..
+                    } => ExprKind::ArrayIndex { array, index },
+                    value => ExprKind::IndexAccess {
+                        value: Box::new(value),
+                        index,
+                    },
+                }
+            }
+            rule => return Err(format!("Unexpected binding suffix: {rule:?}")),
+        };
+        value = Expression::new(kind, span);
     }
+    Ok(value)
 }
 
-/// Parse a `byte_value` rule into an Expression. Used wherever the grammar
-/// accepts an arbitrary byte-producing operand (substr/cat/bin2num/size args).
-pub(crate) fn parse_byte_value(pair: Pair<Rule>) -> Result<Expression, String> {
-    // byte_value wraps exactly one inner rule.
-    let inner = pair.into_inner().next().ok_or("Empty byte_value")?;
-    match inner.as_rule() {
-        Rule::substr_func => parse_substr(inner),
-        Rule::intent_field => parse_intent_inspect(inner),
-        Rule::cat_func => parse_cat(inner),
-        Rule::num2bin_func => parse_num2bin(inner),
-        Rule::reverse_bytes_func => parse_reverse_bytes(inner),
-        Rule::packet_inspect => parse_packet_inspect(inner),
-        Rule::input_packet_inspect => parse_input_packet_inspect(inner),
-        Rule::input_introspection => parse_input_introspection_to_expression(inner),
-        Rule::output_introspection => parse_output_introspection_to_expression(inner),
-        Rule::asset_at => parse_asset_at_to_expression(inner),
-        Rule::hex_literal | Rule::string_literal => parse_primary_expr(inner),
-        Rule::identifier => Ok(Expression::Variable(inner.as_str().to_string())),
-        Rule::named_binding => {
-            let name = inner.as_str().to_string();
-            if name.contains(['.', '[']) {
-                Ok(Expression::Property(name))
-            } else {
-                Ok(Expression::Variable(name))
-            }
-        }
-        r => Err(format!("Unsupported byte_value rule: {:?}", r)),
+/// Parse a `function_call` whose name is a builtin into a `Builtin` node.
+fn parse_builtin_call(
+    builtin: &'static crate::builtins::Builtin,
+    pair: Pair<Rule>,
+) -> Result<Expression, String> {
+    let span: crate::diagnostics::Span = pair.as_span().into();
+    let args: Vec<Expression> = pair
+        .into_inner()
+        .skip(1)
+        .map(parse_general_expression)
+        .collect::<Result<_, _>>()?;
+    if args.len() != builtin.params.len() {
+        return Err(format!(
+            "malformed reserved function call `{}(...)`; expected {}",
+            builtin.name,
+            builtin.signature()
+        ));
     }
+    Ok(Expression::new(ExprKind::Builtin { builtin, args }, span))
 }
 
 // ─── Constructor Parsing ───────────────────────────────────────────────────────
 
-/// Parse a `constructor` rule pair into an `Expression::ContractInstance`.
+/// Parse a `constructor` rule pair into an `ExprKind::ContractInstance`.
 ///
 /// Handles `new ContractName(arg1, arg2, ...)` and produces
 /// `ContractInstance { contract_name, args }` which the compiler lowers to
-/// a `<VTXO:ContractName(...)>` scriptPubKey placeholder.
+/// a `<CONTRACT:ContractName(...)>` 32-byte Taproot output-key placeholder.
 pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let span: crate::diagnostics::Span = pair.as_span().into();
     let mut inner = pair.into_inner();
 
     // First child: contract name identifier
@@ -419,10 +476,13 @@ pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expres
         Vec::new()
     };
 
-    Ok(Expression::ContractInstance {
-        contract_name,
-        args,
-    })
+    Ok(Expression::new(
+        ExprKind::ContractInstance {
+            contract_name,
+            args,
+        },
+        span,
+    ))
 }
 
 /// Parse constructor arguments into a Vec<Expression>.

@@ -80,12 +80,12 @@ pub(crate) fn emit_group_has_asm(
 /// OP_EQUALVERIFY), and AND the two booleans. The absent tuple
 /// `[empty_bytes, 0, 0]` cannot equal a valid bytes32 txid, so absence is false.
 pub(crate) fn emit_group_control_is_asm(
-    group: &str,
+    group: &Expression,
     asset_txid: &Expression,
     asset_gidx: &Expression,
     asm: &mut Vec<String>,
 ) {
-    asm.push(format!("<{}>", group));
+    emit_expression_asm(group, asm);
     asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
     asm.push(OP_DROP.to_string()); // drop success flag -> [ctrl_txid, ctrl_gidx]
     emit_expression_asm(asset_gidx, asm);
@@ -165,34 +165,28 @@ pub(crate) fn emit_asset_at_asm(
 }
 
 /// Emit assembly for group property access
-pub(crate) fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec<String>) {
+pub(crate) fn emit_group_property_asm(group: &Expression, property: &str, asm: &mut Vec<String>) {
+    emit_expression_asm(group, asm);
     match property {
-        "sumInputs" => {
-            asm.push(format!("<{}>", group));
-            asm.push(OP_0.to_string()); // source=inputs
-            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-        }
-        "sumOutputs" => {
-            asm.push(format!("<{}>", group));
-            asm.push(OP_1.to_string()); // source=outputs
-            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-        }
-        "numInputs" => {
-            asm.push(format!("<{}>", group));
-            asm.push(OP_0.to_string()); // source=inputs
-            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
-        }
-        "numOutputs" => {
-            asm.push(format!("<{}>", group));
-            asm.push(OP_1.to_string()); // source=outputs
-            asm.push(OP_INSPECTASSETGROUPNUM.to_string());
+        "sumInputs" | "sumOutputs" | "numInputs" | "numOutputs" => {
+            let source = if property.ends_with("Inputs") {
+                OP_0
+            } else {
+                OP_1
+            };
+            asm.push(source.to_string());
+            asm.push(if property.starts_with("sum") {
+                OP_INSPECTASSETGROUPSUM.to_string()
+            } else {
+                OP_INSPECTASSETGROUPNUM.to_string()
+            });
         }
         "delta" => {
             // delta = sumOutputs - sumInputs
-            asm.push(format!("<{}>", group));
+            asm.push(OP_DUP.to_string());
             asm.push(OP_1.to_string());
             asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-            asm.push(format!("<{}>", group));
+            asm.push(OP_SWAP.to_string());
             asm.push(OP_0.to_string());
             asm.push(OP_INSPECTASSETGROUPSUM.to_string());
             asm.push(OP_SUB.to_string());
@@ -200,35 +194,43 @@ pub(crate) fn emit_group_property_asm(group: &str, property: &str, asm: &mut Vec
         "hasControl" => {
             // group.hasControl: presence only.
             // [ctrl_txid, ctrl_gidx, flag] -> OP_NIP OP_NIP -> flag (Bool)
-            asm.push(format!("<{}>", group));
             asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
             asm.push(OP_NIP.to_string());
             asm.push(OP_NIP.to_string());
         }
-        "metadataHash" => {
-            asm.push(format!("<{}>", group));
-            asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string());
+        "controlAssetId" => {
+            // [ctrl_txid, ctrl_gidx, flag]: aborts when the group has no control asset.
+            asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
+            asm.push(OP_VERIFY.to_string());
         }
-        "assetId" => {
-            // Returns the canonical Asset ID (asset_txid, asset_gidx).
-            asm.push(format!("<{}>", group));
-            asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
-        }
+        "metadataHash" => asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string()),
+        // Returns the canonical Asset ID (asset_txid, asset_gidx).
+        "assetId" => asm.push(OP_INSPECTASSETGROUPASSETID.to_string()),
         "isFresh" => {
-            // isFresh: compares assetId.txid with current transaction's txid
-            // 1. Get group's assetId (returns txid32, gidx_u16)
-            asm.push(format!("<{}>", group));
+            // The group's asset txid equals the current transaction's txid.
             asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
-            // 2. Drop gidx_u16, keep txid32
             asm.push(OP_DROP.to_string());
-            // 3. Get current transaction hash
             asm.push(OP_TXID.to_string());
-            // 4. Compare txids - result is bool
             asm.push(OP_EQUAL.to_string());
         }
-        _ => {
-            // Unknown group property
-            asm.push(format!("<{}.{}>", group, property));
+        _ => unreachable!("unknown asset group property '{property}'"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_group_property_has_an_emitter() {
+        for property in crate::typechecker::GROUP_PROPERTIES {
+            let mut asm = Vec::new();
+            emit_group_property_asm(
+                &ExprKind::Variable("g".to_string()).into(),
+                property,
+                &mut asm,
+            );
+            assert!(asm.len() > 1, "{property}");
         }
     }
 }

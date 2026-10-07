@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DUP, OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_PUT,
     OP_VERIFY,
@@ -515,7 +515,8 @@ contract Local(bytes32 h) {
     .to_string();
 
     assert!(
-        error.contains("element 1 of array 'xs' has type 'int', expected 'bytes32'"),
+        error.contains("binding 'xs'")
+            && error.contains("element 1: expected 'bytes32', got 'int'"),
         "unexpected error: {error}"
     );
 }

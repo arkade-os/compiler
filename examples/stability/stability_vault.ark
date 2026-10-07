@@ -41,8 +41,7 @@ contract StabilityVault(
   int     fundingRatePerSec,  // signed fixed-point at scale 1e12; mutates on settle
   int     lastUpdate,         // unix seconds; basis for funding accrual
   int     collateralRatioPct, // min collateral ratio for removeCapital (e.g. 50 = 1.5:1)
-  int     seekerExitFee,      // basis points (1e4 scale); seekerExit pays fee × targetUSD to provider
-  int     exit                // exit timelock in blocks
+  int     seekerExitFee       // basis points (1e4 scale); seekerExit pays fee × targetUSD to provider
 ) {
 
   // State transitions need dynamic taproot reconstruction, and settlement
@@ -60,7 +59,7 @@ contract StabilityVault(
 //       tx.outputs[0].scriptPubKey == new StabilityVault(
 //         newSeekerPk, providerPk, oraclePk, ticker,
 //         targetUSD, totalCollateral, fundingRatePerSec, lastUpdate,
-//         collateralRatioPct, seekerExitFee, exit
+//         collateralRatioPct, seekerExitFee
 //       ),
 //       "invalid transfer output"
 //     );
@@ -86,7 +85,7 @@ contract StabilityVault(
 //       tx.outputs[0].scriptPubKey == new StabilityVault(
 //         newSeekerPk, providerPk, oraclePk, ticker,
 //         amountUSD, collateralA, fundingRatePerSec, lastUpdate,
-//         collateralRatioPct, seekerExitFee, exit
+//         collateralRatioPct, seekerExitFee
 //       ),
 //       "invalid split output 0"
 //     );
@@ -96,7 +95,7 @@ contract StabilityVault(
 //       tx.outputs[1].scriptPubKey == new StabilityVault(
 //         seekerPk, providerPk, oraclePk, ticker,
 //         remainingUSD, collateralB, fundingRatePerSec, lastUpdate,
-//         collateralRatioPct, seekerExitFee, exit
+//         collateralRatioPct, seekerExitFee
 //       ),
 //       "invalid split output 1"
 //     );
@@ -124,7 +123,7 @@ contract StabilityVault(
 //       tx.inputs[otherIdx].scriptPubKey == new StabilityVault(
 //         seekerPk, providerPk, oraclePk, ticker,
 //         otherTargetUSD, otherTotalCollateral, otherFundingRatePerSec, otherLastUpdate,
-//         collateralRatioPct, otherSeekerExitFee, exit
+//         collateralRatioPct, otherSeekerExitFee
 //       ),
 //       "input not matching vault"
 //     );
@@ -160,7 +159,7 @@ contract StabilityVault(
 //       tx.outputs[0].scriptPubKey == new StabilityVault(
 //         seekerPk, providerPk, oraclePk, ticker,
 //         mergedTargetUSD, mergedTotalCollateral, mergedFundingRatePerSec, tx.offchainTime,
-//         collateralRatioPct, mergedSeekerExitFee, exit
+//         collateralRatioPct, mergedSeekerExitFee
 //       ),
 //       "invalid merged vault output"
 //     );
@@ -189,7 +188,7 @@ contract StabilityVault(
 //       tx.outputs[0].scriptPubKey == new StabilityVault(
 //         seekerPk, providerPk, oraclePk, ticker,
 //         newTargetUSD, totalCollateral, newFundingRatePerSec, tx.offchainTime,
-//         collateralRatioPct, seekerExitFee, exit
+//         collateralRatioPct, seekerExitFee
 //       ),
 //       "invalid settle output"
 //     );
@@ -209,7 +208,7 @@ contract StabilityVault(
 //       tx.outputs[0].scriptPubKey == new StabilityVault(
 //         seekerPk, providerPk, oraclePk, ticker,
 //         targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,
-//         collateralRatioPct, seekerExitFee, exit
+//         collateralRatioPct, seekerExitFee
 //       ),
 //       "invalid output"
 //     );
@@ -251,12 +250,12 @@ contract StabilityVault(
 //       tx.outputs[0].scriptPubKey == new StabilityVault(
 //         seekerPk, providerPk, oraclePk, ticker,
 //         targetUSD, newTotalCollateral, fundingRatePerSec, lastUpdate,
-//         collateralRatioPct, seekerExitFee, exit
+//         collateralRatioPct, seekerExitFee
 //       ),
 //       "invalid vault output"
 //     );
 //     require(tx.outputs[0].value >= newTotalCollateral, "vault underfunded");
-//     require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk, exit), "output 1 not provider");
+//     require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
 //     require(tx.outputs[1].value >= amount, "provider underpaid");
 //   }
 
@@ -289,18 +288,18 @@ contract StabilityVault(
 
 //     if (seekerRaw <= 0) {
 //       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
-//       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk, exit), "output 0 not provider");
+//       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "output 0 not provider");
 //     } else {
 //       if (seekerRaw >= totalCollateral) {
 //         require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
-//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk, exit), "output 0 not seeker");
+//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
 //       } else {
 //         require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
-//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk, exit), "output 0 not seeker");
+//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
 //         int providerPayout = totalCollateral - seekerRaw;
 //         if (providerPayout > 330) {
 //           require(tx.outputs[1].value >= providerPayout, "provider underpaid");
-//           require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk, exit), "output 1 not provider");
+//           require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
 //         }
 //       }
 //     }
@@ -334,18 +333,18 @@ contract StabilityVault(
 
 //     if (seekerRaw <= 0) {
 //       require(tx.outputs[0].value >= totalCollateral, "provider underpaid");
-//       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk, exit), "output 0 not provider");
+//       require(tx.outputs[0].scriptPubKey == new SingleSig(providerPk), "output 0 not provider");
 //     } else {
 //       if (seekerRaw >= totalCollateral) {
 //         require(tx.outputs[0].value >= totalCollateral, "seeker underpaid");
-//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk, exit), "output 0 not seeker");
+//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
 //       } else {
 //         require(tx.outputs[0].value >= seekerRaw, "seeker underpaid");
-//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk, exit), "output 0 not seeker");
+//         require(tx.outputs[0].scriptPubKey == new SingleSig(seekerPk), "output 0 not seeker");
 //         int providerPayout = totalCollateral - seekerRaw;
 //         if (providerPayout > 330) {
 //           require(tx.outputs[1].value >= providerPayout, "provider underpaid");
-//           require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk, exit), "output 1 not provider");
+//           require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
 //         }
 //       }
 //     }
@@ -356,7 +355,7 @@ contract StabilityVault(
   // Seeker recovers after exit delay (Arkade operator offline).
   // -------------------------------------------------------------------------
   function unilateral(signature seekerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(seekerSig, seekerPk));
   }
 }

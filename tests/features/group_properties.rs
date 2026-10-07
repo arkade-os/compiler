@@ -1,8 +1,8 @@
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPASSETID,
-    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
-    OP_INSPECTASSETGROUPSUM, OP_SUB, OP_SWAP, OP_TXID,
+    OP_0, OP_1, OP_2DROP, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_SUB, OP_SWAP, OP_TXID,
 };
 
 use crate::common::arkade_asm;
@@ -39,7 +39,7 @@ fn test_group_is_fresh_basic() {
             function verifyFresh(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let group = tx.assetGroups.find(newAssetIdTxid, newAssetIdGidx);
-                require(group.isFresh == 1, "must be fresh");
+                require(group.isFresh == true, "must be fresh");
             }
         }
     "#;
@@ -78,7 +78,7 @@ fn test_is_fresh_with_delta_combo() {
             function mintNFT(signature issuerSig, pubkey issuer) {
                 require(checkSig(issuerSig, issuer));
                 let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
-                require(nftGroup.isFresh == 1, "must be new asset");
+                require(nftGroup.isFresh == true, "must be new asset");
                 require(nftGroup.delta == 1, "must mint exactly 1");
                 require(nftGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
             }
@@ -115,7 +115,7 @@ fn test_is_fresh_with_delta_combo() {
     );
 }
 
-/// Test isFresh == 0 for verifying existing (non-fresh) assets
+/// Test isFresh == false for verifying existing (non-fresh) assets
 #[test]
 fn test_is_fresh_zero_for_existing_asset() {
     let code = r#"
@@ -123,7 +123,7 @@ fn test_is_fresh_zero_for_existing_asset() {
             function transferExisting(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
-                require(group.isFresh == 0, "must be existing asset");
+                require(group.isFresh == false, "must be existing asset");
                 require(group.delta == 0, "must be transfer only");
             }
         }
@@ -184,7 +184,7 @@ fn test_all_group_properties() {
                 let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
 
                 // Test all group properties
-                require(group.isFresh == 1, "not fresh");
+                require(group.isFresh == true, "not fresh");
                 require(group.delta == expectedDelta, "wrong delta");
                 require(group.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
                 require(group.metadataHash == expectedMetadata, "wrong metadata");
@@ -330,4 +330,264 @@ fn test_group_num_io_together() {
         count,
         asm_str
     );
+}
+
+/// tx.assetGroups[k].outputs[j].amount emits OP_INSPECTASSETGROUP (source=1
+/// for outputs) followed by two OP_NIP to drop type and data, leaving amount.
+#[test]
+fn test_group_io_access_output_amount() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.assetGroups[0].outputs[0].amount >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("group IO access compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let window = asm
+        .windows(4)
+        .find(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_NIP && w[3] == OP_NIP);
+    assert!(
+        window.is_some(),
+        "expected OP_1 {OP_INSPECTASSETGROUP} {OP_NIP} {OP_NIP}: {asm:?}"
+    );
+}
+
+#[test]
+fn test_group_io_access_output_type() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.assetGroups[0].outputs[0].type >= 0);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("group IO access compiles");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        asm.windows(3)
+            .any(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_2DROP),
+        "expected OP_1 {OP_INSPECTASSETGROUP} {OP_2DROP}: {asm:?}"
+    );
+}
+
+#[test]
+fn test_group_accesses_ignore_whitespace_and_comments() {
+    let compile_body = |body: &str| {
+        let code = format!(
+            "contract GroupIOTest(pubkey owner) {{ function spend(signature sig, int g, bytes32 t) {{
+                require(checkSig(sig, owner));
+                require(t == t);
+                {body}
+            }} }}"
+        );
+        let output = compile(&code).unwrap_or_else(|error| panic!("{body}: {error}"));
+        crate::common::arkade_asm_tokens(&output, "spend")
+    };
+
+    for (plain, spaced) in [
+        (
+            "require(tx.assetGroups[g].outputs[1].amount >= 0);",
+            "require(tx.assetGroups[ g ].outputs[ 1 // io\n ]. amount >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[g].outputs[g].type >= 0);",
+            "require(tx.assetGroups[ g ].outputs[\tg ]. type >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[0].sumInputs >= tx.assetGroups[g].numOutputs);",
+            "require(tx.assetGroups[ 0 ].sumInputs >= tx.assetGroups[ g ].numOutputs);",
+        ),
+        (
+            "require(tx.assetGroups[g].outputs[1].amount >= 0);",
+            "require(tx . assetGroups // groups\n [g] . outputs [1] . amount >= 0);",
+        ),
+        (
+            "require(tx.assetGroups[0].sumInputs >= tx.assetGroups[g].numOutputs);",
+            "require(tx.assetGroups [0] . sumInputs >= tx.assetGroups[g]\n.numOutputs);",
+        ),
+        (
+            "require(tx.assetGroups.length >= g);",
+            "require(tx . assetGroups . length >= g);",
+        ),
+        (
+            "let x = tx.assetGroups.find(t, g); require(x == x);",
+            "let x = tx.assetGroups . find(t, g); require(x == x);",
+        ),
+        (
+            "require(tx.input.current.value >= g);",
+            "require(tx . input . current . value >= g);",
+        ),
+    ] {
+        assert_eq!(compile_body(plain), compile_body(spaced), "{spaced}");
+    }
+}
+
+/// The input side is rejected as a value: LOCAL and INTENT inputs don't share
+/// a stack shape, so "amount" isn't at a fixed position.
+#[test]
+fn test_group_io_access_input_amount_is_rejected() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let result = tx.assetGroups[0].inputs[0].amount;
+                require(result >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("input-side group IO access must not bind a value")
+        .to_string();
+    assert!(error.contains("variable-width result"), "{error}");
+}
+
+/// Without a property, the raw (type, data..., amount) tuple isn't one
+/// stack item and can't be bound either.
+#[test]
+fn test_group_io_access_without_property_is_rejected() {
+    let code = r#"
+        contract GroupIOTest(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let result = tx.assetGroups[0].outputs[0];
+                require(result >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("a raw group IO access must not bind a value")
+        .to_string();
+    assert!(error.contains("does not produce one stack item"), "{error}");
+}
+
+#[test]
+fn test_group_access_as_constructor_argument_is_parsed() {
+    let code = r#"
+        contract T(int amount, pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(amount >= 0);
+                require(tx.outputs[0].scriptPubKey == new T(tx.assetGroups[0].sumInputs, owner));
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("computed constructor arguments are rejected")
+        .to_string();
+    assert!(
+        error.contains("computed contract arguments are not supported"),
+        "{error}"
+    );
+    assert!(!error.contains("is undefined"), "{error}");
+}
+
+#[test]
+fn inline_group_properties_emit_their_opcode() {
+    for (property, opcode) in [
+        ("numInputs", "OP_INSPECTASSETGROUPNUM"),
+        ("numOutputs", "OP_INSPECTASSETGROUPNUM"),
+        ("sumInputs", "OP_INSPECTASSETGROUPSUM"),
+        ("sumOutputs", "OP_INSPECTASSETGROUPSUM"),
+        (
+            "delta",
+            "OP_DUP OP_1 OP_INSPECTASSETGROUPSUM OP_SWAP OP_0 OP_INSPECTASSETGROUPSUM OP_SUB",
+        ),
+        ("hasControl", "OP_INSPECTASSETGROUPCTRL OP_NIP OP_NIP"),
+        ("controlAssetId", "OP_INSPECTASSETGROUPCTRL OP_VERIFY"),
+        ("metadataHash", "OP_INSPECTASSETGROUPMETADATAHASH"),
+        ("assetId", "OP_INSPECTASSETGROUPASSETID"),
+        (
+            "isFresh",
+            "OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL",
+        ),
+    ] {
+        for group in ["tx.assetGroups[0]", "tx.assetGroups.find(t, 0)"] {
+            let code = format!(
+                "contract V(bytes32 t) {{ function spend() {{ let x = {group}.{property}; require(x == x); }} }}"
+            );
+            let output = compile(&code).unwrap_or_else(|error| panic!("{code}: {error}"));
+            let asm = arkade_asm(&output, "spend");
+            assert!(asm.contains(opcode), "{group}.{property}: {asm}");
+        }
+    }
+}
+
+#[test]
+fn asset_groups_bind_pass_index_and_nest_like_other_values() {
+    let code = r#"
+        struct Watch { AssetGroup group; int floor; }
+        contract V(bytes32 t) {
+            function spend(AssetGroup g, AssetGroup[2] gs, int i, Watch w) {
+                require(g.outputs[0].amount >= 0);
+                require(gs[i].delta >= 0);
+                require(gs[i].controlIs(t, 0));
+                AssetGroup found = tx.assetGroups.find(t, 0);
+                require(found.outputs[0].type >= 0);
+                require(tx.assetGroups.find(t, 1).isFresh);
+                require(tx.assetGroups[i].controlIs(t, 2));
+                require(w.group.sumOutputs >= w.floor);
+                for (k, h) in gs {
+                    require(h.sumOutputs >= h.sumInputs);
+                }
+            }
+        }
+    "#;
+    let output = compile(code).unwrap_or_else(|error| panic!("{error}"));
+    let covenant = crate::common::group(&output, "spend")
+        .arkade
+        .as_ref()
+        .unwrap();
+    let types: Vec<_> = covenant
+        .inputs
+        .iter()
+        .map(|input| input.param_type.as_str())
+        .collect();
+    assert_eq!(types, ["AssetGroup", "AssetGroup[2]", "int", "Watch"]);
+    let asm = arkade_asm(&output, "spend");
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUPCTRL").count(), 2, "{asm}");
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUP ").count(), 2, "{asm}");
+    assert_eq!(
+        asm.matches("OP_FINDASSETGROUPBYASSETID").count(),
+        2,
+        "{asm}"
+    );
+}
+
+#[test]
+fn asset_groups_are_typed() {
+    for (statement, expected) in [
+        (
+            "AssetGroup g = 0; require(g.delta == 0);",
+            "binding 'g' declares type 'AssetGroup' but initializer has type 'int'",
+        ),
+        (
+            "int k = tx.assetGroups.find(t, 0); require(k == 0);",
+            "binding 'k' declares type 'int' but initializer has type 'AssetGroup'",
+        ),
+        (
+            "AssetGroup g = tx.assetGroups[0]; require(g + 1 > 0);",
+            "arithmetic '+' operand has type 'AssetGroup', expected 'int'",
+        ),
+        (
+            "AssetGroup g = tx.assetGroups[0]; require(g > g);",
+            "comparison '>' is not defined between 'AssetGroup' and 'AssetGroup'",
+        ),
+        (
+            "AssetGroup g = tx.assetGroups[0]; require(tx.assetGroups[g].delta == 0);",
+            "tx.assetGroups[] operand has type 'AssetGroup', expected 'int'",
+        ),
+    ] {
+        let code = format!("contract V(bytes32 t) {{ function spend() {{ {statement} }} }}");
+        let error = compile(&code).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+    }
 }

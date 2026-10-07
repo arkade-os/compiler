@@ -1,6 +1,7 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_EQUALVERIFY, OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
+    OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
     OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_SWAP,
 };
 
@@ -293,4 +294,127 @@ fn test_input_output_value_comparison() {
         "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
         asm_str
     );
+}
+
+/// tx.input.current.arkadeScriptHash/.arkadeWitnessHash used to silently
+/// compile to a scriptPubKey inspection instead of the named field.
+#[test]
+fn test_current_input_arkade_hashes() {
+    let code = r#"
+        contract V(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                require(tx.input.current.arkadeScriptHash != tx.input.current.arkadeWitnessHash);
+            }
+        }
+    "#;
+
+    let output = compile(code).expect("current-input arkade hashes compile");
+    let asm_str = crate::common::arkade_asm(&output, "spend");
+    assert!(
+        asm_str.contains(OP_INSPECTINPUTARKADESCRIPTHASH),
+        "Expected {OP_INSPECTINPUTARKADESCRIPTHASH} in ASM: {asm_str}"
+    );
+    assert!(
+        asm_str.contains(OP_INSPECTINPUTARKADEWITNESSHASH),
+        "Expected {OP_INSPECTINPUTARKADEWITNESSHASH} in ASM: {asm_str}"
+    );
+}
+
+/// An unrecognized tx.input.current property must be a clear parse error,
+/// not a silent fall-through to scriptPubKey inspection.
+#[test]
+fn test_current_input_rejects_unknown_property() {
+    let code = r#"
+        contract V(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let x = tx.input.current.weight;
+                require(x >= 0);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("unknown current-input property must be rejected")
+        .to_string();
+    assert!(
+        error.contains("tx.input.current requires one of"),
+        "{error}"
+    );
+}
+
+/// tx.input.current with no property is not a value on its own.
+#[test]
+fn test_current_input_requires_a_property() {
+    let code = r#"
+        contract V(pubkey owner) {
+            function spend(signature sig) {
+                require(checkSig(sig, owner));
+                let x = tx.input.current;
+                require(x == x);
+            }
+        }
+    "#;
+
+    let error = compile(code)
+        .expect_err("bare tx.input.current must be rejected")
+        .to_string();
+    assert!(
+        error.contains("tx.input.current requires one of"),
+        "{error}"
+    );
+}
+
+#[test]
+fn witness_version_keeps_the_second_script_pubkey_result() {
+    for (expression, expected) in [
+        (
+            "tx.inputs[1].witnessVersion",
+            format!("1 {OP_INSPECTINPUTSCRIPTPUBKEY} OP_NIP"),
+        ),
+        (
+            "tx.outputs[2].witnessVersion",
+            format!("2 {OP_INSPECTOUTPUTSCRIPTPUBKEY} OP_NIP"),
+        ),
+        (
+            "tx.input.current.witnessVersion",
+            format!("OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTSCRIPTPUBKEY} OP_NIP"),
+        ),
+    ] {
+        let code = format!("contract V() {{ function spend() {{ require({expression} == 1); }} }}");
+        let output = compile(&code).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend").join(" ");
+        assert!(asm.contains(&expected), "{expression}: {asm}");
+    }
+}
+
+#[test]
+fn witness_version_is_an_int() {
+    let code = "contract V(bytes program) { function spend() { require(tx.outputs[0].witnessVersion == program); } }";
+    let error = compile(code)
+        .expect_err("a witness version is not bytes")
+        .to_string();
+    assert!(
+        error.contains("comparison '==' is not defined between 'int' and 'bytes'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn witness_version_is_rejected_in_tapscripts() {
+    for expression in [
+        "tx.input.current.witnessVersion",
+        "tx.inputs[0].witnessVersion",
+        "tx.outputs[0].witnessVersion",
+    ] {
+        let code = format!("contract V(pubkey owner) {{ function exit(signature sig) tapscript {{ require({expression} == 1); require(checkSig(sig, owner)); }} }}");
+        let error = compile(&code)
+            .expect_err("introspection must not compile into an L1 leaf")
+            .to_string();
+        assert!(
+            error.contains("unsupported compound expression in tapscript"),
+            "{expression}: {error}"
+        );
+    }
 }

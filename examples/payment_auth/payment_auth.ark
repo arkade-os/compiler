@@ -27,10 +27,7 @@ contract PaymentAuthorization(
   int refundBlockHeight,
 
   // Authorization key
-  pubkey merchantPubkey,
-
-  // Exit timelock in blocks
-  int exit
+  pubkey merchantPubkey
 ) {
 
   // Capture: merchant-authorized settlement
@@ -110,7 +107,7 @@ contract PaymentAuthorization(
   // Unilateral exit (CSV): merchant reclaims cooperatively after CSV delay.
   // Note: customer's exit is via the refund path above; no single customer pubkey exists.
   function unilateral(signature merchantSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(merchantSig, merchantPubkey));
   }
 }

@@ -9,7 +9,7 @@ use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_VERIFY,
 };
-use crate::typechecker::ArkType;
+use crate::typechecker::{digest_accepts, ArkType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -284,13 +284,11 @@ fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, 
     Ok(target)
 }
 
-/// arkd structural rules F2/F3/E1/E3 + key resolution (§5.3). `min_exit_delay`
-/// enables literal-only E3 magnitude checks.
+/// arkd structural rules F2/F3/E1 + key resolution (§5.3).
 pub fn validate_arkd_rules(
     contract: &Contract,
     ts: &NamedTapscript,
     c: &Closure,
-    min_exit_delay: Option<u64>,
 ) -> Result<(), String> {
     let constructor_scope =
         crate::typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
@@ -298,7 +296,7 @@ pub fn validate_arkd_rules(
     let in_scope = |name: &str| -> bool {
         name == "server"
             || name == "emulator"
-            || constructor_scope.get(name) == Some(&ArkType::Pubkey)
+            || constructor_scope.get(name) == Some(&ArkType::Bytes)
             || ts
                 .inputs
                 .iter()
@@ -316,7 +314,7 @@ pub fn validate_arkd_rules(
                 return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
             }
             KeyExpr::Tweak { base, func } if base != "emulator" => {
-                if constructor_scope.get(base) != Some(&ArkType::Pubkey) {
+                if constructor_scope.get(base) != Some(&ArkType::Bytes) {
                     return Err(format!(
                         "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
                         ts.name
@@ -357,6 +355,14 @@ pub fn validate_arkd_rules(
             !matches!(binding_type, ArkType::Struct(_) | ArkType::Array(..))
         }) || ts.inputs.iter().any(|p| p.name == name)
     };
+    let name_type = |name: &str| -> Option<ArkType> {
+        constructor_scope.get(name).cloned().or_else(|| {
+            ts.inputs
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| ArkType::parse(&p.param_type))
+        })
+    };
     // A declared `signature` input.
     let sig_input = |name: &str| -> bool {
         ts.inputs
@@ -395,7 +401,11 @@ pub fn validate_arkd_rules(
     // Hash values may also be byte literals; timelocks may be numeric literals.
     for item in &ts.items {
         match item {
-            TapItem::Hash { preimage, hash, .. } => {
+            TapItem::Hash {
+                hash_fn,
+                preimage,
+                hash,
+            } => {
                 if !name_declared(preimage) {
                     return Err(format!(
                         "tapscript `{}`: hash preimage `{preimage}` is not a declared input or constructor parameter",
@@ -408,12 +418,44 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
+                if let Some(t) = name_type(hash).filter(|t| !digest_accepts(hash_fn, t)) {
+                    return Err(format!(
+                        "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
+                        ts.name,
+                        hash_fn.name(),
+                        t.as_str(),
+                        hash_fn.digest_type()
+                    ));
+                }
             }
-            TapItem::Older { value } | TapItem::After { value } => {
+            TapItem::Older { value } if value == "serverExitDelay" => {}
+            // arkd only accepts seconds CSV, encoded at compile time.
+            TapItem::Older { value } => {
+                let Ok(n) = value.parse::<i64>() else {
+                    return Err(format!(
+                        "tapscript `{}`: older(`{value}`) takes a literal, constant, or serverExitDelay",
+                        ts.name
+                    ));
+                };
+                if n <= 0 || n % 512 != 0 || n / 512 > 0xffff {
+                    return Err(format!(
+                        "tapscript `{}`: older({value}) must be 512..33553920 seconds, a multiple of 512",
+                        ts.name
+                    ));
+                }
+            }
+            TapItem::After { value } => {
                 if value.parse::<u64>().is_err() && !name_declared(value) {
                     return Err(format!(
                         "tapscript `{}`: timelock `{value}` is not a literal, declared input, or constructor parameter",
                         ts.name
+                    ));
+                }
+                if let Some(t) = name_type(value).filter(|t| *t != ArkType::Int) {
+                    return Err(format!(
+                        "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
+                        ts.name,
+                        t.as_str()
                     ));
                 }
             }
@@ -427,21 +469,6 @@ pub fn validate_arkd_rules(
             "forfeit tapscript `{}` must include `server` (arkd co-signer)",
             ts.name
         ));
-    }
-
-    // E3: literal exit-delay magnitude (CSV closures only).
-    if c.class.is_exit() {
-        if let (Some(tl), Some(min)) = (&c.timelock, min_exit_delay) {
-            if let Ok(v) = tl.parse::<u64>() {
-                if v < min {
-                    return Err(format!(
-                        "tapscript `{}`: exit delay too short (min {min})",
-                        ts.name
-                    ));
-                }
-            }
-            // Non-literal (param) timelock: defer to arkd.
-        }
     }
 
     // F3 (CLTV seconds vs block) is value-dependent and only decidable for
@@ -463,27 +490,21 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
     }
 }
 
-/// Timelock operand. CLTV is the number or `<param>`. CSV is seconds: a literal
-/// is the BIP68 sequence, a name is `<seconds:name>`.
-/// ponytail: tapscript cannot divide or OR, so the sequence is fixed here.
-fn timelock_operand(ts_name: &str, value: &str, csv: bool) -> Result<String, String> {
-    let Ok(n) = value.parse::<u64>() else {
-        return Ok(if csv {
-            format!("<seconds:{value}>")
+/// Emit a timelock operand: `serverExitDelay` as arkd's unilateral exit delay,
+/// a CSV literal (seconds) as its BIP68 time-based sequence, a CLTV literal
+/// as-is, else a `<param>` placeholder.
+fn timelock_operand(value: &str, csv: bool) -> String {
+    if value == "serverExitDelay" {
+        "<SERVER_EXIT_DELAY>".to_string()
+    } else if let Ok(n) = value.parse::<u64>() {
+        if csv {
+            ((n / 512) | (1 << 22)).to_string()
         } else {
-            format!("<{value}>")
-        });
-    };
-    if !csv {
-        return Ok(n.to_string());
+            n.to_string()
+        }
+    } else {
+        format!("<{value}>")
     }
-    if n == 0 || !n.is_multiple_of(512) || n / 512 > 0xffff {
-        return Err(format!(
-            "tapscript `{ts_name}`: older({value}) must be 512..{} seconds, a multiple of 512",
-            0xffff * 512
-        ));
-    }
-    Ok(((n / 512) | (1 << 22)).to_string())
 }
 
 /// Emit the multisig suffix (N-of-N CHECKSIG chain).
@@ -499,7 +520,7 @@ fn emit_multisig(keys: &[KeyExpr], leaf_func: &str, asm: &mut Vec<String>) {
 }
 
 /// Assemble the full leaf ASM in arkd's closure byte order: condition? · timelock? · multisig.
-pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Result<Vec<String>, String> {
+pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<String> {
     let mut asm = Vec::new();
     // The function name used for a bare `emulator` placeholder.
     let leaf_func = match binding {
@@ -523,21 +544,19 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Result<Ve
 
     // Timelock prefix.
     if let Some(tl) = &c.timelock {
-        let csv = matches!(
-            c.class,
-            ClosureClass::CsvMultisig | ClosureClass::ConditionCsvMultisig
-        );
-        asm.push(timelock_operand(ts_name, tl, csv)?);
-        asm.push(if csv {
-            OP_CHECKSEQUENCEVERIFY.to_string()
+        let csv = c.class.is_exit();
+        asm.push(timelock_operand(tl, csv));
+        let op = if csv {
+            OP_CHECKSEQUENCEVERIFY
         } else {
-            OP_CHECKLOCKTIMEVERIFY.to_string()
-        });
+            OP_CHECKLOCKTIMEVERIFY
+        };
+        asm.push(op.to_string());
         asm.push(OP_DROP.to_string());
     }
 
     emit_multisig(&c.keys, leaf_func, &mut asm);
-    Ok(asm)
+    asm
 }
 
 /// Derive the leaf witness from the tapscript inputs, one entry per input.
@@ -591,12 +610,12 @@ pub fn build_function_groups(
         let closure = assemble_closure(ts)?;
         validate_closure_shape(&closure, &ts.name)?;
         let binding = resolve_binding(contract, ts)?;
-        validate_arkd_rules(contract, ts, &closure, None)?;
+        validate_arkd_rules(contract, ts, &closure)?;
 
         let group_key =
             shared_tweak_func(&ts.name, &closure.keys)?.unwrap_or_else(|| ts.name.clone());
 
-        let mut asm = emit_leaf_asm(&closure, &ts.name, &binding)?;
+        let mut asm = emit_leaf_asm(&closure, &ts.name, &binding);
         resolve_constructor_field_placeholders(&mut asm, contract)?;
         grouped.entry(group_key).or_default().push(AbiLeaf {
             name: ts.name.clone(),
@@ -646,17 +665,11 @@ fn resolve_constructor_field_placeholders(
         .into_iter()
         .flatten()
         .filter(|leaf| leaf.access_name != leaf.emitted_name)
-        .flat_map(|leaf| {
-            [
-                (
-                    format!("<{}>", leaf.access_name),
-                    format!("<{}>", leaf.emitted_name),
-                ),
-                (
-                    format!("<seconds:{}>", leaf.access_name),
-                    format!("<seconds:{}>", leaf.emitted_name),
-                ),
-            ]
+        .map(|leaf| {
+            (
+                format!("<{}>", leaf.access_name),
+                format!("<{}>", leaf.emitted_name),
+            )
         })
         .collect::<std::collections::HashMap<_, _>>();
     for token in asm {
@@ -705,8 +718,7 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
                 injected: true,
             },
         ],
-        asm: emit_leaf_asm(&closure, func, &Binding::NameMatched)
-            .expect("synthesized leaf has no timelock"),
+        asm: emit_leaf_asm(&closure, func, &Binding::NameMatched),
     }
 }
 
@@ -760,7 +772,7 @@ mod tests {
     fn older_then_multisig_is_csv_exit() {
         let c = assemble_closure(&ts(vec![
             TapItem::Older {
-                value: "exitDelay".into(),
+                value: "512".into(),
             },
             TapItem::Sig {
                 keys: vec![ident("owner")],
@@ -888,6 +900,7 @@ mod tests {
                 .iter()
                 .map(|n| Function {
                     name: (*n).into(),
+                    span: crate::diagnostics::Span { start: 0, end: 0 },
                     parameters: vec![],
                     statements: vec![],
                     is_private: false,
@@ -1053,23 +1066,18 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("server"), "got: {err}");
     }
 
     #[test]
     fn csv_exit_without_server_is_accepted() {
-        let mut inputs = sig_params(1);
-        inputs.push(Parameter {
-            name: "exitDelay".into(),
-            param_type: "int".into(),
-        });
         let leaf = NamedTapscript {
             name: "unilateral".into(),
-            inputs,
+            inputs: sig_params(1),
             items: vec![
                 TapItem::Older {
-                    value: "exitDelay".into(),
+                    value: "512".into(),
                 },
                 sig(vec![ident("owner")]),
             ],
@@ -1077,7 +1085,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        assert!(validate_arkd_rules(&c, &leaf, &cl, None).is_ok());
+        assert!(validate_arkd_rules(&c, &leaf, &cl).is_ok());
     }
 
     #[test]
@@ -1090,48 +1098,33 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("unknown key"), "got: {err}");
     }
 
     #[test]
-    fn literal_exit_delay_below_min_is_rejected() {
-        let leaf = NamedTapscript {
-            name: "exit".into(),
-            inputs: sig_params(1),
-            items: vec![
-                TapItem::Older { value: "10".into() }, // literal
-                sig(vec![ident("owner")]),
-            ],
-        };
-        let c = contract_with(&[], vec![leaf.clone()]);
-        let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, Some(144)).unwrap_err();
-        assert!(err.contains("exit delay too short"), "got: {err}");
-    }
-
-    #[test]
-    fn param_exit_delay_defers_magnitude_check() {
-        let mut inputs = sig_params(1);
-        inputs.push(Parameter {
-            name: "exitDelay".into(),
-            param_type: "int".into(),
-        });
-        let leaf = NamedTapscript {
-            name: "exit".into(),
-            inputs,
-            items: vec![
-                TapItem::Older {
-                    value: "exitDelay".into(),
-                }, // param → defer
-                sig(vec![ident("owner")]),
-            ],
-        };
-        let c = contract_with(&[], vec![leaf.clone()]);
-        let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
-        assert!(validate_arkd_rules(&c, &leaf, &cl, Some(144)).is_ok());
+    fn older_rejects_params_and_non_seconds() {
+        for (value, expected) in [
+            ("owner", "takes a literal, constant, or serverExitDelay"),
+            ("0", "multiple of 512"),
+            ("-512", "multiple of 512"),
+            ("144", "multiple of 512"),
+            ("33554432", "multiple of 512"),
+        ] {
+            let leaf = NamedTapscript {
+                name: "exit".into(),
+                inputs: sig_params(1),
+                items: vec![
+                    TapItem::Older {
+                        value: value.into(),
+                    },
+                    sig(vec![ident("owner")]),
+                ],
+            };
+            let c = contract_with(&[], vec![leaf.clone()]);
+            let err = validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap_err();
+            assert!(err.contains(expected), "{value}: {err}");
+        }
     }
 
     #[test]
@@ -1152,7 +1145,7 @@ mod tests {
         let c = contract_with(&["x"], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("align 1:1"), "got: {err}");
     }
 
@@ -1171,7 +1164,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(
             err.contains("not a declared `signature` input"),
             "got: {err}"
@@ -1180,12 +1173,12 @@ mod tests {
 
     #[test]
     fn undeclared_timelock_operand_is_rejected() {
-        // older(typo) where `typo` is neither a literal nor a declared name.
+        // after(typo) where `typo` is neither a literal nor a declared name.
         let leaf = NamedTapscript {
             name: "exit".into(),
             inputs: sig_params(1),
             items: vec![
-                TapItem::Older {
+                TapItem::After {
                     value: "typoDelay".into(),
                 },
                 sig(vec![ident("owner")]),
@@ -1194,7 +1187,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("timelock `typoDelay`"), "got: {err}");
     }
 
@@ -1229,7 +1222,7 @@ mod tests {
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
         let _binding = resolve_binding(&c, &leaf).unwrap();
-        let err = validate_arkd_rules(&c, &leaf, &cl, None).unwrap_err();
+        let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("hash value `typoHash`"), "got: {err}");
     }
 
@@ -1267,7 +1260,7 @@ mod tests {
             ],
         };
         let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "claim", &Binding::NameMatched).unwrap();
+        let asm = emit_leaf_asm(&c, "claim", &Binding::NameMatched);
         assert_eq!(
             asm,
             vec![
@@ -1301,7 +1294,7 @@ mod tests {
             ],
         };
         let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "refund", &Binding::NameMatched).unwrap();
+        let asm = emit_leaf_asm(&c, "refund", &Binding::NameMatched);
         assert_eq!(
             asm,
             vec![
@@ -1326,7 +1319,7 @@ mod tests {
             }],
             items: vec![
                 TapItem::Older {
-                    value: "exit".into(),
+                    value: "512".into(),
                 },
                 TapItem::Sig {
                     keys: vec![ident("sender")],
@@ -1336,32 +1329,18 @@ mod tests {
             ],
         };
         let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "unilateral", &Binding::Standalone).unwrap();
+        let asm = emit_leaf_asm(&c, "unilateral", &Binding::Standalone);
         assert_eq!(
             asm,
             vec![
-                "<seconds:exit>".to_string(),
+                // 512 seconds: one 512-second unit with the BIP68 type flag.
+                "4194305".to_string(),
                 OP_CHECKSEQUENCEVERIFY.to_string(),
                 OP_DROP.to_string(),
                 "<sender>".to_string(),
                 OP_CHECKSIG.to_string(),
             ]
         );
-    }
-
-    #[test]
-    fn older_encodes_seconds() {
-        let output = super::super::compile(
-            "contract Demo(int[1] delays, pubkey owner) { function later(signature sig) tapscript { require(older(delays[0])); require(checkSig(sig, owner)); } }",
-        )
-        .unwrap();
-        assert_eq!(output.functions[0].leaves[0].asm[0], "<seconds:delays.0>");
-        let err = super::super::compile(
-            "contract Demo(pubkey owner) { function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, owner)); } }",
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("older(10)"), "{err}");
     }
 
     /// `tweak(constructorPubkey, func)` binds that key to the covenant on any leaf.

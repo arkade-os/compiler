@@ -22,8 +22,8 @@ fn test_htlc_contract() {
     // Verify contract name
     assert_eq!(output.name, "HTLC");
 
-    // Verify parameters: sender, receiver, preimageHash (bytes20), refundTime, exit
-    assert_eq!(output.parameters.len(), 5);
+    // Verify parameters: sender, receiver, preimageHash (bytes20), refundTime
+    assert_eq!(output.parameters.len(), 4);
     assert_eq!(output.parameters[0].name, "sender");
     assert_eq!(output.parameters[0].param_type, "pubkey");
     assert_eq!(output.parameters[1].name, "receiver");
@@ -32,8 +32,6 @@ fn test_htlc_contract() {
     assert_eq!(output.parameters[2].param_type, "bytes20");
     assert_eq!(output.parameters[3].name, "refundTime");
     assert_eq!(output.parameters[3].param_type, "int");
-    assert_eq!(output.parameters[4].name, "exit");
-    assert_eq!(output.parameters[4].param_type, "int");
 
     // 2 covenant groups (claim, refund) + 1 standalone unilateral = 3 groups
     assert_eq!(
@@ -146,8 +144,8 @@ fn test_htlc_contract() {
 
     let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
-        unilateral_leaf.contains("<seconds:exit>"),
-        "unilateral leaf should push exit timelock: {}",
+        unilateral_leaf.contains("<SERVER_EXIT_DELAY>"),
+        "unilateral leaf should push the server exit delay: {}",
         unilateral_leaf
     );
     assert!(

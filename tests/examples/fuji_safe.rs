@@ -9,7 +9,7 @@ fn fuji_safe_rejects_the_old_constructor_layout() {
         .replace(",\n        treasuryBurnScript, borrowerBurnScript\n", "\n");
     let error = compile(&source).unwrap_err().to_string();
     assert!(
-        error.contains("constructor 'FujiSafe' expects 12 arguments, got 10"),
+        error.contains("constructor 'FujiSafe' expects 11 arguments, got 9"),
         "{error}"
     );
 }
@@ -27,11 +27,11 @@ fn test_fuji_safe_contract() {
     assert_eq!(output.name, "FujiSafe");
 
     // Verify parameters
-    assert_eq!(output.parameters.len(), 12);
-    assert_eq!(output.parameters[10].name, "treasuryBurnScript");
+    assert_eq!(output.parameters.len(), 11);
+    assert_eq!(output.parameters[9].name, "treasuryBurnScript");
+    assert_eq!(output.parameters[9].param_type, "bytes32");
+    assert_eq!(output.parameters[10].name, "borrowerBurnScript");
     assert_eq!(output.parameters[10].param_type, "bytes32");
-    assert_eq!(output.parameters[11].name, "borrowerBurnScript");
-    assert_eq!(output.parameters[11].param_type, "bytes32");
     assert_eq!(output.parameters[0].name, "assetCommitmentHash");
     assert_eq!(output.parameters[0].param_type, "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
@@ -67,14 +67,14 @@ fn test_fuji_safe_contract() {
             "claim",
             "<treasuryBurnScript>",
             "OP_3 OP_PICK",
-            "OP_1 OP_PICK",
+            "OP_OVER",
             &[("treasurySig", "signature")][..],
         ),
         (
             "liquidate",
             "<treasuryBurnScript>",
             "OP_3 OP_PICK",
-            "OP_1 OP_PICK",
+            "OP_OVER",
             &[
                 ("currentPrice", "int"),
                 ("oracleSig", "signature"),
@@ -85,18 +85,18 @@ fn test_fuji_safe_contract() {
             "redeem",
             "<borrowerBurnScript>",
             "OP_3 OP_ROLL",
-            "OP_1 OP_ROLL",
+            "OP_SWAP",
             &[("borrowerSig", "signature")][..],
         ),
         (
             "renew",
             "<borrowerBurnScript>",
             concat!(
-                "<VTXO:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
-                "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,<exit>,",
+                "<CONTRACT:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
+                "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,",
                 "<treasuryBurnScript>,<borrowerBurnScript>)>"
             ),
-            "OP_1 OP_ROLL",
+            "OP_SWAP",
             &[("treasurySig", "signature")][..],
         ),
     ] {
@@ -116,7 +116,7 @@ fn test_fuji_safe_contract() {
             ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP", script_read),
             ("OP_INSPECTOUTPUTVALUE", value_read),
         ] {
-            let comparison = format!("0 {opcode} {operand} OP_EQUAL OP_VERIFY");
+            let comparison = format!("0 {opcode} {operand} OP_EQUALVERIFY");
             let expected = comparison.split_whitespace().collect::<Vec<_>>();
             assert!(
                 asm.windows(expected.len()).any(|window| window

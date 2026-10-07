@@ -209,9 +209,9 @@ contract Demo(int[3] xs) {
 fn dotted_array_elements_do_not_collide_with_tapscript_inputs() {
     let output = compile(
         r#"
-contract Demo(pubkey[3] owners, int exitDelay) {
+contract Demo(pubkey[3] owners) {
   function unilateral(signature arraySig, signature scalarSig, pubkey owners_0) tapscript {
-    require(older(exitDelay));
+    require(older(serverExitDelay));
     require(checkMultisig([owners[0], owners_0], [arraySig, scalarSig], 2));
   }
 }
@@ -253,9 +253,9 @@ contract Demo(pubkey[3] ks) {
 fn rejects_tapscript_input_shadowing_constructor_param() {
     let err = compile(
         r#"
-contract Demo(pubkey owner, int exitDelay) {
+contract Demo(pubkey owner) {
   function unilateral(signature sig, pubkey owner) tapscript {
-    require(older(exitDelay));
+    require(older(serverExitDelay));
     require(checkSig(sig, owner));
   }
 }

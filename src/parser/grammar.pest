@@ -104,7 +104,7 @@ var_assign = {
 }
 
 assignment_target = {
-    identifier ~ ("." ~ identifier)* ~ ("[" ~ general_expression ~ "]")?
+    identifier ~ binding_suffix*
 }
 
 // Require statement
@@ -135,53 +135,44 @@ logical_and_expr = { comparison_expr ~ (and_op ~ comparison_expr)* }
 
 // Comparisons bind tighter than logical operators.
 comparison_expr = {
-    additive_expr ~ (comparison_operator ~ additive_expr)?
+    bit_or_expr ~ (comparison_operator ~ bit_or_expr)?
 }
+
+// Bytewise operators bind tighter than comparisons, so `a & mask == b` is
+// `(a & mask) == b`; shifts bind looser than `+` and `-`.
+bit_or_expr = { bit_xor_expr ~ (bit_or_op ~ bit_xor_expr)* }
+bit_xor_expr = { bit_and_expr ~ (bit_xor_op ~ bit_and_expr)* }
+bit_and_expr = { shift_expr ~ (bit_and_op ~ shift_expr)* }
+shift_expr = { additive_expr ~ (shift_op ~ additive_expr)* }
 
 // Additive expressions (+ and -)
 additive_expr = {
     multiplicative_expr ~ ((add_op | sub_op) ~ multiplicative_expr)*
 }
 
-// Multiplicative expressions (* and /)
+// Multiplicative expressions (* / %)
 multiplicative_expr = {
-    unary_expr ~ ((mul_op | div_op) ~ unary_expr)*
+    unary_expr ~ ((mul_op | div_op | rem_op) ~ unary_expr)*
 }
 
 // Prefix operators bind tighter than multiplication and apply right to left.
-unary_expr = { (sub_op | not_op)* ~ primary_expr }
+unary_expr = { (sub_op | not_op | invert_op)* ~ primary_expr }
 
 // Built-in operands accept prefixes on literals, bindings, and grouped expressions.
-unary_atom = { (sub_op | not_op)* ~ ("(" ~ general_expression ~ ")" | byte_literal | bool_literal | qualified_name | number_literal) }
+unary_atom = { (sub_op | not_op)* ~ (parenthesized_expr | byte_literal | bool_literal | identifier_property_access | qualified_name | number_literal) }
+
+parenthesized_expr = { "(" ~ general_expression ~ ")" }
 
 // Primary expressions (atoms)
 primary_expr = {
-    "(" ~ general_expression ~ ")" |
+    parenthesized_expr |
     check_sig_from_stack_verify |
     check_sig_from_stack |
     check_sig |
-    check_time |
     tunnel |
     intent_field |
     intent_has |
-    sha256_initialize |
-    sha256_update |
-    sha256_finalize |
-    sha256_func |
-    digest_func |
-    sighash_func |
-    mod_exp_func |
-    ec_add |
-    ec_mul |
-    ec_pairing |
-    ec_mul_scalar_verify |
-    tweak_verify |
-    substr_func |
-    cat_func |
-    bin2num_func |
-    num2bin_func |
-    reverse_bytes_func |
-    size_func |
+    cast_func |
     input_packet_inspect |
     packet_inspect |
     asset_at |
@@ -223,13 +214,18 @@ sub_op = { "-" }
 not_op = { "!" ~ !"=" }
 and_op = { "&&" }
 or_op = { "||" }
+bit_and_op = @{ "&" ~ !"&" }
+bit_or_op = @{ "|" ~ !"|" }
+bit_xor_op = { "^" }
+shift_op = { "<<" | ">>" }
+invert_op = { "~" }
 mul_op = { "*" }
 div_op = { "/" }
+rem_op = { "%" }
 
 // Complex expression types (for require statements)
 // PEG ordered choice: first matching alternative wins
 complex_expression = _{
-    check_time |
     tunnel |
     intent_field |
     intent_has |
@@ -239,23 +235,6 @@ complex_expression = _{
     check_multisig |
     time_comparison |
     hash_comparison |
-    sha256_initialize |
-    sha256_update |
-    sha256_finalize |
-    digest_func |
-    sighash_func |
-    mod_exp_func |
-    ec_add |
-    ec_mul |
-    ec_pairing |
-    ec_mul_scalar_verify |
-    tweak_verify |
-    substr_func |
-    cat_func |
-    bin2num_func |
-    num2bin_func |
-    reverse_bytes_func |
-    size_func |
     input_packet_inspect |
     packet_inspect |
     asset_at |
@@ -266,7 +245,6 @@ complex_expression = _{
     output_introspection |
     tx_introspection |
     group_control_is |
-    asset_group_access |
     constructor |
     tx_property_access |
     this_property_access |
@@ -282,10 +260,10 @@ complex_expression = _{
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
 asset_id_txid_operand = _{ identifier_property_access | identifier }
-asset_id_gidx_operand = _{ number_literal | identifier_property_access | identifier }
+asset_id_gidx_operand = _{ general_expression }
 
 // Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
-// txid is a bytes32 identifier; gidx is an int identifier or a 0..65535 literal.
+// txid is a bytes32 identifier; gidx is an int expression (constants must be 0..65535).
 asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
         ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
@@ -341,7 +319,7 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "sequence" | "outpoint" |
+    "value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash"
 }
 
@@ -351,43 +329,26 @@ output_introspection = {
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" }
+output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
-// Asset group access: tx.assetGroups.find(id), tx.assetGroups.length,
-// tx.assetGroups[k].sumInputs, etc.
-asset_group_access = {
-    "tx" ~ "." ~ "assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
-        "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
-        "." ~ "length" |
-        array_access ~ "." ~ group_property
-    )
-}
-
-// Group property names — atomic to prevent partial matches
-// numInputs/numOutputs must come before sumInputs/sumOutputs to prevent partial matches
-// Control membership is tested with `controlIs(txid, gidx)` / `hasControl`.
-group_property = @{
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh"
-}
-
 // Group control predicates compare explicit AssetId components:
 //   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
-//   group.hasControl            → Bool (handled as a plain group_property)
+//   group.hasControl            → Bool (handled as a plain group property)
+// Inline `tx.assetGroups...controlIs(...)` is an asset_group_member instead.
 group_control_is = {
-    identifier ~ "." ~ "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
+    group_binding ~ "." ~ asset_group_control_is
 }
+group_binding = { !("tx" ~ ".") ~ identifier ~ (!("." ~ "controlIs" ~ "(") ~ binding_suffix)* }
+asset_group_control_is = { "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" }
 
-// Named field path, optionally ending in an array index.
-identifier_property_access = {
-    identifier ~ ("." ~ identifier)+ ~ ("[" ~ general_expression ~ "]")?
-}
+// Field and index suffixes may alternate for arrays of structs.
+binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
+identifier_property_access = { identifier ~ binding_suffix+ }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
 
-check_time = { "checkTime" ~ "(" ~ general_expression ~ ")" }
 tunnel = {
     "this" ~ "." ~ "tunnel" ~ "(" ~ general_expression
     ~ ("," ~ struct_literal ~ ("," ~ tunnel_exceptions)?)? ~ ")"
@@ -405,13 +366,11 @@ hash_fn_name = { "sha256" | "hash256" | "hash160" | "ripemd160" }
 // Generalized hash function: hashFn(expr)
 hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
 
-// Hash comparison: hashFn(preimage) == hash. The RHS may be a simple
-// identifier (legacy fast path, e.g. htlc), or any byte-producing term so
-// that constructions like `sha256(substr(packet, ...)) == substr(other, ...)`
-// — used by the LayerZero scripts — parse natively.
+// Hash comparison fast path: hashFn(preimage) == hash with a simple RHS.
+// Other RHS forms parse as a general comparison.
 // The fast path must consume the whole require/constructor argument.
 hash_comparison = {
-    hash_func ~ "==" ~ (substr_func | cat_func | num2bin_func | byte_literal | named_binding) ~ &("," | ")")
+    hash_func ~ "==" ~ (byte_literal | named_binding) ~ &("," | ")")
 }
 
 // Constructor expression: new ContractName(args)
@@ -433,14 +392,15 @@ tx_property_access = {
 
 // Body of tx property access - separated to control greediness
 tx_property_body = {
-    // Input.current syntax - first-class support for current input introspection
-    ("input" ~ "." ~ "current" ~ ("." ~ identifier)*) |
-    // Asset groups access: find, has, length, or indexed property access
+    // Input.current syntax - first-class support for current input introspection.
+    // Same property set as tx.inputs[i].property (this *is* tx.inputs[i] for
+    // the current i); a property is required, there is no bare form.
+    ("input" ~ "." ~ "current" ~ "." ~ input_introspection_property) |
+    // Asset groups access: has, length, or an AssetGroup with an optional member
     ("assetGroups" ~ (
-        "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
         "." ~ "length" |
-        array_access ~ ("." ~ asset_group_property)?
+        asset_group_ref ~ asset_group_member?
     )?) |
     // Standard property access
     (tx_property_part ~ tx_property_suffix*)
@@ -451,9 +411,25 @@ tx_property_suffix = {
     array_access | ("." ~ tx_property_part)
 }
 
+// An AssetGroup value: tx.assetGroups.find(txid, gidx) or tx.assetGroups[k]
+asset_group_ref = {
+    "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" | array_access
+}
+
+// Member access on an AssetGroup value
+asset_group_member = {
+    "." ~ (
+        asset_group_control_is |
+        asset_group_io_source ~ array_access ~ ("." ~ asset_group_io_property)? |
+        asset_group_property
+    )
+}
+asset_group_io_source = { "inputs" | "outputs" }
+asset_group_io_property = { "amount" | "type" }
+
 // Asset group properties
 asset_group_property = {
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "metadataHash" | "assetId" | "isFresh" | "length" | "find"
+    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "controlAssetId" | "metadataHash" | "assetId" | "isFresh"
 }
 
 // This property access
@@ -468,17 +444,12 @@ this_property = {
 
 // Property part with various access types
 tx_property_part = {
-    tx_special_property | tx_method_call | identifier
+    tx_method_call | identifier
 }
 
-// Special properties that have specific meaning
-tx_special_property = {
-    "time" | "inputs" | "outputs" | "version" | "locktime" | "currentInput" | "assetGroups"
-}
-
-// Array access with index - simplified to avoid parsing ambiguity
+// Array access with an integer index expression
 array_access = {
-    "[" ~ (number_literal | qualified_name) ~ "]"
+    "[" ~ general_expression ~ "]"
 }
 
 // Method call with optional arguments
@@ -554,135 +525,19 @@ array = {
     "[" ~ named_binding ~ ("," ~ named_binding)* ~ "]"
 }
 
-// Named operands used by crypto checks. Dynamic indices here remain limited
-// to a single binding because these AST nodes store operand names directly.
-named_binding = @{
-    identifier ~ (
-        ("." ~ identifier)+ ~ ("[" ~ (qualified_name | number_literal) ~ "]")? |
-        "[" ~ (qualified_name | number_literal) ~ "]"
-    )?
-}
-
-// SHA256 function. Accepts any additive expression so concatenation chains
-// like `sha256(a + b + c)` parse (`additive_expr` cascades down to primary,
-// which still accepts a bare identifier for the legacy `sha256(preimage)` form).
-sha256_func = {
-    "sha256" ~ "(" ~ additive_expr ~ ")"
-}
-
-// ─── Streaming SHA256 ──────────────────────────────────────────────────
-
-// Streaming SHA256 initialize: sha256Initialize(data) → OP_SHA256INITIALIZE
-sha256_initialize = {
-    "sha256Initialize" ~ "(" ~ unary_atom ~ ")"
-}
-
-// Streaming SHA256 update: sha256Update(ctx, chunk) → OP_SHA256UPDATE
-sha256_update = {
-    "sha256Update" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Streaming SHA256 finalize: sha256Finalize(ctx, lastChunk) → OP_SHA256FINALIZE
-sha256_finalize = {
-    "sha256Finalize" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-sighash_func = {
-    "sighash" ~ "(" ~ unary_atom ~ ")"
-}
-
-digest_func = {
-    "digest" ~ "(" ~ additive_expr ~ "," ~ unary_atom ~ ")"
-}
-
-// ─── Arithmetic ────────────────────────────────────────────────────────
-
-// Modular exponentiation: modExp(base, exponent, modulus) → OP_MODEXP
-mod_exp_func = {
-    "modExp" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// ─── Crypto Opcodes ────────────────────────────────────────────────────
-
-ec_add = {
-    "ecAdd" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-ec_mul = {
-    "ecMul" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-ec_pairing = {
-    "ecPairing" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// EC scalar multiplication verify: ecMulScalarVerify(k, P, Q) → OP_ECMULSCALARVERIFY
-ec_mul_scalar_verify = {
-    "ecMulScalarVerify" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Tweak verification: tweakVerify(P, k, Q) → OP_TWEAKVERIFY
-tweak_verify = {
-    "tweakVerify" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
+// Named operands used by crypto checks: a binding with field and index suffixes.
+named_binding = { identifier ~ binding_suffix* }
 
 // CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
 check_sig_from_stack_verify = {
     "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
 }
 
-// ─── Byte-string Manipulation ──────────────────────────────────────────
-// These map to the introspector's byte-string opcodes and are used to slice,
-// concat, and parse fixed-width fields out of extension packets.
-
-// A byte-producing operand. Accepted as a child of substr/cat/bin2num/size
-// so packet introspection results can flow directly into slicing:
-//   substr(tx.packet(EndpointState), 1, 32)
-//   sha256(substr(tx.inputs[1].packet(LzReceive), 1, 140))
-byte_value = {
-    intent_field |
-    substr_func |
-    cat_func |
-    num2bin_func |
-    reverse_bytes_func |
-    packet_inspect |
-    input_packet_inspect |
-    input_introspection |
-    output_introspection |
-    asset_at |
-    byte_literal |
-    named_binding
-}
-
-// Substring extraction: substr(data, offset, size) → OP_SUBSTR
-substr_func = {
-    "substr" ~ "(" ~ byte_value ~ "," ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Byte concatenation: cat(a, b) → OP_CAT
-cat_func = {
-    "cat" ~ "(" ~ byte_value ~ "," ~ byte_value ~ ")"
-}
-
-// Bytes → BigNum: bin2num(bytes) → OP_BIN2NUM
-bin2num_func = {
-    "bin2num" ~ "(" ~ byte_value ~ ")"
-}
-
-// BigNum → fixed-width bytes: num2bin(num, size) → OP_NUM2BIN
-num2bin_func = {
-    "num2bin" ~ "(" ~ unary_atom ~ "," ~ unary_atom ~ ")"
-}
-
-// Reverse a byte array: reverseBytes(bytes) → OP_REVERSEBYTES
-reverse_bytes_func = {
-    "reverseBytes" ~ "(" ~ byte_value ~ ")"
-}
-
-// Byte-array length: size(bytes) → OP_SIZE OP_NIP (returns size only)
-size_func = {
-    "size" ~ "(" ~ byte_value ~ ")"
-}
+// Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
+// pubkey/signature are semantic because the VM validates them when consumed.
+// int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
+cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
+cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 
 // ─── Packet Introspection ──────────────────────────────────────────────
 // Extension-packet introspection over the current transaction or a previous
@@ -692,13 +547,13 @@ size_func = {
 
 // Current-tx packet: tx.packet(packetType) → <packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY
 packet_inspect = {
-    "tx" ~ "." ~ "packet" ~ "(" ~ unary_atom ~ ")"
+    "tx" ~ "." ~ "packet" ~ "(" ~ general_expression ~ ")"
 }
 
 // Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
 // → <packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY
 input_packet_inspect = {
-    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ unary_atom ~ ")"
+    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ general_expression ~ ")"
 }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────

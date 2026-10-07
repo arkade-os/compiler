@@ -17,7 +17,7 @@ import (
 // are fixed Unix times safely in the past (2023) and future (2100).
 const (
 	amount        = int64(500_000)
-	exitDelay     = int64(512)
+	exitDelay     = int64(144)
 	pastTimeout   = int64(1_700_000_000)
 	futureTimeout = int64(4_102_444_800)
 )
@@ -56,7 +56,7 @@ func TestCompiledEscrow(t *testing.T) {
 		"partyBScript":      partyBProgram,
 		"amount":            scriptInt(t, amount),
 		"timeoutAt":         scriptInt(t, pastTimeout),
-		"exit":              scriptInt(t, exitDelay),
+		"SERVER_EXIT_DELAY": scriptInt(t, exitDelay),
 	}
 	pendingValues := make(map[string][]byte, len(values))
 	for key, value := range values {
@@ -131,7 +131,7 @@ func TestCompiledEscrow(t *testing.T) {
 			other := sha256.Sum256([]byte("deed transferred, lot 43"))
 			requireVMResult(
 				t, attested(amount, other[:], oracleKey, toPartyB),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 
@@ -148,7 +148,7 @@ func TestCompiledEscrow(t *testing.T) {
 				t, attested(amount, oracleMsg[:], oracleKey, []*wire.TxOut{
 					{Value: amount, PkScript: p2trTo(thief)},
 				}),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 
@@ -165,7 +165,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(complete.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, attested(amount, oracleMsg[:], oracleKey, toPartyB), extra),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 	})
@@ -205,7 +205,7 @@ func TestCompiledEscrow(t *testing.T) {
 				{Value: amount, PkScript: p2trTo(partyBProgram)},
 			}
 			requireVMResult(
-				t, refund(cancel, 0, toPartyB), emulatorKey.PubKey(), "OP_VERIFY failed",
+				t, refund(cancel, 0, toPartyB), emulatorKey.PubKey(), "false stack entry",
 			)
 		})
 
@@ -223,7 +223,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(cancel.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, refund(cancel, 0, toPartyA), extra),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
+				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 	})
@@ -231,21 +231,17 @@ func TestCompiledEscrow(t *testing.T) {
 	t.Run("unilateral tapscript", func(t *testing.T) {
 		unilateral := instantiateLeaf(t, contract, "unilateral", values, serverKey.PubKey())
 		deployment := fundingTx(unilateral.pkScript, amount)
-		sequence, err := csvSecondsSequence(scriptInt(t, exitDelay))
-		if err != nil {
-			t.Fatal(err)
-		}
 
 		t.Run("both parties together after the delay", func(t *testing.T) {
 			requireTapscriptResult(
-				t, deployment, unilateral, 0, uint32(sequence),
+				t, deployment, unilateral, 0, uint32(exitDelay),
 				[]*btcec.PrivateKey{partyAKey, partyBKey}, nil, "",
 			)
 		})
 
 		t.Run("party A alone cannot exit", func(t *testing.T) {
 			requireTapscriptResult(
-				t, deployment, unilateral, 0, uint32(sequence),
+				t, deployment, unilateral, 0, uint32(exitDelay),
 				[]*btcec.PrivateKey{partyAKey, partyAKey}, nil, "signature not empty",
 			)
 		})

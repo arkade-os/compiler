@@ -1,5 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Function, Parameter, Statement, StructDefinition,
+    AssignmentTarget, Constant, Contract, ExprKind, Expression, Function, LocatedStatement,
+    Parameter, Statement, StructDefinition,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -18,6 +19,8 @@ mod comparison;
 mod crypto;
 mod expr;
 mod introspection;
+#[cfg(any(feature = "wasm", test))]
+mod symbols;
 mod tapscript;
 
 pub(crate) use asset::*;
@@ -26,6 +29,8 @@ pub(crate) use comparison::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
+#[cfg(any(feature = "wasm", test))]
+pub(crate) use symbols::{symbols, Symbol};
 pub(crate) use tapscript::*;
 
 #[cfg(test)]
@@ -34,8 +39,7 @@ pub fn parse(source: &str) -> Result<Contract, String> {
 }
 
 pub(crate) fn imports(source: &str) -> Result<Vec<String>, String> {
-    let mut pairs =
-        ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
+    let mut pairs = parse_main(source)?;
     pairs
         .next()
         .expect("main")
@@ -49,8 +53,135 @@ pub(crate) fn parse_with_constants(
     source: &str,
     constants: &[Constant],
 ) -> Result<Contract, String> {
-    let pairs = ArkadeParser::parse(Rule::main, source).map_err(|e| format!("Parse error: {e}"))?;
-    build_ast(pairs, constants)
+    build_ast(parse_main(source)?, constants)
+}
+
+/// Parse a source file, naming expected tokens in source terms instead of grammar rules.
+pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
+    pest::set_error_detail(true);
+    ArkadeParser::parse(Rule::main, source)
+        .map_err(|e| format!("Parse error: {}", readable_error(e, source)))
+}
+
+/// Rewrite a pest error in source-language terms: report the farthest position
+/// reached, quote the closing tokens expected there, and name rules in plain words.
+fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error::Error<Rule> {
+    use pest::error::{Error, ErrorVariant, InputLocation};
+    let Some(attempts) = error.parse_attempts() else {
+        return error;
+    };
+    // Literal tokens only; `a..z` style entries are character ranges.
+    let tokens: Vec<String> = attempts
+        .expected_tokens()
+        .iter()
+        .map(ToString::to_string)
+        .filter(|t| !t.trim().is_empty() && t != "//" && !t.contains(".."))
+        .map(|t| format!("'{t}'"))
+        .collect();
+    let mut expected: Vec<String> = tokens
+        .iter()
+        .filter(|t| ["';'", "')'", "'}'", "']'", "','"].contains(&t.as_str()))
+        .cloned()
+        .collect();
+    // Pest's rule positives can point at an earlier position than the attempts.
+    if let ErrorVariant::ParsingError { positives, .. } = &error.variant {
+        if error.location == InputLocation::Pos(attempts.max_position) {
+            for term in positives.iter().filter_map(rule_term) {
+                if !expected.contains(&term) {
+                    expected.push(term);
+                }
+            }
+        }
+    }
+    if expected.is_empty() {
+        expected = tokens;
+    }
+    let message = match expected.split_last() {
+        None => "unexpected input".to_string(),
+        Some((last, [])) => format!("expected {last}"),
+        Some((last, rest)) => format!("expected {} or {last}", rest.join(", ")),
+    };
+    match pest::Position::new(source, attempts.max_position) {
+        Some(pos) => Error::new_from_pos(ErrorVariant::CustomError { message }, pos),
+        None => error,
+    }
+}
+
+fn rule_term(rule: &Rule) -> Option<String> {
+    let term = match rule {
+        Rule::main => return None,
+        Rule::EOI => "end of file",
+        Rule::comparison_operator
+        | Rule::add_op
+        | Rule::sub_op
+        | Rule::not_op
+        | Rule::and_op
+        | Rule::or_op
+        | Rule::bit_and_op
+        | Rule::bit_or_op
+        | Rule::bit_xor_op
+        | Rule::shift_op
+        | Rule::invert_op
+        | Rule::mul_op
+        | Rule::div_op
+        | Rule::rem_op => "an operator",
+        Rule::asset_lookup_source | Rule::tx_introspection_property | Rule::tx_property_part => {
+            "a transaction property"
+        }
+        Rule::input_introspection_property => "an input property",
+        Rule::output_introspection_property => "an output property",
+        Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
+            "an asset group property"
+        }
+        Rule::asset_at_property => "an asset property",
+        Rule::this_property => "a contract property",
+        Rule::identifier => "a name",
+        Rule::const_keyword => "a constant",
+        Rule::function_visibility | Rule::function => "a function",
+        Rule::data_type => "a type",
+        Rule::block => "a block",
+        Rule::unary_expr
+        | Rule::primary_expr
+        | Rule::parenthesized_expr
+        | Rule::general_expression => "an expression",
+        Rule::number_literal => "a number",
+        Rule::string_literal => "a string",
+        // ponytail: unmapped rules fall back to their grammar name with spaces;
+        // map any that show up confusingly in real errors.
+        other => return Some(format!("{other:?}").replace('_', " ")),
+    };
+    Some(term.to_string())
+}
+
+/// The raw pest parse, with the error already rewritten in source-language
+/// terms by `readable_error`. Used where the byte position of a failure
+/// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
+pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Error<Rule>> {
+    pest::set_error_detail(true);
+    ArkadeParser::parse(Rule::main, source).map_err(|e| readable_error(e, source))
+}
+
+pub(crate) fn parse_error_diagnostic(
+    error: &pest::error::Error<Rule>,
+    file: &str,
+    source: &str,
+) -> crate::diagnostics::Diagnostic {
+    use pest::error::InputLocation;
+    let (start, end) = match error.location {
+        // A point location still needs a non-empty span to underline: cover the
+        // character there, or at end of input the last non-whitespace one.
+        InputLocation::Pos(pos) => match source[pos..].chars().next() {
+            Some(c) => (pos, pos + c.len_utf8()),
+            None => {
+                let text = source[..pos].trim_end();
+                let start = text.char_indices().next_back().map_or(0, |(i, _)| i);
+                (start, text.len())
+            }
+        },
+        InputLocation::Span((start, end)) => (start, end),
+    };
+    crate::diagnostics::Diagnostic::error(file, error.variant.message().into_owned())
+        .with_span(crate::diagnostics::Span { start, end })
 }
 
 /// Build a Contract AST from parsed Pest pairs
@@ -218,16 +349,28 @@ fn parse_function(
     let is_static = is_library || visibility == "static";
     let is_private = is_library || visibility != "public";
     let is_exported = is_static && visibility != "private";
-    let name = inner
-        .next()
-        .ok_or("Missing function name")?
-        .as_str()
-        .to_string();
+    let name = inner.next().ok_or("Missing function name")?;
+    let span = crate::diagnostics::Span {
+        start: name.as_span().start(),
+        end: name.as_span().end(),
+    };
+    let name = name.as_str().to_string();
     if is_private
         && (expr::reserved_function_signature(&name).is_some()
             || matches!(
                 name.as_str(),
-                "require" | "return" | "negate" | "neg64" | "le64ToScriptNum" | "le32ToLe64"
+                "require"
+                    | "return"
+                    | "negate"
+                    | "neg64"
+                    | "le64ToScriptNum"
+                    | "le32ToLe64"
+                    | "pubkey"
+                    | "signature"
+                    | "bytes20"
+                    | "bytes32"
+                    | "int"
+                    | "bool"
             ))
     {
         return Err(format!("function name '{name}' is reserved"));
@@ -238,28 +381,33 @@ fn parse_function(
     } else {
         None
     };
-    let mut func = Function {
+    let mut statements = Vec::new();
+    for statement in inner {
+        statements.extend(parse_statement(&name, statement, constants)?);
+    }
+    Ok(Function {
         name,
+        span,
         parameters,
-        statements: Vec::new(),
+        statements,
         is_private,
         is_static,
         is_exported,
         return_type,
-    };
-    for statement in inner {
-        parse_function_body(&mut func, statement, constants)?;
-    }
-    Ok(func)
+    })
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
-fn parse_function_body(
-    func: &mut Function,
+fn parse_statement(
+    function_name: &str,
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<(), String> {
-    match pair.as_rule() {
+) -> Result<Option<LocatedStatement>, String> {
+    let span = crate::diagnostics::Span {
+        start: pair.as_span().start(),
+        end: pair.as_span().end(),
+    };
+    let statement = match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
             let expr = match inner.next() {
@@ -267,7 +415,7 @@ fn parse_function_body(
                 None => {
                     return Err(format!(
                         "Parse error: Invalid arguments to function {}",
-                        func.name
+                        function_name
                     ))
                 }
             };
@@ -277,9 +425,7 @@ fn parse_function_body(
                 parse_string_literal(message.as_str())?;
             }
 
-            // Wrap the requirement in a Statement::Require
-            func.statements.push(Statement::Require(requirement));
-            Ok(())
+            Statement::Require(requirement)
         }
         Rule::let_binding => {
             let mut inner = pair.into_inner();
@@ -293,12 +439,11 @@ fn parse_function_body(
                 .ok_or_else(|| "Parse error: Missing value in let binding".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::LetBinding {
+            Statement::LetBinding {
                 name,
                 declared_type: None,
                 value,
-            });
-            Ok(())
+            }
         }
         Rule::var_assign => {
             let mut inner = pair.into_inner();
@@ -312,8 +457,7 @@ fn parse_function_body(
                 .ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::VarAssign { target, value });
-            Ok(())
+            Statement::VarAssign { target, value }
         }
         Rule::if_stmt => {
             let mut inner = pair.into_inner();
@@ -325,20 +469,19 @@ fn parse_function_body(
             let then_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
-            let then_body = parse_block(then_block, constants)?;
+            let then_body = parse_block(function_name, then_block, constants)?;
 
             let else_body = if let Some(else_block) = inner.next() {
-                Some(parse_block(else_block, constants)?)
+                Some(parse_block(function_name, else_block, constants)?)
             } else {
                 None
             };
 
-            func.statements.push(Statement::IfElse {
+            Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
-            });
-            Ok(())
+            }
         }
         Rule::for_stmt => {
             let loop_statement = pair
@@ -368,17 +511,18 @@ fn parse_function_body(
                             "Parse error: Missing iterable in for loop".to_string()
                         })?)?;
                     let body = parse_block(
+                        function_name,
                         inner
                             .next()
                             .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
                         constants,
                     )?;
-                    func.statements.push(Statement::ForIn {
+                    Statement::ForIn {
                         index_var,
                         value_var,
                         iterable,
                         body,
-                    });
+                    }
                 }
                 Rule::for_count_stmt => {
                     let count =
@@ -386,22 +530,31 @@ fn parse_function_body(
                             "Parse error: Missing count in for loop".to_string()
                         })?)?;
                     let body = parse_block(
+                        function_name,
                         inner
                             .next()
                             .ok_or_else(|| "Parse error: Missing body in for loop".to_string())?,
                         constants,
                     )?;
-                    func.statements.push(Statement::ForCount { count, body });
+                    Statement::ForCount { count, body }
                 }
                 _ => return Err("Parse error: Invalid for loop".to_string()),
             }
-            Ok(())
         }
         Rule::function_call_stmt => {
             let call = pair.into_inner().next().ok_or("Missing function call")?;
-            func.statements
-                .push(Statement::Call(parse_general_expression(call)?));
-            Ok(())
+            match parse_general_expression(call)? {
+                Expression {
+                    kind: ExprKind::Builtin { builtin, .. },
+                    ..
+                } => {
+                    return Err(format!(
+                        "`{}(...)` cannot be a statement; use it inside require()",
+                        builtin.name
+                    ));
+                }
+                call => Statement::Call(call),
+            }
         }
         Rule::return_stmt => {
             let value = pair
@@ -409,8 +562,7 @@ fn parse_function_body(
                 .nth(1)
                 .map(parse_general_expression)
                 .transpose()?;
-            func.statements.push(Statement::Return(value));
-            Ok(())
+            Statement::Return(value)
         }
         Rule::variable_declaration => {
             let mut inner = pair.into_inner();
@@ -429,62 +581,43 @@ fn parse_function_body(
                 .ok_or_else(|| "Parse error: Missing value".to_string())?;
             let value = parse_general_expression(value_pair)?;
 
-            func.statements.push(Statement::LetBinding {
+            Statement::LetBinding {
                 name,
                 declared_type: Some(declared_type),
                 value,
-            });
-            Ok(())
+            }
         }
-        _ => Ok(()),
-    }
+        _ => return Ok(None),
+    };
+    Ok(Some(LocatedStatement { span, statement }))
 }
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
-    let mut path = Vec::new();
-    let mut index = None;
-    for part in pair.into_inner() {
-        match part.as_rule() {
-            Rule::identifier => path.push(part.as_str().to_string()),
-            Rule::general_expression => index = Some(parse_general_expression(part)?),
-            rule => return Err(format!("Unexpected rule in assignment target: {rule:?}")),
-        }
-    }
-    let name = path.join(".");
-    if name.is_empty() {
-        return Err("Parse error: Missing assignment target".to_string());
-    }
-    Ok(match index {
-        Some(index) => AssignmentTarget::ArrayIndex {
-            array: name,
-            index: Box::new(index),
-        },
-        None => AssignmentTarget::Binding(name),
+    Ok(match expr::parse_property_access(pair)? {
+        Expression {
+            kind: ExprKind::Variable(name) | ExprKind::Property(name),
+            ..
+        } => AssignmentTarget::Binding(name),
+        Expression {
+            kind: ExprKind::ArrayIndex { array, index },
+            ..
+        } => AssignmentTarget::ArrayIndex { array, index },
+        value => AssignmentTarget::Access(Box::new(value)),
     })
 }
 
 // ─── Expression Parsing ────────────────────────────────────────────────────────
 
 // Parse a block of statements
-fn parse_block(pair: Pair<Rule>, constants: &[Constant]) -> Result<Vec<Statement>, String> {
+fn parse_block(
+    function_name: &str,
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<Vec<LocatedStatement>, String> {
     let mut statements = Vec::new();
-
     for inner in pair.into_inner() {
-        // Create a temporary function to collect statements
-        let mut temp_func = Function {
-            name: String::new(),
-            parameters: Vec::new(),
-            statements: Vec::new(),
-            is_private: false,
-            is_static: false,
-            is_exported: false,
-            return_type: None,
-        };
-
-        parse_function_body(&mut temp_func, inner, constants)?;
-        statements.extend(temp_func.statements);
+        statements.extend(parse_statement(function_name, inner, constants)?);
     }
-
     Ok(statements)
 }
 
@@ -528,7 +661,76 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::models::{AssignmentTarget, Expression, Requirement, Statement};
+    use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
+    use crate::operators::UnaryOperator;
+
+    #[test]
+    fn expression_spans_cover_their_source_and_nest() {
+        let source = "contract C(bytes a, bytes32 h, int[2] xs) { function spend(int n) {
+            require(sha256(cat(a, a)) == h);
+            let total = xs[n] + -n * 2;
+            let mask = ~a ^ a;
+            let flipped = -~n;
+            let grouped = (n) + ((2));
+            let prefixed = -!(n);
+            let packet = tx.packet(-!(n));
+            let sum = tx.assetGroups[n].sumInputs;
+            let owned = tx.assetGroups.find(h, n).controlIs(h, n);
+            require(total > 0);
+        } }";
+        let contract = parse(source).expect("parses");
+        let text = |e: &Expression| &source[e.span.start..e.span.end];
+        fn walk<'a>(e: &'a Expression, out: &mut Vec<&'a Expression>) {
+            out.push(e);
+            for child in crate::models::child_exprs(e) {
+                assert!(
+                    e.span.start <= child.span.start && child.span.end <= e.span.end,
+                    "{child:?} escapes {e:?}"
+                );
+                walk(child, out);
+            }
+        }
+        let mut nodes = Vec::new();
+        for statement in &contract.functions[0].statements {
+            match &statement.statement {
+                Statement::Require(Requirement::Comparison { left, right, .. }) => {
+                    walk(left, &mut nodes);
+                    walk(right, &mut nodes);
+                }
+                Statement::LetBinding { value, .. } => walk(value, &mut nodes),
+                other => panic!("unexpected statement {other:?}"),
+            }
+        }
+        let texts: Vec<&str> = nodes.iter().map(|e| text(e)).collect();
+        for expected in [
+            "sha256(cat(a, a))",
+            "cat(a, a)",
+            "h",
+            "xs[n] + -n * 2",
+            "xs[n]",
+            "-n * 2",
+            "-n",
+            "~a ^ a",
+            "~a",
+            "-~n",
+            "~n",
+            "(n) + ((2))",
+            "(n)",
+            "((2))",
+            "-!(n)",
+            "!(n)",
+            "tx.packet(-!(n))",
+            "tx.assetGroups[n].sumInputs",
+            "tx.assetGroups.find(h, n).controlIs(h, n)",
+            "total",
+            "0",
+        ] {
+            assert!(
+                texts.contains(&expected),
+                "no node spans {expected:?} in {texts:?}"
+            );
+        }
+    }
 
     #[test]
     fn parses_version_pragmas_without_enforcing_compatibility() {
@@ -590,10 +792,10 @@ mod tests {
         assert_eq!(contract.parameters[0].param_type, "pubkey[C.N]");
         assert_eq!(contract.functions[0].parameters[0].param_type, "int[N]");
         assert!(
-            matches!(&contract.functions[0].statements[0], Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
+            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
         );
         assert!(
-            matches!(&contract.functions[0].statements[1], Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "-"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "-"))
         );
         for size in ["", "0", "-1", "1 2", "N + 1"] {
             assert!(
@@ -615,13 +817,13 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0], Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xDEADbeef")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xDEADbeef")
         );
         assert!(
-            matches!(&statements[1], Statement::LetBinding { value: Expression::Literal(value), .. } if value == "0xc5be0a")
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xc5be0a")
         );
         assert!(
-            matches!(&statements[2], Statement::Require(Requirement::Comparison { left: Expression::Literal(left), right: Expression::Literal(right), .. }) if left == "0x68656c6c6f" && left == right)
+            matches!(&statements[2].statement, Statement::Require(Requirement::Comparison { left: Expression { kind: ExprKind::Literal(left), .. }, right: Expression { kind: ExprKind::Literal(right), .. }, .. }) if left == "0x68656c6c6f" && left == right)
         );
     }
 
@@ -633,16 +835,16 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0], Statement::LetBinding { value: Expression::Property(name), .. } if name == "x.field")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Property(name), .. }, .. } if name == "x.field")
         );
         assert!(
-            matches!(&statements[1], Statement::LetBinding { value: Expression::Call { name, args, .. }, .. } if name == "Helper.value" && args.is_empty())
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Call { name, args, .. }, .. }, .. } if name == "Helper.value" && args.is_empty())
         );
     }
 
     #[test]
     fn parses_private_visibility_return_types_and_call_arguments() {
-        use crate::models::Expression;
+        use crate::models::{ExprKind, Expression};
         let contract = parse(
             r#"contract C() {
             public function spend(int amount) { check(amount + 1 * 2); }
@@ -657,14 +859,14 @@ mod tests {
         assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
         assert!(!contract.functions[3].is_private);
         assert!(
-            matches!(&contract.functions[0].statements[0], Statement::Call(Expression::Call { name, args, .. }) if name == "check" && matches!(&args[0], Expression::BinaryOp { op, .. } if op == "+"))
+            matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression { kind: ExprKind::Call { name, args, .. }, .. }) if name == "check" && matches!(&args[0].kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+"))
         );
         assert!(matches!(
-            &contract.functions[1].statements[1],
+            &contract.functions[1].statements[1].statement,
             Statement::Return(None)
         ));
         assert!(matches!(
-            &contract.functions[2].statements[0],
+            &contract.functions[2].statements[0].statement,
             Statement::Return(Some(_))
         ));
     }
@@ -673,51 +875,91 @@ mod tests {
     fn parses_logical_precedence_and_grouping() {
         let contract = parse("contract C() { function spend() { let value = !a == b || c && d && e; require((a || b) && !(c < d)); } }").unwrap();
         let Statement::LetBinding {
-            value: Expression::BinaryOp { left, op, right },
+            value:
+                Expression {
+                    kind: ExprKind::BinaryOp { left, op, right },
+                    ..
+                },
             ..
-        } = &contract.functions[0].statements[0]
+        } = &contract.functions[0].statements[0].statement
         else {
             panic!("expected logical expression");
         };
-        assert_eq!(op, "||");
-        assert!(
-            matches!(left.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op == "==" && matches!(left.as_ref(), Expression::Not { .. }))
-        );
-        assert!(
-            matches!(right.as_ref(), Expression::BinaryOp { left, op, .. }
-            if op == "&&" && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "&&"))
-        );
-        assert!(matches!(&contract.functions[0].statements[1],
-            Statement::Require(Requirement::Expression(Expression::BinaryOp { left, op, right }))
-            if op == "&&"
-                && matches!(left.as_ref(), Expression::BinaryOp { op, .. } if op == "||")
-                && matches!(right.as_ref(), Expression::Not { value }
-                    if matches!(value.as_ref(), Expression::BinaryOp { op, .. } if op == "<"))));
+        assert_eq!(op.symbol(), "||");
+        assert!(matches!(&left.kind, ExprKind::BinaryOp { left, op, .. }
+            if op.symbol() == "==" && matches!(&left.kind, ExprKind::Unary { op: UnaryOperator::Not, .. })));
+        assert!(matches!(&right.kind, ExprKind::BinaryOp { left, op, .. }
+            if op.symbol() == "&&" && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "&&")));
+        assert!(matches!(&contract.functions[0].statements[1].statement,
+            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::BinaryOp { left, op, right }, .. }))
+            if op.symbol() == "&&"
+                && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "||")
+                && matches!(&right.kind, ExprKind::Unary { op: UnaryOperator::Not, value }
+                    if matches!(&value.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "<"))));
     }
 
     #[test]
     fn parses_unary_prefix_order_and_boolean_boundaries() {
         let contract = parse("contract Unary() { function spend() { let result = -!true != false; let truth = !trueValue; } }").unwrap();
         let Statement::LetBinding {
-            value: Expression::BinaryOp { left, op, right },
+            value:
+                Expression {
+                    kind: ExprKind::BinaryOp { left, op, right },
+                    ..
+                },
             ..
-        } = &contract.functions[0].statements[0]
+        } = &contract.functions[0].statements[0].statement
         else {
             panic!("comparison must be the outer expression");
         };
-        assert_eq!(op, "!=");
-        let Expression::Negate { value } = left.as_ref() else {
+        assert_eq!(op.symbol(), "!=");
+        let ExprKind::Unary {
+            op: UnaryOperator::Neg,
+            value,
+        } = &left.kind
+        else {
             panic!("minus must be the outer prefix");
         };
-        let Expression::Not { value } = value.as_ref() else {
+        let ExprKind::Unary {
+            op: UnaryOperator::Not,
+            value,
+        } = &value.kind
+        else {
             panic!("not must be the inner prefix");
         };
-        assert!(matches!(value.as_ref(), Expression::Literal(value) if value == "true"));
-        assert!(matches!(right.as_ref(), Expression::Literal(value) if value == "false"));
+        assert!(matches!(&value.kind, ExprKind::Literal(value) if value == "true"));
+        assert!(matches!(&right.kind, ExprKind::Literal(value) if value == "false"));
         assert!(
-            matches!(&contract.functions[0].statements[1], Statement::LetBinding { value: Expression::Not { value }, .. } if matches!(value.as_ref(), Expression::Variable(name) if name == "trueValue"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Unary { op: UnaryOperator::Not, value }, .. }, .. } if matches!(&value.kind, ExprKind::Variable(name) if name == "trueValue"))
         );
+    }
+
+    #[test]
+    fn parses_operand_paths_as_structured_accesses() {
+        let contract = parse(
+            r#"
+contract C() {
+    function spend(signature sig) {
+        require(checkSig(sig, signers[i + 1].keys[0]));
+        let part = substr(rows[0].data, p.offset, 1);
+    }
+}
+"#,
+        )
+        .unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(matches!(
+            &statements[0].statement,
+            Statement::Require(Requirement::CheckSig { pubkey: pubkey @ Expression { kind: ExprKind::IndexAccess { .. }, .. }, .. })
+                if pubkey.source_text() == "signers[i + 1].keys[0]"
+        ));
+        assert!(matches!(
+            &statements[1].statement,
+            Statement::LetBinding { value: Expression { kind: ExprKind::Builtin { builtin, args }, .. }, .. }
+                if builtin.name == "substr"
+                    && matches!(&args[0].kind, ExprKind::FieldAccess { field, .. } if field == "data")
+                    && matches!(&args[1].kind, ExprKind::Property(name) if name == "p.offset")
+        ));
     }
 
     #[test]
@@ -743,22 +985,22 @@ contract Demo() {
 
         let statements = &contract.functions[0].statements;
         assert!(matches!(
-            &statements[0],
+            &statements[0].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
             } if name == "state.enabled"
         ));
         assert!(matches!(
-            &statements[1],
+            &statements[1].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { array, index },
                 ..
             } if array == "state.values"
-                && matches!(index.as_ref(), Expression::BinaryOp { op, .. } if op == "+")
+                && matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+")
         ));
         assert!(matches!(
-            &statements[2],
+            &statements[2].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
@@ -783,7 +1025,7 @@ contract Demo(pubkey first, pubkey second) {
 
         let statements = &contract.functions[0].statements;
         assert!(matches!(
-            &statements[0],
+            &statements[0].statement,
             Statement::LetBinding {
                 name,
                 declared_type: None,
@@ -791,7 +1033,7 @@ contract Demo(pubkey first, pubkey second) {
             } if name == "inferred"
         ));
         assert!(matches!(
-            &statements[1],
+            &statements[1].statement,
             Statement::LetBinding {
                 name,
                 declared_type: Some(declared_type),
@@ -799,12 +1041,13 @@ contract Demo(pubkey first, pubkey second) {
             } if name == "explicit" && declared_type == "int"
         ));
         assert!(matches!(
-            &statements[2],
+            &statements[2].statement,
             Statement::Require(Requirement::CheckMultisig {
                 pubkeys,
                 signatures,
                 threshold: 2,
-            }) if pubkeys == &["first", "second"] && signatures == &["firstSig", "secondSig"]
+            }) if pubkeys.iter().map(Expression::source_text).eq(["first", "second"])
+                && signatures.iter().map(Expression::source_text).eq(["firstSig", "secondSig"])
         ));
     }
 
@@ -826,13 +1069,13 @@ contract Demo() {
             then_body,
             else_body: Some(else_body),
             ..
-        } = &contract.functions[0].statements[0]
+        } = &contract.functions[0].statements[0].statement
         else {
             panic!("expected if/else");
         };
         for body in [then_body, else_body] {
             assert!(matches!(
-                body[0],
+                body[0].statement,
                 Statement::Require(Requirement::CheckMultisig { threshold: 1, .. })
             ));
         }

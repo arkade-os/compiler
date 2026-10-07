@@ -1,5 +1,5 @@
+use crate::common::compile_unoptimized as compile;
 use crate::common::*;
-use arkade_compiler::compile;
 
 #[test]
 fn nested_private_calls_preserve_constructor_scope_and_public_abi() {
@@ -88,17 +88,17 @@ contract Composite(Pair initial) {
     private function copy(Pair value) Pair { return value; }
     private function make(int x) Pair { return { left: x, right: [x + 1, x + 2] }; }
     private function values(int[2] items) int[2] { items[0] = items[0] + 1; return items; }
-    private function point(int n) ECPoint { return ecMul(1, 2, n, 0); }
+    private function point(ECPoint base, int n) ECPoint { return ecMul(base, n, 0); }
     private function xCoordinate(ECPoint point) int { return point.x; }
-    function spend(int amount) {
+    function spend(int amount, ECPoint base) {
         Pair nested = { left: amount, right: values([amount, amount + 1]) };
-        Wrapped wrapped = { pair: make(amount), point: point(amount) };
+        Wrapped wrapped = { pair: make(amount), point: point(base, amount) };
         require(nested.right[0] == amount + 1);
         require(wrapped.pair.left == amount);
         Pair pair = copy(make(amount));
         let other = copy(initial);
         int[2] result = values(pair.right);
-        let point = point(amount);
+        let point = point(base, amount);
         require(xCoordinate(point) >= 0);
         require(result[0] == pair.right[0] + 1);
         require(other.left == initial.left);
@@ -147,7 +147,7 @@ contract C() {
 fn helper_requirements_count_on_all_paths_including_expression_calls() {
     for body in [
         "checked();",
-        "let value = checkedValue();",
+        "let value = checkedValue(); value = value + 1;",
         "require(predicate());",
     ] {
         compile(&format!(
@@ -229,8 +229,8 @@ fn tapscript_cannot_call_bind_or_tweak_private_helpers() {
 }
 
 #[test]
-fn calls_and_returns_preserve_nested_expression_type_warnings() {
-    let output = compile(
+fn calls_and_returns_reject_nested_expression_type_errors() {
+    let error = compile(
         r#"
 struct Flag { bool value; }
 contract C() {
@@ -241,14 +241,15 @@ contract C() {
 }
 "#,
     )
-    .expect("type mismatches produce warnings");
+    .expect_err("type mismatches are rejected")
+    .to_string();
     for function in ["spend", "array", "flag"] {
-        assert!(output
-            .warnings
-            .iter()
-            .any(|warning| warning.contains(&format!(
+        assert!(
+            error.contains(&format!(
                 "fn {function}: comparison '==' is not defined between 'int' and 'bool'"
-            ))));
+            )),
+            "{error}"
+        );
     }
 }
 

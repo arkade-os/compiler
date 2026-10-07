@@ -1,8 +1,7 @@
 pragma arkade ^0.1.0;
 
 contract SingleSig(
-  pubkey user,
-  int exit
+  pubkey user
 ) {
   // Single signature spend path
   function spend(signature userSig) {
@@ -11,7 +10,7 @@ contract SingleSig(
 
   // Unilateral exit (CSV).
   function unilateral(signature userSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(userSig, user));
   }
 }

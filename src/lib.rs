@@ -1,9 +1,12 @@
 // Compilation entry points, data models, and opcode constants are public.
 // Pipeline stages are crate-internal.
+mod builtins;
 mod compiler;
+pub mod diagnostics;
 mod imports;
 pub mod models;
 pub mod opcodes;
+pub mod operators;
 mod parser;
 mod typechecker;
 mod validator;
@@ -11,11 +14,25 @@ mod validator;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+pub use diagnostics::{Diagnostic, Severity, Span};
 pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
     WitnessElement,
 };
 pub use typechecker::{ArkType, TypeError};
+
+/// Per-call compiler settings. Optimizations are enabled by default.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CompileOptions {
+    /// Apply assembly optimizations to Arkade covenants.
+    pub optimize: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self { optimize: true }
+    }
+}
 
 /// Compile Arkade Script source code to a JSON-serializable structure
 ///
@@ -41,13 +58,13 @@ pub use typechecker::{ArkType, TypeError};
 /// use arkade_compiler::compile;
 ///
 /// let source_code = r#"
-/// contract Example(pubkey owner, int exit) {
+/// contract Example(pubkey owner) {
 ///     function spend(signature ownerSig) {
 ///         require(checkSig(ownerSig, owner));
 ///     }
 ///
 ///     function unilateral(signature ownerSig) tapscript {
-///         require(older(exit));
+///         require(older(serverExitDelay));
 ///         require(checkSig(ownerSig, owner));
 ///     }
 /// }"#;
@@ -60,17 +77,22 @@ pub use typechecker::{ArkType, TypeError};
 /// println!("{}", json);
 /// ```
 pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    match compiler::compile(source_code) {
-        Ok(output) => Ok(output),
-        Err(err) => Err(err.into()),
-    }
+    compiler::compile(source_code).map_err(Into::into)
 }
 
 /// Compile an entry file and its relative imports from the filesystem.
 pub fn compile_file(
     path: impl AsRef<std::path::Path>,
 ) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    imports::compile_file(path.as_ref()).map_err(Into::into)
+    compile_file_with_options(path, CompileOptions::default())
+}
+
+/// Compile an entry file and its relative imports with per-call options.
+pub fn compile_file_with_options(
+    path: impl AsRef<std::path::Path>,
+    options: CompileOptions,
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    imports::compile_file(path.as_ref(), options).map_err(Into::into)
 }
 
 /// Compile an entry file from an in-memory map of relative paths to source text.
@@ -78,5 +100,23 @@ pub fn compile_sources(
     entry: &str,
     files: &std::collections::BTreeMap<String, String>,
 ) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    imports::compile_sources(entry, files).map_err(Into::into)
+    imports::compile_sources(entry, files, CompileOptions::default()).map_err(Into::into)
+}
+
+/// Compile in-memory sources with per-call options.
+pub fn compile_sources_with_options(
+    entry: &str,
+    files: &std::collections::BTreeMap<String, String>,
+    options: CompileOptions,
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    imports::compile_sources(entry, files, options).map_err(Into::into)
+}
+
+/// Every parse, validation and type diagnostic for `entry`, without writing
+/// an artifact. Unlike the `compile_*` functions, this does not stop at the
+/// first error: independent problems in `entry` each get their own entry.
+/// Diagnostics from imports name the imported file. `entry` may be a library
+/// file.
+pub fn check(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Vec<Diagnostic> {
+    imports::check_sources(entry, files)
 }

@@ -26,11 +26,11 @@ func TestCompiledHTLC(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := map[string][]byte{
-		"preimageHash": btcutil.Hash160(preimage),
-		"refundTime":   refundTimeBytes,
-		"sender":       fixedPublicKey(4).SerializeCompressed(),
-		"receiver":     fixedPublicKey(5).SerializeCompressed(),
-		"exit":         exitBytes,
+		"preimageHash":      btcutil.Hash160(preimage),
+		"refundTime":        refundTimeBytes,
+		"sender":            fixedPublicKey(4).SerializeCompressed(),
+		"receiver":          fixedPublicKey(5).SerializeCompressed(),
+		"SERVER_EXIT_DELAY": exitBytes,
 	}
 	claim := instantiateGroup(
 		t, contract, "claim", values, serverKey.PubKey(), emulatorKey.PubKey(),
@@ -51,7 +51,7 @@ func TestCompiledHTLC(t *testing.T) {
 				requireVMResult(t, valid, emulatorKey.PubKey(), "")
 
 				underfunded := spendingPSBT(t, prevTx, group, 9_999, group.pkScript)
-				requireVMResult(t, underfunded, emulatorKey.PubKey(), "OP_VERIFY failed")
+				requireVMResult(t, underfunded, emulatorKey.PubKey(), "false stack entry")
 			})
 		}
 	})

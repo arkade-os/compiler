@@ -7,17 +7,17 @@ use pest::iterators::Pair;
 /// Parse checkSig(sig, pubkey) → CheckSig requirement
 pub(crate) fn parse_check_sig(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-    let pubkey = parse_named_operand(inner.next().ok_or("Missing public key")?)?;
+    let signature = parse_operand(inner.next().ok_or("Missing signature")?)?;
+    let pubkey = parse_operand(inner.next().ok_or("Missing public key")?)?;
     Ok(Requirement::CheckSig { signature, pubkey })
 }
 
 /// Parse checkSigFromStack(sig, pubkey, message) → CheckSigFromStack requirement
 pub(crate) fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
     let mut inner = pair.into_inner();
-    let signature = parse_named_operand(inner.next().ok_or("Missing signature")?)?;
-    let pubkey = parse_named_operand(inner.next().ok_or("Missing public key")?)?;
-    let message = parse_named_operand(inner.next().ok_or("Missing message")?)?;
+    let signature = parse_operand(inner.next().ok_or("Missing signature")?)?;
+    let pubkey = parse_operand(inner.next().ok_or("Missing public key")?)?;
+    let message = parse_operand(inner.next().ok_or("Missing message")?)?;
     Ok(Requirement::CheckSigFromStack {
         signature,
         pubkey,
@@ -37,17 +37,17 @@ pub(crate) fn parse_check_multisig(
         .into_inner();
     let pubkeys_array = inner.next().ok_or("Missing public keys")?;
 
-    let pubkeys: Vec<String> = pubkeys_array
+    let pubkeys = pubkeys_array
         .into_inner()
-        .map(|p| p.as_str().to_string())
-        .collect();
+        .map(parse_operand)
+        .collect::<Result<Vec<_>, _>>()?;
 
     let signatures = inner
         .next()
         .ok_or("Missing signatures")?
         .into_inner()
-        .map(|p| p.as_str().to_string())
-        .collect();
+        .map(parse_operand)
+        .collect::<Result<_, _>>()?;
 
     let threshold = match inner.next() {
         Some(next_pair) => parse_multisig_threshold(next_pair, constants)?,
@@ -71,8 +71,8 @@ pub(crate) fn parse_multisig_threshold(
             .iter()
             .find(|constant| constant.name == name)
             .ok_or_else(|| format!("multisig threshold '{name}' must be an int constant"))?;
-        match (&constant.value, constant.const_type.as_str()) {
-            (Expression::Literal(text), "int") => text.as_str(),
+        match (&constant.value.kind, constant.const_type.as_str()) {
+            (ExprKind::Literal(text), "int") => text.as_str(),
             _ => {
                 return Err(format!(
                     "multisig threshold '{name}' must be an int literal constant"

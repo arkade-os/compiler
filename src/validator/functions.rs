@@ -8,6 +8,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         .map(|s| (s.name.as_str(), s))
         .collect();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let first = issues.len();
         if let Some(result) = &function.return_type {
             if !function.is_private {
                 issues.push(ValidationIssue::error(format!(
@@ -34,37 +35,43 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
             &contract.structs,
         ));
         validate_body(&function.statements, function, &mut scope, contract, issues);
+        locate(&mut issues[first..], function.span);
     }
 
     let mut guarantees = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         if let Err(error) = analyze_function(function, contract, &mut Vec::new(), &mut guarantees) {
-            issues.push(ValidationIssue::error(error));
+            issues.push(ValidationIssue::error(error).at(function.span));
             return;
         }
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let flow = flow_block(&function.statements, 1, &guarantees);
         if function.is_private && function.return_type.is_some() && flow.fallthrough != 0 {
-            issues.push(ValidationIssue::error(format!(
-                "private function '{}' must return a value on every path",
-                function.name
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "private function '{}' must return a value on every path",
+                    function.name
+                ))
+                .at(function.span),
+            );
         }
         if !function.is_private && (flow.fallthrough | flow.returned) & 1 != 0 {
-            issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)));
+            issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)).at(function.span));
         }
     }
 }
 
 fn validate_body(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     function: &Function,
     scope: &mut Scope,
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    for statement in statements {
+    for located in statements {
+        let first = issues.len();
+        let statement = &located.statement;
         for expression in statement_expressions(statement) {
             validate_calls(
                 expression,
@@ -79,8 +86,8 @@ fn validate_body(
             Statement::Require(Requirement::Comparison { left, right, .. }) => {
                 for (value, other) in [(left, right), (right, left)] {
                     if matches!(
-                        value,
-                        Expression::ArrayLiteral(_) | Expression::StructLiteral(_)
+                        &value.kind,
+                        ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
                     ) {
                         let expected = infer_type(other, scope);
                         if matches!(expected, ArkType::Array(..) | ArkType::Struct(_)) {
@@ -128,6 +135,19 @@ fn validate_body(
                 declared_type,
                 value,
             } => {
+                // Non-literal initializers are type-checked with the declaration.
+                if let (Some(expected), ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)) =
+                    (declared_type, &value.kind)
+                {
+                    validate_value(
+                        expected,
+                        value,
+                        scope,
+                        contract,
+                        &format!("binding '{name}' in '{}'", function.name),
+                        issues,
+                    );
+                }
                 crate::typechecker::bind_local_type(
                     scope,
                     name,
@@ -158,7 +178,13 @@ fn validate_body(
                     _ => ArkType::Unknown,
                 };
                 scope.insert(index_var.clone(), ArkType::Int);
-                scope.insert(value_var.clone(), element);
+                crate::typechecker::bind_local_type(
+                    &mut scope,
+                    value_var,
+                    None,
+                    element,
+                    &contract.structs,
+                );
                 validate_body(body, function, &mut scope, contract, issues);
             }
             Statement::ForCount { body, .. } => {
@@ -166,6 +192,7 @@ fn validate_body(
             }
             Statement::Call(_) | Statement::Require(_) | Statement::VarAssign { .. } => {}
         }
+        locate(&mut issues[first..], located.span);
     }
 }
 
@@ -177,7 +204,8 @@ fn validate_calls(
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    if let Expression::Call { name, args, .. } = expression {
+    let first = issues.len();
+    if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
             None => issues.push(ValidationIssue::error(format!(
                 "unknown private function '{name}'"
@@ -223,6 +251,7 @@ fn validate_calls(
             }
         }
     }
+    locate(&mut issues[first..], expression.span);
     for child in child_exprs(expression) {
         validate_calls(child, true, caller, scope, contract, issues);
     }
@@ -236,20 +265,28 @@ fn validate_value(
     context: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    let first = issues.len();
     let expected_type = ArkType::parse(expected);
-    match (value, &expected_type) {
-        (Expression::ArrayLiteral(elements), ArkType::Array(element, length)) => {
+    match (&value.kind, &expected_type) {
+        (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) => {
             if elements.len() != *length {
                 issues.push(ValidationIssue::error(format!(
                     "{context}: expected {length} array elements, got {}",
                     elements.len()
                 )));
             }
-            for value in elements {
-                validate_value(&element.as_str(), value, scope, contract, context, issues);
+            for (index, value) in elements.iter().enumerate() {
+                validate_value(
+                    &element.as_str(),
+                    value,
+                    scope,
+                    contract,
+                    &format!("{context}, element {index}"),
+                    issues,
+                );
             }
         }
-        (Expression::StructLiteral(fields), ArkType::Struct(name)) => {
+        (ExprKind::StructLiteral(fields), ArkType::Struct(name)) => {
             let native =
                 crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
                     name: name.clone(),
@@ -273,7 +310,14 @@ fn validate_value(
                         )));
                     }
                     if let Some(field) = definition.fields.iter().find(|f| f.name == *name) {
-                        validate_value(&field.param_type, value, scope, contract, context, issues);
+                        validate_value(
+                            &field.param_type,
+                            value,
+                            scope,
+                            contract,
+                            &format!("{context}, field '{name}'"),
+                            issues,
+                        );
                     } else {
                         issues.push(ValidationIssue::error(format!(
                             "{context}: unknown field '{name}'"
@@ -300,6 +344,7 @@ fn validate_value(
             }
         }
     }
+    locate(&mut issues[first..], value.span);
 }
 
 fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
@@ -309,7 +354,7 @@ fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
         Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
         Statement::LetBinding { value, .. } => vec![value],
         Statement::VarAssign {
-            target: AssignmentTarget::ArrayIndex { index, .. },
+            target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
             value,
         } => vec![value, index],
         Statement::VarAssign { value, .. } => vec![value],
@@ -348,12 +393,13 @@ fn analyze_function(
 }
 
 fn analyze_calls(
-    statements: &[Statement],
+    statements: &[LocatedStatement],
     contract: &Contract,
     visiting: &mut Vec<String>,
     guarantees: &mut HashMap<String, bool>,
 ) -> Result<(), String> {
     for statement in statements {
+        let statement = &statement.statement;
         for expression in statement_expressions(statement) {
             analyze_expression(expression, contract, visiting, guarantees)?;
         }
@@ -383,7 +429,7 @@ fn analyze_expression(
     visiting: &mut Vec<String>,
     guarantees: &mut HashMap<String, bool>,
 ) -> Result<(), String> {
-    if let Expression::Call { name, .. } = expression {
+    if let ExprKind::Call { name, .. } = &expression.kind {
         if let Some(function) = contract.functions.iter().find(|f| f.name == *name) {
             analyze_function(function, contract, visiting, guarantees)?;
         }
@@ -403,18 +449,22 @@ struct Flow {
 
 fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, bool>) -> bool {
     // Conservatively count only the always-evaluated left operand, even for literal conditions.
-    if let Expression::BinaryOp { left, op, .. } = expression {
-        if matches!(op.as_str(), "&&" | "||") {
+    if let ExprKind::BinaryOp { left, op, .. } = &expression.kind {
+        if op.class() == crate::operators::OperatorClass::Logical {
             return expression_enforces(left, guarantees);
         }
     }
-    matches!(expression, Expression::Call { name, .. } if guarantees.get(name) == Some(&true))
+    matches!(&expression.kind, ExprKind::Call { name, .. } if guarantees.get(name) == Some(&true))
         || child_exprs(expression)
             .into_iter()
             .any(|child| expression_enforces(child, guarantees))
 }
 
-fn flow_block(statements: &[Statement], incoming: u8, guarantees: &HashMap<String, bool>) -> Flow {
+fn flow_block(
+    statements: &[LocatedStatement],
+    incoming: u8,
+    guarantees: &HashMap<String, bool>,
+) -> Flow {
     let mut flow = Flow {
         fallthrough: incoming,
         returned: 0,
@@ -423,6 +473,7 @@ fn flow_block(statements: &[Statement], incoming: u8, guarantees: &HashMap<Strin
         if flow.fallthrough == 0 {
             break;
         }
+        let statement = &statement.statement;
         if statement_expressions(statement)
             .into_iter()
             .any(|e| expression_enforces(e, guarantees))
@@ -456,7 +507,11 @@ fn flow_block(statements: &[Statement], incoming: u8, guarantees: &HashMap<Strin
                 flow.returned |= body.returned;
             }
             Statement::ForCount {
-                count: Expression::Literal(count),
+                count:
+                    Expression {
+                        kind: ExprKind::Literal(count),
+                        ..
+                    },
                 body,
             } if count.parse::<usize>().is_ok_and(|count| count > 0) => {
                 let body = flow_block(body, flow.fallthrough, guarantees);

@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL,
     OP_EQUALVERIFY, OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT,
@@ -76,10 +76,10 @@ contract C(Node value) { function spend() { require(true); } }
         ),
         (
             r#"
-struct Item { int value; }
-contract C(Item[2] values) { function spend() { require(true); } }
+struct Item { Item[2] values; }
+contract C(Item item) { function spend() { require(true); } }
 "#,
-            "arrays of structs are not supported",
+            "recursive struct layout",
         ),
         (
             r#"
@@ -327,18 +327,18 @@ contract C(Point point) {
         .as_ref()
         .expect("covenant")
         .asm
-        .contains(&"<VTXO:C(<point.x>,<point.y>)>".to_string()));
+        .contains(&"<CONTRACT:C(<point.x>,<point.y>)>".to_string()));
 }
 
 #[test]
 fn constructor_struct_fields_are_available_to_tapscripts() {
     let output = compile(
         r#"
-struct Owner { pubkey key; int exit; }
+struct Owner { pubkey key; int lock; }
 contract C(Owner owner) {
-    function exit(signature sig) tapscript {
-        require(older(owner.exit));
-        require(checkSig(sig, owner.key));
+    function exit(signature serverSig, signature sig) tapscript {
+        require(after(owner.lock));
+        require(checkMultisig([server, owner.key], [serverSig, sig], 2));
     }
 }
 "#,
@@ -346,7 +346,7 @@ contract C(Owner owner) {
     .expect("scalar constructor fields in tapscript");
 
     let asm = &output.functions[0].leaves[0].asm;
-    assert!(asm.contains(&"<seconds:owner.exit>".to_string()));
+    assert!(asm.contains(&"<owner.lock>".to_string()));
     assert!(asm.contains(&"<owner.key>".to_string()));
     assert!(asm.contains(&OP_CHECKSIG.to_string()));
 }
@@ -359,7 +359,7 @@ struct Delay { int blocks; }
 struct Policy { Delay exit; }
 contract C(Policy policy, pubkey owner) {
     function exit(signature sig) tapscript {
-        require(older(policy.exit));
+        require(after(policy.exit));
         require(checkSig(sig, owner));
     }
 }
@@ -565,21 +565,21 @@ contract C() { function spend() { Point point = { x: 1, y: 2, z: 3 }; require(tr
 struct Point { int x; int y; }
 contract C() { function spend() { Point point = { x: 1, x: 2, y: 3 }; require(true); } }
 "#,
-            "more than once",
+            "duplicate field 'x'",
         ),
         (
             r#"
 struct Values { int[2] items; }
 contract C() { function spend() { Values values = { items: [1] }; require(true); } }
 "#,
-            "declares 2 elements",
+            "expected 2 array elements",
         ),
         (
             r#"
 struct Point { int x; int y; }
 contract C() { function spend() { Point point = { x: true, y: 2 }; require(true); } }
 "#,
-            "has type 'bool', expected 'int'",
+            "expected 'int', got 'bool'",
         ),
         (
             r#"
