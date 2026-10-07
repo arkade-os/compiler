@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Requirement, Statement,
+    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Statement,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 
@@ -206,212 +206,137 @@ pub(crate) fn bind_local_type(
     }
 }
 
-/// Type every expression of the contract's own functions.
+/// Type every expression of the contract's own functions, first resolving
+/// call return types and asset-group members, which depend on the types.
 pub(crate) fn annotate(contract: &mut Contract) {
     let constructor = build_scope_with_structs(&contract.parameters, &contract.structs);
+    let returns: HashMap<_, _> = contract
+        .functions
+        .iter()
+        .map(|f| (f.name.clone(), f.return_type.clone()))
+        .collect();
+    let typing = Typing {
+        structs: &contract.structs,
+        returns: Some(&returns),
+    };
     for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
         let mut scope = constructor.clone();
         scope.extend(build_scope_with_structs(
             &function.parameters,
             &contract.structs,
         ));
-        annotate_statements(&mut function.statements, &mut scope, &contract.structs);
+        typing.statements(&mut function.statements, &mut scope);
     }
 }
 
-/// Type `statements`, binding their locals into `scope`.
+/// Type `statements`, binding their locals into `scope`. For code built from
+/// already annotated code, such as an unrolled loop body.
 pub(crate) fn annotate_statements(
     statements: &mut [LocatedStatement],
     scope: &mut Scope,
     structs: &[crate::models::StructDefinition],
 ) {
-    for statement in statements {
-        match &mut statement.statement {
-            Statement::Call(value) | Statement::Return(Some(value)) => {
-                annotate_expression(value, scope)
-            }
-            Statement::Return(None) => {}
-            Statement::Require(requirement) => {
-                for value in requirement.expressions_mut() {
-                    annotate_expression(value, scope);
+    Typing {
+        structs,
+        returns: None,
+    }
+    .statements(statements, scope);
+}
+
+struct Typing<'a> {
+    structs: &'a [crate::models::StructDefinition],
+    /// Present on the first pass, which also resolves names.
+    returns: Option<&'a HashMap<String, Option<String>>>,
+}
+
+impl Typing<'_> {
+    fn statements(&self, statements: &mut [LocatedStatement], scope: &mut Scope) {
+        for statement in statements {
+            match &mut statement.statement {
+                Statement::Call(value) | Statement::Return(Some(value)) => {
+                    self.expression(value, scope)
                 }
-            }
-            Statement::LetBinding {
-                name,
-                declared_type,
-                value,
-            } => {
-                annotate_expression(value, scope);
-                let ty = declared_type
-                    .as_deref()
-                    .map(ArkType::parse)
-                    .unwrap_or_else(|| value.ty.clone());
-                bind_local_type(scope, name, declared_type.as_deref(), ty, structs);
-            }
-            Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::Access(index)
-                | AssignmentTarget::ArrayIndex { index, .. } = target
-                {
-                    annotate_expression(index, scope);
+                Statement::Return(None) => {}
+                Statement::Require(requirement) => {
+                    for value in requirement.expressions_mut() {
+                        self.expression(value, scope);
+                    }
                 }
-                annotate_expression(value, scope);
-            }
-            Statement::IfElse {
-                condition,
-                then_body,
-                else_body,
-            } => {
-                annotate_expression(condition, scope);
-                annotate_statements(then_body, &mut scope.clone(), structs);
-                if let Some(else_body) = else_body {
-                    annotate_statements(else_body, &mut scope.clone(), structs);
+                Statement::LetBinding {
+                    name,
+                    declared_type,
+                    value,
+                } => {
+                    self.expression(value, scope);
+                    let ty = declared_type
+                        .as_deref()
+                        .map(ArkType::parse)
+                        .unwrap_or_else(|| value.ty.clone());
+                    bind_local_type(scope, name, declared_type.as_deref(), ty, self.structs);
                 }
-            }
-            Statement::ForIn {
-                index_var,
-                value_var,
-                iterable,
-                body,
-            } => {
-                annotate_expression(iterable, scope);
-                let mut body_scope = scope.clone();
-                body_scope.insert(index_var.clone(), ArkType::Int);
-                let element = match &iterable.ty {
-                    ArkType::Array(element, _) => (**element).clone(),
-                    _ => ArkType::Unknown,
-                };
-                bind_local_type(&mut body_scope, value_var, None, element, structs);
-                annotate_statements(body, &mut body_scope, structs);
-            }
-            Statement::ForCount { count, body } => {
-                annotate_expression(count, scope);
-                annotate_statements(body, &mut scope.clone(), structs);
+                Statement::VarAssign { target, value } => {
+                    if let AssignmentTarget::Access(index)
+                    | AssignmentTarget::ArrayIndex { index, .. } = target
+                    {
+                        self.expression(index, scope);
+                    }
+                    self.expression(value, scope);
+                }
+                Statement::IfElse {
+                    condition,
+                    then_body,
+                    else_body,
+                } => {
+                    self.expression(condition, scope);
+                    self.statements(then_body, &mut scope.clone());
+                    if let Some(else_body) = else_body {
+                        self.statements(else_body, &mut scope.clone());
+                    }
+                }
+                Statement::ForIn {
+                    index_var,
+                    value_var,
+                    iterable,
+                    body,
+                } => {
+                    self.expression(iterable, scope);
+                    let mut body_scope = scope.clone();
+                    body_scope.insert(index_var.clone(), ArkType::Int);
+                    let element = match &iterable.ty {
+                        ArkType::Array(element, _) => (**element).clone(),
+                        _ => ArkType::Unknown,
+                    };
+                    bind_local_type(&mut body_scope, value_var, None, element, self.structs);
+                    self.statements(body, &mut body_scope);
+                }
+                Statement::ForCount { count, body } => {
+                    self.expression(count, scope);
+                    self.statements(body, &mut scope.clone());
+                }
             }
         }
     }
-}
 
-fn annotate_expression(expression: &mut Expression, scope: &Scope) {
-    for child in crate::models::child_exprs_mut(expression) {
-        annotate_expression(child, scope);
-    }
-    expression.ty = infer_type(expression, scope);
-}
-
-pub(crate) fn resolve_group_properties(contract: &mut Contract) {
-    let constructor_scope = build_scope_with_structs(&contract.parameters, &contract.structs);
-    let returns = contract
-        .functions
-        .iter()
-        .map(|f| (f.name.clone(), f.return_type.clone()))
-        .collect();
-    for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
-        let mut scope = constructor_scope.clone();
-        scope.extend(build_scope_with_structs(
-            &function.parameters,
-            &contract.structs,
-        ));
-        resolve_statements(
-            &mut function.statements,
-            &mut scope,
-            &contract.structs,
-            &returns,
-        );
-    }
-}
-
-fn resolve_statements(
-    statements: &mut [LocatedStatement],
-    scope: &mut Scope,
-    structs: &[crate::models::StructDefinition],
-    returns: &HashMap<String, Option<String>>,
-) {
-    for statement in statements {
-        match &mut statement.statement {
-            Statement::Call(expression) | Statement::Return(Some(expression)) => {
-                resolve_expression(expression, scope, returns)
-            }
-            Statement::Return(None) => {}
-            Statement::Require(requirement) => match requirement {
-                Requirement::Expression(expression) => {
-                    resolve_expression(expression, scope, returns)
-                }
-                Requirement::Comparison { left, right, .. } => {
-                    resolve_expression(left, scope, returns);
-                    resolve_expression(right, scope, returns);
-                }
-                _ => {}
-            },
-            Statement::LetBinding {
-                name,
-                declared_type,
-                value,
-            } => {
-                resolve_expression(value, scope, returns);
-                let binding_type = declared_type
-                    .as_deref()
-                    .map(ArkType::parse)
-                    .unwrap_or_else(|| infer_type(value, scope));
-                bind_local_type(scope, name, declared_type.as_deref(), binding_type, structs);
-            }
-            Statement::VarAssign { target, value } => {
-                if let AssignmentTarget::ArrayIndex { index, .. }
-                | AssignmentTarget::Access(index) = target
-                {
-                    resolve_expression(index, scope, returns);
-                }
-                resolve_expression(value, scope, returns);
-            }
-            Statement::IfElse {
-                condition,
-                then_body,
-                else_body,
-            } => {
-                resolve_expression(condition, scope, returns);
-                resolve_statements(then_body, &mut scope.clone(), structs, returns);
-                if let Some(else_body) = else_body {
-                    resolve_statements(else_body, &mut scope.clone(), structs, returns);
-                }
-            }
-            Statement::ForIn {
-                index_var,
-                value_var,
-                iterable,
-                body,
-            } => {
-                resolve_expression(iterable, scope, returns);
-                let element_type = match infer_type(iterable, scope) {
-                    ArkType::Array(element, _) => *element,
-                    _ => ArkType::Unknown,
-                };
-                let mut loop_scope = scope.clone();
-                loop_scope.insert(index_var.clone(), ArkType::Int);
-                bind_local_type(&mut loop_scope, value_var, None, element_type, structs);
-                resolve_statements(body, &mut loop_scope, structs, returns);
-            }
-            Statement::ForCount { count, body } => {
-                resolve_expression(count, scope, returns);
-                resolve_statements(body, &mut scope.clone(), structs, returns);
-            }
+    fn expression(&self, expression: &mut Expression, scope: &Scope) {
+        for child in crate::models::child_exprs_mut(expression) {
+            self.expression(child, scope);
         }
+        if let Some(returns) = self.returns {
+            if let ExprKind::Call {
+                name, return_type, ..
+            } = &mut expression.kind
+            {
+                *return_type = returns.get(name).cloned().flatten();
+            }
+            resolve_group_member(expression, scope);
+        }
+        expression.ty = infer_type(expression, scope);
     }
 }
 
-fn resolve_expression(
-    expression: &mut Expression,
-    scope: &Scope,
-    returns: &HashMap<String, Option<String>>,
-) {
-    for child in crate::models::child_exprs_mut(expression) {
-        resolve_expression(child, scope, returns);
-    }
-    if let ExprKind::Call {
-        name, return_type, ..
-    } = &mut expression.kind
-    {
-        *return_type = returns.get(name).cloned().flatten();
-    }
-
+/// Group members apply to any non-struct value; the builtin table rejects
+/// operands that aren't `AssetGroup`, while struct fields keep their names.
+fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
     let resolved = match &expression.kind {
         // `g.delta`, `s.group.delta`
         ExprKind::Property(path) => path.rsplit_once('.').and_then(|(base, property)| {
@@ -438,7 +363,7 @@ fn resolve_expression(
             ExprKind::FieldAccess {
                 value: group,
                 field,
-            } if !is_struct(group, scope) => {
+            } if !matches!(group.ty, ArkType::Struct(_)) => {
                 group_io_source(field).map(|source| ExprKind::GroupIOAccess {
                     group: group.clone(),
                     io_index: index.clone(),
@@ -461,7 +386,9 @@ fn resolve_expression(
                 source: source.clone(),
                 property: Some(field.clone()),
             }),
-            _ if GROUP_PROPERTIES.contains(&field.as_str()) && !is_struct(value, scope) => {
+            _ if GROUP_PROPERTIES.contains(&field.as_str())
+                && !matches!(value.ty, ArkType::Struct(_)) =>
+            {
                 Some(ExprKind::GroupProperty {
                     group: value.clone(),
                     property: field.clone(),
@@ -491,21 +418,17 @@ pub(crate) const GROUP_PROPERTIES: [&str; 10] = [
     "isFresh",
 ];
 
-/// Group members apply to any non-struct value; the builtin table rejects
-/// operands that aren't `AssetGroup`, while struct fields keep their names.
-fn is_struct(value: &Expression, scope: &Scope) -> bool {
-    matches!(infer_type(value, scope), ArkType::Struct(_))
-}
-
 /// The binding named by `path`, when a group member can apply to it; it takes
 /// the span of the access `at`, which has none narrower for the binding alone.
 fn group_binding(path: &str, at: &Expression, scope: &Scope) -> Option<Expression> {
     (!matches!(scope.get(path), Some(ArkType::Struct(_)))).then(|| {
-        at.with_kind(if path.contains('.') {
+        let mut binding = at.with_kind(if path.contains('.') {
             ExprKind::Property(path.to_string())
         } else {
             ExprKind::Variable(path.to_string())
-        })
+        });
+        binding.ty = infer_type(&binding, scope);
+        binding
     })
 }
 

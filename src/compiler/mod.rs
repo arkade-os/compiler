@@ -815,7 +815,6 @@ pub(crate) fn prepare(
     require_entrypoint: bool,
     file: &str,
 ) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
-    typechecker::resolve_group_properties(contract);
     typechecker::annotate(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────

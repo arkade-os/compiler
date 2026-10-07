@@ -585,6 +585,10 @@ fn asset_groups_are_typed() {
             "AssetGroup g = tx.assetGroups[0]; require(tx.assetGroups[g].delta == 0);",
             "tx.assetGroups[] operand has type 'AssetGroup', expected 'int'",
         ),
+        (
+            "int g = 0; require(g.delta == 0);",
+            "asset group property operand has type 'int', expected 'AssetGroup'",
+        ),
     ] {
         let code = format!("contract V(bytes32 t) {{ function spend() {{ {statement} }} }}");
         let error = compile(&code).expect_err(statement).to_string();
