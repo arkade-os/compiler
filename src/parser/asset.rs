@@ -13,14 +13,6 @@ pub(crate) fn parse_asset_id_txid(pair: Pair<Rule>) -> Result<Expression, String
     }
 }
 
-pub(crate) fn parse_asset_id_gidx(pair: Pair<Rule>) -> Result<Expression, String> {
-    match pair.as_rule() {
-        Rule::number_literal => Ok(Expression::Literal(pair.as_str().to_string())),
-        Rule::identifier_property_access => parse_property_access(pair),
-        _ => Ok(Expression::Variable(pair.as_str().to_string())),
-    }
-}
-
 /// Parse the two Asset ID operands from an asset-group access pair.
 pub(crate) fn parse_asset_group_id_operands(
     pair: Pair<Rule>,
@@ -51,17 +43,15 @@ pub(crate) fn parse_asset_group_id_operands(
     if !matches!(
         txid_pair.as_rule(),
         Rule::identifier | Rule::identifier_property_access
-    ) || !matches!(
-        gidx_pair.as_rule(),
-        Rule::identifier | Rule::identifier_property_access | Rule::number_literal
-    ) || operands.next().is_some()
+    ) || gidx_pair.as_rule() != Rule::general_expression
+        || operands.next().is_some()
     {
         return Err("asset id requires (txid, gidx) operands".to_string());
     }
 
     Ok((
         parse_asset_id_txid(txid_pair)?,
-        parse_asset_id_gidx(gidx_pair)?,
+        parse_general_expression(gidx_pair)?,
     ))
 }
 
@@ -95,7 +85,7 @@ pub(crate) fn parse_asset_lookup_operands(
 
     // Parse the canonical Asset ID operands: txid (bytes32) then gidx (int).
     let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing asset txid")?)?;
-    let asset_gidx = parse_asset_id_gidx(inner.next().ok_or("Missing asset gidx")?)?;
+    let asset_gidx = parse_general_expression(inner.next().ok_or("Missing asset gidx")?)?;
 
     Ok((source, index, asset_txid, asset_gidx))
 }
@@ -215,7 +205,7 @@ pub(crate) fn parse_group_control_is(
 ) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let asset_txid = parse_asset_id_txid(inner.next().ok_or("Missing controlIs txid")?)?;
-    let asset_gidx = parse_asset_id_gidx(inner.next().ok_or("Missing controlIs gidx")?)?;
+    let asset_gidx = parse_general_expression(inner.next().ok_or("Missing controlIs gidx")?)?;
     Ok(Expression::GroupControlIs {
         group,
         asset_txid: Box::new(asset_txid),

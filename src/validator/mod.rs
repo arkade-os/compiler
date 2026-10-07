@@ -1921,30 +1921,46 @@ fn validate_asset_id(
         )));
     }
 
-    // gidx: a numeric literal is range-checked directly; anything else must
-    // resolve to Int through the scope.
-    if let Expression::Literal(lit) = asset_gidx {
-        match lit.parse::<i64>() {
+    // gidx must resolve to Int; a constant one must also be in range.
+    let gidx_type = infer_type(asset_gidx, scope);
+    if gidx_type != ArkType::Int {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
+            fname,
+            asset_gidx.source_text(),
+            gidx_type.as_str()
+        )));
+    } else if is_constant(asset_gidx) {
+        let value = crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into()))
+            .and_then(|value| {
+                value
+                    .parse::<i64>()
+                    .map_err(|_| format!("'{value}' is not a valid integer"))
+            });
+        match value {
             Ok(v) if (0..=65535).contains(&v) => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx literal {} is out of range 0..65535",
+                "function '{}': asset id gidx {} is out of range 0..65535",
                 fname, v
             ))),
-            Err(_) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx literal '{}' is not a valid integer",
-                fname, lit
-            ))),
-        }
-    } else {
-        let gidx_type = infer_type(asset_gidx, scope);
-        if gidx_type != ArkType::Int {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
+            Err(error) => issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx '{}': {}",
                 fname,
                 asset_gidx.source_text(),
-                gidx_type.as_str()
-            )));
+                error
+            ))),
         }
+    }
+}
+
+/// Built only from literals and operators; constants are folded to literals before validation.
+fn is_constant(expr: &Expression) -> bool {
+    match expr {
+        Expression::Literal(_) => true,
+        Expression::Unary { .. } | Expression::BinaryOp { .. } => {
+            child_exprs(expr).into_iter().all(is_constant)
+        }
+        _ => false,
     }
 }
 

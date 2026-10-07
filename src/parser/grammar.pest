@@ -257,10 +257,10 @@ complex_expression = _{
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
 asset_id_txid_operand = _{ identifier_property_access | identifier }
-asset_id_gidx_operand = _{ number_literal | identifier_property_access | identifier }
+asset_id_gidx_operand = _{ general_expression }
 
 // Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
-// txid is a bytes32 identifier; gidx is an int identifier or a 0..65535 literal.
+// txid is a bytes32 identifier; gidx is an int expression (constants must be 0..65535).
 asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
         ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
@@ -444,9 +444,9 @@ tx_property_part = {
     tx_method_call | identifier
 }
 
-// Array access with index - simplified to avoid parsing ambiguity
+// Array access with an integer index expression
 array_access = {
-    "[" ~ (number_literal | qualified_name) ~ "]"
+    "[" ~ general_expression ~ "]"
 }
 
 // Method call with optional arguments
@@ -544,13 +544,13 @@ cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 
 // Current-tx packet: tx.packet(packetType) → <packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY
 packet_inspect = {
-    "tx" ~ "." ~ "packet" ~ "(" ~ unary_atom ~ ")"
+    "tx" ~ "." ~ "packet" ~ "(" ~ general_expression ~ ")"
 }
 
 // Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
 // → <packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY
 input_packet_inspect = {
-    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ unary_atom ~ ")"
+    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ general_expression ~ ")"
 }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────
