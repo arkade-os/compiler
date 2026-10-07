@@ -184,7 +184,7 @@ contract DupFuncs(pubkey owner) {
 
 #[test]
 fn reserved_role_as_constructor_param_is_rejected() {
-    for role in ["server", "emulator"] {
+    for role in ["server", "emulator", "serverExitDelay"] {
         let source = format!(
             r#"
 contract Reserved(pubkey {role}) {{

@@ -96,7 +96,7 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
 /// - Each function's parameter names are unique within that function.
-/// - Tapscript inputs do not collide with reserved key roles.
+/// - Tapscript inputs do not collide with reserved arkd names.
 /// - Asset ID operands have the expected txid/gidx types.
 pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
@@ -181,12 +181,12 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
         }
     }
 
-    // Reserved key roles may only appear as key operands inside a tapscript's
-    // checkSig/checkMultisig — never as constructor parameters.
+    // Reserved arkd names (`server`, `emulator`, `serverExitDelay`) are
+    // supplied by the server, never by constructor parameters.
     for p in &contract.parameters {
-        if p.name == "server" || p.name == "emulator" {
+        if matches!(p.name.as_str(), "server" | "emulator" | "serverExitDelay") {
             issues.push(ValidationIssue::error(format!(
-                "constructor parameter '{}' collides with a reserved key role",
+                "constructor parameter '{}' collides with a reserved arkd name",
                 p.name
             )));
         }
@@ -199,9 +199,9 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
                 &format!("input in tapscript '{}'", ts.name),
                 &mut issues,
             );
-            if p.name == "server" || p.name == "emulator" {
+            if matches!(p.name.as_str(), "server" | "emulator" | "serverExitDelay") {
                 issues.push(ValidationIssue::error(format!(
-                    "tapscript '{}' input '{}' collides with a reserved key role",
+                    "tapscript '{}' input '{}' collides with a reserved arkd name",
                     ts.name, p.name
                 )));
             }
@@ -409,7 +409,7 @@ fn validate_declared_type(
 }
 
 fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
-    if name == "SERVER_KEY" {
+    if matches!(name, "SERVER_KEY" | "SERVER_EXIT_DELAY") {
         issues.push(ValidationIssue::error(format!(
             "{context} '{name}' uses a compiler-reserved placeholder name"
         )));
