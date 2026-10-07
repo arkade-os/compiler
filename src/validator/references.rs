@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::models::child_exprs;
+use super::child_exprs;
 use crate::models::{
     AssignmentTarget, ExprKind, Expression, Function, LocatedStatement, Requirement, Statement,
 };

@@ -1126,24 +1126,58 @@ fn merkle_root_pushes_operands_in_vm_order() {
     )
     .expect("merkleRoot compiles");
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
-    let position = |token: &str| asm.iter().position(|t| t == token).unwrap_or(usize::MAX);
-    // OP_MERKLEBRANCHVERIFY pops leaf, proof, branch tag, leaf tag: tags go in first.
-    assert!(
-        position("0x6c656166") < position("0x6272616e6368"),
-        "{asm:?}"
-    );
-    assert!(
-        position("0x6272616e6368") < position("OP_MERKLEBRANCHVERIFY"),
-        "{asm:?}"
+    assert_eq!(
+        asm,
+        "<root> 0x6c656166 0x6272616e6368 OP_4 OP_ROLL OP_4 OP_ROLL OP_MERKLEBRANCHVERIFY OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1"
+            .split_whitespace().collect::<Vec<_>>()
     );
 
-    let error = compile(
-        "contract M(bytes32 root) { function spend(bytes proof) { require(merkleRoot(\"\", \"b\", proof, 5) == root); } }",
-    )
-    .expect_err("an int leaf")
-    .to_string();
-    assert!(
-        error.contains("merkleRoot operand has type 'int', expected 'bytes'"),
-        "{error}"
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["leaf", "proof"]
     );
+    assert_eq!(
+        crate::common::leaf_asm_tokens(&output, "spend", "spend"),
+        [
+            "<SERVER_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<EMULATOR_KEY:spend>",
+            "OP_CHECKSIG"
+        ]
+    );
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+
+    for (args, expected) in [
+        (
+            "5, \"b\", proof, leaf",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", 5, proof, leaf",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", \"b\", 5, leaf",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", \"b\", proof, 5",
+            "operand has type 'int', expected 'bytes'",
+        ),
+        (
+            "\"\", \"b\", proof",
+            "expected merkleRoot(leafTag, branchTag, proof, leaf)",
+        ),
+        (
+            "\"\", \"b\", proof, leaf, leaf",
+            "expected merkleRoot(leafTag, branchTag, proof, leaf)",
+        ),
+    ] {
+        let source = format!("contract M(bytes32 root) {{ function spend(bytes leaf, bytes proof) {{ require(merkleRoot({args}) == root); }} }}");
+        let error = compile(&source).expect_err(args).to_string();
+        assert!(error.contains(expected), "{args}: {error}");
+    }
 }

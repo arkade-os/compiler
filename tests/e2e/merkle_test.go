@@ -13,12 +13,8 @@ func TestMerkleRoot(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "merkle.ark")
 	err := os.WriteFile(source, []byte(`
 contract Merkle(bytes32 root) {
-    function tagged(bytes leaf, bytes proof) {
-        require(merkleRoot("leaf", "branch", proof, leaf) == root);
-    }
-
-    function prehashed(bytes leafHash, bytes proof) {
-        require(merkleRoot("", "branch", proof, leafHash) == root);
+    function spend(bytes leafTag, bytes branchTag, bytes proof, bytes leaf) {
+        require(merkleRoot(leafTag, branchTag, proof, leaf) == root);
     }
 }`), 0600)
 	if err != nil {
@@ -40,22 +36,31 @@ contract Merkle(bytes32 root) {
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	for _, tc := range []struct {
-		name, function string
-		leaf, proof    []byte
-		wantErr        string
+		name                                  string
+		leafTag, branchTag, leaf, proof, root []byte
+		wantErr                               string
 	}{
-		{"tagged leaf", "tagged", leaf, proof, ""},
-		{"prehashed leaf", "prehashed", leafHash[:], proof, ""},
-		{"wrong leaf", "tagged", []byte("vtxo-8"), proof, "false stack entry"},
-		{"malformed proof", "tagged", leaf, append(proof, 0), "proof length must be a multiple of 32"},
-		{"short prehashed leaf", "prehashed", leafHash[:31], proof, "raw hash mode requires leaf_data to be 32 bytes"},
+		{"tagged leaf", []byte("leaf"), []byte("branch"), leaf, proof, root, ""},
+		{"prehashed leaf", nil, []byte("branch"), leafHash[:], proof, root, ""},
+		{"empty tagged proof", []byte("leaf"), []byte("branch"), leaf, nil, leafHash[:], ""},
+		{"empty prehashed proof", nil, []byte("branch"), leafHash[:], nil, leafHash[:], ""},
+		{"chained proof", nil, []byte("branch"), branch(leafHash[:], sibling1[:]), sibling2[:], root, ""},
+		{"wrong leaf", []byte("leaf"), []byte("branch"), []byte("vtxo-8"), proof, root, "false stack entry"},
+		{"wrong root", []byte("leaf"), []byte("branch"), leaf, proof, leafHash[:], "false stack entry"},
+		{"wrong leaf tag", []byte("other"), []byte("branch"), leaf, proof, root, "false stack entry"},
+		{"wrong branch tag", []byte("leaf"), []byte("other"), leaf, proof, root, "false stack entry"},
+		{"reversed proof", []byte("leaf"), []byte("branch"), leaf, append(sibling2[:], sibling1[:]...), root, "false stack entry"},
+		{"malformed proof", []byte("leaf"), []byte("branch"), leaf, append(proof, 0), root, "proof length must be a multiple of 32"},
+		{"empty branch tag", []byte("leaf"), nil, leaf, proof, root, "branch_tag must not be empty"},
+		{"empty branch tag and proof", []byte("leaf"), nil, leaf, nil, leafHash[:], "branch_tag must not be empty"},
+		{"short prehashed leaf", nil, []byte("branch"), leafHash[:31], proof, root, "raw hash mode requires leaf_data to be 32 bytes"},
+		{"long prehashed leaf", nil, []byte("branch"), append(leafHash[:], 0), proof, root, "raw hash mode requires leaf_data to be 32 bytes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, tc.function)
-			instance := instantiateGroup(t, contract, tc.function, map[string][]byte{"root": root}, serverKey.PubKey(), emulatorKey.PubKey())
+			group := covenantGroup(t, contract, "spend")
+			instance := instantiateGroup(t, contract, "spend", map[string][]byte{"root": tc.root}, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
-			leafName := map[string]string{"tagged": "leaf", "prehashed": "leafHash"}[tc.function]
-			witness := covenantWitness(t, contract, group, map[string][]byte{leafName: tc.leaf, "proof": tc.proof})
+			witness := covenantWitness(t, contract, group, map[string][]byte{"leafTag": tc.leafTag, "branchTag": tc.branchTag, "proof": tc.proof, "leaf": tc.leaf})
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, witness)
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
