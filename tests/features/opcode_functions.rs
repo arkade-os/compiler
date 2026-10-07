@@ -948,6 +948,19 @@ fn unrolled_loop_bodies_concatenate_bytes_and_drop_same_type_casts() {
 }
 
 #[test]
+fn helper_results_concatenate_and_drop_same_type_casts() {
+    let output = compile(
+        "contract C(bytes32 h) { function spend() { require(sha256(f() + g()) == h); require(bytes32(k()) == h); } private function f() bytes { return h; } private function g() bytes { return h; } private function k() bytes32 { return h; } }",
+    )
+    .expect("helpers compile");
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let count = |opcode: &str| asm.iter().filter(|token| *token == opcode).count();
+    assert_eq!(count("OP_CAT"), 1, "{asm:?}");
+    assert_eq!(count("OP_ADD"), 0, "{asm:?}");
+    assert_eq!(count("OP_SIZE"), 0, "{asm:?}");
+}
+
+#[test]
 fn grouped_builtin_operands_reject_implicit_byte_conversion() {
     let error = compile("contract Grouped() { function spend(bytes data, bytes32 k, pubkey q) { require(ecMulScalarVerify(k, (pubkey(data + 1)), q)); } }")
         .expect_err("grouped operands must validate concatenation types")
