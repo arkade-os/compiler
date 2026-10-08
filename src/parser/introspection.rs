@@ -2,7 +2,9 @@ use super::Rule;
 #[allow(unused_imports)]
 use super::*;
 use crate::models::*;
-use crate::properties::{InputProperty, OutputProperty, ThisProperty, TxProperty};
+use crate::properties::{
+    GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty, TxProperty,
+};
 use pest::iterators::Pair;
 
 pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
@@ -344,14 +346,17 @@ fn parse_asset_group_access(
                 io_index: Box::new(parse_array_access_index(
                     parts.next().ok_or("Missing asset group io index")?,
                 )?),
-                property: parts.next().map(|p| p.as_str().to_string()),
+                property: parts
+                    .next()
+                    .map(|p| named(p, GroupIoProperty::from_name))
+                    .transpose()?,
             },
             span,
         ),
         _ => Expression::new(
             ExprKind::GroupProperty {
                 group,
-                property: part.as_str().to_string(),
+                property: named(part, GroupProperty::from_name)?,
             },
             span,
         ),

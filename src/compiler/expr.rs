@@ -1,7 +1,7 @@
 use super::*;
 use crate::models::*;
 use crate::operators::{BinaryOperator, OperatorClass};
-use crate::properties::ThisProperty;
+use crate::properties::{GroupIoProperty, ThisProperty};
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
     match lit {
@@ -117,7 +117,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asset_index,
             property,
         } => {
-            emit_asset_at_asm(source, io_index, asset_index, property, asm);
+            emit_asset_at_asm(source, io_index, asset_index, *property, asm);
         }
         ExprKind::TxIntrospection { property } => {
             emit_tx_introspection_asm(*property, asm);
@@ -149,7 +149,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
         }
         ExprKind::GroupProperty { group, property } => {
-            emit_group_property_asm(group, property, asm);
+            emit_group_property_asm(group, *property, asm);
         }
         ExprKind::AssetGroupsLength => {
             asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
@@ -169,18 +169,16 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.push(OP_INSPECTASSETGROUP.to_string());
             // Extract property if specified
-            if let Some(prop) = property {
-                match prop.as_str() {
-                    "amount" => {
-                        asm.push(OP_NIP.to_string());
-                        asm.push(OP_NIP.to_string());
-                    }
-                    "type" => {
-                        asm.push(OP_DROP.to_string()); // amount
-                        asm.push(OP_DROP.to_string()); // data
-                    }
-                    _ => unreachable!("the parser only yields amount or type, got '{prop}'"),
+            match property {
+                Some(GroupIoProperty::Amount) => {
+                    asm.push(OP_NIP.to_string());
+                    asm.push(OP_NIP.to_string());
                 }
+                Some(GroupIoProperty::Type) => {
+                    asm.push(OP_DROP.to_string()); // amount
+                    asm.push(OP_DROP.to_string()); // data
+                }
+                None => {}
             }
         }
         ExprKind::ContractInstance {

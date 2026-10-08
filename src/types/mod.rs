@@ -11,6 +11,7 @@ use crate::models::{
     AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Statement,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
+use crate::properties::{GroupIoProperty, GroupProperty};
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
@@ -348,9 +349,7 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
         ExprKind::Property(path) => path.rsplit_once('.').and_then(|(base, property)| {
             Some(ExprKind::GroupProperty {
                 group: Box::new(group_binding(base, expression, scope)?),
-                property: GROUP_PROPERTIES
-                    .contains(&property)
-                    .then(|| property.to_string())?,
+                property: GroupProperty::from_name(property)?,
             })
         }),
         // `g.inputs[j]`
@@ -386,18 +385,16 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
                 io_index,
                 source,
                 property: None,
-            } if matches!(field.as_str(), "amount" | "type") => Some(ExprKind::GroupIOAccess {
+            } if GroupIoProperty::from_name(field).is_some() => Some(ExprKind::GroupIOAccess {
                 group: group.clone(),
                 io_index: io_index.clone(),
                 source: source.clone(),
-                property: Some(field.clone()),
+                property: GroupIoProperty::from_name(field),
             }),
-            _ if GROUP_PROPERTIES.contains(&field.as_str())
-                && !matches!(value.ty, ArkType::Struct(_)) =>
-            {
-                Some(ExprKind::GroupProperty {
+            _ if !matches!(value.ty, ArkType::Struct(_)) => {
+                GroupProperty::from_name(field).map(|property| ExprKind::GroupProperty {
                     group: value.clone(),
-                    property: field.clone(),
+                    property,
                 })
             }
             _ => None,
@@ -408,21 +405,6 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
         expression.kind = resolved;
     }
 }
-
-/// Each entry also needs an `asset_group_property` grammar alternative and an
-/// `emit_group_property_asm` arm.
-pub(crate) const GROUP_PROPERTIES: [&str; 10] = [
-    "numInputs",
-    "numOutputs",
-    "sumInputs",
-    "sumOutputs",
-    "delta",
-    "hasControl",
-    "controlAssetId",
-    "metadataHash",
-    "assetId",
-    "isFresh",
-];
 
 /// The binding named by `path`, when a group member can apply to it; it takes
 /// the span of the access `at`, which has none narrower for the binding alone.
@@ -521,30 +503,17 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::AssetLookup { .. } => ArkType::Int,
         ExprKind::AssetHas { .. } => ArkType::Bool,
         ExprKind::AssetCount { .. } => ArkType::Int,
-        ExprKind::AssetAt { property, .. } => match property.as_str() {
-            "amount" => ArkType::Int,
-            "assetId" => ArkType::Struct("AssetId".to_string()),
-            _ => ArkType::Unknown,
-        },
+        ExprKind::AssetAt { property, .. } => ArkType::parse(property.value_type()),
 
         // Asset group introspection
         ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
         ExprKind::GroupHas { .. } => ArkType::Bool,
         ExprKind::GroupControlIs { .. } => ArkType::Bool,
         ExprKind::AssetGroupsLength => ArkType::Int,
-        ExprKind::GroupProperty { property, .. } => match property.as_str() {
-            "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,
-            "numInputs" | "numOutputs" => ArkType::Int,
-            "metadataHash" => ArkType::Bytes32,
-            "assetId" | "controlAssetId" => ArkType::Struct("AssetId".to_string()),
-            "isFresh" | "hasControl" => ArkType::Bool,
-            _ => ArkType::Unknown,
-        },
-        ExprKind::GroupIOAccess { property, .. } => match property.as_deref() {
-            Some("amount") => ArkType::Int,
-            Some("type") => ArkType::Int,
-            _ => ArkType::Unknown,
-        },
+        ExprKind::GroupProperty { property, .. } => ArkType::parse(property.value_type()),
+        ExprKind::GroupIOAccess { property, .. } => property
+            .map(|property| ArkType::parse(property.value_type()))
+            .unwrap_or(ArkType::Unknown),
 
         ExprKind::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
 

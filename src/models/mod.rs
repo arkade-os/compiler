@@ -694,7 +694,7 @@ pub enum ExprKind {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: String, // "assetId" or "amount"
+        property: crate::properties::AssetProperty,
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
     TxIntrospection {
@@ -734,7 +734,7 @@ pub enum ExprKind {
     /// Asset group property: group.sumInputs, group.delta, etc.
     GroupProperty {
         group: Box<Expression>,
-        property: String,
+        property: crate::properties::GroupProperty,
     },
     /// Boolean equality over the complete canonical control Asset ID:
     /// group.controlIs(txid, gidx). False when control is absent or either
@@ -753,7 +753,7 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
+        property: Option<crate::properties::GroupIoProperty>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
     /// CheckSig expression result (for use in if conditions)
     CheckSigExpr {
@@ -814,21 +814,13 @@ pub enum ExprKind {
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match &expression.kind {
-        ExprKind::Builtin { builtin, .. } => builtin
-            .result
-            .filter(|result| builtin_struct_fields(result).is_some()),
-        ExprKind::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
-        ExprKind::GroupProperty { property, .. }
-            if matches!(property.as_str(), "assetId" | "controlAssetId") =>
-        {
-            Some("AssetId")
-        }
-        ExprKind::InputIntrospection {
-            property: crate::properties::InputProperty::Outpoint,
-            ..
-        } => Some("Outpoint"),
+        ExprKind::Builtin { builtin, .. } => builtin.result,
+        ExprKind::AssetAt { property, .. } => Some(property.value_type()),
+        ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
+        ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
     }
+    .filter(|result| builtin_struct_fields(result).is_some())
 }
 
 /// Generates the shared and mutable traversals from one list of each variant's

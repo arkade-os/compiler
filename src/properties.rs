@@ -76,6 +76,38 @@ properties!(
     }
 );
 
+properties!(
+    /// `group.<property>` on an `AssetGroup`
+    GroupProperty {
+        NumInputs => ("numInputs", "int"),
+        NumOutputs => ("numOutputs", "int"),
+        SumInputs => ("sumInputs", "int"),
+        SumOutputs => ("sumOutputs", "int"),
+        Delta => ("delta", "int"),
+        HasControl => ("hasControl", "bool"),
+        ControlAssetId => ("controlAssetId", "AssetId"),
+        MetadataHash => ("metadataHash", "bytes32"),
+        AssetId => ("assetId", "AssetId"),
+        IsFresh => ("isFresh", "bool"),
+    }
+);
+
+properties!(
+    /// `group.inputs[j].<property>`, `group.outputs[j].<property>`
+    GroupIoProperty {
+        Amount => ("amount", "int"),
+        Type => ("type", "int"),
+    }
+);
+
+properties!(
+    /// `tx.inputs[i].assets[j].<property>`, `tx.outputs[o].assets[j].<property>`
+    AssetProperty {
+        AssetId => ("assetId", "AssetId"),
+        Amount => ("amount", "int"),
+    }
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +137,18 @@ mod tests {
         assert_eq!(
             spelled("output_introspection_property"),
             names(OutputProperty::ALL, OutputProperty::name)
+        );
+        assert_eq!(
+            spelled("asset_group_property"),
+            names(GroupProperty::ALL, GroupProperty::name)
+        );
+        assert_eq!(
+            spelled("asset_group_io_property"),
+            names(GroupIoProperty::ALL, GroupIoProperty::name)
+        );
+        assert_eq!(
+            spelled("asset_at_property"),
+            names(AssetProperty::ALL, AssetProperty::name)
         );
         let mut this = names(ThisProperty::ALL, ThisProperty::name);
         this.insert(1, "activeBytecode");
