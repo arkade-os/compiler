@@ -1183,3 +1183,90 @@ fn crypto_builtins_keep_operand_and_verify_validation() {
         assert!(compile(&source).is_err(), "{body}");
     }
 }
+
+#[test]
+fn crypto_multisig_pairs_helper_returned_keys_and_signatures() {
+    use crate::common::{arkade_asm_tokens, arkade_inputs, group, leaf_asm, witness_names};
+    let output = compile(
+        r#"
+contract C(pubkey first, pubkey second) {
+    private function keys_helper() pubkey[2] { return [first, second]; }
+    private function sigs_helper(signature a, signature b) signature[2] { return [a, b]; }
+    function spend(signature a, signature b) {
+        require(checkMultisig(keys_helper(), sigs_helper(a, b)));
+    }
+}
+"#,
+    )
+    .expect("both multisig arrays can be helper results");
+    assert_eq!(arkade_inputs(&output, "spend"), ["a", "b"]);
+    assert_eq!(group(&output, "spend").leaves.len(), 1);
+    assert_eq!(
+        witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert_eq!(
+        leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+
+    // This models this contract's stack operations; extend it if its emitted opcodes change.
+    let mut stack = vec!["b".to_string(), "a".to_string()];
+    let mut checks = 0;
+    for token in arkade_asm_tokens(&output, "spend") {
+        match token.as_str() {
+            "OP_PICK" | "OP_ROLL" => {
+                let depth = stack.pop().unwrap().parse::<usize>().unwrap();
+                let index = stack.len() - depth - 1;
+                let value = if token == "OP_PICK" {
+                    stack[index].clone()
+                } else {
+                    stack.remove(index)
+                };
+                stack.push(value);
+            }
+            "OP_NIP" => {
+                stack.remove(stack.len() - 2);
+            }
+            "OP_CHECKSIG" | "OP_CHECKSIGADD" => {
+                let key = stack.pop().unwrap();
+                let count = if token == "OP_CHECKSIGADD" {
+                    stack.pop().unwrap().parse::<usize>().unwrap()
+                } else {
+                    0
+                };
+                let signature = stack.pop().unwrap();
+                assert_eq!(
+                    (key.as_str(), signature.as_str()),
+                    [("first", "a"), ("second", "b")][checks]
+                );
+                stack.push((count + 1).to_string());
+                checks += 1;
+            }
+            "OP_NUMEQUAL" => {
+                let right = stack.pop().unwrap();
+                let left = stack.pop().unwrap();
+                stack.push(usize::from(left == right).to_string());
+            }
+            "OP_VERIFY" => {
+                assert_eq!(stack.pop().unwrap(), "1");
+            }
+            _ if token.starts_with("OP_") => {
+                stack.push(
+                    token
+                        .strip_prefix("OP_")
+                        .unwrap()
+                        .parse::<usize>()
+                        .expect("supported numeric opcode")
+                        .to_string(),
+                );
+            }
+            _ if token.starts_with('<') && token.ends_with('>') => {
+                stack.push(token[1..token.len() - 1].to_string());
+            }
+            _ => panic!("unexpected opcode {token}"),
+        }
+    }
+    assert_eq!(checks, 2);
+    assert_eq!(stack, ["1"]);
+}

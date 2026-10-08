@@ -180,7 +180,6 @@ impl ConcatPass {
                 );
                 *right = nr;
             }
-            _ => {}
         }
     }
 

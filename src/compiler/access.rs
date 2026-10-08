@@ -172,6 +172,7 @@ impl Generator {
                     .to_string(),
             );
         }
+        // Keys need indexed reads, so computed arrays are bound once.
         if !matches!(keys, Expression::ArrayLiteral(_)) && keys.binding_path().is_none() {
             let baseline = self.stack.len();
             let scope = self.scope.clone();
@@ -193,6 +194,7 @@ impl Generator {
             self.pinned_stack_len = pinned;
             return Ok(());
         }
+        // Signatures need no binding: array emission leaves sig[0] on top for the checks.
         self.emit_typed_value(signatures, &format!("signature[{count}]"))?;
         for index in 0..count {
             let key = match keys {

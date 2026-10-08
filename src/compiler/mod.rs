@@ -1181,17 +1181,6 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.push_temporary(OP_1);
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                Expression::CheckSigFromStackVerify {
-                    signature,
-                    pubkey,
-                    message,
-                } => {
-                    generator.emit_expression(signature)?;
-                    generator.emit_expression(message)?;
-                    generator.emit_expression(pubkey)?;
-                    generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
-                    generator.apply(OP_VERIFY, 1, 0)?;
-                }
                 Expression::Builtin { builtin, .. } if builtin.result.is_none() => {
                     generator.emit_expression_items(expr, 0)?;
                 }
@@ -1200,55 +1189,6 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
             }
-            Ok(())
-        }
-        Requirement::CheckSig { signature, pubkey } => {
-            generator.emit_expression(signature)?;
-            generator.emit_expression(pubkey)?;
-            generator.apply(OP_CHECKSIG, 2, 1)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-        Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
-        } => {
-            generator.emit_expression(signature)?;
-            generator.emit_expression(message)?;
-            generator.emit_expression(pubkey)?;
-            generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-        Requirement::CheckMultisig {
-            pubkeys,
-            signatures,
-            threshold,
-        } => {
-            let expression = Expression::Builtin {
-                builtin: crate::builtins::find("checkMultisig")
-                    .expect("checkMultisig is a builtin"),
-                args: vec![
-                    Expression::ArrayLiteral(pubkeys.clone()),
-                    Expression::ArrayLiteral(signatures.clone()),
-                    Expression::Literal(threshold.to_string()),
-                ],
-            };
-            generator.emit_expression(&expression)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-        Requirement::HashEqual {
-            hash_fn,
-            preimage,
-            hash,
-        } => {
-            generator.emit_expression(preimage)?;
-            generator.lower_raw_opcode(hash_fn.opcode())?;
-            generator.emit_expression(hash)?;
-            generator.apply(OP_EQUAL, 2, 1)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
         }
         Requirement::Comparison { left, op, right } => {

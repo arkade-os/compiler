@@ -195,21 +195,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_contract_instance_asm(contract_name, args, asm);
         }
-        Expression::CheckSigExpr { signature, pubkey } => {
-            emit_expression_asm(signature, asm);
-            emit_expression_asm(pubkey, asm);
-            asm.push(OP_CHECKSIG.to_string());
-        }
-        Expression::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        } => {
-            emit_expression_asm(signature, asm);
-            emit_expression_asm(message, asm);
-            emit_expression_asm(pubkey, asm);
-            asm.push(OP_CHECKSIGFROMSTACK.to_string());
-        }
         Expression::Builtin { builtin, args } => {
             let crate::builtins::Lowering::Opcodes(opcodes) = builtin.lowering else {
                 unreachable!("pairings are extracted before raw emission")
@@ -231,17 +216,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         Expression::Unary { op, value } => {
             emit_expression_asm(value, asm);
             asm.push(op.opcode().to_string());
-        }
-        Expression::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => {
-            emit_expression_asm(signature, asm);
-            emit_expression_asm(message, asm);
-            emit_expression_asm(pubkey, asm);
-            asm.push(OP_CHECKSIGFROMSTACK.to_string());
-            asm.push(OP_VERIFY.to_string());
         }
         Expression::Cast { target, data } => {
             emit_expression_asm(data, asm);
