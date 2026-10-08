@@ -61,6 +61,18 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes",
         &[OP_SUBSTR],
     ),
+    builtin(
+        "left",
+        &[("data", "bytes"), ("count", "int")],
+        "bytes",
+        &[OP_LEFT],
+    ),
+    builtin(
+        "right",
+        &[("data", "bytes"), ("count", "int")],
+        "bytes",
+        &[OP_RIGHT],
+    ),
     builtin("cat", &[("a", "bytes"), ("b", "bytes")], "bytes", &[OP_CAT]),
     builtin("bin2num", &[("data", "bytes")], "int", &[OP_BIN2NUM]),
     builtin(
@@ -82,6 +94,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes",
         &[OP_DIGEST],
     ),
+    builtin("sha1", &[("data", "bytes")], "bytes20", &[OP_SHA1]),
     builtin("sha256", &[("data", "bytes")], "bytes32", &[OP_SHA256]),
     builtin("hash256", &[("data", "bytes")], "bytes32", &[OP_HASH256]),
     builtin("hash160", &[("data", "bytes")], "bytes20", &[OP_HASH160]),
@@ -168,6 +181,15 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("base", "int"), ("exponent", "int"), ("modulus", "int")],
         "int",
         &[OP_MODEXP],
+    ),
+    builtin("abs", &[("value", "int")], "int", &[OP_ABS]),
+    builtin("min", &[("a", "int"), ("b", "int")], "int", &[OP_MIN]),
+    builtin("max", &[("a", "int"), ("b", "int")], "int", &[OP_MAX]),
+    builtin(
+        "within",
+        &[("value", "int"), ("lower", "int"), ("upper", "int")],
+        "bool",
+        &[OP_WITHIN],
     ),
     builtin(
         "ecAdd",
