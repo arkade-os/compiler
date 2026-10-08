@@ -23,6 +23,8 @@ pub enum Lowering {
     /// Push each (G1, G2) array element field by field, then the pair count
     /// and the curve.
     Pairing,
+    /// Count valid signatures with CHECKSIGADD and compare with the optional threshold.
+    Multisig,
 }
 
 const fn builtin(
@@ -59,6 +61,18 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes",
         &[OP_SUBSTR],
     ),
+    builtin(
+        "left",
+        &[("data", "bytes"), ("count", "int")],
+        "bytes",
+        &[OP_LEFT],
+    ),
+    builtin(
+        "right",
+        &[("data", "bytes"), ("count", "int")],
+        "bytes",
+        &[OP_RIGHT],
+    ),
     builtin("cat", &[("a", "bytes"), ("b", "bytes")], "bytes", &[OP_CAT]),
     builtin("bin2num", &[("data", "bytes")], "int", &[OP_BIN2NUM]),
     builtin(
@@ -80,7 +94,51 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes",
         &[OP_DIGEST],
     ),
+    builtin("sha1", &[("data", "bytes")], "bytes20", &[OP_SHA1]),
     builtin("sha256", &[("data", "bytes")], "bytes32", &[OP_SHA256]),
+    builtin("hash256", &[("data", "bytes")], "bytes32", &[OP_HASH256]),
+    builtin("hash160", &[("data", "bytes")], "bytes20", &[OP_HASH160]),
+    builtin(
+        "ripemd160",
+        &[("data", "bytes")],
+        "bytes20",
+        &[OP_RIPEMD160],
+    ),
+    builtin(
+        "checkSig",
+        &[("signature", "signature"), ("pubkey", "bytes")],
+        "bool",
+        &[OP_CHECKSIG],
+    ),
+    builtin(
+        "checkSigFromStack",
+        &[
+            ("signature", "signature"),
+            ("pubkey", "bytes"),
+            ("message", "bytes"),
+        ],
+        "bool",
+        &[OP_SWAP, OP_CHECKSIGFROMSTACK],
+    ),
+    verify(
+        "checkSigFromStackVerify",
+        &[
+            ("signature", "signature"),
+            ("pubkey", "bytes"),
+            ("message", "bytes"),
+        ],
+        &[OP_SWAP, OP_CHECKSIGFROMSTACK, OP_VERIFY],
+    ),
+    Builtin {
+        name: "checkMultisig",
+        params: &[
+            ("pubkeys", "bytes[]"),
+            ("sigs", "signature[]"),
+            ("threshold", "int"),
+        ],
+        result: Some("bool"),
+        lowering: Lowering::Multisig,
+    },
     builtin(
         "sha256Initialize",
         &[("data", "bytes")],
@@ -124,6 +182,15 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "int",
         &[OP_MODEXP],
     ),
+    builtin("abs", &[("value", "int")], "int", &[OP_ABS]),
+    builtin("min", &[("a", "int"), ("b", "int")], "int", &[OP_MIN]),
+    builtin("max", &[("a", "int"), ("b", "int")], "int", &[OP_MAX]),
+    builtin(
+        "within",
+        &[("value", "int"), ("lower", "int"), ("upper", "int")],
+        "bool",
+        &[OP_WITHIN],
+    ),
     builtin(
         "ecAdd",
         &[("P", "ECPoint"), ("Q", "ECPoint"), ("curveId", "int")],
@@ -160,8 +227,16 @@ pub(crate) const BUILTINS: &[Builtin] = &[
 ];
 
 impl Builtin {
+    /// Whether a call with `count` arguments matches; multisig's threshold is optional.
+    pub(crate) fn accepts_arity(&self, count: usize) -> bool {
+        count == self.params.len() || matches!(self.lowering, Lowering::Multisig) && count == 2
+    }
+
     /// Source form for diagnostics, such as `substr(data, offset, size)`.
     pub(crate) fn signature(&self) -> String {
+        if matches!(self.lowering, Lowering::Multisig) {
+            return "checkMultisig([pubkeys], [sigs], threshold?)".to_string();
+        }
         let params: Vec<&str> = self.params.iter().map(|(name, _)| *name).collect();
         format!("{}({})", self.name, params.join(", "))
     }

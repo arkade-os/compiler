@@ -399,29 +399,6 @@ pub enum AssignmentTarget {
 pub enum Requirement {
     /// Expression that must evaluate to true
     Expression(Expression),
-    /// Check signature requirement
-    CheckSig {
-        signature: Expression,
-        pubkey: Expression,
-    },
-    /// Check signature from stack requirement (signature verified against a message)
-    CheckSigFromStack {
-        signature: Expression,
-        pubkey: Expression,
-        message: Expression,
-    },
-    /// Check multisig requirement
-    CheckMultisig {
-        pubkeys: Vec<Expression>,
-        signatures: Vec<Expression>,
-        threshold: u16,
-    },
-    /// Hash equal requirement
-    HashEqual {
-        hash_fn: HashFn,
-        preimage: Expression,
-        hash: Expression,
-    },
     /// Comparison requirement
     Comparison {
         left: Expression,
@@ -747,17 +724,6 @@ pub enum ExprKind {
         source: GroupIOSource,
         property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
-    /// CheckSig expression result (for use in if conditions)
-    CheckSigExpr {
-        signature: Box<Expression>,
-        pubkey: Box<Expression>,
-    },
-    /// CheckSigFromStack expression result
-    CheckSigFromStackExpr {
-        signature: Box<Expression>,
-        pubkey: Box<Expression>,
-        message: Box<Expression>,
-    },
     // ─── Byte-string operations ────────────────────────────────────────
     /// Byte-string concatenation: produced by the rewrite pass when `+` has at
     /// least one bytes-like operand. Both operands must already be bytes; a
@@ -774,13 +740,6 @@ pub enum ExprKind {
     Unary {
         op: crate::operators::UnaryOperator,
         value: Box<Expression>,
-    },
-    // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
-    CheckSigFromStackVerify {
-        signature: Box<Expression>,
-        pubkey: Box<Expression>,
-        message: Box<Expression>,
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
@@ -850,18 +809,6 @@ macro_rules! expression_children {
                 | ExprKind::TxIntrospection { .. }
                 | ExprKind::IntentInspect { .. }
                 | ExprKind::AssetGroupsLength => vec![],
-
-                ExprKind::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
-                ExprKind::CheckSigFromStackExpr {
-                    signature,
-                    pubkey,
-                    message,
-                }
-                | ExprKind::CheckSigFromStackVerify {
-                    signature,
-                    pubkey,
-                    message,
-                } => vec![signature, pubkey, message],
 
                 ExprKind::FieldAccess { value, .. } => vec![value],
                 ExprKind::IndexAccess { value, index } => vec![value, index],

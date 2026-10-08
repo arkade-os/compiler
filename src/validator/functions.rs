@@ -361,7 +361,7 @@ fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
         Statement::IfElse { condition, .. } => vec![condition],
         Statement::ForIn { iterable, .. } => vec![iterable],
         Statement::ForCount { count, .. } => vec![count],
-        Statement::Return(None) | Statement::Require(_) => vec![],
+        Statement::Return(None) => vec![],
     }
 }
 

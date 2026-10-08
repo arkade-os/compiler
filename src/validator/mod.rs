@@ -618,7 +618,6 @@ fn walk_asset_id_stmts(
                     check_asset_id_expr(left, scope, fname, issues);
                     check_asset_id_expr(right, scope, fname, issues);
                 }
-                _ => {}
             },
             Statement::LetBinding {
                 name,
@@ -1204,82 +1203,6 @@ fn validate_named_binding(
     }
 }
 
-/// Validate a crypto-check operand, reporting only its first fault.
-fn validate_operand(
-    value: &Expression,
-    expected: Option<ArkType>,
-    label: &str,
-    function_name: &str,
-    scopes: &BindingScopes,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    if let ExprKind::Variable(name) | ExprKind::Property(name) = &value.kind {
-        if find_binding(scopes, name).is_none() {
-            issues.push(
-                ValidationIssue::error(format!(
-                    "function '{function_name}': {label} '{name}' is undefined"
-                ))
-                .at(value.span),
-            );
-            return;
-        }
-    }
-    let before = issues.len();
-    validate_binding_expression(value, function_name, scopes, issues, true);
-    let actual = resolved_expression_type(value, scopes);
-    if let Some(expected) = expected.filter(|expected| {
-        issues.len() == before
-            && actual != ArkType::Unknown
-            && !binding_types_compatible(expected, &actual)
-    }) {
-        issues.push(
-            ValidationIssue::error(format!(
-                "function '{function_name}': {label} '{}' has type '{}', expected '{}'",
-                value.source_text(),
-                actual.as_str(),
-                expected.as_str()
-            ))
-            .at(value.span),
-        );
-    }
-}
-
-fn validate_signature_operands(
-    signature: &Expression,
-    pubkey: &Expression,
-    message: Option<&Expression>,
-    function_name: &str,
-    scopes: &BindingScopes,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    validate_operand(
-        signature,
-        Some(ArkType::Signature),
-        "signature",
-        function_name,
-        scopes,
-        issues,
-    );
-    validate_operand(
-        pubkey,
-        Some(ArkType::Bytes),
-        "public key",
-        function_name,
-        scopes,
-        issues,
-    );
-    if let Some(message) = message {
-        validate_operand(
-            message,
-            Some(ArkType::Bytes),
-            "message",
-            function_name,
-            scopes,
-            issues,
-        );
-    }
-}
-
 fn validate_binding_requirement(
     requirement: &Requirement,
     function_name: &str,
@@ -1288,64 +1211,8 @@ fn validate_binding_requirement(
 ) {
     match requirement {
         Requirement::Expression(expression) => {
-            let produces_value = !matches!(
-                &expression.kind,
-                ExprKind::CheckSigFromStackVerify { .. }
-            ) && !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
+            let produces_value = !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             validate_binding_expression(expression, function_name, scopes, issues, produces_value);
-        }
-        Requirement::CheckSig { signature, pubkey } => {
-            validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
-        }
-        Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
-        } => {
-            validate_signature_operands(
-                signature,
-                pubkey,
-                Some(message),
-                function_name,
-                scopes,
-                issues,
-            );
-        }
-        Requirement::CheckMultisig {
-            pubkeys,
-            signatures,
-            ..
-        } => {
-            if pubkeys.len() != signatures.len() {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': checkMultisig key and signature counts must match",
-                    function_name
-                )));
-            }
-            for pubkey in pubkeys {
-                validate_operand(
-                    pubkey,
-                    Some(ArkType::Bytes),
-                    "multisig public key",
-                    function_name,
-                    scopes,
-                    issues,
-                );
-            }
-            for signature in signatures {
-                validate_operand(
-                    signature,
-                    Some(ArkType::Signature),
-                    "multisig signature",
-                    function_name,
-                    scopes,
-                    issues,
-                );
-            }
-        }
-        Requirement::HashEqual { preimage, hash, .. } => {
-            validate_operand(preimage, None, "preimage", function_name, scopes, issues);
-            validate_operand(hash, None, "hash", function_name, scopes, issues);
         }
         Requirement::Comparison { left, op, right } => {
             let left_type = resolved_expression_type(left, scopes);
@@ -1417,7 +1284,6 @@ fn validate_binding_expression(
         && (matches!(
             &expression.kind,
             ExprKind::GroupIOAccess { property: None, .. }
-                | ExprKind::CheckSigFromStackVerify { .. }
         ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none()))
     {
         issues.push(ValidationIssue::error(format!(
@@ -1543,9 +1409,10 @@ fn validate_binding_expression(
             let (name, operands) = registered_builtin.unwrap();
             let params = crate::typechecker::builtins::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
-            assert_eq!(
-                operands.len(),
-                params.len(),
+            assert!(
+                crate::builtins::find(name).map_or(operands.len() == params.len(), |builtin| {
+                    builtin.accepts_arity(operands.len())
+                }),
                 "{name}: operands() and its signature disagree on arity"
             );
             // Every `[]` operand takes the length of the first one.
@@ -1568,6 +1435,27 @@ fn validate_binding_expression(
                 // A hex literal carries its own width, so 32 bytes need no cast.
                 let literal_bytes32 = expected == ArkType::Bytes32
                     && matches!(&operand.kind, ExprKind::Literal(value) if value.starts_with("0x") && value.len() == 66);
+                if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
+                    (&operand.kind, &expected)
+                {
+                    for value in elements {
+                        let actual = resolved_expression_type(value, scopes);
+                        if actual != ArkType::Unknown && !binding_types_compatible(element, &actual)
+                        {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{function_name}': {name} '{}' has type '{}', expected '{}'",
+                                value.source_text(), actual.as_str(), element.as_str()
+                            )).at(value.span));
+                        }
+                    }
+                    if elements.len() != *length {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{function_name}': {name} operand has {} elements, expected {length}",
+                            elements.len()
+                        )).at(operand.span));
+                    }
+                    continue;
+                }
                 if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
@@ -1707,30 +1595,6 @@ fn validate_binding_expression(
             if name.contains('.') && find_binding(scopes, root).is_some() {
                 validate_named_binding(name, None, "field", function_name, scopes, issues);
             }
-        }
-        ExprKind::CheckSigExpr { signature, pubkey } => {
-            validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
-            children_checked = true;
-        }
-        ExprKind::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | ExprKind::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => {
-            validate_signature_operands(
-                signature,
-                pubkey,
-                Some(message),
-                function_name,
-                scopes,
-                issues,
-            );
-            children_checked = true;
         }
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
@@ -2384,6 +2248,38 @@ contract Demo() {
             .contains("assignment to an element of 'values' changes its type")));
     }
 
+    #[test]
+    fn builtin_array_literals_report_each_fault_once() {
+        for (call, expected) in [
+            (
+                "checkMultisig([1], [sig])",
+                "checkMultisig '1' has type 'int', expected 'bytes'",
+            ),
+            (
+                "checkMultisig([key], [1])",
+                "checkMultisig '1' has type 'int', expected 'signature'",
+            ),
+            (
+                "checkMultisig([key, 1], [sig, sig])",
+                "checkMultisig '1' has type 'int', expected 'bytes'",
+            ),
+            (
+                "checkMultisig([key], [sig, sig])",
+                "checkMultisig operand has 2 elements, expected 1",
+            ),
+            (
+                "checkMultisig([key], [signature(substr(1, 0, 64))])",
+                "substr operand has type 'int', expected 'bytes'",
+            ),
+            ("checkMultisig([key], [missing])", "'missing' is undefined"),
+        ] {
+            let source = format!("contract C(pubkey key) {{ function spend(signature sig) {{ require(checkSig(sig, key)); require({call}); }} }}");
+            let issues = parse_and_validate(&source);
+            assert_eq!(issues.len(), 1, "{call}: {issues:?}");
+            assert!(issues[0].message.contains(expected), "{call}: {issues:?}");
+        }
+    }
+
     fn located(statement: Statement) -> LocatedStatement {
         LocatedStatement {
             span: crate::diagnostics::Span { start: 0, end: 0 },
@@ -2413,10 +2309,16 @@ contract Demo() {
                         param_type: "bool".to_string(),
                     },
                 ],
-                statements: vec![located(Statement::Require(Requirement::CheckSig {
-                    signature: ExprKind::Variable("ownerSig".to_string()).into(),
-                    pubkey: ExprKind::Variable("owner".to_string()).into(),
-                }))],
+                statements: vec![located(Statement::Require(Requirement::Expression(
+                    ExprKind::Builtin {
+                        builtin: crate::builtins::find("checkSig").unwrap(),
+                        args: vec![
+                            ExprKind::Variable("ownerSig".to_string()).into(),
+                            ExprKind::Variable("owner".to_string()).into(),
+                        ],
+                    }
+                    .into(),
+                )))],
                 is_private: false,
                 is_static: false,
                 is_exported: false,
@@ -2444,10 +2346,16 @@ contract Demo() {
         let mut contract = make_contract("BarePath");
         contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: ExprKind::Variable("flag".to_string()).into(),
-            then_body: vec![located(Statement::Require(Requirement::CheckSig {
-                signature: ExprKind::Variable("ownerSig".to_string()).into(),
-                pubkey: ExprKind::Variable("owner".to_string()).into(),
-            }))],
+            then_body: vec![located(Statement::Require(Requirement::Expression(
+                ExprKind::Builtin {
+                    builtin: crate::builtins::find("checkSig").unwrap(),
+                    args: vec![
+                        ExprKind::Variable("ownerSig".to_string()).into(),
+                        ExprKind::Variable("owner".to_string()).into(),
+                    ],
+                }
+                .into(),
+            )))],
             else_body: None,
         })];
         let issues = validate_ast(&contract, true);
@@ -2461,10 +2369,16 @@ contract Demo() {
     fn require_in_both_branches_is_ok() {
         let mut contract = make_contract("BothPaths");
         let req = || {
-            located(Statement::Require(Requirement::CheckSig {
-                signature: ExprKind::Variable("ownerSig".to_string()).into(),
-                pubkey: ExprKind::Variable("owner".to_string()).into(),
-            }))
+            located(Statement::Require(Requirement::Expression(
+                ExprKind::Builtin {
+                    builtin: crate::builtins::find("checkSig").unwrap(),
+                    args: vec![
+                        ExprKind::Variable("ownerSig".to_string()).into(),
+                        ExprKind::Variable("owner".to_string()).into(),
+                    ],
+                }
+                .into(),
+            )))
         };
         contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: ExprKind::Variable("flag".to_string()).into(),

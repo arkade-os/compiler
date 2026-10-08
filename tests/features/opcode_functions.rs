@@ -13,6 +13,121 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
             .eq(expected.iter().copied())
     })
 }
+
+#[test]
+fn utility_builtins_emit_native_opcodes_and_validate_signatures() {
+    use crate::common::{arkade_asm_tokens, opcode_count_in_arkade};
+    for (name, args, result, wrong_result, opcode) in [
+        ("abs", vec!["n"], "int", "bool", "OP_ABS"),
+        ("min", vec!["n", "m"], "int", "bool", "OP_MIN"),
+        ("max", vec!["n", "m"], "int", "bool", "OP_MAX"),
+        (
+            "within",
+            vec!["n", "m", "upper"],
+            "bool",
+            "int",
+            "OP_WITHIN",
+        ),
+        ("left", vec!["data", "n"], "bytes", "bytes32", "OP_LEFT"),
+        ("right", vec!["data", "n"], "bytes", "bytes32", "OP_RIGHT"),
+        ("sha1", vec!["data"], "bytes20", "bytes32", "OP_SHA1"),
+    ] {
+        let params = args
+            .iter()
+            .map(|arg| format!("{} {arg}", if *arg == "data" { "bytes" } else { "int" }))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = |args: &[&str], result: &str| {
+            format!("contract C() {{ function spend({params}) {{ {result} r = {name}({}); require(r == r); }} }}", args.join(", "))
+        };
+        for optimize in [false, true] {
+            let output = if optimize {
+                arkade_compiler::compile(&source(&args, result))
+            } else {
+                compile(&source(&args, result))
+            }
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(opcode_count_in_arkade(&output, "spend", opcode), 1);
+            assert!(arkade_asm_tokens(&output, "spend")
+                .iter()
+                .all(|token| !token.contains('$')));
+        }
+        for index in 0..args.len() {
+            let mut invalid = args.clone();
+            invalid[index] = "true";
+            let error = compile(&source(&invalid, result)).unwrap_err().to_string();
+            assert!(
+                error.contains(&format!("{name} operand has type 'bool'")),
+                "{error}"
+            );
+        }
+        for invalid in [
+            args[..args.len() - 1].to_vec(),
+            [args.as_slice(), &["n"]].concat(),
+        ] {
+            let error = compile(&source(&invalid, result)).unwrap_err().to_string();
+            assert!(error.contains(&format!("expected {name}(")), "{error}");
+        }
+        assert!(
+            compile(&source(&args, wrong_result)).is_err(),
+            "{name} result type"
+        );
+    }
+}
+
+#[test]
+fn utility_builtins_compose_in_helpers_and_preserve_the_covenant_abi() {
+    use crate::common::{arkade_asm_tokens, arkade_inputs, group, leaf_asm, witness_names};
+    let source = r#"
+contract C() {
+    private function bounded(int n, int limit) int { return max(0, min(abs(n), limit)); }
+    private function fingerprint(bytes data, int count) bytes20 {
+        return sha1(left(data, count) + right(data, count));
+    }
+    function spend(int n, int limit, bytes32 data, int count, bytes20 expected) {
+        require(within(bounded(n, limit), 0, limit + 1));
+        require(fingerprint(data, count) == expected);
+    }
+}
+"#;
+    for output in [
+        compile(source).unwrap(),
+        arkade_compiler::compile(source).unwrap(),
+    ] {
+        let asm = arkade_asm_tokens(&output, "spend");
+        assert!(contains_tokens(&asm, &["OP_CAT", "OP_SHA1"]), "{asm:?}");
+        for opcode in [
+            "OP_ABS",
+            "OP_MIN",
+            "OP_MAX",
+            "OP_WITHIN",
+            "OP_LEFT",
+            "OP_RIGHT",
+        ] {
+            assert!(asm.iter().any(|token| token == opcode), "{asm:?}");
+        }
+        assert_eq!(
+            arkade_inputs(&output, "spend"),
+            ["n", "limit", "data", "count", "expected"]
+        );
+        assert_eq!(group(&output, "spend").leaves.len(), 1);
+        assert_eq!(
+            witness_names(&output, "spend", "spend"),
+            ["serverSig", "emulatorSig"]
+        );
+        assert_eq!(
+            leaf_asm(&output, "spend", "spend"),
+            "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        );
+    }
+    let error = arkade_compiler::compile(
+        "contract C() { function spend(bytes data, bytes20 hash, signature sig) tapscript { require(sha1(data) == hash); require(checkSig(sig, server)); } }"
+    ).unwrap_err().to_string();
+    assert!(
+        error.contains("unsupported compound expression in tapscript"),
+        "{error}"
+    );
+}
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
 #[test]
@@ -1055,6 +1170,225 @@ fn bytewise_results_keep_a_known_operand_width() {
         } }",
     )
     .expect("a fixed-width operand fixes the result width");
+}
+
+#[test]
+fn crypto_hash_builtins_are_values_with_computed_operands() {
+    use crate::common::{arkade_asm_tokens, arkade_inputs, group, leaf_asm, witness_names};
+    for (name, ty, opcode) in [
+        ("sha256", "bytes32", "OP_SHA256"),
+        ("hash256", "bytes32", "OP_HASH256"),
+        ("hash160", "bytes20", "OP_HASH160"),
+        ("ripemd160", "bytes20", "OP_RIPEMD160"),
+    ] {
+        let source = format!(
+            r#"
+contract H({ty} expected) {{
+    private function hash(bytes data) {ty} {{ return {name}(data); }}
+    function spend(bytes data, bool fallback) {{
+        {ty} h = {name}(cat(data, ""));
+        h = {name}(substr(data, 0, size(data)));
+        require(h != {name}(data + "!"));
+        let valid = fallback || {name}(data) == expected;
+        require(valid);
+        require({name}({name}(data)) == hash(data));
+    }}
+}}
+"#
+        );
+        let output = compile(&source).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let asm = arkade_asm_tokens(&output, "spend");
+        assert!(
+            asm.iter().filter(|token| token.as_str() == opcode).count() >= 7,
+            "{asm:?}"
+        );
+        assert!(asm.iter().any(|token| token == "OP_SUBSTR"));
+        assert!(asm.iter().any(|token| token == "OP_CAT"));
+        assert!(asm.iter().any(|token| token == "OP_IF"));
+        assert_eq!(arkade_inputs(&output, "spend"), ["data", "fallback"]);
+        assert_eq!(group(&output, "spend").leaves.len(), 1);
+        assert_eq!(
+            witness_names(&output, "spend", "spend"),
+            ["serverSig", "emulatorSig"]
+        );
+        assert_eq!(
+            leaf_asm(&output, "spend", "spend"),
+            "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        );
+    }
+}
+
+#[test]
+fn crypto_signature_builtins_accept_computed_operands_and_return_values() {
+    use crate::common::arkade_asm_tokens;
+    let output = compile(
+        r#"
+contract C(pubkey first, pubkey second) {
+    private function keys(pubkey a, pubkey b) pubkey[2] { return [a, b]; }
+    private function signed(signature sig, pubkey key, bytes data) bool {
+        return checkSigFromStack(sig, key, sha256(data));
+    }
+    function spend(signature a, signature b, bytes data, int threshold, bool fallback) {
+        pubkey[2] keyList = [first, second];
+        signature[2] sigList = [a, b];
+        let valid = checkMultisig(keyList, sigList);
+        valid = checkMultisig(keys(first, second), [signature(a), signature(b)], 1);
+        if (valid) { require(checkSig(signature(a), pubkey(first))); }
+        else { require(checkSig(signature(b), pubkey(second))); }
+        require(checkMultisig([pubkey(first), pubkey(second)], [a, b], threshold) || fallback);
+        require(checkMultisig([first, second], [a, b], 1) == true);
+        require(signed(a, first, data) || checkSigFromStack(b, second, sha256(data)));
+        require(checkSigFromStackVerify(signature(a), pubkey(first), sha256(data)));
+    }
+}
+"#,
+    )
+    .expect("generic signature expressions");
+    let asm = arkade_asm_tokens(&output, "spend");
+    assert_eq!(
+        asm.iter()
+            .filter(|token| token.as_str() == "OP_CHECKSIGADD")
+            .count(),
+        4
+    );
+    assert_eq!(
+        asm.iter()
+            .filter(|token| token.as_str() == "OP_CHECKSIGFROMSTACK")
+            .count(),
+        3
+    );
+    assert!(contains_tokens(
+        &asm,
+        &["OP_SHA256", "OP_SWAP", "OP_CHECKSIGFROMSTACK"]
+    ));
+    assert!(contains_tokens(
+        &asm,
+        &["OP_SHA256", "OP_SWAP", "OP_CHECKSIGFROMSTACK", "OP_VERIFY"]
+    ));
+    assert!(contains_tokens(
+        &asm,
+        &[
+            "OP_DUP",
+            "OP_1",
+            "OP_GREATERTHANOREQUAL",
+            "OP_VERIFY",
+            "OP_DUP",
+            "OP_2",
+            "OP_LESSTHANOREQUAL",
+            "OP_VERIFY",
+            "OP_NUMEQUAL"
+        ]
+    ));
+    assert!(asm.iter().all(|token| !token.contains('$')));
+}
+
+#[test]
+fn crypto_builtins_keep_operand_and_verify_validation() {
+    for body in [
+        "require(hash256(1) == data);",
+        "require(hash160(data) == hash256(data));",
+        "require(checkSig(data, key));",
+        "require(checkSigFromStack(sig, key, 1));",
+        "require(checkMultisig([key], 1));",
+        "require(checkMultisig([key], [sig, sig]));",
+        "require(checkMultisig([key, 1], [sig, sig]));",
+        "require(checkMultisig([key, key], [sig, 1]));",
+        "require(checkMultisig([key], [sig], true));",
+        "require(checkMultisig([key], [sig], 0));",
+        "require(checkMultisig([key], [sig], 2));",
+        "let x = checkSigFromStackVerify(sig, key, data); require(x);",
+        "require(checkSigFromStackVerify(sig, key, data) || true);",
+    ] {
+        let source = format!("contract C(pubkey key) {{ function spend(signature sig, bytes data) {{ require(checkSig(sig, key)); require(size(data) >= 0); {body} }} }}");
+        assert!(compile(&source).is_err(), "{body}");
+    }
+}
+
+#[test]
+fn crypto_multisig_pairs_helper_returned_keys_and_signatures() {
+    use crate::common::{arkade_asm_tokens, arkade_inputs, group, leaf_asm, witness_names};
+    let output = compile(
+        r#"
+contract C(pubkey first, pubkey second) {
+    private function keys_helper() pubkey[2] { return [first, second]; }
+    private function sigs_helper(signature a, signature b) signature[2] { return [a, b]; }
+    function spend(signature a, signature b) {
+        require(checkMultisig(keys_helper(), sigs_helper(a, b)));
+    }
+}
+"#,
+    )
+    .expect("both multisig arrays can be helper results");
+    assert_eq!(arkade_inputs(&output, "spend"), ["a", "b"]);
+    assert_eq!(group(&output, "spend").leaves.len(), 1);
+    assert_eq!(
+        witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert_eq!(
+        leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+
+    // This models this contract's stack operations; extend it if its emitted opcodes change.
+    let mut stack = vec!["b".to_string(), "a".to_string()];
+    let mut checks = 0;
+    for token in arkade_asm_tokens(&output, "spend") {
+        match token.as_str() {
+            "OP_PICK" | "OP_ROLL" => {
+                let depth = stack.pop().unwrap().parse::<usize>().unwrap();
+                let index = stack.len() - depth - 1;
+                let value = if token == "OP_PICK" {
+                    stack[index].clone()
+                } else {
+                    stack.remove(index)
+                };
+                stack.push(value);
+            }
+            "OP_NIP" => {
+                stack.remove(stack.len() - 2);
+            }
+            "OP_CHECKSIG" | "OP_CHECKSIGADD" => {
+                let key = stack.pop().unwrap();
+                let count = if token == "OP_CHECKSIGADD" {
+                    stack.pop().unwrap().parse::<usize>().unwrap()
+                } else {
+                    0
+                };
+                let signature = stack.pop().unwrap();
+                assert_eq!(
+                    (key.as_str(), signature.as_str()),
+                    [("first", "a"), ("second", "b")][checks]
+                );
+                stack.push((count + 1).to_string());
+                checks += 1;
+            }
+            "OP_NUMEQUAL" => {
+                let right = stack.pop().unwrap();
+                let left = stack.pop().unwrap();
+                stack.push(usize::from(left == right).to_string());
+            }
+            "OP_VERIFY" => {
+                assert_eq!(stack.pop().unwrap(), "1");
+            }
+            _ if token.starts_with("OP_") => {
+                stack.push(
+                    token
+                        .strip_prefix("OP_")
+                        .unwrap()
+                        .parse::<usize>()
+                        .expect("supported numeric opcode")
+                        .to_string(),
+                );
+            }
+            _ if token.starts_with('<') && token.ends_with('>') => {
+                stack.push(token[1..token.len() - 1].to_string());
+            }
+            _ => panic!("unexpected opcode {token}"),
+        }
+    }
+    assert_eq!(checks, 2);
+    assert_eq!(stack, ["1"]);
 }
 
 #[test]

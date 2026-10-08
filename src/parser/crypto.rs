@@ -4,45 +4,6 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
-/// Parse checkSigFromStackVerify(sig, pubkey, msg) → Requirement::CheckSig (verify variant)
-pub(crate) fn parse_check_sig_from_stack_verify(pair: Pair<Rule>) -> Result<Requirement, String> {
-    Ok(Requirement::Expression(
-        parse_check_sig_from_stack_verify_expr(pair)?,
-    ))
-}
-
-/// Parse checkSigFromStackVerify for primary expression context
-pub(crate) fn parse_check_sig_from_stack_verify_expr(
-    pair: Pair<Rule>,
-) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let mut inner = pair.into_inner();
-    let signature = parse_operand(
-        inner
-            .next()
-            .ok_or("Missing signature in checkSigFromStackVerify")?,
-    )?;
-    let pubkey = parse_operand(
-        inner
-            .next()
-            .ok_or("Missing pubkey in checkSigFromStackVerify")?,
-    )?;
-    let message = parse_operand(
-        inner
-            .next()
-            .ok_or("Missing message in checkSigFromStackVerify")?,
-    )?;
-
-    Ok(Expression::new(
-        ExprKind::CheckSigFromStackVerify {
-            signature: Box::new(signature),
-            pubkey: Box::new(pubkey),
-            message: Box::new(message),
-        },
-        span,
-    ))
-}
-
 /// Parse pubkey(x) / signature(x) / bytes20(x) / bytes32(x) / int(x) / bool(x) → ExprKind::Cast,
 /// folding int(0x..) into a decimal literal.
 pub(crate) fn parse_cast(pair: Pair<Rule>) -> Result<Expression, String> {

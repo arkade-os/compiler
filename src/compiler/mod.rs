@@ -4,7 +4,7 @@ use crate::models::{
     Function, FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
-    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_AND, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG,
+    OP_0, OP_0NOTEQUAL, OP_1, OP_ABS, OP_ADD, OP_AND, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG,
     OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP,
     OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL,
     OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
@@ -16,12 +16,12 @@ use crate::opcodes::{
     OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
     OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
     OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
-    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_INVERT, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_LSHIFT,
-    OP_MERKLEBRANCHVERIFY, OP_MOD, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP, OP_NOT, OP_NUM2BIN,
-    OP_NUMEQUAL, OP_OR, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_REVERSEBYTES,
-    OP_ROLL, OP_RSHIFT, OP_SHA256, OP_SHA256FINALIZE, OP_SHA256INITIALIZE, OP_SHA256UPDATE,
-    OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP, OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID,
-    OP_TXWEIGHT, OP_VERIFY, OP_XOR,
+    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_INVERT, OP_LEFT, OP_LESSTHAN, OP_LESSTHANOREQUAL,
+    OP_LSHIFT, OP_MAX, OP_MERKLEBRANCHVERIFY, OP_MIN, OP_MOD, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP,
+    OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_OR, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY,
+    OP_PUT, OP_REVERSEBYTES, OP_RIGHT, OP_ROLL, OP_RSHIFT, OP_SHA1, OP_SHA256, OP_SHA256FINALIZE,
+    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP,
+    OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY, OP_WITHIN, OP_XOR,
 };
 use crate::typechecker::{self};
 use crate::validator::{self, Severity};
@@ -377,10 +377,12 @@ impl Generator {
                 Ok(())
             }
             OP_NEGATE
+            | OP_ABS
             | OP_CHECKTIME
             | OP_NOT
             | OP_0NOTEQUAL
             | OP_SHA256
+            | OP_SHA1
             | "OP_HASH160"
             | "OP_HASH256"
             | "OP_RIPEMD160"
@@ -398,6 +400,10 @@ impl Generator {
             | OP_INSPECTOUTASSETCOUNT
             | OP_INSPECTASSETGROUPMETADATAHASH => self.apply(opcode, 1, 1),
             OP_ADD
+            | OP_MIN
+            | OP_MAX
+            | OP_LEFT
+            | OP_RIGHT
             | OP_SUB
             | OP_AND
             | OP_OR
@@ -422,7 +428,7 @@ impl Generator {
             | OP_CHECKSIG
             | OP_INSPECTASSETGROUPSUM
             | OP_INSPECTASSETGROUPNUM => self.apply(opcode, 2, 1),
-            OP_MODEXP | OP_SUBSTR | OP_CHECKSIGADD | OP_CHECKSIGFROMSTACK => {
+            OP_MODEXP | OP_SUBSTR | OP_WITHIN | OP_CHECKSIGADD | OP_CHECKSIGFROMSTACK => {
                 self.apply(opcode, 3, 1)
             }
             OP_MERKLEBRANCHVERIFY => self.apply(opcode, 4, 1),
@@ -558,6 +564,9 @@ impl Generator {
                 } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
                 {
                     self.emit_pairing(value)?;
+                } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
+                {
+                    self.emit_multisig(value)?;
                 } else {
                     let ty = typechecker::infer_type(value, &self.scope).as_str();
                     self.emit_access_value(value, &ty)?;
@@ -1179,17 +1188,6 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.push_temporary(OP_1);
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
-                ExprKind::CheckSigFromStackVerify {
-                    signature,
-                    pubkey,
-                    message,
-                } => {
-                    generator.emit_expression(signature)?;
-                    generator.emit_expression(message)?;
-                    generator.emit_expression(pubkey)?;
-                    generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
-                    generator.apply(OP_VERIFY, 1, 0)?;
-                }
                 ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {
                     generator.emit_expression_items(expr, 0)?;
                 }
@@ -1198,82 +1196,6 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
             }
-            Ok(())
-        }
-        Requirement::CheckSig { signature, pubkey } => {
-            generator.emit_expression(signature)?;
-            generator.emit_expression(pubkey)?;
-            generator.apply(OP_CHECKSIG, 2, 1)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-        Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
-        } => {
-            generator.emit_expression(signature)?;
-            generator.emit_expression(message)?;
-            generator.emit_expression(pubkey)?;
-            generator.apply(OP_CHECKSIGFROMSTACK, 3, 1)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-        Requirement::CheckMultisig {
-            pubkeys,
-            signatures,
-            threshold,
-        } => {
-            let pubkeys_size = pubkeys.len();
-            let pubkeys_size = if pubkeys_size <= 999 {
-                pubkeys_size as u16
-            } else {
-                return Err("Number of pubkeys should be less than 999.".to_string());
-            };
-
-            if threshold < &1u16 {
-                return Err(format!(
-                    "m-of-n multisig cannot succeed with threshold(m) of {}",
-                    threshold
-                ));
-            }
-            if threshold > &pubkeys_size {
-                return Err(
-                    "m-of-n multisig threshold(m) exceeds acceptable number of signers(n)"
-                        .to_string(),
-                );
-            }
-            if pubkeys.len() != signatures.len() {
-                return Err("checkMultisig key and signature counts must match".to_string());
-            }
-            for signature in signatures.iter().rev() {
-                generator.emit_expression(signature)?;
-            }
-            generator.emit_expression(&pubkeys[0])?;
-            generator.apply(OP_CHECKSIG, 2, 1)?;
-            for pubkey in pubkeys.iter().skip(1) {
-                generator.emit_expression(pubkey)?;
-                generator.apply(OP_CHECKSIGADD, 3, 1)?;
-            }
-            if threshold <= &16 {
-                generator.push_temporary(format!("OP_{threshold}"));
-            } else {
-                generator.push_temporary(threshold.to_string());
-            }
-            generator.apply(OP_NUMEQUAL, 2, 1)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-        Requirement::HashEqual {
-            hash_fn,
-            preimage,
-            hash,
-        } => {
-            generator.emit_expression(preimage)?;
-            generator.lower_raw_opcode(hash_fn.opcode())?;
-            generator.emit_expression(hash)?;
-            generator.apply(OP_EQUAL, 2, 1)?;
-            generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
         }
         Requirement::Comparison { left, op, right } => {

@@ -153,7 +153,6 @@ impl ConcatPass {
                 let (nr, _) = self.rewrite_expression_concat(right.take(), scope);
                 *right = nr;
             }
-            _ => {}
         }
     }
 

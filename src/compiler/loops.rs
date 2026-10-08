@@ -127,43 +127,6 @@ pub(crate) fn substitute_requirement(
             op: *op,
             right: substitute_expression(right, index_var, value_var, k, items),
         },
-        Requirement::CheckSig { signature, pubkey } => Requirement::CheckSig {
-            signature: substitute_expression(signature, index_var, value_var, k, items),
-            pubkey: substitute_expression(pubkey, index_var, value_var, k, items),
-        },
-        Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
-        } => Requirement::CheckSigFromStack {
-            signature: substitute_expression(signature, index_var, value_var, k, items),
-            pubkey: substitute_expression(pubkey, index_var, value_var, k, items),
-            message: substitute_expression(message, index_var, value_var, k, items),
-        },
-        Requirement::CheckMultisig {
-            pubkeys,
-            signatures,
-            threshold,
-        } => Requirement::CheckMultisig {
-            pubkeys: pubkeys
-                .iter()
-                .map(|key| substitute_expression(key, index_var, value_var, k, items))
-                .collect(),
-            signatures: signatures
-                .iter()
-                .map(|sig| substitute_expression(sig, index_var, value_var, k, items))
-                .collect(),
-            threshold: *threshold,
-        },
-        Requirement::HashEqual {
-            hash_fn,
-            preimage,
-            hash,
-        } => Requirement::HashEqual {
-            hash_fn: hash_fn.clone(),
-            preimage: substitute_expression(preimage, index_var, value_var, k, items),
-            hash: substitute_expression(hash, index_var, value_var, k, items),
-        },
     }
 }
 

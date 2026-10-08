@@ -466,8 +466,8 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
             "`tweakVerify(...)` cannot be a statement; use it inside require()",
         ),
         (
-            "function spend(bytes a) { require(hash160(a) == substr(a, 0, 20)); }",
-            "`hash160` is only supported as `hash160(preimage) == hash`",
+            "function spend(bytes a) { require(hash160(a, a) == substr(a, 0, 20)); }",
+            "malformed reserved function call `hash160(...)`; expected hash160(data)",
         ),
     ] {
         let source = format!("contract C() {{ {body} }}");

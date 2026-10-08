@@ -220,7 +220,7 @@ fn multisig_threshold_constants_resolve_before_and_after_functions() {
 }
 
 #[test]
-fn multisig_threshold_rejects_non_constants_and_invalid_values() {
+fn multisig_threshold_checks_types_bounds_and_tapscript_constants() {
     for declaration in [
         "",
         "const bool QUORUM = true;",
@@ -237,7 +237,12 @@ fn multisig_threshold_rejects_non_constants_and_invalid_values() {
             let source = format!("contract Vault(pubkey owner, int QUORUM_INPUT) {{ {declaration} function spend(signature sig){modifier} {{ {timelock} require(checkMultisig([owner], [sig], QUORUM)); }} }}");
             compile(&source.replace(", QUORUM)", ", 1)")).expect("literal threshold");
             assert!(compile(&source).is_err(), "{declaration} {modifier}");
-            assert!(compile(&source.replace(", QUORUM)", ", QUORUM_INPUT)")).is_err());
+            let runtime = compile(&source.replace(", QUORUM)", ", QUORUM_INPUT)"));
+            assert_eq!(
+                runtime.is_ok(),
+                modifier.is_empty(),
+                "{declaration} {modifier}: {runtime:?}"
+            );
         }
     }
 }

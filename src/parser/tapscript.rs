@@ -35,7 +35,7 @@ pub(crate) fn parse_named_tapscript(
     let block = inner.next().ok_or("Missing tapscript body")?;
     let mut items = Vec::new();
     for stmt in block.into_inner() {
-        if stmt.as_rule() == Rule::require_stmt {
+        if stmt.as_rule() == Rule::tap_require_stmt {
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
             for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {

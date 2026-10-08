@@ -15,7 +15,6 @@ pub struct ArkadeParser;
 // parse_* helpers; siblings reach them via `use super::*`.
 mod asset;
 mod checksig;
-mod comparison;
 mod crypto;
 mod expr;
 mod introspection;
@@ -25,7 +24,6 @@ mod tapscript;
 
 pub(crate) use asset::*;
 pub(crate) use checksig::*;
-pub(crate) use comparison::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
@@ -419,7 +417,7 @@ fn parse_statement(
                     ))
                 }
             };
-            let requirement = parse_complex_expression(expr, constants)?;
+            let requirement = parse_complex_expression(expr)?;
 
             if let Some(message) = inner.next() {
                 parse_string_literal(message.as_str())?;
@@ -950,8 +948,9 @@ contract C() {
         let statements = &contract.functions[0].statements;
         assert!(matches!(
             &statements[0].statement,
-            Statement::Require(Requirement::CheckSig { pubkey: pubkey @ Expression { kind: ExprKind::IndexAccess { .. }, .. }, .. })
-                if pubkey.source_text() == "signers[i + 1].keys[0]"
+            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+                if builtin.name == "checkSig" && matches!(&args[1].kind, ExprKind::IndexAccess { .. })
+                    && args[1].source_text() == "signers[i + 1].keys[0]"
         ));
         assert!(matches!(
             &statements[1].statement,
@@ -1042,17 +1041,15 @@ contract Demo(pubkey first, pubkey second) {
         ));
         assert!(matches!(
             &statements[2].statement,
-            Statement::Require(Requirement::CheckMultisig {
-                pubkeys,
-                signatures,
-                threshold: 2,
-            }) if pubkeys.iter().map(Expression::source_text).eq(["first", "second"])
-                && signatures.iter().map(Expression::source_text).eq(["firstSig", "secondSig"])
+            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+                if builtin.name == "checkMultisig" && args.len() == 2
+                    && matches!(&args[0].kind, ExprKind::ArrayLiteral(keys) if keys.iter().map(Expression::source_text).eq(["first", "second"]))
+                    && matches!(&args[1].kind, ExprKind::ArrayLiteral(sigs) if sigs.iter().map(Expression::source_text).eq(["firstSig", "secondSig"]))
         ));
     }
 
     #[test]
-    fn resolves_constant_thresholds_in_nested_helper_bodies() {
+    fn retains_constant_thresholds_in_nested_helper_bodies() {
         let contract = parse(
             r#"
 contract Demo() {
@@ -1075,18 +1072,16 @@ contract Demo() {
         };
         for body in [then_body, else_body] {
             assert!(matches!(
-                body[0].statement,
-                Statement::Require(Requirement::CheckMultisig { threshold: 1, .. })
+                &body[0].statement,
+                Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+                    if builtin.name == "checkMultisig" && matches!(&args[2].kind, ExprKind::Variable(name) if name == "QUORUM")
             ));
         }
     }
 
     #[test]
     fn rejects_multisig_without_explicit_signatures() {
-        for call in [
-            "checkMultisig([first, second])",
-            "checkMultisig([first, second], 2)",
-        ] {
+        for call in ["checkMultisig([first, second])"] {
             for modifier in ["", " tapscript"] {
                 let source = format!(
                     r#"

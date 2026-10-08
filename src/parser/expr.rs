@@ -76,13 +76,6 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         ));
     }
 
-    if matches!(name.as_str(), "hash160" | "hash256" | "ripemd160") {
-        return Err(format!(
-            "`{name}` is only supported as `{name}(preimage) == hash` with a named or literal hash; \
-             only sha256 accepts computed operands"
-        ));
-    }
-
     if let Some(signature) = reserved_function_signature(&name) {
         return Err(format!(
             "malformed reserved function call `{name}(...)`; expected {signature}"
@@ -97,13 +90,6 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
         return Some(builtin.signature());
     }
     let signature = match name {
-        "checkSig" => Some("checkSig(signature, pubkey)"),
-        "checkSigFromStack" => Some("checkSigFromStack(signature, pubkey, message)"),
-        "checkSigFromStackVerify" => Some("checkSigFromStackVerify(signature, pubkey, message)"),
-        "checkMultisig" => Some("checkMultisig([pubkeys], [sigs], threshold?)"),
-        "hash160" => Some("hash160(data)"),
-        "hash256" => Some("hash256(data)"),
-        "ripemd160" => Some("ripemd160(data)"),
         "older" => Some("older(value)"),
         "after" => Some("after(value)"),
         "this.tunnel" => Some("this.tunnel(outputIndex, policy?, exceptions?)"),
@@ -127,22 +113,6 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
         Ok(hex)
     } else {
         Ok(text.to_string())
-    }
-}
-
-/// Parse a crypto-check operand: a binding access or a byte literal.
-pub(crate) fn parse_operand(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    match pair.as_rule() {
-        Rule::sig_arg | Rule::key_expr => {
-            parse_operand(pair.into_inner().next().ok_or("Missing operand")?)
-        }
-        Rule::named_binding => parse_property_access(pair),
-        Rule::tweak_key => Err("tweak(...) is only available in tapscript functions".to_string()),
-        _ => Ok(Expression::new(
-            ExprKind::Literal(parse_named_operand(pair)?),
-            span,
-        )),
     }
 }
 
@@ -266,30 +236,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         }
         Rule::tunnel => parse_tunnel(pair),
         Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
-        Rule::check_sig => {
-            let mut inner = pair.into_inner();
-            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
-            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
-            Ok(Expression::new(
-                ExprKind::CheckSigExpr { signature, pubkey },
-                span,
-            ))
-        }
-        Rule::check_sig_from_stack => {
-            let mut inner = pair.into_inner();
-            let signature = Box::new(parse_operand(inner.next().ok_or("Missing signature")?)?);
-            let pubkey = Box::new(parse_operand(inner.next().ok_or("Missing pubkey")?)?);
-            let message = Box::new(parse_operand(inner.next().ok_or("Missing message")?)?);
-            Ok(Expression::new(
-                ExprKind::CheckSigFromStackExpr {
-                    signature,
-                    pubkey,
-                    message,
-                },
-                span,
-            ))
-        }
-        Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify_expr(pair),
         // Byte-string manipulation
         Rule::cast_func => parse_cast(pair),
         // Packet introspection
@@ -344,10 +290,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
 }
 
 /// Parse a complex expression into a Requirement AST node
-pub(crate) fn parse_complex_expression(
-    pair: Pair<Rule>,
-    constants: &[Constant],
-) -> Result<Requirement, String> {
+pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
     match pair.as_rule() {
         Rule::general_expression => {
             let expression = parse_general_expression(pair)?;
@@ -367,12 +310,6 @@ pub(crate) fn parse_complex_expression(
             }
             Ok(Requirement::Expression(expression))
         }
-        Rule::check_sig => parse_check_sig(pair),
-        Rule::check_sig_from_stack => parse_check_sig_from_stack(pair),
-        Rule::check_sig_from_stack_verify => parse_check_sig_from_stack_verify(pair),
-        Rule::check_multisig => parse_check_multisig(pair, constants),
-        Rule::time_comparison => parse_time_comparison(pair),
-        Rule::hash_comparison => parse_hash_comparison(pair),
         _ => Err(format!(
             "Unexpected rule in complex expression: {:?}",
             pair.as_rule()
@@ -441,7 +378,7 @@ fn parse_builtin_call(
         .skip(1)
         .map(parse_general_expression)
         .collect::<Result<_, _>>()?;
-    if args.len() != builtin.params.len() {
+    if !builtin.accepts_arity(args.len()) {
         return Err(format!(
             "malformed reserved function call `{}(...)`; expected {}",
             builtin.name,
@@ -487,9 +424,7 @@ pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expres
 
 /// Parse constructor arguments into a Vec<Expression>.
 ///
-/// `constructor_args` is a named (non-silent) rule whose children are the
-/// alternatives matched by the silent `complex_expression` rule — so we
-/// see the raw inner rules (identifier, number_literal, etc.) directly.
+/// Constructor arguments use the same expression parser as builtin calls.
 pub(crate) fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
     pair.into_inner().map(parse_general_expression).collect()
 }
