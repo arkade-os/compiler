@@ -20,7 +20,7 @@ contract Vault(pubkey owner) {{
         require({strict});
     }}
     function exit(signature sig) tapscript {{
-        require(older({delay}));
+        require(older(blocks({delay})));
         require(checkSig(sig, owner));
     }}
 }}

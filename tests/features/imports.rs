@@ -79,7 +79,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
         require(Fees.calculate(value) <= policy.maximum);
     }
     function exit(signature sig) tapscript {
-        require(older(Fees.DELAY));
+        require(older(blocks(Fees.DELAY)));
         require(checkSig(sig, owner));
     }
 }"#;
@@ -240,7 +240,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
         require(value >= Fees.MINIMUM);
         require(value != amount);
     }
-    function exit(signature sig) tapscript { require(older(Fees.DELAY)); require(checkSig(sig, owner)); }
+    function exit(signature sig) tapscript { require(older(blocks(Fees.DELAY))); require(checkSig(sig, owner)); }
 }"#;
     let types = "struct Policy { int maximum; } // end of file comment";
     let fees = r#"contract Fees() {
@@ -269,7 +269,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     }
     static function twice(int n) int { return n * 2; }
     static function calculate(int n) int { return twice(n) + 10; }
-    function exit(signature sig) tapscript { require(older(144)); require(checkSig(sig, owner)); }
+    function exit(signature sig) tapscript { require(older(blocks(144))); require(checkSig(sig, owner)); }
 }"#,
     )
     .unwrap();

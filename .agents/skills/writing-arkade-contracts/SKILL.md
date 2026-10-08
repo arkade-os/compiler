@@ -37,7 +37,7 @@ function unilateral(signature ownerSig) tapscript {
 }
 ```
 
-`serverExitDelay` is arkd's unilateral exit delay and needs no constructor parameter. Take a constructor `int` only when the contract needs a different delay.
+`serverExitDelay` is arkd's unilateral exit delay and needs no constructor parameter. For a different fixed delay, write `older(seconds(n))` with a literal or `int` constant. Take a constructor `int` only when the delay varies per instance; it is pushed raw, so the caller passes the BIP68 sequence.
 
 Keep `server`, `emulator`, and `serverExitDelay` out of constructors and covenant bodies. Use them only as reserved key operands in tapscript signature checks. Declare the corresponding signature witnesses on author-written tapscripts.
 
@@ -62,7 +62,7 @@ Do not mix time domains:
 
 - `checkTime(timestamp)` reads the emulator clock in Unix seconds and compiles to `OP_CHECKTIME`. Put it in `require`. The operator runs that clock and can accept the spend early. Offchain spends of the leaf are rebuilt with nLockTime 0, so `tx.time` does not enforce the same deadline.
 - Use `tx.time` for Bitcoin nLockTime/CLTV.
-- `older(n)` pushes `n` as a CSV value. The compiler does not set the BIP68 seconds bit. Public arkd rejects a block-type sequence on an exit leaf, so an offchain exit passes `n` as that BIP68 seconds sequence. The counter starts when the output is mined, not when the virtual coin is created.
+- Write timelock literals as `older(blocks(n))`, `older(seconds(n))`, `after(blocks(height))`, or `after(seconds(timestamp))`. `seconds(n)` in `older` must be a multiple of 512 and compiles to the BIP68 time-based sequence. A parameter or a unitless literal is pushed raw, so a CSV parameter must already be the BIP68 sequence. Public arkd rejects block-type timelocks, so prefer `older(serverExitDelay)` on exit leaves. The CSV counter starts when the output is mined, not when the virtual coin is created.
 - `tx.offchainTime` is gone.
 
 ```ark

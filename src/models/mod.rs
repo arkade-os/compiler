@@ -523,16 +523,32 @@ pub enum TapItem {
         preimage: String,
         hash: String,
     },
-    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal or param name.
-    Older { value: String },
-    /// `after(n)` → CLTV (absolute timelock, forfeit class).
-    After { value: String },
+    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal,
+    /// constant, parameter, or `serverExitDelay`; without a unit it is the raw
+    /// BIP68 sequence.
+    Older {
+        value: String,
+        unit: Option<TimeUnit>,
+    },
+    /// `after(n)` → CLTV (absolute timelock, forfeit class). Without a unit
+    /// `value` is the raw nLockTime.
+    After {
+        value: String,
+        unit: Option<TimeUnit>,
+    },
     /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
     Sig {
         keys: Vec<KeyExpr>,
         sigs: Vec<String>,
         threshold: Option<u16>,
     },
+}
+
+/// The unit of a `blocks(n)` or `seconds(n)` timelock operand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeUnit {
+    Blocks,
+    Seconds,
 }
 
 /// A `tapscript`-modified function declaration: an L1 tapleaf source member.
