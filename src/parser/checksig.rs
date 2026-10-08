@@ -4,63 +4,6 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
-/// Parse checkSig(sig, pubkey) → CheckSig requirement
-pub(crate) fn parse_check_sig(pair: Pair<Rule>) -> Result<Requirement, String> {
-    let mut inner = pair.into_inner();
-    let signature = parse_operand(inner.next().ok_or("Missing signature")?)?;
-    let pubkey = parse_operand(inner.next().ok_or("Missing public key")?)?;
-    Ok(Requirement::CheckSig { signature, pubkey })
-}
-
-/// Parse checkSigFromStack(sig, pubkey, message) → CheckSigFromStack requirement
-pub(crate) fn parse_check_sig_from_stack(pair: Pair<Rule>) -> Result<Requirement, String> {
-    let mut inner = pair.into_inner();
-    let signature = parse_operand(inner.next().ok_or("Missing signature")?)?;
-    let pubkey = parse_operand(inner.next().ok_or("Missing public key")?)?;
-    let message = parse_operand(inner.next().ok_or("Missing message")?)?;
-    Ok(Requirement::CheckSigFromStack {
-        signature,
-        pubkey,
-        message,
-    })
-}
-
-/// Parse checkMultisig([pubkeys], [sigs], threshold?) → CheckMultisig requirement
-pub(crate) fn parse_check_multisig(
-    pair: Pair<Rule>,
-    constants: &[Constant],
-) -> Result<Requirement, String> {
-    let mut inner = pair
-        .into_inner()
-        .next()
-        .ok_or("Missing checkMultisig definition")?
-        .into_inner();
-    let pubkeys_array = inner.next().ok_or("Missing public keys")?;
-
-    let pubkeys = pubkeys_array
-        .into_inner()
-        .map(parse_operand)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let signatures = inner
-        .next()
-        .ok_or("Missing signatures")?
-        .into_inner()
-        .map(parse_operand)
-        .collect::<Result<_, _>>()?;
-
-    let threshold = match inner.next() {
-        Some(next_pair) => parse_multisig_threshold(next_pair, constants)?,
-        None => pubkeys.len() as u16,
-    };
-
-    Ok(Requirement::CheckMultisig {
-        pubkeys,
-        signatures,
-        threshold,
-    })
-}
-
 pub(crate) fn parse_multisig_threshold(
     pair: Pair<Rule>,
     constants: &[Constant],

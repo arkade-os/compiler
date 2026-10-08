@@ -555,6 +555,9 @@ impl Generator {
                 } else if matches!(value, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
                 {
                     self.emit_pairing(value)?;
+                } else if matches!(value, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
+                {
+                    self.emit_multisig(value)?;
                 } else {
                     let ty = typechecker::infer_type(value, &self.scope).as_str();
                     self.emit_access_value(value, &ty)?;
@@ -1223,43 +1226,16 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             signatures,
             threshold,
         } => {
-            let pubkeys_size = pubkeys.len();
-            let pubkeys_size = if pubkeys_size <= 999 {
-                pubkeys_size as u16
-            } else {
-                return Err("Number of pubkeys should be less than 999.".to_string());
+            let expression = Expression::Builtin {
+                builtin: crate::builtins::find("checkMultisig")
+                    .expect("checkMultisig is a builtin"),
+                args: vec![
+                    Expression::ArrayLiteral(pubkeys.clone()),
+                    Expression::ArrayLiteral(signatures.clone()),
+                    Expression::Literal(threshold.to_string()),
+                ],
             };
-
-            if threshold < &1u16 {
-                return Err(format!(
-                    "m-of-n multisig cannot succeed with threshold(m) of {}",
-                    threshold
-                ));
-            }
-            if threshold > &pubkeys_size {
-                return Err(
-                    "m-of-n multisig threshold(m) exceeds acceptable number of signers(n)"
-                        .to_string(),
-                );
-            }
-            if pubkeys.len() != signatures.len() {
-                return Err("checkMultisig key and signature counts must match".to_string());
-            }
-            for signature in signatures.iter().rev() {
-                generator.emit_expression(signature)?;
-            }
-            generator.emit_expression(&pubkeys[0])?;
-            generator.apply(OP_CHECKSIG, 2, 1)?;
-            for pubkey in pubkeys.iter().skip(1) {
-                generator.emit_expression(pubkey)?;
-                generator.apply(OP_CHECKSIGADD, 3, 1)?;
-            }
-            if threshold <= &16 {
-                generator.push_temporary(format!("OP_{threshold}"));
-            } else {
-                generator.push_temporary(threshold.to_string());
-            }
-            generator.apply(OP_NUMEQUAL, 2, 1)?;
+            generator.emit_expression(&expression)?;
             generator.apply(OP_VERIFY, 1, 0)?;
             Ok(())
         }

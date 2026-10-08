@@ -9,7 +9,7 @@ pub(super) fn extract_values(
     if matches!(
         expression,
         Expression::Call { .. } | Expression::FieldAccess { .. } | Expression::IndexAccess { .. }
-    ) || matches!(expression, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+    ) || matches!(expression, Expression::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing | crate::builtins::Lowering::Multisig))
         || (matches!(expression, Expression::ArrayIndex { .. })
             && matches!(
                 typechecker::infer_type(expression, scope),
@@ -305,7 +305,11 @@ impl Generator {
         Ok(())
     }
 
-    fn discard_call_frame(&mut self, baseline: usize, results: usize) -> Result<(), String> {
+    pub(super) fn discard_call_frame(
+        &mut self,
+        baseline: usize,
+        results: usize,
+    ) -> Result<(), String> {
         while self.stack.len() > baseline + results {
             match results {
                 0 => {

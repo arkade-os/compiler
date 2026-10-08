@@ -140,6 +140,95 @@ impl Generator {
         self.apply(OP_PUT, 2, 0)
     }
 
+    pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<(), String> {
+        let Expression::Builtin { args, .. } = expression else {
+            return Err("expected checkMultisig".to_string());
+        };
+        let keys = &args[0];
+        let signatures = &args[1];
+        let ArkType::Array(_, count) = infer_type(keys, &self.scope) else {
+            return Err("checkMultisig public keys must be an array".to_string());
+        };
+        if count == 0 || count > 999 {
+            return Err("checkMultisig needs between 1 and 999 public keys".to_string());
+        }
+        if !matches!(infer_type(signatures, &self.scope), ArkType::Array(_, length) if length == count)
+        {
+            return Err("checkMultisig key and signature counts must match".to_string());
+        }
+        let threshold = args.get(2);
+        let literal_threshold = match threshold {
+            None => Some(count),
+            Some(Expression::Literal(value)) => Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| "invalid multisig threshold")?,
+            ),
+            _ => None,
+        };
+        if literal_threshold.is_some_and(|threshold| threshold == 0 || threshold > count) {
+            return Err(
+                "checkMultisig threshold must be between 1 and the number of public keys"
+                    .to_string(),
+            );
+        }
+        if !matches!(keys, Expression::ArrayLiteral(_)) && keys.binding_path().is_none() {
+            let baseline = self.stack.len();
+            let scope = self.scope.clone();
+            let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+            let ty = infer_type(keys, &self.scope).as_str();
+            let name = format!("$multisig:{baseline}");
+            self.emit_typed_value(keys, &ty)?;
+            self.bind_value(&name, &ty)?;
+            self.bind_type(&name, &ty);
+            let mut normalized = expression.clone();
+            let Expression::Builtin { args, .. } = &mut normalized else {
+                unreachable!()
+            };
+            args[0] = Expression::Variable(name);
+            self.emit_multisig(&normalized)?;
+            self.discard_call_frame(baseline, 1)?;
+            self.last_reads.retain(|(_, index), _| *index < baseline);
+            self.scope = scope;
+            self.pinned_stack_len = pinned;
+            return Ok(());
+        }
+        self.emit_typed_value(signatures, &format!("signature[{count}]"))?;
+        for index in 0..count {
+            let key = match keys {
+                Expression::ArrayLiteral(elements) => elements[index].clone(),
+                value => Expression::IndexAccess {
+                    value: Box::new(value.clone()),
+                    index: Box::new(Expression::Literal(index.to_string())),
+                },
+            };
+            self.emit_expression(&key)?;
+            self.apply(
+                if index == 0 {
+                    OP_CHECKSIG
+                } else {
+                    OP_CHECKSIGADD
+                },
+                if index == 0 { 2 } else { 3 },
+                1,
+            )?;
+        }
+        if let Some(threshold) = literal_threshold {
+            self.push_integer_temporary(threshold);
+        } else {
+            self.emit_expression(threshold.expect("runtime threshold"))?;
+            self.apply(OP_DUP, 1, 2)?;
+            self.push_integer_temporary(1);
+            self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
+            self.apply(OP_VERIFY, 1, 0)?;
+            self.apply(OP_DUP, 1, 2)?;
+            self.push_integer_temporary(count);
+            self.apply(OP_LESSTHANOREQUAL, 2, 1)?;
+            self.apply(OP_VERIFY, 1, 0)?;
+        }
+        self.apply(OP_NUMEQUAL, 2, 1)
+    }
+
     /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
     pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<(), String> {
         let Expression::Builtin { args, .. } = pairing else {

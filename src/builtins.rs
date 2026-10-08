@@ -23,6 +23,8 @@ pub enum Lowering {
     /// Push each (G1, G2) array element field by field, then the pair count
     /// and the curve.
     Pairing,
+    /// Count valid signatures with CHECKSIGADD and compare with the optional threshold.
+    Multisig,
 }
 
 const fn builtin(
@@ -81,6 +83,49 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[OP_DIGEST],
     ),
     builtin("sha256", &[("data", "bytes")], "bytes32", &[OP_SHA256]),
+    builtin("hash256", &[("data", "bytes")], "bytes32", &[OP_HASH256]),
+    builtin("hash160", &[("data", "bytes")], "bytes20", &[OP_HASH160]),
+    builtin(
+        "ripemd160",
+        &[("data", "bytes")],
+        "bytes20",
+        &[OP_RIPEMD160],
+    ),
+    builtin(
+        "checkSig",
+        &[("signature", "signature"), ("pubkey", "bytes")],
+        "bool",
+        &[OP_CHECKSIG],
+    ),
+    builtin(
+        "checkSigFromStack",
+        &[
+            ("signature", "signature"),
+            ("pubkey", "bytes"),
+            ("message", "bytes"),
+        ],
+        "bool",
+        &[OP_SWAP, OP_CHECKSIGFROMSTACK],
+    ),
+    verify(
+        "checkSigFromStackVerify",
+        &[
+            ("signature", "signature"),
+            ("pubkey", "bytes"),
+            ("message", "bytes"),
+        ],
+        &[OP_SWAP, OP_CHECKSIGFROMSTACK, OP_VERIFY],
+    ),
+    Builtin {
+        name: "checkMultisig",
+        params: &[
+            ("pubkeys", "bytes[]"),
+            ("sigs", "signature[]"),
+            ("threshold", "int"),
+        ],
+        result: Some("bool"),
+        lowering: Lowering::Multisig,
+    },
     builtin(
         "sha256Initialize",
         &[("data", "bytes")],
@@ -150,6 +195,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
 impl Builtin {
     /// Source form for diagnostics, such as `substr(data, offset, size)`.
     pub(crate) fn signature(&self) -> String {
+        if matches!(self.lowering, Lowering::Multisig) {
+            return "checkMultisig([pubkeys], [sigs], threshold?)".to_string();
+        }
         let params: Vec<&str> = self.params.iter().map(|(name, _)| *name).collect();
         format!("{}({})", self.name, params.join(", "))
     }

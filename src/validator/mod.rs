@@ -1595,9 +1595,8 @@ fn validate_binding_expression(
             let (name, operands) = registered_builtin.unwrap();
             let params = crate::typechecker::builtins::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
-            assert_eq!(
-                operands.len(),
-                params.len(),
+            assert!(
+                operands.len() == params.len() || name == "checkMultisig" && operands.len() == 2,
                 "{name}: operands() and its signature disagree on arity"
             );
             // Every `[]` operand takes the length of the first one.
@@ -1620,6 +1619,20 @@ fn validate_binding_expression(
                 // A hex literal carries its own width, so 32 bytes need no cast.
                 let literal_bytes32 = expected == ArkType::Bytes32
                     && matches!(operand, Expression::Literal(value) if value.starts_with("0x") && value.len() == 66);
+                if let (Expression::ArrayLiteral(elements), ArkType::Array(element, _)) =
+                    (*operand, &expected)
+                {
+                    for value in elements {
+                        validate_operand(
+                            value,
+                            Some(*element.clone()),
+                            name,
+                            function_name,
+                            scopes,
+                            issues,
+                        );
+                    }
+                }
                 if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
                     issues.push(ValidationIssue::error(format!(
                         "function '{function_name}': {name} operand has type '{}', expected '{}'",
