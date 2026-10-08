@@ -227,6 +227,11 @@ pub(crate) const BUILTINS: &[Builtin] = &[
 ];
 
 impl Builtin {
+    /// Whether a call with `count` arguments matches; multisig's threshold is optional.
+    pub(crate) fn accepts_arity(&self, count: usize) -> bool {
+        count == self.params.len() || matches!(self.lowering, Lowering::Multisig) && count == 2
+    }
+
     /// Source form for diagnostics, such as `substr(data, offset, size)`.
     pub(crate) fn signature(&self) -> String {
         if matches!(self.lowering, Lowering::Multisig) {

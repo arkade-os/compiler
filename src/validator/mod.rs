@@ -1410,7 +1410,9 @@ fn validate_binding_expression(
             let params = crate::typechecker::builtins::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
             assert!(
-                operands.len() == params.len() || name == "checkMultisig" && operands.len() == 2,
+                crate::builtins::find(name).map_or(operands.len() == params.len(), |builtin| {
+                    builtin.accepts_arity(operands.len())
+                }),
                 "{name}: operands() and its signature disagree on arity"
             );
             // Every `[]` operand takes the length of the first one.

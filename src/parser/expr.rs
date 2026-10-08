@@ -378,9 +378,7 @@ fn parse_builtin_call(
         .skip(1)
         .map(parse_general_expression)
         .collect::<Result<_, _>>()?;
-    let optional_threshold =
-        matches!(builtin.lowering, crate::builtins::Lowering::Multisig) && args.len() == 2;
-    if args.len() != builtin.params.len() && !optional_threshold {
+    if !builtin.accepts_arity(args.len()) {
         return Err(format!(
             "malformed reserved function call `{}(...)`; expected {}",
             builtin.name,
