@@ -931,10 +931,15 @@ impl Expression {
         })
     }
 
-    /// Spell an operand as written, for diagnostics.
+    /// Spell an operand for diagnostics, using canonical names for aliases.
     pub(crate) fn source_text(&self) -> String {
         match &self.kind {
             ExprKind::Literal(value) => value.clone(),
+            ExprKind::This(property) => format!("this.{}", property.name()),
+            ExprKind::TxIntrospection { property } => format!("tx.{}", property.name()),
+            ExprKind::InputIntrospection { index, property } => {
+                format!("tx.inputs[{}].{}", index.source_text(), property.name())
+            }
             ExprKind::BinaryOp { left, op, right } => {
                 format!("{} {op} {}", left.source_text(), right.source_text())
             }

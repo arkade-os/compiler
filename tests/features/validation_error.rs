@@ -488,6 +488,34 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
 }
 
 #[test]
+fn introspection_diagnostics_name_normalized_operands() {
+    for (expression, expected) in [
+        (
+            "tx.assetGroups.has(id, this.activeBytecode)",
+            "gidx operand 'tx.inputs[this.activeInputIndex].scriptPubKey' must be int",
+        ),
+        (
+            "checkSig(values[this.activeInputIndex], values[0])",
+            "signature 'values[this.activeInputIndex]' has type 'bytes'",
+        ),
+        (
+            "checkSig(values[this.expiry], values[0])",
+            "signature 'values[this.expiry]' has type 'bytes'",
+        ),
+        (
+            "checkSig(values[tx.time], values[0])",
+            "signature 'values[tx.locktime]' has type 'bytes'",
+        ),
+    ] {
+        let source = format!(
+            "contract C(bytes32 id, bytes[1] values) {{ function spend() {{ require({expression}); }} }}"
+        );
+        let error = compile(&source).unwrap_err().to_string();
+        assert!(error.contains(expected), "{expression}: {error}");
+    }
+}
+
+#[test]
 fn expression_diagnostics_point_at_the_expression() {
     for (body, expected) in [
         ("let x = n / 0; require(x == n);", "0"),
