@@ -431,15 +431,27 @@ pub fn validate_arkd_rules(
             TapItem::Older { value } if value == "serverExitDelay" => {}
             // arkd only accepts seconds CSV, encoded at compile time.
             TapItem::Older { value } => {
-                let Ok(n) = value.parse::<i64>() else {
+                let digits = value.strip_prefix('-').unwrap_or(value);
+                if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
                     return Err(format!(
                         "tapscript `{}`: older(`{value}`) takes a literal, constant, or serverExitDelay",
                         ts.name
                     ));
-                };
-                if n <= 0 || n % 512 != 0 || n / 512 > 0xffff {
+                }
+                let n = value.parse::<i64>().unwrap_or(if digits == value {
+                    i64::MAX
+                } else {
+                    i64::MIN
+                });
+                if n > 0xffff * 512 {
                     return Err(format!(
-                        "tapscript `{}`: older({value}) must be 512..33553920 seconds, a multiple of 512",
+                        "tapscript `{}`: older({value}) exceeds the 33553920-second maximum (65535 * 512)",
+                        ts.name
+                    ));
+                }
+                if n <= 0 || n % 512 != 0 {
+                    return Err(format!(
+                        "tapscript `{}`: older({value}) must be a positive multiple of 512 seconds",
                         ts.name
                     ));
                 }
@@ -1103,13 +1115,23 @@ mod tests {
     }
 
     #[test]
-    fn older_rejects_params_and_non_seconds() {
+    fn older_validates_seconds_operands() {
         for (value, expected) in [
-            ("owner", "takes a literal, constant, or serverExitDelay"),
-            ("0", "multiple of 512"),
-            ("-512", "multiple of 512"),
-            ("144", "multiple of 512"),
-            ("33554432", "multiple of 512"),
+            (
+                "owner",
+                Some("takes a literal, constant, or serverExitDelay"),
+            ),
+            ("0", Some("positive multiple of 512")),
+            ("-512", Some("positive multiple of 512")),
+            ("-99999999999999999999", Some("positive multiple of 512")),
+            ("144", Some("positive multiple of 512")),
+            ("33554432", Some("exceeds the 33553920-second maximum")),
+            (
+                "99999999999999999999",
+                Some("exceeds the 33553920-second maximum"),
+            ),
+            ("512", None),
+            ("33553920", None),
         ] {
             let leaf = NamedTapscript {
                 name: "exit".into(),
@@ -1122,8 +1144,12 @@ mod tests {
                 ],
             };
             let c = contract_with(&[], vec![leaf.clone()]);
-            let err = validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap_err();
-            assert!(err.contains(expected), "{value}: {err}");
+            match (validate_arkd_rules(&c, &leaf, &closure_of(&leaf)), expected) {
+                (Err(err), Some(expected)) => assert!(err.contains(expected), "{value}: {err}"),
+                (result, expected) => {
+                    assert!(result.is_ok() && expected.is_none(), "{value}: {result:?}")
+                }
+            }
         }
     }
 
