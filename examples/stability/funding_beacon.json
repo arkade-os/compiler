@@ -1,0 +1,482 @@
+{
+  "contractName": "FundingBeacon",
+  "constructorInputs": [
+    {
+      "name": "yieldTicker_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "yieldTicker_gidx",
+      "type": "int"
+    },
+    {
+      "name": "yieldClock_txid",
+      "type": "bytes32"
+    },
+    {
+      "name": "yieldClock_gidx",
+      "type": "int"
+    },
+    {
+      "name": "oraclePk",
+      "type": "pubkey"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "update",
+      "functionInputs": [
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "newIndex",
+          "type": "int"
+        },
+        {
+          "name": "newBlockHeight",
+          "type": "int"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newIndex",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "newBlockHeight",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIG",
+        "0",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "0",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<newIndex>",
+        "OP_GREATERTHANOREQUAL",
+        "<currentIndex>",
+        "<newBlockHeight>",
+        "OP_GREATERTHANOREQUAL",
+        "<currentHeight>",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:FundingBeacon(<yieldTicker>,<yieldClock>,<oraclePk>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<newIndex>",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<newBlockHeight>",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "update",
+      "functionInputs": [
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "newIndex",
+          "type": "int"
+        },
+        {
+          "name": "newBlockHeight",
+          "type": "int"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "1-of-1 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "passthrough",
+      "functionInputs": [],
+      "witnessSchema": [
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:FundingBeacon(<yieldTicker>,<yieldClock>,<oraclePk>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "0",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentIndex>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "0",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentHeight>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "passthrough",
+      "functionInputs": [
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "1-of-1 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "migrate",
+      "functionInputs": [
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "newOraclePk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newOraclePk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "assetCheck"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIG",
+        "0",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "0",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTINASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:FundingBeacon(<yieldTicker>,<yieldClock>,<newOraclePk>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "<yieldTicker_txid>",
+        "<yieldTicker_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentIndex>",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "0",
+        "<yieldClock_txid>",
+        "<yieldClock_gidx>",
+        "OP_INSPECTOUTASSETLOOKUP",
+        "OP_DUP",
+        "OP_1NEGATE",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_VERIFY",
+        "<currentHeight>",
+        "OP_EQUAL",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "migrate",
+      "functionInputs": [
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "newOraclePk",
+          "type": "pubkey"
+        },
+        {
+          "name": "oraclePkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newOraclePkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "oraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newOraclePkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<oraclePk>",
+        "<oraclePkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newOraclePk>",
+        "<newOraclePkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract FundingBeacon(\n  bytes32 yieldTicker,\n  bytes32 yieldClock,\n  pubkey  oraclePk,\n  int     exit\n) {\n\n  function update(signature oracleSig, int newIndex, int newBlockHeight) {\n    require(checkSig(oracleSig, oraclePk), \"invalid oracle signature\");\n\n    int currentIndex  = tx.inputs[0].assets.lookup(yieldTicker);\n    int currentHeight = tx.inputs[0].assets.lookup(yieldClock);\n\n    require(newIndex >= currentIndex, \"index must not regress\");\n    require(newBlockHeight >= currentHeight, \"block height must not regress\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new FundingBeacon(yieldTicker, yieldClock, oraclePk, exit),\n      \"beacon script must survive\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(yieldTicker) == newIndex,\n      \"index not updated correctly\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(yieldClock) == newBlockHeight,\n      \"block height not updated correctly\"\n    );\n  }\n\n  function passthrough() {\n    require(\n      tx.outputs[0].scriptPubKey == new FundingBeacon(yieldTicker, yieldClock, oraclePk, exit),\n      \"beacon script must survive\"\n    );\n\n    int currentIndex = tx.inputs[0].assets.lookup(yieldTicker);\n    require(\n      tx.outputs[0].assets.lookup(yieldTicker) >= currentIndex,\n      \"index asset must survive\"\n    );\n\n    int currentHeight = tx.inputs[0].assets.lookup(yieldClock);\n    require(\n      tx.outputs[0].assets.lookup(yieldClock) >= currentHeight,\n      \"clock asset must survive\"\n    );\n  }\n\n  function migrate(signature oracleSig, pubkey newOraclePk) {\n    require(checkSig(oracleSig, oraclePk), \"invalid oracle signature\");\n\n    int currentIndex  = tx.inputs[0].assets.lookup(yieldTicker);\n    int currentHeight = tx.inputs[0].assets.lookup(yieldClock);\n\n    require(\n      tx.outputs[0].scriptPubKey == new FundingBeacon(yieldTicker, yieldClock, newOraclePk, exit),\n      \"invalid new beacon\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(yieldTicker) == currentIndex,\n      \"index must be preserved\"\n    );\n    require(\n      tx.outputs[0].assets.lookup(yieldClock) == currentHeight,\n      \"block height must be preserved\"\n    );\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-05-15T17:19:01.384798613+00:00",
+  "warnings": [
+    "warning[type]: fn update: comparison '>=' mixes uint64le ('int') with scriptnum ('uint64le') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn update: comparison '>=' mixes uint64le ('int') with scriptnum ('uint64le') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn update: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn update: comparison '==' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control"
+  ]
+}
