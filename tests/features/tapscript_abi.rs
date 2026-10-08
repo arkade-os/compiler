@@ -1,5 +1,7 @@
 use arkade_compiler::compile;
 
+use crate::common::group;
+
 #[test]
 fn htlc_emits_grouped_leaves_with_arkade_covenants() {
     let src = r#"
@@ -115,23 +117,31 @@ contract Demo(pubkey owner) {
     assert_eq!(user_supplied, vec!["ownerSig"]);
 }
 
-/// Clients build the taproot tree from artifact order, so several standalone
-/// leaves must arrive in the order they were declared — not sorted. A 2-of-3
-/// exit is written as its pairs, because arkd recognizes only N-of-N closures.
 #[test]
 fn standalone_leaves_keep_declaration_order() {
     let src = r#"
 contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
-    function spend(signature aSig) {
-        require(checkSig(aSig, a));
-    }
     function exitZulu(signature bSig, signature cSig) tapscript {
         require(older(exit));
         require(checkMultisig([b, c], [bSig, cSig], 2));
     }
+    function spend(signature aSig) {
+        require(checkSig(aSig, a));
+    }
+    function boundZulu(signature aSig) tapscript {
+        require(older(exit));
+        require(checkSig(aSig, tweak(a, spend)));
+    }
     function exitAlpha(signature aSig, signature bSig) tapscript {
         require(older(exit));
         require(checkMultisig([a, b], [aSig, bSig], 2));
+    }
+    function refund(signature cSig) {
+        require(checkSig(cSig, c));
+    }
+    function boundAlpha(signature aSig) tapscript {
+        require(older(exit));
+        require(checkSig(aSig, tweak(a, spend)));
     }
     function exitMike(signature aSig, signature cSig) tapscript {
         require(older(exit));
@@ -143,7 +153,90 @@ contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
     let names: Vec<_> = out.functions.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(
         names,
-        ["spend", "exitZulu", "exitAlpha", "exitMike"],
+        ["spend", "refund", "exitZulu", "exitAlpha", "exitMike"],
         "covenant groups first, then standalone leaves as written"
     );
+
+    let spend = group(&out, "spend");
+    assert!(spend.arkade.is_some());
+    assert_eq!(
+        spend
+            .leaves
+            .iter()
+            .map(|leaf| leaf.name.as_str())
+            .collect::<Vec<_>>(),
+        ["spend", "boundZulu", "boundAlpha"]
+    );
+    assert!(spend.leaves[0]
+        .asm
+        .contains(&"<EMULATOR_KEY:spend>".to_string()));
+    for leaf in &spend.leaves[1..] {
+        assert!(leaf.asm.contains(&"<TWEAK:a:spend>".to_string()));
+    }
+    assert!(group(&out, "refund").arkade.is_some());
+
+    for (name, keys, witnesses) in [
+        ("exitZulu", ["<b>", "<c>"], ["bSig", "cSig"]),
+        ("exitAlpha", ["<a>", "<b>"], ["aSig", "bSig"]),
+        ("exitMike", ["<a>", "<c>"], ["aSig", "cSig"]),
+    ] {
+        let standalone = group(&out, name);
+        assert!(standalone.arkade.is_none());
+        assert_eq!(standalone.leaves.len(), 1);
+        let leaf = &standalone.leaves[0];
+        assert_eq!(leaf.name, name);
+        assert_eq!(
+            leaf.asm,
+            [
+                "<exit>",
+                "OP_CHECKSEQUENCEVERIFY",
+                "OP_DROP",
+                keys[0],
+                "OP_CHECKSIGVERIFY",
+                keys[1],
+                "OP_CHECKSIG"
+            ]
+        );
+        assert_eq!(
+            leaf.witness
+                .iter()
+                .map(|w| w.name.as_str())
+                .collect::<Vec<_>>(),
+            witnesses
+        );
+        assert!(leaf
+            .witness
+            .iter()
+            .all(|w| !w.injected && w.elem_type == "signature"));
+    }
+}
+
+#[test]
+fn standalone_only_leaves_keep_declaration_order() {
+    let out = compile(
+        r#"
+contract Exits(pubkey owner) {
+    function zulu(signature sig) tapscript {
+        require(older(serverExitDelay));
+        require(checkSig(sig, owner));
+    }
+    function alpha(signature sig) tapscript {
+        require(older(serverExitDelay));
+        require(checkSig(sig, owner));
+    }
+}
+"#,
+    )
+    .expect("compile");
+    assert_eq!(
+        out.functions
+            .iter()
+            .map(|g| g.name.as_str())
+            .collect::<Vec<_>>(),
+        ["zulu", "alpha"]
+    );
+    assert!(out
+        .functions
+        .iter()
+        .all(|g| g.arkade.is_none() && g.leaves.len() == 1));
 }
