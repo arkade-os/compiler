@@ -235,6 +235,20 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
                 )));
             }
         }
+        // A literal or constant without blocks(n)/seconds(n) is pushed raw.
+        for item in &ts.items {
+            let (call, value, raw) = match item {
+                TapItem::Older { value, unit: None } => ("older", value, "BIP68 sequence"),
+                TapItem::After { value, unit: None } => ("after", value, "nLockTime"),
+                _ => continue,
+            };
+            if value.parse::<i64>().is_ok() {
+                issues.push(ValidationIssue::warning(format!(
+                    "tapscript '{}': {call}({value}) is a raw {raw}; write blocks(n) or seconds(n) to state its unit",
+                    ts.name
+                )));
+            }
+        }
     }
 
     check_shadowing(contract, &mut issues);
@@ -464,7 +478,7 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         for item in &tapscript.items {
             match item {
                 TapItem::Hash { preimage, hash, .. } => used.extend([preimage, hash]),
-                TapItem::Older { value } | TapItem::After { value } => {
+                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
                     used.insert(value);
                 }
                 TapItem::Sig { keys, sigs, .. } => {

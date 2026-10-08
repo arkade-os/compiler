@@ -3,7 +3,7 @@
 
 use crate::models::{
     AbiFunctionGroup, AbiLeaf, ArkadeCovenant, Contract, HashFn, KeyExpr, NamedTapscript,
-    Parameter, TapItem, WitnessElement,
+    Parameter, TapItem, TimeUnit, WitnessElement,
 };
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
@@ -39,7 +39,7 @@ impl ClosureClass {
 pub struct Closure {
     pub class: ClosureClass,
     pub condition: Option<(HashFn, String)>, // (hashFn, hash value name)
-    pub timelock: Option<String>,            // CSV or CLTV bound (literal or param)
+    pub timelock: Option<(String, Option<TimeUnit>)>, // CSV or CLTV bound and its unit
     pub keys: Vec<KeyExpr>,
     pub threshold: Option<u16>,
 }
@@ -50,7 +50,7 @@ pub struct Closure {
 /// combination is an error (§4.4, §5.2).
 pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     let mut condition: Option<(HashFn, String)> = None;
-    let mut timelock: Option<String> = None;
+    let mut timelock: Option<(String, Option<TimeUnit>)> = None;
     let mut is_csv = false; // older() → CSV; after() → CLTV
     let mut multisig: Option<(Vec<KeyExpr>, Option<u16>)> = None;
 
@@ -81,7 +81,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                 }
                 condition = Some((hash_fn.clone(), hash.clone()));
             }
-            TapItem::Older { value } | TapItem::After { value } => {
+            TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 if multisig.is_some() {
                     return Err(format!(
                         "tapscript `{}`: timelock must come before the multisig (out of order)",
@@ -94,7 +94,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                         ts.name
                     ));
                 }
-                timelock = Some(value.clone());
+                timelock = Some((value.clone(), *unit));
                 is_csv = matches!(item, TapItem::Older { .. });
             }
             TapItem::Sig {
@@ -428,46 +428,72 @@ pub fn validate_arkd_rules(
                     ));
                 }
             }
-            TapItem::Older { value } if value == "serverExitDelay" => {}
-            // arkd only accepts seconds CSV, encoded at compile time.
-            TapItem::Older { value } => {
-                let digits = value.strip_prefix('-').unwrap_or(value);
-                if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                    return Err(format!(
-                        "tapscript `{}`: older(`{value}`) takes a literal, constant, or serverExitDelay",
-                        ts.name
-                    ));
+            TapItem::Older { value, unit } | TapItem::After { value, unit } => {
+                let csv = matches!(item, TapItem::Older { .. });
+                let call = if csv { "older" } else { "after" };
+                let operand = match unit {
+                    Some(TimeUnit::Blocks) => format!("blocks({value})"),
+                    Some(TimeUnit::Seconds) => format!("seconds({value})"),
+                    None => value.clone(),
+                };
+                if csv && value == "serverExitDelay" {
+                    if unit.is_some() {
+                        return Err(format!(
+                            "tapscript `{}`: serverExitDelay has its own unit; write older(serverExitDelay)",
+                            ts.name
+                        ));
+                    }
+                    continue;
                 }
-                let n = value.parse::<i64>().unwrap_or(if digits == value {
-                    i64::MAX
-                } else {
-                    i64::MIN
-                });
-                if n > 0xffff * 512 {
+                let Some(n) = timelock_number(value) else {
+                    if unit.is_some() {
+                        return Err(format!(
+                            "tapscript `{}`: {call}({operand}) takes a literal or constant; pass `{value}` without a unit as the raw value",
+                            ts.name
+                        ));
+                    }
+                    if !name_declared(value) {
+                        return Err(format!(
+                            "tapscript `{}`: timelock `{value}` is not a literal, declared input, or constructor parameter",
+                            ts.name
+                        ));
+                    }
+                    if let Some(t) = name_type(value).filter(|t| *t != ArkType::Int) {
+                        return Err(format!(
+                            "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
+                            ts.name,
+                            t.as_str()
+                        ));
+                    }
+                    continue;
+                };
+                const MAX: i128 = u32::MAX as i128;
+                let (valid, expected) = match (csv, unit) {
+                    (true, None) => (
+                        (0..=MAX).contains(&n) && n & (1 << 31) == 0,
+                        "a BIP68 sequence in 0..=4294967295 without the disable flag (bit 31)",
+                    ),
+                    (true, Some(TimeUnit::Blocks)) => {
+                        ((1..=0xffff).contains(&n), "1..=65535 blocks")
+                    }
+                    (true, Some(TimeUnit::Seconds)) => (
+                        (1..=0xffff * 512).contains(&n) && n % 512 == 0,
+                        "a multiple of 512 in 512..=33553920 seconds",
+                    ),
+                    (false, None) => ((0..=MAX).contains(&n), "a locktime in 0..=4294967295"),
+                    (false, Some(TimeUnit::Blocks)) => (
+                        (1..500_000_000).contains(&n),
+                        "a block height in 1..=499999999",
+                    ),
+                    (false, Some(TimeUnit::Seconds)) => (
+                        (500_000_000..=MAX).contains(&n),
+                        "a Unix timestamp in 500000000..=4294967295",
+                    ),
+                };
+                if !valid {
                     return Err(format!(
-                        "tapscript `{}`: older({value}) exceeds the 33553920-second maximum (65535 * 512)",
+                        "tapscript `{}`: {call}({operand}) must be {expected}",
                         ts.name
-                    ));
-                }
-                if n <= 0 || n % 512 != 0 {
-                    return Err(format!(
-                        "tapscript `{}`: older({value}) must be a positive multiple of 512 seconds",
-                        ts.name
-                    ));
-                }
-            }
-            TapItem::After { value } => {
-                if value.parse::<u64>().is_err() && !name_declared(value) {
-                    return Err(format!(
-                        "tapscript `{}`: timelock `{value}` is not a literal, declared input, or constructor parameter",
-                        ts.name
-                    ));
-                }
-                if let Some(t) = name_type(value).filter(|t| *t != ArkType::Int) {
-                    return Err(format!(
-                        "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
-                        ts.name,
-                        t.as_str()
                     ));
                 }
             }
@@ -502,20 +528,31 @@ pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
     }
 }
 
-/// Emit a timelock operand: `serverExitDelay` as arkd's unilateral exit delay,
-/// a CSV literal (seconds) as its BIP68 time-based sequence, a CLTV literal
-/// as-is, else a `<param>` placeholder.
-fn timelock_operand(value: &str, csv: bool) -> String {
-    if value == "serverExitDelay" {
-        "<SERVER_EXIT_DELAY>".to_string()
-    } else if let Ok(n) = value.parse::<u64>() {
-        if csv {
-            ((n / 512) | (1 << 22)).to_string()
-        } else {
-            n.to_string()
-        }
+/// The value of a numeric timelock operand, or `None` for a name. Out-of-range
+/// digit strings saturate so range checks reject them.
+fn timelock_number(value: &str) -> Option<i128> {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(value.parse().unwrap_or(if digits == value {
+        i128::MAX
     } else {
-        format!("<{value}>")
+        i128::MIN
+    }))
+}
+
+/// Emit a timelock operand: `serverExitDelay` as arkd's unilateral exit delay,
+/// `seconds(n)` in a CSV as its BIP68 time-based sequence, any other number
+/// as-is, else a `<param>` placeholder pushing the raw value.
+fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> String {
+    if value == "serverExitDelay" {
+        return "<SERVER_EXIT_DELAY>".to_string();
+    }
+    match timelock_number(value) {
+        Some(n) if csv && unit == Some(TimeUnit::Seconds) => ((n / 512) | (1 << 22)).to_string(),
+        Some(n) => n.to_string(),
+        None => format!("<{value}>"),
     }
 }
 
@@ -555,9 +592,9 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
     }
 
     // Timelock prefix.
-    if let Some(tl) = &c.timelock {
+    if let Some((value, unit)) = &c.timelock {
         let csv = c.class.is_exit();
-        asm.push(timelock_operand(tl, csv));
+        asm.push(timelock_operand(value, *unit, csv));
         let op = if csv {
             OP_CHECKSEQUENCEVERIFY
         } else {
@@ -785,6 +822,7 @@ mod tests {
         let c = assemble_closure(&ts(vec![
             TapItem::Older {
                 value: "512".into(),
+                unit: None,
             },
             TapItem::Sig {
                 keys: vec![ident("owner")],
@@ -802,6 +840,7 @@ mod tests {
         let c = assemble_closure(&ts(vec![
             TapItem::After {
                 value: "cancelTime".into(),
+                unit: None,
             },
             TapItem::Sig {
                 keys: vec![ident("backup"), ident("server")],
@@ -821,7 +860,10 @@ mod tests {
                 preimage: "p".into(),
                 hash: "h".into(),
             },
-            TapItem::After { value: "t".into() },
+            TapItem::After {
+                value: "t".into(),
+                unit: None,
+            },
             TapItem::Sig {
                 keys: vec![ident("server")],
                 sigs: vec!["serverSig".into()],
@@ -837,7 +879,11 @@ mod tests {
 
     #[test]
     fn missing_multisig_is_rejected() {
-        let err = assemble_closure(&ts(vec![TapItem::Older { value: "x".into() }])).unwrap_err();
+        let err = assemble_closure(&ts(vec![TapItem::Older {
+            value: "x".into(),
+            unit: None,
+        }]))
+        .unwrap_err();
         assert!(err.contains("multisig"), "got: {err}");
     }
 
@@ -1090,6 +1136,7 @@ mod tests {
             items: vec![
                 TapItem::Older {
                     value: "512".into(),
+                    unit: None,
                 },
                 sig(vec![ident("owner")]),
             ],
@@ -1115,33 +1162,95 @@ mod tests {
     }
 
     #[test]
-    fn older_validates_seconds_operands() {
-        for (value, expected) in [
+    fn timelock_operands_are_range_checked() {
+        use TimeUnit::{Blocks, Seconds};
+        for (csv, value, unit, expected) in [
+            (true, "144", None, None),
+            (true, "4194305", None, None),
+            (true, "2147483648", None, Some("without the disable flag")),
+            (true, "-1", None, Some("BIP68 sequence in 0..=4294967295")),
+            (true, "144", Some(Blocks), None),
+            (true, "65535", Some(Blocks), None),
+            (true, "0", Some(Blocks), Some("1..=65535 blocks")),
+            (true, "65536", Some(Blocks), Some("1..=65535 blocks")),
+            (true, "512", Some(Seconds), None),
+            (true, "33553920", Some(Seconds), None),
             (
+                true,
+                "144",
+                Some(Seconds),
+                Some("multiple of 512 in 512..=33553920"),
+            ),
+            (
+                true,
+                "33554432",
+                Some(Seconds),
+                Some("multiple of 512 in 512..=33553920"),
+            ),
+            (
+                true,
+                "-512",
+                Some(Seconds),
+                Some("multiple of 512 in 512..=33553920"),
+            ),
+            (
+                true,
+                "99999999999999999999999999999999999999999",
+                Some(Seconds),
+                Some("33553920"),
+            ),
+            (true, "serverExitDelay", None, None),
+            (
+                true,
+                "serverExitDelay",
+                Some(Seconds),
+                Some("has its own unit"),
+            ),
+            (
+                true,
                 "owner",
-                Some("takes a literal, constant, or serverExitDelay"),
+                Some(Blocks),
+                Some("takes a literal or constant"),
             ),
-            ("0", Some("positive multiple of 512")),
-            ("-512", Some("positive multiple of 512")),
-            ("-99999999999999999999", Some("positive multiple of 512")),
-            ("144", Some("positive multiple of 512")),
-            ("33554432", Some("exceeds the 33553920-second maximum")),
+            (true, "typo", None, Some("is not a literal")),
+            (false, "4294967295", None, None),
             (
-                "99999999999999999999",
-                Some("exceeds the 33553920-second maximum"),
+                false,
+                "4294967296",
+                None,
+                Some("locktime in 0..=4294967295"),
             ),
-            ("512", None),
-            ("33553920", None),
+            (false, "800000", Some(Blocks), None),
+            (
+                false,
+                "500000000",
+                Some(Blocks),
+                Some("block height in 1..=499999999"),
+            ),
+            (false, "1700000000", Some(Seconds), None),
+            (
+                false,
+                "800000",
+                Some(Seconds),
+                Some("Unix timestamp in 500000000..=4294967295"),
+            ),
         ] {
+            let value = value.to_string();
+            let timelock = if csv {
+                TapItem::Older {
+                    value: value.clone(),
+                    unit,
+                }
+            } else {
+                TapItem::After {
+                    value: value.clone(),
+                    unit,
+                }
+            };
             let leaf = NamedTapscript {
                 name: "exit".into(),
-                inputs: sig_params(1),
-                items: vec![
-                    TapItem::Older {
-                        value: value.into(),
-                    },
-                    sig(vec![ident("owner")]),
-                ],
+                inputs: sig_params(2),
+                items: vec![timelock, sig(vec![ident("server"), ident("owner")])],
             };
             let c = contract_with(&[], vec![leaf.clone()]);
             match (validate_arkd_rules(&c, &leaf, &closure_of(&leaf)), expected) {
@@ -1151,6 +1260,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn only_csv_seconds_are_encoded() {
+        use TimeUnit::{Blocks, Seconds};
+        assert_eq!(timelock_operand("1024", Some(Seconds), true), "4194306");
+        assert_eq!(timelock_operand("144", Some(Blocks), true), "144");
+        assert_eq!(timelock_operand("144", None, true), "144");
+        assert_eq!(timelock_operand("exitDelay", None, true), "<exitDelay>");
+        assert_eq!(
+            timelock_operand("serverExitDelay", None, true),
+            "<SERVER_EXIT_DELAY>"
+        );
+        assert_eq!(
+            timelock_operand("1700000000", Some(Seconds), false),
+            "1700000000"
+        );
     }
 
     #[test]
@@ -1206,6 +1332,7 @@ mod tests {
             items: vec![
                 TapItem::After {
                     value: "typoDelay".into(),
+                    unit: None,
                 },
                 sig(vec![ident("owner")]),
             ],
@@ -1315,6 +1442,7 @@ mod tests {
             items: vec![
                 TapItem::After {
                     value: "refundTime".into(),
+                    unit: None,
                 },
                 sig(vec![ident("server"), ident("emulator")]),
             ],
@@ -1346,6 +1474,7 @@ mod tests {
             items: vec![
                 TapItem::Older {
                     value: "512".into(),
+                    unit: Some(TimeUnit::Seconds),
                 },
                 TapItem::Sig {
                     keys: vec![ident("sender")],

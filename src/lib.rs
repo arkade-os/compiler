@@ -58,13 +58,13 @@ impl Default for CompileOptions {
 /// use arkade_compiler::compile;
 ///
 /// let source_code = r#"
-/// contract Example(pubkey owner) {
+/// contract Example(pubkey owner, int exit) {
 ///     function spend(signature ownerSig) {
 ///         require(checkSig(ownerSig, owner));
 ///     }
 ///
 ///     function unilateral(signature ownerSig) tapscript {
-///         require(older(serverExitDelay));
+///         require(older(exit));
 ///         require(checkSig(ownerSig, owner));
 ///     }
 /// }"#;

@@ -334,11 +334,11 @@ contract C(Point point) {
 fn constructor_struct_fields_are_available_to_tapscripts() {
     let output = compile(
         r#"
-struct Owner { pubkey key; int lock; }
+struct Owner { pubkey key; int exit; }
 contract C(Owner owner) {
-    function exit(signature serverSig, signature sig) tapscript {
-        require(after(owner.lock));
-        require(checkMultisig([server, owner.key], [serverSig, sig], 2));
+    function exit(signature sig) tapscript {
+        require(older(owner.exit));
+        require(checkSig(sig, owner.key));
     }
 }
 "#,
@@ -346,7 +346,7 @@ contract C(Owner owner) {
     .expect("scalar constructor fields in tapscript");
 
     let asm = &output.functions[0].leaves[0].asm;
-    assert!(asm.contains(&"<owner.lock>".to_string()));
+    assert!(asm.contains(&"<owner.exit>".to_string()));
     assert!(asm.contains(&"<owner.key>".to_string()));
     assert!(asm.contains(&OP_CHECKSIG.to_string()));
 }
@@ -359,7 +359,7 @@ struct Delay { int blocks; }
 struct Policy { Delay exit; }
 contract C(Policy policy, pubkey owner) {
     function exit(signature sig) tapscript {
-        require(after(policy.exit));
+        require(older(policy.exit));
         require(checkSig(sig, owner));
     }
 }

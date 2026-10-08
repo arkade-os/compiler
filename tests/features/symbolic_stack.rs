@@ -391,19 +391,19 @@ contract RuntimeIndex() {
 fn constructor_parameters_are_filtered_per_spending_path() {
     let output = compile(
         r#"
-contract Paths(int unused, int left, int right, pubkey exitKey) {
+contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
     function first(int value) { require(value == left); }
     function second(int value) { require(value == right); }
     function neither() { require(true); }
     function exit(signature ownerSig) tapscript {
-        require(older(serverExitDelay));
+        require(older(delay));
         require(checkSig(ownerSig, exitKey));
     }
 }
 "#,
     )
     .expect("compile");
-    assert_eq!(output.parameters.len(), 4);
+    assert_eq!(output.parameters.len(), 5);
     assert_eq!(output.functions.len(), 4);
     for (name, parameter) in [("first", "left"), ("second", "right")] {
         let group = crate::common::group(&output, name);
@@ -437,7 +437,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey) {
     );
     assert_eq!(
         crate::common::leaf_asm(&output, "exit", "exit"),
-        "<SERVER_EXIT_DELAY> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
+        "<delay> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
     );
 }
 

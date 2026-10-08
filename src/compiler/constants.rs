@@ -31,7 +31,7 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
         }
         for item in &mut tapscript.items {
             match item {
-                TapItem::Older { value } | TapItem::After { value } => {
+                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
                     if let Some(text) = values.get(value.as_str()) {
                         *value = text.clone();
                     }

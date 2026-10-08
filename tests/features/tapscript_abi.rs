@@ -3,7 +3,7 @@ use arkade_compiler::compile;
 #[test]
 fn htlc_emits_grouped_leaves_with_arkade_covenants() {
     let src = r#"
-contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTime) {
+contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTime, int exit) {
     function claim() {
         require(tx.outputs[0].value >= tx.inputs[0].value);
     }
@@ -19,7 +19,7 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
         require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
     }
     function unilateral(signature senderSig) tapscript {
-        require(older(serverExitDelay));
+        require(older(exit));
         require(checkSig(senderSig, sender));
     }
 }

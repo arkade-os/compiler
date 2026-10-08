@@ -492,7 +492,7 @@ fn hash_comparisons_expect_the_digest_width() {
 #[test]
 fn tapscript_timelocks_must_be_int() {
     for (ty, ok) in [("int", true), ("bytes", false), ("bytes32", false)] {
-        let source = format!("contract T(pubkey owner, {ty} delay) {{ function spend() {{ require(delay == delay); }} function exit(signature serverSig, signature sig) tapscript {{ require(after(delay)); require(checkMultisig([server, owner], [serverSig, sig], 2)); }} }}");
+        let source = format!("contract T(pubkey owner, {ty} delay) {{ function spend() {{ require(delay == delay); }} function exit(signature sig) tapscript {{ require(older(delay)); require(checkSig(sig, owner)); }} }}");
         match compile(&source) {
             Ok(_) => assert!(ok, "{ty} timelock accepted"),
             Err(error) => assert!(

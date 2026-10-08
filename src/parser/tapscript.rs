@@ -144,22 +144,58 @@ pub(crate) fn parse_tap_item(
             }
             let arg = inner
                 .next()
-                .ok_or_else(|| format!("{name}() requires one argument"))?
-                .as_str()
-                .to_string();
+                .ok_or_else(|| format!("{name}() requires one argument"))?;
             if inner.next().is_some() {
                 return Err(format!("{name}() requires one argument"));
             }
+            let (value, unit) = parse_time_operand(&name, arg)?;
             if name == "older" {
-                Ok(TapItem::Older { value: arg })
+                Ok(TapItem::Older { value, unit })
             } else {
-                Ok(TapItem::After { value: arg })
+                Ok(TapItem::After { value, unit })
             }
         }
         other => Err(format!(
             "unsupported expression in tapscript require(): {other:?}"
         )),
     }
+}
+
+/// Split a timelock operand into its value and the unit of a `blocks(n)` or
+/// `seconds(n)` wrapper.
+fn parse_time_operand(
+    call: &str,
+    arg: Pair<Rule>,
+) -> Result<(String, Option<crate::models::TimeUnit>), String> {
+    use crate::models::TimeUnit;
+    let text = arg.as_str();
+    let Some(wrapper) = arg
+        .into_inner()
+        .flatten()
+        .find(|p| p.as_rule() == Rule::function_call && p.as_str() == text)
+    else {
+        return Ok((text.to_string(), None));
+    };
+    let mut parts = wrapper.into_inner();
+    let unit_name = parts.next().ok_or("Missing call name")?.as_str();
+    let unit = match unit_name {
+        "blocks" => TimeUnit::Blocks,
+        "seconds" => TimeUnit::Seconds,
+        other => {
+            return Err(format!(
+                "{call}() takes blocks(n), seconds(n), or a value, not `{other}(...)`"
+            ))
+        }
+    };
+    let value = parts
+        .next()
+        .ok_or_else(|| format!("{unit_name}() requires one argument"))?
+        .as_str()
+        .to_string();
+    if parts.next().is_some() {
+        return Err(format!("{unit_name}() requires one argument"));
+    }
+    Ok((value, Some(unit)))
 }
 
 /// Parse `check_threshold_multisig` inner pairs into a Sig item.
@@ -311,7 +347,9 @@ contract Demo(pubkey owner) {
         let c = parse(src);
         assert_eq!(c.tapscripts.len(), 3);
         let exit = c.tapscripts.iter().find(|t| t.name == "exit").unwrap();
-        assert!(matches!(&exit.items[0], TapItem::Older { value } if value == "exitDelay"));
+        assert!(
+            matches!(&exit.items[0], TapItem::Older { value, unit: None } if value == "exitDelay")
+        );
         let direct = c.tapscripts.iter().find(|t| t.name == "direct").unwrap();
         match &direct.items[0] {
             TapItem::Sig { keys, .. } => assert_eq!(
@@ -324,7 +362,9 @@ contract Demo(pubkey owner) {
             other => panic!("expected Sig with tweak key, got {other:?}"),
         }
         let cancel = c.tapscripts.iter().find(|t| t.name == "cancel").unwrap();
-        assert!(matches!(&cancel.items[0], TapItem::After { value } if value == "cancelTime"));
+        assert!(
+            matches!(&cancel.items[0], TapItem::After { value, unit: None } if value == "cancelTime")
+        );
         // Omitted threshold → N-of-N (None).
         match &cancel.items[1] {
             TapItem::Sig { threshold, .. } => assert_eq!(*threshold, None),

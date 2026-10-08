@@ -136,6 +136,7 @@ struct Signer {
 struct Policy {
   Signer primary;
   int[2] limits;
+  int exitDelay;
 }
 
 contract StructVault(Policy policy) {
@@ -150,13 +151,14 @@ contract StructVault(Policy policy) {
 
     Policy local = {
       primary: { key: next.primary.key, weight: total },
-      limits: [next.limits[0], next.limits[1]]
+      limits: [next.limits[0], next.limits[1]],
+      exitDelay: policy.exitDelay
     };
     require(local.primary.weight == total);
   }
 
   function unilateral(signature sig) tapscript {
-    require(older(serverExitDelay));
+    require(older(policy.exitDelay));
     require(checkSig(sig, policy.primary.key));
   }
 }
@@ -391,7 +393,7 @@ Literals work in byte expressions, calls, comparisons, arrays, structs, and cons
 ### Constants
 
 ```solidity
-const int EXIT_DELAY = 1024;
+const int EXIT_DELAY = 144;
 const int HALF_DELAY = EXIT_DELAY / 2;
 const int KEY_COUNT = 2;
 const bool STRICT = HALF_DELAY > 0;
@@ -405,7 +407,7 @@ Constants are immutable, and their names must be distinct from all other binding
 
 ```solidity
 contract Vault(pubkey owner) {
-    const int EXIT_DELAY = 1024;
+    const int EXIT_DELAY = 144;
 
     static function pct(int amount, int bps) int {
         return amount * bps / 10000;
@@ -430,7 +432,7 @@ require(<expr>);
 require(<expr>, "message");
 let x = <expr>;                    // inferred type
 int fee = amount / 100;            // declared type
-Policy p = { primary: {...}, limits: [1, 2] };
+Policy p = { primary: {...}, limits: [1, 2], exitDelay: 10 };
 int[3] scale = [1, 2, 3];
 x = <expr>;                        // reassignment keeps the declared type
 scale[x + 1] = 10;                 // runtime index with bounds checking
@@ -454,7 +456,7 @@ Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 =
 
 **Merkle proofs.** `merkleRoot(leafTag, branchTag, proof, leaf)` returns the `bytes32` root that `OP_MERKLEBRANCHVERIFY` computes with BIP-341 tagged hashes: the leaf is `tagged_hash(leafTag, leaf)`, and each 32-byte sibling in `proof` is combined in sorted order as `tagged_hash(branchTag, min || max)`. An empty `leafTag` (`""`) takes a 32-byte `leaf` as already hashed. Compare the result yourself, e.g. `require(merkleRoot("leaf", "branch", proof, leaf) == root)`; the VM fails the spend when `proof` is not a multiple of 32 bytes, `branchTag` is empty, or a prehashed `leaf` is not exactly 32 bytes.
 
-**Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits a time-based CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts. `older` takes `serverExitDelay` or a literal or constant number of seconds, a positive multiple of 512 up to 33553920, which compiles to its BIP68 sequence: `older(1024)` pushes `4194306`. arkd rejects block-based CSV, so `older` does not take constructor parameters or inputs.
+**Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts. Wrap a literal or constant in `blocks(n)` or `seconds(n)` to state its unit. `older(blocks(144))` pushes `144`, and `older(seconds(1024))` pushes the BIP68 time-based sequence `4194306` (a multiple of 512 seconds, at most 33553920). `after(blocks(n))` takes a block height below 500000000, and `after(seconds(n))` takes a Unix timestamp at or above it. A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime; the compiler warns on a literal or constant without a unit. arkd rejects block-based timelocks unless the server allows them, so arkd exit leaves should use `older(serverExitDelay)`.
 
 In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
 

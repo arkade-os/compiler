@@ -18,7 +18,7 @@ fn project(
 
 #[test]
 fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
-    let contract = "contract C(pubkey owner) { function spend(signature sig) { require(checkSig(sig, owner)); } function exit(signature sig) tapscript { require(older(serverExitDelay)); require(checkSig(sig, owner)); } }";
+    let contract = "contract C(pubkey owner, int delay) { function spend(signature sig) { require(checkSig(sig, owner)); } function exit(signature sig) tapscript { require(older(delay)); require(checkSig(sig, owner)); } }";
     let source = format!("pragma arkade ^0.1.0;\n{contract}");
     let standalone = compile(&source).unwrap();
     assert_eq!(
@@ -79,14 +79,14 @@ contract Vault(Policy policy, int amount, pubkey owner) {
         require(Fees.calculate(value) <= policy.maximum);
     }
     function exit(signature sig) tapscript {
-        require(older(Fees.DELAY));
+        require(older(blocks(Fees.DELAY)));
         require(checkSig(sig, owner));
     }
 }"#;
     let library = r#"// Shared fee policy.
 struct Policy { int maximum; }
 library Fees {
-    const int DELAY = 512;
+    const int DELAY = 144;
     const int SIZE = 2;
     function calculate(int amount) int { return Fees.twice(amount); }
     private function twice(int amount) int { return amount * 2; }
@@ -240,12 +240,12 @@ contract Vault(Policy policy, int amount, pubkey owner) {
         require(value >= Fees.MINIMUM);
         require(value != amount);
     }
-    function exit(signature sig) tapscript { require(older(Fees.DELAY)); require(checkSig(sig, owner)); }
+    function exit(signature sig) tapscript { require(older(blocks(Fees.DELAY))); require(checkSig(sig, owner)); }
 }"#;
     let types = "struct Policy { int maximum; } // end of file comment";
     let fees = r#"contract Fees() {
         const int MINIMUM = 10;
-        const int DELAY = 512;
+        const int DELAY = 144;
         static function twice(int amount) int { return amount * 2; }
         static function calculate(int amount) int { return twice(amount) + MINIMUM; }
     }"#;
@@ -269,7 +269,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     }
     static function twice(int n) int { return n * 2; }
     static function calculate(int n) int { return twice(n) + 10; }
-    function exit(signature sig) tapscript { require(older(512)); require(checkSig(sig, owner)); }
+    function exit(signature sig) tapscript { require(older(blocks(144))); require(checkSig(sig, owner)); }
 }"#,
     )
     .unwrap();
@@ -531,7 +531,7 @@ contract Main(pubkey[2] keys, pubkey owner) {
         require(checkMultisig([owner], [sig], Limits.THRESHOLD));
     }
 }"#),
-        ("limits.ark", "contract Limits() { const int INDEX = 1; const int THRESHOLD = 1; const int DELAY = 512; }"),
+        ("limits.ark", "contract Limits() { const int INDEX = 1; const int THRESHOLD = 1; const int DELAY = 144; }"),
     ]).unwrap();
     assert!(arkade_asm_tokens(&output, "spend").contains(&"<keys.1>".to_string()));
     assert!(
@@ -635,7 +635,7 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
             struct Limits { int[Config.SIZE] values; }
             contract Config() {
                 const int SIZE = Base.COUNT / 2;
-                const int DELAY = SIZE * 512;
+                const int DELAY = SIZE * 72;
                 static function check(int[SIZE] values) { int[SIZE] copy = [values[0], values[1]]; require(copy[1] > 0); }
             }"#),
         ("main.ark", r#"import "config.ark";
@@ -652,7 +652,7 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
         contract Vault(pubkey[2] keys) {
             static function check(int[2] values) { int[2] copy = [values[0], values[1]]; require(copy[1] > 0); }
             function spend(int[2] values, Limits limits) { check(values); require(limits.values[1] < 3); }
-            function exit(signature sig) tapscript { require(older(512)); require(checkSig(sig, keys[1])); }
+            function exit(signature sig) tapscript { require(older(72)); require(checkSig(sig, keys[1])); }
         }
     "#).unwrap();
     assert_eq!(output.parameters[0].param_type, "pubkey[2]");

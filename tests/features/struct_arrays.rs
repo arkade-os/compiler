@@ -105,12 +105,12 @@ contract C(Outpoint[2] positions) {
 #[test]
 fn indexed_crypto_operands_and_constructor_tapleaf_fields_compile() {
     let output = compile(r#"
-struct Signer { pubkey key; signature sig; }
+struct Signer { pubkey key; signature sig; int delay; }
 contract C(Signer[2] owners) {
     function spend(int index, Signer[2] signers) {
         require(checkSig(signers[index].sig, owners[index].key));
     }
-    function exit(signature sig) tapscript { require(older(serverExitDelay)); require(checkSig(sig, owners[1].key)); }
+    function exit(signature sig) tapscript { require(older(owners[1].delay)); require(checkSig(sig, owners[1].key)); }
 }
 "#).unwrap();
     assert!(arkade_asm_tokens(&output, "spend")

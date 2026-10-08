@@ -62,7 +62,7 @@ Do not mix time domains:
 
 - `checkTime(timestamp)` reads the emulator clock in Unix seconds and compiles to `OP_CHECKTIME`. Put it in `require`. The operator runs that clock and can accept the spend early. Offchain spends of the leaf are rebuilt with nLockTime 0, so `tx.time` does not enforce the same deadline.
 - Use `tx.time` for Bitcoin nLockTime/CLTV.
-- `older(n)` takes `serverExitDelay` or a literal or constant number of seconds, a positive multiple of 512. The compiler emits the BIP68 time-based sequence because public arkd rejects block-type CSV on an exit leaf. Constructor parameters and inputs are rejected. The counter starts when the output is mined, not when the virtual coin is created.
+- Write timelock literals as `older(blocks(n))`, `older(seconds(n))`, `after(blocks(height))`, or `after(seconds(timestamp))`. `seconds(n)` in `older` must be a multiple of 512 and compiles to the BIP68 time-based sequence. A parameter or a unitless literal is pushed raw, so a CSV parameter must already be the BIP68 sequence. Public arkd rejects block-type timelocks, so prefer `older(serverExitDelay)` on exit leaves. The CSV counter starts when the output is mined, not when the virtual coin is created.
 - `tx.offchainTime` is gone.
 
 ```ark
