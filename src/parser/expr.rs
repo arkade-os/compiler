@@ -259,8 +259,17 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
         Rule::this_property_access => {
             let property = pair.into_inner().next().ok_or("Missing this property")?;
+            if property.as_str() == "activeBytecode" {
+                return Ok(super::introspection::current_input(
+                    crate::properties::InputProperty::ScriptPubKey,
+                    span,
+                ));
+            }
             Ok(Expression::new(
-                ExprKind::Property(format!("this.{}", property.as_str())),
+                ExprKind::This(super::introspection::named(
+                    property,
+                    crate::properties::ThisProperty::from_name,
+                )?),
                 span,
             ))
         }

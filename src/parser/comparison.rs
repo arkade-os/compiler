@@ -12,7 +12,12 @@ pub(crate) fn parse_time_comparison(pair: Pair<Rule>) -> Result<Requirement, Str
     };
     let mut inner = pair.into_inner();
     Ok(Requirement::Comparison {
-        left: Expression::new(ExprKind::Property("tx.time".to_string()), span),
+        left: Expression::new(
+            ExprKind::TxIntrospection {
+                property: crate::properties::TxProperty::Locktime,
+            },
+            span,
+        ),
         op: crate::operators::BinaryOperator::Ge,
         right: parse_general_expression(inner.next().ok_or("Missing timelock")?)?,
     })

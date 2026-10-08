@@ -664,8 +664,8 @@ pub enum ExprKind {
         array: String,
         index: Box<Expression>,
     },
-    /// Current input access (tx.input.current)
-    CurrentInput(Option<String>),
+    /// `this.activeInputIndex`, `this.expiry`
+    This(crate::properties::ThisProperty),
     /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
     /// tx.outputs[o].assets.lookup(txid, gidx). Asserts the asset is present
     /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
@@ -694,19 +694,22 @@ pub enum ExprKind {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: String, // "assetId" or "amount"
+        property: crate::properties::AssetProperty,
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
-    TxIntrospection { property: String },
-    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint
+    TxIntrospection {
+        property: crate::properties::TxProperty,
+    },
+    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint;
+    /// tx.input.current.* indexes it with this.activeInputIndex
     InputIntrospection {
         index: Box<Expression>,
-        property: String,
+        property: crate::properties::InputProperty,
     },
     /// Output introspection: tx.outputs[o].value, scriptPubKey
     OutputIntrospection {
         index: Box<Expression>,
-        property: String,
+        property: crate::properties::OutputProperty,
     },
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
@@ -731,7 +734,7 @@ pub enum ExprKind {
     /// Asset group property: group.sumInputs, group.delta, etc.
     GroupProperty {
         group: Box<Expression>,
-        property: String,
+        property: crate::properties::GroupProperty,
     },
     /// Boolean equality over the complete canonical control Asset ID:
     /// group.controlIs(txid, gidx). False when control is absent or either
@@ -750,7 +753,7 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
+        property: Option<crate::properties::GroupIoProperty>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
     /// CheckSig expression result (for use in if conditions)
     CheckSigExpr {
@@ -811,22 +814,13 @@ pub enum ExprKind {
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match &expression.kind {
-        ExprKind::Builtin { builtin, .. } => builtin
-            .result
-            .filter(|result| builtin_struct_fields(result).is_some()),
-        ExprKind::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
-        ExprKind::GroupProperty { property, .. }
-            if matches!(property.as_str(), "assetId" | "controlAssetId") =>
-        {
-            Some("AssetId")
-        }
-        ExprKind::CurrentInput(Some(property)) | ExprKind::InputIntrospection { property, .. }
-            if property == "outpoint" =>
-        {
-            Some("Outpoint")
-        }
+        ExprKind::Builtin { builtin, .. } => builtin.result,
+        ExprKind::AssetAt { property, .. } => Some(property.value_type()),
+        ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
+        ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
     }
+    .filter(|result| builtin_struct_fields(result).is_some())
 }
 
 /// Generates the shared and mutable traversals from one list of each variant's
@@ -840,7 +834,7 @@ macro_rules! expression_children {
                 ExprKind::Variable(_)
                 | ExprKind::Literal(_)
                 | ExprKind::Property(_)
-                | ExprKind::CurrentInput(_)
+                | ExprKind::This(_)
                 | ExprKind::TxIntrospection { .. }
                 | ExprKind::IntentInspect { .. }
                 | ExprKind::AssetGroupsLength => vec![],
@@ -937,10 +931,15 @@ impl Expression {
         })
     }
 
-    /// Spell an operand as written, for diagnostics.
+    /// Spell an operand for diagnostics, using canonical names for aliases.
     pub(crate) fn source_text(&self) -> String {
         match &self.kind {
             ExprKind::Literal(value) => value.clone(),
+            ExprKind::This(property) => format!("this.{}", property.name()),
+            ExprKind::TxIntrospection { property } => format!("tx.{}", property.name()),
+            ExprKind::InputIntrospection { index, property } => {
+                format!("tx.inputs[{}].{}", index.source_text(), property.name())
+            }
             ExprKind::BinaryOp { left, op, right } => {
                 format!("{} {op} {}", left.source_text(), right.source_text())
             }

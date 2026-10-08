@@ -190,12 +190,10 @@ pub(crate) fn parse_asset_at_to_expression(pair: Pair<Rule>) -> Result<Expressio
         .ok_or("Missing asset index value")?;
     let asset_index = parse_general_expression(asset_index_pair)?;
 
-    // Parse property: "assetId" or "amount"
-    let property = inner
-        .next()
-        .ok_or("Missing asset property")?
-        .as_str()
-        .to_string();
+    let property = super::introspection::named(
+        inner.next().ok_or("Missing asset property")?,
+        crate::properties::AssetProperty::from_name,
+    )?;
 
     Ok(Expression::new(
         ExprKind::AssetAt {

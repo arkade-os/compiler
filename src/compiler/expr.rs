@@ -1,6 +1,7 @@
 use super::*;
 use crate::models::*;
 use crate::operators::{BinaryOperator, OperatorClass};
+use crate::properties::{GroupIoProperty, ThisProperty};
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<String>) {
     match lit {
@@ -83,21 +84,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 asm.push(format!("{INTERNAL_ARRAY_INDEX_PREFIX}{array}"));
             }
         }
-        ExprKind::Property(prop) => {
-            // Map the introspector "this" properties to their dedicated opcodes
-            // (the parser stores them as Property strings; resolving them here
-            // keeps the placeholder pipeline untouched for everything else).
-            match prop.trim() {
-                "this.activeInputIndex" => asm.push(OP_PUSHCURRENTINPUTINDEX.to_string()),
-                "this.expiry" => asm.push(OP_PUSHEXPIRY.to_string()),
-                "this.activeBytecode" => emit_current_input_asm(Some("scriptPubKey"), asm),
-                "tx.time" => asm.push(OP_INSPECTLOCKTIME.to_string()),
-                property => asm.push(format!("<{}>", property)),
+        ExprKind::Property(property) => asm.push(format!("<{}>", property.trim())),
+        ExprKind::This(property) => asm.push(
+            match property {
+                ThisProperty::ActiveInputIndex => OP_PUSHCURRENTINPUTINDEX,
+                ThisProperty::Expiry => OP_PUSHEXPIRY,
             }
-        }
-        ExprKind::CurrentInput(property) => {
-            emit_current_input_asm(property.as_deref(), asm);
-        }
+            .to_string(),
+        ),
         ExprKind::AssetLookup {
             source,
             index,
@@ -123,16 +117,16 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asset_index,
             property,
         } => {
-            emit_asset_at_asm(source, io_index, asset_index, property, asm);
+            emit_asset_at_asm(source, io_index, asset_index, *property, asm);
         }
         ExprKind::TxIntrospection { property } => {
-            emit_tx_introspection_asm(property, asm);
+            emit_tx_introspection_asm(*property, asm);
         }
         ExprKind::InputIntrospection { index, property } => {
-            emit_input_introspection_asm(index, property, asm);
+            emit_input_introspection_asm(index, *property, asm);
         }
         ExprKind::OutputIntrospection { index, property } => {
-            emit_output_introspection_asm(index, property, asm);
+            emit_output_introspection_asm(index, *property, asm);
         }
         ExprKind::BinaryOp { left, op, right } => emit_binary_op_asm(left, *op, right, asm),
         ExprKind::GroupFind {
@@ -155,7 +149,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
         }
         ExprKind::GroupProperty { group, property } => {
-            emit_group_property_asm(group, property, asm);
+            emit_group_property_asm(group, *property, asm);
         }
         ExprKind::AssetGroupsLength => {
             asm.push(OP_INSPECTNUMASSETGROUPS.to_string());
@@ -175,18 +169,16 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
             asm.push(OP_INSPECTASSETGROUP.to_string());
             // Extract property if specified
-            if let Some(prop) = property {
-                match prop.as_str() {
-                    "amount" => {
-                        asm.push(OP_NIP.to_string());
-                        asm.push(OP_NIP.to_string());
-                    }
-                    "type" => {
-                        asm.push(OP_DROP.to_string()); // amount
-                        asm.push(OP_DROP.to_string()); // data
-                    }
-                    _ => unreachable!("the parser only yields amount or type, got '{prop}'"),
+            match property {
+                Some(GroupIoProperty::Amount) => {
+                    asm.push(OP_NIP.to_string());
+                    asm.push(OP_NIP.to_string());
                 }
+                Some(GroupIoProperty::Type) => {
+                    asm.push(OP_DROP.to_string()); // amount
+                    asm.push(OP_DROP.to_string()); // data
+                }
+                None => {}
             }
         }
         ExprKind::ContractInstance {
@@ -264,43 +256,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asm.push(OP_1.to_string());
             asm.push(OP_EQUALVERIFY.to_string());
         }
-    }
-}
-
-/// Emit assembly for tx.input.current property access
-pub(crate) fn emit_current_input_asm(property: Option<&str>, asm: &mut Vec<String>) {
-    match property {
-        Some("scriptPubKey") => {
-            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
-        }
-        Some("witnessVersion") => {
-            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            emit_witness_version_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm);
-        }
-        Some("value") => {
-            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTVALUE.to_string());
-        }
-        Some("sequence") => {
-            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTSEQUENCE.to_string());
-        }
-        Some("outpoint") => {
-            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTOUTPOINT.to_string());
-        }
-        Some("arkadeScriptHash") => {
-            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string());
-        }
-        Some("arkadeWitnessHash") => {
-            asm.push(OP_PUSHCURRENTINPUTINDEX.to_string());
-            asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string());
-        }
-        // The grammar restricts tx.input.current.* to input_introspection_property,
-        // so every valid parse matches one of the arms above.
-        _ => unreachable!("unrecognized tx.input.current property: {property:?}"),
     }
 }
 

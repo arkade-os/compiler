@@ -1,20 +1,20 @@
 use super::*;
 use crate::models::*;
+use crate::properties::{InputProperty, OutputProperty, TxProperty};
 
 /// Emit assembly for transaction introspection: tx.version, tx.locktime, etc.
-pub(crate) fn emit_tx_introspection_asm(property: &str, asm: &mut Vec<String>) {
-    match property {
-        "version" => asm.push(OP_INSPECTVERSION.to_string()),
-        "locktime" => asm.push(OP_INSPECTLOCKTIME.to_string()),
-        "numInputs" => asm.push(OP_INSPECTNUMINPUTS.to_string()),
-        "numOutputs" => asm.push(OP_INSPECTNUMOUTPUTS.to_string()),
-        "weight" => asm.push(OP_TXWEIGHT.to_string()),
-        "id" => asm.push(OP_TXID.to_string()),
-        _ => {
-            // Unknown property, emit as placeholder
-            asm.push(format!("<tx.{}>", property));
+pub(crate) fn emit_tx_introspection_asm(property: TxProperty, asm: &mut Vec<String>) {
+    asm.push(
+        match property {
+            TxProperty::Version => OP_INSPECTVERSION,
+            TxProperty::Locktime => OP_INSPECTLOCKTIME,
+            TxProperty::NumInputs => OP_INSPECTNUMINPUTS,
+            TxProperty::NumOutputs => OP_INSPECTNUMOUTPUTS,
+            TxProperty::Weight => OP_TXWEIGHT,
+            TxProperty::Id => OP_TXID,
         }
-    }
+        .to_string(),
+    );
 }
 
 /// Emit a scriptPubKey inspection opcode and reduce its result to one item.
@@ -37,45 +37,33 @@ pub(crate) fn emit_witness_version_asm(opcode: &str, asm: &mut Vec<String>) {
 /// Emit assembly for input introspection: tx.inputs[i].property
 pub(crate) fn emit_input_introspection_asm(
     index: &Expression,
-    property: &str,
+    property: InputProperty,
     asm: &mut Vec<String>,
 ) {
-    // Push the index
     emit_expression_asm(index, asm);
-
-    // Emit the appropriate opcode
     match property {
-        "value" => asm.push(OP_INSPECTINPUTVALUE.to_string()),
-        "scriptPubKey" => emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm),
-        "witnessVersion" => emit_witness_version_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm),
-        "sequence" => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
-        "outpoint" => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
-        "arkadeScriptHash" => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
-        "arkadeWitnessHash" => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
-        _ => {
-            // Unknown property, emit as placeholder
-            asm.push(format!("<tx.inputs[?].{}>", property));
-        }
+        InputProperty::Value => asm.push(OP_INSPECTINPUTVALUE.to_string()),
+        InputProperty::ScriptPubKey => emit_script_pubkey_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm),
+        InputProperty::WitnessVersion => emit_witness_version_asm(OP_INSPECTINPUTSCRIPTPUBKEY, asm),
+        InputProperty::Sequence => asm.push(OP_INSPECTINPUTSEQUENCE.to_string()),
+        InputProperty::Outpoint => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
+        InputProperty::ArkadeScriptHash => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
+        InputProperty::ArkadeWitnessHash => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
     }
 }
 
 /// Emit assembly for output introspection: tx.outputs[o].property
 pub(crate) fn emit_output_introspection_asm(
     index: &Expression,
-    property: &str,
+    property: OutputProperty,
     asm: &mut Vec<String>,
 ) {
-    // Push the index
     emit_expression_asm(index, asm);
-
-    // Emit the appropriate opcode
     match property {
-        "value" => asm.push(OP_INSPECTOUTPUTVALUE.to_string()),
-        "scriptPubKey" => emit_script_pubkey_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm),
-        "witnessVersion" => emit_witness_version_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm),
-        _ => {
-            // Unknown property, emit as placeholder
-            asm.push(format!("<tx.outputs[?].{}>", property));
+        OutputProperty::Value => asm.push(OP_INSPECTOUTPUTVALUE.to_string()),
+        OutputProperty::ScriptPubKey => emit_script_pubkey_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm),
+        OutputProperty::WitnessVersion => {
+            emit_witness_version_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm)
         }
     }
 }
