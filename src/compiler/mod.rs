@@ -839,7 +839,7 @@ pub(crate) fn prepare(
         if matches!(issue.severity, Severity::Warning) {
             warnings.push(
                 Diagnostic::warning(file, issue.message.clone())
-                    .with_code("validation")
+                    .with_code(issue.code)
                     .with_span(issue.span),
             );
         }
