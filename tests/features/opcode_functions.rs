@@ -13,6 +13,121 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
             .eq(expected.iter().copied())
     })
 }
+
+#[test]
+fn utility_builtins_emit_native_opcodes_and_validate_signatures() {
+    use crate::common::{arkade_asm_tokens, opcode_count_in_arkade};
+    for (name, args, result, wrong_result, opcode) in [
+        ("abs", vec!["n"], "int", "bool", "OP_ABS"),
+        ("min", vec!["n", "m"], "int", "bool", "OP_MIN"),
+        ("max", vec!["n", "m"], "int", "bool", "OP_MAX"),
+        (
+            "within",
+            vec!["n", "m", "upper"],
+            "bool",
+            "int",
+            "OP_WITHIN",
+        ),
+        ("left", vec!["data", "n"], "bytes", "bytes32", "OP_LEFT"),
+        ("right", vec!["data", "n"], "bytes", "bytes32", "OP_RIGHT"),
+        ("sha1", vec!["data"], "bytes20", "bytes32", "OP_SHA1"),
+    ] {
+        let params = args
+            .iter()
+            .map(|arg| format!("{} {arg}", if *arg == "data" { "bytes" } else { "int" }))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = |args: &[&str], result: &str| {
+            format!("contract C() {{ function spend({params}) {{ {result} r = {name}({}); require(r == r); }} }}", args.join(", "))
+        };
+        for optimize in [false, true] {
+            let output = if optimize {
+                arkade_compiler::compile(&source(&args, result))
+            } else {
+                compile(&source(&args, result))
+            }
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(opcode_count_in_arkade(&output, "spend", opcode), 1);
+            assert!(arkade_asm_tokens(&output, "spend")
+                .iter()
+                .all(|token| !token.contains('$')));
+        }
+        for index in 0..args.len() {
+            let mut invalid = args.clone();
+            invalid[index] = "true";
+            let error = compile(&source(&invalid, result)).unwrap_err().to_string();
+            assert!(
+                error.contains(&format!("{name} operand has type 'bool'")),
+                "{error}"
+            );
+        }
+        for invalid in [
+            args[..args.len() - 1].to_vec(),
+            [args.as_slice(), &["n"]].concat(),
+        ] {
+            let error = compile(&source(&invalid, result)).unwrap_err().to_string();
+            assert!(error.contains(&format!("expected {name}(")), "{error}");
+        }
+        assert!(
+            compile(&source(&args, wrong_result)).is_err(),
+            "{name} result type"
+        );
+    }
+}
+
+#[test]
+fn utility_builtins_compose_in_helpers_and_preserve_the_covenant_abi() {
+    use crate::common::{arkade_asm_tokens, arkade_inputs, group, leaf_asm, witness_names};
+    let source = r#"
+contract C() {
+    private function bounded(int n, int limit) int { return max(0, min(abs(n), limit)); }
+    private function fingerprint(bytes data, int count) bytes20 {
+        return sha1(left(data, count) + right(data, count));
+    }
+    function spend(int n, int limit, bytes32 data, int count, bytes20 expected) {
+        require(within(bounded(n, limit), 0, limit + 1));
+        require(fingerprint(data, count) == expected);
+    }
+}
+"#;
+    for output in [
+        compile(source).unwrap(),
+        arkade_compiler::compile(source).unwrap(),
+    ] {
+        let asm = arkade_asm_tokens(&output, "spend");
+        assert!(contains_tokens(&asm, &["OP_CAT", "OP_SHA1"]), "{asm:?}");
+        for opcode in [
+            "OP_ABS",
+            "OP_MIN",
+            "OP_MAX",
+            "OP_WITHIN",
+            "OP_LEFT",
+            "OP_RIGHT",
+        ] {
+            assert!(asm.iter().any(|token| token == opcode), "{asm:?}");
+        }
+        assert_eq!(
+            arkade_inputs(&output, "spend"),
+            ["n", "limit", "data", "count", "expected"]
+        );
+        assert_eq!(group(&output, "spend").leaves.len(), 1);
+        assert_eq!(
+            witness_names(&output, "spend", "spend"),
+            ["serverSig", "emulatorSig"]
+        );
+        assert_eq!(
+            leaf_asm(&output, "spend", "spend"),
+            "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        );
+    }
+    let error = arkade_compiler::compile(
+        "contract C() { function spend(bytes data, bytes20 hash, signature sig) tapscript { require(sha1(data) == hash); require(checkSig(sig, server)); } }"
+    ).unwrap_err().to_string();
+    assert!(
+        error.contains("unsupported compound expression in tapscript"),
+        "{error}"
+    );
+}
 // ─── Streaming SHA256 ──────────────────────────────────────────────────
 
 #[test]
