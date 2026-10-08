@@ -37,7 +37,7 @@ function unilateral(signature ownerSig) tapscript {
 }
 ```
 
-`serverExitDelay` is arkd's unilateral exit delay and needs no constructor parameter. Take a constructor `int` only when the contract needs a different delay.
+`serverExitDelay` is arkd's unilateral exit delay and needs no constructor parameter. For a different fixed delay, write `older(seconds(n))` with a literal or `int` constant. Take a constructor `int` only when the delay varies per instance; it is pushed raw, so the caller passes the BIP68 sequence.
 
 Keep `server`, `emulator`, and `serverExitDelay` out of constructors and covenant bodies. Use them only as reserved key operands in tapscript signature checks. Declare the corresponding signature witnesses on author-written tapscripts.
 
