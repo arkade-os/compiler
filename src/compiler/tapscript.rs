@@ -447,8 +447,13 @@ pub fn validate_arkd_rules(
                 }
                 let Some(n) = timelock_number(value) else {
                     if unit.is_some() {
+                        let hint = if name_declared(value) {
+                            format!("; pass `{value}` without a unit to push it raw")
+                        } else {
+                            String::new()
+                        };
                         return Err(format!(
-                            "tapscript `{}`: {call}({operand}) takes a literal or constant; pass `{value}` without a unit as the raw value",
+                            "tapscript `{}`: {call}({operand}) takes an integer literal or constant{hint}",
                             ts.name
                         ));
                     }
@@ -1210,7 +1215,13 @@ mod tests {
                 true,
                 "owner",
                 Some(Blocks),
-                Some("takes a literal or constant"),
+                Some("pass `owner` without a unit"),
+            ),
+            (
+                true,
+                "0x00",
+                Some(Blocks),
+                Some("takes an integer literal or constant"),
             ),
             (true, "typo", None, Some("is not a literal")),
             (false, "4294967295", None, None),
