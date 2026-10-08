@@ -28,6 +28,7 @@ contract Utility() {
         return sha1(left(data, count) + right(data, count));
     }
     function hash(bytes data, int count, bytes20 expected) {
+        // OP_DIGEST selector 2 is SHA-1 in the emulator.
         require(sha1(data) == digest(data, 2));
         require(fingerprint(data, count) == expected);
     }
