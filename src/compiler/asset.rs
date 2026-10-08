@@ -225,7 +225,11 @@ mod tests {
     fn every_group_property_has_an_emitter() {
         for property in crate::typechecker::GROUP_PROPERTIES {
             let mut asm = Vec::new();
-            emit_group_property_asm(&Expression::Variable("g".to_string()), property, &mut asm);
+            emit_group_property_asm(
+                &ExprKind::Variable("g".to_string()).into(),
+                property,
+                &mut asm,
+            );
             assert!(asm.len() > 1, "{property}");
         }
     }

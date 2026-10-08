@@ -19,9 +19,10 @@
 //! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
 //! whether any are fatal.
 
+use crate::models::child_exprs;
 use crate::models::{
-    AssignmentTarget, Contract, ContractJson, Expression, KeyExpr, LocatedStatement, Requirement,
-    Statement, TapItem,
+    AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
+    Requirement, Statement, TapItem,
 };
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::typechecker::{build_scope_with_structs, infer_type, literal_index, ArkType, Scope};
@@ -46,7 +47,7 @@ pub enum Severity {
 pub struct ValidationIssue {
     pub severity: Severity,
     pub message: String,
-    /// Byte range of the statement or function that caused it.
+    /// Byte range of the expression, statement or function that caused it.
     pub span: Option<crate::diagnostics::Span>,
 }
 
@@ -96,7 +97,7 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
 /// - Each function's parameter names are unique within that function.
-/// - Tapscript inputs do not collide with reserved key roles.
+/// - Tapscript inputs do not collide with reserved arkd names.
 /// - Asset ID operands have the expected txid/gidx types.
 pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
@@ -181,12 +182,12 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
         }
     }
 
-    // Reserved key roles may only appear as key operands inside a tapscript's
-    // checkSig/checkMultisig — never as constructor parameters.
+    // Reserved arkd names (`server`, `emulator`, `serverExitDelay`) are
+    // supplied by the server, never by constructor parameters.
     for p in &contract.parameters {
-        if p.name == "server" || p.name == "emulator" {
+        if matches!(p.name.as_str(), "server" | "emulator" | "serverExitDelay") {
             issues.push(ValidationIssue::error(format!(
-                "constructor parameter '{}' collides with a reserved key role",
+                "constructor parameter '{}' collides with a reserved arkd name",
                 p.name
             )));
         }
@@ -199,9 +200,9 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
                 &format!("input in tapscript '{}'", ts.name),
                 &mut issues,
             );
-            if p.name == "server" || p.name == "emulator" {
+            if matches!(p.name.as_str(), "server" | "emulator" | "serverExitDelay") {
                 issues.push(ValidationIssue::error(format!(
-                    "tapscript '{}' input '{}' collides with a reserved key role",
+                    "tapscript '{}' input '{}' collides with a reserved arkd name",
                     ts.name, p.name
                 )));
             }
@@ -231,6 +232,20 @@ pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<Valida
                 issues.push(ValidationIssue::error(format!(
                     "duplicate input '{}' in tapscript '{}'",
                     p.name, ts.name
+                )));
+            }
+        }
+        // A literal or constant without blocks(n)/seconds(n) is pushed raw.
+        for item in &ts.items {
+            let (call, value, raw) = match item {
+                TapItem::Older { value, unit: None } => ("older", value, "BIP68 sequence"),
+                TapItem::After { value, unit: None } => ("after", value, "nLockTime"),
+                _ => continue,
+            };
+            if value.parse::<i64>().is_ok() {
+                issues.push(ValidationIssue::warning(format!(
+                    "tapscript '{}': {call}({value}) is a raw {raw}; write blocks(n) or seconds(n) to state its unit",
+                    ts.name
                 )));
             }
         }
@@ -409,7 +424,7 @@ fn validate_declared_type(
 }
 
 fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
-    if name == "SERVER_KEY" {
+    if matches!(name, "SERVER_KEY" | "SERVER_EXIT_DELAY") {
         issues.push(ValidationIssue::error(format!(
             "{context} '{name}' uses a compiler-reserved placeholder name"
         )));
@@ -463,7 +478,7 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         for item in &tapscript.items {
             match item {
                 TapItem::Hash { preimage, hash, .. } => used.extend([preimage, hash]),
-                TapItem::Older { value } | TapItem::After { value } => {
+                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
                     used.insert(value);
                 }
                 TapItem::Sig { keys, sigs, .. } => {
@@ -692,26 +707,26 @@ fn check_asset_id_expr(
     issues: &mut Vec<ValidationIssue>,
 ) {
     // Variant-specific Asset ID operand validation.
-    match expr {
-        Expression::AssetLookup {
+    match &expr.kind {
+        ExprKind::AssetLookup {
             asset_txid,
             asset_gidx,
             ..
         }
-        | Expression::AssetHas {
+        | ExprKind::AssetHas {
             asset_txid,
             asset_gidx,
             ..
         }
-        | Expression::GroupFind {
+        | ExprKind::GroupFind {
             asset_txid,
             asset_gidx,
         }
-        | Expression::GroupHas {
+        | ExprKind::GroupHas {
             asset_txid,
             asset_gidx,
         }
-        | Expression::GroupControlIs {
+        | ExprKind::GroupControlIs {
             asset_txid,
             asset_gidx,
             ..
@@ -724,90 +739,6 @@ fn check_asset_id_expr(
     // Generic recursion through every sub-expression.
     for child in child_exprs(expr) {
         check_asset_id_expr(child, scope, fname, issues);
-    }
-}
-
-/// Return the direct sub-expressions of `expr`.
-///
-/// This is the single source of truth for expression-tree traversal in the
-/// validator. The match is intentionally exhaustive (no `_` arm): adding a new
-/// [`Expression`] variant will fail to compile here until its nested
-/// expressions — if any — are declared, guaranteeing that walkers built on top
-/// of this (e.g. [`check_asset_id_expr`]) cover every new construct.
-pub(crate) fn child_exprs(expr: &Expression) -> Vec<&Expression> {
-    match expr {
-        // Leaf nodes: no nested expressions.
-        Expression::Variable(_)
-        | Expression::Literal(_)
-        | Expression::Property(_)
-        | Expression::CurrentInput(_)
-        | Expression::TxIntrospection { .. }
-        | Expression::IntentInspect { .. }
-        | Expression::AssetGroupsLength => vec![],
-
-        Expression::FieldAccess { value, .. } => vec![value],
-        Expression::IndexAccess { value, index } => vec![value, index],
-        Expression::ArrayIndex { index, .. } => vec![index],
-
-        Expression::ArrayLiteral(elements)
-        | Expression::Call { args: elements, .. }
-        | Expression::Builtin { args: elements, .. } => elements.iter().collect(),
-        Expression::StructLiteral(fields) => fields.iter().map(|(_, value)| value).collect(),
-
-        Expression::AssetLookup {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        }
-        | Expression::AssetHas {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        } => vec![index, asset_txid, asset_gidx],
-        Expression::AssetCount { index, .. }
-        | Expression::InputIntrospection { index, .. }
-        | Expression::OutputIntrospection { index, .. }
-        | Expression::AssetGroupAt { index }
-        | Expression::GroupProperty { group: index, .. } => vec![index],
-        Expression::AssetAt {
-            io_index,
-            asset_index,
-            ..
-        } => vec![io_index, asset_index],
-        Expression::BinaryOp { left, right, .. } | Expression::Concat { left, right, .. } => {
-            vec![left, right]
-        }
-        Expression::GroupFind {
-            asset_txid,
-            asset_gidx,
-        }
-        | Expression::GroupHas {
-            asset_txid,
-            asset_gidx,
-        } => vec![asset_txid, asset_gidx],
-        Expression::GroupControlIs {
-            group,
-            asset_txid,
-            asset_gidx,
-        } => vec![group, asset_txid, asset_gidx],
-        Expression::GroupIOAccess {
-            group, io_index, ..
-        } => vec![group, io_index],
-        Expression::Unary { value, .. } => vec![value],
-        Expression::Tunnel {
-            output_index,
-            policy,
-            exceptions,
-        } => std::iter::once(output_index.as_ref())
-            .chain(policy.iter())
-            .chain(exceptions.iter())
-            .collect(),
-        Expression::ContractInstance { args, .. } => args.iter().collect(),
-        Expression::Cast { data, .. } => vec![data],
-        Expression::PacketInspect { packet_type } => vec![packet_type],
-        Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
     }
 }
 
@@ -862,8 +793,8 @@ fn flattened_types(scopes: &BindingScopes) -> Scope {
 }
 
 fn resolved_expression_type(expression: &Expression, scopes: &BindingScopes) -> ArkType {
-    match expression {
-        Expression::Variable(name) | Expression::Property(name) => find_binding(scopes, name)
+    match &expression.kind {
+        ExprKind::Variable(name) | ExprKind::Property(name) => find_binding(scopes, name)
             .map(|binding| binding.binding_type.clone())
             .unwrap_or_else(|| infer_type(expression, &flattened_types(scopes))),
         _ => infer_type(expression, &flattened_types(scopes)),
@@ -933,8 +864,8 @@ fn validate_binding_statements(
             } => {
                 // Composite initializers are validated through their scalar
                 // children; the declaration itself owns their result shape.
-                match value {
-                    Expression::StructLiteral(_) => {
+                match &value.kind {
+                    ExprKind::StructLiteral(_) => {
                         if !declared_type
                             .as_deref()
                             .is_some_and(|ty| matches!(ArkType::parse(ty), ArkType::Struct(_)))
@@ -946,10 +877,10 @@ fn validate_binding_statements(
                         }
                         validate_value_expression(value, function_name, scopes, issues);
                     }
-                    Expression::ArrayLiteral(_)
-                    | Expression::ArrayIndex { .. }
-                    | Expression::FieldAccess { .. }
-                    | Expression::IndexAccess { .. } => {
+                    ExprKind::ArrayLiteral(_)
+                    | ExprKind::ArrayIndex { .. }
+                    | ExprKind::FieldAccess { .. }
+                    | ExprKind::IndexAccess { .. } => {
                         validate_value_expression(value, function_name, scopes, issues)
                     }
                     _ => validate_binding_expression(
@@ -958,7 +889,7 @@ fn validate_binding_statements(
                         scopes,
                         issues,
                         crate::models::expression_result_struct(value).is_none()
-                            && !matches!(value, Expression::Call { .. }),
+                            && !matches!(&value.kind, ExprKind::Call { .. }),
                     ),
                 }
                 let inferred = resolved_expression_type(value, scopes);
@@ -979,7 +910,7 @@ fn validate_binding_statements(
                         inferred.as_str()
                     )));
                 }
-                if matches!(value, Expression::ArrayLiteral(_))
+                if matches!(&value.kind, ExprKind::ArrayLiteral(_))
                     && declared_type
                         .as_deref()
                         .and_then(crate::models::array_type_parts)
@@ -992,14 +923,14 @@ fn validate_binding_statements(
                 }
                 if let ArkType::Struct(struct_type) = &binding_type {
                     let result_type = crate::models::expression_result_struct(value);
-                    if !matches!(value, Expression::StructLiteral(_))
+                    if !matches!(&value.kind, ExprKind::StructLiteral(_))
                         && result_type != Some(struct_type.as_str())
                         && !matches!(
-                            value,
-                            Expression::Call { .. }
-                                | Expression::ArrayIndex { .. }
-                                | Expression::FieldAccess { .. }
-                                | Expression::IndexAccess { .. }
+                            &value.kind,
+                            ExprKind::Call { .. }
+                                | ExprKind::ArrayIndex { .. }
+                                | ExprKind::FieldAccess { .. }
+                                | ExprKind::IndexAccess { .. }
                         )
                     {
                         issues.push(ValidationIssue::error(format!(
@@ -1136,8 +1067,8 @@ fn validate_binding_statements(
                 iterable,
                 body,
             } => {
-                let element_type = match iterable {
-                    Expression::Variable(name) | Expression::Property(name)
+                let element_type = match &iterable.kind {
+                    ExprKind::Variable(name) | ExprKind::Property(name)
                         if name.trim() != "tx.assetGroups" =>
                     {
                         match find_binding(scopes, name) {
@@ -1163,7 +1094,7 @@ fn validate_binding_statements(
                             }
                         }
                     }
-                    Expression::Property(property) if property.trim() == "tx.assetGroups" => {
+                    ExprKind::Property(property) if property.trim() == "tx.assetGroups" => {
                         issues.push(ValidationIssue::error(format!(
                             "function '{}': cannot iterate 'tx.assetGroups'; the group count is \
                              not known at compile time. Iterate a declared array of group \
@@ -1172,9 +1103,9 @@ fn validate_binding_statements(
                         )));
                         ArkType::Unknown
                     }
-                    Expression::ArrayIndex { .. }
-                    | Expression::FieldAccess { .. }
-                    | Expression::IndexAccess { .. } => {
+                    ExprKind::ArrayIndex { .. }
+                    | ExprKind::FieldAccess { .. }
+                    | ExprKind::IndexAccess { .. } => {
                         let before = issues.len();
                         validate_value_expression(iterable, function_name, scopes, issues);
                         match resolved_expression_type(iterable, scopes) {
@@ -1225,7 +1156,8 @@ fn validate_binding_statements(
                 scopes.pop();
             }
             Statement::ForCount { count, body } => {
-                if !matches!(count, Expression::Literal(value) if value.parse::<usize>().is_ok()) {
+                if !matches!(&count.kind, ExprKind::Literal(value) if value.parse::<usize>().is_ok())
+                {
                     issues.push(ValidationIssue::error(format!(
                         "function '{}': loop count must be a non-negative integer compile-time constant",
                         function_name
@@ -1279,7 +1211,7 @@ fn validate_binding_requirement(
 ) {
     match requirement {
         Requirement::Expression(expression) => {
-            let produces_value = !matches!(expression, Expression::Builtin { builtin, .. } if builtin.result.is_none());
+            let produces_value = !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             validate_binding_expression(expression, function_name, scopes, issues, produces_value);
         }
         Requirement::Comparison { left, op, right } => {
@@ -1322,8 +1254,8 @@ fn validate_value_expression(
         resolved_expression_type(expression, scopes),
         ArkType::Array(..) | ArkType::Struct(..)
     ) && !matches!(
-        expression,
-        Expression::StructLiteral(_) | Expression::ArrayLiteral(_)
+        &expression.kind,
+        ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
     );
     validate_binding_expression(expression, function_name, scopes, issues, scalar);
 }
@@ -1335,6 +1267,7 @@ fn validate_binding_expression(
     issues: &mut Vec<ValidationIssue>,
     value_position: bool,
 ) {
+    let first = issues.len();
     let expression_type = resolved_expression_type(expression, scopes);
     if value_position && matches!(expression_type, ArkType::Array(..) | ArkType::Struct(..)) {
         let kind = if matches!(expression_type, ArkType::Struct(..)) {
@@ -1348,8 +1281,10 @@ fn validate_binding_expression(
         )));
     }
     if value_position
-        && (matches!(expression, Expression::GroupIOAccess { property: None, .. })
-            || matches!(expression, Expression::Builtin { builtin, .. } if builtin.result.is_none()))
+        && (matches!(
+            &expression.kind,
+            ExprKind::GroupIOAccess { property: None, .. }
+        ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none()))
     {
         issues.push(ValidationIssue::error(format!(
             "function '{}': expression does not produce one stack item",
@@ -1358,8 +1293,8 @@ fn validate_binding_expression(
     }
     if value_position
         && matches!(
-            expression,
-            Expression::GroupIOAccess {
+            &expression.kind,
+            ExprKind::GroupIOAccess {
                 source: crate::models::GroupIOSource::Inputs,
                 ..
             }
@@ -1372,18 +1307,22 @@ fn validate_binding_expression(
     }
 
     let registered_builtin = crate::typechecker::builtins::operands(expression);
+    let mut children_checked = false;
 
-    match expression {
-        Expression::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
+    match &expression.kind {
+        ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
             let scope = flattened_types(scopes);
             for operand in [left, right] {
                 let actual = resolved_expression_type(operand, scopes);
                 if actual != ArkType::Unknown && !binding_types_compatible(&ArkType::Bytes, &actual)
                 {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': bytewise '{op}' operand has type '{}', expected 'bytes'",
-                        actual.as_str()
-                    )));
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "function '{function_name}': bytewise '{op}' operand has type '{}', expected 'bytes'",
+                            actual.as_str()
+                        ))
+                        .at(operand.span),
+                    );
                 }
             }
             // The VM aborts on operands of different lengths.
@@ -1397,7 +1336,7 @@ fn validate_binding_expression(
                 }
             }
         }
-        Expression::BinaryOp { left, op, right }
+        ExprKind::BinaryOp { left, op, right }
             if matches!(
                 op.class(),
                 OperatorClass::Logical | OperatorClass::Arithmetic | OperatorClass::Shift
@@ -1412,43 +1351,58 @@ fn validate_binding_expression(
             // Bytes-like `+` is concatenation, checked when it is rewritten to OP_CAT.
             let concat =
                 *op == BinaryOperator::Add && types.iter().any(crate::typechecker::is_bytes_like);
-            for actual in types.iter().filter(|_| !concat) {
+            for (operand, actual) in [left, right].iter().zip(&types).filter(|_| !concat) {
                 if *actual != expected && *actual != ArkType::Unknown {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{}': {kind} '{}' operand has type '{}', expected '{}'",
-                        function_name,
-                        op,
-                        actual.as_str(),
-                        expected.as_str()
-                    )));
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "function '{}': {kind} '{}' operand has type '{}', expected '{}'",
+                            function_name,
+                            op,
+                            actual.as_str(),
+                            expected.as_str()
+                        ))
+                        .at(operand.span),
+                    );
                 }
             }
-            if *op == BinaryOperator::Div
+            if matches!(op, BinaryOperator::Div | BinaryOperator::Rem)
                 && literal_index(right).is_some_and(|(_, value)| value == "0")
             {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': division by zero"
-                )));
+                let what = if *op == BinaryOperator::Rem {
+                    "modulo"
+                } else {
+                    "division"
+                };
+                issues.push(
+                    ValidationIssue::error(format!("function '{function_name}': {what} by zero"))
+                        .at(right.span),
+                );
             }
             if op.class() == OperatorClass::Shift
                 && literal_index(right).is_some_and(|(negative, value)| negative && value != "0")
             {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': shift count must not be negative"
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "function '{function_name}': shift count must not be negative"
+                    ))
+                    .at(right.span),
+                );
             }
         }
-        Expression::Unary { op, value } => {
+        ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
             let actual = resolved_expression_type(value, scopes);
             if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': unary '{}' operand has type '{}', expected '{}'",
-                    function_name,
-                    operator,
-                    actual.as_str(),
-                    expected.as_str()
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "function '{}': unary '{}' operand has type '{}', expected '{}'",
+                        function_name,
+                        operator,
+                        actual.as_str(),
+                        expected.as_str()
+                    ))
+                    .at(value.span),
+                );
             }
         }
         _ if registered_builtin.is_some() => {
@@ -1478,9 +1432,9 @@ fn validate_binding_expression(
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
                 // A hex literal carries its own width, so 32 bytes need no cast.
                 let literal_bytes32 = expected == ArkType::Bytes32
-                    && matches!(operand, Expression::Literal(value) if value.starts_with("0x") && value.len() == 66);
-                if let (Expression::ArrayLiteral(elements), ArkType::Array(element, length)) =
-                    (*operand, &expected)
+                    && matches!(&operand.kind, ExprKind::Literal(value) if value.starts_with("0x") && value.len() == 66);
+                if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
+                    (&operand.kind, &expected)
                 {
                     for value in elements {
                         let actual = resolved_expression_type(value, scopes);
@@ -1489,23 +1443,26 @@ fn validate_binding_expression(
                             issues.push(ValidationIssue::error(format!(
                                 "function '{function_name}': {name} '{}' has type '{}', expected '{}'",
                                 value.source_text(), actual.as_str(), element.as_str()
-                            )));
+                            )).at(value.span));
                         }
                     }
                     if elements.len() != *length {
                         issues.push(ValidationIssue::error(format!(
                             "function '{function_name}': {name} operand has {} elements, expected {length}",
                             elements.len()
-                        )));
+                        )).at(operand.span));
                     }
                     continue;
                 }
                 if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': {name} operand has type '{}', expected '{}'",
-                        actual.as_str(),
-                        expected.as_str()
-                    )));
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "function '{function_name}': {name} operand has type '{}', expected '{}'",
+                            actual.as_str(),
+                            expected.as_str()
+                        ))
+                        .at(operand.span),
+                    );
                 }
             }
             // OP_ECPAIRING bounds its work at 16 pairs.
@@ -1515,7 +1472,7 @@ fn validate_binding_expression(
                 )));
             }
         }
-        Expression::Cast { target, data } => {
+        ExprKind::Cast { target, data } => {
             let actual = resolved_expression_type(data, scopes);
             let (source, hint) = match target.as_str() {
                 "int" => (
@@ -1533,7 +1490,7 @@ fn validate_binding_expression(
                 )));
             }
         }
-        Expression::Tunnel {
+        ExprKind::Tunnel {
             output_index,
             policy,
             exceptions,
@@ -1545,19 +1502,19 @@ fn validate_binding_expression(
                     actual.as_str()
                 )));
             }
-            if policy.iter().any(|value| !matches!(value, Expression::Literal(literal) if literal == "true" || literal == "false")) {
+            if policy.iter().any(|value| !matches!(&value.kind, ExprKind::Literal(literal) if literal == "true" || literal == "false")) {
                 issues.push(ValidationIssue::error("tunnel policy fields must be compile-time bool constants"));
             }
             if !policy
                 .iter()
-                .any(|value| matches!(value, Expression::Literal(literal) if literal == "true"))
+                .any(|value| matches!(&value.kind, ExprKind::Literal(literal) if literal == "true"))
             {
                 issues.push(ValidationIssue::error(
                     "tunnel policy must preserve at least one property",
                 ));
             }
             if !exceptions.is_empty()
-                && !matches!(&policy[2], Expression::Literal(literal) if literal == "true")
+                && !matches!(&policy[2].kind, ExprKind::Literal(literal) if literal == "true")
             {
                 issues.push(ValidationIssue::error(
                     "tunnel exceptions require asset preservation",
@@ -1574,17 +1531,17 @@ fn validate_binding_expression(
             }
         }
 
-        Expression::StructLiteral(_) if value_position => {
+        ExprKind::StructLiteral(_) if value_position => {
             issues.push(ValidationIssue::error(format!(
                 "function '{}': struct literals may only initialize typed struct declarations",
                 function_name
             )));
         }
-        Expression::Variable(name) => {
+        ExprKind::Variable(name) => {
             validate_named_binding(name, None, "binding", function_name, scopes, issues);
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
-        Expression::FieldAccess { value, .. } => {
+        ExprKind::FieldAccess { value, .. } => {
             let before = issues.len();
             validate_value_expression(value, function_name, scopes, issues);
             if issues.len() == before {
@@ -1602,9 +1559,9 @@ fn validate_binding_expression(
                     }
                 }
             }
-            return;
+            children_checked = true;
         }
-        Expression::IndexAccess { value, index } => {
+        ExprKind::IndexAccess { value, index } => {
             let before = issues.len();
             validate_value_expression(value, function_name, scopes, issues);
             validate_binding_expression(index, function_name, scopes, issues, true);
@@ -1620,27 +1577,27 @@ fn validate_binding_expression(
                     );
                 }
             }
-            return;
+            children_checked = true;
         }
-        Expression::ArrayIndex { array, index } => {
+        ExprKind::ArrayIndex { array, index } => {
             validate_array_index(array, array, index, function_name, scopes, issues);
         }
-        Expression::Property(name)
+        ExprKind::Property(name)
             if name.ends_with(".length") && find_binding(scopes, name).is_none() =>
         {
             let array = name.strip_suffix(".length").expect("checked suffix");
             validate_array_length(array, function_name, scopes, issues);
         }
-        Expression::Property(name) => {
+        ExprKind::Property(name) => {
             let root = name.split('.').next().unwrap_or(name);
             if name.contains('.') && find_binding(scopes, root).is_some() {
                 validate_named_binding(name, None, "field", function_name, scopes, issues);
             }
         }
-        Expression::ContractInstance { args, .. } => {
+        ExprKind::ContractInstance { args, .. } => {
             for argument in args {
-                match argument {
-                    Expression::Variable(name) => {
+                match &argument.kind {
+                    ExprKind::Variable(name) => {
                         if let Some(binding) = find_binding(scopes, name) {
                             if !matches!(binding.source, BindingSource::Constructor) {
                                 issues.push(ValidationIssue::error(format!(
@@ -1650,7 +1607,7 @@ fn validate_binding_expression(
                             }
                         }
                     }
-                    Expression::Literal(_) => {}
+                    ExprKind::Literal(_) => {}
                     _ => issues.push(ValidationIssue::error(format!(
                         "function '{}': computed contract arguments are not supported",
                         function_name
@@ -1661,16 +1618,20 @@ fn validate_binding_expression(
         _ => {}
     }
 
+    locate(&mut issues[first..], expression.span);
+    if children_checked {
+        return;
+    }
     for child in child_exprs(expression) {
         if matches!(
-            expression,
-            Expression::Call { .. }
-                | Expression::Builtin { .. }
-                | Expression::StructLiteral(_)
-                | Expression::ArrayLiteral(_)
-                | Expression::Tunnel { .. }
-                | Expression::FieldAccess { .. }
-                | Expression::IndexAccess { .. }
+            &expression.kind,
+            ExprKind::Call { .. }
+                | ExprKind::Builtin { .. }
+                | ExprKind::StructLiteral(_)
+                | ExprKind::ArrayLiteral(_)
+                | ExprKind::Tunnel { .. }
+                | ExprKind::FieldAccess { .. }
+                | ExprKind::IndexAccess { .. }
         ) {
             validate_value_expression(child, function_name, scopes, issues);
         } else {
@@ -1679,7 +1640,7 @@ fn validate_binding_expression(
                 function_name,
                 scopes,
                 issues,
-                !matches!(expression, Expression::ContractInstance { .. }),
+                !matches!(&expression.kind, ExprKind::ContractInstance { .. }),
             );
         }
     }
@@ -1733,11 +1694,14 @@ fn validate_array_index(
 
     let index_type = resolved_expression_type(index, scopes);
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': array index has type '{}', expected 'int'",
-            function_name,
-            index_type.as_str()
-        )));
+        issues.push(
+            ValidationIssue::error(format!(
+                "function '{}': array index has type '{}', expected 'int'",
+                function_name,
+                index_type.as_str()
+            ))
+            .at(index.span),
+        );
     }
     if let (Some((negative, literal)), Some((_, length, _))) =
         (literal_index(index), array_info.as_ref())
@@ -1749,10 +1713,13 @@ fn validate_array_index(
         };
         if !in_bounds {
             let sign = if negative { "-" } else { "" };
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': array index '{}{}' is out of range for '{}[{}]'",
-                function_name, sign, literal, written, length
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "function '{}': array index '{}{}' is out of range for '{}[{}]'",
+                    function_name, sign, literal, written, length
+                ))
+                .at(index.span),
+            );
         }
     }
 
@@ -1777,30 +1744,46 @@ fn validate_asset_id(
         )));
     }
 
-    // gidx: a numeric literal is range-checked directly; anything else must
-    // resolve to Int through the scope.
-    if let Expression::Literal(lit) = asset_gidx {
-        match lit.parse::<i64>() {
+    // gidx must resolve to Int; a constant one must also be in range.
+    let gidx_type = infer_type(asset_gidx, scope);
+    if gidx_type != ArkType::Int {
+        issues.push(ValidationIssue::error(format!(
+            "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
+            fname,
+            asset_gidx.source_text(),
+            gidx_type.as_str()
+        )));
+    } else if is_constant(asset_gidx) {
+        let value = crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into()))
+            .and_then(|value| {
+                value
+                    .parse::<i64>()
+                    .map_err(|_| format!("'{value}' is not a valid integer"))
+            });
+        match value {
             Ok(v) if (0..=65535).contains(&v) => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx literal {} is out of range 0..65535",
+                "function '{}': asset id gidx {} is out of range 0..65535",
                 fname, v
             ))),
-            Err(_) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx literal '{}' is not a valid integer",
-                fname, lit
-            ))),
-        }
-    } else {
-        let gidx_type = infer_type(asset_gidx, scope);
-        if gidx_type != ArkType::Int {
-            issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
+            Err(error) => issues.push(ValidationIssue::error(format!(
+                "function '{}': asset id gidx '{}': {}",
                 fname,
                 asset_gidx.source_text(),
-                gidx_type.as_str()
-            )));
+                error
+            ))),
         }
+    }
+}
+
+/// Built only from literals and operators; constants are folded to literals before validation.
+fn is_constant(expr: &Expression) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(_) => true,
+        ExprKind::Unary { .. } | ExprKind::BinaryOp { .. } => {
+            child_exprs(expr).into_iter().all(is_constant)
+        }
+        _ => false,
     }
 }
 
@@ -2325,13 +2308,14 @@ contract Demo() {
                     },
                 ],
                 statements: vec![located(Statement::Require(Requirement::Expression(
-                    Expression::Builtin {
+                    ExprKind::Builtin {
                         builtin: crate::builtins::find("checkSig").unwrap(),
                         args: vec![
-                            Expression::Variable("ownerSig".to_string()),
-                            Expression::Variable("owner".to_string()),
+                            ExprKind::Variable("ownerSig".to_string()).into(),
+                            ExprKind::Variable("owner".to_string()).into(),
                         ],
-                    },
+                    }
+                    .into(),
                 )))],
                 is_private: false,
                 is_static: false,
@@ -2359,15 +2343,16 @@ contract Demo() {
         // "condition false" path with no require() → a trivially-passing spend.
         let mut contract = make_contract("BarePath");
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: Expression::Variable("flag".to_string()),
+            condition: ExprKind::Variable("flag".to_string()).into(),
             then_body: vec![located(Statement::Require(Requirement::Expression(
-                Expression::Builtin {
+                ExprKind::Builtin {
                     builtin: crate::builtins::find("checkSig").unwrap(),
                     args: vec![
-                        Expression::Variable("ownerSig".to_string()),
-                        Expression::Variable("owner".to_string()),
+                        ExprKind::Variable("ownerSig".to_string()).into(),
+                        ExprKind::Variable("owner".to_string()).into(),
                     ],
-                },
+                }
+                .into(),
             )))],
             else_body: None,
         })];
@@ -2383,17 +2368,18 @@ contract Demo() {
         let mut contract = make_contract("BothPaths");
         let req = || {
             located(Statement::Require(Requirement::Expression(
-                Expression::Builtin {
+                ExprKind::Builtin {
                     builtin: crate::builtins::find("checkSig").unwrap(),
                     args: vec![
-                        Expression::Variable("ownerSig".to_string()),
-                        Expression::Variable("owner".to_string()),
+                        ExprKind::Variable("ownerSig".to_string()).into(),
+                        ExprKind::Variable("owner".to_string()).into(),
                     ],
-                },
+                }
+                .into(),
             )))
         };
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: Expression::Variable("flag".to_string()),
+            condition: ExprKind::Variable("flag".to_string()).into(),
             then_body: vec![req()],
             else_body: Some(vec![req()]),
         })];

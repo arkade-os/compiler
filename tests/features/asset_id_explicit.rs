@@ -340,3 +340,76 @@ fn accepts_loop_index_as_gidx() {
         compile(src).err()
     );
 }
+
+// ─── Computed indexes and gidx operands ─────────────────────────────────────
+
+#[test]
+fn computed_indexes_unroll_in_nested_loops() {
+    let asm = arkade_asm(
+        "contract C(bytes32 fooTxid, int packetType) {
+            function f(int[2] xs, int[2] ys) {
+                for (i, x) in xs {
+                    for (j, y) in ys {
+                        require(tx.inputs[i + j].value >= tx.outputs[i * 2 + j].value);
+                        require(tx.outputs[j].assets.lookup(fooTxid, i + j) >= x + y);
+                        require(tx.assetGroups[i + j].delta >= 0);
+                        require(size(tx.inputs[i].packet(packetType + j)) > 0);
+                    }
+                }
+            }
+        }",
+        "f",
+    );
+    for fragment in [
+        "1 1 OP_ADD OP_INSPECTINPUTVALUE 1 2 OP_MUL 1 OP_ADD OP_INSPECTOUTPUTVALUE",
+        "1 OP_1 OP_PICK 1 1 OP_ADD OP_INSPECTOUTASSETLOOKUP",
+        "1 1 OP_ADD OP_DUP OP_1 OP_INSPECTASSETGROUPSUM",
+        "1 OP_ADD 1 OP_INSPECTINPUTPACKET",
+    ] {
+        assert!(asm.contains(fragment), "missing `{fragment}` in:\n{asm}");
+    }
+}
+
+#[test]
+fn constant_gidx_expressions_are_typed_and_range_checked() {
+    let gidx_error = |gidx: &str| {
+        compile(&format!(
+            "contract C(bytes32 fooTxid) {{
+                const int G = 65535;
+                function f() {{ require(tx.outputs[0].assets.lookup(fooTxid, {gidx}) >= 1); }}
+            }}"
+        ))
+        .err()
+        .map(|err| err.to_string())
+    };
+    assert_eq!(gidx_error("G - 1"), None);
+    for (gidx, expected) in [
+        ("G + 1", "gidx 65536 is out of range"),
+        ("-1", "gidx -1 is out of range"),
+        ("0 - 1", "gidx -1 is out of range"),
+        ("99999999999999999999", "expected a signed 64-bit integer"),
+        ("9223372036854775807 + 1", "integer overflow"),
+        ("~0x0001", "must be int (0..65535), got bytes"),
+        ("1 == 1", "must be int (0..65535), got bool"),
+    ] {
+        let err = gidx_error(gidx).unwrap_or_else(|| panic!("{gidx} must be rejected"));
+        assert!(err.contains(expected), "{gidx}: {err}");
+    }
+}
+
+#[test]
+fn control_is_accepts_computed_gidx() {
+    let asm = arkade_asm(
+        "contract C(bytes32 fooTxid) {
+            function f(int k) {
+                let g = tx.assetGroups[k];
+                require(g.controlIs(fooTxid, k + 1));
+            }
+        }",
+        "f",
+    );
+    assert!(
+        asm.contains("OP_INSPECTASSETGROUPCTRL OP_DROP") && asm.contains("1 OP_ADD OP_EQUAL"),
+        "{asm}"
+    );
+}

@@ -14,8 +14,8 @@ pub(crate) fn parse_multisig_threshold(
             .iter()
             .find(|constant| constant.name == name)
             .ok_or_else(|| format!("multisig threshold '{name}' must be an int constant"))?;
-        match (&constant.value, constant.const_type.as_str()) {
-            (Expression::Literal(text), "int") => text.as_str(),
+        match (&constant.value.kind, constant.const_type.as_str()) {
+            (ExprKind::Literal(text), "int") => text.as_str(),
             _ => {
                 return Err(format!(
                     "multisig threshold '{name}' must be an int literal constant"

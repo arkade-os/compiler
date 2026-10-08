@@ -56,7 +56,7 @@ func TestCompiledEscrow(t *testing.T) {
 		"partyBScript":      partyBProgram,
 		"amount":            scriptInt(t, amount),
 		"timeoutAt":         scriptInt(t, pastTimeout),
-		"exit":              scriptInt(t, exitDelay),
+		"SERVER_EXIT_DELAY": scriptInt(t, exitDelay),
 	}
 	pendingValues := make(map[string][]byte, len(values))
 	for key, value := range values {

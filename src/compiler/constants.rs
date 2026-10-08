@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, Expression, KeyExpr, LocatedStatement, Requirement,
-    Statement, TapItem,
+    AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr, LocatedStatement,
+    Requirement, Statement, TapItem,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
         }
         for item in &mut tapscript.items {
             match item {
-                TapItem::Older { value } | TapItem::After { value } => {
+                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
                     if let Some(text) = values.get(value.as_str()) {
                         *value = text.clone();
                     }
@@ -64,7 +64,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         } = constant;
         if matches!(
             name.as_str(),
-            "true" | "false" | "server" | "emulator" | "SERVER_KEY"
+            "true" | "false" | "server" | "emulator" | "serverExitDelay" | "SERVER_KEY"
         ) {
             return Err(format!("constant name '{name}' is reserved"));
         }
@@ -106,7 +106,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
 pub(crate) fn resolve(contract: &mut Contract) -> Result<(), String> {
     let values = collect(contract)?;
     for constant in &mut contract.constants {
-        constant.value = Expression::Literal(values[&constant.name].clone());
+        constant.value.kind = ExprKind::Literal(values[&constant.name].clone());
     }
     Ok(())
 }
@@ -172,15 +172,15 @@ fn validate_expression(
     expression: &Expression,
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<&'static str, String> {
-    match expression {
-        Expression::Literal(text) => {
+    match &expression.kind {
+        ExprKind::Literal(text) => {
             if kind(text) == "int" {
                 integer(text)?;
             }
             Ok(kind(text))
         }
-        Expression::Variable(name) | Expression::Property(name) => Ok(kind(&resolve(name)?)),
-        Expression::Unary { op, value } => {
+        ExprKind::Variable(name) | ExprKind::Property(name) => Ok(kind(&resolve(name)?)),
+        ExprKind::Unary { op, value } => {
             let expected = match op {
                 UnaryOperator::Invert => {
                     return Err(format!(
@@ -190,7 +190,7 @@ fn validate_expression(
                 }
                 UnaryOperator::Not => "bool",
                 UnaryOperator::Neg => {
-                    if let Expression::Literal(text) = value.as_ref() {
+                    if let ExprKind::Literal(text) = &value.as_ref().kind {
                         integer(&format!("-{text}"))?;
                         return Ok("int");
                     }
@@ -206,7 +206,7 @@ fn validate_expression(
             }
             Ok(expected)
         }
-        Expression::BinaryOp { left, op, right } => {
+        ExprKind::BinaryOp { left, op, right } => {
             let left = validate_expression(left, resolve)?;
             let right = validate_expression(right, resolve)?;
             let valid = match op.class() {
@@ -242,22 +242,22 @@ fn validate_expression(
     }
 }
 
-fn evaluate(
+pub(crate) fn evaluate(
     expression: &Expression,
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<String, String> {
     let overflow = || "integer overflow in constant expression".to_string();
-    match expression {
-        Expression::Literal(text) => match kind(text) {
+    match &expression.kind {
+        ExprKind::Literal(text) => match kind(text) {
             "int" => Ok(integer(text)?.to_string()),
             _ => Ok(text.clone()),
         },
-        Expression::Variable(name) | Expression::Property(name) => resolve(name),
-        Expression::Unary {
+        ExprKind::Variable(name) | ExprKind::Property(name) => resolve(name),
+        ExprKind::Unary {
             op: UnaryOperator::Neg,
             value,
         } => {
-            if let Expression::Literal(text) = value.as_ref() {
+            if let ExprKind::Literal(text) = &value.as_ref().kind {
                 return Ok(integer(&format!("-{text}"))?.to_string());
             }
             let value = evaluate(value, resolve)?;
@@ -266,7 +266,7 @@ fn evaluate(
                 .ok_or_else(overflow)?
                 .to_string())
         }
-        Expression::Unary {
+        ExprKind::Unary {
             op: UnaryOperator::Not,
             value,
         } => {
@@ -277,7 +277,7 @@ fn evaluate(
                 _ => Err("operator '!' requires a bool constant".to_string()),
             }
         }
-        Expression::BinaryOp { left, op, right } => {
+        ExprKind::BinaryOp { left, op, right } => {
             let left = evaluate(left, resolve)?;
             if op.class() == OperatorClass::Logical {
                 if (*op == BinaryOperator::And && left == "false")
@@ -308,6 +308,10 @@ fn evaluate(
                     return Err("division by zero in constant expression".to_string())
                 }
                 BinaryOperator::Div => left.checked_div(right),
+                BinaryOperator::Rem if right == 0 => {
+                    return Err("modulo by zero in constant expression".to_string())
+                }
+                BinaryOperator::Rem => Some(left.wrapping_rem(right)),
                 BinaryOperator::Shl | BinaryOperator::Shr if right < 0 => {
                     return Err("negative shift count in constant expression".to_string())
                 }
@@ -400,7 +404,7 @@ fn fold_statements(
             Statement::ForCount { count, body } => {
                 fold_expression(count, values);
                 if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
-                    *count = Expression::Literal(value);
+                    count.kind = ExprKind::Literal(value);
                 }
                 fold_statements(body, values)?;
             }
@@ -421,24 +425,23 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
 }
 
 fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
-    match expression {
-        Expression::Variable(name) | Expression::Property(name) if values.contains_key(name) => {
-            *expression = Expression::Literal(values[name].clone());
+    if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
+        if let Some(value) = values.get(name) {
+            expression.kind = ExprKind::Literal(value.clone());
             return;
         }
-        Expression::Tunnel { policy, .. } => {
-            for value in policy.iter_mut() {
-                if let Ok(literal) = evaluate(value, &mut |name| {
-                    values
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| format!("unknown constant '{name}'"))
-                }) {
-                    *value = Expression::Literal(literal);
-                }
+    }
+    if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {
+        for value in policy.iter_mut() {
+            if let Ok(literal) = evaluate(value, &mut |name| {
+                values
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("unknown constant '{name}'"))
+            }) {
+                value.kind = ExprKind::Literal(literal);
             }
         }
-        _ => {}
     }
     for child in crate::models::child_exprs_mut(expression) {
         fold_expression(child, values);

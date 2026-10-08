@@ -20,7 +20,7 @@ contract Vault(pubkey owner) {{
         require({strict});
     }}
     function exit(signature sig) tapscript {{
-        require(older({delay}));
+        require(older(blocks({delay})));
         require(checkSig(sig, owner));
     }}
 }}
@@ -249,7 +249,14 @@ fn multisig_threshold_checks_types_bounds_and_tapscript_constants() {
 
 #[test]
 fn reserved_names_cannot_be_constants() {
-    for name in ["true", "false", "server", "emulator", "SERVER_KEY"] {
+    for name in [
+        "true",
+        "false",
+        "server",
+        "emulator",
+        "serverExitDelay",
+        "SERVER_KEY",
+    ] {
         let source = format!(
             "contract Vault() {{ const int {name} = 10; function spend() {{ require(true); }} }}"
         );
@@ -364,6 +371,7 @@ fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic
         ("int", "tx.time", "unknown constant 'tx.time'"),
         ("int", "helper()", "constant expression"),
         ("int", "1 / 0", "division by zero"),
+        ("int", "1 % 0", "modulo by zero"),
         ("int", "9223372036854775807 + 1", "overflow"),
         ("int", "-9223372036854775808 - 1", "overflow"),
         ("int", "9223372036854775807 * 2", "overflow"),
@@ -717,4 +725,19 @@ fn shifts_fold_in_constants_like_the_vm() {
         let error = fold(expr).expect_err(expr);
         assert!(error.contains(message), "{expr}: {error}");
     }
+}
+
+#[test]
+fn remainder_folds_with_the_sign_of_the_dividend() {
+    let fold = |expr: &str| {
+        let output = arkade_compiler::compile(&format!(
+            "contract C() {{ const int Z = {expr}; function spend(int n) {{ require(n == Z); }} }}"
+        ))
+        .expect(expr);
+        crate::common::arkade_asm(&output, "spend")
+    };
+    assert_eq!(fold("7 % 3"), fold("1"));
+    assert_eq!(fold("-7 % 2"), fold("-1"));
+    assert_eq!(fold("7 % -2"), fold("1"));
+    assert_eq!(fold("-9223372036854775808 % -1"), fold("0"));
 }

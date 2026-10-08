@@ -87,6 +87,7 @@ fn local_check_placeholder_consistency(
         let inner = &tok[1..tok.len() - 1];
         // Built-in / runtime-injected names that are always resolved.
         if inner == "SERVER_KEY"
+            || inner == "SERVER_EXIT_DELAY"
             || inner == "serverSig"
             || inner == "emulatorSig"
             || inner.starts_with("EMULATOR_KEY:")

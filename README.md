@@ -32,19 +32,19 @@ Every pull request gets its own build at `https://arkade-os.github.io/compiler/p
 ### One key, one exit
 
 ```solidity
-contract SingleSig(pubkey user, int exit) {
+contract SingleSig(pubkey user) {
   function spend(signature userSig) {
     require(checkSig(userSig, user));
   }
 
   function unilateral(signature userSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(userSig, user));
   }
 }
 ```
 
-`spend` has no modifier, so it is an Arkade covenant: the body compiles to covenant ASM that the Arkade VM runs. Because `spend` declares no tapscript of its own, the compiler synthesizes the collaborative L1 leaf `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG` for it. `unilateral` is marked `tapscript`, so it is a pure L1 leaf: a CSV delay followed by the user's key.
+`spend` has no modifier, so it is an Arkade covenant: the body compiles to covenant ASM that the Arkade VM runs. Because `spend` declares no tapscript of its own, the compiler synthesizes the collaborative L1 leaf `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG` for it. `unilateral` is marked `tapscript`, so it is a pure L1 leaf: a CSV delay followed by the user's key. `serverExitDelay` is arkd's unilateral exit delay; it lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config, so it is not a constructor input.
 
 ### Hash and time locks
 
@@ -53,8 +53,7 @@ contract HTLC(
   pubkey sender,
   pubkey receiver,
   bytes20 preimageHash,
-  int refundTime,
-  int exit
+  int refundTime
 ) {
   function claim() {
     require(tx.outputs[0].value >= tx.inputs[0].value);
@@ -73,7 +72,7 @@ contract HTLC(
   }
 
   function unilateral(signature senderSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(senderSig, sender));
   }
 }
@@ -86,15 +85,15 @@ A covenant and a tapscript with the same name form one spend group. The covenant
 ```solidity
 import "single_sig.ark";
 
-contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
+contract Splitter(pubkey alicePk, pubkey bobPk) {
   function split() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk, exit));
-    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk, exit));
+    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk));
+    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk));
   }
 }
 ```
 
-`new SingleSig(alicePk, exit)` compiles to the opaque placeholder `<CONTRACT:SingleSig(<alicePk>,<exit>)>`. The Arkade runtime resolves it to the child contract's 32-byte Taproot output key (witness program) at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk)` compiles to the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`. The Arkade runtime resolves it to the child contract's 32-byte Taproot output key (witness program) at instantiation, so the check itself is a plain `OP_INSPECTOUTPUTSCRIPTPUBKEY ... OP_EQUAL`. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -104,8 +103,7 @@ contract TokenVault(
   bytes32 tokenAssetIdTxid,
   int tokenAssetIdGidx,
   bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx,
-  int exit
+  int ctrlAssetIdGidx
 ) {
   function deposit(signature ownerSig) {
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in input");
@@ -119,7 +117,7 @@ contract TokenVault(
   }
 
   function unilateral(signature ownerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -401,7 +399,7 @@ const int KEY_COUNT = 2;
 const bool STRICT = HALF_DELAY > 0;
 ```
 
-Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, `<<`, `>>`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); `bytes` constants accept a literal or another `bytes` constant. Integer arithmetic uses checked signed 64-bit values; division truncates toward zero. Cycles, runtime values, type mismatches, and out-of-range literals are rejected even in skipped operands. Division by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
+Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, `%`, `<<`, `>>`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); `bytes` constants accept a literal or another `bytes` constant. Integer arithmetic uses checked signed 64-bit values; division truncates toward zero and `%` takes the sign of the dividend. Cycles, runtime values, type mismatches, and out-of-range literals are rejected even in skipped operands. Division or modulo by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
 A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
 
@@ -448,7 +446,7 @@ Each live binding has a unique name. Constructor parameters are immutable.
 
 ### Expressions
 
-Arithmetic `+ - * /` and unary `-` on `int`. Shifts `<<` and `>>` on `int`: the count must not be negative, and `>>` is arithmetic, rounding toward negative infinity. Bytewise `&`, `|`, `^` and unary `~` on bytes; the two-operand forms need operands of equal length, checked at compile time when both lengths are known and by the VM otherwise. Comparison `== != < <= > >=`. Boolean `!`, `&&`, and `||` on `bool` in covenant functions. Precedence from highest to lowest is unary operators, multiplication/division, addition/subtraction, shifts, `&`, `^`, `|`, comparisons, `&&`, then `||`; parentheses override it, and `a & mask == b` means `(a & mask) == b`. Logical operators evaluate left to right and short-circuit: `&&` skips the right operand when the left is false, and `||` skips it when the left is true. Both operands must be valid boolean expressions even when one is skipped. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you widen it with `num2bin(value, width)`, because the width is consensus-visible. `arr.length` folds to the declared size. Array reads and writes accept `int` index expressions; runtime indices emit bounds checks.
+Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 == -1`) and unary `-` on `int`. Shifts `<<` and `>>` on `int`: the count must not be negative, and `>>` is arithmetic, rounding toward negative infinity. Bytewise `&`, `|`, `^` and unary `~` on bytes; the two-operand forms need operands of equal length, checked at compile time when both lengths are known and by the VM otherwise. Comparison `== != < <= > >=`. Boolean `!`, `&&`, and `||` on `bool` in covenant functions. Precedence from highest to lowest is unary operators, multiplication/division/remainder, addition/subtraction, shifts, `&`, `^`, `|`, comparisons, `&&`, then `||`; parentheses override it, and `a & mask == b` means `(a & mask) == b`. Logical operators evaluate left to right and short-circuit: `&&` skips the right operand when the left is false, and `||` skips it when the left is true. Both operands must be valid boolean expressions even when one is skipped. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you widen it with `num2bin(value, width)`, because the width is consensus-visible. `arr.length` folds to the declared size. Array reads and writes accept `int` index expressions; runtime indices emit bounds checks.
 
 ### Built-ins
 
@@ -456,7 +454,9 @@ Arithmetic `+ - * /` and unary `-` on `int`. Shifts `<<` and `>>` on `int`: the 
 
 **Hashes.** In covenants, `sha256(expr)` and `hash256(expr)` return `bytes32`; `hash160(expr)` and `ripemd160(expr)` return `bytes20`. All four accept computed byte operands and work in bindings, helper returns, nested calls, and comparisons. Tapscript hashlocks use `require(hashFn(preimage) == hash)`. Streaming: `sha256Initialize`, `sha256Update`, `sha256Finalize`. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
-**Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts.
+**Merkle proofs.** `merkleRoot(leafTag, branchTag, proof, leaf)` returns the `bytes32` root that `OP_MERKLEBRANCHVERIFY` computes with BIP-341 tagged hashes: the leaf is `tagged_hash(leafTag, leaf)`, and each 32-byte sibling in `proof` is combined in sorted order as `tagged_hash(branchTag, min || max)`. An empty `leafTag` (`""`) takes a 32-byte `leaf` as already hashed. Compare the result yourself, e.g. `require(merkleRoot("leaf", "branch", proof, leaf) == root)`; the VM fails the spend when `proof` is not a multiple of 32 bytes, `branchTag` is empty, or a prehashed `leaf` is not exactly 32 bytes.
+
+**Time.** In covenants, `tx.time` reads the transaction locktime using `OP_INSPECTLOCKTIME`, and `require(tx.time >= deadline)` compares it with the bound, whether a literal, constant, or runtime value. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.time` is not available in tapscripts. Wrap a literal or constant in `blocks(n)` or `seconds(n)` to state its unit. `older(blocks(144))` pushes `144`, and `older(seconds(1024))` pushes the BIP68 time-based sequence `4194306` (a multiple of 512 seconds, at most 33553920). `after(blocks(n))` takes a block height below 500000000, and `after(seconds(n))` takes a Unix timestamp at or above it. A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime; the compiler warns on a literal or constant without a unit. arkd rejects block-based timelocks unless the server allows them, so arkd exit leaves should use `older(serverExitDelay)`.
 
 In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
 
@@ -484,7 +484,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a `checkMultisig` threshold, if written, must equal the key count, and each signature must be a declared `signature` input aligned 1:1 with its key.
 
-Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. Inputs named `server` or `emulator` are rejected.
+Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. `older(serverExitDelay)` uses arkd's unilateral exit delay and lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config. Inputs named `server`, `emulator`, or `serverExitDelay` are rejected.
 
 ## Artifact format
 

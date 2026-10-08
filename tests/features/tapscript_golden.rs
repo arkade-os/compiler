@@ -61,3 +61,60 @@ fn unilateral_matches_csv_multisig_closure() {
         "<exit> OP_CHECKSEQUENCEVERIFY OP_DROP <sender> OP_CHECKSIG"
     );
 }
+
+const SERVER_EXIT: &str = r#"
+contract Exit(pubkey owner) {
+    function exit(signature ownerSig) tapscript {
+        require(older(serverExitDelay));
+        require(checkSig(ownerSig, owner));
+    }
+}
+"#;
+
+#[test]
+fn server_exit_delay_lowers_to_reserved_placeholder() {
+    let out = compile(SERVER_EXIT).unwrap();
+    assert_eq!(
+        crate::common::leaf_asm(&out, "exit", "exit"),
+        "<SERVER_EXIT_DELAY> OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
+    );
+    let inputs: Vec<_> = out.parameters.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(inputs, ["owner"]);
+}
+
+#[test]
+fn server_exit_delay_is_not_an_absolute_locktime() {
+    let source = SERVER_EXIT.replace("older(serverExitDelay)", "after(serverExitDelay)");
+    let error = compile(&source).unwrap_err().to_string();
+    assert!(error.contains("serverExitDelay"), "got: {error}");
+}
+
+#[test]
+fn timelock_units_encode_literals_and_constants() {
+    let leaf = |timelock: &str| {
+        let source = format!(
+            "contract C(pubkey owner) {{ const int DELAY = 1024; function exit(signature serverSig, signature sig) tapscript {{ require({timelock}); require(checkMultisig([server, owner], [serverSig, sig], 2)); }} }}"
+        );
+        let out = compile(&source).unwrap();
+        (crate::common::leaf_asm(&out, "exit", "exit"), out.warnings)
+    };
+    for (timelock, operand) in [
+        ("older(seconds(DELAY))", "4194306 OP_CHECKSEQUENCEVERIFY"),
+        ("older(blocks(144))", "144 OP_CHECKSEQUENCEVERIFY"),
+        ("after(blocks(800000))", "800000 OP_CHECKLOCKTIMEVERIFY"),
+        (
+            "after(seconds(1700000000))",
+            "1700000000 OP_CHECKLOCKTIMEVERIFY",
+        ),
+    ] {
+        let (asm, warnings) = leaf(timelock);
+        assert!(asm.starts_with(operand), "{timelock}: {asm}");
+        assert!(warnings.is_empty(), "{timelock}: {warnings:?}");
+    }
+    let (asm, warnings) = leaf("older(DELAY)");
+    assert!(asm.starts_with("1024 OP_CHECKSEQUENCEVERIFY"), "{asm}");
+    assert!(
+        warnings[0].contains("older(1024) is a raw BIP68 sequence"),
+        "{warnings:?}"
+    );
+}

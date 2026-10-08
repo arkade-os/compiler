@@ -86,8 +86,8 @@ fn validate_body(
             Statement::Require(Requirement::Comparison { left, right, .. }) => {
                 for (value, other) in [(left, right), (right, left)] {
                     if matches!(
-                        value,
-                        Expression::ArrayLiteral(_) | Expression::StructLiteral(_)
+                        &value.kind,
+                        ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
                     ) {
                         let expected = infer_type(other, scope);
                         if matches!(expected, ArkType::Array(..) | ArkType::Struct(_)) {
@@ -136,10 +136,8 @@ fn validate_body(
                 value,
             } => {
                 // Non-literal initializers are type-checked with the declaration.
-                if let (
-                    Some(expected),
-                    Expression::ArrayLiteral(_) | Expression::StructLiteral(_),
-                ) = (declared_type, value)
+                if let (Some(expected), ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)) =
+                    (declared_type, &value.kind)
                 {
                     validate_value(
                         expected,
@@ -206,7 +204,8 @@ fn validate_calls(
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    if let Expression::Call { name, args, .. } = expression {
+    let first = issues.len();
+    if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
             None => issues.push(ValidationIssue::error(format!(
                 "unknown private function '{name}'"
@@ -252,6 +251,7 @@ fn validate_calls(
             }
         }
     }
+    locate(&mut issues[first..], expression.span);
     for child in child_exprs(expression) {
         validate_calls(child, true, caller, scope, contract, issues);
     }
@@ -265,9 +265,10 @@ fn validate_value(
     context: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    let first = issues.len();
     let expected_type = ArkType::parse(expected);
-    match (value, &expected_type) {
-        (Expression::ArrayLiteral(elements), ArkType::Array(element, length)) => {
+    match (&value.kind, &expected_type) {
+        (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) => {
             if elements.len() != *length {
                 issues.push(ValidationIssue::error(format!(
                     "{context}: expected {length} array elements, got {}",
@@ -285,7 +286,7 @@ fn validate_value(
                 );
             }
         }
-        (Expression::StructLiteral(fields), ArkType::Struct(name)) => {
+        (ExprKind::StructLiteral(fields), ArkType::Struct(name)) => {
             let native =
                 crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
                     name: name.clone(),
@@ -343,6 +344,7 @@ fn validate_value(
             }
         }
     }
+    locate(&mut issues[first..], value.span);
 }
 
 fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
@@ -427,7 +429,7 @@ fn analyze_expression(
     visiting: &mut Vec<String>,
     guarantees: &mut HashMap<String, bool>,
 ) -> Result<(), String> {
-    if let Expression::Call { name, .. } = expression {
+    if let ExprKind::Call { name, .. } = &expression.kind {
         if let Some(function) = contract.functions.iter().find(|f| f.name == *name) {
             analyze_function(function, contract, visiting, guarantees)?;
         }
@@ -447,12 +449,12 @@ struct Flow {
 
 fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, bool>) -> bool {
     // Conservatively count only the always-evaluated left operand, even for literal conditions.
-    if let Expression::BinaryOp { left, op, .. } = expression {
+    if let ExprKind::BinaryOp { left, op, .. } = &expression.kind {
         if op.class() == crate::operators::OperatorClass::Logical {
             return expression_enforces(left, guarantees);
         }
     }
-    matches!(expression, Expression::Call { name, .. } if guarantees.get(name) == Some(&true))
+    matches!(&expression.kind, ExprKind::Call { name, .. } if guarantees.get(name) == Some(&true))
         || child_exprs(expression)
             .into_iter()
             .any(|child| expression_enforces(child, guarantees))
@@ -505,7 +507,11 @@ fn flow_block(
                 flow.returned |= body.returned;
             }
             Statement::ForCount {
-                count: Expression::Literal(count),
+                count:
+                    Expression {
+                        kind: ExprKind::Literal(count),
+                        ..
+                    },
                 body,
             } if count.parse::<usize>().is_ok_and(|count| count > 0) => {
                 let body = flow_block(body, flow.fallthrough, guarantees);

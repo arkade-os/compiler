@@ -20,8 +20,6 @@ contract FujiSafe(
   pubkey oraclePk,
   // The asset pair identifier
   bytes assetPair,
-  // Exit timelock in blocks
-  int exit,
   // Burn-output witness programs, constructed from the keys and asset commitment by the client
   bytes32 treasuryBurnScript,
   bytes32 borrowerBurnScript
@@ -83,7 +81,7 @@ contract FujiSafe(
     require(
       tx.outputs[0].scriptPubKey == new FujiSafe(
         assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,
-        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair, exit,
+        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair,
         treasuryBurnScript, borrowerBurnScript
       ),
       "contract mismatch"
@@ -96,7 +94,7 @@ contract FujiSafe(
 
   // Unilateral exit (CSV): borrower recovers after exit delay.
   function unilateral(signature borrowerSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(borrowerSig, borrowerPk));
   }
 }

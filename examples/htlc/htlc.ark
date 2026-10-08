@@ -4,8 +4,7 @@ contract HTLC(
   pubkey sender,
   pubkey receiver,
   bytes20 preimageHash,
-  int refundTime,
-  int exit
+  int refundTime
 ) {
   // Covenants (emulator): pin the payout to the right party for >= input value.
   function claim() {
@@ -27,7 +26,7 @@ contract HTLC(
 
   // Unilateral exit (CSV).
   function unilateral(signature senderSig) tapscript {
-    require(older(exit));
+    require(older(serverExitDelay));
     require(checkSig(senderSig, sender));
   }
 }

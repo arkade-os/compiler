@@ -500,16 +500,32 @@ pub enum TapItem {
         preimage: String,
         hash: String,
     },
-    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal or param name.
-    Older { value: String },
-    /// `after(n)` → CLTV (absolute timelock, forfeit class).
-    After { value: String },
+    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal,
+    /// constant, parameter, or `serverExitDelay`; without a unit it is the raw
+    /// BIP68 sequence.
+    Older {
+        value: String,
+        unit: Option<TimeUnit>,
+    },
+    /// `after(n)` → CLTV (absolute timelock, forfeit class). Without a unit
+    /// `value` is the raw nLockTime.
+    After {
+        value: String,
+        unit: Option<TimeUnit>,
+    },
     /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
     Sig {
         keys: Vec<KeyExpr>,
         sigs: Vec<String>,
         threshold: Option<u16>,
     },
+}
+
+/// The unit of a `blocks(n)` or `seconds(n)` timelock operand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeUnit {
+    Blocks,
+    Seconds,
 }
 
 /// A `tapscript`-modified function declaration: an L1 tapleaf source member.
@@ -541,9 +557,41 @@ pub enum GroupIOSource {
     Outputs,
 }
 
+/// An expression with the byte range of the source text it came from.
+/// Nodes the compiler builds in place of another keep that node's span.
+#[derive(Debug, Clone)]
+pub struct Expression {
+    pub kind: ExprKind,
+    pub span: crate::diagnostics::Span,
+}
+
+impl Expression {
+    pub fn new(kind: ExprKind, span: crate::diagnostics::Span) -> Self {
+        Self { kind, span }
+    }
+
+    /// A node replacing this one, at the same source position.
+    pub(crate) fn with_kind(&self, kind: ExprKind) -> Self {
+        Self::new(kind, self.span)
+    }
+
+    /// Move the expression out, leaving an empty literal at its position.
+    pub(crate) fn take(&mut self) -> Self {
+        let placeholder = self.with_kind(ExprKind::Literal(String::new()));
+        std::mem::replace(self, placeholder)
+    }
+}
+
+#[cfg(test)]
+impl From<ExprKind> for Expression {
+    fn from(kind: ExprKind) -> Self {
+        Self::new(kind, crate::diagnostics::Span { start: 0, end: 0 })
+    }
+}
+
 /// Expression AST
 #[derive(Debug, Clone)]
-pub enum Expression {
+pub enum ExprKind {
     /// A private function call; the declared result type is resolved before validation.
     Call {
         name: String,
@@ -727,18 +775,17 @@ pub enum Expression {
 
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
-    match expression {
-        Expression::Builtin { builtin, .. } => builtin
+    match &expression.kind {
+        ExprKind::Builtin { builtin, .. } => builtin
             .result
             .filter(|result| builtin_struct_fields(result).is_some()),
-        Expression::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
-        Expression::GroupProperty { property, .. }
+        ExprKind::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
+        ExprKind::GroupProperty { property, .. }
             if matches!(property.as_str(), "assetId" | "controlAssetId") =>
         {
             Some("AssetId")
         }
-        Expression::CurrentInput(Some(property))
-        | Expression::InputIntrospection { property, .. }
+        ExprKind::CurrentInput(Some(property)) | ExprKind::InputIntrospection { property, .. }
             if property == "outpoint" =>
         {
             Some("Outpoint")
@@ -747,97 +794,107 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
     }
 }
 
-pub(crate) fn child_exprs_mut(expr: &mut Expression) -> Vec<&mut Expression> {
-    match expr {
-        // Leaf nodes: no nested expressions.
-        Expression::Variable(_)
-        | Expression::Literal(_)
-        | Expression::Property(_)
-        | Expression::CurrentInput(_)
-        | Expression::TxIntrospection { .. }
-        | Expression::IntentInspect { .. }
-        | Expression::AssetGroupsLength => vec![],
+/// Generates the shared and mutable traversals from one list of each variant's
+/// direct sub-expressions, so the two cannot drift apart. The match has no `_`
+/// arm: a new variant does not compile until its children are declared here.
+macro_rules! expression_children {
+    ($name:ident, $expr:ty, ($($borrow:tt)*), $iter:ident, $as_box:ident) => {
+        pub(crate) fn $name(expr: $expr) -> Vec<$expr> {
+            match $($borrow)* expr.kind {
+                // Leaf nodes: no nested expressions.
+                ExprKind::Variable(_)
+                | ExprKind::Literal(_)
+                | ExprKind::Property(_)
+                | ExprKind::CurrentInput(_)
+                | ExprKind::TxIntrospection { .. }
+                | ExprKind::IntentInspect { .. }
+                | ExprKind::AssetGroupsLength => vec![],
 
-        Expression::FieldAccess { value, .. } => vec![value],
-        Expression::IndexAccess { value, index } => vec![value, index],
-        Expression::ArrayIndex { index, .. } => vec![index],
+                ExprKind::FieldAccess { value, .. } => vec![value],
+                ExprKind::IndexAccess { value, index } => vec![value, index],
+                ExprKind::ArrayIndex { index, .. } => vec![index],
 
-        Expression::ArrayLiteral(elements)
-        | Expression::Call { args: elements, .. }
-        | Expression::Builtin { args: elements, .. } => elements.iter_mut().collect(),
-        Expression::StructLiteral(fields) => fields.iter_mut().map(|(_, value)| value).collect(),
+                ExprKind::ArrayLiteral(elements)
+                | ExprKind::Call { args: elements, .. }
+                | ExprKind::Builtin { args: elements, .. } => elements.$iter().collect(),
+                ExprKind::StructLiteral(fields) => fields.$iter().map(|(_, value)| value).collect(),
 
-        Expression::AssetLookup {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
+                ExprKind::AssetLookup {
+                    index,
+                    asset_txid,
+                    asset_gidx,
+                    ..
+                }
+                | ExprKind::AssetHas {
+                    index,
+                    asset_txid,
+                    asset_gidx,
+                    ..
+                } => vec![index, asset_txid, asset_gidx],
+                ExprKind::AssetCount { index, .. }
+                | ExprKind::InputIntrospection { index, .. }
+                | ExprKind::OutputIntrospection { index, .. }
+                | ExprKind::AssetGroupAt { index }
+                | ExprKind::GroupProperty { group: index, .. } => vec![index],
+                ExprKind::AssetAt {
+                    io_index,
+                    asset_index,
+                    ..
+                } => vec![io_index, asset_index],
+                ExprKind::BinaryOp { left, right, .. } | ExprKind::Concat { left, right, .. } => {
+                    vec![left, right]
+                }
+                ExprKind::GroupFind {
+                    asset_txid,
+                    asset_gidx,
+                }
+                | ExprKind::GroupHas {
+                    asset_txid,
+                    asset_gidx,
+                } => vec![asset_txid, asset_gidx],
+                ExprKind::GroupControlIs {
+                    group,
+                    asset_txid,
+                    asset_gidx,
+                } => vec![group, asset_txid, asset_gidx],
+                ExprKind::GroupIOAccess {
+                    group, io_index, ..
+                } => vec![group, io_index],
+                ExprKind::Unary { value, .. } => vec![value],
+                ExprKind::Tunnel {
+                    output_index,
+                    policy,
+                    exceptions,
+                } => std::iter::once(output_index.$as_box())
+                    .chain(policy.$iter())
+                    .chain(exceptions.$iter())
+                    .collect(),
+                ExprKind::ContractInstance { args, .. } => args.$iter().collect(),
+                ExprKind::Cast { data, .. } => vec![data],
+                ExprKind::PacketInspect { packet_type } => vec![packet_type],
+                ExprKind::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+            }
         }
-        | Expression::AssetHas {
-            index,
-            asset_txid,
-            asset_gidx,
-            ..
-        } => vec![index, asset_txid, asset_gidx],
-        Expression::AssetCount { index, .. }
-        | Expression::InputIntrospection { index, .. }
-        | Expression::OutputIntrospection { index, .. }
-        | Expression::AssetGroupAt { index }
-        | Expression::GroupProperty { group: index, .. } => vec![index],
-        Expression::AssetAt {
-            io_index,
-            asset_index,
-            ..
-        } => vec![io_index, asset_index],
-        Expression::BinaryOp { left, right, .. } | Expression::Concat { left, right, .. } => {
-            vec![left, right]
-        }
-        Expression::GroupFind {
-            asset_txid,
-            asset_gidx,
-        }
-        | Expression::GroupHas {
-            asset_txid,
-            asset_gidx,
-        } => vec![asset_txid, asset_gidx],
-        Expression::GroupControlIs {
-            group,
-            asset_txid,
-            asset_gidx,
-        } => vec![group, asset_txid, asset_gidx],
-        Expression::GroupIOAccess {
-            group, io_index, ..
-        } => vec![group, io_index],
-        Expression::Unary { value, .. } => vec![value],
-        Expression::Tunnel {
-            output_index,
-            policy,
-            exceptions,
-        } => std::iter::once(output_index.as_mut())
-            .chain(policy.iter_mut())
-            .chain(exceptions.iter_mut())
-            .collect(),
-        Expression::ContractInstance { args, .. } => args.iter_mut().collect(),
-        Expression::Cast { data, .. } => vec![data],
-        Expression::PacketInspect { packet_type } => vec![packet_type],
-        Expression::InputPacketInspect { index, packet_type } => vec![index, packet_type],
-    }
+    };
 }
+
+expression_children!(child_exprs, &Expression, (&), iter, as_ref);
+expression_children!(child_exprs_mut, &mut Expression, (&mut), iter_mut, as_mut);
 
 impl Expression {
     /// Resolve the layout path, using element zero for runtime indexes.
     pub(crate) fn binding_path(&self) -> Option<String> {
-        self.access_path(&|index| match index {
-            Self::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
+        self.access_path(&|index| match &index.kind {
+            ExprKind::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
             _ => "0".to_string(),
         })
     }
 
     /// Spell an operand as written, for diagnostics.
     pub(crate) fn source_text(&self) -> String {
-        match self {
-            Self::Literal(value) => value.clone(),
-            Self::BinaryOp { left, op, right } => {
+        match &self.kind {
+            ExprKind::Literal(value) => value.clone(),
+            ExprKind::BinaryOp { left, op, right } => {
                 format!("{} {op} {}", left.source_text(), right.source_text())
             }
             _ => self
@@ -847,15 +904,17 @@ impl Expression {
     }
 
     fn access_path(&self, index_text: &dyn Fn(&Self) -> String) -> Option<String> {
-        match self {
-            Self::Variable(name) | Self::Property(name) => Some(name.clone()),
-            Self::ArrayIndex { array, index } => Some(format!("{array}[{}]", index_text(index))),
-            Self::IndexAccess { value, index } => Some(format!(
+        match &self.kind {
+            ExprKind::Variable(name) | ExprKind::Property(name) => Some(name.clone()),
+            ExprKind::ArrayIndex { array, index } => {
+                Some(format!("{array}[{}]", index_text(index)))
+            }
+            ExprKind::IndexAccess { value, index } => Some(format!(
                 "{}[{}]",
                 value.access_path(index_text)?,
                 index_text(index)
             )),
-            Self::FieldAccess { value, field } => {
+            ExprKind::FieldAccess { value, field } => {
                 Some(format!("{}.{field}", value.access_path(index_text)?))
             }
             _ => None,

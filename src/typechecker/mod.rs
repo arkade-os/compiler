@@ -9,7 +9,8 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, Expression, Function, LocatedStatement, Requirement, Statement,
+    AssignmentTarget, Contract, ExprKind, Expression, Function, LocatedStatement, Requirement,
+    Statement,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 
@@ -119,7 +120,7 @@ impl ArkType {
 pub struct TypeError {
     /// Human-readable description of the problem.
     pub message: String,
-    /// Byte range of the statement that caused it.
+    /// Byte range of the expression, or else the statement, that caused it.
     pub span: Option<crate::diagnostics::Span>,
 }
 
@@ -332,28 +333,28 @@ fn resolve_expression(
     for child in crate::models::child_exprs_mut(expression) {
         resolve_expression(child, scope, returns);
     }
-    if let Expression::Call {
+    if let ExprKind::Call {
         name, return_type, ..
-    } = expression
+    } = &mut expression.kind
     {
         *return_type = returns.get(name).cloned().flatten();
     }
 
-    let resolved = match expression {
+    let resolved = match &expression.kind {
         // `g.delta`, `s.group.delta`
-        Expression::Property(path) => path.rsplit_once('.').and_then(|(base, property)| {
-            Some(Expression::GroupProperty {
-                group: Box::new(group_binding(base, scope)?),
+        ExprKind::Property(path) => path.rsplit_once('.').and_then(|(base, property)| {
+            Some(ExprKind::GroupProperty {
+                group: Box::new(group_binding(base, expression, scope)?),
                 property: GROUP_PROPERTIES
                     .contains(&property)
                     .then(|| property.to_string())?,
             })
         }),
         // `g.inputs[j]`
-        Expression::ArrayIndex { array, index } => {
+        ExprKind::ArrayIndex { array, index } => {
             array.rsplit_once('.').and_then(|(base, source)| {
-                Some(Expression::GroupIOAccess {
-                    group: Box::new(group_binding(base, scope)?),
+                Some(ExprKind::GroupIOAccess {
+                    group: Box::new(group_binding(base, expression, scope)?),
                     io_index: index.clone(),
                     source: group_io_source(source)?,
                     property: None,
@@ -361,12 +362,12 @@ fn resolve_expression(
             })
         }
         // `gs[i].inputs[j]`
-        Expression::IndexAccess { value, index } => match value.as_ref() {
-            Expression::FieldAccess {
+        ExprKind::IndexAccess { value, index } => match &value.as_ref().kind {
+            ExprKind::FieldAccess {
                 value: group,
                 field,
             } if !is_struct(group, scope) => {
-                group_io_source(field).map(|source| Expression::GroupIOAccess {
+                group_io_source(field).map(|source| ExprKind::GroupIOAccess {
                     group: group.clone(),
                     io_index: index.clone(),
                     source,
@@ -376,21 +377,21 @@ fn resolve_expression(
             _ => None,
         },
         // `g.inputs[j].amount`, `gs[i].delta`
-        Expression::FieldAccess { value, field } => match value.as_ref() {
-            Expression::GroupIOAccess {
+        ExprKind::FieldAccess { value, field } => match &value.as_ref().kind {
+            ExprKind::GroupIOAccess {
                 group,
                 io_index,
                 source,
                 property: None,
-            } if matches!(field.as_str(), "amount" | "type") => Some(Expression::GroupIOAccess {
+            } if matches!(field.as_str(), "amount" | "type") => Some(ExprKind::GroupIOAccess {
                 group: group.clone(),
                 io_index: io_index.clone(),
                 source: source.clone(),
                 property: Some(field.clone()),
             }),
-            group if GROUP_PROPERTIES.contains(&field.as_str()) && !is_struct(group, scope) => {
-                Some(Expression::GroupProperty {
-                    group: Box::new(group.clone()),
+            _ if GROUP_PROPERTIES.contains(&field.as_str()) && !is_struct(value, scope) => {
+                Some(ExprKind::GroupProperty {
+                    group: value.clone(),
                     property: field.clone(),
                 })
             }
@@ -399,7 +400,7 @@ fn resolve_expression(
         _ => None,
     };
     if let Some(resolved) = resolved {
-        *expression = resolved;
+        expression.kind = resolved;
     }
 }
 
@@ -424,14 +425,15 @@ fn is_struct(value: &Expression, scope: &Scope) -> bool {
     matches!(infer_type(value, scope), ArkType::Struct(_))
 }
 
-/// The binding named by `path`, when a group member can apply to it.
-fn group_binding(path: &str, scope: &Scope) -> Option<Expression> {
+/// The binding named by `path`, when a group member can apply to it; it takes
+/// the span of the access `at`, which has none narrower for the binding alone.
+fn group_binding(path: &str, at: &Expression, scope: &Scope) -> Option<Expression> {
     (!matches!(scope.get(path), Some(ArkType::Struct(_)))).then(|| {
-        if path.contains('.') {
-            Expression::Property(path.to_string())
+        at.with_kind(if path.contains('.') {
+            ExprKind::Property(path.to_string())
         } else {
-            Expression::Variable(path.to_string())
-        }
+            ExprKind::Variable(path.to_string())
+        })
     })
 }
 
@@ -612,7 +614,7 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
             check_expression(expr, scope, errors, fn_name);
             let condition_type = infer_type(expr, scope);
             // A bare find verifies the asset group exists; its index is dropped.
-            if !matches!(expr, Expression::GroupFind { .. })
+            if !matches!(&expr.kind, ExprKind::GroupFind { .. })
                 && condition_type != ArkType::Bool
                 && condition_type != ArkType::Unknown
             {
@@ -626,19 +628,27 @@ fn check_requirement(req: &Requirement, scope: &Scope, errors: &mut Vec<TypeErro
         Requirement::Comparison { left, op, right } => {
             check_expression(left, scope, errors, fn_name);
             check_expression(right, scope, errors, fn_name);
+            let first = errors.len();
             check_comparison(left, *op, right, scope, errors, fn_name);
+            let span = crate::diagnostics::Span {
+                start: left.span.start,
+                end: right.span.end,
+            };
+            for error in &mut errors[first..] {
+                error.span.get_or_insert(span);
+            }
         }
     }
 }
 
 fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError>, fn_name: &str) {
     // check_array_index recurses into the index itself.
-    match expr {
-        Expression::ArrayIndex { array, index } => {
+    match &expr.kind {
+        ExprKind::ArrayIndex { array, index } => {
             check_array_index(array, index, scope, errors, fn_name);
             return;
         }
-        Expression::IndexAccess { value, index } => {
+        ExprKind::IndexAccess { value, index } => {
             if let Some(array) = value.binding_path() {
                 check_expression(value, scope, errors, fn_name);
                 check_array_index(&array, index, scope, errors, fn_name);
@@ -647,14 +657,18 @@ fn check_expression(expr: &Expression, scope: &Scope, errors: &mut Vec<TypeError
         }
         _ => {}
     }
-    for child in crate::validator::child_exprs(expr) {
+    for child in crate::models::child_exprs(expr) {
         check_expression(child, scope, errors, fn_name);
     }
-    match expr {
-        Expression::BinaryOp { left, op, right } if op.compares() => {
+    let first = errors.len();
+    match &expr.kind {
+        ExprKind::BinaryOp { left, op, right } if op.compares() => {
             check_comparison(left, *op, right, scope, errors, fn_name);
         }
         _ => {}
+    }
+    for error in &mut errors[first..] {
+        error.span.get_or_insert(expr.span);
     }
 }
 
@@ -668,10 +682,13 @@ fn check_array_index(
     check_expression(index, scope, errors, fn_name);
     let index_type = infer_type(index, scope);
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
-        errors.push(TypeError::new(format!(
-            "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
-            index_type.as_str()
-        )));
+        errors.push(TypeError {
+            message: format!(
+                "fn {fn_name}: array index for '{array}' has type '{}', expected 'int'",
+                index_type.as_str()
+            ),
+            span: Some(index.span),
+        });
     }
     match scope.get(array) {
         Some(ArkType::Array(element, _)) => Some((**element).clone()),
@@ -681,16 +698,16 @@ fn check_array_index(
 
 pub(crate) fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
     let mut negative = false;
-    while let Expression::Unary {
+    while let ExprKind::Unary {
         op: UnaryOperator::Neg,
         value,
-    } = expression
+    } = &expression.kind
     {
         negative = !negative;
         expression = value;
     }
-    match expression {
-        Expression::Literal(value) => Some(match value.strip_prefix('-') {
+    match &expression.kind {
+        ExprKind::Literal(value) => Some(match value.strip_prefix('-') {
             Some(magnitude) => (!negative, magnitude),
             None => (negative, value),
         }),
@@ -763,19 +780,19 @@ fn is_numeric(t: &ArkType) -> bool {
 /// Returns `ArkType::Unknown` for expressions whose type cannot be determined
 /// statically (e.g., unresolved variables, not-yet-implemented forms).
 pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
-    match expr {
-        Expression::Call { return_type, .. } => return_type
+    match &expr.kind {
+        ExprKind::Call { return_type, .. } => return_type
             .as_deref()
             .map(ArkType::parse)
             .unwrap_or(ArkType::Unknown),
-        Expression::Variable(name) => scope
+        ExprKind::Variable(name) => scope
             .get(name.as_str())
             .cloned()
             .unwrap_or(ArkType::Unknown),
-        Expression::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
-        Expression::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
-        Expression::Literal(_) => ArkType::Int,
-        Expression::ArrayLiteral(elements) => ArkType::Array(
+        ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
+        ExprKind::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
+        ExprKind::Literal(_) => ArkType::Int,
+        ExprKind::ArrayLiteral(elements) => ArkType::Array(
             Box::new(
                 elements
                     .first()
@@ -784,20 +801,20 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ),
             elements.len(),
         ),
-        Expression::StructLiteral(_) => ArkType::Unknown,
-        Expression::FieldAccess { .. } => expr
+        ExprKind::StructLiteral(_) => ArkType::Unknown,
+        ExprKind::FieldAccess { .. } => expr
             .binding_path()
-            .map(|name| infer_type(&Expression::Property(name), scope))
+            .map(|name| infer_type(&expr.with_kind(ExprKind::Property(name)), scope))
             .unwrap_or(ArkType::Unknown),
-        Expression::IndexAccess { value, .. } => match infer_type(value, scope) {
+        ExprKind::IndexAccess { value, .. } => match infer_type(value, scope) {
             ArkType::Array(element, _) => *element,
             _ => ArkType::Unknown,
         },
-        Expression::ArrayIndex { array, .. } => match scope.get(array) {
+        ExprKind::ArrayIndex { array, .. } => match scope.get(array) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,
         },
-        Expression::Property(property) => scope
+        ExprKind::Property(property) => scope
             .get(property.trim())
             .cloned()
             .or_else(|| {
@@ -821,7 +838,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             }),
 
         // tx.input.current.*
-        Expression::CurrentInput(prop) => match prop.as_deref() {
+        ExprKind::CurrentInput(prop) => match prop.as_deref() {
             Some("value") => ArkType::Int,
             Some("scriptPubKey") => ArkType::Bytes,
             Some("sequence") | Some("witnessVersion") => ArkType::Int,
@@ -831,7 +848,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         },
 
         // tx-level introspection
-        Expression::TxIntrospection { property } => match property.as_str() {
+        ExprKind::TxIntrospection { property } => match property.as_str() {
             "version" | "locktime" => ArkType::Int,
             "numInputs" | "numOutputs" | "weight" => ArkType::Int,
             "id" => ArkType::Bytes32,
@@ -839,7 +856,7 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         },
 
         // tx.inputs[i].*
-        Expression::InputIntrospection { property, .. } => match property.as_str() {
+        ExprKind::InputIntrospection { property, .. } => match property.as_str() {
             "value" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
             "sequence" | "witnessVersion" => ArkType::Int,
@@ -849,28 +866,28 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         },
 
         // tx.outputs[o].*
-        Expression::OutputIntrospection { property, .. } => match property.as_str() {
+        ExprKind::OutputIntrospection { property, .. } => match property.as_str() {
             "value" | "witnessVersion" => ArkType::Int,
             "scriptPubKey" => ArkType::Bytes,
             _ => ArkType::Unknown,
         },
 
         // Asset introspection
-        Expression::AssetLookup { .. } => ArkType::Int,
-        Expression::AssetHas { .. } => ArkType::Bool,
-        Expression::AssetCount { .. } => ArkType::Int,
-        Expression::AssetAt { property, .. } => match property.as_str() {
+        ExprKind::AssetLookup { .. } => ArkType::Int,
+        ExprKind::AssetHas { .. } => ArkType::Bool,
+        ExprKind::AssetCount { .. } => ArkType::Int,
+        ExprKind::AssetAt { property, .. } => match property.as_str() {
             "amount" => ArkType::Int,
             "assetId" => ArkType::Struct("AssetId".to_string()),
             _ => ArkType::Unknown,
         },
 
         // Asset group introspection
-        Expression::GroupFind { .. } | Expression::AssetGroupAt { .. } => ArkType::AssetGroup,
-        Expression::GroupHas { .. } => ArkType::Bool,
-        Expression::GroupControlIs { .. } => ArkType::Bool,
-        Expression::AssetGroupsLength => ArkType::Int,
-        Expression::GroupProperty { property, .. } => match property.as_str() {
+        ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
+        ExprKind::GroupHas { .. } => ArkType::Bool,
+        ExprKind::GroupControlIs { .. } => ArkType::Bool,
+        ExprKind::AssetGroupsLength => ArkType::Int,
+        ExprKind::GroupProperty { property, .. } => match property.as_str() {
             "sumInputs" | "sumOutputs" | "delta" => ArkType::Int,
             "numInputs" | "numOutputs" => ArkType::Int,
             "metadataHash" => ArkType::Bytes32,
@@ -878,43 +895,43 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             "isFresh" | "hasControl" => ArkType::Bool,
             _ => ArkType::Unknown,
         },
-        Expression::GroupIOAccess { property, .. } => match property.as_deref() {
+        ExprKind::GroupIOAccess { property, .. } => match property.as_deref() {
             Some("amount") => ArkType::Int,
             Some("type") => ArkType::Int,
             _ => ArkType::Unknown,
         },
 
-        Expression::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
+        ExprKind::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
 
         // Byte-string ops
-        Expression::Concat { .. } => ArkType::Bytes,
+        ExprKind::Concat { .. } => ArkType::Bytes,
 
         // Arithmetic
-        Expression::Unary {
+        ExprKind::Unary {
             op: UnaryOperator::Invert,
             ..
         } => bytes_of_width(static_byte_width(expr, scope)),
-        Expression::Unary { op, .. } => ArkType::parse(op.operand_type()),
-        Expression::Tunnel { .. } => ArkType::Bool,
+        ExprKind::Unary { op, .. } => ArkType::parse(op.operand_type()),
+        ExprKind::Tunnel { .. } => ArkType::Bool,
 
         // Contract instantiation resolves to a scriptPubKey bytes value.
-        Expression::ContractInstance { .. } => ArkType::Bytes,
+        ExprKind::ContractInstance { .. } => ArkType::Bytes,
 
-        Expression::Cast { target, .. } => ArkType::parse(target),
+        ExprKind::Cast { target, .. } => ArkType::parse(target),
 
         // Packet introspection — returns raw packet bytes.
-        Expression::PacketInspect { .. } => ArkType::Bytes,
-        Expression::IntentInspect { presence_only, .. } => {
+        ExprKind::PacketInspect { .. } => ArkType::Bytes,
+        ExprKind::IntentInspect { presence_only, .. } => {
             if *presence_only {
                 ArkType::Bool
             } else {
                 ArkType::Bytes
             }
         }
-        Expression::InputPacketInspect { .. } => ArkType::Bytes,
+        ExprKind::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.
-        Expression::BinaryOp { left, op, right } => {
+        ExprKind::BinaryOp { left, op, right } => {
             let lt = infer_type(left, scope);
             let rt = infer_type(right, scope);
             match op.class() {
@@ -936,13 +953,13 @@ pub fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
 /// Byte length of `expr` when it is known at compile time.
 pub(crate) fn static_byte_width(expr: &Expression, scope: &Scope) -> Option<usize> {
-    match expr {
-        Expression::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
+    match &expr.kind {
+        ExprKind::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
         // Bytewise operands share one length, so either side's known width is the result's.
-        Expression::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
+        ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
             static_byte_width(left, scope).or_else(|| static_byte_width(right, scope))
         }
-        Expression::Unary {
+        ExprKind::Unary {
             op: UnaryOperator::Invert,
             value,
         } => static_byte_width(value, scope),

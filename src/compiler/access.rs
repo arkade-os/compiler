@@ -9,22 +9,20 @@ impl Generator {
         indices: &mut Vec<(&'a Expression, usize, usize)>,
     ) -> Result<String, String> {
         let path = value.binding_path().ok_or("expected a binding access")?;
-        let (array, index) = match value {
-            Expression::FieldAccess { value, .. } => {
+        let (array, index) = match &value.kind {
+            ExprKind::FieldAccess { value, .. } => {
                 self.access_indices(value, indices)?;
                 return Ok(path);
             }
-            Expression::ArrayIndex { array, index } => (array.clone(), index),
-            Expression::IndexAccess { value, index } => {
-                (self.access_indices(value, indices)?, index)
-            }
+            ExprKind::ArrayIndex { array, index } => (array.clone(), index),
+            ExprKind::IndexAccess { value, index } => (self.access_indices(value, indices)?, index),
             _ => return Ok(path),
         };
         let Some(ArkType::Array(element, length)) = self.scope.get(&array) else {
             return Err(format!("'{array}' is not an array"));
         };
-        let literal = match index.as_ref() {
-            Expression::Literal(literal) => literal.parse::<usize>().ok(),
+        let literal = match &index.as_ref().kind {
+            ExprKind::Literal(literal) => literal.parse::<usize>().ok(),
             _ => None,
         };
         match literal {
@@ -141,7 +139,7 @@ impl Generator {
     }
 
     pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<(), String> {
-        let Expression::Builtin { args, .. } = expression else {
+        let ExprKind::Builtin { args, .. } = &expression.kind else {
             return Err("expected checkMultisig".to_string());
         };
         let keys = &args[0];
@@ -159,7 +157,10 @@ impl Generator {
         let threshold = args.get(2);
         let literal_threshold = match threshold {
             None => Some(count),
-            Some(Expression::Literal(value)) => Some(
+            Some(Expression {
+                kind: ExprKind::Literal(value),
+                ..
+            }) => Some(
                 value
                     .parse::<usize>()
                     .map_err(|_| "invalid multisig threshold")?,
@@ -173,7 +174,7 @@ impl Generator {
             );
         }
         // Keys need indexed reads, so computed arrays are bound once.
-        if !matches!(keys, Expression::ArrayLiteral(_)) && keys.binding_path().is_none() {
+        if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.binding_path().is_none() {
             let baseline = self.stack.len();
             let scope = self.scope.clone();
             let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
@@ -183,10 +184,10 @@ impl Generator {
             self.bind_value(&name, &ty)?;
             self.bind_type(&name, &ty);
             let mut normalized = expression.clone();
-            let Expression::Builtin { args, .. } = &mut normalized else {
+            let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
                 unreachable!()
             };
-            args[0] = Expression::Variable(name);
+            args[0] = keys.with_kind(ExprKind::Variable(name));
             self.emit_multisig(&normalized)?;
             self.discard_call_frame(baseline, 1)?;
             self.last_reads.retain(|(_, index), _| *index < baseline);
@@ -197,12 +198,12 @@ impl Generator {
         // Signatures need no binding: array emission leaves sig[0] on top for the checks.
         self.emit_typed_value(signatures, &format!("signature[{count}]"))?;
         for index in 0..count {
-            let key = match keys {
-                Expression::ArrayLiteral(elements) => elements[index].clone(),
-                value => Expression::IndexAccess {
-                    value: Box::new(value.clone()),
-                    index: Box::new(Expression::Literal(index.to_string())),
-                },
+            let key = match &keys.kind {
+                ExprKind::ArrayLiteral(elements) => elements[index].clone(),
+                _ => keys.with_kind(ExprKind::IndexAccess {
+                    value: Box::new(keys.clone()),
+                    index: Box::new(keys.with_kind(ExprKind::Literal(index.to_string()))),
+                }),
             };
             self.emit_expression(&key)?;
             self.apply(
@@ -233,7 +234,7 @@ impl Generator {
 
     /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
     pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<(), String> {
-        let Expression::Builtin { args, .. } = pairing else {
+        let ExprKind::Builtin { args, .. } = &pairing.kind else {
             return Err("expected ecPairing".to_string());
         };
         let [g1, g2, curve_id] = args.as_slice() else {
@@ -250,26 +251,24 @@ impl Generator {
                             .to_string(),
                     );
                 }
-                let index = Box::new(Expression::Literal(index.to_string()));
-                let element = match points {
-                    Expression::Variable(array) | Expression::Property(array) => {
-                        Expression::ArrayIndex {
-                            array: array.clone(),
-                            index,
-                        }
-                    }
-                    value => Expression::IndexAccess {
-                        value: Box::new(value.clone()),
+                let index = Box::new(points.with_kind(ExprKind::Literal(index.to_string())));
+                let element = points.with_kind(match &points.kind {
+                    ExprKind::Variable(array) | ExprKind::Property(array) => ExprKind::ArrayIndex {
+                        array: array.clone(),
                         index,
                     },
-                };
+                    _ => ExprKind::IndexAccess {
+                        value: Box::new(points.clone()),
+                        index,
+                    },
+                });
                 for (field, field_type) in crate::models::builtin_struct_fields(ty)
                     .ok_or("internal compiler error: missing native point layout")?
                 {
-                    let leaf = Expression::FieldAccess {
+                    let leaf = points.with_kind(ExprKind::FieldAccess {
                         value: Box::new(element.clone()),
                         field: field.to_string(),
-                    };
+                    });
                     self.emit_access_value(&leaf, field_type)?;
                 }
             }

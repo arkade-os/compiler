@@ -269,6 +269,7 @@ fn cashscript_parity_rejections() {
             "arithmetic '+' operand has type 'bool'",
         ),
         ("require(a / 0 == 1);", "division by zero"),
+        ("require(a % 0 == 1);", "modulo by zero"),
         (
             "require(a == b);",
             "comparison '==' is not defined between 'int' and 'bytes'",
