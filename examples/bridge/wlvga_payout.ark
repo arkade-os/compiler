@@ -1,0 +1,136 @@
+// wLVGA Payout — bridge-OUT (Arkade → SwissLedger)
+//
+// A merchant-payment bridge-out for wrapped LVGA. Real LVGA lives in a
+// liquidity pool on SwissLedger (an EVM chain); wLVGA is a BTC-backed claim
+// issued on Arkade (a user pays BTC → gets wLVGA). To pay a merchant in real
+// LVGA, the wLVGA is spent on Arkade with a commitment naming the merchant,
+// and the SwissLedger pool contract reads that commitment and releases LVGA.
+//
+// HARD REQUIREMENT — LVGA is a TRANSFER-RESTRICTED token: wLVGA can NEVER be
+// redeemed for real LVGA (only whitelisted addresses hold LVGA, and payouts
+// flow one way, pool → merchant). So wLVGA is purely a BTC-backed BEARER
+// claim; it is liquidatable for BTC, not for LVGA. The BTC side and the LVGA
+// side are linked only through the LP's balance sheet.
+//
+// CLOSING THE LOOP — who is paid for the released LVGA. The wLVGA is a claim
+// on the BTC a user locked at mint time. Two roles can be separate parties:
+//   - the BTC side (whoever issued the wLVGA and holds the BTC backing), and
+//   - the LVGA liquidity provider (LP) who funds the SwissLedger pool.
+// If they are separate, the LP must be compensated for the LVGA it releases
+// or it bleeds out. The LP is a market maker: it releases LVGA (a CHF-pegged
+// position) and receives the BTC-backed wLVGA claim (hedgeable to USDT), plus
+// fees priced into its quote — i.e. it takes CHF/BTC exposure for fee income.
+// This contract offers two payout modes:
+//
+//   payOut()  (default, TWO parties): the wLVGA is TRANSFERRED to the LP,
+//             not destroyed. The LP receives the BTC-backed claim (redeemable
+//             for BTC, never for LVGA), so releasing LVGA on SwissLedger is
+//             matched by receiving BTC value on Arkade — the loop is closed
+//             and the BTC side and the LP may be different parties.
+//
+//   burnOut() (option, SAME party): the wLVGA is BURNED. This is only
+//             solvent when the LP is also the party that received the BTC at
+//             mint time (an integrated market maker), because a burn
+//             compensates no one. Kept for deployments where that is legally
+//             and operationally a single entity.
+//
+// Both modes commit (protocolTag ‖ merchantEvmAddr ‖ amount) in an OP_RETURN
+// and authorize the payee with the merchant's secp256k1 key via
+// OP_CHECKSIGFROMSTACK — mirrored on SwissLedger by ecrecover over the same
+// message (one key, two chains; see README). Residual trust in both modes is
+// that the pool/LP honors the release; the two-party mode fixes SOLVENCY
+// (the LP is paid), not release-liveness (use a bonded/permissioned LP, or
+// the trustless swap_htlc.ark route when a live counterparty is available).
+//
+// Types: merchantPk/merchantSig appear ONLY inside checkSigFromStack — never
+// in a `+` concat — so every hashed/committed field is bytes/int and `+`
+// lowers to OP_CAT, matching the merchant's off-chain signing and the EVM
+// reconstruction byte-for-byte. Replay is bounded by burnNonce.
+
+import "single_sig.ark";
+
+contract WlvgaPayout(
+  // wrapped LVGA asset (a BTC-backed claim) issued on Arkade
+  bytes32 tokenAssetIdTxid,
+  int     tokenAssetIdGidx,
+  // Arkade key of the LVGA liquidity provider who funds the SwissLedger pool;
+  // receives the wLVGA claim as compensation in the two-party payOut() mode
+  pubkey  lpPk,
+  // domain/protocol tag prefixing the signed message and the commitment
+  bytes   protocolTag,
+  int     exit
+) {
+  // TWO-PARTY payout (default): transfer the wLVGA claim to the LP, commit
+  // the merchant payout for the SwissLedger pool. The LP is compensated by
+  // receiving the BTC-backed wLVGA, so the BTC side and the LP may differ.
+  //
+  // Transaction layout:
+  //   input[0]:  wLVGA being spent
+  //   output[0]: wLVGA → LP (SingleSig(lpPk))            compensation
+  //   output[commitIndex]: OP_RETURN commitment          merchant payout
+  function payOut(
+    int       amount,
+    bytes     merchantEvmAddr,
+    pubkey    merchantPk,
+    signature merchantSig,
+    int       burnNonce,
+    int       commitIndex
+  ) {
+    require(amount > 0, "zero payout");
+    require(size(merchantEvmAddr) == 20, "bad evm address");
+
+    let payoutMsg = sha256(protocolTag + merchantEvmAddr + amount + burnNonce);
+    require(
+      checkSigFromStack(merchantSig, merchantPk, payoutMsg),
+      "bad merchant sig"
+    );
+
+    // Compensate the LP: the wLVGA claim moves to them (not burned).
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(lpPk, exit),
+      "payout not to lp"
+    );
+    require(
+      tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount,
+      "lp claim short"
+    );
+
+    // Commitment the SwissLedger pool reads.
+    let commitment = protocolTag + merchantEvmAddr + num2bin(amount, 8);
+    require(
+      tx.outputs[commitIndex].scriptPubKey == commitment,
+      "missing payout commitment"
+    );
+  }
+
+  // SAME-PARTY payout (option): burn the wLVGA. Only solvent when the LP also
+  // received the BTC at mint time (integrated market maker) — a burn
+  // compensates no one on its own.
+  function burnOut(
+    int       amount,
+    bytes     merchantEvmAddr,
+    pubkey    merchantPk,
+    signature merchantSig,
+    int       burnNonce,
+    int       commitIndex
+  ) {
+    require(amount > 0, "zero payout");
+    require(size(merchantEvmAddr) == 20, "bad evm address");
+
+    let payoutMsg = sha256(protocolTag + merchantEvmAddr + amount + burnNonce);
+    require(
+      checkSigFromStack(merchantSig, merchantPk, payoutMsg),
+      "bad merchant sig"
+    );
+
+    // Burn: wLVGA supply shrinks by exactly `amount`.
+    let g = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+    require(g.sumInputs >= g.sumOutputs + amount, "burn short");
+
+    let commitment = protocolTag + merchantEvmAddr + num2bin(amount, 8);
+    require(
+      tx.outputs[commitIndex].scriptPubKey == commitment,
+      "missing payout commitment"
+    );
+  }
+}
