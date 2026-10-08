@@ -695,13 +695,19 @@ pub fn build_function_groups(
         });
     }
 
-    // Remaining groups are pure-standalone leaves (no covenant). Stable order.
-    for (name, leaves) in grouped {
-        groups.push(AbiFunctionGroup {
-            name,
-            arkade: None,
-            leaves,
-        });
+    // Standalone groups follow covenant groups, in tapscript declaration order.
+    for ts in &contract.tapscripts {
+        if let Some((name, leaves)) = grouped.remove_entry(&ts.name) {
+            groups.push(AbiFunctionGroup {
+                name,
+                arkade: None,
+                leaves,
+            });
+        }
+    }
+
+    if !grouped.is_empty() {
+        return Err("unassigned tapscript groups (compiler bug)".to_string());
     }
 
     Ok(groups)
