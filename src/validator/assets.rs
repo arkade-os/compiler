@@ -29,7 +29,7 @@ fn walk_asset_id_stmts(stmts: &[LocatedStatement], fname: &str, issues: &mut Vec
                 check_asset_id_expr(left, fname, issues);
                 check_asset_id_expr(right, fname, issues);
             }
-            Statement::Return(None) | Statement::Require(_) => {}
+            Statement::Return(None) => {}
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }
                 | AssignmentTarget::Access(index) = target

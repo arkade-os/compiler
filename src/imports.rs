@@ -667,7 +667,6 @@ fn visit_statements(
                     visit_expression(left, visit)?;
                     visit_expression(right, visit)?;
                 }
-                _ => {}
             },
             Statement::VarAssign { target, value } => {
                 if let models::AssignmentTarget::ArrayIndex { index, .. }

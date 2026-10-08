@@ -59,7 +59,12 @@ function = {
     | data_type? ~ "{" ~ statement* ~ "}" )
 }
 function_visibility = @{ ("private" | "public" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
-tapscript_block = { "{" ~ require_stmt* ~ "}" }
+tapscript_block = { "{" ~ tap_require_stmt* ~ "}" }
+tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ")" ~ ";" }
+tap_require_expression = _{
+    ((check_sig_from_stack_verify | check_sig_from_stack | check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |
+    general_expression
+}
 return_keyword = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
 return_stmt = { return_keyword ~ general_expression? ~ ";" }
 
@@ -113,7 +118,6 @@ require_stmt = {
 }
 
 require_expression = _{
-    ((check_sig_from_stack_verify | check_sig_from_stack | check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |
     general_expression
 }
 
@@ -166,9 +170,6 @@ parenthesized_expr = { "(" ~ general_expression ~ ")" }
 // Primary expressions (atoms)
 primary_expr = {
     parenthesized_expr |
-    check_sig_from_stack_verify |
-    check_sig_from_stack |
-    check_sig |
     tunnel |
     intent_field |
     intent_has |
@@ -222,40 +223,6 @@ invert_op = { "~" }
 mul_op = { "*" }
 div_op = { "/" }
 rem_op = { "%" }
-
-// Complex expression types (for require statements)
-// PEG ordered choice: first matching alternative wins
-complex_expression = _{
-    tunnel |
-    intent_field |
-    intent_has |
-    check_sig_from_stack_verify |
-    check_sig_from_stack |
-    check_sig |
-    check_multisig |
-    time_comparison |
-    hash_comparison |
-    input_packet_inspect |
-    packet_inspect |
-    asset_at |
-    asset_count |
-    asset_has |
-    asset_lookup |
-    input_introspection |
-    output_introspection |
-    tx_introspection |
-    group_control_is |
-    constructor |
-    tx_property_access |
-    this_property_access |
-    function_call |
-    identifier_property_access |
-    array_index_access |
-    byte_literal |
-    identifier |
-    number_literal |
-    array_literal
-}
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
@@ -380,7 +347,7 @@ constructor = {
 
 // Arguments for constructor (optional - allows zero-arg constructors)
 constructor_args = {
-    (complex_expression ~ ("," ~ complex_expression)*)?
+    (general_expression ~ ("," ~ general_expression)*)?
 }
 
 // ─── Transaction Property Access ───────────────────────────────────────────────

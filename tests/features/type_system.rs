@@ -145,7 +145,7 @@ contract BadHashType(pubkey owner, int hashVal) {
 }"#;
     let error = compile_error(source);
     assert!(
-        error.contains("'hashVal' has type 'int', expected bytes32"),
+        error.contains("comparison '==' is not defined between 'bytes32' and 'int'"),
         "wrong hash type must be rejected: {error}"
     );
 }
@@ -473,7 +473,7 @@ fn hash_comparisons_expect_the_digest_width() {
         let error = compile_error(&covenant(wrong));
         assert!(
             error.contains(&format!(
-                "{hash_fn} comparison: 'h' has type '{wrong}', expected {digest}"
+                "comparison '==' is not defined between '{digest}' and '{wrong}'"
             )),
             "{error}"
         );
@@ -558,7 +558,7 @@ fn builtin_operands_are_type_checked() {
         ),
         (
             "checkSigFromStack(s, k, i)",
-            "message 'i' has type 'int', expected 'bytes'",
+            "checkSigFromStack operand has type 'int', expected 'bytes'",
         ),
     ] {
         let source = |condition: &str| {

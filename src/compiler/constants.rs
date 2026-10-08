@@ -31,7 +31,7 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
         }
         for item in &mut tapscript.items {
             match item {
-                TapItem::Older { value } | TapItem::After { value } => {
+                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
                     if let Some(text) = values.get(value.as_str()) {
                         *value = text.clone();
                     }
@@ -420,32 +420,6 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
         Requirement::Comparison { left, right, .. } => {
             fold_expression(left, values);
             fold_expression(right, values);
-        }
-        Requirement::CheckSig { signature, pubkey } => {
-            fold_expression(signature, values);
-            fold_expression(pubkey, values);
-        }
-        Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
-        } => {
-            for operand in [signature, pubkey, message] {
-                fold_expression(operand, values);
-            }
-        }
-        Requirement::CheckMultisig {
-            pubkeys,
-            signatures,
-            ..
-        } => {
-            for operand in pubkeys.iter_mut().chain(signatures) {
-                fold_expression(operand, values);
-            }
-        }
-        Requirement::HashEqual { preimage, hash, .. } => {
-            fold_expression(preimage, values);
-            fold_expression(hash, values);
         }
     }
 }

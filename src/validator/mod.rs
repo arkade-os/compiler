@@ -262,6 +262,20 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                 )));
             }
         }
+        // A literal or constant without blocks(n)/seconds(n) is pushed raw.
+        for item in &ts.items {
+            let (call, value, raw) = match item {
+                TapItem::Older { value, unit: None } => ("older", value, "BIP68 sequence"),
+                TapItem::After { value, unit: None } => ("after", value, "nLockTime"),
+                _ => continue,
+            };
+            if value.parse::<i64>().is_ok() {
+                issues.push(ValidationIssue::warning(format!(
+                    "tapscript '{}': {call}({value}) is a raw {raw}; write blocks(n) or seconds(n) to state its unit",
+                    ts.name
+                )));
+            }
+        }
     }
 
     check_shadowing(contract, &mut issues);
@@ -491,7 +505,7 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         for item in &tapscript.items {
             match item {
                 TapItem::Hash { preimage, hash, .. } => used.extend([preimage, hash]),
-                TapItem::Older { value } | TapItem::After { value } => {
+                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
                     used.insert(value);
                 }
                 TapItem::Sig { keys, sigs, .. } => {
@@ -707,6 +721,38 @@ contract Demo() {
             .contains("assignment to an element of 'values' changes its type")));
     }
 
+    #[test]
+    fn builtin_array_literals_report_each_fault_once() {
+        for (call, expected) in [
+            (
+                "checkMultisig([1], [sig])",
+                "checkMultisig '1' has type 'int', expected 'bytes'",
+            ),
+            (
+                "checkMultisig([key], [1])",
+                "checkMultisig '1' has type 'int', expected 'signature'",
+            ),
+            (
+                "checkMultisig([key, 1], [sig, sig])",
+                "checkMultisig '1' has type 'int', expected 'bytes'",
+            ),
+            (
+                "checkMultisig([key], [sig, sig])",
+                "checkMultisig operand has 2 elements, expected 1",
+            ),
+            (
+                "checkMultisig([key], [signature(substr(1, 0, 64))])",
+                "substr operand has type 'int', expected 'bytes'",
+            ),
+            ("checkMultisig([key], [missing])", "'missing' is undefined"),
+        ] {
+            let source = format!("contract C(pubkey key) {{ function spend(signature sig) {{ require(checkSig(sig, key)); require({call}); }} }}");
+            let issues = parse_and_validate(&source);
+            assert_eq!(issues.len(), 1, "{call}: {issues:?}");
+            assert!(issues[0].message.contains(expected), "{call}: {issues:?}");
+        }
+    }
+
     fn located(statement: Statement) -> LocatedStatement {
         LocatedStatement {
             span: crate::diagnostics::Span { start: 0, end: 0 },
@@ -736,10 +782,16 @@ contract Demo() {
                         param_type: "bool".to_string(),
                     },
                 ],
-                statements: vec![located(Statement::Require(Requirement::CheckSig {
-                    signature: ExprKind::Variable("ownerSig".to_string()).into(),
-                    pubkey: ExprKind::Variable("owner".to_string()).into(),
-                }))],
+                statements: vec![located(Statement::Require(Requirement::Expression(
+                    ExprKind::Builtin {
+                        builtin: crate::builtins::find("checkSig").unwrap(),
+                        args: vec![
+                            ExprKind::Variable("ownerSig".to_string()).into(),
+                            ExprKind::Variable("owner".to_string()).into(),
+                        ],
+                    }
+                    .into(),
+                )))],
                 is_private: false,
                 is_static: false,
                 is_exported: false,
@@ -767,10 +819,16 @@ contract Demo() {
         let mut contract = make_contract("BarePath");
         contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: ExprKind::Variable("flag".to_string()).into(),
-            then_body: vec![located(Statement::Require(Requirement::CheckSig {
-                signature: ExprKind::Variable("ownerSig".to_string()).into(),
-                pubkey: ExprKind::Variable("owner".to_string()).into(),
-            }))],
+            then_body: vec![located(Statement::Require(Requirement::Expression(
+                ExprKind::Builtin {
+                    builtin: crate::builtins::find("checkSig").unwrap(),
+                    args: vec![
+                        ExprKind::Variable("ownerSig".to_string()).into(),
+                        ExprKind::Variable("owner".to_string()).into(),
+                    ],
+                }
+                .into(),
+            )))],
             else_body: None,
         })];
         let issues = validate(&contract);
@@ -784,10 +842,16 @@ contract Demo() {
     fn require_in_both_branches_is_ok() {
         let mut contract = make_contract("BothPaths");
         let req = || {
-            located(Statement::Require(Requirement::CheckSig {
-                signature: ExprKind::Variable("ownerSig".to_string()).into(),
-                pubkey: ExprKind::Variable("owner".to_string()).into(),
-            }))
+            located(Statement::Require(Requirement::Expression(
+                ExprKind::Builtin {
+                    builtin: crate::builtins::find("checkSig").unwrap(),
+                    args: vec![
+                        ExprKind::Variable("ownerSig".to_string()).into(),
+                        ExprKind::Variable("owner".to_string()).into(),
+                    ],
+                }
+                .into(),
+            )))
         };
         contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: ExprKind::Variable("flag".to_string()).into(),

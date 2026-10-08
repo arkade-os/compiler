@@ -525,11 +525,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::Unary { op, .. } => ArkType::parse(op.operand_type()),
         ExprKind::Tunnel { .. } => ArkType::Bool,
 
-        // Crypto expressions
-        ExprKind::CheckSigExpr { .. }
-        | ExprKind::CheckSigFromStackExpr { .. }
-        | ExprKind::CheckSigFromStackVerify { .. } => ArkType::Bool,
-
         // Contract instantiation resolves to a scriptPubKey bytes value.
         ExprKind::ContractInstance { .. } => ArkType::Bytes,
 

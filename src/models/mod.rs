@@ -398,18 +398,6 @@ impl Requirement {
     pub(crate) fn expressions_mut(&mut self) -> Vec<&mut Expression> {
         match self {
             Requirement::Expression(expression) => vec![expression],
-            Requirement::CheckSig { signature, pubkey } => vec![signature, pubkey],
-            Requirement::CheckSigFromStack {
-                signature,
-                pubkey,
-                message,
-            } => vec![signature, pubkey, message],
-            Requirement::CheckMultisig {
-                pubkeys,
-                signatures,
-                ..
-            } => pubkeys.iter_mut().chain(signatures.iter_mut()).collect(),
-            Requirement::HashEqual { preimage, hash, .. } => vec![preimage, hash],
             Requirement::Comparison { left, right, .. } => vec![left, right],
         }
     }
@@ -420,29 +408,6 @@ impl Requirement {
 pub enum Requirement {
     /// Expression that must evaluate to true
     Expression(Expression),
-    /// Check signature requirement
-    CheckSig {
-        signature: Expression,
-        pubkey: Expression,
-    },
-    /// Check signature from stack requirement (signature verified against a message)
-    CheckSigFromStack {
-        signature: Expression,
-        pubkey: Expression,
-        message: Expression,
-    },
-    /// Check multisig requirement
-    CheckMultisig {
-        pubkeys: Vec<Expression>,
-        signatures: Vec<Expression>,
-        threshold: u16,
-    },
-    /// Hash equal requirement
-    HashEqual {
-        hash_fn: HashFn,
-        preimage: Expression,
-        hash: Expression,
-    },
     /// Comparison requirement
     Comparison {
         left: Expression,
@@ -544,16 +509,32 @@ pub enum TapItem {
         preimage: String,
         hash: String,
     },
-    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal or param name.
-    Older { value: String },
-    /// `after(n)` → CLTV (absolute timelock, forfeit class).
-    After { value: String },
+    /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal,
+    /// constant, parameter, or `serverExitDelay`; without a unit it is the raw
+    /// BIP68 sequence.
+    Older {
+        value: String,
+        unit: Option<TimeUnit>,
+    },
+    /// `after(n)` → CLTV (absolute timelock, forfeit class). Without a unit
+    /// `value` is the raw nLockTime.
+    After {
+        value: String,
+        unit: Option<TimeUnit>,
+    },
     /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
     Sig {
         keys: Vec<KeyExpr>,
         sigs: Vec<String>,
         threshold: Option<u16>,
     },
+}
+
+/// The unit of a `blocks(n)` or `seconds(n)` timelock operand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeUnit {
+    Blocks,
+    Seconds,
 }
 
 /// A `tapscript`-modified function declaration: an L1 tapleaf source member.
@@ -755,29 +736,11 @@ pub enum ExprKind {
         source: GroupIOSource,
         property: Option<crate::properties::GroupIoProperty>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
-    /// CheckSig expression result (for use in if conditions)
-    CheckSigExpr {
-        signature: Box<Expression>,
-        pubkey: Box<Expression>,
-    },
-    /// CheckSigFromStack expression result
-    CheckSigFromStackExpr {
-        signature: Box<Expression>,
-        pubkey: Box<Expression>,
-        message: Box<Expression>,
-    },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
     Unary {
         op: crate::operators::UnaryOperator,
         value: Box<Expression>,
-    },
-    // ─── Crypto Opcodes ────────────────────────────────────────────────
-    /// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg)
-    CheckSigFromStackVerify {
-        signature: Box<Expression>,
-        pubkey: Box<Expression>,
-        message: Box<Expression>,
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
@@ -838,18 +801,6 @@ macro_rules! expression_children {
                 | ExprKind::TxIntrospection { .. }
                 | ExprKind::IntentInspect { .. }
                 | ExprKind::AssetGroupsLength => vec![],
-
-                ExprKind::CheckSigExpr { signature, pubkey } => vec![signature, pubkey],
-                ExprKind::CheckSigFromStackExpr {
-                    signature,
-                    pubkey,
-                    message,
-                }
-                | ExprKind::CheckSigFromStackVerify {
-                    signature,
-                    pubkey,
-                    message,
-                } => vec![signature, pubkey, message],
 
                 ExprKind::FieldAccess { value, .. } => vec![value],
                 ExprKind::IndexAccess { value, index } => vec![value, index],

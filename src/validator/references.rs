@@ -59,34 +59,6 @@ fn collect_requirement<'a>(
             collect_expression(left, names, functions, visited);
             collect_expression(right, names, functions, visited);
         }
-        Requirement::CheckSig { signature, pubkey } => {
-            for operand in [signature, pubkey] {
-                collect_expression(operand, names, functions, visited);
-            }
-        }
-        Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
-        } => {
-            for operand in [signature, pubkey, message] {
-                collect_expression(operand, names, functions, visited);
-            }
-        }
-        Requirement::CheckMultisig {
-            pubkeys,
-            signatures,
-            ..
-        } => {
-            for operand in pubkeys.iter().chain(signatures) {
-                collect_expression(operand, names, functions, visited);
-            }
-        }
-        Requirement::HashEqual { preimage, hash, .. } => {
-            for operand in [preimage, hash] {
-                collect_expression(operand, names, functions, visited);
-            }
-        }
     }
 }
 

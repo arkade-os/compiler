@@ -466,8 +466,8 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
             "`tweakVerify(...)` cannot be a statement; use it inside require()",
         ),
         (
-            "function spend(bytes a) { require(hash160(a) == substr(a, 0, 20)); }",
-            "`hash160` is only supported as `hash160(preimage) == hash`",
+            "function spend(bytes a) { require(hash160(a, a) == substr(a, 0, 20)); }",
+            "malformed reserved function call `hash160(...)`; expected hash160(data)",
         ),
     ] {
         let source = format!("contract C() {{ {body} }}");
@@ -495,16 +495,16 @@ fn introspection_diagnostics_name_normalized_operands() {
             "gidx operand 'tx.inputs[this.activeInputIndex].scriptPubKey' must be int",
         ),
         (
-            "checkSig(values[this.activeInputIndex], values[0])",
-            "signature 'values[this.activeInputIndex]' has type 'bytes'",
+            "checkMultisig([values[0]], [values[this.activeInputIndex]])",
+            "checkMultisig 'values[this.activeInputIndex]' has type 'bytes'",
         ),
         (
-            "checkSig(values[this.expiry], values[0])",
-            "signature 'values[this.expiry]' has type 'bytes'",
+            "checkMultisig([values[0]], [values[this.expiry]])",
+            "checkMultisig 'values[this.expiry]' has type 'bytes'",
         ),
         (
-            "checkSig(values[tx.time], values[0])",
-            "signature 'values[tx.locktime]' has type 'bytes'",
+            "checkMultisig([values[0]], [values[tx.time]])",
+            "checkMultisig 'values[tx.locktime]' has type 'bytes'",
         ),
     ] {
         let source = format!(

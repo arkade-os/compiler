@@ -3,82 +3,6 @@ use super::bindings::{
 };
 use super::*;
 
-/// Validate a crypto-check operand, reporting only its first fault.
-fn validate_operand(
-    value: &Expression,
-    expected: Option<ArkType>,
-    label: &str,
-    function_name: &str,
-    scopes: &BindingScopes,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    if let ExprKind::Variable(name) | ExprKind::Property(name) = &value.kind {
-        if find_binding(scopes, name).is_none() {
-            issues.push(
-                ValidationIssue::error(format!(
-                    "function '{function_name}': {label} '{name}' is undefined"
-                ))
-                .at(value.span),
-            );
-            return;
-        }
-    }
-    let before = issues.len();
-    validate_binding_expression(value, function_name, scopes, issues, true);
-    let actual = value.ty.clone();
-    if let Some(expected) = expected.filter(|expected| {
-        issues.len() == before
-            && actual != ArkType::Unknown
-            && !binding_types_compatible(expected, &actual)
-    }) {
-        issues.push(
-            ValidationIssue::error(format!(
-                "function '{function_name}': {label} '{}' has type '{}', expected '{}'",
-                value.source_text(),
-                actual.as_str(),
-                expected.as_str()
-            ))
-            .at(value.span),
-        );
-    }
-}
-
-fn validate_signature_operands(
-    signature: &Expression,
-    pubkey: &Expression,
-    message: Option<&Expression>,
-    function_name: &str,
-    scopes: &BindingScopes,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    validate_operand(
-        signature,
-        Some(ArkType::Signature),
-        "signature",
-        function_name,
-        scopes,
-        issues,
-    );
-    validate_operand(
-        pubkey,
-        Some(ArkType::Bytes),
-        "public key",
-        function_name,
-        scopes,
-        issues,
-    );
-    if let Some(message) = message {
-        validate_operand(
-            message,
-            Some(ArkType::Bytes),
-            "message",
-            function_name,
-            scopes,
-            issues,
-        );
-    }
-}
-
 pub(super) fn validate_binding_requirement(
     requirement: &Requirement,
     function_name: &str,
@@ -87,10 +11,7 @@ pub(super) fn validate_binding_requirement(
 ) {
     match requirement {
         Requirement::Expression(expression) => {
-            let produces_value = !matches!(
-                &expression.kind,
-                ExprKind::CheckSigFromStackVerify { .. }
-            ) && !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
+            let produces_value = !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             let before = issues.len();
             validate_binding_expression(expression, function_name, scopes, issues, produces_value);
             let condition = expression.ty.clone();
@@ -103,77 +24,6 @@ pub(super) fn validate_binding_requirement(
                 issues.push(ValidationIssue::type_error(format!(
                     "function '{function_name}': require condition has type '{}', expected bool",
                     condition.as_str()
-                )));
-            }
-        }
-        Requirement::CheckSig { signature, pubkey } => {
-            validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
-        }
-        Requirement::CheckSigFromStack {
-            signature,
-            pubkey,
-            message,
-        } => {
-            validate_signature_operands(
-                signature,
-                pubkey,
-                Some(message),
-                function_name,
-                scopes,
-                issues,
-            );
-        }
-        Requirement::CheckMultisig {
-            pubkeys,
-            signatures,
-            ..
-        } => {
-            if pubkeys.len() != signatures.len() {
-                issues.push(ValidationIssue::error(format!(
-                    "function '{}': checkMultisig key and signature counts must match",
-                    function_name
-                )));
-            }
-            for pubkey in pubkeys {
-                validate_operand(
-                    pubkey,
-                    Some(ArkType::Bytes),
-                    "multisig public key",
-                    function_name,
-                    scopes,
-                    issues,
-                );
-            }
-            for signature in signatures {
-                validate_operand(
-                    signature,
-                    Some(ArkType::Signature),
-                    "multisig signature",
-                    function_name,
-                    scopes,
-                    issues,
-                );
-            }
-        }
-        Requirement::HashEqual {
-            hash_fn,
-            preimage,
-            hash,
-        } => {
-            validate_operand(preimage, None, "preimage", function_name, scopes, issues);
-            let before = issues.len();
-            validate_operand(hash, None, "hash", function_name, scopes, issues);
-            let actual = hash.ty.clone();
-            if issues.len() == before
-                && !matches!(&hash.kind, ExprKind::Literal(_))
-                && !crate::types::digest_accepts(hash_fn, &actual)
-            {
-                issues.push(ValidationIssue::type_error(format!(
-                    "function '{function_name}': {} comparison: '{}' has type '{}', expected {}",
-                    hash_fn.name(),
-                    hash.source_text(),
-                    actual.as_str(),
-                    hash_fn.digest_type()
                 )));
             }
         }
@@ -301,7 +151,6 @@ pub(super) fn validate_binding_expression(
         && (matches!(
             &expression.kind,
             ExprKind::GroupIOAccess { property: None, .. }
-                | ExprKind::CheckSigFromStackVerify { .. }
         ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none()))
     {
         issues.push(ValidationIssue::error(format!(
@@ -447,9 +296,10 @@ pub(super) fn validate_binding_expression(
             let (name, operands) = registered_builtin.unwrap();
             let params = operands::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
-            assert_eq!(
-                operands.len(),
-                params.len(),
+            assert!(
+                crate::builtins::find(name).map_or(operands.len() == params.len(), |builtin| {
+                    builtin.accepts_arity(operands.len())
+                }),
                 "{name}: operands() and its signature disagree on arity"
             );
             // Every `[]` operand takes the length of the first one.
@@ -472,6 +322,27 @@ pub(super) fn validate_binding_expression(
                 // A hex literal carries its own width, so 32 bytes need no cast.
                 let literal_bytes32 = expected == ArkType::Bytes32
                     && matches!(&operand.kind, ExprKind::Literal(value) if value.starts_with("0x") && value.len() == 66);
+                if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
+                    (&operand.kind, &expected)
+                {
+                    for value in elements {
+                        let actual = &value.ty;
+                        if actual != &ArkType::Unknown && !binding_types_compatible(element, actual)
+                        {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{function_name}': {name} '{}' has type '{}', expected '{}'",
+                                value.source_text(), actual.as_str(), element.as_str()
+                            )).at(value.span));
+                        }
+                    }
+                    if elements.len() != *length {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{function_name}': {name} operand has {} elements, expected {length}",
+                            elements.len()
+                        )).at(operand.span));
+                    }
+                    continue;
+                }
                 if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
@@ -609,30 +480,6 @@ pub(super) fn validate_binding_expression(
             if name.contains('.') && find_binding(scopes, root).is_some() {
                 validate_named_binding(name, None, "field", function_name, scopes, issues);
             }
-        }
-        ExprKind::CheckSigExpr { signature, pubkey } => {
-            validate_signature_operands(signature, pubkey, None, function_name, scopes, issues);
-            children_checked = true;
-        }
-        ExprKind::CheckSigFromStackExpr {
-            signature,
-            pubkey,
-            message,
-        }
-        | ExprKind::CheckSigFromStackVerify {
-            signature,
-            pubkey,
-            message,
-        } => {
-            validate_signature_operands(
-                signature,
-                pubkey,
-                Some(message),
-                function_name,
-                scopes,
-                issues,
-            );
-            children_checked = true;
         }
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
