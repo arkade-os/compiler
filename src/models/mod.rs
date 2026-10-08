@@ -592,7 +592,7 @@ pub struct Expression {
     pub kind: ExprKind,
     pub span: crate::diagnostics::Span,
     /// Set by `typechecker::annotate`; `Unknown` until then.
-    pub ty: crate::typechecker::ArkType,
+    pub(crate) ty: crate::typechecker::ArkType,
 }
 
 impl Expression {

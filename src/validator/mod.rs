@@ -110,7 +110,10 @@ pub fn has_errors(issues: &[ValidationIssue]) -> bool {
 /// - Each function's parameter names are unique within that function.
 /// - Tapscript inputs do not collide with reserved arkd names.
 /// - Asset ID operands have the expected txid/gidx types.
-pub fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
+///
+/// Reads `Expression::ty`, so `typechecker::annotate` must run first; on an
+/// unannotated contract every type is `Unknown` and type checks pass vacuously.
+pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
     check_struct_definitions(contract, &mut issues);
@@ -1354,6 +1357,7 @@ fn validate_scalar_comparison(
                 || (bytes_like(&left) && right == ArkType::Bytes)
                 || (bytes_like(&right) && left == ArkType::Bytes)
         }
+        // A bool is a script number on the stack, but ordering booleans is meaningless.
         OperatorClass::Ordering => left == ArkType::Int && right == ArkType::Int,
         _ => true,
     };

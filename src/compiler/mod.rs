@@ -1051,6 +1051,8 @@ fn generate_asm_from_statements_recursive(
                 for k in 0..length {
                     let mut substituted =
                         substitute_loop_body(body, index_var, value_var, k, iterable);
+                    // Substitution builds untyped nodes; return types and group members
+                    // were resolved on the original body and survive the copy.
                     typechecker::annotate_statements(
                         &mut substituted,
                         &mut generator.scope.clone(),
