@@ -664,8 +664,8 @@ pub enum ExprKind {
         array: String,
         index: Box<Expression>,
     },
-    /// Current input access (tx.input.current)
-    CurrentInput(Option<String>),
+    /// `this.activeInputIndex`, `this.expiry`
+    This(crate::properties::ThisProperty),
     /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
     /// tx.outputs[o].assets.lookup(txid, gidx). Asserts the asset is present
     /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
@@ -697,16 +697,19 @@ pub enum ExprKind {
         property: String, // "assetId" or "amount"
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
-    TxIntrospection { property: String },
-    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint
+    TxIntrospection {
+        property: crate::properties::TxProperty,
+    },
+    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint;
+    /// tx.input.current.* indexes it with this.activeInputIndex
     InputIntrospection {
         index: Box<Expression>,
-        property: String,
+        property: crate::properties::InputProperty,
     },
     /// Output introspection: tx.outputs[o].value, scriptPubKey
     OutputIntrospection {
         index: Box<Expression>,
-        property: String,
+        property: crate::properties::OutputProperty,
     },
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
@@ -820,11 +823,10 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
         {
             Some("AssetId")
         }
-        ExprKind::CurrentInput(Some(property)) | ExprKind::InputIntrospection { property, .. }
-            if property == "outpoint" =>
-        {
-            Some("Outpoint")
-        }
+        ExprKind::InputIntrospection {
+            property: crate::properties::InputProperty::Outpoint,
+            ..
+        } => Some("Outpoint"),
         _ => None,
     }
 }
@@ -840,7 +842,7 @@ macro_rules! expression_children {
                 ExprKind::Variable(_)
                 | ExprKind::Literal(_)
                 | ExprKind::Property(_)
-                | ExprKind::CurrentInput(_)
+                | ExprKind::This(_)
                 | ExprKind::TxIntrospection { .. }
                 | ExprKind::IntentInspect { .. }
                 | ExprKind::AssetGroupsLength => vec![],

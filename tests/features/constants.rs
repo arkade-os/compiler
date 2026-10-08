@@ -363,7 +363,7 @@ fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic
     for (ty, expression, message) in [
         ("int", "fee", "unknown constant 'fee'"),
         ("int", "MISSING + 1", "unknown constant 'MISSING'"),
-        ("int", "tx.time", "unknown constant 'tx.time'"),
+        ("int", "tx.time", "constant expression"),
         ("int", "helper()", "constant expression"),
         ("int", "1 / 0", "division by zero"),
         ("int", "1 % 0", "modulo by zero"),

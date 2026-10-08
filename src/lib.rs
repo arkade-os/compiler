@@ -8,6 +8,7 @@ pub mod models;
 pub mod opcodes;
 pub mod operators;
 mod parser;
+pub mod properties;
 mod types;
 mod validator;
 

@@ -2,6 +2,7 @@ use super::Rule;
 #[allow(unused_imports)]
 use super::*;
 use crate::models::*;
+use crate::properties::{InputProperty, OutputProperty, ThisProperty, TxProperty};
 use pest::iterators::Pair;
 
 pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
@@ -92,12 +93,10 @@ pub(crate) fn parse_tx_introspection_to_expression(pair: Pair<Rule>) -> Result<E
     let span: crate::diagnostics::Span = pair.as_span().into();
     let mut inner = pair.into_inner();
 
-    // Parse the property
-    let property = inner
-        .next()
-        .ok_or("Missing tx introspection property")?
-        .as_str()
-        .to_string();
+    let property = named(
+        inner.next().ok_or("Missing tx introspection property")?,
+        TxProperty::from_name,
+    )?;
 
     Ok(Expression::new(
         ExprKind::TxIntrospection { property },
@@ -123,12 +122,10 @@ pub(crate) fn parse_input_introspection_to_expression(
         .ok_or("Missing index value")?;
     let index = parse_general_expression(index_pair)?;
 
-    // Parse the property
-    let property = inner
-        .next()
-        .ok_or("Missing input introspection property")?
-        .as_str()
-        .to_string();
+    let property = named(
+        inner.next().ok_or("Missing input introspection property")?,
+        InputProperty::from_name,
+    )?;
 
     Ok(Expression::new(
         ExprKind::InputIntrospection {
@@ -155,12 +152,12 @@ pub(crate) fn parse_output_introspection_to_expression(
         .ok_or("Missing index value")?;
     let index = parse_general_expression(index_pair)?;
 
-    // Parse the property
-    let property = inner
-        .next()
-        .ok_or("Missing output introspection property")?
-        .as_str()
-        .to_string();
+    let property = named(
+        inner
+            .next()
+            .ok_or("Missing output introspection property")?,
+        OutputProperty::from_name,
+    )?;
 
     Ok(Expression::new(
         ExprKind::OutputIntrospection {
@@ -169,6 +166,23 @@ pub(crate) fn parse_output_introspection_to_expression(
         },
         span,
     ))
+}
+
+/// The property a grammar name pair spells.
+pub(crate) fn named<P>(pair: Pair<Rule>, from_name: fn(&str) -> Option<P>) -> Result<P, String> {
+    from_name(pair.as_str()).ok_or_else(|| format!("unknown property '{}'", pair.as_str()))
+}
+
+/// `tx.inputs[this.activeInputIndex].<property>`, which `tx.input.current.*` spells.
+pub(crate) fn current_input(property: InputProperty, span: crate::diagnostics::Span) -> Expression {
+    let index = Expression::new(ExprKind::This(ThisProperty::ActiveInputIndex), span);
+    Expression::new(
+        ExprKind::InputIntrospection {
+            index: Box::new(index),
+            property,
+        },
+        span,
+    )
 }
 
 /// Parse tx.packet(packetType) → ExprKind::PacketInspect
@@ -254,22 +268,30 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
         return Ok(Expression::new(ExprKind::AssetGroupsLength, span));
     }
 
-    // Handle tx.input.current.<property> — same property set as
-    // tx.inputs[i].<property>, since this *is* tx.inputs[i] for the current i.
     if text.starts_with("tx.input.current") {
-        return match text.strip_prefix("tx.input.current.") {
-            Some(
-                p @ ("value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint"
-                | "arkadeScriptHash" | "arkadeWitnessHash"),
-            ) => Ok(Expression::new(
-                ExprKind::CurrentInput(Some(p.to_string())),
-                span,
-            )),
-            _ => Err(format!(
-                "tx.input.current requires one of: value, scriptPubKey, witnessVersion, sequence, \
-                 outpoint, arkadeScriptHash, arkadeWitnessHash (got '{text}')"
+        return match text
+            .strip_prefix("tx.input.current.")
+            .and_then(InputProperty::from_name)
+        {
+            Some(property) => Ok(current_input(property, span)),
+            None => Err(format!(
+                "tx.input.current requires one of: {} (got '{text}')",
+                InputProperty::ALL
+                    .iter()
+                    .map(|property| property.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )),
         };
+    }
+
+    if text == "tx.time" {
+        return Ok(Expression::new(
+            ExprKind::TxIntrospection {
+                property: TxProperty::Locktime,
+            },
+            span,
+        ));
     }
 
     // Default: treat as a property string

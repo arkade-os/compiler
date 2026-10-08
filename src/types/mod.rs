@@ -510,46 +510,12 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                     _ => None,
                 }
             })
-            .unwrap_or(match property.trim() {
-                "tx.time" | "this.activeInputIndex" | "this.expiry" => ArkType::Int,
-                "this.activeBytecode" => ArkType::Bytes,
-                _ => ArkType::Unknown,
-            }),
+            .unwrap_or(ArkType::Unknown),
 
-        // tx.input.current.*
-        ExprKind::CurrentInput(prop) => match prop.as_deref() {
-            Some("value") => ArkType::Int,
-            Some("scriptPubKey") => ArkType::Bytes,
-            Some("sequence") | Some("witnessVersion") => ArkType::Int,
-            Some("outpoint") => ArkType::Struct("Outpoint".to_string()),
-            Some("arkadeScriptHash") | Some("arkadeWitnessHash") => ArkType::Bytes32,
-            _ => ArkType::Unknown,
-        },
-
-        // tx-level introspection
-        ExprKind::TxIntrospection { property } => match property.as_str() {
-            "version" | "locktime" => ArkType::Int,
-            "numInputs" | "numOutputs" | "weight" => ArkType::Int,
-            "id" => ArkType::Bytes32,
-            _ => ArkType::Unknown,
-        },
-
-        // tx.inputs[i].*
-        ExprKind::InputIntrospection { property, .. } => match property.as_str() {
-            "value" => ArkType::Int,
-            "scriptPubKey" => ArkType::Bytes,
-            "sequence" | "witnessVersion" => ArkType::Int,
-            "outpoint" => ArkType::Struct("Outpoint".to_string()),
-            "arkadeScriptHash" | "arkadeWitnessHash" => ArkType::Bytes32,
-            _ => ArkType::Unknown,
-        },
-
-        // tx.outputs[o].*
-        ExprKind::OutputIntrospection { property, .. } => match property.as_str() {
-            "value" | "witnessVersion" => ArkType::Int,
-            "scriptPubKey" => ArkType::Bytes,
-            _ => ArkType::Unknown,
-        },
+        ExprKind::This(property) => ArkType::parse(property.value_type()),
+        ExprKind::TxIntrospection { property } => ArkType::parse(property.value_type()),
+        ExprKind::InputIntrospection { property, .. } => ArkType::parse(property.value_type()),
+        ExprKind::OutputIntrospection { property, .. } => ArkType::parse(property.value_type()),
 
         // Asset introspection
         ExprKind::AssetLookup { .. } => ArkType::Int,
