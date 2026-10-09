@@ -29,12 +29,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
                 }
             }
         }
-        let mut scope = build_scope_with_structs(&contract.parameters, &contract.structs);
-        scope.extend(build_scope_with_structs(
-            &function.parameters,
-            &contract.structs,
-        ));
-        validate_body(&function.statements, function, &mut scope, contract, issues);
+        validate_body(&function.statements, function, contract, issues);
         locate(&mut issues[first..], function.span);
     }
 
@@ -65,7 +60,6 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
 fn validate_body(
     statements: &[LocatedStatement],
     function: &Function,
-    scope: &mut Scope,
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -77,7 +71,6 @@ fn validate_body(
                 expression,
                 !matches!(statement, Statement::Call(_)),
                 function,
-                scope,
                 contract,
                 issues,
             );
@@ -89,12 +82,11 @@ fn validate_body(
                         &value.kind,
                         ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
                     ) {
-                        let expected = infer_type(other, scope);
+                        let expected = &other.ty;
                         if matches!(expected, ArkType::Array(..) | ArkType::Struct(_)) {
                             validate_value(
                                 &expected.as_str(),
                                 value,
-                                scope,
                                 contract,
                                 &format!("comparison in '{}'", function.name),
                                 issues,
@@ -114,7 +106,6 @@ fn validate_body(
                     (Some(expected), Some(value)) => validate_value(
                         expected,
                         value,
-                        scope,
                         contract,
                         &format!("return from '{}'", function.name),
                         issues,
@@ -142,53 +133,24 @@ fn validate_body(
                     validate_value(
                         expected,
                         value,
-                        scope,
                         contract,
                         &format!("binding '{name}' in '{}'", function.name),
                         issues,
                     );
                 }
-                crate::typechecker::bind_local_type(
-                    scope,
-                    name,
-                    declared_type.as_deref(),
-                    infer_type(value, scope),
-                    &contract.structs,
-                );
             }
             Statement::IfElse {
                 then_body,
                 else_body,
                 ..
             } => {
-                validate_body(then_body, function, &mut scope.clone(), contract, issues);
+                validate_body(then_body, function, contract, issues);
                 if let Some(body) = else_body {
-                    validate_body(body, function, &mut scope.clone(), contract, issues);
+                    validate_body(body, function, contract, issues);
                 }
             }
-            Statement::ForIn {
-                index_var,
-                value_var,
-                iterable,
-                body,
-            } => {
-                let mut scope = scope.clone();
-                let element = match infer_type(iterable, &scope) {
-                    ArkType::Array(element, _) => *element,
-                    _ => ArkType::Unknown,
-                };
-                scope.insert(index_var.clone(), ArkType::Int);
-                crate::typechecker::bind_local_type(
-                    &mut scope,
-                    value_var,
-                    None,
-                    element,
-                    &contract.structs,
-                );
-                validate_body(body, function, &mut scope, contract, issues);
-            }
-            Statement::ForCount { body, .. } => {
-                validate_body(body, function, &mut scope.clone(), contract, issues);
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                validate_body(body, function, contract, issues);
             }
             Statement::Call(_) | Statement::Require(_) | Statement::VarAssign { .. } => {}
         }
@@ -200,7 +162,6 @@ fn validate_calls(
     expression: &Expression,
     value_position: bool,
     caller: &Function,
-    scope: &Scope,
     contract: &Contract,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -242,7 +203,6 @@ fn validate_calls(
                     validate_value(
                         &parameter.param_type,
                         argument,
-                        scope,
                         contract,
                         &format!("argument '{}' to '{name}'", parameter.name),
                         issues,
@@ -253,14 +213,13 @@ fn validate_calls(
     }
     locate(&mut issues[first..], expression.span);
     for child in child_exprs(expression) {
-        validate_calls(child, true, caller, scope, contract, issues);
+        validate_calls(child, true, caller, contract, issues);
     }
 }
 
 fn validate_value(
     expected: &str,
     value: &Expression,
-    scope: &Scope,
     contract: &Contract,
     context: &str,
     issues: &mut Vec<ValidationIssue>,
@@ -279,7 +238,6 @@ fn validate_value(
                 validate_value(
                     &element.as_str(),
                     value,
-                    scope,
                     contract,
                     &format!("{context}, element {index}"),
                     issues,
@@ -313,7 +271,6 @@ fn validate_value(
                         validate_value(
                             &field.param_type,
                             value,
-                            scope,
                             contract,
                             &format!("{context}, field '{name}'"),
                             issues,
@@ -335,8 +292,8 @@ fn validate_value(
             }
         }
         _ => {
-            let actual = infer_type(value, scope);
-            if !binding_types_compatible(&expected_type, &actual) {
+            let actual = &value.ty;
+            if !binding_types_compatible(&expected_type, actual) {
                 issues.push(ValidationIssue::error(format!(
                     "{context}: expected '{expected}', got '{}'",
                     actual.as_str()

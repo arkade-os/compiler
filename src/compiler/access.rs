@@ -1,5 +1,5 @@
 use super::*;
-use crate::typechecker::{infer_type, ArkType};
+use crate::types::ArkType;
 
 impl Generator {
     /// Resolve an access to its layout path, collecting runtime indexes.
@@ -109,10 +109,7 @@ impl Generator {
     }
 
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<(), String> {
-        if matches!(
-            infer_type(value, &self.scope),
-            ArkType::Array(..) | ArkType::Struct(_)
-        ) {
+        if matches!(value.ty, ArkType::Array(..) | ArkType::Struct(_)) {
             return Err("assignment requires a scalar field".to_string());
         }
         let mut indices = Vec::new();
@@ -144,14 +141,13 @@ impl Generator {
         };
         let keys = &args[0];
         let signatures = &args[1];
-        let ArkType::Array(_, count) = infer_type(keys, &self.scope) else {
+        let ArkType::Array(element, count) = keys.ty.clone() else {
             return Err("checkMultisig public keys must be an array".to_string());
         };
         if count == 0 || count > 999 {
             return Err("checkMultisig needs between 1 and 999 public keys".to_string());
         }
-        if !matches!(infer_type(signatures, &self.scope), ArkType::Array(_, length) if length == count)
-        {
+        if !matches!(signatures.ty, ArkType::Array(_, length) if length == count) {
             return Err("checkMultisig key and signature counts must match".to_string());
         }
         let threshold = args.get(2);
@@ -178,7 +174,7 @@ impl Generator {
             let baseline = self.stack.len();
             let scope = self.scope.clone();
             let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
-            let ty = infer_type(keys, &self.scope).as_str();
+            let ty = keys.ty.as_str();
             let name = format!("$multisig:{baseline}");
             self.emit_typed_value(keys, &ty)?;
             self.bind_value(&name, &ty)?;
@@ -188,6 +184,7 @@ impl Generator {
                 unreachable!()
             };
             args[0] = keys.with_kind(ExprKind::Variable(name));
+            args[0].ty = keys.ty.clone();
             self.emit_multisig(&normalized)?;
             self.discard_call_frame(baseline, 1)?;
             self.last_reads.retain(|(_, index), _| *index < baseline);
@@ -198,13 +195,14 @@ impl Generator {
         // Signatures need no binding: array emission leaves sig[0] on top for the checks.
         self.emit_typed_value(signatures, &format!("signature[{count}]"))?;
         for index in 0..count {
-            let key = match &keys.kind {
+            let mut key = match &keys.kind {
                 ExprKind::ArrayLiteral(elements) => elements[index].clone(),
                 _ => keys.with_kind(ExprKind::IndexAccess {
                     value: Box::new(keys.clone()),
                     index: Box::new(keys.with_kind(ExprKind::Literal(index.to_string()))),
                 }),
             };
+            key.ty = (*element).clone();
             self.emit_expression(&key)?;
             self.apply(
                 if index == 0 {
@@ -240,7 +238,7 @@ impl Generator {
         let [g1, g2, curve_id] = args.as_slice() else {
             return Err("ecPairing takes three arguments".to_string());
         };
-        let ArkType::Array(_, pairs) = infer_type(g1, &self.scope) else {
+        let ArkType::Array(_, pairs) = g1.ty else {
             return Err("ecPairing G1 points must be an ECPoint array".to_string());
         };
         for index in 0..pairs {

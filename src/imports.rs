@@ -5,7 +5,7 @@ use crate::diagnostics::Diagnostic;
 use crate::models::{
     self, Contract, ContractJson, ExprKind, Expression, LocatedStatement, SourceBundle, Statement,
 };
-use crate::{compiler, parser, typechecker};
+use crate::{compiler, parser, types};
 
 // Dependency definitions are copied per module; use a shared symbol table if quadratic copying becomes costly.
 struct Module {
@@ -528,9 +528,8 @@ fn validate_scope(
         if let Some(ty) = &function.return_type {
             check_type(ty)?;
         }
-        let mut scope =
-            typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
-        scope.extend(typechecker::build_scope_with_structs(
+        let mut scope = types::build_scope_with_structs(&contract.parameters, &contract.structs);
+        scope.extend(types::build_scope_with_structs(
             &function.parameters,
             &contract.structs,
         ));
@@ -581,10 +580,12 @@ fn validate_scope(
                         ));
                     }
                     for (arg, param) in args.iter().zip(&target.parameters) {
-                        let actual = typechecker::infer_type(arg, &scope);
-                        if actual != typechecker::ArkType::Unknown
+                        let mut arg = arg.clone();
+                        types::annotate_expression(&mut arg, &scope);
+                        let actual = arg.ty;
+                        if actual != types::ArkType::Unknown
                             && !crate::validator::binding_types_compatible(
-                                &typechecker::ArkType::parse(&param.param_type),
+                                &types::ArkType::parse(&param.param_type),
                                 &actual,
                             )
                         {

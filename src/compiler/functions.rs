@@ -1,27 +1,25 @@
 use super::*;
 use crate::models::{child_exprs_mut, flatten_parameter, is_builtin_type, TypeLeaf};
 
-pub(super) fn extract_values(
-    expression: &mut Expression,
-    values: &mut Vec<Expression>,
-    scope: &typechecker::Scope,
-) {
+pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expression>) {
     if matches!(
         &expression.kind,
         ExprKind::Call { .. } | ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
     ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing | crate::builtins::Lowering::Multisig))
         || (matches!(&expression.kind, ExprKind::ArrayIndex { .. })
             && matches!(
-                typechecker::infer_type(expression, scope),
-                typechecker::ArkType::Array(..) | typechecker::ArkType::Struct(_)
+                expression.ty,
+                types::ArkType::Array(..) | types::ArkType::Struct(_)
             ))
     {
-        let replacement =
+        let mut replacement =
             expression.with_kind(ExprKind::Variable(format!("$call:{}", values.len())));
+        // The placeholder stands for the extracted value, so it keeps its type.
+        replacement.ty = expression.ty.clone();
         values.push(std::mem::replace(expression, replacement));
     } else {
         for child in child_exprs_mut(expression) {
-            extract_values(child, values, scope);
+            extract_values(child, values);
         }
     }
 }

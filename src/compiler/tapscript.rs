@@ -9,7 +9,7 @@ use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_VERIFY,
 };
-use crate::typechecker::{digest_accepts, ArkType};
+use crate::types::{digest_accepts, ArkType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -291,7 +291,7 @@ pub fn validate_arkd_rules(
     c: &Closure,
 ) -> Result<(), String> {
     let constructor_scope =
-        crate::typechecker::build_scope_with_structs(&contract.parameters, &contract.structs);
+        crate::types::build_scope_with_structs(&contract.parameters, &contract.structs);
     // Pubkeys in scope: constructor pubkey params + pubkey tapscript inputs.
     let in_scope = |name: &str| -> bool {
         name == "server"

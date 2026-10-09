@@ -394,6 +394,15 @@ pub enum AssignmentTarget {
     },
 }
 
+impl Requirement {
+    pub(crate) fn expressions_mut(&mut self) -> Vec<&mut Expression> {
+        match self {
+            Requirement::Expression(expression) => vec![expression],
+            Requirement::Comparison { left, right, .. } => vec![left, right],
+        }
+    }
+}
+
 /// Requirement AST
 #[derive(Debug, Clone)]
 pub enum Requirement {
@@ -563,22 +572,22 @@ pub enum GroupIOSource {
 pub struct Expression {
     pub kind: ExprKind,
     pub span: crate::diagnostics::Span,
+    /// Set by `types::annotate`; `Unknown` until then.
+    pub(crate) ty: crate::types::ArkType,
 }
 
 impl Expression {
     pub fn new(kind: ExprKind, span: crate::diagnostics::Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            ty: crate::types::ArkType::Unknown,
+        }
     }
 
     /// A node replacing this one, at the same source position.
     pub(crate) fn with_kind(&self, kind: ExprKind) -> Self {
         Self::new(kind, self.span)
-    }
-
-    /// Move the expression out, leaving an empty literal at its position.
-    pub(crate) fn take(&mut self) -> Self {
-        let placeholder = self.with_kind(ExprKind::Literal(String::new()));
-        std::mem::replace(self, placeholder)
     }
 }
 
@@ -636,8 +645,8 @@ pub enum ExprKind {
         array: String,
         index: Box<Expression>,
     },
-    /// Current input access (tx.input.current)
-    CurrentInput(Option<String>),
+    /// `this.activeInputIndex`, `this.expiry`
+    This(crate::properties::ThisProperty),
     /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
     /// tx.outputs[o].assets.lookup(txid, gidx). Asserts the asset is present
     /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
@@ -666,19 +675,22 @@ pub enum ExprKind {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: String, // "assetId" or "amount"
+        property: crate::properties::AssetProperty,
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
-    TxIntrospection { property: String },
-    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint
+    TxIntrospection {
+        property: crate::properties::TxProperty,
+    },
+    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint;
+    /// tx.input.current.* indexes it with this.activeInputIndex
     InputIntrospection {
         index: Box<Expression>,
-        property: String,
+        property: crate::properties::InputProperty,
     },
     /// Output introspection: tx.outputs[o].value, scriptPubKey
     OutputIntrospection {
         index: Box<Expression>,
-        property: String,
+        property: crate::properties::OutputProperty,
     },
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
@@ -703,7 +715,7 @@ pub enum ExprKind {
     /// Asset group property: group.sumInputs, group.delta, etc.
     GroupProperty {
         group: Box<Expression>,
-        property: String,
+        property: crate::properties::GroupProperty,
     },
     /// Boolean equality over the complete canonical control Asset ID:
     /// group.controlIs(txid, gidx). False when control is absent or either
@@ -722,18 +734,7 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<String>, // "amount" or "type"; None returns the raw type/data/amount tuple
-    },
-    // ─── Byte-string operations ────────────────────────────────────────
-    /// Byte-string concatenation: produced by the rewrite pass when `+` has at
-    /// least one bytes-like operand. Both operands must already be bytes; a
-    /// numeric operand is a compile error telling the author to convert it with
-    /// `num2bin(value, width)`. The compiler never picks a width on its own,
-    /// because the width and byte order are consensus-visible: they decide what
-    /// an off-chain signer must hash to match.
-    Concat {
-        left: Box<Expression>,
-        right: Box<Expression>,
+        property: Option<crate::properties::GroupIoProperty>, // "amount" or "type"; None returns the raw type/data/amount tuple
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
@@ -776,22 +777,13 @@ pub enum ExprKind {
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match &expression.kind {
-        ExprKind::Builtin { builtin, .. } => builtin
-            .result
-            .filter(|result| builtin_struct_fields(result).is_some()),
-        ExprKind::AssetAt { property, .. } if property == "assetId" => Some("AssetId"),
-        ExprKind::GroupProperty { property, .. }
-            if matches!(property.as_str(), "assetId" | "controlAssetId") =>
-        {
-            Some("AssetId")
-        }
-        ExprKind::CurrentInput(Some(property)) | ExprKind::InputIntrospection { property, .. }
-            if property == "outpoint" =>
-        {
-            Some("Outpoint")
-        }
+        ExprKind::Builtin { builtin, .. } => builtin.result,
+        ExprKind::AssetAt { property, .. } => Some(property.value_type()),
+        ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
+        ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
     }
+    .filter(|result| builtin_struct_fields(result).is_some())
 }
 
 /// Generates the shared and mutable traversals from one list of each variant's
@@ -805,7 +797,7 @@ macro_rules! expression_children {
                 ExprKind::Variable(_)
                 | ExprKind::Literal(_)
                 | ExprKind::Property(_)
-                | ExprKind::CurrentInput(_)
+                | ExprKind::This(_)
                 | ExprKind::TxIntrospection { .. }
                 | ExprKind::IntentInspect { .. }
                 | ExprKind::AssetGroupsLength => vec![],
@@ -841,7 +833,7 @@ macro_rules! expression_children {
                     asset_index,
                     ..
                 } => vec![io_index, asset_index],
-                ExprKind::BinaryOp { left, right, .. } | ExprKind::Concat { left, right, .. } => {
+                ExprKind::BinaryOp { left, right, .. } => {
                     vec![left, right]
                 }
                 ExprKind::GroupFind {
@@ -890,10 +882,15 @@ impl Expression {
         })
     }
 
-    /// Spell an operand as written, for diagnostics.
+    /// Spell an operand for diagnostics, using canonical names for aliases.
     pub(crate) fn source_text(&self) -> String {
         match &self.kind {
             ExprKind::Literal(value) => value.clone(),
+            ExprKind::This(property) => format!("this.{}", property.name()),
+            ExprKind::TxIntrospection { property } => format!("tx.{}", property.name()),
+            ExprKind::InputIntrospection { index, property } => {
+                format!("tx.inputs[{}].{}", index.source_text(), property.name())
+            }
             ExprKind::BinaryOp { left, op, right } => {
                 format!("{} {op} {}", left.source_text(), right.source_text())
             }

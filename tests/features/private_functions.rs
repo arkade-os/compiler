@@ -246,7 +246,7 @@ contract C() {
     for function in ["spend", "array", "flag"] {
         assert!(
             error.contains(&format!(
-                "fn {function}: comparison '==' is not defined between 'int' and 'bool'"
+                "function '{function}': comparison '==' is not defined between 'int' and 'bool'"
             )),
             "{error}"
         );

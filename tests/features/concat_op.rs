@@ -98,3 +98,26 @@ contract LoopHash(bytes32 tag) {
         "Loop value variable must not survive unrolling; asm:\n{asm}"
     );
 }
+
+#[test]
+fn concatenation_rejects_non_byte_scalar_types() {
+    for ty in ["AssetGroup", "asset"] {
+        for (expression, side) in [
+            ("0x01 + value", "right"),
+            ("value + 0x01", "left"),
+            ("sha256(0x01 + value)", "right"),
+            ("sha256(value + 0x01)", "left"),
+        ] {
+            let source = format!(
+                "contract C() {{ function spend({ty} value) {{ require({expression} == 0x01); }} }}"
+            );
+            let error = compile(&source).expect_err(&source).to_string();
+            assert!(
+                error.contains(&format!(
+                    "cannot concatenate bytes with the {side} `{ty}` operand"
+                )),
+                "{source}: {error}"
+            );
+        }
+    }
+}

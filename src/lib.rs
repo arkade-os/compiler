@@ -8,7 +8,8 @@ pub mod models;
 pub mod opcodes;
 pub mod operators;
 mod parser;
-mod typechecker;
+pub mod properties;
+mod types;
 mod validator;
 
 #[cfg(feature = "wasm")]
@@ -19,7 +20,7 @@ pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
     WitnessElement,
 };
-pub use typechecker::{ArkType, TypeError};
+pub use types::ArkType;
 
 /// Per-call compiler settings. Optimizations are enabled by default.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]

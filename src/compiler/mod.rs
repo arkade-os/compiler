@@ -23,7 +23,7 @@ use crate::opcodes::{
     OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP,
     OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY, OP_WITHIN, OP_XOR,
 };
-use crate::typechecker::{self};
+use crate::types::{self};
 use crate::validator::{self, Severity};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -35,7 +35,6 @@ pub mod tapscript;
 mod access;
 mod asset;
 mod comparison;
-mod concat;
 pub(crate) mod constants;
 pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
 mod expr;
@@ -45,7 +44,6 @@ mod loops;
 mod optimization;
 
 pub(crate) use asset::*;
-pub(crate) use concat::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
 pub(crate) use loops::*;
@@ -74,10 +72,10 @@ fn internal_array_binding_name(array: &str, index: &str) -> String {
 struct Generator {
     asm: Vec<String>,
     stack: Vec<StackItem>,
-    scopes: Vec<(usize, typechecker::Scope)>,
+    scopes: Vec<(usize, types::Scope)>,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
-    scope: typechecker::Scope,
+    scope: types::Scope,
     functions: Vec<Function>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<String, usize>,
@@ -140,8 +138,8 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        let mut scope = typechecker::build_scope_with_structs(constructor_parameters, structs);
-        scope.extend(typechecker::build_scope_with_structs(
+        let mut scope = types::build_scope_with_structs(constructor_parameters, structs);
+        scope.extend(types::build_scope_with_structs(
             function_parameters,
             structs,
         ));
@@ -181,7 +179,7 @@ impl Generator {
     /// Declared element count, independent of the flattened element width.
     fn array_length(&self, array: &str) -> usize {
         match self.scope.get(array) {
-            Some(typechecker::ArkType::Array(_, length)) => *length,
+            Some(types::ArkType::Array(_, length)) => *length,
             _ => 0,
         }
     }
@@ -533,7 +531,7 @@ impl Generator {
         let mut raw = Vec::new();
         let mut expression = expression.clone();
         let mut values = Vec::new();
-        functions::extract_values(&mut expression, &mut values, &self.scope);
+        functions::extract_values(&mut expression, &mut values);
         emit_expression_asm(&expression, &mut raw);
         // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
         let preserved = self.preserve_bindings;
@@ -568,7 +566,7 @@ impl Generator {
                 {
                     self.emit_multisig(value)?;
                 } else {
-                    let ty = typechecker::infer_type(value, &self.scope).as_str();
+                    let ty = value.ty.as_str();
                     self.emit_access_value(value, &ty)?;
                 }
             } else {
@@ -816,7 +814,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
-/// Runs semantic validation and type checking on `contract`. Returns every
+/// Runs semantic validation, including type checking, on `contract`. Returns every
 /// warning on success, every error (each its own diagnostic, not joined into
 /// one message) on failure. Diagnostic messages carry no location prefix —
 /// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
@@ -826,7 +824,7 @@ pub(crate) fn prepare(
     require_entrypoint: bool,
     file: &str,
 ) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
-    typechecker::resolve_group_properties(contract);
+    types::annotate(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
     // Catch errors the PEG grammar cannot express (duplicate names, missing
@@ -838,24 +836,8 @@ pub(crate) fn prepare(
             .filter(|i| matches!(i.severity, Severity::Error))
             .map(|i| {
                 Diagnostic::error(file, i.message.clone())
-                    .with_code("validation")
+                    .with_code(i.code)
                     .with_span(i.span)
-            })
-            .collect());
-    }
-
-    // ── Rewrite pass: route `+` to OP_CAT when operands are bytes-like ─────
-    rewrite_concat_ops(contract).map_err(|e| vec![Diagnostic::error(file, e)])?;
-
-    // ── Type checking ──────────────────────────────────────────────────────
-    let type_errors = typechecker::check_contract(contract);
-    if !type_errors.is_empty() {
-        return Err(type_errors
-            .iter()
-            .map(|e| {
-                Diagnostic::error(file, e.message.clone())
-                    .with_code("type")
-                    .with_span(e.span)
             })
             .collect());
     }
@@ -866,7 +848,7 @@ pub(crate) fn prepare(
         if matches!(issue.severity, Severity::Warning) {
             warnings.push(
                 Diagnostic::warning(file, issue.message.clone())
-                    .with_code("validation")
+                    .with_code(issue.code)
                     .with_span(issue.span),
             );
         }
@@ -1072,13 +1054,19 @@ fn generate_asm_from_statements_recursive(
                 iterable,
                 body,
             } => {
-                let typechecker::ArkType::Array(_, length) =
-                    typechecker::infer_type(iterable, &generator.scope)
-                else {
+                let types::ArkType::Array(_, length) = iterable.ty else {
                     return Err("unsupported loop iterable".to_string());
                 };
                 for k in 0..length {
-                    let substituted = substitute_loop_body(body, index_var, value_var, k, iterable);
+                    let mut substituted =
+                        substitute_loop_body(body, index_var, value_var, k, iterable);
+                    // Substitution builds untyped nodes; return types and group members
+                    // were resolved on the original body and survive the copy.
+                    types::annotate_statements(
+                        &mut substituted,
+                        &mut generator.scope.clone(),
+                        &generator.structs,
+                    );
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
                     if k > 0 && functions::contains_return(body) {
@@ -1140,7 +1128,7 @@ fn generate_asm_from_statements_recursive(
                 } else {
                     generator.emit_expression(value)?;
                     generator.bind_local(name)?;
-                    let ty = typechecker::infer_type(value, &generator.scope);
+                    let ty = value.ty.clone();
                     generator.scope.insert(name.clone(), ty);
                 }
             }
