@@ -1,12 +1,12 @@
-//! Script opcodes. Each one is listed once, with the items it pops and pushes when
-//! an expression emits it; the covenant generator models the stack from these.
+//! Script opcodes. Each one is listed once, with the items it pops and pushes; the
+//! covenant generator models the stack from these.
 
 macro_rules! opcodes {
     ($($name:ident $(=> ($pops:literal, $pushes:literal))?),* $(,)?) => {
         $(pub const $name: &str = stringify!($name);)*
 
-        /// Items an expression opcode pops and pushes; `None` for opcodes that
-        /// expressions never emit or whose effect depends on their operands.
+        /// Items an opcode pops and pushes; `None` when that depends on an operand
+        /// (`OP_PICK`, `OP_ROLL`, `OP_TUNNEL`) or the opcode is not modelled.
         pub(crate) fn stack_effect(opcode: &str) -> Option<(usize, usize)> {
             match opcode {
                 $($(stringify!($name) => Some(($pops, $pushes)),)?)*
@@ -43,7 +43,7 @@ opcodes! {
     // Signature verification
     OP_CHECKMULTISIG,
     OP_CHECKSIG => (2, 1),
-    OP_CHECKSIGVERIFY,
+    OP_CHECKSIGVERIFY => (2, 0),
     OP_CHECKSIGFROMSTACK => (3, 1),
     OP_CHECKSIGADD => (3, 1),
     OP_SIGHASH => (1, 1),
@@ -95,7 +95,7 @@ opcodes! {
     OP_VERIFY => (1, 0),
 
     // Arithmetic (BigNum)
-    OP_1ADD,
+    OP_1ADD => (1, 1),
     OP_1SUB,
     OP_NEGATE => (1, 1),
     OP_ABS => (1, 1),
@@ -123,15 +123,15 @@ opcodes! {
     // Stack manipulation (extended)
     OP_1NEGATE,
     OP_DUP => (1, 2),
-    OP_ROT,
-    OP_OVER,
+    OP_ROT => (3, 3),
+    OP_OVER => (2, 3),
     OP_PICK,
     OP_PUT,
     OP_ROLL,
     OP_TUCK,
     OP_IFDUP,
     OP_DEPTH,
-    OP_2DROP,
+    OP_2DROP => (2, 0),
     OP_2DUP,
     OP_3DUP,
     OP_2OVER,
