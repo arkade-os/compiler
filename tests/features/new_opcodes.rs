@@ -169,12 +169,31 @@ fn intent_paths_match_the_emulator_restrictions() {
 }
 
 #[test]
+fn intent_paths_can_be_runtime_bytes() {
+    let output = compile(
+        "contract C(bytes path) { function spend(bytes key) { require(tx.intent.has(path)); require(tx.intent.field(key) == path); } }",
+    )
+    .expect("runtime paths compile");
+    let asm = arkade_asm(&output, "spend");
+    assert!(asm.contains("OP_INSPECTINTENTMESSAGE OP_NIP"), "{asm}");
+    assert!(asm.contains("OP_INSPECTINTENTMESSAGE OP_VERIFY"), "{asm}");
+    assert!(!asm.contains("0x"), "paths come from the stack: {asm}");
+
+    let error = compile("contract C() { function spend(int n) { require(tx.intent.has(n)); } }")
+        .expect_err("a path is bytes")
+        .to_string();
+    assert!(
+        error.contains("tx.intent operand has type 'int', expected 'bytes'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn intent_accessors_validate_arity_types_and_context() {
     for body in [
         "require(tx.intent.has());",
         "require(tx.intent.has(\"type\", \"other\"));",
         "require(tx.intent.has(1));",
-        "require(tx.intent.has(path));",
         "int value = tx.intent.field(\"expire_at\");",
         "bytes value = tx.intent.has(\"type\");",
     ] {

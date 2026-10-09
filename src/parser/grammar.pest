@@ -271,8 +271,10 @@ tx_introspection = {
 // the SDK convention used in docs/arkade-script-with-assets.md).
 tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" | "id" }
 
-intent_field = { "tx" ~ "." ~ "intent" ~ "." ~ "field" ~ "(" ~ string_literal ~ ")" }
-intent_has = { "tx" ~ "." ~ "intent" ~ "." ~ "has" ~ "(" ~ string_literal ~ ")" }
+// A quoted path is checked at compile time; any other bytes expression is checked by the VM.
+intent_field = { "tx" ~ "." ~ "intent" ~ "." ~ "field" ~ "(" ~ intent_path ~ ")" }
+intent_has = { "tx" ~ "." ~ "intent" ~ "." ~ "has" ~ "(" ~ intent_path ~ ")" }
+intent_path = _{ string_literal | general_expression }
 
 // ─── Indexed Input/Output Introspection ─────────────────────────────────────────
 
