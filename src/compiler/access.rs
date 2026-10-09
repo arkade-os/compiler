@@ -249,23 +249,17 @@ impl Generator {
         self.emit_expression(io_index)?;
         self.push_temporary(OP_0);
         self.apply(OP_INSPECTASSETGROUP, 3, 1)?;
-        let keep: &[&str] = match property {
-            GroupIoProperty::Amount => &[OP_TOALTSTACK, OP_DROP],
-            GroupIoProperty::Index => &[OP_DROP, OP_TOALTSTACK],
-            GroupIoProperty::Type => &[OP_DROP, OP_DROP],
-        };
         // Only an intent input's txid is 32 bytes; the type below it is 1 or 2.
-        let txid = [OP_SIZE, "32", OP_EQUAL, OP_IF, OP_DROP, OP_ENDIF];
-        let restore: &[&str] = match property {
-            GroupIoProperty::Type => &[],
-            _ => &[OP_DROP, OP_FROMALTSTACK],
+        const DROP_TXID: &[&str] = &[OP_SIZE, "32", OP_EQUAL, OP_IF, OP_DROP, OP_ENDIF];
+        let restore: &[&str] = &[OP_DROP, OP_FROMALTSTACK];
+        let ops = match property {
+            GroupIoProperty::Amount => [&[OP_TOALTSTACK, OP_DROP], DROP_TXID, restore].concat(),
+            GroupIoProperty::Index => [&[OP_DROP, OP_TOALTSTACK], DROP_TXID, restore].concat(),
+            GroupIoProperty::Type => [&[OP_DROP, OP_DROP], DROP_TXID].concat(),
+            // A local input has no txid, so the size check fails the spend.
+            GroupIoProperty::Txid => vec![OP_DROP, OP_DROP, OP_SIZE, "32", OP_EQUALVERIFY, OP_NIP],
         };
-        self.asm.extend(
-            keep.iter()
-                .chain(&txid)
-                .chain(restore)
-                .map(|op| op.to_string()),
-        );
+        self.asm.extend(ops.iter().map(|op| op.to_string()));
         Ok(())
     }
 

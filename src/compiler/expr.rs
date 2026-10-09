@@ -182,6 +182,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                     asm.push(OP_DROP.to_string()); // amount
                     asm.push(OP_NIP.to_string()); // type
                 }
+                Some(GroupIoProperty::Txid) => unreachable!("outputs have no txid"),
                 None => {}
             }
         }

@@ -21,6 +21,9 @@ contract GroupRecords() {
         require(g.outputs[0].index == 1);
         require(g.outputs[0].amount == amount);
     }
+    function source(AssetGroup g, bytes32 txid) {
+        require(g.inputs[0].txid == txid);
+    }
 }`), 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +47,26 @@ contract GroupRecords() {
 			Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeIntent, Txid: chainhash.Hash{8}, Vin: 3, Amount: 11}},
 			Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 1, Amount: 11}},
 		},
+	}
+	sourceGroup := covenantGroup(t, contract, "source")
+	sourceInstance := instantiateGroup(t, contract, "source", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	sourceDeployment := fundingTx(sourceInstance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name    string
+		g       int64
+		txid    chainhash.Hash
+		wantErr string
+	}{
+		{"intent txid", 1, chainhash.Hash{8}, ""},
+		{"wrong txid", 1, chainhash.Hash{9}, "false stack entry"},
+		{"local input has no txid", 0, chainhash.Hash{8}, "OP_EQUALVERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"g": scriptInt(t, tc.g), "txid": tc.txid[:]}
+			spend := spendingPSBTWithWitness(t, sourceDeployment, sourceInstance, 10_000, sourceInstance.pkScript,
+				covenantWitness(t, contract, sourceGroup, values), extension.Packet(packet))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
 	}
 	for _, tc := range []struct {
 		name                      string

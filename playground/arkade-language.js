@@ -197,7 +197,7 @@ const arkadeMembers = {
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
     'tx.assetGroups[]': groupMembers,
-    'tx.assetGroups[].inputs[]': recordProps,
+    'tx.assetGroups[].inputs[]': [...recordProps, prop('txid', 'Intent input source transaction')],
     'tx.assetGroups[].outputs[]': recordProps,
     'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
     'this': [

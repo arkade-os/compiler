@@ -392,7 +392,7 @@ asset_group_member = {
     )
 }
 asset_group_io_source = { "inputs" | "outputs" }
-asset_group_io_property = { "amount" | "type" | "index" }
+asset_group_io_property = { "amount" | "type" | "index" | "txid" }
 
 // Asset group properties
 asset_group_property = {

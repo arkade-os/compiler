@@ -158,6 +158,18 @@ pub(super) fn validate_binding_expression(
             function_name
         )));
     }
+    if matches!(
+        &expression.kind,
+        ExprKind::GroupIOAccess {
+            source: crate::models::GroupIOSource::Outputs,
+            property: Some(crate::properties::GroupIoProperty::Txid),
+            ..
+        }
+    ) {
+        issues.push(ValidationIssue::error(format!(
+            "function '{function_name}': asset group output records have no txid"
+        )));
+    }
 
     let registered_builtin = operands::operands(expression);
     let mut children_checked = false;
