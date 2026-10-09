@@ -158,20 +158,6 @@ pub(super) fn validate_binding_expression(
             function_name
         )));
     }
-    if value_position
-        && matches!(
-            &expression.kind,
-            ExprKind::GroupIOAccess {
-                source: crate::models::GroupIOSource::Inputs,
-                ..
-            }
-        )
-    {
-        issues.push(ValidationIssue::error(format!(
-            "function '{}': asset-group input inspection has a variable-width result and cannot be used as a value",
-            function_name
-        )));
-    }
 
     let registered_builtin = operands::operands(expression);
     let mut children_checked = false;

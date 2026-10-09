@@ -93,10 +93,12 @@ properties!(
 );
 
 properties!(
-    /// `group.inputs[j].<property>`, `group.outputs[j].<property>`
+    /// `group.inputs[j].<property>`, `group.outputs[j].<property>`. `index` is an
+    /// output's vout, a local input's vin, or an intent input's referenced output.
     GroupIoProperty {
         Amount => ("amount", "int"),
         Type => ("type", "int"),
+        Index => ("index", "int"),
     }
 );
 
