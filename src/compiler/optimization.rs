@@ -4,6 +4,27 @@ use crate::opcodes::{
     OP_VERIFY,
 };
 
+/// Adjacent pairs and what they become; `None` removes the pair.
+const REWRITES: &[([&str; 2], Option<&str>)] = &[
+    ([OP_0, OP_PICK], Some(OP_DUP)),
+    ([OP_DUP, OP_SWAP], Some(OP_DUP)),
+    ([OP_0, OP_PUT], Some(OP_NIP)),
+    ([OP_1, OP_PICK], Some(OP_OVER)),
+    ([OP_0, OP_ROLL], None),
+    ([OP_SWAP, OP_SWAP], None),
+    ([OP_1, OP_ROLL], Some(OP_SWAP)),
+    ([OP_2, OP_ROLL], Some(OP_ROT)),
+    ([OP_SWAP, OP_DROP], Some(OP_NIP)),
+    ([OP_DROP, OP_DROP], Some(OP_2DROP)),
+    ([OP_1, OP_ADD], Some(OP_1ADD)),
+    (["1", OP_ADD], Some(OP_1ADD)),
+    ([OP_1, OP_1ADD], Some(OP_2)),
+    (["1", OP_1ADD], Some(OP_2)),
+    ([OP_EQUAL, OP_VERIFY], Some(OP_EQUALVERIFY)),
+    ([OP_DUP, OP_EQUALVERIFY], Some(OP_DROP)),
+    ([OP_CHECKSIG, OP_VERIFY], Some(OP_CHECKSIGVERIFY)),
+];
+
 pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
     // The final clean-stack truth check already enforces a trailing `OP_VERIFY OP_1`, so a
     // failing last requirement reports a false stack entry instead. The NIPs clear items below it.
@@ -17,24 +38,8 @@ pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
         optimized.push(token);
         while optimized.len() >= 2 {
             let len = optimized.len();
-            let replacement = match (optimized[len - 2].as_str(), optimized[len - 1].as_str()) {
-                (OP_0, OP_PICK) => Some(Some(OP_DUP)),
-                (OP_DUP, OP_SWAP) => Some(Some(OP_DUP)),
-                (OP_0, OP_PUT) => Some(Some(OP_NIP)),
-                (OP_1, OP_PICK) => Some(Some(OP_OVER)),
-                (OP_0, OP_ROLL) | (OP_SWAP, OP_SWAP) => Some(None),
-                (OP_1, OP_ROLL) => Some(Some(OP_SWAP)),
-                (OP_2, OP_ROLL) => Some(Some(OP_ROT)),
-                (OP_SWAP, OP_DROP) => Some(Some(OP_NIP)),
-                (OP_DROP, OP_DROP) => Some(Some(OP_2DROP)),
-                (OP_1 | "1", OP_ADD) => Some(Some(OP_1ADD)),
-                (OP_1 | "1", OP_1ADD) => Some(Some(OP_2)),
-                (OP_EQUAL, OP_VERIFY) => Some(Some(OP_EQUALVERIFY)),
-                (OP_DUP, OP_EQUALVERIFY) => Some(Some(OP_DROP)),
-                (OP_CHECKSIG, OP_VERIFY) => Some(Some(OP_CHECKSIGVERIFY)),
-                _ => None,
-            };
-            let Some(replacement) = replacement else {
+            let pair = [optimized[len - 2].as_str(), optimized[len - 1].as_str()];
+            let Some(&(_, replacement)) = REWRITES.iter().find(|(from, _)| *from == pair) else {
                 break;
             };
             optimized.truncate(len - 2);
@@ -49,6 +54,30 @@ pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewrites_keep_the_stack_height() {
+        let effect = |op: &str| match op {
+            "1" => (0, 1),
+            _ => crate::opcodes::stack_effect(op).unwrap_or_else(|| panic!("{op} has no effect")),
+        };
+        let height = |(pops, pushes): (usize, usize)| pushes as isize - pops as isize;
+        for &(pair, replacement) in REWRITES {
+            // These take their depth from the operand before them.
+            if pair
+                .iter()
+                .any(|op| [OP_PICK, OP_ROLL, OP_PUT].contains(op))
+            {
+                continue;
+            }
+            let after = replacement.map_or((0, 0), effect);
+            assert_eq!(
+                height(effect(pair[0])) + height(effect(pair[1])),
+                height(after),
+                "{pair:?}"
+            );
+        }
+    }
 
     #[test]
     fn shallow_stack_operations_and_final_requirement() {

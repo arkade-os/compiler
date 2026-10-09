@@ -1,190 +1,237 @@
-// Numeric pushes
-pub const OP_0: &str = "OP_0";
-pub const OP_1: &str = "OP_1";
-pub const OP_2: &str = "OP_2";
-pub const OP_3: &str = "OP_3";
-pub const OP_4: &str = "OP_4";
-pub const OP_5: &str = "OP_5";
-pub const OP_6: &str = "OP_6";
-pub const OP_7: &str = "OP_7";
-pub const OP_8: &str = "OP_8";
-pub const OP_9: &str = "OP_9";
-pub const OP_10: &str = "OP_10";
-pub const OP_11: &str = "OP_11";
-pub const OP_12: &str = "OP_12";
-pub const OP_13: &str = "OP_13";
-pub const OP_14: &str = "OP_14";
-pub const OP_15: &str = "OP_15";
-pub const OP_16: &str = "OP_16";
+//! Script opcodes. Each one is listed once, with the items it pops and pushes; the
+//! covenant generator models the stack from these.
 
-// Absolute and relative timelock verification
-pub const OP_CHECKLOCKTIMEVERIFY: &str = "OP_CHECKLOCKTIMEVERIFY";
-pub const OP_CHECKSEQUENCEVERIFY: &str = "OP_CHECKSEQUENCEVERIFY";
+macro_rules! opcodes {
+    ($($name:ident $(=> ($pops:literal, $pushes:literal))?),* $(,)?) => {
+        $(pub const $name: &str = stringify!($name);)*
 
-// Signature verification
-pub const OP_CHECKMULTISIG: &str = "OP_CHECKMULTISIG";
-pub const OP_CHECKSIG: &str = "OP_CHECKSIG";
-pub const OP_CHECKSIGVERIFY: &str = "OP_CHECKSIGVERIFY";
-pub const OP_CHECKSIGFROMSTACK: &str = "OP_CHECKSIGFROMSTACK";
-pub const OP_CHECKSIGADD: &str = "OP_CHECKSIGADD";
-pub const OP_SIGHASH: &str = "OP_SIGHASH";
+        /// Items an opcode pops and pushes; `None` when that depends on an operand
+        /// (`OP_PICK`, `OP_ROLL`, `OP_TUNNEL`) or the opcode is not modelled.
+        pub(crate) fn stack_effect(opcode: &str) -> Option<(usize, usize)> {
+            match opcode {
+                $($(stringify!($name) => Some(($pops, $pushes)),)?)*
+                _ => None,
+            }
+        }
+    };
+}
 
-// Comparisons
-pub const OP_EQUAL: &str = "OP_EQUAL";
-pub const OP_NUMEQUAL: &str = "OP_NUMEQUAL";
-pub const OP_GREATERTHANOREQUAL: &str = "OP_GREATERTHANOREQUAL";
-pub const OP_LESSTHANOREQUAL: &str = "OP_LESSTHANOREQUAL";
-pub const OP_GREATERTHAN: &str = "OP_GREATERTHAN";
-pub const OP_LESSTHAN: &str = "OP_LESSTHAN";
+opcodes! {
+    // Numeric pushes
+    OP_0 => (0, 1),
+    OP_1 => (0, 1),
+    OP_2 => (0, 1),
+    OP_3 => (0, 1),
+    OP_4 => (0, 1),
+    OP_5 => (0, 1),
+    OP_6 => (0, 1),
+    OP_7 => (0, 1),
+    OP_8 => (0, 1),
+    OP_9 => (0, 1),
+    OP_10 => (0, 1),
+    OP_11 => (0, 1),
+    OP_12 => (0, 1),
+    OP_13 => (0, 1),
+    OP_14 => (0, 1),
+    OP_15 => (0, 1),
+    OP_16 => (0, 1),
 
-// Cryptography
-pub const OP_SHA256: &str = "OP_SHA256";
-pub const OP_SHA256UPDATE: &str = "OP_SHA256UPDATE";
-pub const OP_SHA256INITIALIZE: &str = "OP_SHA256INITIALIZE";
-pub const OP_SHA256FINALIZE: &str = "OP_SHA256FINALIZE";
-pub const OP_HASH160: &str = "OP_HASH160";
-pub const OP_HASH256: &str = "OP_HASH256";
-pub const OP_RIPEMD160: &str = "OP_RIPEMD160";
-pub const OP_DIGEST: &str = "OP_DIGEST";
+    // Absolute and relative timelock verification
+    OP_CHECKLOCKTIMEVERIFY,
+    OP_CHECKSEQUENCEVERIFY,
 
-// Byte-string manipulation
-pub const OP_CAT: &str = "OP_CAT";
+    // Signature verification
+    OP_CHECKMULTISIG,
+    OP_CHECKSIG => (2, 1),
+    OP_CHECKSIGVERIFY => (2, 0),
+    OP_CHECKSIGFROMSTACK => (3, 1),
+    OP_CHECKSIGADD => (3, 1),
+    OP_SIGHASH => (1, 1),
 
-// Stack manipulation
-pub const OP_DROP: &str = "OP_DROP";
-pub const OP_NIP: &str = "OP_NIP";
-pub const OP_SWAP: &str = "OP_SWAP";
-pub const OP_TOALTSTACK: &str = "OP_TOALTSTACK";
-pub const OP_FROMALTSTACK: &str = "OP_FROMALTSTACK";
+    // Comparisons
+    OP_EQUAL => (2, 1),
+    OP_NUMEQUAL => (2, 1),
+    OP_GREATERTHANOREQUAL => (2, 1),
+    OP_LESSTHANOREQUAL => (2, 1),
+    OP_GREATERTHAN => (2, 1),
+    OP_LESSTHAN => (2, 1),
 
-// Elliptic curve
-pub const OP_ECADD: &str = "OP_ECADD";
-pub const OP_ECMUL: &str = "OP_ECMUL";
-pub const OP_ECPAIRING: &str = "OP_ECPAIRING";
-pub const OP_ECMULSCALARVERIFY: &str = "OP_ECMULSCALARVERIFY";
-pub const OP_TWEAKVERIFY: &str = "OP_TWEAKVERIFY";
+    // Cryptography
+    OP_SHA256 => (1, 1),
+    OP_SHA256UPDATE => (2, 1),
+    OP_SHA256INITIALIZE => (1, 1),
+    OP_SHA256FINALIZE => (2, 1),
+    OP_HASH160 => (1, 1),
+    OP_HASH256 => (1, 1),
+    OP_RIPEMD160 => (1, 1),
+    OP_DIGEST => (2, 1),
 
-// Conditionals
-pub const OP_BOOLAND: &str = "OP_BOOLAND";
-pub const OP_NOT: &str = "OP_NOT";
-pub const OP_FALSE: &str = "OP_FALSE";
-pub const OP_IF: &str = "OP_IF";
-pub const OP_ENDIF: &str = "OP_ENDIF";
-pub const OP_ELSE: &str = "OP_ELSE";
+    // Byte-string manipulation
+    OP_CAT => (2, 1),
 
-// Condition verification
-pub const OP_VERIFY: &str = "OP_VERIFY";
+    // Stack manipulation
+    OP_DROP => (1, 0),
+    OP_NIP => (2, 1),
+    OP_SWAP => (2, 2),
+    OP_TOALTSTACK,
+    OP_FROMALTSTACK,
 
-// Arithmetic (BigNum)
-pub const OP_1ADD: &str = "OP_1ADD";
-pub const OP_1SUB: &str = "OP_1SUB";
-pub const OP_NEGATE: &str = "OP_NEGATE";
-pub const OP_ABS: &str = "OP_ABS";
-pub const OP_0NOTEQUAL: &str = "OP_0NOTEQUAL";
-pub const OP_ADD: &str = "OP_ADD";
-pub const OP_SUB: &str = "OP_SUB";
-pub const OP_MUL: &str = "OP_MUL";
-pub const OP_DIV: &str = "OP_DIV";
-pub const OP_MOD: &str = "OP_MOD";
-pub const OP_LSHIFT: &str = "OP_LSHIFT";
-pub const OP_RSHIFT: &str = "OP_RSHIFT";
-pub const OP_2MUL: &str = "OP_2MUL";
-pub const OP_2DIV: &str = "OP_2DIV";
-pub const OP_MIN: &str = "OP_MIN";
-pub const OP_MAX: &str = "OP_MAX";
-pub const OP_WITHIN: &str = "OP_WITHIN";
-pub const OP_MODEXP: &str = "OP_MODEXP";
+    // Elliptic curve
+    OP_ECADD => (5, 2),
+    OP_ECMUL => (4, 2),
+    OP_ECPAIRING,
+    OP_ECMULSCALARVERIFY => (3, 0),
+    OP_TWEAKVERIFY => (3, 0),
 
-// Verify variants
-pub const OP_EQUALVERIFY: &str = "OP_EQUALVERIFY";
-pub const OP_NUMEQUALVERIFY: &str = "OP_NUMEQUALVERIFY";
-pub const OP_NUMNOTEQUAL: &str = "OP_NUMNOTEQUAL";
-pub const OP_BOOLOR: &str = "OP_BOOLOR";
+    // Conditionals
+    OP_BOOLAND => (2, 1),
+    OP_NOT => (1, 1),
+    OP_FALSE,
+    OP_IF,
+    OP_ENDIF,
+    OP_ELSE,
 
-// Stack manipulation (extended)
-pub const OP_1NEGATE: &str = "OP_1NEGATE";
-pub const OP_DUP: &str = "OP_DUP";
-pub const OP_ROT: &str = "OP_ROT";
-pub const OP_OVER: &str = "OP_OVER";
-pub const OP_PICK: &str = "OP_PICK";
-pub const OP_PUT: &str = "OP_PUT";
-pub const OP_ROLL: &str = "OP_ROLL";
-pub const OP_TUCK: &str = "OP_TUCK";
-pub const OP_IFDUP: &str = "OP_IFDUP";
-pub const OP_DEPTH: &str = "OP_DEPTH";
-pub const OP_2DROP: &str = "OP_2DROP";
-pub const OP_2DUP: &str = "OP_2DUP";
-pub const OP_3DUP: &str = "OP_3DUP";
-pub const OP_2OVER: &str = "OP_2OVER";
-pub const OP_2ROT: &str = "OP_2ROT";
-pub const OP_2SWAP: &str = "OP_2SWAP";
+    // Condition verification
+    OP_VERIFY => (1, 0),
 
-// Byte-string manipulation (introspector extensions)
-pub const OP_SUBSTR: &str = "OP_SUBSTR";
-pub const OP_LEFT: &str = "OP_LEFT";
-pub const OP_RIGHT: &str = "OP_RIGHT";
-pub const OP_SIZE: &str = "OP_SIZE";
+    // Arithmetic (BigNum)
+    OP_1ADD => (1, 1),
+    OP_1SUB,
+    OP_NEGATE => (1, 1),
+    OP_ABS => (1, 1),
+    OP_0NOTEQUAL => (1, 1),
+    OP_ADD => (2, 1),
+    OP_SUB => (2, 1),
+    OP_MUL => (2, 1),
+    OP_DIV => (2, 1),
+    OP_MOD => (2, 1),
+    OP_LSHIFT => (2, 1),
+    OP_RSHIFT => (2, 1),
+    OP_2MUL,
+    OP_2DIV,
+    OP_MIN => (2, 1),
+    OP_MAX => (2, 1),
+    OP_WITHIN => (3, 1),
+    OP_MODEXP => (3, 1),
 
-// Bitwise (introspector extensions)
-pub const OP_INVERT: &str = "OP_INVERT";
-pub const OP_AND: &str = "OP_AND";
-pub const OP_OR: &str = "OP_OR";
-pub const OP_XOR: &str = "OP_XOR";
+    // Verify variants
+    OP_EQUALVERIFY => (2, 0),
+    OP_NUMEQUALVERIFY,
+    OP_NUMNOTEQUAL,
+    OP_BOOLOR,
 
-// Numeric conversion (introspector extensions)
-pub const OP_BIN2NUM: &str = "OP_BIN2NUM";
-pub const OP_NUM2BIN: &str = "OP_NUM2BIN";
-pub const OP_REVERSEBYTES: &str = "OP_REVERSEBYTES";
+    // Stack manipulation (extended)
+    OP_1NEGATE,
+    OP_DUP => (1, 2),
+    OP_ROT => (3, 3),
+    OP_OVER => (2, 3),
+    OP_PICK,
+    OP_PUT,
+    OP_ROLL,
+    OP_TUCK,
+    OP_IFDUP,
+    OP_DEPTH,
+    OP_2DROP => (2, 0),
+    OP_2DUP,
+    OP_3DUP,
+    OP_2OVER,
+    OP_2ROT,
+    OP_2SWAP,
 
-// Hashing (additional)
-pub const OP_SHA1: &str = "OP_SHA1";
+    // Byte-string manipulation (introspector extensions)
+    OP_SUBSTR => (3, 1),
+    OP_LEFT => (2, 1),
+    OP_RIGHT => (2, 1),
+    OP_SIZE => (1, 2),
 
-// Merkle proof verification (introspector extension)
-pub const OP_MERKLEBRANCHVERIFY: &str = "OP_MERKLEBRANCHVERIFY";
+    // Bitwise (introspector extensions)
+    OP_INVERT => (1, 1),
+    OP_AND => (2, 1),
+    OP_OR => (2, 1),
+    OP_XOR => (2, 1),
 
-// Introspection (transaction global)
-pub const OP_TXID: &str = "OP_TXID";
-pub const OP_TXWEIGHT: &str = "OP_TXWEIGHT";
-pub const OP_INSPECTVERSION: &str = "OP_INSPECTVERSION";
-pub const OP_INSPECTLOCKTIME: &str = "OP_INSPECTLOCKTIME";
-pub const OP_INSPECTNUMINPUTS: &str = "OP_INSPECTNUMINPUTS";
-pub const OP_INSPECTNUMOUTPUTS: &str = "OP_INSPECTNUMOUTPUTS";
+    // Numeric conversion (introspector extensions)
+    OP_BIN2NUM => (1, 1),
+    OP_NUM2BIN => (2, 1),
+    OP_REVERSEBYTES => (1, 1),
 
-// Introspection (input metadata)
-pub const OP_PUSHCURRENTINPUTINDEX: &str = "OP_PUSHCURRENTINPUTINDEX";
-pub const OP_PUSHEXPIRY: &str = "OP_PUSHEXPIRY";
-pub const OP_CHECKTIME: &str = "OP_CHECKTIME";
-pub const OP_TUNNEL: &str = "OP_TUNNEL";
-pub const OP_INSPECTINPUTOUTPOINT: &str = "OP_INSPECTINPUTOUTPOINT";
-pub const OP_INSPECTINPUTSCRIPTPUBKEY: &str = "OP_INSPECTINPUTSCRIPTPUBKEY";
-pub const OP_INSPECTINPUTVALUE: &str = "OP_INSPECTINPUTVALUE";
-pub const OP_INSPECTINPUTSEQUENCE: &str = "OP_INSPECTINPUTSEQUENCE";
-pub const OP_INSPECTINPUTARKADESCRIPTHASH: &str = "OP_INSPECTINPUTARKADESCRIPTHASH";
-pub const OP_INSPECTINPUTARKADEWITNESSHASH: &str = "OP_INSPECTINPUTARKADEWITNESSHASH";
+    // Hashing (additional)
+    OP_SHA1 => (1, 1),
 
-// Introspection (output metadata)
-pub const OP_INSPECTOUTPUTVALUE: &str = "OP_INSPECTOUTPUTVALUE";
-pub const OP_INSPECTOUTPUTSCRIPTPUBKEY: &str = "OP_INSPECTOUTPUTSCRIPTPUBKEY";
+    // Merkle proof verification (introspector extension)
+    OP_MERKLEBRANCHVERIFY => (4, 1),
 
-// Introspection (packet)
-pub const OP_INSPECTPACKET: &str = "OP_INSPECTPACKET";
-pub const OP_INSPECTINTENTMESSAGE: &str = "OP_INSPECTINTENTMESSAGE";
-pub const OP_INSPECTINPUTPACKET: &str = "OP_INSPECTINPUTPACKET";
+    // Introspection (transaction global)
+    OP_TXID => (0, 1),
+    OP_TXWEIGHT => (0, 1),
+    OP_INSPECTVERSION => (0, 1),
+    OP_INSPECTLOCKTIME => (0, 1),
+    OP_INSPECTNUMINPUTS => (0, 1),
+    OP_INSPECTNUMOUTPUTS => (0, 1),
 
-// Introspection (asset groups)
-pub const OP_INSPECTASSETGROUP: &str = "OP_INSPECTASSETGROUP";
-pub const OP_INSPECTASSETGROUPNUM: &str = "OP_INSPECTASSETGROUPNUM";
-pub const OP_INSPECTASSETGROUPSUM: &str = "OP_INSPECTASSETGROUPSUM";
-pub const OP_INSPECTNUMASSETGROUPS: &str = "OP_INSPECTNUMASSETGROUPS";
-pub const OP_FINDASSETGROUPBYASSETID: &str = "OP_FINDASSETGROUPBYASSETID";
-pub const OP_INSPECTASSETGROUPCTRL: &str = "OP_INSPECTASSETGROUPCTRL";
-pub const OP_INSPECTASSETGROUPMETADATAHASH: &str = "OP_INSPECTASSETGROUPMETADATAHASH";
-pub const OP_INSPECTASSETGROUPASSETID: &str = "OP_INSPECTASSETGROUPASSETID";
+    // Introspection (input metadata)
+    OP_PUSHCURRENTINPUTINDEX => (0, 1),
+    OP_PUSHEXPIRY => (0, 1),
+    OP_CHECKTIME => (1, 1),
+    OP_TUNNEL,
+    OP_INSPECTINPUTOUTPOINT => (1, 2),
+    OP_INSPECTINPUTSCRIPTPUBKEY => (1, 2),
+    OP_INSPECTINPUTVALUE => (1, 1),
+    OP_INSPECTINPUTSEQUENCE => (1, 1),
+    OP_INSPECTINPUTARKADESCRIPTHASH => (1, 1),
+    OP_INSPECTINPUTARKADEWITNESSHASH => (1, 1),
 
-// Introspection (asset cross-input/output)
-pub const OP_INSPECTINASSETLOOKUP: &str = "OP_INSPECTINASSETLOOKUP";
-pub const OP_INSPECTOUTASSETLOOKUP: &str = "OP_INSPECTOUTASSETLOOKUP";
-pub const OP_INSPECTINASSETCOUNT: &str = "OP_INSPECTINASSETCOUNT";
-pub const OP_INSPECTOUTASSETCOUNT: &str = "OP_INSPECTOUTASSETCOUNT";
-pub const OP_INSPECTINASSETAT: &str = "OP_INSPECTINASSETAT";
-pub const OP_INSPECTOUTASSETAT: &str = "OP_INSPECTOUTASSETAT";
+    // Introspection (output metadata)
+    OP_INSPECTOUTPUTVALUE => (1, 1),
+    OP_INSPECTOUTPUTSCRIPTPUBKEY => (1, 2),
+
+    // Introspection (packet)
+    OP_INSPECTPACKET => (1, 2),
+    OP_INSPECTINTENTMESSAGE => (1, 2),
+    OP_INSPECTINPUTPACKET => (2, 2),
+
+    // Introspection (asset groups)
+    OP_INSPECTASSETGROUP => (3, 3),
+    OP_INSPECTASSETGROUPNUM => (2, 1),
+    OP_INSPECTASSETGROUPSUM => (2, 1),
+    OP_INSPECTNUMASSETGROUPS => (0, 1),
+    OP_FINDASSETGROUPBYASSETID => (2, 2),
+    OP_INSPECTASSETGROUPCTRL => (1, 3),
+    OP_INSPECTASSETGROUPMETADATAHASH => (1, 1),
+    OP_INSPECTASSETGROUPASSETID => (1, 2),
+
+    // Introspection (asset cross-input/output)
+    OP_INSPECTINASSETLOOKUP => (3, 2),
+    OP_INSPECTOUTASSETLOOKUP => (3, 2),
+    OP_INSPECTINASSETCOUNT => (1, 1),
+    OP_INSPECTOUTASSETCOUNT => (1, 1),
+    OP_INSPECTINASSETAT => (2, 3),
+    OP_INSPECTOUTASSETAT => (2, 3),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stack_effect;
+    use crate::builtins::{Lowering, BUILTINS};
+    use crate::operators::{BinaryOperator, UnaryOperator};
+
+    #[test]
+    fn every_table_opcode_has_a_stack_effect() {
+        let builtins = BUILTINS
+            .iter()
+            .filter_map(|builtin| match builtin.lowering {
+                Lowering::Opcodes(opcodes) => Some(opcodes),
+                _ => None,
+            });
+        let binary = BinaryOperator::ALL.map(BinaryOperator::opcodes);
+        let unary = [
+            UnaryOperator::Neg,
+            UnaryOperator::Not,
+            UnaryOperator::Invert,
+        ]
+        .map(UnaryOperator::opcode);
+        for opcode in builtins.chain(binary).flatten().chain(&unary) {
+            assert!(stack_effect(opcode).is_some(), "{opcode}");
+        }
+    }
+}
