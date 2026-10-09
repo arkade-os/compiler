@@ -58,22 +58,25 @@ mod tests {
     #[test]
     fn rewrites_keep_the_stack_height() {
         let effect = |op: &str| match op {
-            "1" => Some((0, 1)),
-            _ => crate::opcodes::stack_effect(op),
+            "1" => (0, 1),
+            _ => crate::opcodes::stack_effect(op).unwrap_or_else(|| panic!("{op} has no effect")),
         };
         let height = |(pops, pushes): (usize, usize)| pushes as isize - pops as isize;
-        let mut checked = 0;
         for &(pair, replacement) in REWRITES {
-            let (Some(first), Some(second)) = (effect(pair[0]), effect(pair[1])) else {
+            // These take their depth from the operand before them.
+            if pair
+                .iter()
+                .any(|op| [OP_PICK, OP_ROLL, OP_PUT].contains(op))
+            {
                 continue;
-            };
-            let Some(after) = replacement.map_or(Some((0, 0)), effect) else {
-                continue;
-            };
-            assert_eq!(height(first) + height(second), height(after), "{pair:?}");
-            checked += 1;
+            }
+            let after = replacement.map_or((0, 0), effect);
+            assert_eq!(
+                height(effect(pair[0])) + height(effect(pair[1])),
+                height(after),
+                "{pair:?}"
+            );
         }
-        assert_eq!(checked, 11);
     }
 
     #[test]
