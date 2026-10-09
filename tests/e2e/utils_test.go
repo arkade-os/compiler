@@ -408,7 +408,7 @@ func spendingPSBTWithWitness(
 }
 
 // spendingPSBTOutputs is the general form: an explicit output list and
-// locktime, for covenants that pin several payouts or read tx.time.
+// locktime, for covenants that pin several payouts or read tx.locktime.
 func spendingPSBTOutputs(
 	t *testing.T,
 	prevTx *wire.MsgTx,

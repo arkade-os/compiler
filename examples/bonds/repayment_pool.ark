@@ -59,11 +59,11 @@ contract RepaymentPool(
   int     debitCtrlIdGidx,
   bytes32 ticker,                // oracle feed id (e.g. sha256("BTC/USDT"))
   pubkey  oraclePk,              // price oracle (Fuji-style signed feed)
-  int     oracleMaxAgeSeconds,   // max oracle staleness, in SECONDS (tx.offchainTime); contrast with maturity/auctionWindow which are BLOCK HEIGHTS (tx.time)
+  int     oracleMaxAgeSeconds,   // max oracle staleness, in seconds (tx.offchainTime)
   int     initRatioBps,          // required collateral ratio at issuance (e.g. 15000 = 150%)
   int     liqThresholdBps,       // margin-call trigger: liquidate when collateralValue < this × mintedAmount / 10000 (e.g. 11000 = 110%)
-  int     maturity,              // block height: settlement boundary
-  int     auctionWindow,         // blocks: auction phase length post-maturity
+  int     maturity,              // Unix seconds: settlement boundary
+  int     auctionWindow,         // seconds: auction phase length post-maturity
   int     auctionDiscountBps,    // bps: auctioneer's spread on pool income (0..10000)
   int     usdtBalance,
   int     totalCreditOutstanding,
@@ -88,7 +88,7 @@ contract RepaymentPool(
 //     require(auctionWindow > 0, "auction window must be positive");
 //     require(auctionDiscountBps >= 0, "negative discount");
 //     require(auctionDiscountBps < 10000, "discount >= 100%");
-//     require(tx.time < maturity, "pool matured");
+//     require(!checkTime(maturity), "pool matured");
 //     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
 //     require(oraclePrice > 0, "invalid oracle price");
 
@@ -148,7 +148,7 @@ contract RepaymentPool(
 //   function acceptRepayment(pubkey borrowerPk, int vaultIdx, int mintedAmount, int collateral) {
 //     require(mintedAmount > 0, "zero amount");
 //     require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
-//     require(tx.time < maturity, "matured; use acceptAuction");
+//     require(!checkTime(maturity), "matured; use acceptAuction");
 
 //     require(
 //       tx.inputs[vaultIdx].scriptPubKey == new BondMint(
@@ -192,7 +192,7 @@ contract RepaymentPool(
 //     require(oldMintedAmount > 0, "zero amount");
 //     require(oldMintedAmount <= totalDebitOutstanding, "exceeds outstanding");
 //     require(expectedDischarge == oldMintedAmount, "discharge must equal par");
-//     require(tx.time < maturity, "old pool matured");
+//     require(!checkTime(maturity), "old pool matured");
 //     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
 
 //     require(
@@ -238,7 +238,7 @@ contract RepaymentPool(
 //     require(auctionWindow > 0, "auction window must be positive");
 //     require(auctionDiscountBps >= 0, "negative discount");
 //     require(auctionDiscountBps < 10000, "discount >= 100%");
-//     require(tx.time < maturity, "new pool matured");
+//     require(!checkTime(maturity), "new pool matured");
 //     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
 //     require(oraclePrice > 0, "invalid oracle price");
 
@@ -297,7 +297,7 @@ contract RepaymentPool(
 //     require(auctionDiscountBps < 10000, "discount >= 100%");
 //     require(mintedAmount > 0, "zero amount");
 //     require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
-//     require(tx.time < maturity, "matured; use acceptAuction");
+//     require(!checkTime(maturity), "matured; use acceptAuction");
 //     require(oraclePrice > 0, "invalid oracle price");
 
 //     int oracleAge = tx.offchainTime - oracleTime;
@@ -377,9 +377,9 @@ contract RepaymentPool(
 //     require(auctionDiscountBps < 10000, "discount >= 100%");
 //     require(mintedAmount > 0, "zero amount");
 //     require(mintedAmount <= totalDebitOutstanding, "exceeds outstanding");
-//     require(tx.time >= maturity, "not yet matured");
+//     require(checkTime(maturity), "not yet matured");
 //     int windowEnd = maturity + auctionWindow;
-//     require(tx.time < windowEnd, "auction window closed");
+//     require(!checkTime(windowEnd), "auction window closed");
 //     require(oraclePrice > 0, "invalid oracle price");
 
 //     int oracleAge = tx.offchainTime - oracleTime;
@@ -456,7 +456,7 @@ contract RepaymentPool(
 //   function redeem(int amount, pubkey holderPk, signature holderSig) {
 //     require(amount > 0, "zero redeem");
 //     int redeemStart = maturity + auctionWindow;
-//     require(tx.time >= redeemStart, "auction window not closed");
+//     require(checkTime(redeemStart), "auction window not closed");
 //     require(checkSig(holderSig, holderPk), "invalid holder sig");
 //     require(amount <= totalCreditOutstanding, "exceeds outstanding");
 //     require(totalCreditOutstanding > 0, "no credit outstanding");

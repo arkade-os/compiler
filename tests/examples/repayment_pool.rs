@@ -252,8 +252,8 @@ fn test_issue_enforces_deployment_invariants() {
     //   - liqThresholdBps > 0: a non-positive threshold inverts the health
     //     gate (every vault liquidatable, or none).
     //   - auctionWindow > 0: a zero-length auction window means no defaulted
-    //     vault can ever be settled (`tx.time >= maturity && tx.time <
-    //     maturity` is empty), so totalDebitOutstanding accumulates forever.
+    //     vault can ever be settled (`checkTime(maturity) &&
+    //     !checkTime(maturity)` is empty), so totalDebitOutstanding accumulates forever.
     //   - auctionDiscountBps ∈ [0, 10000): an out-of-range discount bricks
     //     every liquidate + acceptAuction at the runtime check, leaving the
     //     pool unsettleable.
@@ -385,7 +385,7 @@ fn test_accept_repayment_validates_vault_and_burns_debit() {
     );
     assert!(
         asm.contains(OP_LESSTHAN),
-        "acceptRepayment gated on tx.time < maturity"
+        "acceptRepayment gated on !checkTime(maturity)"
     );
 }
 
@@ -393,7 +393,7 @@ fn test_accept_repayment_validates_vault_and_burns_debit() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_accept_auction_is_permissionless_oracle_priced_phased() {
     // Oracle witness only. Auctioneer identity = witness pubkey.
-    // Phased gate: tx.time >= maturity AND tx.time < maturity + auctionWindow.
+    // Phased gate: checkTime(maturity) AND !checkTime(maturity + auctionWindow).
     let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "acceptAuction");
     assert!(
@@ -481,7 +481,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     );
     // liquidate carries exactly THREE strict less-than comparisons:
     //   1. auctionDiscountBps < 10000  (discount bound)
-    //   2. tx.time < maturity          (pre-maturity gate)
+    //   2. !checkTime(maturity)          (pre-maturity gate)
     //   3. collateralValue < healthFloor (the margin-call trigger)
     // Asserting the exact count (3) means removing ANY of them — in particular
     // the health gate, the single most important liquidate invariant — fails
@@ -490,7 +490,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     let lt = opcode_count_in_arkade(&output, "liquidate", "OP_LESSTHAN");
     assert_eq!(
         lt, 3,
-        "liquidate must gate on discount-bound AND tx.time<maturity AND \
+        "liquidate must gate on discount-bound AND !checkTime(maturity) AND \
          collateralValue<healthFloor (expected exactly 3 OP_LESSTHAN, found {lt})"
     );
 
@@ -516,8 +516,8 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_liquidate_and_accept_auction_are_phase_disjoint() {
     // Margin-call and post-maturity auction must NEVER both fire on the same
-    // vault in the same block: liquidate is gated on tx.time < maturity,
-    // acceptAuction on tx.time >= maturity. liquidate carries 3 OP_LESSTHAN
+    // vault in the same block: liquidate is gated on !checkTime(maturity),
+    // acceptAuction on checkTime(maturity). liquidate carries 3 OP_LESSTHAN
     // (discount bound + pre-maturity gate + health gate); acceptAuction carries
     // an OP_LESSTHAN for its window upper bound but its lower bound is a
     // >= comparison — so the two paths can never both be valid at one height.
@@ -622,7 +622,7 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
     );
     assert!(
         asm.contains(OP_LESSTHAN),
-        "rollOut gated on tx.time < maturity (pre-maturity)"
+        "rollOut gated on !checkTime(maturity) (pre-maturity)"
     );
     assert!(
         asm.contains(OP_CHECKSIG),

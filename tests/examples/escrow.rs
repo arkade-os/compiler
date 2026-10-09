@@ -100,7 +100,7 @@ fn test_payouts_are_pinned_to_committed_destinations() {
     );
     assert!(
         !cancel.contains(OP_INSPECTLOCKTIME),
-        "arkd rebuilds this spend with nLockTime 0, so tx.time cannot gate cancel: {cancel}"
+        "arkd rebuilds this spend with nLockTime 0, so tx.locktime cannot gate cancel: {cancel}"
     );
     assert!(
         cancel.contains("<partyAScript>") && !cancel.contains("<partyBScript>"),

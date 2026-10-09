@@ -546,7 +546,7 @@ contract C(pubkey owner, bytes32 hash) {
         valid = valid && (sha256(preimage) == hash || sufficient(amount));
         if (valid && sufficient(amount)) { require(valid); } else { require(!valid); }
         require(checkSigFromStack(sig, owner, hash) || !enabled);
-        require(tx.time >= 0 && (amount > 0 || enabled));
+        require(tx.locktime >= 0 && (amount > 0 || enabled));
         require(sha256(preimage) == hash || checkSig(sig, owner));
         require(sufficient(amount) == (enabled || amount > 0));
     }

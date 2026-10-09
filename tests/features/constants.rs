@@ -83,7 +83,7 @@ contract Vault(pubkey owner) {{
 fn covenant_time_comparisons_use_inspection() {
     for bound in ["500000", "DEADLINE", "deadline", "deadline + 1"] {
         let source = format!(
-            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function spend() {{ require(tx.time >= {bound}); }} }}"
+            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function spend() {{ require(tx.locktime >= {bound}); }} }}"
         );
         let output = compile(&source).expect("time comparison");
         let asm = arkade_asm_tokens(&output, "spend");
@@ -96,7 +96,8 @@ fn covenant_time_comparisons_use_inspection() {
             !asm.contains(&"OP_CHECKLOCKTIMEVERIFY".to_string()),
             "{asm:?}"
         );
-        let general = compile(&source.replace("require(tx.time", "require((tx.time)")).unwrap();
+        let general =
+            compile(&source.replace("require(tx.locktime", "require((tx.locktime)")).unwrap();
         assert_eq!(asm, arkade_asm_tokens(&general, "spend"));
         if bound == "DEADLINE" {
             let literal = compile(&source.replace(">= DEADLINE", ">= 500000")).unwrap();
@@ -368,7 +369,7 @@ fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic
     for (ty, expression, message) in [
         ("int", "fee", "unknown constant 'fee'"),
         ("int", "MISSING + 1", "unknown constant 'MISSING'"),
-        ("int", "tx.time", "constant expression"),
+        ("int", "tx.locktime", "constant expression"),
         ("int", "helper()", "constant expression"),
         ("int", "1 / 0", "division by zero"),
         ("int", "1 % 0", "modulo by zero"),

@@ -322,9 +322,9 @@ tunnel = {
 }
 tunnel_exceptions = { "[" ~ (general_expression ~ ("," ~ general_expression)*)? ~ "]" }
 
-// Time comparison (tx.time >= timelock)
+// Locktime comparison (tx.locktime >= timelock), rejected in tapscript
 time_comparison = {
-    "tx.time" ~ ">=" ~ additive_expr
+    "tx.locktime" ~ ">=" ~ additive_expr
 }
 
 // Generalized hash condition function name.

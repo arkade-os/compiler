@@ -20,8 +20,8 @@ contract EpochLimiter(
 
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
 
-    if (tx.time >= epochStart + epochBlocks) {
-      let newStart = tx.time;
+    if (tx.locktime >= epochStart + epochBlocks) {
+      let newStart = tx.locktime;
       require(tx.assetGroups[epochStartIdx].sumOutputs == newStart, "start not reset");
       require(tx.assetGroups[epochTotalIdx].sumOutputs == transferAmount, "total wrong");
       require(transferAmount <= epochLimit, "exceeds limit");

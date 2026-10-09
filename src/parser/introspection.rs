@@ -287,15 +287,6 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
         };
     }
 
-    if text == "tx.time" {
-        return Ok(Expression::new(
-            ExprKind::TxIntrospection {
-                property: TxProperty::Locktime,
-            },
-            span,
-        ));
-    }
-
     // Default: treat as a property string
     Ok(Expression::new(ExprKind::Property(text), span))
 }
