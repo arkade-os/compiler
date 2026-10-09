@@ -47,10 +47,10 @@ pub(crate) fn find(name: &str) -> Option<Vec<&'static str>> {
 pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expression>)> {
     Some(match &expr.kind {
         ExprKind::Builtin { builtin, args } => (builtin.name, args.iter().collect()),
-        ExprKind::PacketInspect { packet_type } => ("tx.packet", vec![packet_type]),
-        ExprKind::InputPacketInspect { index, packet_type } => {
-            ("tx.inputs[].packet", vec![index, packet_type])
-        }
+        ExprKind::PacketInspect { packet_type, .. } => ("tx.packet", vec![packet_type]),
+        ExprKind::InputPacketInspect {
+            index, packet_type, ..
+        } => ("tx.inputs[].packet", vec![index, packet_type]),
         ExprKind::InputIntrospection { index, .. } => ("tx.inputs[]", vec![index]),
         ExprKind::OutputIntrospection { index, .. } => ("tx.outputs[]", vec![index]),
         ExprKind::AssetGroupAt { index } => ("tx.assetGroups[]", vec![index]),

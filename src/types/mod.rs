@@ -531,7 +531,14 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::Cast { target, .. } => ArkType::parse(target),
 
         // Packet introspection — returns raw packet bytes.
-        ExprKind::PacketInspect { .. } => ArkType::Bytes,
+        ExprKind::PacketInspect { presence_only, .. }
+        | ExprKind::InputPacketInspect { presence_only, .. } => {
+            if *presence_only {
+                ArkType::Bool
+            } else {
+                ArkType::Bytes
+            }
+        }
         ExprKind::IntentInspect { presence_only, .. } => {
             if *presence_only {
                 ArkType::Bool
@@ -539,7 +546,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                 ArkType::Bytes
             }
         }
-        ExprKind::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.
         ExprKind::BinaryOp { left, op, right } => {

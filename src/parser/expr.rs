@@ -248,8 +248,8 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         // Byte-string manipulation
         Rule::cast_func => parse_cast(pair),
         // Packet introspection
-        Rule::packet_inspect => parse_packet_inspect(pair),
-        Rule::input_packet_inspect => parse_input_packet_inspect(pair),
+        Rule::packet_inspect | Rule::packet_has => parse_packet_inspect(pair),
+        Rule::input_packet_inspect | Rule::input_packet_has => parse_input_packet_inspect(pair),
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
         Rule::asset_has => parse_asset_has_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),

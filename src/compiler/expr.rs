@@ -217,19 +217,34 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             }
         }
         // Packet introspection
-        ExprKind::PacketInspect { packet_type } => {
+        ExprKind::PacketInspect {
+            packet_type,
+            presence_only,
+        } => {
             emit_expression_asm(packet_type, asm);
             asm.push(OP_INSPECTPACKET.to_string());
-            asm.push(OP_1.to_string());
-            asm.push(OP_EQUALVERIFY.to_string());
+            emit_packet_result_asm(*presence_only, asm);
         }
-        ExprKind::InputPacketInspect { index, packet_type } => {
+        ExprKind::InputPacketInspect {
+            index,
+            packet_type,
+            presence_only,
+        } => {
             emit_expression_asm(packet_type, asm);
             emit_expression_asm(index, asm);
             asm.push(OP_INSPECTINPUTPACKET.to_string());
-            asm.push(OP_1.to_string());
-            asm.push(OP_EQUALVERIFY.to_string());
+            emit_packet_result_asm(*presence_only, asm);
         }
+    }
+}
+
+/// Reduce a packet inspection's `[bytes, found]` to the flag or to the asserted bytes.
+fn emit_packet_result_asm(presence_only: bool, asm: &mut Vec<String>) {
+    if presence_only {
+        asm.push(OP_NIP.to_string());
+    } else {
+        asm.push(OP_1.to_string());
+        asm.push(OP_EQUALVERIFY.to_string());
     }
 }
 
