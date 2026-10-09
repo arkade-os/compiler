@@ -190,12 +190,14 @@ pub(crate) fn current_input(property: InputProperty, span: crate::diagnostics::S
 /// Parse tx.packet(packetType) → ExprKind::PacketInspect
 pub(crate) fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();
+    let presence_only = pair.as_rule() == Rule::packet_has;
     let mut inner = pair.into_inner();
     let packet_type =
         parse_general_expression(inner.next().ok_or("Missing packet type in tx.packet()")?)?;
     Ok(Expression::new(
         ExprKind::PacketInspect {
             packet_type: Box::new(packet_type),
+            presence_only,
         },
         span,
     ))
@@ -204,6 +206,7 @@ pub(crate) fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, Strin
 /// Parse tx.inputs[i].packet(packetType) → ExprKind::InputPacketInspect
 pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();
+    let presence_only = pair.as_rule() == Rule::input_packet_has;
     let mut inner = pair.into_inner();
 
     // First child: array_access — extract the index expression
@@ -226,6 +229,7 @@ pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression,
         ExprKind::InputPacketInspect {
             index: Box::new(index),
             packet_type: Box::new(packet_type),
+            presence_only,
         },
         span,
     ))

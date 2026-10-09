@@ -193,6 +193,8 @@ const arkadeMembers = {
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
     'tx.assetGroups[]': groupMembers,
     'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
+    'tx.packet': [method('has', '${1:packetType}', 'Whether this transaction carries the packet')],
+    'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the previous Arkade transaction carries the packet')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),
         prop('activeBytecode', 'Script being executed'),

@@ -109,6 +109,36 @@ contract InputPacketDemo(int exit) {{
 }
 
 #[test]
+fn packet_has_keeps_only_the_presence_flag() {
+    let asm = compile_first_function_asm(
+        r#"
+contract PacketHas() {
+  function probe(int packetType, int i) {
+    require(tx.packet.has(packetType) && !tx.inputs[i].packet.has(packetType));
+  }
+}"#,
+    );
+    for opcode in [OP_INSPECTPACKET, OP_INSPECTINPUTPACKET] {
+        let at = asm
+            .iter()
+            .position(|s| s == opcode)
+            .unwrap_or_else(|| panic!("{asm:?}"));
+        assert_eq!(asm[at + 1], OP_NIP, "{asm:?}");
+    }
+    assert!(!asm.iter().any(|s| s == OP_EQUALVERIFY), "{asm:?}");
+
+    let error = compile(
+        "contract C() { function probe() { bytes b = tx.packet.has(1); require(size(b) > 0); } }",
+    )
+    .expect_err("presence is a bool")
+    .to_string();
+    assert!(
+        error.contains("declares type 'bytes' but initializer has type 'bool'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn test_substr_emits_op_substr() {
     let src = format!(
         r#"{}

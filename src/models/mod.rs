@@ -765,12 +765,17 @@ pub enum ExprKind {
     /// Current-tx packet content: tx.packet(packetType)
     /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
     /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`.
-    PacketInspect { packet_type: Box<Expression> },
+    PacketInspect {
+        packet_type: Box<Expression>,
+        /// `tx.packet.has(type)`: the presence flag instead of the bytes
+        presence_only: bool,
+    },
     /// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
     /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`.
     InputPacketInspect {
         index: Box<Expression>,
         packet_type: Box<Expression>,
+        presence_only: bool,
     },
 }
 
@@ -863,8 +868,10 @@ macro_rules! expression_children {
                     .collect(),
                 ExprKind::ContractInstance { args, .. } => args.$iter().collect(),
                 ExprKind::Cast { data, .. } => vec![data],
-                ExprKind::PacketInspect { packet_type } => vec![packet_type],
-                ExprKind::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+                ExprKind::PacketInspect { packet_type, .. } => vec![packet_type],
+                ExprKind::InputPacketInspect {
+                    index, packet_type, ..
+                } => vec![index, packet_type],
             }
         }
     };
