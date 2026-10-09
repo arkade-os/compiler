@@ -5,7 +5,7 @@ pragma arkade ^0.1.0;
 //
 // Paths:
 // - swap cooperative: takerSig + serverSig + OP_INSPECT* (trustless via introspection)
-// - cancel cooperative: makerSig + serverSig + after(expiration)
+// - cancel cooperative: makerSig + serverSig + checkTime(expirationTime)
 // - unilateral: makerSig + CSV (maker recovers if no taker)
 
 import "../single_sig/single_sig.ark";
@@ -23,7 +23,7 @@ contract NonInteractiveSwap(
   int wantAssetIdGidx,
   // Amount of want asset required for the swap
   int wantAmount,
-  // Expiration timestamp (block height) after which maker can cancel
+  // Expiration time in Unix seconds after which maker can cancel
   int expirationTime
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
@@ -55,7 +55,7 @@ contract NonInteractiveSwap(
 
   // Cancel: Maker reclaims after expiration if no taker
   function cancel(signature makerSig) {
-    require(tx.time >= expirationTime, "swap not expired");
+    require(checkTime(expirationTime), "swap not expired");
     require(checkSig(makerSig, makerPk), "invalid maker signature");
   }
 

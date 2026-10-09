@@ -728,7 +728,7 @@ contract Vault(Point[2] points, pubkey owner) {
         require(checkSig(sig, owner));
     }
     function exit() {
-        require(tx.time >= Fees.DELAY);
+        require(tx.locktime >= Fees.DELAY);
     }
 }"#;
         let fees = r#"import "deep.ark";

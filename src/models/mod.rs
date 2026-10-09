@@ -616,7 +616,7 @@ pub enum ExprKind {
     Variable(String),
     /// Decimal integer, boolean, or 0x-prefixed byte data (including empty 0x).
     Literal(String),
-    /// Property access (e.g., tx.time)
+    /// Property access
     Property(String),
     /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
     IntentInspect { path: String, presence_only: bool },

@@ -195,7 +195,7 @@ contract BreedCommit(
             saltHash,
             sireOwner, dameOwner,
             newKittyOwner,
-            tx.time + timeout,
+            tx.locktime + timeout,
         );
 
         require(tx.outputs[revealOutputIndex].scriptPubKey == revealScript, "Reveal output script mismatch");

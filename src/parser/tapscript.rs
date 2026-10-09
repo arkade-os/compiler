@@ -106,7 +106,7 @@ pub(crate) fn parse_tap_item(
             })
         }
         Rule::time_comparison => Err(
-            "`tx.time` is only available in covenant functions; use `after(...)` in tapscript functions"
+            "`tx.locktime` is only available in covenant functions; use `after(...)` in tapscript functions"
                 .to_string(),
         ),
         Rule::check_sig => {
@@ -393,11 +393,11 @@ contract Demo(pubkey owner) {{
     }
 
     #[test]
-    fn rejects_tx_time_in_tapscript() {
+    fn rejects_tx_locktime_in_tapscript() {
         let src = r#"
 contract Demo(pubkey owner, int deadline) {
     function exit(signature ownerSig) tapscript {
-        require(tx.time >= deadline);
+        require(tx.locktime >= deadline);
         require(checkSig(ownerSig, owner));
     }
 }

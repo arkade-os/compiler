@@ -5,7 +5,7 @@ pragma arkade ^0.1.0;
 // Per-issuance collateral vault holding the borrower's debit tokens. Created
 // atomically by RepaymentPool.issue. Each vault represents one issuance of
 // `mintedAmount` credit + `mintedAmount` debit (1:1) by a borrower against
-// `collateral` sats, maturing at block height `maturity`.
+// `collateral` sats, maturing at Unix time `maturity` (seconds).
 //
 // SETTLEMENT PATHS (four; all burn the vault's debit exactly)
 //   repay      — pre-maturity, borrower-signed. The borrower pays par USDT,
@@ -94,7 +94,7 @@ contract BondMint(
   //   output[1]: collateral sats → borrower
   function repay(signature borrowerSig, int poolIdx) {
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
-    require(tx.time < maturity, "loan matured");
+    require(!checkTime(maturity), "loan matured");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
@@ -119,7 +119,7 @@ contract BondMint(
   // vault-side floor still prevents the "1 sat to auctioneer, rest as miner
   // fee" siphon shape.
   function liquidate(int poolIdx, bytes auctioneerScriptPubKey) {
-    require(tx.time < maturity, "matured; use auction");
+    require(!checkTime(maturity), "matured; use auction");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
@@ -136,9 +136,9 @@ contract BondMint(
   //   output[0]: pool re-created (enforced by acceptAuction)
   //   output[1]: collateral (or sold portion) → auctioneer
   function auction(int poolIdx, bytes auctioneerScriptPubKey) {
-    require(tx.time >= maturity, "not yet matured");
+    require(checkTime(maturity), "not yet matured");
     int windowEnd = maturity + auctionWindow;
-    require(tx.time < windowEnd, "auction window closed");
+    require(!checkTime(windowEnd), "auction window closed");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
@@ -163,7 +163,7 @@ contract BondMint(
   //                witness-supplied indices)
   function roll(signature borrowerSig, int poolIdx) {
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
-    require(tx.time < maturity, "vault matured");
+    require(!checkTime(maturity), "vault matured");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 

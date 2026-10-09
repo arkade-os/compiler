@@ -676,7 +676,7 @@ fn struct_fields_are_accepted_as_hash_and_timelock_operands() {
 struct Terms { bytes32 digest; int deadline; }
 contract C(Terms terms) {
     function claim(bytes preimage) {
-        require(tx.time >= terms.deadline);
+        require(tx.locktime >= terms.deadline);
         require(sha256(preimage) == terms.digest);
     }
 }

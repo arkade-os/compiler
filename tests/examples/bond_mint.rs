@@ -1,7 +1,7 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKTIME, OP_INSPECTASSETGROUPSUM,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_NOT,
 };
 
 use crate::common::{arkade_asm, arkade_inputs, user_signatures};
@@ -48,8 +48,8 @@ fn test_repay_is_atomic_with_pool() {
         "repay pins collateral dest"
     );
     assert!(
-        asm.contains(OP_LESSTHAN),
-        "repay gated on tx.time < maturity"
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "repay gated on !checkTime(maturity)"
     );
     assert!(asm.contains(OP_CHECKSIG), "repay needs borrower sig");
 }
@@ -57,7 +57,7 @@ fn test_repay_is_atomic_with_pool() {
 #[test]
 fn test_liquidate_is_permissionless_prematurity() {
     // Margin-call settlement path: permissionless (no user signature),
-    // pre-maturity gated (tx.time < maturity), pool co-spent, debit-burned,
+    // pre-maturity gated (!checkTime(maturity)), pool co-spent, debit-burned,
     // caller-selected collateral output. The oracle + threshold + payout
     // math lives on the pool side.
     let output = compile_file(PATH).expect("compilation failed");
@@ -75,8 +75,8 @@ fn test_liquidate_is_permissionless_prematurity() {
         "liquidate pins collateral dest to auctioneer"
     );
     assert!(
-        asm.contains(OP_LESSTHAN),
-        "liquidate enforces tx.time < maturity"
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "liquidate enforces !checkTime(maturity)"
     );
 
     let ws = arkade_inputs(&output, "liquidate");
@@ -103,7 +103,7 @@ fn test_liquidate_is_permissionless_prematurity() {
 #[test]
 fn test_auction_is_permissionless_and_phased() {
     // The auction's only bindings are:
-    //   - phased time gate (tx.time >= maturity AND tx.time < maturity + auctionWindow)
+    //   - phased time gate (checkTime(maturity) AND !checkTime(maturity + auctionWindow))
     //   - pool co-spent (debit control asset lookup)
     //   - debit burn
     //   - caller-selected collateral output
@@ -120,8 +120,12 @@ fn test_auction_is_permissionless_and_phased() {
         "auction pins collateral dest to auctioneer"
     );
     assert!(
-        asm.contains(OP_LESSTHAN),
-        "auction enforces tx.time < maturity + auctionWindow"
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "auction enforces !checkTime(maturity + auctionWindow)"
+    );
+    assert!(
+        asm.contains(&format!("{OP_CHECKTIME} OP_VERIFY")),
+        "auction enforces checkTime(maturity)"
     );
 
     let ws = arkade_inputs(&output, "auction");
@@ -165,8 +169,8 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
         "roll burns the old debit"
     );
     assert!(
-        asm.contains(OP_LESSTHAN),
-        "roll gated on tx.time < maturity"
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "roll gated on !checkTime(maturity)"
     );
     assert!(asm.contains(OP_CHECKSIG), "roll needs borrower sig");
 

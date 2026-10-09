@@ -46,7 +46,7 @@ newTargetUSD  = targetUSD × (1 + fundingRatePerSec × elapsed / 1e12)
 - `fundingRatePerSec`: signed fixed-point fraction at scale 1e12.
 - `lastUpdate`: unix-second timestamp of the last settlement.
 
-`tx.offchainTime` is the TEE-introspector wallclock in unix seconds, distinct from `tx.time` (Bitcoin nLockTime, block height).
+`tx.offchainTime` is the TEE-introspector wallclock in unix seconds, the same axis as `checkTime(...)` and distinct from `tx.locktime` (the transaction nLockTime).
 
 Conversion: `fundingRatePerSec = (annual_pct / 100) / 31536000 × 1e12`. Example: 0.5% APY → `158`; 5% APY → `1585`.
 

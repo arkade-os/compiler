@@ -301,7 +301,7 @@ fn check_time_uses_the_emulator_clock_and_preserves_operand_order() {
                 bool reached = checkTime(deadline);
                 require(reached);
                 require(!checkTime(this.expiry - window));
-                require(tx.time >= deadline);
+                require(tx.locktime >= deadline);
             }
         }
     "#,
