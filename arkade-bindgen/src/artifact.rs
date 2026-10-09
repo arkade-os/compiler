@@ -12,7 +12,7 @@ pub fn load_artifact(path: &Path) -> Result<ContractJson, String> {
 /// Load a compiled Arkade contract artifact from a JSON string.
 pub fn load_artifact_str(json: &str) -> Result<ContractJson, String> {
     let artifact: ContractJson =
-        serde_json::from_str(json).map_err(|e| format!("Failed to parse artifact JSON: {}", e))?;
+        serde_json::from_str(json).map_err(|e| format!("Failed to parse artifact JSON: {e}"))?;
 
     if let Some(version) = artifact.format_version {
         if version != arkade_compiler::models::ARTIFACT_FORMAT_VERSION {

@@ -89,15 +89,13 @@ fn check_ctor_assignment(
                 let root = name.split(['.', '[']).next().unwrap_or(name);
                 if ctor_names.contains(root) {
                     issues.push(ValidationIssue::error(format!(
-                        "cannot assign to constructor parameter '{}' in function '{}'; \
-                         constructor parameters are immutable",
-                        name, fname
+                        "cannot assign to constructor parameter '{name}' in function '{fname}'; \
+                         constructor parameters are immutable"
                     )));
                 }
                 if const_names.contains(root) {
                     issues.push(ValidationIssue::error(format!(
-                        "cannot assign to constant '{}' in function '{}'",
-                        name, fname
+                        "cannot assign to constant '{name}' in function '{fname}'"
                     )));
                 }
             }
@@ -143,8 +141,7 @@ fn walk_scope(
                 validate_source_identifier(name, &format!("binding in function '{fname}'"), issues);
                 if in_scope(stack, name) {
                     issues.push(ValidationIssue::error(format!(
-                        "binding '{}' in function '{}' shadows an in-scope binding",
-                        name, fname
+                        "binding '{name}' in function '{fname}' shadows an in-scope binding"
                     )));
                 } else {
                     stack
@@ -171,15 +168,13 @@ fn walk_scope(
                 );
                 if index_var == value_var {
                     issues.push(ValidationIssue::error(format!(
-                        "loop variables in function '{}' must differ; both are named '{}'",
-                        fname, index_var
+                        "loop variables in function '{fname}' must differ; both are named '{index_var}'"
                     )));
                 }
                 for v in [index_var, value_var] {
                     if in_scope(stack, v) {
                         issues.push(ValidationIssue::error(format!(
-                            "loop variable '{}' in function '{}' shadows an in-scope binding",
-                            v, fname
+                            "loop variable '{v}' in function '{fname}' shadows an in-scope binding"
                         )));
                     }
                 }

@@ -212,7 +212,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     // Reserved arkd names (`server`, `emulator`, `serverExitDelay`) are
     // supplied by the server, never by constructor parameters.
     for p in &contract.parameters {
-        if matches!(p.name.as_str(), "server" | "emulator" | "serverExitDelay") {
+        if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
             issues.push(ValidationIssue::error(format!(
                 "constructor parameter '{}' collides with a reserved arkd name",
                 p.name
@@ -227,7 +227,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                 &format!("input in tapscript '{}'", ts.name),
                 &mut issues,
             );
-            if matches!(p.name.as_str(), "server" | "emulator" | "serverExitDelay") {
+            if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' collides with a reserved arkd name",
                     ts.name, p.name
@@ -451,7 +451,7 @@ fn validate_declared_type(
 }
 
 fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
-    if matches!(name, "SERVER_KEY" | "SERVER_EXIT_DELAY") {
+    if crate::models::RESERVED_PLACEHOLDERS.contains(&name) {
         issues.push(ValidationIssue::error(format!(
             "{context} '{name}' uses a compiler-reserved placeholder name"
         )));
@@ -958,15 +958,13 @@ contract Demo() {
             let issues = validate_output(&output);
             assert!(
                 has_errors(&issues),
-                "leaked placeholder {} must be an output error",
-                leaked
+                "leaked placeholder {leaked} must be an output error"
             );
             assert!(
                 issues
                     .iter()
                     .any(|i| i.message.contains("signature in asm")),
-                "expected sig-leak message for {}",
-                leaked
+                "expected sig-leak message for {leaked}"
             );
         }
     }

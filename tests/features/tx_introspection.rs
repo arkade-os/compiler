@@ -26,8 +26,7 @@ fn test_tx_version() {
     let asm_str = crate::common::arkade_asm(&output, "checkVersion");
     assert!(
         asm_str.contains(OP_INSPECTVERSION),
-        "Expected {OP_INSPECTVERSION} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTVERSION} in ASM: {asm_str}"
     );
 }
 
@@ -53,8 +52,7 @@ fn test_tx_locktime() {
     let asm_str = crate::common::arkade_asm(&output, "checkLocktime");
     assert!(
         asm_str.contains(OP_INSPECTLOCKTIME),
-        "Expected {OP_INSPECTLOCKTIME} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTLOCKTIME} in ASM: {asm_str}"
     );
 }
 
@@ -88,8 +86,7 @@ fn test_tx_num_inputs() {
     let asm_str = crate::common::arkade_asm(&output, "checkInputs");
     assert!(
         asm_str.contains(OP_INSPECTNUMINPUTS),
-        "Expected {OP_INSPECTNUMINPUTS} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTNUMINPUTS} in ASM: {asm_str}"
     );
 }
 
@@ -115,8 +112,7 @@ fn test_tx_num_outputs() {
     let asm_str = crate::common::arkade_asm(&output, "checkOutputs");
     assert!(
         asm_str.contains(OP_INSPECTNUMOUTPUTS),
-        "Expected {OP_INSPECTNUMOUTPUTS} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTNUMOUTPUTS} in ASM: {asm_str}"
     );
 }
 
@@ -142,8 +138,7 @@ fn test_tx_weight() {
     let asm_str = crate::common::arkade_asm(&output, "checkWeight");
     assert!(
         asm_str.contains(OP_TXWEIGHT),
-        "Expected {OP_TXWEIGHT} in ASM: {}",
-        asm_str
+        "Expected {OP_TXWEIGHT} in ASM: {asm_str}"
     );
 }
 

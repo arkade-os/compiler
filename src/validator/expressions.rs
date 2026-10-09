@@ -35,8 +35,7 @@ pub(super) fn validate_binding_requirement(
             if composite {
                 if op.class() != OperatorClass::Equality {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': '{}' is not defined for composite values",
-                        function_name, op
+                        "function '{function_name}': '{op}' is not defined for composite values"
                     )));
                 } else if left_type != ArkType::Unknown
                     && right_type != ArkType::Unknown
@@ -143,8 +142,7 @@ pub(super) fn validate_binding_expression(
             "array"
         };
         issues.push(ValidationIssue::error(format!(
-            "function '{}': {kind} expressions are composite values and cannot be used here",
-            function_name,
+            "function '{function_name}': {kind} expressions are composite values and cannot be used here",
         )));
     }
     if value_position
@@ -154,8 +152,7 @@ pub(super) fn validate_binding_expression(
         ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none()))
     {
         issues.push(ValidationIssue::error(format!(
-            "function '{}': expression does not produce one stack item",
-            function_name
+            "function '{function_name}': expression does not produce one stack item"
         )));
     }
     if value_position
@@ -168,8 +165,7 @@ pub(super) fn validate_binding_expression(
         )
     {
         issues.push(ValidationIssue::error(format!(
-            "function '{}': asset-group input inspection has a variable-width result and cannot be used as a value",
-            function_name
+            "function '{function_name}': asset-group input inspection has a variable-width result and cannot be used as a value"
         )));
     }
 
@@ -423,8 +419,7 @@ pub(super) fn validate_binding_expression(
 
         ExprKind::StructLiteral(_) if value_position => {
             issues.push(ValidationIssue::error(format!(
-                "function '{}': struct literals may only initialize typed struct declarations",
-                function_name
+                "function '{function_name}': struct literals may only initialize typed struct declarations"
             )));
         }
         ExprKind::Variable(name) => {
@@ -491,16 +486,14 @@ pub(super) fn validate_binding_expression(
                         if let Some(binding) = find_binding(scopes, name) {
                             if !matches!(binding.source, BindingSource::Constructor) {
                                 issues.push(ValidationIssue::error(format!(
-                                    "function '{}': contract instance argument '{}' is a runtime value; only constructor parameters and literals are supported",
-                                function_name, name
+                                    "function '{function_name}': contract instance argument '{name}' is a runtime value; only constructor parameters and literals are supported"
                             )));
                             }
                         }
                     }
                     ExprKind::Literal(_) => {}
                     _ => issues.push(ValidationIssue::error(format!(
-                        "function '{}': computed contract arguments are not supported",
-                        function_name
+                        "function '{function_name}': computed contract arguments are not supported"
                     ))),
                 }
             }
@@ -564,8 +557,7 @@ pub(super) fn validate_array_index(
     let array_info = match find_binding(scopes, array) {
         None => {
             issues.push(ValidationIssue::error(format!(
-                "function '{}': array '{}' is undefined",
-                function_name, written
+                "function '{function_name}': array '{written}' is undefined"
             )));
             None
         }
@@ -575,8 +567,7 @@ pub(super) fn validate_array_index(
         }) => Some(((**element).clone(), *length, *source)),
         Some(_) => {
             issues.push(ValidationIssue::error(format!(
-                "function '{}': binding '{}' is not an array",
-                function_name, written
+                "function '{function_name}': binding '{written}' is not an array"
             )));
             None
         }
@@ -605,8 +596,7 @@ pub(super) fn validate_array_index(
             let sign = if negative { "-" } else { "" };
             issues.push(
                 ValidationIssue::error(format!(
-                    "function '{}': array index '{}{}' is out of range for '{}[{}]'",
-                    function_name, sign, literal, written, length
+                    "function '{function_name}': array index '{sign}{literal}' is out of range for '{written}[{length}]'"
                 ))
                 .at(index.span),
             );

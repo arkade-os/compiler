@@ -154,60 +154,51 @@ fn test_fuji_safe_contract() {
     let claim_asm = crate::common::arkade_asm(&output, "claim");
     assert!(
         claim_asm.contains(&format!("{OP_CHECKTIME} OP_VERIFY")),
-        "claim covenant should enforce expiration timeout: {}",
-        claim_asm
+        "claim covenant should enforce expiration timeout: {claim_asm}"
     );
     assert!(
         claim_asm.contains(OP_CHECKSIG),
-        "claim covenant should verify treasury sig: {}",
-        claim_asm
+        "claim covenant should verify treasury sig: {claim_asm}"
     );
 
     // Verify liquidate function: price comparison + oracle sig + CLTV
     let liquidate_asm = crate::common::arkade_asm(&output, "liquidate");
     assert!(
         liquidate_asm.contains(OP_LESSTHAN),
-        "liquidate covenant should compare price: {}",
-        liquidate_asm
+        "liquidate covenant should compare price: {liquidate_asm}"
     );
     assert!(
         liquidate_asm.contains(OP_CHECKSIGFROMSTACK),
-        "liquidate covenant should verify oracle sig: {}",
-        liquidate_asm
+        "liquidate covenant should verify oracle sig: {liquidate_asm}"
     );
     assert!(
         liquidate_asm.contains(OP_CHECKSIG),
-        "liquidate covenant should verify treasury sig: {}",
-        liquidate_asm
+        "liquidate covenant should verify treasury sig: {liquidate_asm}"
     );
 
     // Verify redeem function: borrower signature
     let redeem_asm = crate::common::arkade_asm(&output, "redeem");
     assert!(
         redeem_asm.contains(OP_CHECKSIG),
-        "redeem covenant should verify borrower sig: {}",
-        redeem_asm
+        "redeem covenant should verify borrower sig: {redeem_asm}"
     );
 
     // Verify renew function: treasury signature
     let renew_asm = crate::common::arkade_asm(&output, "renew");
     assert!(
         renew_asm.contains(OP_CHECKSIG),
-        "renew covenant should verify treasury sig: {}",
-        renew_asm
+        "renew covenant should verify treasury sig: {renew_asm}"
     );
 
     // Unilateral exit: CSV-based, borrower only (no server involvement)
     let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_leaf.contains("OP_CHECKSEQUENCEVERIFY"),
-        "unilateral leaf should have CSV: {}",
-        unilateral_leaf
+        "unilateral leaf should have CSV: {unilateral_leaf}"
     );
     assert!(
         unilateral_leaf.contains(OP_CHECKSIG),
-        "unilateral leaf should verify borrower sig: {}",
-        unilateral_leaf
+        "unilateral leaf should verify borrower sig: {unilateral_leaf}"
     );
 }
 

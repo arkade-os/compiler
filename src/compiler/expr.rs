@@ -36,7 +36,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             unreachable!("private calls are extracted before raw expression emission")
         }
         ExprKind::Variable(var) => {
-            asm.push(format!("<{}>", var));
+            asm.push(format!("<{var}>"));
         }
         ExprKind::Literal(lit) => push_literal_asm(lit, asm),
         ExprKind::IntentInspect {
@@ -261,7 +261,7 @@ pub(crate) fn emit_contract_instance_asm(
     let args_str = args
         .iter()
         .map(|a| match &a.kind {
-            ExprKind::Variable(v) => format!("<{}>", v),
+            ExprKind::Variable(v) => format!("<{v}>"),
             ExprKind::Literal(l) => l.clone(),
             _ => {
                 // For complex arg expressions, emit a nested representation
@@ -273,7 +273,7 @@ pub(crate) fn emit_contract_instance_asm(
         .collect::<Vec<_>>()
         .join(",");
 
-    asm.push(format!("<CONTRACT:{}({})>", contract_name, args_str));
+    asm.push(format!("<CONTRACT:{contract_name}({args_str})>"));
 }
 
 /// Emit assembly for arithmetic or a short-circuit logical operation.

@@ -48,25 +48,21 @@ fn test_token_vault_contract() {
 
     assert!(
         deposit_asm.contains(OP_INSPECTINASSETLOOKUP),
-        "missing {OP_INSPECTINASSETLOOKUP} in deposit asm: {}",
-        deposit_asm
+        "missing {OP_INSPECTINASSETLOOKUP} in deposit asm: {deposit_asm}"
     );
     assert!(
         deposit_asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "missing {OP_INSPECTOUTASSETLOOKUP} in deposit asm: {}",
-        deposit_asm
+        "missing {OP_INSPECTOUTASSETLOOKUP} in deposit asm: {deposit_asm}"
     );
 
     // Lookups assert presence by consuming the opcode success flag with OP_VERIFY
     assert!(
         deposit_asm.contains(&format!("{OP_INSPECTINASSETLOOKUP} {OP_VERIFY}")),
-        "input lookup must be followed by OP_VERIFY flag-consume: {}",
-        deposit_asm
+        "input lookup must be followed by OP_VERIFY flag-consume: {deposit_asm}"
     );
     assert!(
         deposit_asm.contains(&format!("{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY}")),
-        "output lookup must be followed by OP_VERIFY flag-consume: {}",
-        deposit_asm
+        "output lookup must be followed by OP_VERIFY flag-consume: {deposit_asm}"
     );
 
     // The output token amount must be at least the input token amount.
@@ -74,23 +70,20 @@ fn test_token_vault_contract() {
         deposit_asm.contains(&format!(
             "{OP_INSPECTINASSETLOOKUP} {OP_VERIFY} {OP_GREATERTHANOREQUAL}"
         )),
-        "missing output >= input token amount comparison in deposit asm: {}",
-        deposit_asm
+        "missing output >= input token amount comparison in deposit asm: {deposit_asm}"
     );
 
     // deposit covenant should verify owner signature
     assert!(
         deposit_asm.contains(OP_CHECKSIG),
-        "missing {OP_CHECKSIG} in deposit covenant: {}",
-        deposit_asm
+        "missing {OP_CHECKSIG} in deposit covenant: {deposit_asm}"
     );
 
     // deposit leaf carries server + emulator cosig
     let deposit_leaf = crate::common::leaf_asm(&output, "deposit", "deposit");
     assert!(
         deposit_leaf.contains("<SERVER_KEY>"),
-        "deposit leaf should have SERVER_KEY: {}",
-        deposit_leaf
+        "deposit leaf should have SERVER_KEY: {deposit_leaf}"
     );
 
     // Unilateral exit: standalone CSV leaf with no introspection.
@@ -98,18 +91,15 @@ fn test_token_vault_contract() {
 
     assert!(
         unilateral_asm.contains(OP_CHECKSIG),
-        "missing {OP_CHECKSIG} in unilateral exit: {}",
-        unilateral_asm
+        "missing {OP_CHECKSIG} in unilateral exit: {unilateral_asm}"
     );
     assert!(
         unilateral_asm.contains(OP_CHECKSEQUENCEVERIFY),
-        "missing CSV exit timelock in unilateral leaf: {}",
-        unilateral_asm
+        "missing CSV exit timelock in unilateral leaf: {unilateral_asm}"
     );
     assert!(
         !unilateral_asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "exit leaf should not have introspection: {}",
-        unilateral_asm
+        "exit leaf should not have introspection: {unilateral_asm}"
     );
 }
 

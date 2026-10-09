@@ -62,18 +62,15 @@ fn test_epoch_limiter_has_if_else() {
     // Check for if/else opcodes in the covenant assembly
     assert!(
         asm_str.contains(OP_IF),
-        "Missing OP_IF in assembly: {}",
-        asm_str
+        "Missing OP_IF in assembly: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_ELSE),
-        "Missing OP_ELSE in assembly: {}",
-        asm_str
+        "Missing OP_ELSE in assembly: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_ENDIF),
-        "Missing OP_ENDIF in assembly: {}",
-        asm_str
+        "Missing OP_ENDIF in assembly: {asm_str}"
     );
 }
 
@@ -122,12 +119,10 @@ fn test_epoch_limiter_default_leaf_has_checksig() {
 
     assert!(
         l.contains(OP_CHECKSIG),
-        "Default leaf missing OP_CHECKSIG: {}",
-        l
+        "Default leaf missing OP_CHECKSIG: {l}"
     );
     assert!(
         l.contains("<SERVER_KEY>"),
-        "Default leaf missing <SERVER_KEY>: {}",
-        l
+        "Default leaf missing <SERVER_KEY>: {l}"
     );
 }
