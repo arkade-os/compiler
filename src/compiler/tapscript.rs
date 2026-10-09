@@ -5,6 +5,7 @@ use crate::models::{
     AbiFunctionGroup, AbiLeaf, ArkadeCovenant, Contract, HashFn, KeyExpr, NamedTapscript,
     Parameter, TapItem, TimeUnit, WitnessElement,
 };
+use crate::models::{EMULATOR, SERVER, SERVER_EXIT_DELAY};
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_VERIFY,
@@ -199,8 +200,8 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
         if let TapItem::Sig { keys, .. } = item {
             for k in keys {
                 match k {
-                    KeyExpr::Ident(id) if id == "emulator" => uses_bare_emulator = true,
-                    KeyExpr::Tweak { base, func } if base == "emulator" => {
+                    KeyExpr::Ident(id) if id == EMULATOR => uses_bare_emulator = true,
+                    KeyExpr::Tweak { base, func } if base == EMULATOR => {
                         tweak_targets.push(func.clone())
                     }
                     _ => {}
@@ -267,7 +268,7 @@ fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, 
     let mut target: Option<String> = None;
     for key in keys {
         let func = match key {
-            KeyExpr::Ident(id) if id == "emulator" => ts_name,
+            KeyExpr::Ident(id) if id == EMULATOR => ts_name,
             KeyExpr::Tweak { func, .. } => func.as_str(),
             _ => continue,
         };
@@ -294,8 +295,8 @@ pub fn validate_arkd_rules(
         crate::types::build_scope_with_structs(&contract.parameters, &contract.structs);
     // Pubkeys in scope: constructor pubkey params + pubkey tapscript inputs.
     let in_scope = |name: &str| -> bool {
-        name == "server"
-            || name == "emulator"
+        name == SERVER
+            || name == EMULATOR
             || constructor_scope.get(name) == Some(&ArkType::Bytes)
             || ts
                 .inputs
@@ -313,7 +314,7 @@ pub fn validate_arkd_rules(
             KeyExpr::Ident(id) if !in_scope(id) => {
                 return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
             }
-            KeyExpr::Tweak { base, func } if base != "emulator" => {
+            KeyExpr::Tweak { base, func } if base != EMULATOR => {
                 if constructor_scope.get(base) != Some(&ArkType::Bytes) {
                     return Err(format!(
                         "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
@@ -436,7 +437,7 @@ pub fn validate_arkd_rules(
                     Some(TimeUnit::Seconds) => format!("seconds({value})"),
                     None => value.clone(),
                 };
-                if csv && value == "serverExitDelay" {
+                if csv && value == SERVER_EXIT_DELAY {
                     if unit.is_some() {
                         return Err(format!(
                             "tapscript `{}`: serverExitDelay has its own unit; write older(serverExitDelay)",
@@ -525,10 +526,10 @@ pub fn validate_arkd_rules(
 /// used for a name-matched leaf's bare `emulator`.
 pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
     match k {
-        KeyExpr::Ident(id) if id == "server" => "<SERVER_KEY>".to_string(),
-        KeyExpr::Ident(id) if id == "emulator" => format!("<EMULATOR_KEY:{leaf_func}>"),
+        KeyExpr::Ident(id) if id == SERVER => "<SERVER_KEY>".to_string(),
+        KeyExpr::Ident(id) if id == EMULATOR => format!("<EMULATOR_KEY:{leaf_func}>"),
         KeyExpr::Ident(id) => format!("<{id}>"),
-        KeyExpr::Tweak { base, func } if base == "emulator" => format!("<EMULATOR_KEY:{func}>"),
+        KeyExpr::Tweak { base, func } if base == EMULATOR => format!("<EMULATOR_KEY:{func}>"),
         KeyExpr::Tweak { base, func } => format!("<TWEAK:{base}:{func}>"),
     }
 }
@@ -551,7 +552,7 @@ fn timelock_number(value: &str) -> Option<i128> {
 /// `seconds(n)` in a CSV as its BIP68 time-based sequence, any other number
 /// as-is, else a `<param>` placeholder pushing the raw value.
 fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> String {
-    if value == "serverExitDelay" {
+    if value == SERVER_EXIT_DELAY {
         return "<SERVER_EXIT_DELAY>".to_string();
     }
     match timelock_number(value) {
@@ -753,9 +754,9 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
         condition: None,
         timelock: None,
         keys: vec![
-            KeyExpr::Ident("server".into()),
+            KeyExpr::Ident(SERVER.into()),
             KeyExpr::Tweak {
-                base: "emulator".into(),
+                base: EMULATOR.into(),
                 func: func.into(),
             },
         ],

@@ -201,15 +201,23 @@ pub enum KeyExpr {
     Tweak { base: String, func: String },
 }
 
+/// Names the server supplies; a contract cannot declare them.
+pub(crate) const SERVER: &str = "server";
+pub(crate) const EMULATOR: &str = "emulator";
+pub(crate) const SERVER_EXIT_DELAY: &str = "serverExitDelay";
+pub(crate) const RESERVED_NAMES: [&str; 3] = [SERVER, EMULATOR, SERVER_EXIT_DELAY];
+/// Artifact placeholders the SDK fills; reserved as source identifiers.
+pub(crate) const RESERVED_PLACEHOLDERS: [&str; 2] = ["SERVER_KEY", "SERVER_EXIT_DELAY"];
+
 impl KeyExpr {
     /// The reserved arkd-operator role.
     pub fn is_server(&self) -> bool {
-        matches!(self, KeyExpr::Ident(id) if id == "server")
+        matches!(self, KeyExpr::Ident(id) if id == SERVER)
     }
 
     /// A bare (implicitly-tweaked) emulator role.
     pub fn is_emulator(&self) -> bool {
-        matches!(self, KeyExpr::Ident(id) if id == "emulator")
+        matches!(self, KeyExpr::Ident(id) if id == EMULATOR)
     }
 
     /// An infra-injected co-signer whose signature is generated, not user pubkey:
@@ -218,7 +226,7 @@ impl KeyExpr {
     pub fn is_cosigner(&self) -> bool {
         self.is_server()
             || self.is_emulator()
-            || matches!(self, KeyExpr::Tweak { base, .. } if base == "emulator")
+            || matches!(self, KeyExpr::Tweak { base, .. } if base == EMULATOR)
     }
 }
 
