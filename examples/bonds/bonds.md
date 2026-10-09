@@ -486,7 +486,7 @@ exact lines where each one would land.
 
 | # | Item | Why | Sketch |
 |---|---|---|---|
-| **T1** | ~~Unify time axis or document the conversion~~ — **ADDRESSED.** The phase gates read the emulator clock through `checkTime`, so `maturity` and `auctionWindow` are Unix seconds, the same axis as oracle freshness (`oracleMaxAgeSeconds`). | — |
+| **T1** | ~~Unify time axis or document the conversion~~ — **PARTIALLY ADDRESSED.** `maturity` and `auctionWindow` are Unix seconds, the same axis as oracle freshness (`oracleMaxAgeSeconds`). `BondMint` gates them through `checkTime`; the `RepaymentPool` gates are written the same way but stay commented out until its functions are restored. | Restore the pool functions with their `checkTime` gates. |
 
 ### Monetisation surfaces (not yet wired)
 
