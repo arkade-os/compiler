@@ -4,24 +4,19 @@ use crate::models::{
     Function, FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
-    OP_0, OP_0NOTEQUAL, OP_1, OP_ABS, OP_ADD, OP_AND, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG,
-    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP,
-    OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL,
-    OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
-    OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
-    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
+    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD, OP_DROP,
+    OP_DUP, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID,
+    OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID,
+    OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM,
+    OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
     OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTOUTPOINT,
     OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
     OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
     OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
     OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
-    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_INVERT, OP_LEFT, OP_LESSTHAN, OP_LESSTHANOREQUAL,
-    OP_LSHIFT, OP_MAX, OP_MERKLEBRANCHVERIFY, OP_MIN, OP_MOD, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP,
-    OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_OR, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY,
-    OP_PUT, OP_REVERSEBYTES, OP_RIGHT, OP_ROLL, OP_RSHIFT, OP_SHA1, OP_SHA256, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP,
-    OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY, OP_WITHIN, OP_XOR,
+    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_MUL, OP_NIP, OP_NOT,
+    OP_NUMEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT, OP_ROLL, OP_SIZE,
+    OP_SUB, OP_SWAP, OP_TUNNEL, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::types::{self};
 use crate::validator::{self, Severity};
@@ -351,94 +346,9 @@ impl Generator {
 
     fn lower_raw_opcode(&mut self, opcode: &str) -> Result<(), String> {
         match opcode {
-            OP_0 | OP_1 | "OP_2" | "OP_3" | "OP_4" | "OP_5" | "OP_6" | "OP_7" | "OP_8" | "OP_9"
-            | "OP_10" | "OP_11" | "OP_12" | "OP_13" | "OP_14" | "OP_15" | "OP_16" => {
-                self.push_temporary(opcode);
-                Ok(())
-            }
-            OP_DROP => self.apply(opcode, 1, 0),
-            OP_DUP => self.apply(opcode, 1, 2),
+            // These move bindings as well as temporaries.
             OP_NIP => self.nip(),
             OP_SWAP => self.swap(),
-            OP_VERIFY => self.apply(opcode, 1, 0),
-            OP_EQUALVERIFY => self.apply(opcode, 2, 0),
-            OP_PUSHCURRENTINPUTINDEX
-            | OP_PUSHEXPIRY
-            | OP_INSPECTVERSION
-            | OP_INSPECTLOCKTIME
-            | OP_INSPECTNUMINPUTS
-            | OP_INSPECTNUMOUTPUTS
-            | OP_INSPECTNUMASSETGROUPS
-            | OP_TXID
-            | OP_TXWEIGHT => {
-                self.push_temporary(opcode);
-                Ok(())
-            }
-            OP_NEGATE
-            | OP_ABS
-            | OP_CHECKTIME
-            | OP_NOT
-            | OP_0NOTEQUAL
-            | OP_SHA256
-            | OP_SHA1
-            | "OP_HASH160"
-            | "OP_HASH256"
-            | "OP_RIPEMD160"
-            | OP_SHA256INITIALIZE
-            | OP_SIGHASH
-            | OP_BIN2NUM
-            | OP_REVERSEBYTES
-            | OP_INVERT
-            | OP_INSPECTINPUTVALUE
-            | OP_INSPECTINPUTSEQUENCE
-            | OP_INSPECTINPUTARKADESCRIPTHASH
-            | OP_INSPECTINPUTARKADEWITNESSHASH
-            | OP_INSPECTOUTPUTVALUE
-            | OP_INSPECTINASSETCOUNT
-            | OP_INSPECTOUTASSETCOUNT
-            | OP_INSPECTASSETGROUPMETADATAHASH => self.apply(opcode, 1, 1),
-            OP_ADD
-            | OP_MIN
-            | OP_MAX
-            | OP_LEFT
-            | OP_RIGHT
-            | OP_SUB
-            | OP_AND
-            | OP_OR
-            | OP_XOR
-            | OP_LSHIFT
-            | OP_RSHIFT
-            | OP_MUL
-            | OP_DIV
-            | OP_MOD
-            | OP_EQUAL
-            | OP_GREATERTHAN
-            | OP_GREATERTHANOREQUAL
-            | OP_LESSTHAN
-            | OP_LESSTHANOREQUAL
-            | OP_NUMEQUAL
-            | OP_BOOLAND
-            | OP_CAT
-            | OP_SHA256UPDATE
-            | OP_SHA256FINALIZE
-            | OP_DIGEST
-            | OP_NUM2BIN
-            | OP_CHECKSIG
-            | OP_INSPECTASSETGROUPSUM
-            | OP_INSPECTASSETGROUPNUM => self.apply(opcode, 2, 1),
-            OP_MODEXP | OP_SUBSTR | OP_WITHIN | OP_CHECKSIGADD | OP_CHECKSIGFROMSTACK => {
-                self.apply(opcode, 3, 1)
-            }
-            OP_MERKLEBRANCHVERIFY => self.apply(opcode, 4, 1),
-            OP_INSPECTINPUTSCRIPTPUBKEY | OP_INSPECTOUTPUTSCRIPTPUBKEY => self.apply(opcode, 1, 2),
-            OP_INSPECTINPUTOUTPOINT => self.apply(opcode, 1, 2),
-            OP_INSPECTINASSETLOOKUP | OP_INSPECTOUTASSETLOOKUP => self.apply(opcode, 3, 2),
-            OP_FINDASSETGROUPBYASSETID => self.apply(opcode, 2, 2),
-            OP_INSPECTINASSETAT | OP_INSPECTOUTASSETAT => self.apply(opcode, 2, 3),
-            OP_INSPECTASSETGROUPCTRL => self.apply(opcode, 1, 3),
-            OP_INSPECTASSETGROUPASSETID => self.apply(opcode, 1, 2),
-            OP_INSPECTPACKET | OP_INSPECTINTENTMESSAGE => self.apply(opcode, 1, 2),
-            OP_INSPECTINPUTPACKET => self.apply(opcode, 2, 2),
             OP_TUNNEL => {
                 // Fixed exception counts are emitted immediately before the opcode.
                 let inputs = self
@@ -449,14 +359,12 @@ impl Generator {
                     .ok_or("invalid tunnel exception count")?;
                 self.apply(opcode, inputs, 1)
             }
-            OP_SIZE => self.apply(opcode, 1, 2),
-            OP_ECADD => self.apply(opcode, 5, 2),
-            OP_ECMUL => self.apply(opcode, 4, 2),
-            OP_ECMULSCALARVERIFY | OP_TWEAKVERIFY => self.apply(opcode, 3, 0),
-            OP_INSPECTASSETGROUP => self.apply(opcode, 3, 3),
-            _ => Err(format!(
-                "internal compiler error: unknown expression opcode {opcode}"
-            )),
+            _ => {
+                let (inputs, outputs) = crate::opcodes::stack_effect(opcode).ok_or_else(|| {
+                    format!("internal compiler error: unknown expression opcode {opcode}")
+                })?;
+                self.apply(opcode, inputs, outputs)
+            }
         }
     }
 
