@@ -958,15 +958,13 @@ contract Demo() {
             let issues = validate_output(&output);
             assert!(
                 has_errors(&issues),
-                "leaked placeholder {} must be an output error",
-                leaked
+                "leaked placeholder {leaked} must be an output error"
             );
             assert!(
                 issues
                     .iter()
                     .any(|i| i.message.contains("signature in asm")),
-                "expected sig-leak message for {}",
-                leaked
+                "expected sig-leak message for {leaked}"
             );
         }
     }

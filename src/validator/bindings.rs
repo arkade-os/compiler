@@ -112,8 +112,7 @@ fn validate_binding_statements(
                             .is_some_and(|ty| matches!(ArkType::parse(ty), ArkType::Struct(_)))
                         {
                             issues.push(ValidationIssue::error(format!(
-                                "function '{}': struct literal needs a declared struct type",
-                                function_name
+                                "function '{function_name}': struct literal needs a declared struct type"
                             )));
                         }
                         validate_value_expression(value, function_name, scopes, issues);
@@ -158,8 +157,7 @@ fn validate_binding_statements(
                         .is_none()
                 {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': array literal needs a declared array type, as in 'int[2] {} = …'",
-                        function_name, name
+                        "function '{function_name}': array literal needs a declared array type, as in 'int[2] {name} = …'"
                     )));
                 }
                 if let ArkType::Struct(struct_type) = &binding_type {
@@ -175,8 +173,7 @@ fn validate_binding_statements(
                         )
                     {
                         issues.push(ValidationIssue::error(format!(
-                            "function '{}': struct binding '{}' must be initialized with a matching struct value",
-                            function_name, name,
+                            "function '{function_name}': struct binding '{name}' must be initialized with a matching struct value",
                         )));
                     }
                 }
@@ -226,16 +223,14 @@ fn validate_binding_statements(
                     }
                     AssignmentTarget::Binding(name) => match find_binding(scopes, name) {
                         None => issues.push(ValidationIssue::error(format!(
-                            "function '{}': assignment to undeclared variable '{}'",
-                            function_name, name
+                            "function '{function_name}': assignment to undeclared variable '{name}'"
                         ))),
                         Some(binding) if binding.source == BindingSource::Constructor => {
                             // The shadowing walk owns the constructor-mutation diagnostic.
                         }
                         Some(binding) if binding.source == BindingSource::Loop => {
                             issues.push(ValidationIssue::error(format!(
-                                "function '{}': cannot assign to compile-time loop variable '{}'",
-                                function_name, name
+                                "function '{function_name}': cannot assign to compile-time loop variable '{name}'"
                             )));
                         }
                         Some(binding)
@@ -259,8 +254,7 @@ fn validate_binding_statements(
                         {
                             if source == BindingSource::Loop {
                                 issues.push(ValidationIssue::error(format!(
-                                    "function '{}': cannot assign to compile-time loop variable '{}'",
-                                    function_name, array
+                                    "function '{function_name}': cannot assign to compile-time loop variable '{array}'"
                                 )));
                             } else if inferred != ArkType::Unknown
                                 && element_type != ArkType::Unknown
@@ -328,8 +322,7 @@ fn validate_binding_statements(
                             }
                             None => {
                                 issues.push(ValidationIssue::error(format!(
-                                    "function '{}': loop iterable '{}' is undefined",
-                                    function_name, name
+                                    "function '{function_name}': loop iterable '{name}' is undefined"
                                 )));
                                 ArkType::Unknown
                             }
@@ -337,10 +330,9 @@ fn validate_binding_statements(
                     }
                     ExprKind::Property(property) if property.trim() == "tx.assetGroups" => {
                         issues.push(ValidationIssue::error(format!(
-                            "function '{}': cannot iterate 'tx.assetGroups'; the group count is \
+                            "function '{function_name}': cannot iterate 'tx.assetGroups'; the group count is \
                              not known at compile time. Iterate a declared array of group \
-                             indices instead",
-                            function_name
+                             indices instead"
                         )));
                         ArkType::Unknown
                     }
@@ -366,8 +358,7 @@ fn validate_binding_statements(
                     }
                     _ => {
                         issues.push(ValidationIssue::error(format!(
-                            "function '{}': unsupported loop iterable",
-                            function_name
+                            "function '{function_name}': unsupported loop iterable"
                         )));
                         ArkType::Unknown
                     }
@@ -394,8 +385,7 @@ fn validate_binding_statements(
                 if !matches!(&count.kind, ExprKind::Literal(value) if value.parse::<usize>().is_ok())
                 {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': loop count must be a non-negative integer compile-time constant",
-                        function_name
+                        "function '{function_name}': loop count must be a non-negative integer compile-time constant"
                     )));
                 }
                 scopes.push(HashMap::new());
@@ -417,8 +407,7 @@ pub(super) fn validate_named_binding(
 ) {
     match find_binding(scopes, name) {
         None => issues.push(ValidationIssue::error(format!(
-            "function '{}': {} '{}' is undefined",
-            function_name, label, name
+            "function '{function_name}': {label} '{name}' is undefined"
         ))),
         Some(binding)
             if expected.as_ref().is_some_and(|expected| {

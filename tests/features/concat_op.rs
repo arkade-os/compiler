@@ -26,24 +26,20 @@ fn test_plus_on_bytes32_emits_op_cat() {
 
     assert!(
         asm.contains(OP_CAT),
-        "Expected OP_CAT for bytes32 + int + int; asm:\n{}",
-        asm
+        "Expected OP_CAT for bytes32 + int + int; asm:\n{asm}"
     );
     assert!(
         asm.contains(OP_SHA256),
-        "Expected OP_SHA256 for sha256(...) call; asm:\n{}",
-        asm
+        "Expected OP_SHA256 for sha256(...) call; asm:\n{asm}"
     );
     assert_eq!(
         asm.matches(OP_NUM2BIN).count(),
         2,
-        "Expected exactly the two num2bin conversions the contract asks for; asm:\n{}",
-        asm
+        "Expected exactly the two num2bin conversions the contract asks for; asm:\n{asm}"
     );
     assert!(
         !asm.contains(OP_ADD),
-        "OP_ADD should not appear — bytes32 + int must route to OP_CAT, not arithmetic; asm:\n{}",
-        asm
+        "OP_ADD should not appear — bytes32 + int must route to OP_CAT, not arithmetic; asm:\n{asm}"
     );
 }
 
@@ -61,13 +57,11 @@ contract IntMath(int a, int b) {
     let asm = crate::common::arkade_asm(&out, "check");
     assert!(
         asm.contains(OP_ADD),
-        "int + int should use OP_ADD; asm:\n{}",
-        asm
+        "int + int should use OP_ADD; asm:\n{asm}"
     );
     assert!(
         !asm.contains(OP_CAT),
-        "int + int must NOT route to OP_CAT; asm:\n{}",
-        asm
+        "int + int must NOT route to OP_CAT; asm:\n{asm}"
     );
 }
 

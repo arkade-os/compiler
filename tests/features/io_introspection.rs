@@ -28,8 +28,7 @@ fn test_input_value() {
     let asm_str = crate::common::arkade_asm(&output, "checkInputValue");
     assert!(
         asm_str.contains(OP_INSPECTINPUTVALUE),
-        "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTINPUTVALUE} in ASM: {asm_str}"
     );
 }
 
@@ -55,8 +54,7 @@ fn test_input_script_pubkey() {
     let asm_str = crate::common::arkade_asm(&output, "checkInputScript");
     assert!(
         asm_str.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
-        "Expected {OP_INSPECTINPUTSCRIPTPUBKEY} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTINPUTSCRIPTPUBKEY} in ASM: {asm_str}"
     );
 }
 
@@ -82,8 +80,7 @@ fn test_input_sequence() {
     let asm_str = crate::common::arkade_asm(&output, "checkSequence");
     assert!(
         asm_str.contains(OP_INSPECTINPUTSEQUENCE),
-        "Expected {OP_INSPECTINPUTSEQUENCE} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTINPUTSEQUENCE} in ASM: {asm_str}"
     );
 }
 
@@ -160,8 +157,7 @@ fn test_output_value() {
     let asm_str = crate::common::arkade_asm(&output, "checkOutputValue");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),
-        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {asm_str}"
     );
 }
 
@@ -187,8 +183,7 @@ fn test_output_script_pubkey() {
     let asm_str = crate::common::arkade_asm(&output, "checkOutputScript");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
-        "Expected {OP_INSPECTOUTPUTSCRIPTPUBKEY} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTPUTSCRIPTPUBKEY} in ASM: {asm_str}"
     );
 }
 
@@ -223,8 +218,7 @@ fn test_variable_index_input() {
     );
     assert!(
         asm_str.contains(OP_INSPECTINPUTVALUE),
-        "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTINPUTVALUE} in ASM: {asm_str}"
     );
 }
 
@@ -258,8 +252,7 @@ fn test_variable_index_output() {
     );
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),
-        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {asm_str}"
     );
 }
 
@@ -286,13 +279,11 @@ fn test_input_output_value_comparison() {
     let asm_str = crate::common::arkade_asm(&output, "checkValues");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),
-        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_INSPECTINPUTVALUE),
-        "Expected {OP_INSPECTINPUTVALUE} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTINPUTVALUE} in ASM: {asm_str}"
     );
 }
 

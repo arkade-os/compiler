@@ -144,8 +144,7 @@ fn validate_asset_id(
         match value {
             Ok(v) if (0..=65535).contains(&v) => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx {} is out of range 0..65535",
-                fname, v
+                "function '{fname}': asset id gidx {v} is out of range 0..65535"
             ))),
             Err(error) => issues.push(ValidationIssue::error(format!(
                 "function '{}': asset id gidx '{}': {}",

@@ -103,8 +103,7 @@ fn test_threshold_oracle_checksig_from_stack_unrolled() {
 
     assert_eq!(
         checksig_count, 3,
-        "Expected 3 {OP_CHECKSIGFROMSTACK} calls (one per oracle). Got: {}. ASM: {:?}",
-        checksig_count, tokens
+        "Expected 3 {OP_CHECKSIGFROMSTACK} calls (one per oracle). Got: {checksig_count}. ASM: {tokens:?}"
     );
 }
 
@@ -117,23 +116,20 @@ fn test_threshold_oracle_array_indexing_in_loop() {
     // When loop unrolls, oracles[i] should become <oracles.0>, <oracles.1>, <oracles.2>
     assert!(
         asm_str.contains("<oracles.0>"),
-        "Missing <oracles.0> in assembly (from oracles[0]). ASM: {}",
-        asm_str
+        "Missing <oracles.0> in assembly (from oracles[0]). ASM: {asm_str}"
     );
     assert!(
         asm_str.contains("<oracles.1>"),
-        "Missing <oracles.1> in assembly (from oracles[1]). ASM: {}",
-        asm_str
+        "Missing <oracles.1> in assembly (from oracles[1]). ASM: {asm_str}"
     );
     assert!(
         asm_str.contains("<oracles.2>"),
-        "Missing <oracles.2> in assembly (from oracles[2]). ASM: {}",
-        asm_str
+        "Missing <oracles.2> in assembly (from oracles[2]). ASM: {asm_str}"
     );
 
     // Function inputs are read from their witness stack positions.
-    assert!(!asm_str.contains("<oracleSigs_"), "ASM: {}", asm_str);
-    assert!(asm_str.contains("OP_PICK"), "ASM: {}", asm_str);
+    assert!(!asm_str.contains("<oracleSigs_"), "ASM: {asm_str}");
+    assert!(asm_str.contains("OP_PICK"), "ASM: {asm_str}");
 }
 
 #[test]
@@ -145,7 +141,6 @@ fn test_threshold_oracle_quorum_uses_csn_comparison() {
     // The quorum check (valid >= threshold) should use OP_GREATERTHANOREQUAL
     assert!(
         asm_str.contains(OP_GREATERTHANOREQUAL),
-        "Missing {OP_GREATERTHANOREQUAL} for quorum check. ASM: {}",
-        asm_str
+        "Missing {OP_GREATERTHANOREQUAL} for quorum check. ASM: {asm_str}"
     );
 }

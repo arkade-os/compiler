@@ -177,8 +177,7 @@ fn test_price_beacon_update_enforces_timestamp_monotonicity() {
 
     assert!(
         lookup_count >= 1,
-        "Expected at least 1 {OP_INSPECTINASSETLOOKUP} call in update (timestamp monotonicity), found {}",
-        lookup_count
+        "Expected at least 1 {OP_INSPECTINASSETLOOKUP} call in update (timestamp monotonicity), found {lookup_count}"
     );
 }
 
@@ -196,8 +195,7 @@ fn test_price_beacon_passthrough_preserves_both_assets() {
 
     assert!(
         in_lookup_count >= 2,
-        "Expected at least 2 {OP_INSPECTINASSETLOOKUP} in passthrough (price + timestamp), found {}",
-        in_lookup_count
+        "Expected at least 2 {OP_INSPECTINASSETLOOKUP} in passthrough (price + timestamp), found {in_lookup_count}"
     );
 
     // and verifies both assets survive on the output
@@ -208,7 +206,6 @@ fn test_price_beacon_passthrough_preserves_both_assets() {
 
     assert!(
         out_lookup_count >= 2,
-        "Expected at least 2 OP_INSPECTOUTASSETLOOKUP in passthrough, found {}",
-        out_lookup_count
+        "Expected at least 2 OP_INSPECTOUTASSETLOOKUP in passthrough, found {out_lookup_count}"
     );
 }

@@ -68,8 +68,7 @@ contract Broken(pubkey owner) {
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.to_lowercase().contains("parse") || msg.to_lowercase().contains("error"),
-        "error message should describe a parse failure; got: {}",
-        msg
+        "error message should describe a parse failure; got: {msg}"
     );
 }
 
@@ -177,8 +176,7 @@ contract DupFuncs(pubkey owner) {
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("spend") || msg.to_lowercase().contains("duplicate"),
-        "error must reference the duplicate function name; got: {}",
-        msg
+        "error must reference the duplicate function name; got: {msg}"
     );
 }
 
@@ -261,8 +259,7 @@ contract DupLeaves(pubkey owner) {
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("spend") || msg.to_lowercase().contains("duplicate"),
-        "error must reference the duplicate tapscript name; got: {}",
-        msg
+        "error must reference the duplicate tapscript name; got: {msg}"
     );
 }
 
@@ -297,8 +294,7 @@ contract Empty(pubkey owner) {
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("function") || msg.contains("Function") || msg.contains("tapscript"),
-        "error must mention the missing function; got: {}",
-        msg
+        "error must mention the missing function; got: {msg}"
     );
 }
 
@@ -372,17 +368,15 @@ fn all_validation_errors_have_non_empty_messages() {
     for source in bad_inputs {
         let preview: String = source.chars().take(60).collect();
         let result = compile(source);
-        assert!(result.is_err(), "expected error for source: {}", preview);
+        assert!(result.is_err(), "expected error for source: {preview}");
         let msg = result.unwrap_err().to_string();
         assert!(
             !msg.is_empty(),
-            "error message must be non-empty for source: {}",
-            preview
+            "error message must be non-empty for source: {preview}"
         );
         assert!(
             msg.len() > 5,
-            "error message is suspiciously short ('{}'); should describe the problem",
-            msg
+            "error message is suspiciously short ('{msg}'); should describe the problem"
         );
     }
 }

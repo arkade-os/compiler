@@ -111,22 +111,19 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
     let send_asm = arkade_asm(&result, "send");
     assert!(
         send_asm.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Missing OP_INSPECTOUTPUTSCRIPTPUBKEY in {:?}",
-        send_asm
+        "Missing OP_INSPECTOUTPUTSCRIPTPUBKEY in {send_asm:?}"
     );
 
     // Must contain the contract placeholder with the correct contract name and args
     assert!(
         send_asm.contains("CONTRACT:SingleSig") && send_asm.contains("<ownerPk>"),
-        "Missing CONTRACT:SingleSig(<ownerPk>,...) placeholder in {:?}",
-        send_asm
+        "Missing CONTRACT:SingleSig(<ownerPk>,...) placeholder in {send_asm:?}"
     );
 
     // The comparison operator must be present
     assert!(
         send_asm.contains("OP_EQUAL"),
-        "Missing OP_EQUAL in {:?}",
-        send_asm
+        "Missing OP_EQUAL in {send_asm:?}"
     );
 }
 
@@ -154,21 +151,18 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
 
     assert!(
         vtxo_op.contains("<sender>"),
-        "Missing <sender> in {}",
-        vtxo_op
+        "Missing <sender> in {vtxo_op}"
     );
     assert!(
         vtxo_op.contains("<receiver>"),
-        "Missing <receiver> in {}",
-        vtxo_op
+        "Missing <receiver> in {vtxo_op}"
     );
-    assert!(vtxo_op.contains("<hash>"), "Missing <hash> in {}", vtxo_op);
+    assert!(vtxo_op.contains("<hash>"), "Missing <hash> in {vtxo_op}");
     assert!(
         vtxo_op.contains("<refundTime>"),
-        "Missing <refundTime> in {}",
-        vtxo_op
+        "Missing <refundTime> in {vtxo_op}"
     );
-    assert!(vtxo_op.contains("<exit>"), "Missing <exit> in {}", vtxo_op);
+    assert!(vtxo_op.contains("<exit>"), "Missing <exit> in {vtxo_op}");
     let _ = forward_asm; // used implicitly above via arkade_asm_tokens
 }
 
@@ -195,19 +189,16 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
     let send_leaf = leaf_asm(&result, "send", "send");
     assert!(
         send_leaf.contains("OP_CHECKSIG") || send_leaf.contains("OP_CHECKSIGVERIFY"),
-        "Default leaf must use CHECKSIG guard, got {:?}",
-        send_leaf
+        "Default leaf must use CHECKSIG guard, got {send_leaf:?}"
     );
     // The leaf must NOT contain any introspection opcodes
     assert!(
         !send_leaf.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Default leaf must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
-        send_leaf
+        "Default leaf must NOT contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {send_leaf:?}"
     );
     assert!(
         !send_leaf.contains("CONTRACT:"),
-        "Default leaf must NOT contain contract placeholder, got {:?}",
-        send_leaf
+        "Default leaf must NOT contain contract placeholder, got {send_leaf:?}"
     );
     // Explicit CSV exits require a named tapscript leaf.
 }
@@ -320,8 +311,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     assert_eq!(
         vtxo_op, "<CONTRACT:SingleSig(<ownerPk>,<exit>)>",
-        "Unexpected placeholder format: {}",
-        vtxo_op
+        "Unexpected placeholder format: {vtxo_op}"
     );
 }
 
@@ -346,14 +336,12 @@ contract SpendChecker(pubkey ownerPk, int exit) {
     let check_asm = arkade_asm(&result, "check");
     assert!(
         check_asm.contains("OP_INSPECTINPUTSCRIPTPUBKEY"),
-        "Missing OP_INSPECTINPUTSCRIPTPUBKEY in {:?}",
-        check_asm
+        "Missing OP_INSPECTINPUTSCRIPTPUBKEY in {check_asm:?}"
     );
 
     assert!(
         check_asm.contains("CONTRACT:SingleSig"),
-        "Missing CONTRACT:SingleSig placeholder in {:?}",
-        check_asm
+        "Missing CONTRACT:SingleSig placeholder in {check_asm:?}"
     );
 }
 
@@ -379,8 +367,7 @@ contract ZeroArgUser(pubkey ownerPk) {
     // Zero-arg placeholder must use empty parens, not omit them.
     assert!(
         spend_asm.contains("<CONTRACT:RandomNum()>"),
-        "Expected <CONTRACT:RandomNum()> placeholder in {:?}",
-        spend_asm
+        "Expected <CONTRACT:RandomNum()> placeholder in {spend_asm:?}"
     );
 }
 
@@ -410,19 +397,16 @@ contract TimedForwarder(pubkey ownerPk) {
     // Variable arg is wrapped in angle brackets; literal is not.
     assert!(
         vtxo_op.contains("<ownerPk>"),
-        "Variable arg missing angle brackets in {}",
-        vtxo_op
+        "Variable arg missing angle brackets in {vtxo_op}"
     );
     assert!(
         vtxo_op.contains("144"),
-        "Literal arg 144 missing from {}",
-        vtxo_op
+        "Literal arg 144 missing from {vtxo_op}"
     );
     // Literal must not be wrapped in extra angle brackets.
     assert!(
         !vtxo_op.contains("<144>"),
-        "Literal 144 must not be wrapped in angle brackets in {}",
-        vtxo_op
+        "Literal 144 must not be wrapped in angle brackets in {vtxo_op}"
     );
 }
 
@@ -494,26 +478,22 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
     // Both placeholders must appear in the covenant ASM.
     assert!(
         split_asm.contains("CONTRACT:SingleSig") && split_asm.contains("<alicePk>"),
-        "Missing CONTRACT:SingleSig(<alicePk>,...) in {:?}",
-        split_asm
+        "Missing CONTRACT:SingleSig(<alicePk>,...) in {split_asm:?}"
     );
     assert!(
         split_asm.contains("CONTRACT:SingleSig") && split_asm.contains("<bobPk>"),
-        "Missing CONTRACT:SingleSig(<bobPk>,...) in {:?}",
-        split_asm
+        "Missing CONTRACT:SingleSig(<bobPk>,...) in {split_asm:?}"
     );
 
     // The synthesized default leaf has no introspection opcodes and no contract placeholders.
     let split_leaf = leaf_asm(&result, "split", "split");
     assert!(
         split_leaf.contains("OP_CHECKSIG") || split_leaf.contains("OP_CHECKSIGVERIFY"),
-        "Default leaf must use CHECKSIG guard, got {:?}",
-        split_leaf
+        "Default leaf must use CHECKSIG guard, got {split_leaf:?}"
     );
     assert!(
         !split_leaf.contains("CONTRACT:"),
-        "Default leaf must not contain contract placeholders, got {:?}",
-        split_leaf
+        "Default leaf must not contain contract placeholders, got {split_leaf:?}"
     );
 }
 
@@ -541,13 +521,11 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
     // Both checks present in covenant ASM.
     assert!(
         send_asm.contains("CONTRACT:SingleSig"),
-        "Covenant ASM missing contract placeholder in {:?}",
-        send_asm
+        "Covenant ASM missing contract placeholder in {send_asm:?}"
     );
     assert!(
         send_asm.contains("OP_CHECKSIG"),
-        "Covenant ASM missing OP_CHECKSIG in {:?}",
-        send_asm
+        "Covenant ASM missing OP_CHECKSIG in {send_asm:?}"
     );
 }
 
@@ -572,18 +550,15 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
     let send_leaf = leaf_asm(&result, "send", "send");
     assert!(
         send_leaf.contains("OP_CHECKSIG") || send_leaf.contains("OP_CHECKSIGVERIFY"),
-        "Default leaf must use CHECKSIG guard, got {:?}",
-        send_leaf
+        "Default leaf must use CHECKSIG guard, got {send_leaf:?}"
     );
     assert!(
         !send_leaf.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "Default leaf must not contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {:?}",
-        send_leaf
+        "Default leaf must not contain OP_INSPECTOUTPUTSCRIPTPUBKEY, got {send_leaf:?}"
     );
     assert!(
         !send_leaf.contains("CONTRACT:"),
-        "Default leaf must not contain contract placeholders, got {:?}",
-        send_leaf
+        "Default leaf must not contain contract placeholders, got {send_leaf:?}"
     );
     // Explicit CSV exits require a named tapscript leaf.
 }
@@ -615,41 +590,35 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
     let forward_asm = arkade_asm(&result, "forward");
     assert!(
         forward_asm.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "forward() covenant must have introspection, got {:?}",
-        forward_asm
+        "forward() covenant must have introspection, got {forward_asm:?}"
     );
 
     let forward_leaf = leaf_asm(&result, "forward", "forward");
     assert!(
         forward_leaf.contains("OP_CHECKSIG") || forward_leaf.contains("OP_CHECKSIGVERIFY"),
-        "forward() default leaf must use CHECKSIG guard, got {:?}",
-        forward_leaf
+        "forward() default leaf must use CHECKSIG guard, got {forward_leaf:?}"
     );
     assert!(
         !forward_leaf.contains("CONTRACT:"),
-        "forward() default leaf must not contain contract placeholders, got {:?}",
-        forward_leaf
+        "forward() default leaf must not contain contract placeholders, got {forward_leaf:?}"
     );
 
     // spend() covenant ASM: plain checkSig, no introspection
     let spend_asm = arkade_asm(&result, "spend");
     assert!(
         spend_asm.contains("OP_CHECKSIG"),
-        "spend() covenant must contain OP_CHECKSIG, got {:?}",
-        spend_asm
+        "spend() covenant must contain OP_CHECKSIG, got {spend_asm:?}"
     );
     assert!(
         !spend_asm.contains("CONTRACT:"),
-        "spend() covenant must not have contract placeholders, got {:?}",
-        spend_asm
+        "spend() covenant must not have contract placeholders, got {spend_asm:?}"
     );
 
     // spend() default leaf: server+emulator cosig guard
     let spend_leaf = leaf_asm(&result, "spend", "spend");
     assert!(
         spend_leaf.contains("OP_CHECKSIG"),
-        "spend() default leaf must contain OP_CHECKSIG, got {:?}",
-        spend_leaf
+        "spend() default leaf must contain OP_CHECKSIG, got {spend_leaf:?}"
     );
     // Default leaves do not carry CSV timelocks.
 }
@@ -675,21 +644,18 @@ contract SelfEnforcing(pubkey ownerPk, int exit) {
     let renew_asm = arkade_asm(&result, "renew");
     assert!(
         renew_asm.contains("CONTRACT:SingleSig"),
-        "Missing CONTRACT:SingleSig placeholder in {:?}",
-        renew_asm
+        "Missing CONTRACT:SingleSig placeholder in {renew_asm:?}"
     );
 
     // Default leaf: server+emulator cosig guard (no introspection opcodes).
     let renew_leaf = leaf_asm(&result, "renew", "renew");
     assert!(
         renew_leaf.contains("OP_CHECKSIG") || renew_leaf.contains("OP_CHECKSIGVERIFY"),
-        "Default leaf must use CHECKSIG guard, got {:?}",
-        renew_leaf
+        "Default leaf must use CHECKSIG guard, got {renew_leaf:?}"
     );
     assert!(
         !renew_leaf.contains("CONTRACT:"),
-        "Default leaf must not contain a contract placeholder, got {:?}",
-        renew_leaf
+        "Default leaf must not contain a contract placeholder, got {renew_leaf:?}"
     );
 }
 
@@ -714,7 +680,6 @@ contract SelfRef(pubkey ownerPk) {
     let renew_asm = arkade_asm(&result, "renew");
     assert!(
         renew_asm.contains("CONTRACT:SelfRef(<ownerPk>)"),
-        "Missing CONTRACT:SelfRef(<ownerPk>) in {:?}",
-        renew_asm
+        "Missing CONTRACT:SelfRef(<ownerPk>) in {renew_asm:?}"
     );
 }

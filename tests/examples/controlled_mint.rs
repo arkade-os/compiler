@@ -23,8 +23,7 @@ fn test_controlled_mint_contract() {
     // Asset IDs are authored as explicit (Txid, Gidx) param pairs.
     assert!(
         param_names.contains(&"tokenAssetIdTxid"),
-        "missing explicit tokenAssetIdTxid, got: {:?}",
-        param_names
+        "missing explicit tokenAssetIdTxid, got: {param_names:?}"
     );
     assert!(
         param_names.contains(&"tokenAssetIdGidx"),
@@ -32,8 +31,7 @@ fn test_controlled_mint_contract() {
     );
     assert!(
         param_names.contains(&"ctrlAssetIdTxid"),
-        "missing explicit ctrlAssetIdTxid, got: {:?}",
-        param_names
+        "missing explicit ctrlAssetIdTxid, got: {param_names:?}"
     );
     assert!(
         param_names.contains(&"ctrlAssetIdGidx"),
@@ -58,35 +56,30 @@ fn test_controlled_mint_contract() {
     // Should have asset group find opcode
     assert!(
         mint_asm.contains(OP_FINDASSETGROUPBYASSETID),
-        "missing {OP_FINDASSETGROUPBYASSETID} in mint: {}",
-        mint_asm
+        "missing {OP_FINDASSETGROUPBYASSETID} in mint: {mint_asm}"
     );
 
     // Should have group property opcodes for delta and control
     assert!(
         mint_asm.contains(OP_INSPECTASSETGROUPSUM) && mint_asm.contains(OP_SUB),
-        "missing group-sum subtraction for delta in mint: {}",
-        mint_asm
+        "missing group-sum subtraction for delta in mint: {mint_asm}"
     );
 
     assert!(
         mint_asm.contains(OP_INSPECTASSETGROUPCTRL),
-        "missing {OP_INSPECTASSETGROUPCTRL} in mint: {}",
-        mint_asm
+        "missing {OP_INSPECTASSETGROUPCTRL} in mint: {mint_asm}"
     );
 
     // Should have asset lookup for output check
     assert!(
         mint_asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "missing {OP_INSPECTOUTASSETLOOKUP} in mint: {}",
-        mint_asm
+        "missing {OP_INSPECTOUTASSETLOOKUP} in mint: {mint_asm}"
     );
 
     // Should have checksig
     assert!(
         mint_asm.contains(OP_CHECKSIG),
-        "missing checksig in mint: {}",
-        mint_asm
+        "missing checksig in mint: {mint_asm}"
     );
 
     // Verify burn function
@@ -95,18 +88,15 @@ fn test_controlled_mint_contract() {
     // Burn uses group sumInputs >= sumOutputs + amount
     assert!(
         burn_asm.contains(OP_FINDASSETGROUPBYASSETID),
-        "missing group find in burn: {}",
-        burn_asm
+        "missing group find in burn: {burn_asm}"
     );
     assert!(
         burn_asm.contains(OP_INSPECTASSETGROUPSUM),
-        "missing group sum in burn: {}",
-        burn_asm
+        "missing group sum in burn: {burn_asm}"
     );
     assert!(
         burn_asm.contains(OP_CHECKSIG),
-        "missing checksig in burn: {}",
-        burn_asm
+        "missing checksig in burn: {burn_asm}"
     );
 
     // Verify lockSupply function
@@ -115,21 +105,18 @@ fn test_controlled_mint_contract() {
     // lockSupply checks sumOutputs == 0
     assert!(
         lock_asm.contains(OP_FINDASSETGROUPBYASSETID),
-        "missing group find in lockSupply: {}",
-        lock_asm
+        "missing group find in lockSupply: {lock_asm}"
     );
     assert!(
         lock_asm.contains(OP_INSPECTASSETGROUPSUM),
-        "missing group sum in lockSupply: {}",
-        lock_asm
+        "missing group sum in lockSupply: {lock_asm}"
     );
 
     // Unilateral exit leaf (CSV-based, pure L1)
     let unilateral_asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_asm.contains("OP_CHECKSEQUENCEVERIFY"),
-        "unilateral leaf should have CSV: {}",
-        unilateral_asm
+        "unilateral leaf should have CSV: {unilateral_asm}"
     );
 }
 

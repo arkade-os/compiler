@@ -20,7 +20,7 @@ use arkade_compiler::opcodes::{
 };
 
 fn compile_first_function_asm(src: &str) -> Vec<String> {
-    let out = compile(src).unwrap_or_else(|e| panic!("compile: {:?}", e));
+    let out = compile(src).unwrap_or_else(|e| panic!("compile: {e:?}"));
     // The covenant (function body) carries the introspection logic; cooperative
     // signing lives in a synthesized tapleaf, not the covenant.
     out.functions
@@ -62,20 +62,18 @@ contract ActiveBytecode(bytes expected) {
 #[test]
 fn test_packet_inspect_emits_op_inspectpacket_with_presence_check() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract PacketDemo(int exit) {{
   function probe(int packetType) {{
     require(size(tx.packet(packetType)) > 0);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_INSPECTPACKET),
-        "expected OP_INSPECTPACKET; got {:?}",
-        asm
+        "expected OP_INSPECTPACKET; got {asm:?}"
     );
 
     // Presence is asserted via "OP_1 OP_EQUALVERIFY" after the opcode.
@@ -91,100 +89,90 @@ contract PacketDemo(int exit) {{
 #[test]
 fn test_input_packet_inspect_emits_op_inspectinputpacket() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract InputPacketDemo(int exit) {{
   function probe(int packetType, int i) {{
     require(size(tx.inputs[i].packet(packetType)) > 0);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_INSPECTINPUTPACKET),
-        "expected OP_INSPECTINPUTPACKET; got {:?}",
-        asm
+        "expected OP_INSPECTINPUTPACKET; got {asm:?}"
     );
 }
 
 #[test]
 fn test_substr_emits_op_substr() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract SubstrDemo(int exit) {{
   function probe(bytes data, int offset, int length) {{
     require(substr(data, offset, length) == data);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_SUBSTR),
-        "expected OP_SUBSTR; got {:?}",
-        asm
+        "expected OP_SUBSTR; got {asm:?}"
     );
 }
 
 #[test]
 fn test_cat_emits_op_cat() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract CatDemo(int exit) {{
   function probe(bytes a, bytes b) {{
     require(cat(a, b) == a);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_CAT),
-        "expected OP_CAT; got {:?}",
-        asm
+        "expected OP_CAT; got {asm:?}"
     );
 }
 
 #[test]
 fn test_bin2num_emits_op_bin2num() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract Bin2NumDemo(int exit) {{
   function probe(bytes data) {{
     require(bin2num(data) > 0);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_BIN2NUM),
-        "expected OP_BIN2NUM; got {:?}",
-        asm
+        "expected OP_BIN2NUM; got {asm:?}"
     );
 }
 
 #[test]
 fn test_num2bin_emits_op_num2bin() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract Num2BinDemo(int exit) {{
   function probe(int value, int size) {{
     require(num2bin(value, size) == 0x00);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_NUM2BIN),
-        "expected OP_NUM2BIN; got {:?}",
-        asm
+        "expected OP_NUM2BIN; got {asm:?}"
     );
 }
 
@@ -207,13 +195,12 @@ contract ReverseBytesDemo(bytes data) {
 #[test]
 fn test_size_emits_op_size_and_op_nip() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract SizeDemo(int exit) {{
   function probe(bytes data) {{
     require(size(data) > 0);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
@@ -231,40 +218,36 @@ contract SizeDemo(int exit) {{
 #[test]
 fn test_arkade_script_hash_emits_op_inspectinputarkadescripthash() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract MarkerDemo(bytes32 expectedHash, int exit) {{
   function consume() {{
     require(tx.inputs[1].arkadeScriptHash == expectedHash, "wrong closure");
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_INSPECTINPUTARKADESCRIPTHASH),
-        "expected OP_INSPECTINPUTARKADESCRIPTHASH; got {:?}",
-        asm
+        "expected OP_INSPECTINPUTARKADESCRIPTHASH; got {asm:?}"
     );
 }
 
 #[test]
 fn test_arkade_witness_hash_emits_op_inspectinputarkadewitnesshash() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract WitnessDemo(bytes32 expectedHash, int exit) {{
   function consume() {{
     require(tx.inputs[0].arkadeWitnessHash == expectedHash);
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_INSPECTINPUTARKADEWITNESSHASH),
-        "expected OP_INSPECTINPUTARKADEWITNESSHASH; got {:?}",
-        asm
+        "expected OP_INSPECTINPUTARKADEWITNESSHASH; got {asm:?}"
     );
 }
 
@@ -274,31 +257,27 @@ fn test_sha256_of_substr_emits_inline_opcodes_not_placeholder() {
     // its argument through the additive-expression parser so the inner substr
     // emits inline OP_SUBSTR + OP_SHA256 rather than a "<sha256(...)>" placeholder.
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract Sha256Substr(bytes32 expected, int exit) {{
   function probe(bytes data) {{
     require(sha256(substr(data, 0, 32)) == expected, "hash mismatch");
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_SUBSTR),
-        "expected inline OP_SUBSTR; got {:?}",
-        asm
+        "expected inline OP_SUBSTR; got {asm:?}"
     );
     assert!(
         asm.iter().any(|s| s == OP_SHA256),
-        "expected inline OP_SHA256; got {:?}",
-        asm
+        "expected inline OP_SHA256; got {asm:?}"
     );
     assert!(
         !asm.iter()
             .any(|s| s.contains("sha256(") || s.contains("substr(")),
-        "no source-text placeholder should leak into asm; got {:?}",
-        asm
+        "no source-text placeholder should leak into asm; got {asm:?}"
     );
 }
 
@@ -307,13 +286,12 @@ fn test_active_input_index_eq_literal_has_correct_operand_order() {
     // Regression: `this.activeInputIndex == N` must emit left, right, OP_EQUAL
     // (OP_PUSHCURRENTINPUTINDEX, then the literal, then OP_EQUAL).
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract IndexCheck(int exit) {{
   function probe() {{
     require(this.activeInputIndex == 0, "wrong input index");
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
@@ -324,33 +302,29 @@ contract IndexCheck(int exit) {{
     assert_eq!(
         asm[idx + 1],
         "0",
-        "literal must be pushed before OP_EQUAL: {:?}",
-        asm
+        "literal must be pushed before OP_EQUAL: {asm:?}"
     );
     assert_eq!(
         asm[idx + 2],
         OP_EQUAL,
-        "OP_EQUAL must follow operands: {:?}",
-        asm
+        "OP_EQUAL must follow operands: {asm:?}"
     );
 }
 
 #[test]
 fn test_tx_id_emits_op_txid() {
     let src = format!(
-        r#"{}
+        r#"{PROLOGUE}
 contract TxIdDemo(bytes32 expected, int exit) {{
   function probe() {{
     require(tx.id == expected, "txid mismatch");
   }}
-}}"#,
-        PROLOGUE
+}}"#
     );
 
     let asm = compile_first_function_asm(&src);
     assert!(
         asm.iter().any(|s| s == OP_TXID),
-        "expected OP_TXID; got {:?}",
-        asm
+        "expected OP_TXID; got {asm:?}"
     );
 }
