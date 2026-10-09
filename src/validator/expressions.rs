@@ -221,12 +221,15 @@ pub(super) fn validate_binding_expression(
                 for ((side, operand), actual) in
                     [("left", left), ("right", right)].iter().zip(&types)
                 {
-                    if matches!(actual, ArkType::Int | ArkType::Bool) {
+                    if *actual != ArkType::Unknown && !crate::types::is_bytes_like(actual) {
+                        let hint = if matches!(actual, ArkType::Int | ArkType::Bool) {
+                            "convert it explicitly with num2bin(value, width) — the compiler will not choose a width for you"
+                        } else {
+                            "both operands must be bytes-like"
+                        };
                         issues.push(
                             ValidationIssue::type_error(format!(
-                                "function '{function_name}': cannot concatenate bytes with the {side} `{}` operand of `+`; \
-                                 convert it explicitly with num2bin(value, width) — \
-                                 the compiler will not choose a width for you",
+                                "function '{function_name}': cannot concatenate bytes with the {side} `{}` operand of `+`; {hint}",
                                 actual.as_str()
                             ))
                             .at(operand.span),
