@@ -19,10 +19,14 @@ contract GroupRecords() {
         require(g.inputs[j].type == kind);
         require(g.inputs[j].index == index);
         require(g.outputs[0].index == 1);
+        require(g.outputs[0].type == 1);
         require(g.outputs[0].amount == amount);
     }
     function source(AssetGroup g, bytes32 txid) {
         require(g.inputs[0].txid == txid);
+    }
+    function guarded(AssetGroup g, bytes32 txid) {
+        require(g.inputs[0].type == 1 || g.inputs[0].txid == txid);
     }
 }`), 0600)
 	if err != nil {
@@ -65,6 +69,26 @@ contract GroupRecords() {
 			values := map[string][]byte{"g": scriptInt(t, tc.g), "txid": tc.txid[:]}
 			spend := spendingPSBTWithWitness(t, sourceDeployment, sourceInstance, 10_000, sourceInstance.pkScript,
 				covenantWitness(t, contract, sourceGroup, values), extension.Packet(packet))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+	guarded := covenantGroup(t, contract, "guarded")
+	guardedInstance := instantiateGroup(t, contract, "guarded", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	guardedDeployment := fundingTx(guardedInstance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name    string
+		g       int64
+		txid    chainhash.Hash
+		wantErr string
+	}{
+		{"guarded local input", 0, chainhash.Hash{}, ""},
+		{"guarded intent input", 1, chainhash.Hash{8}, ""},
+		{"guarded wrong txid", 1, chainhash.Hash{9}, "false stack entry"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"g": scriptInt(t, tc.g), "txid": tc.txid[:]}
+			spend := spendingPSBTWithWitness(t, guardedDeployment, guardedInstance, 10_000, guardedInstance.pkScript,
+				covenantWitness(t, contract, guarded, values), extension.Packet(packet))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}

@@ -158,6 +158,8 @@ pub(super) fn validate_binding_expression(
             function_name
         )));
     }
+    // An input's kind is only known at runtime, so `txid` on a local input fails the
+    // spend like `controlAssetId` without control; a type check before `||`/`&&` guards it.
     if matches!(
         &expression.kind,
         ExprKind::GroupIOAccess {

@@ -553,7 +553,13 @@ impl Generator {
                 } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
                 {
                     self.emit_multisig(value)?;
-                } else if matches!(&value.kind, ExprKind::GroupIOAccess { .. }) {
+                } else if matches!(
+                    &value.kind,
+                    ExprKind::GroupIOAccess {
+                        source: crate::models::GroupIOSource::Inputs,
+                        ..
+                    }
+                ) {
                     self.emit_group_input(value)?;
                 } else {
                     let ty = value.ty.as_str();

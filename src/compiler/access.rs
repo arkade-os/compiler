@@ -249,7 +249,8 @@ impl Generator {
         self.emit_expression(io_index)?;
         self.push_temporary(OP_0);
         self.apply(OP_INSPECTASSETGROUP, 3, 1)?;
-        // Only an intent input's txid is 32 bytes; the type below it is 1 or 2.
+        // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
+        // sequence takes back what it puts on the alt stack.
         const DROP_TXID: &[&str] = &[OP_SIZE, "32", OP_EQUAL, OP_IF, OP_DROP, OP_ENDIF];
         let restore: &[&str] = &[OP_DROP, OP_FROMALTSTACK];
         let ops = match property {
