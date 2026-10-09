@@ -570,3 +570,18 @@ fn expression_diagnostics_point_at_the_expression() {
         );
     }
 }
+
+#[test]
+fn check_reports_tapscript_leaf_errors() {
+    let source = "contract C(pubkey owner) { function exit(signature s) tapscript { require(checkSig(s, owner)); require(after(10)); } }";
+    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let errors: Vec<_> = arkade_compiler::check("main.ark", &files)
+        .into_iter()
+        .filter(|d| d.severity == arkade_compiler::Severity::Error)
+        .map(|d| d.message)
+        .collect();
+    assert_eq!(
+        errors,
+        ["tapscript `exit`: timelock must come before the multisig (out of order)"]
+    );
+}

@@ -841,6 +841,15 @@ pub(crate) fn prepare(
             })
             .collect());
     }
+    let leaf_errors: Vec<_> = contract
+        .tapscripts
+        .iter()
+        .filter_map(|ts| tapscript::check_tapscript(contract, ts).err())
+        .map(|message| Diagnostic::error(file, message).with_code("validation"))
+        .collect();
+    if !leaf_errors.is_empty() {
+        return Err(leaf_errors);
+    }
     let mut warnings = Vec::new();
 
     // Append any non-fatal validation warnings (e.g. renew=0)

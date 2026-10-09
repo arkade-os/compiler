@@ -652,6 +652,20 @@ fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElemen
 /// one group per pure-standalone leaf. Runs validation per leaf. `covenants`
 /// holds each function's emulator covenant (built by mod.rs to avoid a cycle);
 /// it is consumed as groups are assembled.
+/// Every check on one author-written leaf: closure shape, emulator binding, arkd
+/// rules and its spend group. Returns what emission needs from them.
+pub(crate) fn check_tapscript(
+    contract: &Contract,
+    ts: &NamedTapscript,
+) -> Result<(Closure, Binding, String), String> {
+    let closure = assemble_closure(ts)?;
+    validate_closure_shape(&closure, &ts.name)?;
+    let binding = resolve_binding(contract, ts)?;
+    validate_arkd_rules(contract, ts, &closure)?;
+    let group_key = shared_tweak_func(&ts.name, &closure.keys)?.unwrap_or_else(|| ts.name.clone());
+    Ok((closure, binding, group_key))
+}
+
 pub fn build_function_groups(
     contract: &Contract,
     mut covenants: std::collections::HashMap<String, ArkadeCovenant>,
@@ -662,13 +676,7 @@ pub fn build_function_groups(
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
 
     for ts in &contract.tapscripts {
-        let closure = assemble_closure(ts)?;
-        validate_closure_shape(&closure, &ts.name)?;
-        let binding = resolve_binding(contract, ts)?;
-        validate_arkd_rules(contract, ts, &closure)?;
-
-        let group_key =
-            shared_tweak_func(&ts.name, &closure.keys)?.unwrap_or_else(|| ts.name.clone());
+        let (closure, binding, group_key) = check_tapscript(contract, ts)?;
 
         let mut asm = emit_leaf_asm(&closure, &ts.name, &binding);
         resolve_constructor_field_placeholders(&mut asm, contract)?;
