@@ -17,6 +17,7 @@ use crate::models::{ExprKind, Expression};
 
 pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("tx.packet", &["int"]),
+    ("tx.intent", &["bytes"]),
     ("tx.inputs[].packet", &["int", "int"]),
     ("tx.inputs[]", &["int"]),
     ("tx.outputs[]", &["int"]),
@@ -48,6 +49,7 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
     Some(match &expr.kind {
         ExprKind::Builtin { builtin, args } => (builtin.name, args.iter().collect()),
         ExprKind::PacketInspect { packet_type } => ("tx.packet", vec![packet_type]),
+        ExprKind::IntentInspect { path, .. } => ("tx.intent", vec![path]),
         ExprKind::InputPacketInspect { index, packet_type } => {
             ("tx.inputs[].packet", vec![index, packet_type])
         }

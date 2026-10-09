@@ -10,10 +10,32 @@ use pest::iterators::Pair;
 pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();
     let presence_only = pair.as_rule() == Rule::intent_has;
-    let literal = pair.into_inner().next().ok_or("Missing intent path")?;
-    let path = parse_string_literal(literal.as_str())?;
-    if path.len() > 520
-        || !path
+    let operand = pair.into_inner().next().ok_or("Missing intent path")?;
+    let path = if operand.as_rule() == Rule::string_literal {
+        let text = parse_string_literal(operand.as_str())?;
+        if !is_intent_path(&text) {
+            return Err(format!("invalid intent message path '{text}'"));
+        }
+        Expression::new(
+            ExprKind::Literal(parse_named_operand(operand.clone())?),
+            operand.as_span().into(),
+        )
+    } else {
+        parse_general_expression(operand)?
+    };
+    Ok(Expression::new(
+        ExprKind::IntentInspect {
+            path: Box::new(path),
+            presence_only,
+        },
+        span,
+    ))
+}
+
+/// The VM's simple path syntax: dot-separated lowercase keys and array indexes.
+fn is_intent_path(path: &str) -> bool {
+    path.len() <= 520
+        && path
             .split('.')
             .all(|segment| match segment.as_bytes().first() {
                 Some(b'0'..=b'9') => {
@@ -27,16 +49,6 @@ pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, Strin
                     .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
                 _ => false,
             })
-    {
-        return Err(format!("invalid intent message path '{path}'"));
-    }
-    Ok(Expression::new(
-        ExprKind::IntentInspect {
-            path: parse_named_operand(literal)?,
-            presence_only,
-        },
-        span,
-    ))
 }
 
 pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
