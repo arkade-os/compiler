@@ -500,18 +500,6 @@ impl Generator {
                     .to_string(),
             );
         }
-        if matches!(
-            &expression.kind,
-            ExprKind::GroupIOAccess {
-                source: crate::models::GroupIOSource::Inputs,
-                ..
-            }
-        ) {
-            return Err(
-                "asset-group input inspection has a variable-width result and cannot be used as a value"
-                    .to_string(),
-            );
-        }
         self.emit_expression_items(expression, 1)
     }
 
@@ -565,6 +553,14 @@ impl Generator {
                 } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
                 {
                     self.emit_multisig(value)?;
+                } else if matches!(
+                    &value.kind,
+                    ExprKind::GroupIOAccess {
+                        source: crate::models::GroupIOSource::Inputs,
+                        ..
+                    }
+                ) {
+                    self.emit_group_input(value)?;
                 } else {
                     let ty = value.ty.as_str();
                     self.emit_access_value(value, &ty)?;

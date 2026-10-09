@@ -66,7 +66,12 @@ const inputProps = [
 ];
 const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'controlAssetId', 'metadataHash', 'assetId', 'isFresh']
     .map(name => prop(name, 'Asset group property'));
-const groupMembers = [...groupProps, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
+const groupRecords = [
+    S('inputs', 'Property', 'inputs[${1:j}]', 'Group input records'),
+    S('outputs', 'Property', 'outputs[${1:j}]', 'Group output records'),
+];
+const recordProps = [prop('amount', 'Record amount'), prop('type', 'Record type: 1 local, 2 intent'), prop('index', 'vout, vin, or the referenced intent output')];
+const groupMembers = [...groupProps, ...groupRecords, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
 
 const arkadeCompletions = [
     // Keywords
@@ -191,6 +196,8 @@ const arkadeMembers = {
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
     'tx.assetGroups[]': groupMembers,
+    'tx.assetGroups[].inputs[]': [...recordProps, prop('txid', 'Intent input source transaction')],
+    'tx.assetGroups[].outputs[]': recordProps,
     'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),

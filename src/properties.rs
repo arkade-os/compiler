@@ -93,10 +93,14 @@ properties!(
 );
 
 properties!(
-    /// `group.inputs[j].<property>`, `group.outputs[j].<property>`
+    /// `group.inputs[j].<property>`, `group.outputs[j].<property>`. `index` is an
+    /// output's vout, a local input's vin, or an intent input's referenced output;
+    /// `txid` is an intent input's source transaction.
     GroupIoProperty {
         Amount => ("amount", "int"),
         Type => ("type", "int"),
+        Index => ("index", "int"),
+        Txid => ("txid", "bytes32"),
     }
 );
 

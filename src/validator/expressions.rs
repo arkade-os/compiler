@@ -158,18 +158,18 @@ pub(super) fn validate_binding_expression(
             function_name
         )));
     }
-    if value_position
-        && matches!(
-            &expression.kind,
-            ExprKind::GroupIOAccess {
-                source: crate::models::GroupIOSource::Inputs,
-                ..
-            }
-        )
-    {
+    // An input's kind is only known at runtime, so `txid` on a local input fails the
+    // spend like `controlAssetId` without control; a type check before `||`/`&&` guards it.
+    if matches!(
+        &expression.kind,
+        ExprKind::GroupIOAccess {
+            source: crate::models::GroupIOSource::Outputs,
+            property: Some(crate::properties::GroupIoProperty::Txid),
+            ..
+        }
+    ) {
         issues.push(ValidationIssue::error(format!(
-            "function '{}': asset-group input inspection has a variable-width result and cannot be used as a value",
-            function_name
+            "function '{function_name}': asset group output records have no txid"
         )));
     }
 
