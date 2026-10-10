@@ -297,24 +297,22 @@ pub(crate) fn emit_contract_instance_asm(
     args: &[Expression],
     asm: &mut Vec<Op>,
 ) {
-    let args_str = args
+    let args = args
         .iter()
-        .map(|a| match &a.kind {
-            ExprKind::Name(path) => format!("<{}>", path.key()),
-            ExprKind::Literal(l) => l.clone(),
+        .map(|arg| match &arg.kind {
+            ExprKind::Name(path) => vec![Op::Param(path.key())],
+            ExprKind::Literal(literal) => vec![Op::Push(literal.clone())],
             _ => {
-                // For complex arg expressions, emit a nested representation
                 let mut nested = Vec::new();
-                emit_expression_asm(a, &mut nested);
-                nested.iter().map(Op::spell).collect::<Vec<_>>().join(" ")
+                emit_expression_asm(arg, &mut nested);
+                nested
             }
         })
-        .collect::<Vec<_>>()
-        .join(",");
-
-    asm.push(Op::Contract(format!(
-        "<CONTRACT:{contract_name}({args_str})>"
-    )));
+        .collect();
+    asm.push(Op::Contract {
+        name: contract_name.to_string(),
+        args,
+    });
 }
 
 /// Emit assembly for arithmetic or a short-circuit logical operation.

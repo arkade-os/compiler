@@ -80,7 +80,8 @@ struct Generator {
     max_depth: usize,
     scopes: Vec<(usize, types::Scope)>,
     deferred: std::collections::HashSet<String>,
-    constructor_array_expansions: Vec<(String, String)>,
+    /// Placeholders of constructor parameters that flatten to other leaves.
+    constructor_expansions: Vec<(String, Vec<String>)>,
     structs: Vec<crate::models::StructDefinition>,
     scope: types::Scope,
     constructor_scope: types::Scope,
@@ -127,20 +128,15 @@ impl Generator {
             .collect::<Vec<_>>();
 
         let mut constructor_bindings = Vec::new();
-        let mut constructor_array_expansions = Vec::new();
+        let mut constructor_expansions = Vec::new();
         for parameter in constructor_parameters {
-            let mut expanded_placeholders = Vec::new();
+            let mut placeholders = Vec::new();
             for_each_expanded_param(parameter, structs, |placeholder, binding_name, _| {
-                expanded_placeholders.push(format!("<{placeholder}>"));
+                placeholders.push(placeholder.clone());
                 constructor_bindings.push((placeholder, binding_name));
             })?;
-            if expanded_placeholders.len() != 1
-                || expanded_placeholders[0] != format!("<{}>", parameter.name)
-            {
-                constructor_array_expansions.push((
-                    format!("<{}>", parameter.name),
-                    expanded_placeholders.join(","),
-                ));
+            if placeholders != [parameter.name.as_str()] {
+                constructor_expansions.push((parameter.name.clone(), placeholders));
             }
         }
         let mut asm = Vec::new();
@@ -190,7 +186,7 @@ impl Generator {
             stack,
             scopes: Vec::new(),
             deferred: std::collections::HashSet::new(),
-            constructor_array_expansions,
+            constructor_expansions,
             structs: structs.to_vec(),
             scope,
             constructor_scope,
@@ -439,11 +435,27 @@ impl Generator {
             }
             Op::Read(path) => self.read_binding(&path),
             Op::ArrayElement(array) => self.select_indexed_value(&array),
-            Op::Contract(mut token) => {
-                for (array, elements) in &self.constructor_array_expansions {
-                    token = token.replace(array, elements);
-                }
-                self.push_temporary(Op::Contract(token));
+            Op::Contract { name, args } => {
+                let args = args
+                    .into_iter()
+                    .flat_map(|arg| {
+                        let expansion = match arg.as_slice() {
+                            [Op::Param(param)] => self
+                                .constructor_expansions
+                                .iter()
+                                .find(|(name, _)| name == param),
+                            _ => None,
+                        };
+                        match expansion {
+                            Some((_, placeholders)) => placeholders
+                                .iter()
+                                .map(|placeholder| vec![Op::Param(placeholder.clone())])
+                                .collect(),
+                            None => vec![arg],
+                        }
+                    })
+                    .collect();
+                self.push_temporary(Op::Contract { name, args });
                 Ok(())
             }
             Op::Value(_) => {

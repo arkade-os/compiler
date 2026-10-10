@@ -8,7 +8,7 @@ use crate::opcodes::Opcode;
 pub(crate) enum Op {
     /// An opcode; its stack effect comes from the opcode table.
     Opcode(Opcode),
-    /// A constant: a number, `0x` bytes, or a small-number opcode such as `OP_3`.
+    /// A constant: a number or `0x` bytes.
     Push(String),
     /// A binding's stack slot.
     Read(Path),
@@ -18,8 +18,9 @@ pub(crate) enum Op {
     ArrayElement(Path),
     /// A constructor argument's placeholder, filled in when the contract is instantiated.
     Param(String),
-    /// A child contract's witness program, resolved when it is instantiated.
-    Contract(String),
+    /// A child contract's witness program, resolved when it is instantiated; each
+    /// argument is spelled from its own instructions.
+    Contract { name: String, args: Vec<Vec<Op>> },
 }
 
 impl Op {
@@ -27,7 +28,15 @@ impl Op {
     pub(crate) fn spell(&self) -> String {
         match self {
             Op::Opcode(opcode) => opcode.name().to_string(),
-            Op::Push(value) | Op::Contract(value) => value.clone(),
+            Op::Push(value) => value.clone(),
+            Op::Contract { name, args } => {
+                let args = args
+                    .iter()
+                    .map(|arg| arg.iter().map(Op::spell).collect::<Vec<_>>().join(" "))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("<CONTRACT:{name}({args})>")
+            }
             Op::Read(path) => format!("<{path}>"),
             Op::Param(name) => format!("<{name}>"),
             Op::Value(index) => format!("<$call:{index}>"),
