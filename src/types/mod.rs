@@ -509,6 +509,8 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .unwrap_or(ArkType::Unknown),
 
         ExprKind::This(property) => ArkType::parse(property.value_type()),
+        // Extraction keeps the extracted value's type on the node.
+        ExprKind::Extracted(_) => expr.ty.clone(),
         ExprKind::TxIntrospection { property } => ArkType::parse(property.value_type()),
         ExprKind::InputIntrospection { property, .. } => ArkType::parse(property.value_type()),
         ExprKind::OutputIntrospection { property, .. } => ArkType::parse(property.value_type()),

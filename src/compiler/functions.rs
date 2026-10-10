@@ -19,8 +19,7 @@ pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expre
                 types::ArkType::Array(..) | types::ArkType::Struct(_)
             ))
     {
-        let mut replacement =
-            expression.with_kind(ExprKind::Variable(format!("$call:{}", values.len())));
+        let mut replacement = expression.with_kind(ExprKind::Extracted(values.len()));
         // The placeholder stands for the extracted value, so it keeps its type.
         replacement.ty = expression.ty.clone();
         values.push(std::mem::replace(expression, replacement));

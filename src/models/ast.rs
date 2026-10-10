@@ -351,6 +351,9 @@ pub enum ExprKind {
     Literal(String),
     /// Property access
     Property(String),
+    /// A value the covenant generator takes out of an expression to emit itself.
+    #[doc(hidden)]
+    Extracted(usize),
     /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
     IntentInspect {
         path: Box<Expression>,
@@ -555,6 +558,7 @@ macro_rules! expression_children {
                 | ExprKind::Literal(_)
                 | ExprKind::Property(_)
                 | ExprKind::This(_)
+                | ExprKind::Extracted(_)
                 | ExprKind::TxIntrospection { .. }
                 | ExprKind::AssetGroupsLength => vec![],
 

@@ -14,7 +14,7 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<Op>) {
 /// Push a two-field native struct with its first field deepest, as native opcodes expect.
 fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut Vec<Op>) {
     match &value.kind {
-        ExprKind::Variable(name) | ExprKind::Property(name) if !name.starts_with("$call:") => {
+        ExprKind::Variable(name) | ExprKind::Property(name) => {
             for (field, _) in fields {
                 asm.push(Op::Read(format!("{name}.{field}")));
             }
@@ -22,7 +22,7 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
         _ => {
             emit_expression_asm(value, asm);
             // Helpers return structs first-field-on-top.
-            if matches!(&value.kind, ExprKind::Variable(name) if name.starts_with("$call:")) {
+            if matches!(&value.kind, ExprKind::Extracted(_)) {
                 asm.push(Op::Opcode(OP_SWAP));
             }
         }
@@ -35,10 +35,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         ExprKind::Call { .. } => {
             unreachable!("private calls are extracted before raw expression emission")
         }
-        ExprKind::Variable(var) => asm.push(match var.strip_prefix("$call:") {
-            Some(index) => Op::Value(index.parse().expect("extracted value index")),
-            None => Op::Read(var.clone()),
-        }),
+        ExprKind::Variable(var) => asm.push(Op::Read(var.clone())),
+        ExprKind::Extracted(index) => asm.push(Op::Value(*index)),
         ExprKind::Literal(lit) => push_literal_asm(lit, asm),
         ExprKind::IntentInspect {
             path,
