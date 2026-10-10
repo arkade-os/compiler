@@ -594,9 +594,9 @@ fn parse_statement(
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
     Ok(match expr::parse_property_access(pair)? {
         Expression {
-            kind: ExprKind::Variable(name) | ExprKind::Property(name),
+            kind: ExprKind::Name(path),
             ..
-        } => AssignmentTarget::Binding(name),
+        } => AssignmentTarget::Binding(path.key()),
         Expression {
             kind: ExprKind::ArrayIndex { array, index },
             ..
@@ -873,7 +873,7 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Property(name), .. }, .. } if name == "x.field")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Name(path), .. }, .. } if path.key() == "x.field")
         );
         assert!(
             matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Call { name, args, .. }, .. }, .. } if name == "Helper.value" && args.is_empty())
@@ -968,7 +968,7 @@ mod tests {
         assert!(matches!(&value.kind, ExprKind::Literal(value) if value == "true"));
         assert!(matches!(&right.kind, ExprKind::Literal(value) if value == "false"));
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Unary { op: UnaryOperator::Not, value }, .. }, .. } if matches!(&value.kind, ExprKind::Variable(name) if name == "trueValue"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Unary { op: UnaryOperator::Not, value }, .. }, .. } if matches!(&value.kind, ExprKind::Name(path) if path.key() == "trueValue"))
         );
     }
 
@@ -997,7 +997,7 @@ contract C() {
             Statement::LetBinding { value: Expression { kind: ExprKind::Builtin { builtin, args }, .. }, .. }
                 if builtin.name == "substr"
                     && matches!(&args[0].kind, ExprKind::FieldAccess { field, .. } if field == "data")
-                    && matches!(&args[1].kind, ExprKind::Property(name) if name == "p.offset")
+                    && matches!(&args[1].kind, ExprKind::Name(path) if path.key() == "p.offset")
         ));
     }
 
@@ -1114,7 +1114,7 @@ contract Demo() {
             assert!(matches!(
                 &body[0].statement,
                 Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
-                    if builtin.name == "checkMultisig" && matches!(&args[2].kind, ExprKind::Variable(name) if name == "QUORUM")
+                    if builtin.name == "checkMultisig" && matches!(&args[2].kind, ExprKind::Name(path) if path.key() == "QUORUM")
             ));
         }
     }

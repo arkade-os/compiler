@@ -302,7 +302,7 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
     }
 
     // Default: treat as a property string
-    Ok(Expression::new(ExprKind::Property(text), span))
+    Ok(Expression::new(ExprKind::Name(Path::from_key(&text)), span))
 }
 
 /// An `AssetGroup` reference and the member accessed on it, if any.

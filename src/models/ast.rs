@@ -2,6 +2,56 @@
 
 use super::*;
 
+/// A binding and the struct fields read through it, as in `s.inner.x`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Path {
+    pub root: String,
+    pub fields: Vec<String>,
+}
+
+impl Path {
+    pub fn new(root: impl Into<String>) -> Self {
+        Self {
+            root: root.into(),
+            fields: Vec::new(),
+        }
+    }
+
+    /// The path a dotted scope key names; `Path::from_key(k).key() == k`.
+    pub fn from_key(key: &str) -> Self {
+        let mut parts = key.split('.').map(str::to_string);
+        Self {
+            root: parts.next().unwrap_or_default(),
+            fields: parts.collect(),
+        }
+    }
+
+    /// The scope key and binding name: the path spelled with dots.
+    pub fn key(&self) -> String {
+        std::iter::once(self.root.as_str())
+            .chain(self.fields.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
+    pub fn field(mut self, field: impl Into<String>) -> Self {
+        self.fields.push(field.into());
+        self
+    }
+
+    /// The path without its last field, and that field.
+    pub fn split_last(&self) -> Option<(Path, &str)> {
+        let (last, fields) = self.fields.split_last()?;
+        Some((
+            Path {
+                root: self.root.clone(),
+                fields: fields.to_vec(),
+            },
+            last,
+        ))
+    }
+}
+
 /// Contract AST
 #[derive(Debug, Clone)]
 pub struct Contract {
@@ -345,12 +395,10 @@ pub enum ExprKind {
         builtin: &'static crate::builtins::Builtin,
         args: Vec<Expression>,
     },
-    /// Variable reference
-    Variable(String),
+    /// A binding, or a field of one: `x`, `s.field`, `s.inner.x`.
+    Name(Path),
     /// Decimal integer, boolean, or 0x-prefixed byte data (including empty 0x).
     Literal(String),
-    /// Property access
-    Property(String),
     /// A value the covenant generator takes out of an expression to emit itself.
     #[doc(hidden)]
     Extracted(usize),
@@ -554,9 +602,8 @@ macro_rules! expression_children {
         pub(crate) fn $name(expr: $expr) -> Vec<$expr> {
             match $($borrow)* expr.kind {
                 // Leaf nodes: no nested expressions.
-                ExprKind::Variable(_)
+                ExprKind::Name(_)
                 | ExprKind::Literal(_)
-                | ExprKind::Property(_)
                 | ExprKind::This(_)
                 | ExprKind::Extracted(_)
                 | ExprKind::TxIntrospection { .. }
@@ -671,7 +718,7 @@ impl Expression {
 
     fn access_path(&self, index_text: &dyn Fn(&Self) -> String) -> Option<String> {
         match &self.kind {
-            ExprKind::Variable(name) | ExprKind::Property(name) => Some(name.clone()),
+            ExprKind::Name(path) => Some(path.key()),
             ExprKind::ArrayIndex { array, index } => {
                 Some(format!("{array}[{}]", index_text(index)))
             }

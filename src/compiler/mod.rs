@@ -1375,7 +1375,9 @@ fn generate_asm_from_statements_recursive(
                     _ => None,
                 };
                 let mut access = value.with_kind(match target {
-                    AssignmentTarget::Binding(name) => ExprKind::Variable(name.clone()),
+                    AssignmentTarget::Binding(name) => {
+                        ExprKind::Name(crate::models::Path::from_key(name))
+                    }
                     AssignmentTarget::ArrayIndex { array, index } => ExprKind::ArrayIndex {
                         array: array.clone(),
                         index: index.clone(),
@@ -1549,7 +1551,7 @@ mod symbolic_stack_tests {
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: "values".into(),
-                index: Box::new(ExprKind::Variable("i".into()).into()),
+                index: Box::new(ExprKind::Name(crate::models::Path::from_key("i")).into()),
             })
             .expect("indexed assignment");
         assert_eq!(
@@ -1595,7 +1597,7 @@ mod symbolic_stack_tests {
                 array: "values".to_string(),
                 index: Box::new(
                     ExprKind::BinaryOp {
-                        left: Box::new(ExprKind::Variable("i".to_string()).into()),
+                        left: Box::new(ExprKind::Name(crate::models::Path::from_key("i")).into()),
                         op: crate::operators::BinaryOperator::Add,
                         right: Box::new(ExprKind::Literal("1".to_string()).into()),
                     }

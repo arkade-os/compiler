@@ -196,7 +196,7 @@ impl Generator {
             let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
                 unreachable!()
             };
-            args[0] = keys.with_kind(ExprKind::Variable(name));
+            args[0] = keys.with_kind(ExprKind::Name(crate::models::Path::from_key(&name)));
             args[0].ty = keys.ty.clone();
             self.emit_multisig(&normalized)?;
             self.discard_call_frame(baseline, 1)?;
@@ -325,8 +325,8 @@ impl Generator {
                 }
                 let index = Box::new(points.with_kind(ExprKind::Literal(index.to_string())));
                 let element = points.with_kind(match &points.kind {
-                    ExprKind::Variable(array) | ExprKind::Property(array) => ExprKind::ArrayIndex {
-                        array: array.clone(),
+                    ExprKind::Name(path) => ExprKind::ArrayIndex {
+                        array: path.key(),
                         index,
                     },
                     _ => ExprKind::IndexAccess {

@@ -35,9 +35,10 @@ fn collect_expression<'a>(
                 collect_statements(&function.statements, names, functions, visited);
             }
         }
-        ExprKind::Variable(name)
-        | ExprKind::Property(name)
-        | ExprKind::ArrayIndex { array: name, .. } => collect_name(name, names),
+        ExprKind::Name(path) => {
+            names.insert(&path.root);
+        }
+        ExprKind::ArrayIndex { array: name, .. } => collect_name(name, names),
         _ => {}
     }
     for child in child_exprs(expression) {

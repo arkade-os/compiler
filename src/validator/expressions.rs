@@ -425,8 +425,8 @@ pub(super) fn validate_binding_expression(
                 "function '{function_name}': struct literals may only initialize typed struct declarations"
             )));
         }
-        ExprKind::Variable(name) => {
-            validate_named_binding(name, None, "binding", function_name, scopes, issues);
+        ExprKind::Name(path) if path.fields.is_empty() => {
+            validate_named_binding(&path.root, None, "binding", function_name, scopes, issues);
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
         ExprKind::FieldAccess { value, .. } => {
@@ -480,22 +480,19 @@ pub(super) fn validate_binding_expression(
         ExprKind::ArrayIndex { array, index } => {
             validate_array_index(array, array, index, function_name, scopes, issues);
         }
-        ExprKind::Property(name)
-            if name.ends_with(".length") && find_binding(scopes, name).is_none() =>
-        {
-            let array = name.strip_suffix(".length").expect("checked suffix");
-            validate_array_length(array, function_name, scopes, issues);
-        }
-        ExprKind::Property(name) => {
-            let root = name.split('.').next().unwrap_or(name);
-            if name.contains('.') && find_binding(scopes, root).is_some() {
-                validate_named_binding(name, None, "field", function_name, scopes, issues);
+        ExprKind::Name(path) => match path.split_last() {
+            Some((array, "length")) if find_binding(scopes, &path.key()).is_none() => {
+                validate_array_length(&array.key(), function_name, scopes, issues);
             }
-        }
+            _ if find_binding(scopes, &path.root).is_some() => {
+                validate_named_binding(&path.key(), None, "field", function_name, scopes, issues);
+            }
+            _ => {}
+        },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
                 match &argument.kind {
-                    ExprKind::Variable(name) => {
+                    ExprKind::Name(Path { root: name, fields }) if fields.is_empty() => {
                         if let Some(binding) = find_binding(scopes, name) {
                             if !matches!(binding.source, BindingSource::Constructor) {
                                 issues.push(ValidationIssue::error(format!(

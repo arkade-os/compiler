@@ -177,7 +177,7 @@ fn validate_expression(
 ) -> Result<&'static str, String> {
     match &expression.kind {
         ExprKind::Literal(text) => Ok(kind(text)),
-        ExprKind::Variable(name) | ExprKind::Property(name) => Ok(kind(&resolve(name)?)),
+        ExprKind::Name(path) => Ok(kind(&resolve(&path.key())?)),
         ExprKind::Unary { op, value } => {
             let expected = match op {
                 UnaryOperator::Invert => {
@@ -241,7 +241,7 @@ pub(crate) fn evaluate(
     let overflow = || "integer overflow in constant expression".to_string();
     match &expression.kind {
         ExprKind::Literal(text) => Ok(text.clone()),
-        ExprKind::Variable(name) | ExprKind::Property(name) => resolve(name),
+        ExprKind::Name(path) => resolve(&path.key()),
         ExprKind::Unary {
             op: UnaryOperator::Neg,
             value,
@@ -416,8 +416,8 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
 }
 
 fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
-    if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
-        if let Some(value) = values.get(name) {
+    if let ExprKind::Name(path) = &expression.kind {
+        if let Some(value) = values.get(&path.key()) {
             expression.kind = ExprKind::Literal(value.clone());
             return;
         }

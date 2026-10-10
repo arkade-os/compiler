@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Statement,
+    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
@@ -358,7 +358,7 @@ impl Typing<'_> {
 fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
     let resolved = match &expression.kind {
         // `g.delta`, `s.group.delta`
-        ExprKind::Property(path) => path.rsplit_once('.').and_then(|(base, property)| {
+        ExprKind::Name(path) => path.split_last().and_then(|(base, property)| {
             Some(ExprKind::GroupProperty {
                 group: Box::new(group_binding(base, expression, scope)?),
                 property: GroupProperty::from_name(property)?,
@@ -366,14 +366,16 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
         }),
         // `g.inputs[j]`
         ExprKind::ArrayIndex { array, index } => {
-            array.rsplit_once('.').and_then(|(base, source)| {
-                Some(ExprKind::GroupIOAccess {
-                    group: Box::new(group_binding(base, expression, scope)?),
-                    io_index: index.clone(),
-                    source: group_io_source(source)?,
-                    property: None,
+            Path::from_key(array)
+                .split_last()
+                .and_then(|(base, source)| {
+                    Some(ExprKind::GroupIOAccess {
+                        group: Box::new(group_binding(base, expression, scope)?),
+                        io_index: index.clone(),
+                        source: group_io_source(source)?,
+                        property: None,
+                    })
                 })
-            })
         }
         // `gs[i].inputs[j]`
         ExprKind::IndexAccess { value, index } => match &value.as_ref().kind {
@@ -420,13 +422,9 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
 
 /// The binding named by `path`, when a group member can apply to it; it takes
 /// the span of the access `at`, which has none narrower for the binding alone.
-fn group_binding(path: &str, at: &Expression, scope: &Scope) -> Option<Expression> {
-    (!matches!(scope.get(path), Some(ArkType::Struct(_)))).then(|| {
-        let mut binding = at.with_kind(if path.contains('.') {
-            ExprKind::Property(path.to_string())
-        } else {
-            ExprKind::Variable(path.to_string())
-        });
+fn group_binding(path: Path, at: &Expression, scope: &Scope) -> Option<Expression> {
+    (!matches!(scope.get(&path.key()), Some(ArkType::Struct(_)))).then(|| {
+        let mut binding = at.with_kind(ExprKind::Name(path));
         binding.ty = infer_type(&binding, scope);
         binding
     })
@@ -458,10 +456,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .as_deref()
             .map(ArkType::parse)
             .unwrap_or(ArkType::Unknown),
-        ExprKind::Variable(name) => scope
-            .get(name.as_str())
-            .cloned()
-            .unwrap_or(ArkType::Unknown),
         ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         ExprKind::Literal(value) if value.starts_with("0x") => {
             bytes_of_width(static_byte_width(expr))
@@ -479,7 +473,12 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::StructLiteral(_) => ArkType::Unknown,
         ExprKind::FieldAccess { .. } => expr
             .binding_path()
-            .map(|name| infer_type(&expr.with_kind(ExprKind::Property(name)), scope))
+            .map(|name| {
+                infer_type(
+                    &expr.with_kind(ExprKind::Name(Path::from_key(&name))),
+                    scope,
+                )
+            })
             .unwrap_or(ArkType::Unknown),
         ExprKind::IndexAccess { value, .. } => match &value.ty {
             ArkType::Array(element, _) => (**element).clone(),
@@ -489,24 +488,29 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,
         },
-        ExprKind::Property(property) => scope
-            .get(property.trim())
-            .cloned()
-            .or_else(|| {
-                let array = property.trim().strip_suffix(".length")?;
-                matches!(scope.get(array)?, ArkType::Array(..)).then_some(ArkType::Int)
-            })
-            .or_else(|| {
-                let (array, index) = property.strip_suffix(']')?.split_once('[')?;
-                if index.parse::<usize>().is_ok() {
-                    return None;
-                }
-                match scope.get(array)? {
-                    ArkType::Array(element, _) => Some((**element).clone()),
-                    _ => None,
-                }
-            })
-            .unwrap_or(ArkType::Unknown),
+        ExprKind::Name(path) => {
+            let property = path.key();
+            let property = property.trim();
+            scope
+                .get(property)
+                .cloned()
+                .or_else(|| {
+                    let (array, field) = path.split_last()?;
+                    (field == "length" && matches!(scope.get(&array.key())?, ArkType::Array(..)))
+                        .then_some(ArkType::Int)
+                })
+                .or_else(|| {
+                    let (array, index) = property.strip_suffix(']')?.split_once('[')?;
+                    if index.parse::<usize>().is_ok() {
+                        return None;
+                    }
+                    match scope.get(array)? {
+                        ArkType::Array(element, _) => Some((**element).clone()),
+                        _ => None,
+                    }
+                })
+                .unwrap_or(ArkType::Unknown)
+        }
 
         ExprKind::This(property) => ArkType::parse(property.value_type()),
         // Extraction keeps the extracted value's type on the node.

@@ -115,9 +115,10 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
         ExprKind::Literal(value) if expression.ty == ArkType::Int => {
             value.parse::<i128>().ok().map(|value| value.to_string())
         }
-        ExprKind::Property(name) if !scope.contains_key(name) => name
-            .strip_suffix(".length")
-            .and_then(|array| match scope.get(array) {
+        ExprKind::Name(path) if !scope.contains_key(&path.key()) => path
+            .split_last()
+            .filter(|&(_, field)| field == "length")
+            .and_then(|(array, _)| match scope.get(&array.key()) {
                 Some(ArkType::Array(_, length)) => Some(length.to_string()),
                 _ => None,
             }),

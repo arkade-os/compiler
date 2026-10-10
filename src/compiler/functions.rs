@@ -124,8 +124,8 @@ impl Generator {
         ) {
             return self.emit_access_value(expression, ty);
         }
-        if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
-            for leaf in self.value_leaves(name, ty)?.iter().rev() {
+        if let ExprKind::Name(path) = &expression.kind {
+            for leaf in self.value_leaves(&path.key(), ty)?.iter().rev() {
                 self.read_binding(&leaf.access_name)?;
             }
             return Ok(());
@@ -212,7 +212,9 @@ impl Generator {
                 && !assigns_parameter(&function.statements, &parameter.name)
             {
                 let source = match &argument.kind {
-                    ExprKind::Variable(name) => Some(Self::internal_binding_name(name)),
+                    ExprKind::Name(path) if path.fields.is_empty() => {
+                        Some(Self::internal_binding_name(&path.root))
+                    }
                     ExprKind::ArrayIndex { array, index } => match &index.as_ref().kind {
                         ExprKind::Literal(index) => {
                             Some(Self::internal_binding_name(&format!("{array}[{index}]")))

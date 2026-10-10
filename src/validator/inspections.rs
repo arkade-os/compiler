@@ -234,8 +234,8 @@ impl Walk {
     fn stable(&self, expression: &Expression) -> bool {
         match &expression.kind {
             ExprKind::Literal(_) | ExprKind::This(_) => true,
-            ExprKind::Variable(name) | ExprKind::Property(name) => {
-                !name.contains('[') && !self.assigned.contains(root(name))
+            ExprKind::Name(path) => {
+                !path.key().contains('[') && !self.assigned.contains(&path.root)
             }
             ExprKind::ArrayIndex { array, index } => {
                 !self.assigned.contains(root(array)) && self.stable(index)

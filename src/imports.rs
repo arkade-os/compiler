@@ -397,9 +397,16 @@ fn load(
                 } = &expression.kind
                 {
                     // Only a bare name can be a library; other groups stay asset groups.
-                    let ExprKind::Variable(group) = &group.as_ref().kind else {
+                    let ExprKind::Name(models::Path {
+                        root: group,
+                        fields,
+                    }) = &group.as_ref().kind
+                    else {
                         return Ok(());
                     };
+                    if !fields.is_empty() {
+                        return Ok(());
+                    }
                     if group == &contract.name || visible_contracts.contains_key(group) {
                         expression.kind = ExprKind::Call {
                             name: format!("{group}.controlIs"),
@@ -555,12 +562,10 @@ fn validate_scope(
                         return Err(format!("library function '{name}' is private"));
                     }
                 }
-                ExprKind::Property(name) => {
-                    if let Some((owner, _)) = name.split_once('.') {
-                        if contracts.contains_key(owner) {
-                            return Err(format!("unknown constant '{name}'"));
-                        }
-                    }
+                ExprKind::Name(path)
+                    if !path.fields.is_empty() && contracts.contains_key(&path.root) =>
+                {
+                    return Err(format!("unknown constant '{}'", path.key()));
                 }
                 ExprKind::ContractInstance {
                     contract_name,

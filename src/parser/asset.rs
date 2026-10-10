@@ -11,7 +11,7 @@ pub(crate) fn parse_asset_id_txid(pair: Pair<Rule>) -> Result<Expression, String
     match pair.as_rule() {
         Rule::identifier_property_access => parse_property_access(pair),
         _ => Ok(Expression::new(
-            ExprKind::Variable(pair.as_str().to_string()),
+            ExprKind::Name(Path::from_key(pair.as_str())),
             span,
         )),
     }

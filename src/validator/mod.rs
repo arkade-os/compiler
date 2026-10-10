@@ -22,7 +22,7 @@
 use crate::models::child_exprs;
 use crate::models::{
     AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
-    Requirement, Statement, TapItem,
+    Path, Requirement, Statement, TapItem,
 };
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::types::{build_scope_with_structs, ArkType, Scope};
@@ -793,8 +793,8 @@ contract Demo() {
                     ExprKind::Builtin {
                         builtin: crate::builtins::find("checkSig").unwrap(),
                         args: vec![
-                            ExprKind::Variable("ownerSig".to_string()).into(),
-                            ExprKind::Variable("owner".to_string()).into(),
+                            ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
+                            ExprKind::Name(crate::models::Path::from_key("owner")).into(),
                         ],
                     }
                     .into(),
@@ -825,13 +825,13 @@ contract Demo() {
         // "condition false" path with no require() → a trivially-passing spend.
         let mut contract = make_contract("BarePath");
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: ExprKind::Variable("flag".to_string()).into(),
+            condition: ExprKind::Name(crate::models::Path::from_key("flag")).into(),
             then_body: vec![located(Statement::Require(Requirement::Expression(
                 ExprKind::Builtin {
                     builtin: crate::builtins::find("checkSig").unwrap(),
                     args: vec![
-                        ExprKind::Variable("ownerSig".to_string()).into(),
-                        ExprKind::Variable("owner".to_string()).into(),
+                        ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
+                        ExprKind::Name(crate::models::Path::from_key("owner")).into(),
                     ],
                 }
                 .into(),
@@ -853,15 +853,15 @@ contract Demo() {
                 ExprKind::Builtin {
                     builtin: crate::builtins::find("checkSig").unwrap(),
                     args: vec![
-                        ExprKind::Variable("ownerSig".to_string()).into(),
-                        ExprKind::Variable("owner".to_string()).into(),
+                        ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
+                        ExprKind::Name(crate::models::Path::from_key("owner")).into(),
                     ],
                 }
                 .into(),
             )))
         };
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: ExprKind::Variable("flag".to_string()).into(),
+            condition: ExprKind::Name(crate::models::Path::from_key("flag")).into(),
             then_body: vec![req()],
             else_body: Some(vec![req()]),
         })];

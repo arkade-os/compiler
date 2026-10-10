@@ -14,9 +14,9 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<Op>) {
 /// Push a two-field native struct with its first field deepest, as native opcodes expect.
 fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut Vec<Op>) {
     match &value.kind {
-        ExprKind::Variable(name) | ExprKind::Property(name) => {
+        ExprKind::Name(path) => {
             for (field, _) in fields {
-                asm.push(Op::Read(format!("{name}.{field}")));
+                asm.push(Op::Read(format!("{}.{field}", path.key())));
             }
         }
         _ => {
@@ -35,7 +35,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         ExprKind::Call { .. } => {
             unreachable!("private calls are extracted before raw expression emission")
         }
-        ExprKind::Variable(var) => asm.push(Op::Read(var.clone())),
+        ExprKind::Name(path) => asm.push(Op::Read(path.key().trim().to_string())),
         ExprKind::Extracted(index) => asm.push(Op::Value(*index)),
         ExprKind::Literal(lit) => push_literal_asm(lit, asm),
         ExprKind::IntentInspect {
@@ -83,7 +83,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 asm.push(Op::ArrayElement(array.clone()));
             }
         }
-        ExprKind::Property(property) => asm.push(Op::Read(property.trim().to_string())),
         ExprKind::This(property) => asm.push(Op::Opcode(match property {
             ThisProperty::ActiveInputIndex => OP_PUSHCURRENTINPUTINDEX,
             ThisProperty::Expiry => OP_PUSHEXPIRY,
@@ -302,7 +301,7 @@ pub(crate) fn emit_contract_instance_asm(
     let args_str = args
         .iter()
         .map(|a| match &a.kind {
-            ExprKind::Variable(v) => format!("<{v}>"),
+            ExprKind::Name(path) => format!("<{}>", path.key()),
             ExprKind::Literal(l) => l.clone(),
             _ => {
                 // For complex arg expressions, emit a nested representation

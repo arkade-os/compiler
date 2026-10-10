@@ -419,9 +419,8 @@ fn validate_binding_statements(
                 body,
             } => {
                 let element_type = match &iterable.kind {
-                    ExprKind::Variable(name) | ExprKind::Property(name)
-                        if name.trim() != "tx.assetGroups" =>
-                    {
+                    ExprKind::Name(path) if path.key().trim() != "tx.assetGroups" => {
+                        let name = &path.key();
                         if find_binding(scopes, name).is_some_and(|binding| !binding.initialized) {
                             validate_named_binding(
                                 name,
@@ -454,7 +453,7 @@ fn validate_binding_statements(
                             }
                         }
                     }
-                    ExprKind::Property(property) if property.trim() == "tx.assetGroups" => {
+                    ExprKind::Name(_) => {
                         issues.push(ValidationIssue::error(format!(
                             "function '{function_name}': cannot iterate 'tx.assetGroups'; the group count is \
                              not known at compile time. Iterate a declared array of group \
