@@ -600,3 +600,24 @@ fn covenants_over_the_vm_stack_limit_do_not_compile() {
         "{error}"
     );
 }
+
+#[test]
+fn covenants_over_the_vm_script_size_do_not_compile() {
+    let source = |wide: usize| {
+        let requires: String = (0..1428)
+            .map(|i| {
+                format!(
+                    "require(x != {});",
+                    if i < wide { 100000 + i } else { 1000 + i }
+                )
+            })
+            .collect();
+        format!("contract C() {{ function spend(int x) {{ {requires} }} }}")
+    };
+    assert!(compile(&source(6)).is_ok());
+    let error = compile(&source(7)).expect_err("10001 bytes").to_string();
+    assert!(
+        error.contains("at least 10001 bytes, above the VM limit of 10000"),
+        "{error}"
+    );
+}

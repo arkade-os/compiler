@@ -59,6 +59,8 @@ enum StackItem {
 
 /// Data and alt stack items the VM allows at once (`txscript.MaxStackSize`).
 const MAX_STACK_ITEMS: usize = 1000;
+/// Bytes the VM allows in a script (`txscript.MaxScriptSize`).
+const MAX_SCRIPT_SIZE: usize = 10_000;
 
 fn integer_op(value: usize) -> Op {
     use crate::opcodes::Opcode::*;
@@ -1158,6 +1160,26 @@ fn covenant_for(
     let mut ops = generator.finish()?;
     if optimize {
         ops = optimization::optimize(ops);
+    }
+    let mut widths = std::collections::HashMap::new();
+    for parameter in &retained_parameters {
+        for leaf in crate::models::flatten_parameter(parameter, structs)? {
+            let width = match types::ArkType::parse(&leaf.leaf_type) {
+                types::ArkType::Signature => 64,
+                types::ArkType::Bytes32 | types::ArkType::Asset => 32,
+                types::ArkType::Bytes20 => 20,
+                _ => 0,
+            };
+            widths.insert(leaf.emitted_name, width);
+        }
+    }
+    let width = |name: &str| widths.get(name).copied().unwrap_or(0);
+    let size: usize = ops.iter().map(|op| op.min_size(&width)).sum();
+    if size > MAX_SCRIPT_SIZE {
+        return Err(format!(
+            "function '{}' assembles to at least {size} bytes, above the VM limit of {MAX_SCRIPT_SIZE}",
+            function.name
+        ));
     }
     let asm = ops.iter().map(Op::spell).collect();
     Ok(ArkadeCovenant { inputs, asm })
