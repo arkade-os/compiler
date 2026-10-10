@@ -34,6 +34,8 @@ pub(crate) mod constants;
 pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
 mod expr;
 mod functions;
+mod ir;
+pub(crate) use ir::Op;
 mod introspection;
 mod loops;
 mod optimization;
@@ -58,7 +60,6 @@ enum StackItem {
 
 // `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
-const INTERNAL_ARRAY_INDEX_PREFIX: &str = "$array-index:";
 
 fn integer_token(value: usize) -> String {
     if value <= 16 {
@@ -443,31 +444,30 @@ impl Generator {
         }
     }
 
-    fn lower_raw_token(&mut self, token: &str) -> Result<(), String> {
-        if let Some(array) = token.strip_prefix(INTERNAL_ARRAY_INDEX_PREFIX) {
-            return self.select_indexed_value(array);
-        }
-        if token.starts_with("<CONTRACT:") {
-            let mut token = token.to_string();
-            for (array, elements) in &self.constructor_array_expansions {
-                token = token.replace(array, elements);
-            }
-            self.push_temporary(token);
-            return Ok(());
-        }
-        if token.starts_with('<') && token.ends_with('>') {
-            let value = &token[1..token.len() - 1];
-            if value.parse::<i64>().is_ok() {
+    fn lower_op(&mut self, op: Op) -> Result<(), String> {
+        match op {
+            Op::Opcode(opcode) => self.lower_raw_opcode(opcode),
+            Op::Push(value) => {
                 self.push_temporary(value);
-                return Ok(());
+                Ok(())
             }
-            return self.read_binding(value);
+            Op::Read(key) if key.parse::<i64>().is_ok() => {
+                self.push_temporary(key);
+                Ok(())
+            }
+            Op::Read(key) => self.read_binding(&key),
+            Op::ArrayElement(array) => self.select_indexed_value(&array),
+            Op::Contract(mut token) => {
+                for (array, elements) in &self.constructor_array_expansions {
+                    token = token.replace(array, elements);
+                }
+                self.push_temporary(token);
+                Ok(())
+            }
+            Op::Value(_) => {
+                Err("internal compiler error: extracted value outside an expression".to_string())
+            }
         }
-        if token.starts_with("OP_") {
-            return self.lower_raw_opcode(token);
-        }
-        self.push_temporary(token);
-        Ok(())
     }
 
     fn emit_expression(&mut self, expression: &Expression) -> Result<(), String> {
@@ -508,49 +508,50 @@ impl Generator {
         // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
         let mut branches = Vec::new();
-        for token in raw {
+        for op in raw {
             self.preserve_bindings = preserved || !branches.is_empty();
-            if token == OP_IF {
-                self.apply(OP_IF, 1, 0)?;
-                branches.push(self.stack.clone());
-            } else if token == OP_ELSE || token == OP_ENDIF {
-                self.pop_temporaries(1, &token)?;
-                if branches.last() != Some(&self.stack) {
-                    return Err("logical branch must produce exactly one stack item".to_string());
+            match op {
+                Op::Opcode(OP_IF) => {
+                    self.apply(OP_IF, 1, 0)?;
+                    branches.push(self.stack.clone());
                 }
-                if token == OP_ENDIF {
-                    branches.pop();
-                    self.stack.push(StackItem::Temporary);
-                }
-                self.asm.push(token);
-            } else if let Some(index) = token
-                .strip_prefix("<$call:")
-                .and_then(|s| s.strip_suffix('>'))
-            {
-                let index = index.parse::<usize>().map_err(|_| "invalid call marker")?;
-                let value = values.get(index).ok_or("invalid call marker")?;
-                if matches!(&value.kind, ExprKind::Call { .. }) {
-                    self.emit_call(value)?;
-                } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
-                {
-                    self.emit_pairing(value)?;
-                } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
-                {
-                    self.emit_multisig(value)?;
-                } else if matches!(
-                    &value.kind,
-                    ExprKind::GroupIOAccess {
-                        source: crate::models::GroupIOSource::Inputs,
-                        ..
+                Op::Opcode(token @ (OP_ELSE | OP_ENDIF)) => {
+                    self.pop_temporaries(1, token)?;
+                    if branches.last() != Some(&self.stack) {
+                        return Err(
+                            "logical branch must produce exactly one stack item".to_string()
+                        );
                     }
-                ) {
-                    self.emit_group_input(value)?;
-                } else {
-                    let ty = value.ty.as_str();
-                    self.emit_access_value(value, &ty)?;
+                    if token == OP_ENDIF {
+                        branches.pop();
+                        self.stack.push(StackItem::Temporary);
+                    }
+                    self.asm.push(token.to_string());
                 }
-            } else {
-                self.lower_raw_token(&token)?;
+                Op::Value(index) => {
+                    let value = values.get(index).ok_or("invalid call marker")?;
+                    if matches!(&value.kind, ExprKind::Call { .. }) {
+                        self.emit_call(value)?;
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+                    {
+                        self.emit_pairing(value)?;
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
+                    {
+                        self.emit_multisig(value)?;
+                    } else if matches!(
+                        &value.kind,
+                        ExprKind::GroupIOAccess {
+                            source: crate::models::GroupIOSource::Inputs,
+                            ..
+                        }
+                    ) {
+                        self.emit_group_input(value)?;
+                    } else {
+                        let ty = value.ty.as_str();
+                        self.emit_access_value(value, &ty)?;
+                    }
+                }
+                op => self.lower_op(op)?,
             }
         }
         self.preserve_bindings = preserved;

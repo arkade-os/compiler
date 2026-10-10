@@ -12,14 +12,14 @@ pub(crate) fn emit_asset_lookup_operands(
     index: &Expression,
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     emit_expression_asm(index, asm);
     emit_expression_asm(asset_txid, asm); // -> <fooTxid>
     emit_expression_asm(asset_gidx, asm); // -> <fooGidx> or pushed literal
     match source {
-        AssetLookupSource::Input => asm.push(OP_INSPECTINASSETLOOKUP.to_string()),
-        AssetLookupSource::Output => asm.push(OP_INSPECTOUTASSETLOOKUP.to_string()),
+        AssetLookupSource::Input => asm.push(Op::Opcode(OP_INSPECTINASSETLOOKUP)),
+        AssetLookupSource::Output => asm.push(Op::Opcode(OP_INSPECTOUTASSETLOOKUP)),
     }
 }
 
@@ -30,10 +30,10 @@ pub(crate) fn emit_asset_lookup_asm(
     index: &Expression,
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
-    asm.push(OP_VERIFY.to_string()); // consume success flag, leave amount
+    asm.push(Op::Opcode(OP_VERIFY)); // consume success flag, leave amount
 }
 
 /// Emit `tx.{inputs,outputs}[i].assets.has(txid, gidx)`: boolean presence —
@@ -43,10 +43,10 @@ pub(crate) fn emit_asset_has_asm(
     index: &Expression,
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
-    asm.push(OP_NIP.to_string()); // drop amount, leave success flag (Bool)
+    asm.push(Op::Opcode(OP_NIP)); // drop amount, leave success flag (Bool)
 }
 
 /// Emit `tx.assetGroups.find(txid, gidx)`: assert existence (consume the success
@@ -54,12 +54,12 @@ pub(crate) fn emit_asset_has_asm(
 pub(crate) fn emit_group_find_asm(
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     emit_expression_asm(asset_txid, asm);
     emit_expression_asm(asset_gidx, asm);
-    asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
-    asm.push(OP_VERIFY.to_string()); // consume success flag, leave k; fail if absent
+    asm.push(Op::Opcode(OP_FINDASSETGROUPBYASSETID));
+    asm.push(Op::Opcode(OP_VERIFY)); // consume success flag, leave k; fail if absent
 }
 
 /// Emit `tx.assetGroups.has(txid, gidx)`: boolean presence — keep the success
@@ -67,12 +67,12 @@ pub(crate) fn emit_group_find_asm(
 pub(crate) fn emit_group_has_asm(
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     emit_expression_asm(asset_txid, asm);
     emit_expression_asm(asset_gidx, asm);
-    asm.push(OP_FINDASSETGROUPBYASSETID.to_string());
-    asm.push(OP_NIP.to_string()); // drop k, leave success flag (Bool)
+    asm.push(Op::Opcode(OP_FINDASSETGROUPBYASSETID));
+    asm.push(Op::Opcode(OP_NIP)); // drop k, leave success flag (Bool)
 }
 
 /// Emit `group.controlIs(txid, gidx)`: boolean equality over the complete
@@ -84,17 +84,17 @@ pub(crate) fn emit_group_control_is_asm(
     group: &Expression,
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     emit_expression_asm(group, asm);
-    asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
-    asm.push(OP_DROP.to_string()); // drop success flag -> [ctrl_txid, ctrl_gidx]
+    asm.push(Op::Opcode(OP_INSPECTASSETGROUPCTRL));
+    asm.push(Op::Opcode(OP_DROP)); // drop success flag -> [ctrl_txid, ctrl_gidx]
     emit_expression_asm(asset_gidx, asm);
-    asm.push(OP_EQUAL.to_string()); // ctrl_gidx == gidx -> [ctrl_txid, bool]
-    asm.push(OP_SWAP.to_string()); // -> [bool, ctrl_txid]
+    asm.push(Op::Opcode(OP_EQUAL)); // ctrl_gidx == gidx -> [ctrl_txid, bool]
+    asm.push(Op::Opcode(OP_SWAP)); // -> [bool, ctrl_txid]
     emit_expression_asm(asset_txid, asm);
-    asm.push(OP_EQUAL.to_string()); // ctrl_txid == txid -> [bool, bool]
-    asm.push(OP_BOOLAND.to_string()); // combine -> Bool
+    asm.push(Op::Opcode(OP_EQUAL)); // ctrl_txid == txid -> [bool, bool]
+    asm.push(Op::Opcode(OP_BOOLAND)); // combine -> Bool
 }
 
 /// Emit assembly for asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -103,7 +103,7 @@ pub(crate) fn emit_group_control_is_asm(
 pub(crate) fn emit_asset_count_asm(
     source: &AssetLookupSource,
     index: &Expression,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     // Push the index
     emit_expression_asm(index, asm);
@@ -111,10 +111,10 @@ pub(crate) fn emit_asset_count_asm(
     // Emit the appropriate count opcode
     match source {
         AssetLookupSource::Input => {
-            asm.push(OP_INSPECTINASSETCOUNT.to_string());
+            asm.push(Op::Opcode(OP_INSPECTINASSETCOUNT));
         }
         AssetLookupSource::Output => {
-            asm.push(OP_INSPECTOUTASSETCOUNT.to_string());
+            asm.push(Op::Opcode(OP_INSPECTOUTASSETCOUNT));
         }
     }
 }
@@ -128,7 +128,7 @@ pub(crate) fn emit_asset_at_asm(
     io_index: &Expression,
     asset_index: &Expression,
     property: Option<AssetProperty>,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     // Push io_index
     emit_expression_asm(io_index, asm);
@@ -139,10 +139,10 @@ pub(crate) fn emit_asset_at_asm(
     // Emit the appropriate opcode
     match source {
         AssetLookupSource::Input => {
-            asm.push(OP_INSPECTINASSETAT.to_string());
+            asm.push(Op::Opcode(OP_INSPECTINASSETAT));
         }
         AssetLookupSource::Output => {
-            asm.push(OP_INSPECTOUTASSETAT.to_string());
+            asm.push(Op::Opcode(OP_INSPECTOUTASSETAT));
         }
     }
 
@@ -152,11 +152,11 @@ pub(crate) fn emit_asset_at_asm(
         None => {}
         Some(AssetProperty::AssetId) => {
             // Drop the amount, keep the canonical Asset ID (asset_txid, asset_gidx).
-            asm.push(OP_DROP.to_string());
+            asm.push(Op::Opcode(OP_DROP));
         }
         Some(AssetProperty::Amount) => {
-            asm.push(OP_NIP.to_string()); // Remove gidx_u16
-            asm.push(OP_NIP.to_string()); // Remove txid32
+            asm.push(Op::Opcode(OP_NIP)); // Remove gidx_u16
+            asm.push(Op::Opcode(OP_NIP)); // Remove txid32
         }
     }
 }
@@ -165,7 +165,7 @@ pub(crate) fn emit_asset_at_asm(
 pub(crate) fn emit_group_property_asm(
     group: &Expression,
     property: GroupProperty,
-    asm: &mut Vec<String>,
+    asm: &mut Vec<Op>,
 ) {
     emit_expression_asm(group, asm);
     match property {
@@ -177,48 +177,48 @@ pub(crate) fn emit_group_property_asm(
                 property,
                 GroupProperty::SumInputs | GroupProperty::NumInputs
             );
-            asm.push(if inputs { OP_0 } else { OP_1 }.to_string());
+            asm.push(Op::Opcode(if inputs { OP_0 } else { OP_1 }));
             let sum = matches!(
                 property,
                 GroupProperty::SumInputs | GroupProperty::SumOutputs
             );
-            asm.push(if sum {
-                OP_INSPECTASSETGROUPSUM.to_string()
+            asm.push(Op::Opcode(if sum {
+                OP_INSPECTASSETGROUPSUM
             } else {
-                OP_INSPECTASSETGROUPNUM.to_string()
-            });
+                OP_INSPECTASSETGROUPNUM
+            }));
         }
         GroupProperty::Delta => {
             // delta = sumOutputs - sumInputs
-            asm.push(OP_DUP.to_string());
-            asm.push(OP_1.to_string());
-            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-            asm.push(OP_SWAP.to_string());
-            asm.push(OP_0.to_string());
-            asm.push(OP_INSPECTASSETGROUPSUM.to_string());
-            asm.push(OP_SUB.to_string());
+            asm.push(Op::Opcode(OP_DUP));
+            asm.push(Op::Opcode(OP_1));
+            asm.push(Op::Opcode(OP_INSPECTASSETGROUPSUM));
+            asm.push(Op::Opcode(OP_SWAP));
+            asm.push(Op::Opcode(OP_0));
+            asm.push(Op::Opcode(OP_INSPECTASSETGROUPSUM));
+            asm.push(Op::Opcode(OP_SUB));
         }
         GroupProperty::HasControl => {
             // group.hasControl: presence only.
             // [ctrl_txid, ctrl_gidx, flag] -> OP_NIP OP_NIP -> flag (Bool)
-            asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
-            asm.push(OP_NIP.to_string());
-            asm.push(OP_NIP.to_string());
+            asm.push(Op::Opcode(OP_INSPECTASSETGROUPCTRL));
+            asm.push(Op::Opcode(OP_NIP));
+            asm.push(Op::Opcode(OP_NIP));
         }
         GroupProperty::ControlAssetId => {
             // [ctrl_txid, ctrl_gidx, flag]: aborts when the group has no control asset.
-            asm.push(OP_INSPECTASSETGROUPCTRL.to_string());
-            asm.push(OP_VERIFY.to_string());
+            asm.push(Op::Opcode(OP_INSPECTASSETGROUPCTRL));
+            asm.push(Op::Opcode(OP_VERIFY));
         }
-        GroupProperty::MetadataHash => asm.push(OP_INSPECTASSETGROUPMETADATAHASH.to_string()),
+        GroupProperty::MetadataHash => asm.push(Op::Opcode(OP_INSPECTASSETGROUPMETADATAHASH)),
         // Returns the canonical Asset ID (asset_txid, asset_gidx).
-        GroupProperty::AssetId => asm.push(OP_INSPECTASSETGROUPASSETID.to_string()),
+        GroupProperty::AssetId => asm.push(Op::Opcode(OP_INSPECTASSETGROUPASSETID)),
         GroupProperty::IsFresh => {
             // The group's asset txid equals the current transaction's txid.
-            asm.push(OP_INSPECTASSETGROUPASSETID.to_string());
-            asm.push(OP_DROP.to_string());
-            asm.push(OP_TXID.to_string());
-            asm.push(OP_EQUAL.to_string());
+            asm.push(Op::Opcode(OP_INSPECTASSETGROUPASSETID));
+            asm.push(Op::Opcode(OP_DROP));
+            asm.push(Op::Opcode(OP_TXID));
+            asm.push(Op::Opcode(OP_EQUAL));
         }
     }
 }
