@@ -173,11 +173,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         )),
         Rule::array_index_access => {
             let mut inner = pair.into_inner();
-            let array = inner
-                .next()
-                .ok_or("Missing array name")?
-                .as_str()
-                .to_string();
+            let array = Path::from_key(inner.next().ok_or("Missing array name")?.as_str());
             let index = inner.next().ok_or("Missing array index")?;
             Ok(Expression::new(
                 ExprKind::ArrayIndex {
@@ -363,10 +359,7 @@ pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, Stri
                     Expression {
                         kind: ExprKind::Name(path),
                         ..
-                    } => ExprKind::ArrayIndex {
-                        array: path.key(),
-                        index,
-                    },
+                    } => ExprKind::ArrayIndex { array: path, index },
                     value => ExprKind::IndexAccess {
                         value: Box::new(value),
                         index,

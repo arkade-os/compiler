@@ -229,8 +229,8 @@ fn validate_binding_statements(
             }
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::Binding(name) = target {
-                    let root = name.split(['.', '[']).next().unwrap_or(name);
-                    if root != name
+                    let root = name.root.as_str();
+                    if !name.segments.is_empty()
                         && find_binding(scopes, root).is_some_and(|binding| !binding.initialized)
                     {
                         validate_named_binding(
@@ -244,14 +244,16 @@ fn validate_binding_statements(
                     }
                 }
                 let target_type = match target {
-                    AssignmentTarget::Binding(name) => {
-                        find_binding(scopes, name).map(|binding| binding.binding_type.clone())
+                    AssignmentTarget::Binding(name) => find_binding(scopes, &name.key())
+                        .map(|binding| binding.binding_type.clone()),
+                    AssignmentTarget::ArrayIndex { array, .. } => {
+                        find_binding(scopes, &array.key()).and_then(|binding| {
+                            match &binding.binding_type {
+                                ArkType::Array(element, _) => Some((**element).clone()),
+                                _ => None,
+                            }
+                        })
                     }
-                    AssignmentTarget::ArrayIndex { array, .. } => find_binding(scopes, array)
-                        .and_then(|binding| match &binding.binding_type {
-                            ArkType::Array(element, _) => Some((**element).clone()),
-                            _ => None,
-                        }),
                     AssignmentTarget::Access(access) => Some(access.ty.clone()),
                 };
                 let composite_target =
@@ -299,14 +301,14 @@ fn validate_binding_statements(
                             {
                                 issues.push(ValidationIssue::error(format!("function '{function_name}': assignment to an indexed field changes its type from '{}' to '{}'", expected.as_str(), inferred.as_str())));
                             }
-                            match access.binding_path().as_deref().and_then(|name| find_binding(scopes, name)) {
+                            match access.binding_path().and_then(|path| find_binding(scopes, &path.key())) {
                                 None => issues.push(ValidationIssue::error(format!("function '{function_name}': assignment target is not a binding"))),
                                 Some(binding) if binding.source == BindingSource::Loop => issues.push(ValidationIssue::error(format!("function '{function_name}': cannot assign to compile-time loop variable"))),
                                 Some(_) => {}
                             }
                         }
                     }
-                    AssignmentTarget::Binding(name) => match find_binding(scopes, name) {
+                    AssignmentTarget::Binding(name) => match find_binding(scopes, &name.key()) {
                         None => issues.push(ValidationIssue::error(format!(
                             "function '{function_name}': assignment to undeclared variable '{name}'"
                         ))),
@@ -334,9 +336,14 @@ fn validate_binding_statements(
                         Some(_) => {}
                     },
                     AssignmentTarget::ArrayIndex { array, index } => {
-                        if let Some((element_type, source)) =
-                            validate_array_index(array, array, index, function_name, scopes, issues)
-                        {
+                        if let Some((element_type, source)) = validate_array_index(
+                            &array.key(),
+                            &array.key(),
+                            index,
+                            function_name,
+                            scopes,
+                            issues,
+                        ) {
                             if source == BindingSource::Loop {
                                 issues.push(ValidationIssue::error(format!(
                                     "function '{function_name}': cannot assign to compile-time loop variable '{array}'"
@@ -359,15 +366,16 @@ fn validate_binding_statements(
                 }
                 if issues.len() == first {
                     if let AssignmentTarget::Binding(name) = target {
+                        let name = name.key();
                         if let Some(frame) = scopes
                             .iter_mut()
                             .rev()
-                            .find(|frame| frame.contains_key(name))
+                            .find(|frame| frame.contains_key(&name))
                         {
                             let field_prefix = format!("{name}.");
                             let index_prefix = format!("{name}[");
                             for (path, binding) in frame {
-                                if path == name
+                                if *path == name
                                     || path.starts_with(&field_prefix)
                                     || path.starts_with(&index_prefix)
                                 {
@@ -419,7 +427,7 @@ fn validate_binding_statements(
                 body,
             } => {
                 let element_type = match &iterable.kind {
-                    ExprKind::Name(path) if path.key().trim() != "tx.assetGroups" => {
+                    ExprKind::Name(path) if path.key() != "tx.assetGroups" => {
                         let name = &path.key();
                         if find_binding(scopes, name).is_some_and(|binding| !binding.initialized) {
                             validate_named_binding(

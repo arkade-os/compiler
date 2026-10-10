@@ -16,7 +16,7 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
     match &value.kind {
         ExprKind::Name(path) => {
             for (field, _) in fields {
-                asm.push(Op::Read(format!("{}.{field}", path.key())));
+                asm.push(Op::Read(path.clone().field(*field)));
             }
         }
         _ => {
@@ -35,7 +35,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         ExprKind::Call { .. } => {
             unreachable!("private calls are extracted before raw expression emission")
         }
-        ExprKind::Name(path) => asm.push(Op::Read(path.key().trim().to_string())),
+        ExprKind::Name(path) => asm.push(Op::Read(path.clone())),
         ExprKind::Extracted(index) => asm.push(Op::Value(*index)),
         ExprKind::Literal(lit) => push_literal_asm(lit, asm),
         ExprKind::IntentInspect {
@@ -76,8 +76,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             unreachable!("binding accesses are extracted before emission")
         }
         ExprKind::ArrayIndex { array, index } => {
-            if let ExprKind::Literal(index) = &index.as_ref().kind {
-                asm.push(Op::Read(format!("{array}[{index}]")));
+            // The validator rejects literal indexes that are not in range.
+            if let Some(index) = index.literal_index() {
+                asm.push(Op::Read(array.clone().index(index)));
             } else {
                 emit_expression_asm(index, asm);
                 asm.push(Op::ArrayElement(array.clone()));

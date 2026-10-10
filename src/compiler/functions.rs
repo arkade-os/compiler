@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{child_exprs_mut, flatten_parameter, is_builtin_type, TypeLeaf};
+use crate::models::{child_exprs_mut, is_builtin_type, TypeLeaf};
 
 pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expression>) {
     if matches!(
@@ -58,7 +58,7 @@ fn assigns_parameter(statements: &[LocatedStatement], name: &str) -> bool {
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(target),
                 ..
-            } => target == name,
+            } => target.root == name && target.segments.is_empty(),
             Statement::IfElse {
                 then_body,
                 else_body,
@@ -77,18 +77,12 @@ fn assigns_parameter(statements: &[LocatedStatement], name: &str) -> bool {
 }
 
 impl Generator {
-    pub(super) fn value_leaves(&self, name: &str, ty: &str) -> Result<Vec<TypeLeaf>, String> {
-        flatten_parameter(
-            &Parameter {
-                name: name.to_string(),
-                param_type: ty.to_string(),
-            },
-            &self.structs,
-        )
+    pub(super) fn value_leaves(&self, path: &Path, ty: &str) -> Result<Vec<TypeLeaf>, String> {
+        crate::models::flatten_value(path, ty, &self.structs)
     }
 
     pub(super) fn bind_value(&mut self, name: &str, ty: &str) -> Result<(), String> {
-        let leaves = self.value_leaves(name, ty)?;
+        let leaves = self.value_leaves(&Path::new(name), ty)?;
         if self.stack.len() < leaves.len() {
             return Err("missing function result".to_string());
         }
@@ -98,7 +92,7 @@ impl Generator {
                 return Err("function result is not a temporary".to_string());
             }
             *item = StackItem::Binding {
-                name: Self::internal_binding_name(&leaf.access_name),
+                name: leaf.access.clone(),
                 kind: BindingKind::Local,
             };
         }
@@ -125,8 +119,8 @@ impl Generator {
             return self.emit_access_value(expression, ty);
         }
         if let ExprKind::Name(path) = &expression.kind {
-            for leaf in self.value_leaves(&path.key(), ty)?.iter().rev() {
-                self.read_binding(&leaf.access_name)?;
+            for leaf in self.value_leaves(path, ty)?.iter().rev() {
+                self.read_binding(&leaf.access)?;
             }
             return Ok(());
         }
@@ -143,7 +137,7 @@ impl Generator {
             return Ok(());
         }
         if crate::models::expression_result_struct(expression) == Some(ty) {
-            let width = self.value_leaves("", ty)?.len();
+            let width = self.value_leaves(&Path::new(""), ty)?.len();
             self.emit_expression_items(expression, width)?;
             // Native results are first deepest; reverse them so the first leaf is on top.
             for depth in 1..width {
@@ -212,15 +206,10 @@ impl Generator {
                 && !assigns_parameter(&function.statements, &parameter.name)
             {
                 let source = match &argument.kind {
-                    ExprKind::Name(path) if path.fields.is_empty() => {
-                        Some(Self::internal_binding_name(&path.root))
-                    }
-                    ExprKind::ArrayIndex { array, index } => match &index.as_ref().kind {
-                        ExprKind::Literal(index) => {
-                            Some(Self::internal_binding_name(&format!("{array}[{index}]")))
-                        }
-                        _ => None,
-                    },
+                    ExprKind::Name(path) if path.segments.is_empty() => Some(path.clone()),
+                    ExprKind::ArrayIndex { array, index } => index
+                        .literal_index()
+                        .map(|index| array.clone().index(index)),
                     _ => None,
                 };
                 if let Some(source) = source {
@@ -233,7 +222,7 @@ impl Generator {
                                 self.final_reads[*previous] = false;
                             }
                         }
-                        aliases.insert(parameter.name.clone(), source_index);
+                        aliases.insert(Path::new(&parameter.name), source_index);
                         continue;
                     }
                 }
@@ -243,7 +232,7 @@ impl Generator {
             self.bind_value(&format!("$argument:{index}"), &parameter.param_type)?;
             arguments.push((
                 start,
-                self.value_leaves(&parameter.name, &parameter.param_type)?,
+                self.value_leaves(&Path::new(&parameter.name), &parameter.param_type)?,
             ));
         }
         // Static calls hide all caller bindings; instance helpers retain constructor state.
@@ -261,7 +250,7 @@ impl Generator {
                 )
             {
                 *item = StackItem::Binding {
-                    name: format!("$caller:{index}"),
+                    name: Path::new(format!("$caller:{index}")),
                     kind: BindingKind::Local,
                 };
             }
@@ -272,7 +261,7 @@ impl Generator {
                 .zip(leaves.iter().rev())
             {
                 *item = StackItem::Binding {
-                    name: Self::internal_binding_name(&leaf.access_name),
+                    name: leaf.access.clone(),
                     kind: BindingKind::Local,
                 };
             }
@@ -297,21 +286,21 @@ impl Generator {
         let results = function
             .return_type
             .as_deref()
-            .map(|ty| self.value_leaves("$result", ty))
+            .map(|ty| self.value_leaves(&Path::new("$result"), ty))
             .transpose()?
             .unwrap_or_default();
         if !direct_return {
             self.push_temporary(Op::Opcode(Int0));
-            self.bind_local("$returned")?;
+            self.bind_local(Path::new("$returned"))?;
             for leaf in results.iter().rev() {
                 self.push_temporary(Op::Opcode(Int0));
-                self.bind_local(&Self::internal_binding_name(&leaf.access_name))?;
+                self.bind_local(leaf.access.clone())?;
             }
         }
         generate_asm_from_statements_recursive(&function.statements, self)?;
         if !direct_return {
             for leaf in results.iter().rev() {
-                self.read_static_binding(&Self::internal_binding_name(&leaf.access_name), true)?;
+                self.read_static_binding(&leaf.access, true)?;
             }
         }
         self.discard_call_frame(baseline, results.len())?;
@@ -364,8 +353,8 @@ impl Generator {
             (Some(ty), Some(value)) => {
                 self.emit_typed_value(value, ty)?;
                 if !self.direct_return {
-                    for leaf in self.value_leaves("$result", ty)? {
-                        self.assign_static_binding(&leaf.access_name, &leaf.access_name)?;
+                    for leaf in self.value_leaves(&Path::new("$result"), ty)? {
+                        self.assign_static_binding(leaf.access)?;
                     }
                 }
             }
@@ -376,7 +365,7 @@ impl Generator {
             Ok(())
         } else {
             self.push_temporary(Op::Opcode(Int1));
-            self.assign_static_binding("$returned", "$returned")
+            self.assign_static_binding(Path::new("$returned"))
         }
     }
 
@@ -384,7 +373,7 @@ impl Generator {
         &mut self,
         statements: &[LocatedStatement],
     ) -> Result<bool, String> {
-        self.read_binding("$returned")?;
+        self.read_binding(&Path::new("$returned"))?;
         self.apply(Not, 1, 1)?;
         self.apply(If, 1, 0)?;
         self.emit_branches(statements, None, false)

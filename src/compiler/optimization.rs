@@ -95,7 +95,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
     };
     if let Some((array, index)) = access {
         if let (Some(ArkType::Array(_, length)), ExprKind::Literal(index)) =
-            (scope.get(&array), &index.kind)
+            (scope.get(&array.key()), &index.kind)
         {
             if !index.parse::<usize>().is_ok_and(|index| index < *length) {
                 return Err(format!(
@@ -325,7 +325,7 @@ mod tests {
                 |token| match Opcode::ALL.iter().find(|opcode| opcode.name() == token) {
                     Some(&opcode) => Op::Opcode(opcode),
                     None if token.starts_with('<') => {
-                        Op::Read(token[1..token.len() - 1].to_string())
+                        Op::Read(crate::models::Path::from_key(&token[1..token.len() - 1]))
                     }
                     None => Op::Push(token),
                 },

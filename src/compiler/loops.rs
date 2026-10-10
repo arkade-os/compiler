@@ -57,7 +57,7 @@ pub(crate) fn substitute_statement(
                 &match target {
                     AssignmentTarget::Access(value) => (**value).clone(),
                     AssignmentTarget::Binding(name) => {
-                        value.with_kind(ExprKind::Name(Path::from_key(name)))
+                        value.with_kind(ExprKind::Name(name.clone()))
                     }
                     AssignmentTarget::ArrayIndex { array, index } => {
                         index.with_kind(ExprKind::ArrayIndex {
@@ -74,7 +74,7 @@ pub(crate) fn substitute_statement(
                 Expression {
                     kind: ExprKind::Name(path),
                     ..
-                } => AssignmentTarget::Binding(path.key()),
+                } => AssignmentTarget::Binding(path),
                 Expression {
                     kind: ExprKind::ArrayIndex { array, index },
                     ..
@@ -140,17 +140,16 @@ fn substitute_path(
     k: usize,
     items: &Expression,
 ) -> Option<Expression> {
-    if path.root == index_var && path.fields.is_empty() {
+    if path.root == index_var && path.segments.is_empty() {
         return Some(at.with_kind(ExprKind::Literal(k.to_string())));
     }
     if path.root != value_var {
         return None;
     }
-    let fields = path.fields.iter();
     let index = Box::new(at.with_kind(ExprKind::Literal(k.to_string())));
     let element = at.with_kind(match &items.kind {
         ExprKind::Name(path) => ExprKind::ArrayIndex {
-            array: path.key(),
+            array: path.clone(),
             index,
         },
         _ => ExprKind::IndexAccess {
@@ -158,10 +157,17 @@ fn substitute_path(
             index,
         },
     });
-    Some(fields.fold(element, |value, field| {
-        at.with_kind(ExprKind::FieldAccess {
-            value: Box::new(value),
-            field: field.to_string(),
+    Some(path.segments.iter().fold(element, |value, segment| {
+        let value = Box::new(value);
+        at.with_kind(match segment {
+            Segment::Field(field) => ExprKind::FieldAccess {
+                value,
+                field: field.clone(),
+            },
+            Segment::Index(index) => ExprKind::IndexAccess {
+                value,
+                index: Box::new(at.with_kind(ExprKind::Literal(index.to_string()))),
+            },
         })
     }))
 }
@@ -179,8 +185,7 @@ pub(crate) fn substitute_expression(
         ExprKind::ArrayIndex { array, index } => {
             let index = Box::new(substitute_expression(index, index_var, value_var, k, items));
             expr.with_kind(
-                match substitute_path(&Path::from_key(array), expr, index_var, value_var, k, items)
-                {
+                match substitute_path(array, expr, index_var, value_var, k, items) {
                     Some(value) => ExprKind::IndexAccess {
                         value: Box::new(value),
                         index,
@@ -230,7 +235,7 @@ mod tests {
             ),
             (
                 ExprKind::ArrayIndex {
-                    array: "x".into(),
+                    array: Path::new("x"),
                     index: Box::new(index.clone()),
                 },
                 ["xs[0][0]", "xs[1][1]"],

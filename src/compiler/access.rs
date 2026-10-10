@@ -9,7 +9,7 @@ impl Generator {
         &self,
         value: &'a Expression,
         indices: &mut Vec<(&'a Expression, usize, usize)>,
-    ) -> Result<String, String> {
+    ) -> Result<Path, String> {
         let path = value.binding_path().ok_or("expected a binding access")?;
         let (array, index) = match &value.kind {
             ExprKind::FieldAccess { value, .. } => {
@@ -20,14 +20,10 @@ impl Generator {
             ExprKind::IndexAccess { value, index } => (self.access_indices(value, indices)?, index),
             _ => return Ok(path),
         };
-        let Some(ArkType::Array(element, length)) = self.scope.get(&array) else {
+        let Some(ArkType::Array(element, length)) = self.scope.get(&array.key()) else {
             return Err(format!("'{array}' is not an array"));
         };
-        let literal = match &index.as_ref().kind {
-            ExprKind::Literal(literal) => literal.parse::<usize>().ok(),
-            _ => None,
-        };
-        match literal {
+        match index.literal_index() {
             Some(literal) if literal >= *length => {
                 return Err(format!(
                     "array index '{literal}' is out of range for '{array}'"
@@ -37,7 +33,7 @@ impl Generator {
             None => indices.push((
                 index,
                 *length,
-                self.value_leaves("", &element.as_str())?.len(),
+                self.value_leaves(&Path::new(""), &element.as_str())?.len(),
             )),
         }
         Ok(path)
@@ -65,9 +61,9 @@ impl Generator {
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
         let length = name
-            .strip_suffix(".length")
-            .filter(|_| !self.scope.contains_key(&name))
-            .and_then(|array| match self.scope.get(array) {
+            .split_last()
+            .filter(|&(_, field)| field == "length" && !self.scope.contains_key(&name.key()))
+            .and_then(|(array, _)| match self.scope.get(&array.key()) {
                 Some(ArkType::Array(_, length)) => Some(*length),
                 _ => None,
             });
@@ -76,10 +72,7 @@ impl Generator {
                 self.push_integer_temporary(length);
             } else {
                 for leaf in self.value_leaves(&name, ty)?.iter().rev() {
-                    self.read_static_binding(
-                        &Self::internal_binding_name(&leaf.access_name),
-                        false,
-                    )?;
+                    self.read_static_binding(&leaf.access, false)?;
                 }
             }
             return Ok(());
@@ -102,8 +95,8 @@ impl Generator {
                 self.apply(Roll, 1, 0)?;
             }
             let slot = self
-                .binding_index(&Self::internal_binding_name(&leaf.access_name))
-                .ok_or_else(|| format!("undefined binding '{}'", leaf.access_name))?;
+                .binding_index(&leaf.access)
+                .ok_or_else(|| format!("undefined binding '{}'", leaf.access))?;
             self.push_integer_temporary(self.stack.len() - slot - 2);
             self.apply(Add, 2, 1)?;
             self.apply(Pick, 1, 1)?;
@@ -117,7 +110,7 @@ impl Generator {
         let leaves = self.value_leaves(&name, &value.ty.as_str())?;
         if indices.is_empty() {
             for leaf in leaves {
-                self.assign_static_binding(&leaf.access_name, &leaf.access_name)?;
+                self.assign_static_binding(leaf.access)?;
             }
             return Ok(());
         }
@@ -130,8 +123,8 @@ impl Generator {
                 self.apply(Pick, 1, 1)?;
             }
             let slot = self
-                .binding_index(&Self::internal_binding_name(&leaf.access_name))
-                .ok_or_else(|| format!("undefined binding '{}'", leaf.access_name))?;
+                .binding_index(&leaf.access)
+                .ok_or_else(|| format!("undefined binding '{}'", leaf.access))?;
             if matches!(
                 self.stack[slot],
                 StackItem::Binding {
@@ -196,7 +189,7 @@ impl Generator {
             let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
                 unreachable!()
             };
-            args[0] = keys.with_kind(ExprKind::Name(crate::models::Path::from_key(&name)));
+            args[0] = keys.with_kind(ExprKind::Name(Path::new(name)));
             args[0].ty = keys.ty.clone();
             self.emit_multisig(&normalized)?;
             self.discard_call_frame(baseline, 1)?;
@@ -322,7 +315,7 @@ impl Generator {
                 let index = Box::new(points.with_kind(ExprKind::Literal(index.to_string())));
                 let element = points.with_kind(match &points.kind {
                     ExprKind::Name(path) => ExprKind::ArrayIndex {
-                        array: path.key(),
+                        array: path.clone(),
                         index,
                     },
                     _ => ExprKind::IndexAccess {

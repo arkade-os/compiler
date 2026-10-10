@@ -596,7 +596,7 @@ fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String>
         Expression {
             kind: ExprKind::Name(path),
             ..
-        } => AssignmentTarget::Binding(path.key()),
+        } => AssignmentTarget::Binding(path),
         Expression {
             kind: ExprKind::ArrayIndex { array, index },
             ..
@@ -692,7 +692,7 @@ mod tests {
             assert!(matches!(
                 &statements[1].statement,
                 Statement::VarAssign { target: AssignmentTarget::Binding(target), .. }
-                    if target == name
+                    if target.key() == name
             ));
             assert!(matches!(
                 &statements[2].statement,
@@ -1028,14 +1028,14 @@ contract Demo() {
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
-            } if name == "state.enabled"
+            } if name.key() == "state.enabled"
         ));
         assert!(matches!(
             &statements[1].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { array, index },
                 ..
-            } if array == "state.values"
+            } if array.key() == "state.values"
                 && matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+")
         ));
         assert!(matches!(
@@ -1043,7 +1043,7 @@ contract Demo() {
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
-            } if name == "index"
+            } if name.key() == "index"
         ));
     }
 

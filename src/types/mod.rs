@@ -365,18 +365,14 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
             })
         }),
         // `g.inputs[j]`
-        ExprKind::ArrayIndex { array, index } => {
-            Path::from_key(array)
-                .split_last()
-                .and_then(|(base, source)| {
-                    Some(ExprKind::GroupIOAccess {
-                        group: Box::new(group_binding(base, expression, scope)?),
-                        io_index: index.clone(),
-                        source: group_io_source(source)?,
-                        property: None,
-                    })
-                })
-        }
+        ExprKind::ArrayIndex { array, index } => array.split_last().and_then(|(base, source)| {
+            Some(ExprKind::GroupIOAccess {
+                group: Box::new(group_binding(base, expression, scope)?),
+                io_index: index.clone(),
+                source: group_io_source(source)?,
+                property: None,
+            })
+        }),
         // `gs[i].inputs[j]`
         ExprKind::IndexAccess { value, index } => match &value.as_ref().kind {
             ExprKind::FieldAccess {
@@ -473,44 +469,25 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::StructLiteral(_) => ArkType::Unknown,
         ExprKind::FieldAccess { .. } => expr
             .binding_path()
-            .map(|name| {
-                infer_type(
-                    &expr.with_kind(ExprKind::Name(Path::from_key(&name))),
-                    scope,
-                )
-            })
+            .map(|path| infer_type(&expr.with_kind(ExprKind::Name(path)), scope))
             .unwrap_or(ArkType::Unknown),
         ExprKind::IndexAccess { value, .. } => match &value.ty {
             ArkType::Array(element, _) => (**element).clone(),
             _ => ArkType::Unknown,
         },
-        ExprKind::ArrayIndex { array, .. } => match scope.get(array) {
+        ExprKind::ArrayIndex { array, .. } => match scope.get(&array.key()) {
             Some(ArkType::Array(element, _)) => (**element).clone(),
             _ => ArkType::Unknown,
         },
-        ExprKind::Name(path) => {
-            let property = path.key();
-            let property = property.trim();
-            scope
-                .get(property)
-                .cloned()
-                .or_else(|| {
-                    let (array, field) = path.split_last()?;
-                    (field == "length" && matches!(scope.get(&array.key())?, ArkType::Array(..)))
-                        .then_some(ArkType::Int)
-                })
-                .or_else(|| {
-                    let (array, index) = property.strip_suffix(']')?.split_once('[')?;
-                    if index.parse::<usize>().is_ok() {
-                        return None;
-                    }
-                    match scope.get(array)? {
-                        ArkType::Array(element, _) => Some((**element).clone()),
-                        _ => None,
-                    }
-                })
-                .unwrap_or(ArkType::Unknown)
-        }
+        ExprKind::Name(path) => scope
+            .get(&path.key())
+            .cloned()
+            .or_else(|| {
+                let (array, field) = path.split_last()?;
+                (field == "length" && matches!(scope.get(&array.key())?, ArkType::Array(..)))
+                    .then_some(ArkType::Int)
+            })
+            .unwrap_or(ArkType::Unknown),
 
         ExprKind::This(property) => ArkType::parse(property.value_type()),
         // Extraction keeps the extracted value's type on the node.

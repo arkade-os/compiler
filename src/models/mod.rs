@@ -79,7 +79,7 @@ pub struct StructDefinition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeLeaf {
     /// Source path used by expressions, such as `policy.owner.key`.
-    pub access_name: String,
+    pub access: Path,
     /// Artifact and placeholder name, such as `policy.owner.key`.
     pub emitted_name: String,
     pub leaf_type: String,
@@ -91,7 +91,7 @@ pub fn flatten_parameter(
 ) -> Result<Vec<TypeLeaf>, String> {
     let mut leaves = Vec::new();
     flatten_type(
-        &parameter.name,
+        Path::new(&parameter.name),
         &parameter.name,
         &parameter.param_type,
         structs,
@@ -101,8 +101,27 @@ pub fn flatten_parameter(
     Ok(leaves)
 }
 
+/// The leaves of a `declared_type` value stored at `access`.
+pub(crate) fn flatten_value(
+    access: &Path,
+    declared_type: &str,
+    structs: &[StructDefinition],
+) -> Result<Vec<TypeLeaf>, String> {
+    let mut leaves = Vec::new();
+    let emitted_name = access.key();
+    flatten_type(
+        access.clone(),
+        &emitted_name,
+        declared_type,
+        structs,
+        &mut Vec::new(),
+        &mut leaves,
+    )?;
+    Ok(leaves)
+}
+
 fn flatten_type(
-    access_name: &str,
+    access: Path,
     emitted_name: &str,
     declared_type: &str,
     structs: &[StructDefinition],
@@ -112,7 +131,7 @@ fn flatten_type(
     if let Some((element_type, length)) = array_type_parts(declared_type) {
         for index in 0..length {
             flatten_type(
-                &format!("{access_name}[{index}]"),
+                access.clone().index(index),
                 &format!("{emitted_name}.{index}"),
                 element_type,
                 structs,
@@ -124,7 +143,7 @@ fn flatten_type(
     }
     if is_builtin_type(declared_type) {
         leaves.push(TypeLeaf {
-            access_name: access_name.to_string(),
+            access,
             emitted_name: emitted_name.to_string(),
             leaf_type: declared_type.to_string(),
         });
@@ -133,7 +152,7 @@ fn flatten_type(
     if let Some(fields) = builtin_struct_fields(declared_type) {
         for (field_name, field_type) in fields {
             flatten_type(
-                &format!("{access_name}.{field_name}"),
+                access.clone().field(*field_name),
                 &format!("{emitted_name}.{field_name}"),
                 field_type,
                 structs,
@@ -154,7 +173,7 @@ fn flatten_type(
     stack.push(declared_type.to_string());
     for field in &definition.fields {
         flatten_type(
-            &format!("{access_name}.{}", field.name),
+            access.clone().field(&field.name),
             &format!("{emitted_name}.{}", field.name),
             &field.param_type,
             structs,

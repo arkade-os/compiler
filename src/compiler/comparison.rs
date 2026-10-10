@@ -32,7 +32,7 @@ impl Generator {
         if op.class() != OperatorClass::Equality {
             return Err(format!("'{op}' is not defined for '{ty}' values"));
         }
-        let width = self.value_leaves("", ty)?.len();
+        let width = self.value_leaves(&Path::new(""), ty)?.len();
         self.emit_typed_value(left, ty)?;
         self.emit_typed_value(right, ty)?;
         for remaining in (1..=width).rev() {

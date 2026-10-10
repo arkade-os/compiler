@@ -2,53 +2,82 @@
 
 use super::*;
 
-/// A binding and the struct fields read through it, as in `s.inner.x`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A binding and the struct fields and constant array elements read through it,
+/// as in `s.inner.x` or `ps[0].x`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Path {
     pub root: String,
-    pub fields: Vec<String>,
+    pub segments: Vec<Segment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Segment {
+    Field(String),
+    Index(usize),
 }
 
 impl Path {
     pub fn new(root: impl Into<String>) -> Self {
         Self {
             root: root.into(),
-            fields: Vec::new(),
+            segments: Vec::new(),
         }
     }
 
-    /// The path a dotted scope key names; `Path::from_key(k).key() == k`.
+    /// The path a dotted name spells, field by field.
     pub fn from_key(key: &str) -> Self {
-        let mut parts = key.split('.').map(str::to_string);
+        let mut parts = key.split('.');
         Self {
-            root: parts.next().unwrap_or_default(),
-            fields: parts.collect(),
+            root: parts.next().unwrap_or_default().to_string(),
+            segments: parts
+                .map(|field| Segment::Field(field.to_string()))
+                .collect(),
         }
     }
 
-    /// The scope key and binding name: the path spelled with dots.
+    /// The scope key and source spelling, such as `ps[0].x`.
     pub fn key(&self) -> String {
-        std::iter::once(self.root.as_str())
-            .chain(self.fields.iter().map(String::as_str))
-            .collect::<Vec<_>>()
-            .join(".")
+        let mut key = self.root.clone();
+        for segment in &self.segments {
+            match segment {
+                Segment::Field(field) => {
+                    key.push('.');
+                    key.push_str(field);
+                }
+                Segment::Index(index) => key.push_str(&format!("[{index}]")),
+            }
+        }
+        key
     }
 
     pub fn field(mut self, field: impl Into<String>) -> Self {
-        self.fields.push(field.into());
+        self.segments.push(Segment::Field(field.into()));
+        self
+    }
+
+    pub fn index(mut self, index: usize) -> Self {
+        self.segments.push(Segment::Index(index));
         self
     }
 
     /// The path without its last field, and that field.
     pub fn split_last(&self) -> Option<(Path, &str)> {
-        let (last, fields) = self.fields.split_last()?;
+        let (Segment::Field(last), segments) = self.segments.split_last()? else {
+            return None;
+        };
         Some((
             Path {
                 root: self.root.clone(),
-                fields: fields.to_vec(),
+                segments: segments.to_vec(),
             },
             last,
         ))
+    }
+}
+
+impl std::fmt::Display for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.key())
     }
 }
 
@@ -162,11 +191,8 @@ pub enum Statement {
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
     Access(Box<Expression>),
-    Binding(String),
-    ArrayIndex {
-        array: String,
-        index: Box<Expression>,
-    },
+    Binding(Path),
+    ArrayIndex { array: Path, index: Box<Expression> },
 }
 
 impl Requirement {
@@ -428,10 +454,7 @@ pub enum ExprKind {
         index: Box<Expression>,
     },
     /// Array element selected by an integer expression.
-    ArrayIndex {
-        array: String,
-        index: Box<Expression>,
-    },
+    ArrayIndex { array: Path, index: Box<Expression> },
     /// `this.activeInputIndex`, `this.expiry`
     This(crate::properties::ThisProperty),
     /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
@@ -690,12 +713,26 @@ expression_children!(child_exprs, &Expression, (&), iter, as_ref);
 expression_children!(child_exprs_mut, &mut Expression, (&mut), iter_mut, as_mut);
 
 impl Expression {
+    /// The array index a literal spells.
+    pub(crate) fn literal_index(&self) -> Option<usize> {
+        match &self.kind {
+            ExprKind::Literal(index) => index.parse().ok(),
+            _ => None,
+        }
+    }
+
     /// Resolve the layout path, using element zero for runtime indexes.
-    pub(crate) fn binding_path(&self) -> Option<String> {
-        self.access_path(&|index| match &index.kind {
-            ExprKind::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
-            _ => "0".to_string(),
-        })
+    pub(crate) fn binding_path(&self) -> Option<Path> {
+        let layout_index = |index: &Expression| index.literal_index().unwrap_or(0);
+        match &self.kind {
+            ExprKind::Name(path) => Some(path.clone()),
+            ExprKind::ArrayIndex { array, index } => Some(array.clone().index(layout_index(index))),
+            ExprKind::IndexAccess { value, index } => {
+                Some(value.binding_path()?.index(layout_index(index)))
+            }
+            ExprKind::FieldAccess { value, field } => Some(value.binding_path()?.field(field)),
+            _ => None,
+        }
     }
 
     /// Spell an operand for diagnostics, using canonical names for aliases.

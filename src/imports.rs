@@ -399,12 +399,12 @@ fn load(
                     // Only a bare name can be a library; other groups stay asset groups.
                     let ExprKind::Name(models::Path {
                         root: group,
-                        fields,
+                        segments,
                     }) = &group.as_ref().kind
                     else {
                         return Ok(());
                     };
-                    if !fields.is_empty() {
+                    if !segments.is_empty() {
                         return Ok(());
                     }
                     if group == &contract.name || visible_contracts.contains_key(group) {
@@ -563,7 +563,7 @@ fn validate_scope(
                     }
                 }
                 ExprKind::Name(path)
-                    if !path.fields.is_empty() && contracts.contains_key(&path.root) =>
+                    if !path.segments.is_empty() && contracts.contains_key(&path.root) =>
                 {
                     return Err(format!("unknown constant '{}'", path.key()));
                 }

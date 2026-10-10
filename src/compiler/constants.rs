@@ -1,5 +1,5 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr, LocatedStatement,
+    AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr, LocatedStatement, Path,
     Requirement, Statement, TapItem,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
@@ -133,7 +133,7 @@ fn resolve_value(
     }
     active.push(name.clone());
     // A nested failure already names the constant it came from; keep that one name.
-    let mut resolve = |name: &str| resolve_value(name, declarations, values, active);
+    let mut resolve = |path: &Path| resolve_value(&path.key(), declarations, values, active);
     let value = validate_expression(&constant.value, &mut resolve)
         .and_then(|_| evaluate(&constant.value, &mut resolve))
         .map_err(|error| match error.starts_with("constant '") {
@@ -173,11 +173,11 @@ fn integer(text: &str) -> Result<i128, String> {
 // Validate skipped operands without evaluating their arithmetic.
 fn validate_expression(
     expression: &Expression,
-    resolve: &mut impl FnMut(&str) -> Result<String, String>,
+    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<&'static str, String> {
     match &expression.kind {
         ExprKind::Literal(text) => Ok(kind(text)),
-        ExprKind::Name(path) => Ok(kind(&resolve(&path.key())?)),
+        ExprKind::Name(path) => Ok(kind(&resolve(path)?)),
         ExprKind::Unary { op, value } => {
             let expected = match op {
                 UnaryOperator::Invert => {
@@ -236,12 +236,12 @@ fn validate_expression(
 
 pub(crate) fn evaluate(
     expression: &Expression,
-    resolve: &mut impl FnMut(&str) -> Result<String, String>,
+    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<String, String> {
     let overflow = || "integer overflow in constant expression".to_string();
     match &expression.kind {
         ExprKind::Literal(text) => Ok(text.clone()),
-        ExprKind::Name(path) => resolve(&path.key()),
+        ExprKind::Name(path) => resolve(path),
         ExprKind::Unary {
             op: UnaryOperator::Neg,
             value,
@@ -424,11 +424,11 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
     }
     if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {
         for value in policy.iter_mut() {
-            if let Ok(literal) = evaluate(value, &mut |name| {
+            if let Ok(literal) = evaluate(value, &mut |path| {
                 values
-                    .get(name)
+                    .get(&path.key())
                     .cloned()
-                    .ok_or_else(|| format!("unknown constant '{name}'"))
+                    .ok_or_else(|| format!("unknown constant '{path}'"))
             }) {
                 value.kind = ExprKind::Literal(literal);
             }

@@ -751,10 +751,10 @@ fn resolve_constructor_field_placeholders(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
-        .filter(|leaf| leaf.access_name != leaf.emitted_name)
+        .filter(|leaf| leaf.access.key() != leaf.emitted_name)
         .map(|leaf| {
             (
-                format!("<{}>", leaf.access_name),
+                format!("<{}>", leaf.access),
                 format!("<{}>", leaf.emitted_name),
             )
         })
