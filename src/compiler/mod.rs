@@ -3,20 +3,19 @@ use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
     Function, FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
-use crate::opcodes::{
-    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
-    OP_DROP, OP_DUP, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
-    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME,
-    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
-    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL,
-    OP_MUL, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT,
-    OP_ROLL, OP_SIZE, OP_SUB, OP_SWAP, OP_TUNNEL, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+use crate::opcodes::Opcode::{
+    self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,
+    Equal, EqualVerify, FindAssetGroupByAssetId, GreaterThanOrEqual, If, InspectAssetGroup,
+    InspectAssetGroupAssetId, InspectAssetGroupCtrl, InspectAssetGroupMetadataHash,
+    InspectAssetGroupNum, InspectAssetGroupSum, InspectInAssetAt, InspectInAssetCount,
+    InspectInAssetLookup, InspectInputArkadeScriptHash, InspectInputArkadeWitnessHash,
+    InspectInputOutpoint, InspectInputPacket, InspectInputScriptPubKey, InspectInputSequence,
+    InspectInputValue, InspectIntentMessage, InspectLockTime, InspectNumAssetGroups,
+    InspectNumInputs, InspectNumOutputs, InspectOutAssetAt, InspectOutAssetCount,
+    InspectOutAssetLookup, InspectOutputScriptPubKey, InspectOutputValue, InspectPacket,
+    InspectVersion, Int0, Int1, LessThan, LessThanOrEqual, Mul, Nip, Not, NotEqual0, NumEqual,
+    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Size, Sub, Swap, Tunnel, TxWeight, Txid,
+    Verify,
 };
 use crate::types::{self};
 use crate::validator::{self, Severity};
@@ -65,10 +64,10 @@ const MAX_STACK_ITEMS: usize = 1000;
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
 
 fn integer_op(value: usize) -> Op {
-    use crate::opcodes::*;
-    const SMALL: [&str; 17] = [
-        OP_0, OP_1, OP_2, OP_3, OP_4, OP_5, OP_6, OP_7, OP_8, OP_9, OP_10, OP_11, OP_12, OP_13,
-        OP_14, OP_15, OP_16,
+    use crate::opcodes::Opcode::*;
+    const SMALL: [Opcode; 17] = [
+        Int0, Int1, Int2, Int3, Int4, Int5, Int6, Int7, Int8, Int9, Int10, Int11, Int12, Int13,
+        Int14, Int15, Int16,
     ];
     match SMALL.get(value) {
         Some(&opcode) => Op::Opcode(opcode),
@@ -174,15 +173,15 @@ impl Generator {
             };
             let depth = prologue + index;
             if depth > 0 {
-                asm.extend([integer_op(depth), Op::Opcode(OP_PICK)]);
+                asm.extend([integer_op(depth), Op::Opcode(Pick)]);
             }
             asm.extend([
-                Op::Opcode(OP_SIZE),
+                Op::Opcode(Size),
                 Op::Push(width.into()),
-                Op::Opcode(OP_EQUALVERIFY),
+                Op::Opcode(EqualVerify),
             ]);
             if depth > 0 {
-                asm.push(Op::Opcode(OP_DROP));
+                asm.push(Op::Opcode(Drop));
             }
         }
         let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
@@ -258,7 +257,7 @@ impl Generator {
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
         if name.starts_with("0x") {
             self.push_temporary(if name == "0x" {
-                Op::Opcode(OP_0)
+                Op::Opcode(Int0)
             } else {
                 Op::Push(name.to_string())
             });
@@ -326,7 +325,7 @@ impl Generator {
         if consume {
             self.stack.remove(index);
         }
-        self.apply(if consume { OP_ROLL } else { OP_PICK }, 1, 1)
+        self.apply(if consume { Roll } else { Pick }, 1, 1)
     }
 
     fn count_constructor_reads(&mut self, index: usize, reads: usize) {
@@ -362,15 +361,15 @@ impl Generator {
     }
 
     fn check_array_index(&mut self, length: usize) -> Result<(), String> {
-        self.apply(OP_DUP, 1, 2)?;
+        self.apply(Dup, 1, 2)?;
         self.push_integer_temporary(0);
-        self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
-        self.apply(OP_VERIFY, 1, 0)?;
+        self.apply(GreaterThanOrEqual, 2, 1)?;
+        self.apply(Verify, 1, 0)?;
 
-        self.apply(OP_DUP, 1, 2)?;
+        self.apply(Dup, 1, 2)?;
         self.push_integer_temporary(length);
-        self.apply(OP_LESSTHAN, 2, 1)?;
-        self.apply(OP_VERIFY, 1, 0)
+        self.apply(LessThan, 2, 1)?;
+        self.apply(Verify, 1, 0)
     }
 
     fn select_indexed_value(&mut self, array: &str) -> Result<(), String> {
@@ -392,12 +391,12 @@ impl Generator {
         self.check_array_index(self.array_length(array))?;
         if first_depth_without_index != 0 {
             self.push_integer_temporary(first_depth_without_index);
-            self.apply(OP_ADD, 2, 1)?;
+            self.apply(Add, 2, 1)?;
         }
-        self.apply(OP_PICK, 1, 1)
+        self.apply(Pick, 1, 1)
     }
 
-    fn pop_temporaries(&mut self, count: usize, opcode: &str) -> Result<(), String> {
+    fn pop_temporaries(&mut self, count: usize, opcode: Opcode) -> Result<(), String> {
         if count > self.stack.len()
             || self.stack[self.stack.len() - count..]
                 .iter()
@@ -411,7 +410,7 @@ impl Generator {
         Ok(())
     }
 
-    fn apply(&mut self, opcode: &'static str, inputs: usize, outputs: usize) -> Result<(), String> {
+    fn apply(&mut self, opcode: Opcode, inputs: usize, outputs: usize) -> Result<(), String> {
         self.pop_temporaries(inputs, opcode)?;
         self.asm.push(Op::Opcode(opcode));
         self.stack
@@ -426,7 +425,7 @@ impl Generator {
         }
         let index = self.stack.len() - 2;
         self.stack.remove(index);
-        self.asm.push(Op::Opcode(OP_NIP));
+        self.asm.push(Op::Opcode(Nip));
         Ok(())
     }
 
@@ -436,16 +435,16 @@ impl Generator {
         }
         let len = self.stack.len();
         self.stack.swap(len - 2, len - 1);
-        self.asm.push(Op::Opcode(OP_SWAP));
+        self.asm.push(Op::Opcode(Swap));
         Ok(())
     }
 
-    fn lower_raw_opcode(&mut self, opcode: &'static str) -> Result<(), String> {
+    fn lower_raw_opcode(&mut self, opcode: Opcode) -> Result<(), String> {
         match opcode {
             // These move bindings as well as temporaries.
-            OP_NIP => self.nip(),
-            OP_SWAP => self.swap(),
-            OP_TUNNEL => {
+            Nip => self.nip(),
+            Swap => self.swap(),
+            Tunnel => {
                 // Fixed exception counts are emitted immediately before the opcode.
                 let inputs = self
                     .asm
@@ -459,7 +458,7 @@ impl Generator {
                 self.apply(opcode, inputs, 1)
             }
             _ => {
-                let (inputs, outputs) = crate::opcodes::stack_effect(opcode).ok_or_else(|| {
+                let (inputs, outputs) = opcode.stack_effect().ok_or_else(|| {
                     format!("internal compiler error: unknown expression opcode {opcode}")
                 })?;
                 self.apply(opcode, inputs, outputs)
@@ -534,18 +533,18 @@ impl Generator {
         for op in raw {
             self.preserve_bindings = preserved || !branches.is_empty();
             match op {
-                Op::Opcode(OP_IF) => {
-                    self.apply(OP_IF, 1, 0)?;
+                Op::Opcode(If) => {
+                    self.apply(If, 1, 0)?;
                     branches.push(self.stack.clone());
                 }
-                Op::Opcode(token @ (OP_ELSE | OP_ENDIF)) => {
+                Op::Opcode(token @ (Else | EndIf)) => {
                     self.pop_temporaries(1, token)?;
                     if branches.last() != Some(&self.stack) {
                         return Err(
                             "logical branch must produce exactly one stack item".to_string()
                         );
                     }
-                    if token == OP_ENDIF {
+                    if token == EndIf {
                         branches.pop();
                         self.stack.push(StackItem::Temporary);
                     }
@@ -694,7 +693,7 @@ impl Generator {
             format!("internal compiler error: invalid assignment target '{display_name}'")
         })?;
         self.push_integer_temporary(depth);
-        self.apply(OP_PUT, 2, 0)
+        self.apply(Put, 2, 0)
     }
 
     fn assign_indexed_binding(&mut self, array: &str, index: &Expression) -> Result<(), String> {
@@ -730,9 +729,9 @@ impl Generator {
         self.check_array_index(self.array_length(array))?;
         if first_depth_without_operands != 0 {
             self.push_integer_temporary(first_depth_without_operands);
-            self.apply(OP_ADD, 2, 1)?;
+            self.apply(Add, 2, 1)?;
         }
-        self.apply(OP_PUT, 2, 0)
+        self.apply(Put, 2, 0)
     }
 
     fn enter_scope(&mut self) {
@@ -768,12 +767,12 @@ impl Generator {
     fn drop_binding(&mut self, index: usize) -> Result<(), String> {
         let depth = self.stack.len() - index - 1;
         match depth {
-            0 => self.asm.push(Op::Opcode(OP_DROP)),
-            1 => self.asm.push(Op::Opcode(OP_NIP)),
+            0 => self.asm.push(Op::Opcode(Drop)),
+            1 => self.asm.push(Op::Opcode(Nip)),
             _ => {
                 self.push_integer_temporary(depth);
-                self.pop_temporaries(1, OP_ROLL)?;
-                self.asm.extend([Op::Opcode(OP_ROLL), Op::Opcode(OP_DROP)]);
+                self.pop_temporaries(1, Roll)?;
+                self.asm.extend([Op::Opcode(Roll), Op::Opcode(Drop)]);
             }
         }
         self.stack.remove(index);
@@ -797,7 +796,7 @@ impl Generator {
                     return Err("internal compiler error: temporary at branch join".into());
                 };
                 // Returning paths share the join frame; direct return lowering could remove this padding.
-                self.push_temporary(Op::Opcode(OP_0));
+                self.push_temporary(Op::Opcode(Int0));
                 self.bind_local(name)?;
             }
         }
@@ -820,8 +819,8 @@ impl Generator {
                         self.swap()?;
                     } else {
                         self.push_integer_temporary(depth);
-                        self.pop_temporaries(1, OP_ROLL)?;
-                        self.asm.push(Op::Opcode(OP_ROLL));
+                        self.pop_temporaries(1, Roll)?;
+                        self.asm.push(Op::Opcode(Roll));
                         let item = self.stack.remove(index);
                         self.stack.push(item);
                     }
@@ -899,10 +898,10 @@ impl Generator {
         let right_joined = self.asm.split_off(start);
         self.asm.extend(left_joined);
         if else_body.is_some() || !right_joined.is_empty() {
-            self.asm.push(Op::Opcode(OP_ELSE));
+            self.asm.push(Op::Opcode(Else));
             self.asm.extend(right_joined);
         }
-        self.asm.push(Op::Opcode(OP_ENDIF));
+        self.asm.push(Op::Opcode(EndIf));
         self.deferred = deferred.difference(&initialized).cloned().collect();
         self.last_reads
             .retain(|(_, slot), _| *slot < baseline.len());
@@ -926,7 +925,7 @@ impl Generator {
         if !self.scopes.is_empty() {
             return Err("internal compiler error: unbalanced generator scope".to_string());
         }
-        self.push_temporary(Op::Opcode(OP_1));
+        self.push_temporary(Op::Opcode(Int1));
         while self.stack.len() > 1 {
             self.nip()?;
         }
@@ -1258,7 +1257,7 @@ fn generate_asm_from_statements_recursive(
                     generator.exit_scope()?;
                 } else {
                     generator.emit_expression(condition)?;
-                    generator.apply(OP_IF, 1, 0)?;
+                    generator.apply(If, 1, 0)?;
                     continues = generator.emit_branches(then_body, else_body.as_deref(), true)?;
                 }
             }
@@ -1430,16 +1429,16 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             match &expr.kind {
                 ExprKind::GroupFind { .. } => {
                     generator.emit_expression(expr)?;
-                    generator.apply(OP_DROP, 1, 0)?;
-                    generator.push_temporary(Op::Opcode(OP_1));
-                    generator.apply(OP_VERIFY, 1, 0)?;
+                    generator.apply(Drop, 1, 0)?;
+                    generator.push_temporary(Op::Opcode(Int1));
+                    generator.apply(Verify, 1, 0)?;
                 }
                 ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {
                     generator.emit_expression_items(expr, 0)?;
                 }
                 _ => {
                     generator.emit_expression(expr)?;
-                    generator.apply(OP_VERIFY, 1, 0)?;
+                    generator.apply(Verify, 1, 0)?;
                 }
             }
             Ok(())
@@ -1453,10 +1452,10 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;
-            for opcode in op.opcodes() {
+            for &opcode in op.opcodes() {
                 generator.lower_raw_opcode(opcode)?;
             }
-            generator.apply(OP_VERIFY, 1, 0)?;
+            generator.apply(Verify, 1, 0)?;
             Ok(())
         }
     }

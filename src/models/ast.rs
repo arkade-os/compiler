@@ -201,14 +201,14 @@ pub enum HashFn {
 }
 
 impl HashFn {
-    /// The Bitcoin opcode string this hash function emits.
-    pub fn opcode(&self) -> &'static str {
-        use crate::opcodes::{OP_HASH160, OP_HASH256, OP_RIPEMD160, OP_SHA256};
+    /// The opcode this hash function emits.
+    pub fn opcode(&self) -> crate::opcodes::Opcode {
+        use crate::opcodes::Opcode::{Hash160, Hash256, Ripemd160, Sha256};
         match self {
-            HashFn::Sha256 => OP_SHA256,
-            HashFn::Hash160 => OP_HASH160,
-            HashFn::Hash256 => OP_HASH256,
-            HashFn::Ripemd160 => OP_RIPEMD160,
+            HashFn::Sha256 => Sha256,
+            HashFn::Hash160 => Hash160,
+            HashFn::Hash256 => Hash256,
+            HashFn::Ripemd160 => Ripemd160,
         }
     }
 

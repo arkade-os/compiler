@@ -151,7 +151,7 @@ impl Generator {
                     self.swap()?;
                 } else {
                     self.push_integer_temporary(depth);
-                    self.apply(OP_ROLL, depth + 2, depth + 1)?;
+                    self.apply(Roll, depth + 2, depth + 1)?;
                 }
             }
             return Ok(());
@@ -301,10 +301,10 @@ impl Generator {
             .transpose()?
             .unwrap_or_default();
         if !direct_return {
-            self.push_temporary(Op::Opcode(OP_0));
+            self.push_temporary(Op::Opcode(Int0));
             self.bind_local("$returned")?;
             for leaf in results.iter().rev() {
-                self.push_temporary(Op::Opcode(OP_0));
+                self.push_temporary(Op::Opcode(Int0));
                 self.bind_local(&Self::internal_binding_name(&leaf.access_name))?;
             }
         }
@@ -339,15 +339,15 @@ impl Generator {
         while self.stack.len() > baseline + results {
             match results {
                 0 => {
-                    self.asm.push(Op::Opcode(OP_DROP));
+                    self.asm.push(Op::Opcode(Drop));
                     self.stack.pop();
                 }
                 1 => self.nip()?,
                 _ => {
                     self.push_integer_temporary(results);
-                    self.pop_temporaries(1, OP_ROLL)?;
-                    self.asm.push(Op::Opcode(OP_ROLL));
-                    self.asm.push(Op::Opcode(OP_DROP));
+                    self.pop_temporaries(1, Roll)?;
+                    self.asm.push(Op::Opcode(Roll));
+                    self.asm.push(Op::Opcode(Drop));
                     self.stack.remove(self.stack.len() - results - 1);
                 }
             }
@@ -375,7 +375,7 @@ impl Generator {
         if self.direct_return {
             Ok(())
         } else {
-            self.push_temporary(Op::Opcode(OP_1));
+            self.push_temporary(Op::Opcode(Int1));
             self.assign_static_binding("$returned", "$returned")
         }
     }
@@ -385,8 +385,8 @@ impl Generator {
         statements: &[LocatedStatement],
     ) -> Result<bool, String> {
         self.read_binding("$returned")?;
-        self.apply(OP_NOT, 1, 1)?;
-        self.apply(OP_IF, 1, 0)?;
+        self.apply(Not, 1, 1)?;
+        self.apply(If, 1, 0)?;
         self.emit_branches(statements, None, false)
     }
 }

@@ -1,6 +1,6 @@
 use super::*;
 use crate::models::*;
-use crate::opcodes::OP_ROLL;
+use crate::opcodes::Opcode::Roll;
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::types::{bind_local_type, ArkType};
 
@@ -40,28 +40,28 @@ impl Generator {
                 if remaining > 1 {
                     self.roll(remaining)?;
                 }
-                self.apply(OP_EQUALVERIFY, 2, 0)?;
+                self.apply(EqualVerify, 2, 0)?;
             } else if remaining == width {
                 self.roll(width)?;
-                self.apply(OP_EQUAL, 2, 1)?;
+                self.apply(Equal, 2, 1)?;
             } else {
                 self.roll(remaining + 1)?;
                 self.roll(2)?;
-                self.apply(OP_EQUAL, 2, 1)?;
-                self.apply(OP_BOOLAND, 2, 1)?;
+                self.apply(Equal, 2, 1)?;
+                self.apply(BoolAnd, 2, 1)?;
             }
         }
         if op == BinaryOperator::Ne {
-            self.apply(OP_NOT, 1, 1)?;
-            self.apply(OP_VERIFY, 1, 0)?;
+            self.apply(Not, 1, 1)?;
+            self.apply(Verify, 1, 0)?;
         }
         Ok(())
     }
 
     fn roll(&mut self, depth: usize) -> Result<(), String> {
         self.push_integer_temporary(depth);
-        self.pop_temporaries(1, OP_ROLL)?;
-        self.asm.push(Op::Opcode(OP_ROLL));
+        self.pop_temporaries(1, Roll)?;
+        self.asm.push(Op::Opcode(Roll));
         Ok(())
     }
 }

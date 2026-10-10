@@ -1,10 +1,12 @@
 //! Expression instructions: what an expression pushes, before the generator
 //! places it on its stack model and spells it as assembly.
 
+use crate::opcodes::Opcode;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Op {
     /// An opcode; its stack effect comes from the opcode table.
-    Opcode(&'static str),
+    Opcode(Opcode),
     /// A constant: a number, `0x` bytes, or a small-number opcode such as `OP_3`.
     Push(String),
     /// A binding, by its scope key.
@@ -21,7 +23,7 @@ impl Op {
     /// The assembly token, as an artifact placeholder spells nested arguments.
     pub(crate) fn spell(&self) -> String {
         match self {
-            Op::Opcode(opcode) => opcode.to_string(),
+            Op::Opcode(opcode) => opcode.name().to_string(),
             Op::Push(value) | Op::Contract(value) => value.clone(),
             Op::Read(key) => format!("<{key}>"),
             Op::Value(index) => format!("<$call:{index}>"),

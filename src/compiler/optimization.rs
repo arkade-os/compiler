@@ -1,12 +1,5 @@
 use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
-use crate::opcodes::{
-    OP_0, OP_0NOTEQUAL, OP_1, OP_1ADD, OP_2, OP_2DROP, OP_2DUP, OP_2OVER, OP_2ROT, OP_2SWAP, OP_3,
-    OP_3DUP, OP_4, OP_5, OP_ADD, OP_BOOLAND, OP_BOOLOR, OP_CHECKSIG, OP_CHECKSIGFROMSTACK,
-    OP_CHECKSIGVERIFY, OP_DROP, OP_DUP, OP_EQUAL, OP_EQUALVERIFY, OP_GREATERTHAN,
-    OP_GREATERTHANOREQUAL, OP_INSPECTINPUTPACKET, OP_INSPECTPACKET, OP_LESSTHAN,
-    OP_LESSTHANOREQUAL, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_OVER, OP_PICK, OP_PUT,
-    OP_ROLL, OP_ROT, OP_SWAP, OP_VERIFY,
-};
+use crate::opcodes::Opcode::{self, *};
 
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
@@ -196,95 +189,88 @@ fn fixed_bytes(value: i128, width: usize) -> Option<String> {
     ))
 }
 
-/// Opcodes that leave a minimal 0 or 1, which `OP_0NOTEQUAL` returns unchanged.
-const BOOLEAN_RESULTS: [&str; 12] = [
-    OP_EQUAL,
-    OP_NUMEQUAL,
-    OP_LESSTHAN,
-    OP_LESSTHANOREQUAL,
-    OP_GREATERTHAN,
-    OP_GREATERTHANOREQUAL,
-    OP_NOT,
-    OP_0NOTEQUAL,
-    OP_BOOLAND,
-    OP_BOOLOR,
-    OP_CHECKSIG,
-    OP_CHECKSIGFROMSTACK,
+/// Opcodes that leave a minimal 0 or 1, which `NotEqual0` returns unchanged.
+const BOOLEAN_RESULTS: [Opcode; 12] = [
+    Equal,
+    NumEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    Not,
+    NotEqual0,
+    BoolAnd,
+    BoolOr,
+    CheckSig,
+    CheckSigFromStack,
 ];
 
 /// Rewrites of the output's last tokens, tried in order. A leading token that only guards a
 /// rewrite reappears in its replacement.
-const REWRITES: &[(&[&str], &[&str])] = &[
-    (&[OP_0, OP_PICK], &[OP_DUP]),
-    (&[OP_DUP, OP_SWAP], &[OP_DUP]),
-    (&[OP_0, OP_PUT], &[OP_NIP]),
-    (&[OP_1, OP_PICK], &[OP_OVER]),
-    (&[OP_0, OP_ROLL], &[]),
-    (&[OP_SWAP, OP_SWAP], &[]),
-    (&[OP_1, OP_ROLL], &[OP_SWAP]),
-    (&[OP_2, OP_ROLL], &[OP_ROT]),
-    (&[OP_SWAP, OP_DROP], &[OP_NIP]),
-    (&[OP_DROP, OP_DROP], &[OP_2DROP]),
-    (&[OP_OVER, OP_OVER], &[OP_2DUP]),
-    (&[OP_DUP, OP_2, OP_PICK], &[OP_2DUP, OP_SWAP]),
-    (&[OP_2, OP_PICK, OP_OVER], &[OP_3DUP, OP_NIP]),
-    (&[OP_2, OP_PICK, OP_4, OP_PICK], &[OP_2OVER, OP_SWAP]),
-    (&[OP_ROT, OP_SWAP, OP_ROT], &[OP_SWAP]),
-    (&[OP_ROT, OP_3, OP_ROLL], &[OP_2SWAP, OP_SWAP]),
-    (&[OP_3, OP_ROLL, OP_3, OP_ROLL], &[OP_2SWAP]),
-    (&[OP_4, OP_ROLL, OP_5, OP_ROLL], &[OP_2ROT, OP_SWAP]),
-    (&[OP_1, OP_ADD], &[OP_1ADD]),
-    (&["1", OP_ADD], &[OP_1ADD]),
-    (&[OP_1, OP_1ADD], &[OP_2]),
-    (&["1", OP_1ADD], &[OP_2]),
-    (&[OP_1, OP_VERIFY], &[]),
-    (&["1", OP_VERIFY], &[]),
-    (&[OP_EQUAL, OP_VERIFY], &[OP_EQUALVERIFY]),
-    (&[OP_NUMEQUAL, OP_VERIFY], &[OP_NUMEQUALVERIFY]),
-    (&[OP_DUP, OP_EQUALVERIFY], &[OP_DROP]),
+const REWRITES: &[(&[Opcode], &[Opcode])] = &[
+    (&[Int0, Pick], &[Dup]),
+    (&[Dup, Swap], &[Dup]),
+    (&[Int0, Put], &[Nip]),
+    (&[Int1, Pick], &[Over]),
+    (&[Int0, Roll], &[]),
+    (&[Swap, Swap], &[]),
+    (&[Int1, Roll], &[Swap]),
+    (&[Int2, Roll], &[Rot]),
+    (&[Swap, Drop], &[Nip]),
+    (&[Drop, Drop], &[Drop2]),
+    (&[Over, Over], &[Dup2]),
+    (&[Dup, Int2, Pick], &[Dup2, Swap]),
+    (&[Int2, Pick, Over], &[Dup3, Nip]),
+    (&[Int2, Pick, Int4, Pick], &[Over2, Swap]),
+    (&[Rot, Swap, Rot], &[Swap]),
+    (&[Rot, Int3, Roll], &[Swap2, Swap]),
+    (&[Int3, Roll, Int3, Roll], &[Swap2]),
+    (&[Int4, Roll, Int5, Roll], &[Rot2, Swap]),
+    (&[Int1, Add], &[Add1]),
+    (&[Int1, Add1], &[Int2]),
+    (&[Int1, Verify], &[]),
+    (&[Equal, Verify], &[EqualVerify]),
+    (&[NumEqual, Verify], &[NumEqualVerify]),
+    (&[Dup, EqualVerify], &[Drop]),
     // Packet lookups push a 0 or 1 presence flag.
     (
-        &[OP_INSPECTPACKET, OP_1, OP_EQUALVERIFY],
-        &[OP_INSPECTPACKET, OP_VERIFY],
+        &[InspectPacket, Int1, EqualVerify],
+        &[InspectPacket, Verify],
     ),
     (
-        &[OP_INSPECTINPUTPACKET, OP_1, OP_EQUALVERIFY],
-        &[OP_INSPECTINPUTPACKET, OP_VERIFY],
+        &[InspectInputPacket, Int1, EqualVerify],
+        &[InspectInputPacket, Verify],
     ),
-    (&[OP_CHECKSIG, OP_VERIFY], &[OP_CHECKSIGVERIFY]),
-    (&[OP_NOT, OP_NOT], &[OP_0NOTEQUAL]),
-    (&[OP_0NOTEQUAL, OP_NOT], &[OP_NOT]),
+    (&[CheckSig, Verify], &[CheckSigVerify]),
+    (&[Not, Not], &[NotEqual0]),
+    (&[NotEqual0, Not], &[Not]),
 ];
 
-/// Whether `op` is spelled `token`: an opcode, or a constant such as the literal `1`.
-fn matches(op: &Op, token: &str) -> bool {
+/// Whether `op` is `opcode`; a literal `1` assembles to `OP_1`, so it counts as one.
+fn matches(op: &Op, opcode: Opcode) -> bool {
     match op {
-        Op::Opcode(opcode) => *opcode == token,
-        Op::Push(value) => value == token,
+        Op::Opcode(op) => *op == opcode,
+        Op::Push(value) => value == "1" && opcode == Int1,
         _ => false,
     }
 }
 
 pub(super) fn optimize(mut asm: Vec<Op>) -> Vec<Op> {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
-    // already enforces a trailing `OP_VERIFY OP_1`, so a failing last requirement reports a false
+    // already enforces a trailing `Verify Int1`, so a failing last requirement reports a false
     // stack entry instead when the NIPs are kept.
-    let nips = asm
-        .iter()
-        .rev()
-        .take_while(|op| matches(op, OP_NIP))
-        .count();
+    let nips = asm.iter().rev().take_while(|op| matches(op, Nip)).count();
     let body = asm.len() - nips;
     let mut kept = asm.clone();
-    if body >= 2 && matches(&kept[body - 2], OP_VERIFY) && matches(&kept[body - 1], OP_1) {
+    if body >= 2 && matches(&kept[body - 2], Verify) && matches(&kept[body - 1], Int1) {
         kept.drain(body - 2..body);
     }
-    // Verifying the final value first lets the cleared items go in pairs with OP_2DROP; a failing
-    // last requirement then reports `OP_VERIFY failed`.
+    // Verifying the final value first lets the cleared items go in pairs with Drop2; a failing
+    // last requirement then reports `Verify failed`.
     asm.truncate(body);
-    asm.push(Op::Opcode(OP_VERIFY));
-    asm.extend(std::iter::repeat_n(Op::Opcode(OP_DROP), nips));
-    asm.push(Op::Opcode(OP_1));
+    asm.push(Op::Opcode(Verify));
+    asm.extend(std::iter::repeat_n(Op::Opcode(Drop), nips));
+    asm.push(Op::Opcode(Int1));
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
     if dropped.len() < kept.len() {
@@ -302,7 +288,7 @@ fn rewrite(asm: Vec<Op>) -> Vec<Op> {
         loop {
             let len = optimized.len();
             if len >= 2
-                && matches(&optimized[len - 1], OP_0NOTEQUAL)
+                && matches(&optimized[len - 1], NotEqual0)
                 && BOOLEAN_RESULTS
                     .iter()
                     .any(|&opcode| matches(&optimized[len - 2], opcode))
@@ -315,7 +301,7 @@ fn rewrite(asm: Vec<Op>) -> Vec<Op> {
                     && optimized[len - from.len()..]
                         .iter()
                         .zip(*from)
-                        .all(|(op, token)| matches(op, token))
+                        .all(|(op, &opcode)| matches(op, opcode))
             }) else {
                 break;
             };
@@ -329,13 +315,14 @@ fn rewrite(asm: Vec<Op>) -> Vec<Op> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::opcodes::*;
 
     /// Instructions for assembly tokens: opcodes, `<binding>` reads and constants.
     fn ops(tokens: Vec<String>) -> Vec<Op> {
         tokens
             .into_iter()
             .map(
-                |token| match crate::opcodes::ALL.iter().find(|&&opcode| opcode == token) {
+                |token| match Opcode::ALL.iter().find(|opcode| opcode.name() == token) {
                     Some(&opcode) => Op::Opcode(opcode),
                     None if token.starts_with('<') => {
                         Op::Read(token[1..token.len() - 1].to_string())
@@ -353,18 +340,15 @@ mod tests {
     fn rewrite(tokens: Vec<String>) -> Vec<String> {
         super::rewrite(ops(tokens)).iter().map(Op::spell).collect()
     }
-    use crate::opcodes::OP_ENDIF;
 
     #[test]
     fn rewrites_shorten_and_keep_the_stack_height() {
-        let height = |ops: &[&str]| -> isize {
+        let height = |ops: &[Opcode]| -> isize {
             ops.iter()
-                .map(|&op| {
-                    let (pops, pushes) = match op {
-                        "1" => (0, 1),
-                        _ => crate::opcodes::stack_effect(op)
-                            .unwrap_or_else(|| panic!("{op} has no effect")),
-                    };
+                .map(|op| {
+                    let (pops, pushes) = op
+                        .stack_effect()
+                        .unwrap_or_else(|| panic!("{op} has no effect"));
                     pushes as isize - pops as isize
                 })
                 .sum()
@@ -372,10 +356,7 @@ mod tests {
         for &(from, to) in REWRITES {
             assert!(to.len() < from.len(), "{from:?}");
             // These take their depth from an operand; the shuffle test covers them.
-            if from
-                .iter()
-                .any(|op| [OP_PICK, OP_ROLL, OP_PUT].contains(op))
-            {
+            if from.iter().any(|op| [Pick, Roll, Put].contains(op)) {
                 continue;
             }
             assert_eq!(height(from), height(to), "{from:?}");
