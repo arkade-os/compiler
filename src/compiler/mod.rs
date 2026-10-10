@@ -914,7 +914,7 @@ impl Generator {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<Vec<String>, String> {
+    fn finish(mut self) -> Result<Vec<Op>, String> {
         if !self.scopes.is_empty() {
             return Err("internal compiler error: unbalanced generator scope".to_string());
         }
@@ -925,7 +925,7 @@ impl Generator {
         if self.stack != vec![StackItem::Temporary] {
             return Err("internal compiler error: covenant did not finish cleanly".to_string());
         }
-        Ok(self.asm.iter().map(Op::spell).collect())
+        Ok(self.asm)
     }
 }
 
@@ -1045,14 +1045,6 @@ pub(crate) fn emit(
     }
 
     json.functions = tapscript::build_function_groups(contract, covenants)?;
-
-    if options.optimize {
-        for group in &mut json.functions {
-            if let Some(covenant) = &mut group.arkade {
-                covenant.asm = optimization::optimize(std::mem::take(&mut covenant.asm));
-            }
-        }
-    }
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
@@ -1179,7 +1171,11 @@ fn covenant_for(
             "internal compiler error: final-use analysis diverged from emission".to_string(),
         );
     }
-    let asm = generator.finish()?;
+    let mut ops = generator.finish()?;
+    if optimize {
+        ops = optimization::optimize(ops);
+    }
+    let asm = ops.iter().map(Op::spell).collect();
     Ok(ArkadeCovenant { inputs, asm })
 }
 

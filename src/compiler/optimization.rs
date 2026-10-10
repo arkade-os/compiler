@@ -11,6 +11,8 @@ use crate::opcodes::{
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
 
+use super::Op;
+
 const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 
 pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result<(), String> {
@@ -253,26 +255,35 @@ const REWRITES: &[(&[&str], &[&str])] = &[
     (&[OP_0NOTEQUAL, OP_NOT], &[OP_NOT]),
 ];
 
-pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
+/// Whether `op` is spelled `token`: an opcode, or a constant such as the literal `1`.
+fn matches(op: &Op, token: &str) -> bool {
+    match op {
+        Op::Opcode(opcode) => *opcode == token,
+        Op::Push(value) => value == token,
+        _ => false,
+    }
+}
+
+pub(super) fn optimize(mut asm: Vec<Op>) -> Vec<Op> {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
     // already enforces a trailing `OP_VERIFY OP_1`, so a failing last requirement reports a false
     // stack entry instead when the NIPs are kept.
     let nips = asm
         .iter()
         .rev()
-        .take_while(|token| *token == OP_NIP)
+        .take_while(|op| matches(op, OP_NIP))
         .count();
     let body = asm.len() - nips;
     let mut kept = asm.clone();
-    if body >= 2 && kept[body - 2] == OP_VERIFY && kept[body - 1] == OP_1 {
+    if body >= 2 && matches(&kept[body - 2], OP_VERIFY) && matches(&kept[body - 1], OP_1) {
         kept.drain(body - 2..body);
     }
     // Verifying the final value first lets the cleared items go in pairs with OP_2DROP; a failing
     // last requirement then reports `OP_VERIFY failed`.
     asm.truncate(body);
-    asm.push(OP_VERIFY.to_string());
-    asm.extend(std::iter::repeat_n(OP_DROP.to_string(), nips));
-    asm.push(OP_1.to_string());
+    asm.push(Op::Opcode(OP_VERIFY));
+    asm.extend(std::iter::repeat_n(Op::Opcode(OP_DROP), nips));
+    asm.push(Op::Opcode(OP_1));
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
     if dropped.len() < kept.len() {
@@ -282,16 +293,18 @@ pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
     }
 }
 
-fn rewrite(asm: Vec<String>) -> Vec<String> {
-    let mut optimized: Vec<String> = Vec::with_capacity(asm.len());
-    for token in asm {
-        optimized.push(token);
+fn rewrite(asm: Vec<Op>) -> Vec<Op> {
+    let mut optimized: Vec<Op> = Vec::with_capacity(asm.len());
+    for op in asm {
+        optimized.push(op);
         // Every rewrite shortens the window, so this terminates.
         loop {
             let len = optimized.len();
             if len >= 2
-                && optimized[len - 1] == OP_0NOTEQUAL
-                && BOOLEAN_RESULTS.contains(&optimized[len - 2].as_str())
+                && matches(&optimized[len - 1], OP_0NOTEQUAL)
+                && BOOLEAN_RESULTS
+                    .iter()
+                    .any(|&opcode| matches(&optimized[len - 2], opcode))
             {
                 optimized.pop();
                 continue;
@@ -301,12 +314,12 @@ fn rewrite(asm: Vec<String>) -> Vec<String> {
                     && optimized[len - from.len()..]
                         .iter()
                         .zip(*from)
-                        .all(|(token, op)| token == op)
+                        .all(|(op, token)| matches(op, token))
             }) else {
                 break;
             };
             optimized.truncate(len - from.len());
-            optimized.extend(to.iter().map(|token| token.to_string()));
+            optimized.extend(to.iter().map(|&opcode| Op::Opcode(opcode)));
         }
     }
     optimized
@@ -315,6 +328,30 @@ fn rewrite(asm: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Instructions for assembly tokens: opcodes, `<binding>` reads and constants.
+    fn ops(tokens: Vec<String>) -> Vec<Op> {
+        tokens
+            .into_iter()
+            .map(
+                |token| match crate::opcodes::ALL.iter().find(|&&opcode| opcode == token) {
+                    Some(&opcode) => Op::Opcode(opcode),
+                    None if token.starts_with('<') => {
+                        Op::Read(token[1..token.len() - 1].to_string())
+                    }
+                    None => Op::Push(token),
+                },
+            )
+            .collect()
+    }
+
+    fn optimize(tokens: Vec<String>) -> Vec<String> {
+        super::optimize(ops(tokens)).iter().map(Op::spell).collect()
+    }
+
+    fn rewrite(tokens: Vec<String>) -> Vec<String> {
+        super::rewrite(ops(tokens)).iter().map(Op::spell).collect()
+    }
     use crate::opcodes::OP_ENDIF;
 
     #[test]

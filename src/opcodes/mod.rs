@@ -5,6 +5,9 @@ macro_rules! opcodes {
     ($($name:ident $(=> ($pops:literal, $pushes:literal))?),* $(,)?) => {
         $(pub const $name: &str = stringify!($name);)*
 
+        #[cfg(test)]
+        pub(crate) const ALL: &[&str] = &[$($name),*];
+
         /// Items an opcode pops and pushes; `None` when that depends on an operand
         /// (`OP_PICK`, `OP_ROLL`, `OP_PUT`, `OP_TUNNEL`) or the opcode is not modelled.
         pub(crate) fn stack_effect(opcode: &str) -> Option<(usize, usize)> {
