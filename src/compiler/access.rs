@@ -257,20 +257,48 @@ impl Generator {
         };
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
-        self.push_temporary(OP_0);
+        self.push_temporary(Op::Opcode(OP_0));
         self.apply(OP_INSPECTASSETGROUP, 3, 1)?;
         // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
         // sequence takes back what it puts on the alt stack.
-        const DROP_TXID: &[&str] = &[OP_SIZE, "32", OP_EQUAL, OP_IF, OP_DROP, OP_ENDIF];
-        let restore: &[&str] = &[OP_DROP, OP_FROMALTSTACK];
-        let ops = match property {
-            GroupIoProperty::Amount => [&[OP_TOALTSTACK, OP_DROP], DROP_TXID, restore].concat(),
-            GroupIoProperty::Index => [&[OP_DROP, OP_TOALTSTACK], DROP_TXID, restore].concat(),
-            GroupIoProperty::Type => [&[OP_DROP, OP_DROP], DROP_TXID].concat(),
+        let size_32 = [Op::Opcode(OP_SIZE), Op::Push("32".into())];
+        let drop_txid = [
+            Op::Opcode(OP_EQUAL),
+            Op::Opcode(OP_IF),
+            Op::Opcode(OP_DROP),
+            Op::Opcode(OP_ENDIF),
+        ];
+        let restore = [Op::Opcode(OP_DROP), Op::Opcode(OP_FROMALTSTACK)];
+        let ops: Vec<Op> = match property {
+            GroupIoProperty::Amount => [
+                vec![Op::Opcode(OP_TOALTSTACK), Op::Opcode(OP_DROP)],
+                size_32.to_vec(),
+                drop_txid.to_vec(),
+                restore.to_vec(),
+            ]
+            .concat(),
+            GroupIoProperty::Index => [
+                vec![Op::Opcode(OP_DROP), Op::Opcode(OP_TOALTSTACK)],
+                size_32.to_vec(),
+                drop_txid.to_vec(),
+                restore.to_vec(),
+            ]
+            .concat(),
+            GroupIoProperty::Type => [
+                vec![Op::Opcode(OP_DROP), Op::Opcode(OP_DROP)],
+                size_32.to_vec(),
+                drop_txid.to_vec(),
+            ]
+            .concat(),
             // A local input has no txid, so the size check fails the spend.
-            GroupIoProperty::Txid => vec![OP_DROP, OP_DROP, OP_SIZE, "32", OP_EQUALVERIFY, OP_NIP],
+            GroupIoProperty::Txid => [
+                vec![Op::Opcode(OP_DROP), Op::Opcode(OP_DROP)],
+                size_32.to_vec(),
+                vec![Op::Opcode(OP_EQUALVERIFY), Op::Opcode(OP_NIP)],
+            ]
+            .concat(),
         };
-        self.asm.extend(ops.iter().map(|op| op.to_string()));
+        self.asm.extend(ops);
         Ok(())
     }
 

@@ -61,11 +61,15 @@ enum StackItem {
 // `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
 
-fn integer_token(value: usize) -> String {
-    if value <= 16 {
-        format!("OP_{value}")
-    } else {
-        value.to_string()
+fn integer_op(value: usize) -> Op {
+    use crate::opcodes::*;
+    const SMALL: [&str; 17] = [
+        OP_0, OP_1, OP_2, OP_3, OP_4, OP_5, OP_6, OP_7, OP_8, OP_9, OP_10, OP_11, OP_12, OP_13,
+        OP_14, OP_15, OP_16,
+    ];
+    match SMALL.get(value) {
+        Some(&opcode) => Op::Opcode(opcode),
+        None => Op::Push(value.to_string()),
     }
 }
 
@@ -75,7 +79,7 @@ fn internal_array_binding_name(array: &str, index: &str) -> String {
 
 struct Generator {
     optimize: bool,
-    asm: Vec<String>,
+    asm: Vec<Op>,
     stack: Vec<StackItem>,
     scopes: Vec<(usize, types::Scope)>,
     deferred: std::collections::HashSet<String>,
@@ -149,7 +153,7 @@ impl Generator {
                 inlined.insert(binding_name, placeholder);
                 continue;
             }
-            asm.push(format!("<{placeholder}>"));
+            asm.push(Op::Read(placeholder.clone()));
             stack.push(StackItem::Binding {
                 name: binding_name,
                 kind: BindingKind::Constructor,
@@ -165,11 +169,15 @@ impl Generator {
             };
             let depth = prologue + index;
             if depth > 0 {
-                asm.extend([integer_token(depth), OP_PICK.to_string()]);
+                asm.extend([integer_op(depth), Op::Opcode(OP_PICK)]);
             }
-            asm.extend([OP_SIZE, width, OP_EQUALVERIFY].map(String::from));
+            asm.extend([
+                Op::Opcode(OP_SIZE),
+                Op::Push(width.into()),
+                Op::Opcode(OP_EQUALVERIFY),
+            ]);
             if depth > 0 {
-                asm.push(OP_DROP.to_string());
+                asm.push(Op::Opcode(OP_DROP));
             }
         }
         let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
@@ -203,8 +211,8 @@ impl Generator {
         })
     }
 
-    fn push_temporary(&mut self, token: impl Into<String>) {
-        self.asm.push(token.into());
+    fn push_temporary(&mut self, op: Op) {
+        self.asm.push(op);
         self.stack.push(StackItem::Temporary);
     }
 
@@ -242,7 +250,11 @@ impl Generator {
 
     fn read_binding(&mut self, name: &str) -> Result<(), String> {
         if name.starts_with("0x") {
-            self.push_temporary(if name == "0x" { "OP_0" } else { name });
+            self.push_temporary(if name == "0x" {
+                Op::Opcode(OP_0)
+            } else {
+                Op::Push(name.to_string())
+            });
             return Ok(());
         }
         // A field named `length` outranks synthetic array length.
@@ -266,7 +278,7 @@ impl Generator {
                 .inlined
                 .get(name)
                 .ok_or_else(|| format!("undefined binding '{name}'"))?;
-            self.push_temporary(format!("<{placeholder}>"));
+            self.push_temporary(Op::Read(placeholder.to_string()));
             return Ok(());
         };
         // An inlined alias source is copied once at the call, however often the helper reads it.
@@ -339,7 +351,7 @@ impl Generator {
     }
 
     fn push_integer_temporary(&mut self, value: usize) {
-        self.push_temporary(integer_token(value));
+        self.push_temporary(integer_op(value));
     }
 
     fn check_array_index(&mut self, length: usize) -> Result<(), String> {
@@ -392,9 +404,9 @@ impl Generator {
         Ok(())
     }
 
-    fn apply(&mut self, opcode: &str, inputs: usize, outputs: usize) -> Result<(), String> {
+    fn apply(&mut self, opcode: &'static str, inputs: usize, outputs: usize) -> Result<(), String> {
         self.pop_temporaries(inputs, opcode)?;
-        self.asm.push(opcode.to_string());
+        self.asm.push(Op::Opcode(opcode));
         self.stack
             .extend(std::iter::repeat_n(StackItem::Temporary, outputs));
         Ok(())
@@ -406,7 +418,7 @@ impl Generator {
         }
         let index = self.stack.len() - 2;
         self.stack.remove(index);
-        self.asm.push(OP_NIP.to_string());
+        self.asm.push(Op::Opcode(OP_NIP));
         Ok(())
     }
 
@@ -416,11 +428,11 @@ impl Generator {
         }
         let len = self.stack.len();
         self.stack.swap(len - 2, len - 1);
-        self.asm.push(OP_SWAP.to_string());
+        self.asm.push(Op::Opcode(OP_SWAP));
         Ok(())
     }
 
-    fn lower_raw_opcode(&mut self, opcode: &str) -> Result<(), String> {
+    fn lower_raw_opcode(&mut self, opcode: &'static str) -> Result<(), String> {
         match opcode {
             // These move bindings as well as temporaries.
             OP_NIP => self.nip(),
@@ -430,7 +442,10 @@ impl Generator {
                 let inputs = self
                     .asm
                     .last()
-                    .and_then(|count| count.parse::<usize>().ok())
+                    .and_then(|count| match count {
+                        Op::Push(count) => count.parse::<usize>().ok(),
+                        _ => None,
+                    })
                     .and_then(|count| count.checked_mul(2)?.checked_add(3))
                     .ok_or("invalid tunnel exception count")?;
                 self.apply(opcode, inputs, 1)
@@ -448,11 +463,11 @@ impl Generator {
         match op {
             Op::Opcode(opcode) => self.lower_raw_opcode(opcode),
             Op::Push(value) => {
-                self.push_temporary(value);
+                self.push_temporary(Op::Push(value));
                 Ok(())
             }
             Op::Read(key) if key.parse::<i64>().is_ok() => {
-                self.push_temporary(key);
+                self.push_temporary(Op::Push(key));
                 Ok(())
             }
             Op::Read(key) => self.read_binding(&key),
@@ -461,7 +476,7 @@ impl Generator {
                 for (array, elements) in &self.constructor_array_expansions {
                     token = token.replace(array, elements);
                 }
-                self.push_temporary(token);
+                self.push_temporary(Op::Contract(token));
                 Ok(())
             }
             Op::Value(_) => {
@@ -526,7 +541,7 @@ impl Generator {
                         branches.pop();
                         self.stack.push(StackItem::Temporary);
                     }
-                    self.asm.push(token.to_string());
+                    self.asm.push(Op::Opcode(token));
                 }
                 Op::Value(index) => {
                     let value = values.get(index).ok_or("invalid call marker")?;
@@ -745,12 +760,12 @@ impl Generator {
     fn drop_binding(&mut self, index: usize) -> Result<(), String> {
         let depth = self.stack.len() - index - 1;
         match depth {
-            0 => self.asm.push(OP_DROP.into()),
-            1 => self.asm.push(OP_NIP.into()),
+            0 => self.asm.push(Op::Opcode(OP_DROP)),
+            1 => self.asm.push(Op::Opcode(OP_NIP)),
             _ => {
                 self.push_integer_temporary(depth);
                 self.pop_temporaries(1, OP_ROLL)?;
-                self.asm.extend([OP_ROLL.into(), OP_DROP.into()]);
+                self.asm.extend([Op::Opcode(OP_ROLL), Op::Opcode(OP_DROP)]);
             }
         }
         self.stack.remove(index);
@@ -774,7 +789,7 @@ impl Generator {
                     return Err("internal compiler error: temporary at branch join".into());
                 };
                 // Returning paths share the join frame; direct return lowering could remove this padding.
-                self.push_temporary(OP_0);
+                self.push_temporary(Op::Opcode(OP_0));
                 self.bind_local(name)?;
             }
         }
@@ -798,7 +813,7 @@ impl Generator {
                     } else {
                         self.push_integer_temporary(depth);
                         self.pop_temporaries(1, OP_ROLL)?;
-                        self.asm.push(OP_ROLL.into());
+                        self.asm.push(Op::Opcode(OP_ROLL));
                         let item = self.stack.remove(index);
                         self.stack.push(item);
                     }
@@ -876,10 +891,10 @@ impl Generator {
         let right_joined = self.asm.split_off(start);
         self.asm.extend(left_joined);
         if else_body.is_some() || !right_joined.is_empty() {
-            self.asm.push(OP_ELSE.into());
+            self.asm.push(Op::Opcode(OP_ELSE));
             self.asm.extend(right_joined);
         }
-        self.asm.push(OP_ENDIF.into());
+        self.asm.push(Op::Opcode(OP_ENDIF));
         self.deferred = deferred.difference(&initialized).cloned().collect();
         self.last_reads
             .retain(|(_, slot), _| *slot < baseline.len());
@@ -903,14 +918,14 @@ impl Generator {
         if !self.scopes.is_empty() {
             return Err("internal compiler error: unbalanced generator scope".to_string());
         }
-        self.push_temporary(OP_1);
+        self.push_temporary(Op::Opcode(OP_1));
         while self.stack.len() > 1 {
             self.nip()?;
         }
         if self.stack != vec![StackItem::Temporary] {
             return Err("internal compiler error: covenant did not finish cleanly".to_string());
         }
-        Ok(self.asm)
+        Ok(self.asm.iter().map(Op::spell).collect())
     }
 }
 
@@ -1404,7 +1419,7 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 ExprKind::GroupFind { .. } => {
                     generator.emit_expression(expr)?;
                     generator.apply(OP_DROP, 1, 0)?;
-                    generator.push_temporary(OP_1);
+                    generator.push_temporary(Op::Opcode(OP_1));
                     generator.apply(OP_VERIFY, 1, 0)?;
                 }
                 ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {
@@ -1451,12 +1466,15 @@ mod symbolic_stack_tests {
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
 
-        generator.push_temporary("9");
+        generator.push_temporary(Op::Push("9".into()));
         generator
             .assign(&AssignmentTarget::Binding("d".to_string()))
             .expect("deep assignment");
 
-        assert_eq!(generator.asm, ["9", "OP_3", "OP_PUT"]);
+        assert_eq!(
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
+            ["9", "OP_3", "OP_PUT"]
+        );
         assert_eq!(
             generator.stack,
             ["d", "c", "b", "a"]
@@ -1481,12 +1499,15 @@ mod symbolic_stack_tests {
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
 
-        generator.push_temporary("9");
+        generator.push_temporary(Op::Push("9".into()));
         generator
             .assign(&AssignmentTarget::Binding("a".to_string()))
             .expect("shallow assignment");
 
-        assert_eq!(generator.asm, ["9", "OP_0", "OP_PUT"]);
+        assert_eq!(
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
+            ["9", "OP_0", "OP_PUT"]
+        );
         assert_eq!(
             generator.stack,
             ["b", "a"]
@@ -1514,7 +1535,7 @@ mod symbolic_stack_tests {
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
         let bindings = generator.stack.clone();
-        generator.push_temporary("9");
+        generator.push_temporary(Op::Push("9".into()));
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: "values".into(),
@@ -1522,7 +1543,7 @@ mod symbolic_stack_tests {
             })
             .expect("indexed assignment");
         assert_eq!(
-            generator.asm,
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
             [
                 "9",
                 "OP_4",
@@ -1555,10 +1576,10 @@ mod symbolic_stack_tests {
         ];
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
-        generator.push_temporary("7");
+        generator.push_temporary(Op::Push("7".into()));
         generator.bind_local("above").expect("local above array");
 
-        generator.push_temporary("9");
+        generator.push_temporary(Op::Push("9".into()));
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: "values".to_string(),
@@ -1574,7 +1595,7 @@ mod symbolic_stack_tests {
             .expect("expression index assignment");
 
         assert_eq!(
-            generator.asm,
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
             [
                 "7",
                 "9",

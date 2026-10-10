@@ -61,7 +61,7 @@ impl Generator {
     fn roll(&mut self, depth: usize) -> Result<(), String> {
         self.push_integer_temporary(depth);
         self.pop_temporaries(1, OP_ROLL)?;
-        self.asm.push(OP_ROLL.to_string());
+        self.asm.push(Op::Opcode(OP_ROLL));
         Ok(())
     }
 }
