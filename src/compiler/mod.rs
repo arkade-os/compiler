@@ -58,6 +58,9 @@ enum StackItem {
     Temporary,
 }
 
+/// Data and alt stack items the VM allows at once (`txscript.MaxStackSize`).
+const MAX_STACK_ITEMS: usize = 1000;
+
 // `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
 
@@ -81,6 +84,8 @@ struct Generator {
     optimize: bool,
     asm: Vec<Op>,
     stack: Vec<StackItem>,
+    /// The most items the stacks hold at once, data and alt together.
+    max_depth: usize,
     scopes: Vec<(usize, types::Scope)>,
     deferred: std::collections::HashSet<String>,
     constructor_array_expansions: Vec<(String, String)>,
@@ -189,6 +194,7 @@ impl Generator {
         Ok(Self {
             optimize: false,
             asm,
+            max_depth: stack.len(),
             stack,
             scopes: Vec::new(),
             deferred: std::collections::HashSet::new(),
@@ -214,6 +220,7 @@ impl Generator {
     fn push_temporary(&mut self, op: Op) {
         self.asm.push(op);
         self.stack.push(StackItem::Temporary);
+        self.max_depth = self.max_depth.max(self.stack.len());
     }
 
     fn binding_index(&self, name: &str) -> Option<usize> {
@@ -409,6 +416,7 @@ impl Generator {
         self.asm.push(Op::Opcode(opcode));
         self.stack
             .extend(std::iter::repeat_n(StackItem::Temporary, outputs));
+        self.max_depth = self.max_depth.max(self.stack.len());
         Ok(())
     }
 
@@ -1170,6 +1178,12 @@ fn covenant_for(
         return Err(
             "internal compiler error: final-use analysis diverged from emission".to_string(),
         );
+    }
+    if generator.max_depth > MAX_STACK_ITEMS {
+        return Err(format!(
+            "function '{}' can hold {} stack items, above the VM limit of {MAX_STACK_ITEMS}",
+            function.name, generator.max_depth
+        ));
     }
     let mut ops = generator.finish()?;
     if optimize {

@@ -585,3 +585,18 @@ fn check_reports_tapscript_leaf_errors() {
         ["tapscript `exit`: timelock must come before the multisig (out of order)"]
     );
 }
+
+#[test]
+fn covenants_over_the_vm_stack_limit_do_not_compile() {
+    let source = |items: usize| {
+        format!("contract C() {{ function spend(int[{items}] xs) {{ require(xs[0] == 1); }} }}")
+    };
+    assert!(compile(&source(998)).is_ok());
+    let error = compile(&source(999))
+        .expect_err("999 items peak above 1000")
+        .to_string();
+    assert!(
+        error.contains("can hold 1001 stack items, above the VM limit of 1000"),
+        "{error}"
+    );
+}

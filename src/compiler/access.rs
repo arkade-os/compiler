@@ -259,6 +259,8 @@ impl Generator {
         self.emit_expression(io_index)?;
         self.push_temporary(Op::Opcode(OP_0));
         self.apply(OP_INSPECTASSETGROUP, 3, 1)?;
+        // The record is up to four items before the normalization below keeps one.
+        self.max_depth = self.max_depth.max(self.stack.len() + 3);
         // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
         // sequence takes back what it puts on the alt stack.
         let size_32 = [Op::Opcode(OP_SIZE), Op::Push("32".into())];
