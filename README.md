@@ -379,7 +379,7 @@ Every spend path must contain at least one `require`, directly or through a help
 
 ### Byte literals
 
-Double-quoted strings and `0x` hex literals both have type `bytes`. Strings use UTF-8 and JSON escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, and `\uXXXX`). Hex literals accept either digit case and require at least one complete byte pair. Use `""` for empty bytes.
+Double-quoted strings and `0x` hex literals have type `bytes20` or `bytes32` when their encoded length is exactly 20 or 32 bytes, and `bytes` otherwise. Strings use UTF-8 and JSON escapes (`\"`, `\\`, `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, and `\uXXXX`). Hex literals accept either digit case and require at least one complete byte pair. Use `""` for empty bytes.
 
 ```ark
 bytes x = "hello";
@@ -390,7 +390,7 @@ require(size("ž") == 2);
 require(sha256("hello" + 0x00) == expectedHash);
 ```
 
-Literals work in byte expressions, calls, comparisons, arrays, structs, and constants. They follow the same type rules as `bytes` variables; they do not implicitly become `int`, `pubkey`, `signature`, `bytes20`, or `bytes32`. Assembly stores byte data as `0x`-prefixed hex tokens and empty bytes as `OP_0`; consumers must decode these tokens as data pushes, preserving leading zeros.
+Literals work in byte expressions, calls, comparisons, arrays, structs, and constants. Sized literals widen implicitly to `bytes` (including its `pubkey` alias), and casts to their inferred type add no runtime length check. Literals do not implicitly become `int` or `signature`. Assembly stores byte data as `0x`-prefixed hex tokens and empty bytes as `OP_0`; consumers must decode these tokens as data pushes, preserving leading zeros.
 
 ### Constants
 

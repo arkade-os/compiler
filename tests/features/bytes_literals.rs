@@ -1,6 +1,72 @@
 use arkade_compiler::compile;
 
-use crate::common::{arkade_asm_tokens, arkade_inputs, group};
+use crate::common::{arkade_asm_tokens, arkade_inputs, compile_unoptimized, group};
+
+#[test]
+fn sized_byte_literals_work_in_bindings_and_calls_without_size_checks() {
+    for width in [20, 32] {
+        let ty = format!("bytes{width}");
+        let hex = format!("0x{}", "00".repeat(width));
+        for literal in [
+            hex,
+            format!("\"{}\"", "a".repeat(width)),
+            format!("\"{}\"", "ž".repeat(width / 2)),
+        ] {
+            let source = format!(
+                r#"
+                struct Value {{ {ty} hash; }}
+                contract Demo() {{
+                    const bytes HASH = {literal};
+                    private function echo({ty} hash) {ty} {{ return hash; }}
+                    private function fixed() {ty} {{ return {literal}; }}
+                    function spend({ty} expected) {{
+                        let inferred = {literal};
+                        {ty} hash = inferred;
+                        hash = {literal};
+                        {ty}[2] hashes = [{literal}, HASH];
+                        Value value = {{ hash: {literal} }};
+                        bytes widened = {literal};
+                        pubkey key = pubkey({literal});
+                        require(hash == expected);
+                        require(echo(inferred) == expected);
+                        require(echo({literal}) == expected);
+                        require(fixed() == expected);
+                        require(hashes[1] == value.hash);
+                        require(widened == key);
+                        require({ty}({literal}) == expected);
+                    }}
+                }}
+                "#
+            );
+            for out in [compile(&source), compile_unoptimized(&source)] {
+                let out = out.unwrap_or_else(|error| panic!("{ty} {literal}: {error}"));
+                let asm = arkade_asm_tokens(&out, "spend");
+                assert!(!asm.iter().any(|token| token == "OP_SIZE"), "{asm:?}");
+                assert!(asm.iter().any(|token| token == "OP_EQUAL"), "{asm:?}");
+                assert_eq!(arkade_inputs(&out, "spend"), ["expected"]);
+                assert_eq!(group(&out, "spend").leaves.len(), 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn sized_byte_literals_reject_other_widths_and_implicit_signatures() {
+    for (ty, width) in [
+        ("bytes20", 19),
+        ("bytes20", 21),
+        ("bytes20", 32),
+        ("bytes32", 20),
+        ("bytes32", 31),
+        ("bytes32", 33),
+        ("signature", 64),
+    ] {
+        let literal = format!("0x{}", "00".repeat(width));
+        assert!(compile(&format!(
+            "contract Demo() {{ function spend() {{ {ty} value = {literal}; require(value == value); }} }}"
+        )).is_err(), "accepted {ty} = {literal}");
+    }
+}
 
 #[test]
 fn bytes_literals_encode_exact_bytes() {
