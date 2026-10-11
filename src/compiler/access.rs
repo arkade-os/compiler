@@ -109,9 +109,6 @@ impl Generator {
     }
 
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<(), String> {
-        if matches!(value.ty, ArkType::Array(..)) {
-            return Err("assignment requires a scalar or struct value".to_string());
-        }
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
         let leaves = self.value_leaves(&name, &value.ty.as_str())?;

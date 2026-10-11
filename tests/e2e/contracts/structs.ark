@@ -75,6 +75,31 @@ contract Structs(Account account) {
     local.a = rows[index].a;
     require(local.a.b == 5, "nested struct copy");
 
+    int[3] values = [1, 2, 3];
+    values = [values[2], values[0], values[1]];
+    require(values == [3, 1, 2], "whole array assignment reads all old elements");
+    values = values;
+    values = rotateValues(values);
+    require(values == [2, 3, 1], "whole array self assignment and helper result");
+    for (2) { values = rotateValues(values); }
+    require(values == [3, 1, 2], "whole array assignment in loops");
+    if (index == 1) { values = [5, 7, 11]; } else { values = [13, 17, 19]; }
+    local.weights = values;
+    require(local.weights == [5, 7, 11], "array field assignment in branches");
+    rows[index].weights = local.weights;
+    require(rows[index].weights == values, "whole indexed array field assignment");
+    require(rows[0].weights == [11, 13, 17], "indexed array assignment preserves neighbor");
+    rows = [rows[1], rows[0]];
+    require(rows[0].weights == values, "whole struct array permutation");
+    require(rows[1].weights == [11, 13, 17], "whole struct array field order");
+    rows = copyRules(rows);
+    require(rows[0].weights == values, "whole struct array helper result");
+    rows = [{ a_b: local.a_b, a: { b: local.a.b }, weights: local.weights }, account.rules];
+    require(rows[0] == local, "whole struct array literal assignment");
+    require(rows[1] == account.rules, "whole struct array literal second element");
+    supplied.weights = rows[0].weights;
+    require(supplied.weights == values, "whole array function input field assignment");
+
     let indexedOutpoint = tx.inputs[0].outpoint;
     Outpoint currentOutpoint = tx.input.current.outpoint;
     require(indexedOutpoint.txid == currentOutpoint.txid, "outpoint txid");
@@ -108,6 +133,11 @@ contract Structs(Account account) {
     require(ecAdd((ecAdd(generator, generator, 0)), generator, 0) == ecMul(generator, 3, 0), "nested ecAdd");
 
     require(checkSig(ownerSig, account.owner));
+  }
+
+  private function rotateValues(int[3] values) int[3] {
+    values = [values[2], values[0], values[1]];
+    return values;
   }
 
   private function rotateRules(Rules item) Rules {

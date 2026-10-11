@@ -737,7 +737,7 @@ contract C(Packet packet, Wrapper wrapper, ArrayField array) {
 }
 
 #[test]
-fn whole_struct_assignments_preserve_the_covenant_and_witness_shape() {
+fn whole_composite_assignments_preserve_the_covenant_and_witness_shape() {
     let output = compile(
         r#"
 struct Point { int x; int y; }
@@ -760,6 +760,12 @@ contract C() {
         State[2] states = [state, next];
         states[index] = state;
         states[0] = states[index];
+        states = states;
+        states = [states[1], states[0]];
+        states = [{ point: { x: 1, y: 2 }, values: [3, 4] }, state];
+        state.values = next.values;
+        state.values = [state.values[1], state.values[0]];
+        states[index].values = state.values;
         states[index].point = { x: state.point.y, y: state.point.x };
         state.point = states[index].point;
         require(state.point == states[index].point);
@@ -789,7 +795,7 @@ contract C() {
 }
 
 #[test]
-fn whole_struct_assignments_validate_types_shapes_and_mutability() {
+fn whole_composite_assignments_validate_types_shapes_and_mutability() {
     let cases = [
         ("point = true;", "changes its type from 'Point' to 'bool'"),
         (
@@ -815,7 +821,23 @@ fn whole_struct_assignments_validate_types_shapes_and_mutability() {
             "points[index] = base;",
             "changes its type from 'Point' to 'ECPoint'",
         ),
-        ("points = points;", "array expressions are composite values"),
+        ("points = [{ x: 1, y: 2 }];", "expected 2 array elements"),
+        ("points = [{ x: 1, y: 2 }, { x: 3 }];", "missing field 'y'"),
+        ("values = [1];", "expected 2 array elements"),
+        ("values = [1, 2, 3];", "expected 2 array elements"),
+        ("values = [true, 2];", "expected 'int', got 'bool'"),
+        (
+            "values = points;",
+            "changes its type from 'int[2]' to 'Point[2]'",
+        ),
+        (
+            "initials = points;",
+            "cannot assign to constructor parameter 'initials'",
+        ),
+        (
+            "values = shorter;",
+            "changes its type from 'int[2]' to 'int[1]'",
+        ),
     ];
     for (statement, expected) in cases {
         let source = format!(
@@ -825,6 +847,8 @@ contract C(Point initial, Point[2] initials) {{
     function spend(ECPoint base, int index) {{
         Point point = {{ x: 1, y: 2 }};
         Point[2] points = [{{ x: 3, y: 4 }}, {{ x: 5, y: 6 }}];
+        int[2] values = [1, 2];
+        int[1] shorter = [3];
         {statement}
         require(true);
     }}

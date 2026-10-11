@@ -213,20 +213,32 @@ fn validate_binding_statements(
                         }),
                     AssignmentTarget::Access(access) => Some(access.ty.clone()),
                 };
-                let struct_target = matches!(target_type, Some(ArkType::Struct(_)));
-                validate_binding_expression(value, function_name, scopes, issues, !struct_target);
-                if let (Some(ArkType::Struct(struct_type)), ExprKind::StructLiteral(_)) =
+                let composite_target =
+                    matches!(target_type, Some(ArkType::Struct(_) | ArkType::Array(..)));
+                validate_binding_expression(
+                    value,
+                    function_name,
+                    scopes,
+                    issues,
+                    !composite_target,
+                );
+                if let (Some(expected), ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)) =
                     (&target_type, &value.kind)
                 {
                     super::functions::validate_value(
-                        struct_type,
+                        &expected.as_str(),
                         value,
                         structs,
                         &format!("assignment in '{function_name}'"),
                         issues,
                     );
                 }
-                let inferred = value.ty.clone();
+                // Array literal elements are checked against the target's complete shape.
+                let inferred = if matches!(&value.kind, ExprKind::ArrayLiteral(_)) {
+                    ArkType::Unknown
+                } else {
+                    value.ty.clone()
+                };
                 match target {
                     AssignmentTarget::Access(access) => {
                         let before = issues.len();
@@ -235,7 +247,7 @@ fn validate_binding_statements(
                             function_name,
                             scopes,
                             issues,
-                            !struct_target,
+                            !composite_target,
                         );
                         // An invalid access already explains the target.
                         if issues.len() == before {
