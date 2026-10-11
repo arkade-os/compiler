@@ -340,7 +340,7 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint`, `G2Point` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Read and assign fields individually; `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
+Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Local structs and covenant parameters support whole-struct reassignment from matching struct values, helper results, native results such as `sc = ecAdd(sc, point, 0);`, and struct literals. Nested struct fields and indexed struct elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
 
 ### Functions
 
