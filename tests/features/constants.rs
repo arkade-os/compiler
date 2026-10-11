@@ -338,6 +338,11 @@ fn constant_expressions_match_literal_assembly() {
         ("int", "-(-Y)", "14"),
         ("int", "Vault.Y", "14"),
         ("int", "-9223372036854775808", "-9223372036854775808"),
+        ("int", "9223372036854775807 + 1", "9223372036854775808"),
+        ("int", "99999999999999999999999999999999999999999", "99999999999999999999999999999999999999999"),
+        ("int", "-(-99999999999999999999999999999999999999999)", "99999999999999999999999999999999999999999"),
+        ("int", "-0", "0"),
+        ("bool", "99999999999999999999999999999999999999999 == 99999999999999999999999999999999999999999", "true"),
         ("bool", "!(Y < 10)", "true"),
         ("bool", "Y <= 14", "true"),
         ("bool", "Y > 14", "false"),
@@ -373,17 +378,41 @@ fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic
         ("int", "helper()", "constant expression"),
         ("int", "1 / 0", "division by zero"),
         ("int", "1 % 0", "modulo by zero"),
-        ("int", "9223372036854775807 + 1", "overflow"),
-        ("int", "-9223372036854775808 - 1", "overflow"),
-        ("int", "9223372036854775807 * 2", "overflow"),
-        ("int", "-9223372036854775808 / -1", "overflow"),
-        ("int", "-(-9223372036854775808)", "overflow"),
-        ("int", "9223372036854775808", "signed 64-bit integer"),
-        ("int", "true + 1", "signed 64-bit integer"),
-        ("int", "-true", "signed 64-bit integer"),
+        (
+            "int",
+            "170141183460469231731687303715884105727 + 1",
+            "overflow",
+        ),
+        (
+            "int",
+            "-170141183460469231731687303715884105728 - 1",
+            "overflow",
+        ),
+        (
+            "int",
+            "170141183460469231731687303715884105727 * 2",
+            "overflow",
+        ),
+        (
+            "int",
+            "-170141183460469231731687303715884105728 / -1",
+            "overflow",
+        ),
+        (
+            "int",
+            "99999999999999999999999999999999999999999 + 0",
+            "exceeds 128 bits",
+        ),
+        (
+            "bool",
+            "99999999999999999999999999999999999999999 > 0",
+            "exceeds 128 bits",
+        ),
+        ("int", "true + 1", "expected an integer"),
+        ("int", "-true", "expected an integer"),
         ("bool", "!1", "requires a bool"),
         ("bool", "true == 1", "same type"),
-        ("bool", "true < false", "signed 64-bit integer"),
+        ("bool", "true < false", "expected an integer"),
         ("bool", "1 + 1", "not a valid 'bool'"),
         ("int", "1 < 2", "not a valid 'int'"),
     ] {
@@ -641,7 +670,7 @@ fn bytes_constants_fold_through_references_and_equality() {
     );
 
     for (declaration, message) in [
-        ("const int N = TAG + 1;", "signed 64-bit integer"),
+        ("const int N = TAG + 1;", "expected an integer"),
         ("const bytes B = 1;", "not a valid 'bytes' literal"),
         ("const bool E = TAG == 1;", "same type"),
     ] {
@@ -671,16 +700,6 @@ fn logical_constants_short_circuit_and_validate_skipped_operands() {
         assert_eq!(
             arkade_asm_tokens(&output, "spend"),
             arkade_asm_tokens(&literal, "spend")
-        );
-    }
-    for expression in [
-        "true || 9223372036854775808 > 0",
-        "false && -9223372036854775809 < 0",
-    ] {
-        let error = error(&format!("contract C() {{ const bool VALUE = {expression}; function spend() {{ require(true); }} }}"));
-        assert!(
-            error.contains("signed 64-bit integer"),
-            "{expression}: {error}"
         );
     }
     for expression in [
@@ -716,10 +735,15 @@ fn shifts_fold_in_constants_like_the_vm() {
     assert_eq!(fold("0 << 2147483647"), fold("0"));
     assert_eq!(fold("-8 >> 2147483647"), fold("-1"));
     assert_eq!(fold("-1 << 63"), fold("-9223372036854775808"));
+    assert_eq!(fold("1 << 63"), fold("9223372036854775808"));
+    assert_eq!(
+        fold("-1 << 127"),
+        fold("-170141183460469231731687303715884105728")
+    );
     for (expr, message) in [
         ("1 << -1", "negative shift count"),
-        ("1 << 63", "integer overflow"),
-        ("3 << 62", "integer overflow"),
+        ("1 << 127", "integer overflow"),
+        ("3 << 126", "integer overflow"),
         ("0 << 2147483648", "shift count exceeds"),
         ("-8 >> 2147483648", "shift count exceeds"),
     ] {

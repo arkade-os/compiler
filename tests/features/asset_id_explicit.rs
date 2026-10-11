@@ -387,8 +387,14 @@ fn constant_gidx_expressions_are_typed_and_range_checked() {
         ("G + 1", "gidx 65536 is out of range"),
         ("-1", "gidx -1 is out of range"),
         ("0 - 1", "gidx -1 is out of range"),
-        ("99999999999999999999", "expected a signed 64-bit integer"),
-        ("9223372036854775807 + 1", "integer overflow"),
+        (
+            "99999999999999999999",
+            "gidx 99999999999999999999 is out of range",
+        ),
+        (
+            "170141183460469231731687303715884105727 + 1",
+            "integer overflow",
+        ),
         ("~0x0001", "must be int (0..65535), got bytes"),
         ("1 == 1", "must be int (0..65535), got bool"),
     ] {
