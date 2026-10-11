@@ -756,7 +756,7 @@ pub enum ExprKind {
     },
     // ─── Byte-string Manipulation (introspector extensions) ────────────
     /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
-    /// or a scalar conversion: int(bool), bool(int)
+    /// or a scalar conversion: int(bool), bool(int), bytes(int), bytes(bool); bytes(bytes-like) widens.
     Cast {
         target: String,
         data: Box<Expression>,
