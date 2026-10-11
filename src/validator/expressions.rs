@@ -222,10 +222,10 @@ pub(super) fn validate_binding_expression(
                     [("left", left), ("right", right)].iter().zip(&types)
                 {
                     if *actual != ArkType::Unknown && !crate::types::is_bytes_like(actual) {
-                        let hint = if matches!(actual, ArkType::Int | ArkType::Bool) {
-                            "convert it explicitly with num2bin(value, width) — the compiler will not choose a width for you"
-                        } else {
-                            "both operands must be bytes-like"
+                        let hint = match actual {
+                            ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or num2bin(value, width) for fixed-width encoding",
+                            ArkType::Bool => "convert it explicitly with bytes(value) for minimal Script-number encoding",
+                            _ => "both operands must be bytes-like",
                         };
                         issues.push(
                             ValidationIssue::type_error(format!(

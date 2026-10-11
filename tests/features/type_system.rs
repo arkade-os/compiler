@@ -461,13 +461,15 @@ contract BytesCasts(pubkey owner) {
         .iter()
         .any(|op| op == "OP_BIN2NUM" || op == "OP_0NOTEQUAL")));
 
-    let error = compile_error(
-        "contract C() { function spend(AssetGroup value) { require(bytes(value) == 0x01); } }",
-    );
-    assert!(
-        error.contains("cannot cast 'AssetGroup' to 'bytes'"),
-        "{error}"
-    );
+    for ty in ["AssetGroup", "asset"] {
+        let error = compile_error(&format!(
+            "contract C() {{ function spend({ty} value) {{ require(bytes(value) == 0x01); }} }}",
+        ));
+        assert!(
+            error.contains(&format!("cannot cast '{ty}' to 'bytes'")),
+            "{error}"
+        );
+    }
     let error = compile_error(
         "contract C() { function spend() { require(true); } private function bytes(int n) bytes { return num2bin(n, 1); } }",
     );
