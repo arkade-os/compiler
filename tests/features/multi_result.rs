@@ -92,3 +92,61 @@ fn whole_results_are_not_scalars() {
         assert!(compile(&code).is_err(), "{expression} compared to a scalar");
     }
 }
+
+#[test]
+fn repeated_multi_result_inspections_warn_with_the_whole_read() {
+    let code = r#"
+        contract C(bytes program, bytes32 t, int g, AssetId id) {
+            function spend() {
+                require(tx.outputs[3].scriptPubKey == program);
+                require(tx.outputs[3].witnessVersion == 1);
+                require(tx.inputs[0].assets[1].amount >= 1);
+                require(tx.inputs[0].assets[1].assetId == id);
+                if (tx.outputs[0].assets.has(t, g)) {
+                    require(tx.outputs[0].assets.lookup(t, g) >= 1);
+                }
+                require(tx.input.current.witnessVersion == 1);
+                require(this.activeBytecode == program);
+            }
+        }
+    "#;
+    let warnings = compile(code).expect("compiles").warnings;
+    for whole in [
+        "tx.outputs[3].script",
+        "tx.inputs[0].assets[1]",
+        "tx.outputs[0].assets.tryLookup(t, g)",
+        "tx.input.current.script",
+    ] {
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains(&format!("`{whole}` is inspected 2 times"))),
+            "{whole}: {warnings:?}"
+        );
+    }
+}
+
+#[test]
+fn exclusive_or_unstable_reads_do_not_warn() {
+    let code = r#"
+        contract C(bytes program) {
+            function spend(int i) {
+                if (i == 0) {
+                    require(tx.outputs[0].scriptPubKey == program);
+                } else {
+                    require(tx.outputs[0].witnessVersion == 1);
+                }
+                require(tx.outputs[i].scriptPubKey == program);
+                i = i + 1;
+                require(tx.outputs[i].witnessVersion == 1);
+                let s = tx.outputs[1].script;
+                require(s.program == program && s.version == 1);
+            }
+        }
+    "#;
+    let warnings = compile(code).expect("compiles").warnings;
+    assert!(
+        !warnings.iter().any(|w| w.contains("is inspected")),
+        "{warnings:?}"
+    );
+}
