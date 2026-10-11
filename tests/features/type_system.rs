@@ -512,6 +512,25 @@ fn pubkeys_and_signatures_widen_to_bytes_in_bindings_and_arguments() {
     );
 }
 
+#[test]
+fn signature_byte_casts_add_no_opcodes() {
+    let asm = |value| {
+        let output = crate::common::compile_unoptimized(&format!(
+            "contract Widen() {{ function spend(signature sig, bytes data) {{ require({value} == data); }} }}"
+        ))
+        .unwrap();
+        assert_eq!(
+            crate::common::arkade_inputs(&output, "spend"),
+            ["sig", "data"]
+        );
+        crate::common::arkade_asm_tokens(&output, "spend")
+    };
+    let expected = asm("sig");
+    for cast in ["bytes(sig)", "pubkey(sig)"] {
+        assert_eq!(asm(cast), expected, "{cast}");
+    }
+}
+
 // ─── Hash widths, builtin operands, and diagnostics ─────────────────────────
 
 #[test]
