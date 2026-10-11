@@ -682,6 +682,27 @@ mod tests {
     }
 
     #[test]
+    fn let_prefix_assignments_are_not_declarations() {
+        for name in ["letter", "letValue", "let_value", "let2"] {
+            let source = format!(
+                "contract C() {{ function spend() {{ int {name}; {name} = 6; let alias = {name}; require(alias == 6); }} }}"
+            );
+            let contract = parse(&source).unwrap();
+            let statements = &contract.functions[0].statements;
+            assert!(matches!(
+                &statements[1].statement,
+                Statement::VarAssign { target: AssignmentTarget::Binding(target), .. }
+                    if target == name
+            ));
+            assert!(matches!(
+                &statements[2].statement,
+                Statement::LetBinding { name, declared_type: None, .. } if name == "alias"
+            ));
+            crate::compile(&source).unwrap();
+        }
+    }
+
+    #[test]
     fn expression_spans_cover_their_source_and_nest() {
         let source = "contract C(bytes a, bytes32 h, int[2] xs) { function spend(int n) {
             require(sha256(cat(a, a)) == h);
