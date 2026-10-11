@@ -345,6 +345,7 @@ fn constant_expressions_match_literal_assembly() {
         ("bool", "99999999999999999999999999999999999999999 == 99999999999999999999999999999999999999999", "true"),
         ("bool", "!(Y < 10)", "true"),
         ("bool", "Y <= 14", "true"),
+        ("bool", "9223372036854775808 > 9223372036854775807", "true"),
         ("bool", "Y > 14", "false"),
         ("bool", "Y >= 14", "true"),
         ("bool", "Y == 14", "true"),
@@ -765,4 +766,8 @@ fn remainder_folds_with_the_sign_of_the_dividend() {
     assert_eq!(fold("-7 % 2"), fold("-1"));
     assert_eq!(fold("7 % -2"), fold("1"));
     assert_eq!(fold("-9223372036854775808 % -1"), fold("0"));
+    assert_eq!(
+        fold("-170141183460469231731687303715884105728 % -1"),
+        fold("0")
+    );
 }
