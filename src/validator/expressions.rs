@@ -432,6 +432,16 @@ pub(super) fn validate_binding_expression(
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
         ExprKind::FieldAccess { value, .. } => {
+            if let Some(array) = expression.binding_path().and_then(|name| {
+                name.strip_suffix(".length")
+                    .filter(|_| find_binding(scopes, &name).is_none())
+                    .map(str::to_owned)
+            }) {
+                if !array.contains('[') && find_binding(scopes, &array).is_some() {
+                    validate_array_length(&array, function_name, scopes, issues);
+                    return;
+                }
+            }
             let before = issues.len();
             validate_value_expression(value, function_name, scopes, issues);
             if issues.len() == before {
@@ -561,6 +571,9 @@ pub(super) fn validate_array_index(
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) -> Option<(ArkType, BindingSource)> {
+    if find_binding(scopes, array).is_some_and(|binding| !binding.initialized) {
+        validate_named_binding(array, None, "array", function_name, scopes, issues);
+    }
     let array_info = match find_binding(scopes, array) {
         None => {
             issues.push(ValidationIssue::error(format!(
@@ -572,6 +585,7 @@ pub(super) fn validate_array_index(
         Some(BindingInfo {
             binding_type: ArkType::Array(element, length),
             source,
+            ..
         }) => Some(((**element).clone(), *length, *source)),
         Some(_) => {
             issues.push(ValidationIssue::error(format!(

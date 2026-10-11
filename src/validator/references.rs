@@ -73,7 +73,7 @@ fn collect_statements<'a>(
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 collect_expression(expression, names, functions, visited);
             }
-            Statement::Return(None) => {}
+            Statement::Return(None) | Statement::Declaration { .. } => {}
             Statement::Require(requirement) => {
                 collect_requirement(requirement, names, functions, visited)
             }

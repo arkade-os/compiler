@@ -18,6 +18,8 @@ mod concat_op;
 mod constants;
 #[path = "features/contract_import_instantiation.rs"]
 mod contract_import_instantiation;
+#[path = "features/deferred_initialization.rs"]
+mod deferred_initialization;
 #[path = "features/epoch_limiter.rs"]
 mod epoch_limiter;
 #[path = "features/general_comparisons.rs"]

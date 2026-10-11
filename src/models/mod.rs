@@ -352,6 +352,8 @@ pub enum Statement {
     Return(Option<Expression>),
     /// require(expr, "message");
     Require(Requirement),
+    /// type name; — no value or stack slot until assignment.
+    Declaration { name: String, declared_type: String },
     /// let name = expr; or type name = expr;
     LetBinding {
         name: String,

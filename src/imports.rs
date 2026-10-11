@@ -613,6 +613,13 @@ fn validate_local_types(
 ) -> Result<(), String> {
     for statement in statements {
         match &statement.statement {
+            Statement::Declaration {
+                name,
+                declared_type,
+            } => {
+                binding(name)?;
+                check(declared_type)?;
+            }
             Statement::LetBinding {
                 name,
                 declared_type,
@@ -695,7 +702,7 @@ fn visit_statements(
                 visit_expression(count, visit)?;
                 visit_statements(body, visit)?;
             }
-            Statement::Return(None) => {}
+            Statement::Return(None) | Statement::Declaration { .. } => {}
         }
     }
     Ok(())

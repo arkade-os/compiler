@@ -16,6 +16,7 @@ pub(super) enum BindingSource {
 pub(super) struct BindingInfo {
     pub(super) binding_type: ArkType,
     pub(super) source: BindingSource,
+    pub(super) initialized: bool,
 }
 
 pub(super) type BindingScopes = Vec<HashMap<String, BindingInfo>>;
@@ -33,6 +34,7 @@ fn insert_parameters(
             BindingInfo {
                 binding_type,
                 source,
+                initialized: true,
             },
         );
     }
@@ -97,6 +99,32 @@ fn validate_binding_statements(
             Statement::Return(None) => {}
             Statement::Require(requirement) => {
                 validate_binding_requirement(requirement, function_name, scopes, issues);
+            }
+            Statement::Declaration {
+                name,
+                declared_type,
+            } => {
+                let mut local = Scope::new();
+                crate::types::bind_local_type(
+                    &mut local,
+                    name,
+                    Some(declared_type),
+                    ArkType::parse(declared_type),
+                    structs,
+                );
+                scopes
+                    .last_mut()
+                    .expect("binding scope")
+                    .extend(local.into_iter().map(|(name, binding_type)| {
+                        (
+                            name,
+                            BindingInfo {
+                                binding_type,
+                                source: BindingSource::Local,
+                                initialized: false,
+                            },
+                        )
+                    }));
             }
             Statement::LetBinding {
                 name,
@@ -197,11 +225,27 @@ fn validate_binding_statements(
                         BindingInfo {
                             binding_type,
                             source: BindingSource::Local,
+                            initialized: true,
                         },
                     );
                 }
             }
             Statement::VarAssign { target, value } => {
+                if let AssignmentTarget::Binding(name) = target {
+                    let root = name.split(['.', '[']).next().unwrap_or(name);
+                    if root != name
+                        && find_binding(scopes, root).is_some_and(|binding| !binding.initialized)
+                    {
+                        validate_named_binding(
+                            root,
+                            None,
+                            "binding",
+                            function_name,
+                            scopes,
+                            issues,
+                        );
+                    }
+                }
                 let target_type = match target {
                     AssignmentTarget::Binding(name) => {
                         find_binding(scopes, name).map(|binding| binding.binding_type.clone())
@@ -319,6 +363,26 @@ fn validate_binding_statements(
                         validate_binding_expression(index, function_name, scopes, issues, true);
                     }
                 }
+                if issues.len() == first {
+                    if let AssignmentTarget::Binding(name) = target {
+                        if let Some(frame) = scopes
+                            .iter_mut()
+                            .rev()
+                            .find(|frame| frame.contains_key(name))
+                        {
+                            let field_prefix = format!("{name}.");
+                            let index_prefix = format!("{name}[");
+                            for (path, binding) in frame {
+                                if path == name
+                                    || path.starts_with(&field_prefix)
+                                    || path.starts_with(&index_prefix)
+                                {
+                                    binding.initialized = true;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Statement::IfElse {
                 condition,
@@ -334,13 +398,23 @@ fn validate_binding_statements(
                         condition_type.as_str()
                     )));
                 }
+                let incoming = scopes.clone();
                 scopes.push(HashMap::new());
                 validate_binding_statements(then_body, function_name, scopes, structs, issues);
                 scopes.pop();
-                if let Some(else_body) = else_body {
-                    scopes.push(HashMap::new());
-                    validate_binding_statements(else_body, function_name, scopes, structs, issues);
-                    scopes.pop();
+                let left = scopes.clone();
+                *scopes = incoming;
+                let else_body = else_body.as_deref().unwrap_or_default();
+                scopes.push(HashMap::new());
+                validate_binding_statements(else_body, function_name, scopes, structs, issues);
+                scopes.pop();
+                let left_continues = super::falls_through(then_body);
+                let right_continues = super::falls_through(else_body);
+                for (frame, left) in scopes.iter_mut().zip(left) {
+                    for (name, binding) in frame {
+                        binding.initialized = (!left_continues || left[name].initialized)
+                            && (!right_continues || binding.initialized);
+                    }
                 }
             }
             Statement::ForIn {
@@ -353,6 +427,16 @@ fn validate_binding_statements(
                     ExprKind::Variable(name) | ExprKind::Property(name)
                         if name.trim() != "tx.assetGroups" =>
                     {
+                        if find_binding(scopes, name).is_some_and(|binding| !binding.initialized) {
+                            validate_named_binding(
+                                name,
+                                None,
+                                "array",
+                                function_name,
+                                scopes,
+                                issues,
+                            );
+                        }
                         match find_binding(scopes, name) {
                             Some(BindingInfo {
                                 binding_type: ArkType::Array(element, _),
@@ -423,6 +507,7 @@ fn validate_binding_statements(
                             BindingInfo {
                                 binding_type,
                                 source: BindingSource::Loop,
+                                initialized: true,
                             },
                         )
                     }));
@@ -439,9 +524,14 @@ fn validate_binding_statements(
                         function_name
                     )));
                 }
+                let incoming = scopes.clone();
                 scopes.push(HashMap::new());
                 validate_binding_statements(body, function_name, scopes, structs, issues);
                 scopes.pop();
+                if !matches!(&count.kind, ExprKind::Literal(count) if count.parse::<usize>().is_ok_and(|count| count > 0))
+                {
+                    *scopes = incoming;
+                }
             }
         }
         locate(&mut issues[first..], statement.span);
@@ -460,6 +550,9 @@ pub(super) fn validate_named_binding(
         None => issues.push(ValidationIssue::error(format!(
             "function '{}': {} '{}' is undefined",
             function_name, label, name
+        ))),
+        Some(binding) if !binding.initialized => issues.push(ValidationIssue::error(format!(
+            "function '{function_name}': {label} '{name}' may be uninitialized; assign it a value before use (initialize arrays and structs as a whole)"
         ))),
         Some(binding)
             if expected.as_ref().is_some_and(|expected| {
