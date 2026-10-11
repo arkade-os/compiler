@@ -413,13 +413,13 @@ contract HexCasts(pubkey owner) {
         "contract F() { function spend(int n) { require(n == n); } private function int(int a) int { return a; } }",
     );
     assert!(error.contains("function name 'int' is reserved"), "{error}");
-    let error = compile_error(
-        "contract G() { const int TOO_BIG = int(0x8000000000000000); function spend(int n) { require(n < TOO_BIG); } }",
+    let asm = crate::common::arkade_asm(
+        &compile_ok(
+            "contract G() { const int BIG = int(0x8000000000000000); function spend(int n) { require(n < BIG); } }",
+        ),
+        "spend",
     );
-    assert!(
-        error.contains("expected a signed 64-bit integer"),
-        "{error}"
-    );
+    assert!(asm.contains("9223372036854775808 OP_LESSTHAN"), "{asm}");
 }
 
 #[test]
