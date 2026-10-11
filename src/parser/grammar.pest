@@ -98,8 +98,9 @@ for_count_stmt = {
 block = { "{" ~ statement* ~ "}" }
 
 // Let binding (new variable with let keyword)
+let_keyword = @{ "let" ~ !(ASCII_ALPHANUMERIC | "_") }
 let_binding = {
-    "let" ~ identifier ~ "=" ~ general_expression ~ ";"
+    &let_keyword ~ "let" ~ identifier ~ "=" ~ general_expression ~ ";"
 }
 
 // Variable assignment (reassignment without let keyword)
@@ -128,7 +129,7 @@ function_call_stmt = {
 
 // Variable declaration (typed)
 variable_declaration = {
-    data_type ~ identifier ~ "=" ~ general_expression ~ ";"
+    !let_keyword ~ data_type ~ identifier ~ ("=" ~ general_expression)? ~ ";"
 }
 
 // General expression with operator precedence

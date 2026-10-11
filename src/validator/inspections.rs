@@ -105,7 +105,7 @@ impl Walk {
                 Statement::Call(value) | Statement::Return(Some(value)) => {
                     self.expression(value, path)
                 }
-                Statement::Return(None) => {}
+                Statement::Return(None) | Statement::Declaration { .. } => {}
                 Statement::Require(Requirement::Expression(value)) => self.expression(value, path),
                 Statement::Require(Requirement::Comparison { left, right, .. }) => {
                     self.expression(left, path);

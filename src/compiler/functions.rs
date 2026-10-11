@@ -194,6 +194,7 @@ impl Generator {
         }
         let caller = self.stack.clone();
         let caller_scope = self.scope.clone();
+        let caller_deferred = std::mem::take(&mut self.deferred);
         let baseline = caller.len();
         let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
         // A caller's top-slot rebinding must not match helper bindings with the same name.
@@ -264,6 +265,12 @@ impl Generator {
                 };
             }
         }
+        let caller_scopes = std::mem::take(&mut self.scopes);
+        self.scope = if function.is_static {
+            types::Scope::new()
+        } else {
+            self.constructor_scope.clone()
+        };
         let previous_aliases = std::mem::replace(&mut self.aliases, aliases);
         for parameter in &function.parameters {
             self.bind_type(&parameter.name, &parameter.param_type);
@@ -299,6 +306,8 @@ impl Generator {
         self.last_reads.retain(|(_, index), _| *index < baseline);
         self.stack[..baseline].clone_from_slice(&caller);
         self.scope = caller_scope;
+        self.scopes = caller_scopes;
+        self.deferred = caller_deferred;
         self.aliases = previous_aliases;
         self.return_type = previous_return;
         self.direct_return = previous_direct_return;
@@ -363,14 +372,7 @@ impl Generator {
         self.read_binding("$returned")?;
         self.apply(OP_NOT, 1, 1)?;
         self.apply(OP_IF, 1, 0)?;
-        let baseline = self.stack.clone();
-        self.enter_scope();
-        generate_asm_from_statements_recursive(statements, self)?;
-        self.exit_scope()?;
-        if self.stack != baseline {
-            return Err("private return changed outer stack layout".to_string());
-        }
-        self.asm.push(OP_ENDIF.to_string());
+        self.emit_branches(statements, None, false)?;
         Ok(())
     }
 }

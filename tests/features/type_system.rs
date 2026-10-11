@@ -312,6 +312,29 @@ fn cashscript_parity_rejections() {
 }
 
 #[test]
+fn let_is_reserved_in_variable_names() {
+    for source in [
+        "contract Demo() { function spend() { int let = 5; require(let == 5); } }",
+        "contract Demo() { function spend() { int let; let = 5; require(let == 5); } }",
+        "contract Demo() { function spend() { let let = 5; require(let == 5); } }",
+        "contract Demo(int let) { function spend() { require(let == 5); } }",
+        "contract Demo() { function spend(int let) { require(let == 5); } }",
+        "contract Demo(pubkey owner) { function spend(signature let) tapscript { require(checkSig(let, owner)); } }",
+        "contract Demo() { function spend() { int[1] values = [5]; for (let, value) in values { require(let == 0 && value == 5); } } }",
+        "contract Demo() { function spend() { int[1] values = [5]; for (index, let) in values { require(index == 0 && let == 5); } } }",
+    ] {
+        let error = compile_error(source);
+        assert!(
+            error.contains("'let' uses a reserved keyword or type name"),
+            "{source}: {error}"
+        );
+    }
+    compile_ok(
+        "contract Demo() { function spend() { int letter = 5; int let_value; let_value = letter; require(let_value == 5); } }",
+    );
+}
+
+#[test]
 fn cashscript_parity_acceptances() {
     let output = compile_ok(
         "contract Strict(pubkey owner, bytes key, int unused) { function spend(signature sig) { require(owner == key); require(checkSig(sig, owner)); } }",

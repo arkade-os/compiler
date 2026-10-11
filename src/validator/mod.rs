@@ -43,6 +43,7 @@ use bindings::check_binding_semantics;
 use shadowing::check_shadowing;
 
 pub(crate) use bindings::binding_types_compatible;
+pub(crate) use functions::falls_through;
 pub(crate) use output::validate_output;
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
@@ -361,7 +362,8 @@ fn validate_local_types(
     for statement in statements {
         let first = issues.len();
         match &statement.statement {
-            Statement::LetBinding {
+            Statement::Declaration { declared_type, .. }
+            | Statement::LetBinding {
                 declared_type: Some(declared_type),
                 ..
             } => {
@@ -478,6 +480,7 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         "in",
         "return",
         "const",
+        "let",
         "import",
         "pragma",
         "true",
@@ -567,7 +570,7 @@ fn check_unused_locals(
 ) {
     for (index, statement) in statements.iter().enumerate() {
         match &statement.statement {
-            Statement::LetBinding { name, .. }
+            Statement::Declaration { name, .. } | Statement::LetBinding { name, .. }
                 if !references::referenced_parameters(&statements[index + 1..], &[])
                     .contains(name.as_str()) =>
             {

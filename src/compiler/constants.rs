@@ -357,6 +357,7 @@ fn fold_statements(
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 fold_expression(expression, values)
             }
+            Statement::Declaration { declared_type, .. } => fold_type(declared_type, values)?,
             Statement::LetBinding {
                 declared_type,
                 value,

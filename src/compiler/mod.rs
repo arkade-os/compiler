@@ -73,9 +73,11 @@ struct Generator {
     asm: Vec<String>,
     stack: Vec<StackItem>,
     scopes: Vec<(usize, types::Scope)>,
+    deferred: std::collections::HashSet<String>,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
     scope: types::Scope,
+    constructor_scope: types::Scope,
     functions: Vec<Function>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<String, usize>,
@@ -138,7 +140,8 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        let mut scope = types::build_scope_with_structs(constructor_parameters, structs);
+        let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
+        let mut scope = constructor_scope.clone();
         scope.extend(types::build_scope_with_structs(
             function_parameters,
             structs,
@@ -147,9 +150,11 @@ impl Generator {
             asm,
             stack,
             scopes: Vec::new(),
+            deferred: std::collections::HashSet::new(),
             constructor_array_expansions,
             structs: structs.to_vec(),
             scope,
+            constructor_scope,
             functions: Vec::new(),
             aliases: std::collections::HashMap::new(),
             return_type: None,
@@ -246,14 +251,12 @@ impl Generator {
                     && index >= self.pinned_stack_len
                     && !name.starts_with('$')
                     && !name.contains('[')
-                    && (self
-                        .scopes
-                        .last()
-                        .is_none_or(|(baseline, _)| index >= *baseline)
-                        || self
-                            .replacement
-                            .as_ref()
-                            .is_some_and(|(target, _, _)| target == name))),
+                    && (self.scopes.last().is_none_or(|(baseline, scope)| {
+                        index >= *baseline && !scope.contains_key(name)
+                    }) || self
+                        .replacement
+                        .as_ref()
+                        .is_some_and(|(target, _, _)| target == name))),
             );
             false
         };
@@ -739,28 +742,172 @@ impl Generator {
         let (baseline, scope) = self
             .scopes
             .pop()
-            .ok_or_else(|| "internal compiler error: scope stack underflow".to_string())?;
-        self.scope = scope;
-        while self.stack.len() > baseline {
-            match self.stack.last() {
-                Some(StackItem::Binding {
+            .ok_or("internal compiler error: scope stack underflow")?;
+        let outer: std::collections::HashSet<_> = scope
+            .keys()
+            .map(|name| Self::internal_binding_name(name))
+            .collect();
+        for index in (baseline..self.stack.len()).rev() {
+            match &self.stack[index] {
+                StackItem::Binding {
                     name,
                     kind: BindingKind::Local,
-                }) => {
-                    // Analysis-pass stack positions are stable (nothing is consumed
-                    // there), so the drop position equals the recorded read position.
-                    self.last_reads.remove(&(name.clone(), self.stack.len() - 1));
-                    self.asm.push(OP_DROP.to_string());
-                    self.stack.pop();
-                }
-                _ => {
-                    return Err(
-                        "internal compiler error: scope ended with a temporary or outer binding above its locals"
-                            .to_string(),
-                    )
+                } if !outer.contains(name) => self.drop_binding(index)?,
+                StackItem::Binding { .. } => {}
+                StackItem::Temporary => {
+                    return Err("internal compiler error: scope ended with a temporary".into())
                 }
             }
         }
+        self.deferred.retain(|name| scope.contains_key(name));
+        self.scope = scope;
+        Ok(())
+    }
+
+    fn drop_binding(&mut self, index: usize) -> Result<(), String> {
+        let depth = self.stack.len() - index - 1;
+        match depth {
+            0 => self.asm.push(OP_DROP.into()),
+            1 => self.asm.push(OP_NIP.into()),
+            _ => {
+                self.push_integer_temporary(depth);
+                self.pop_temporaries(1, OP_ROLL)?;
+                self.asm.extend([OP_ROLL.into(), OP_DROP.into()]);
+            }
+        }
+        self.stack.remove(index);
+        self.last_reads.retain(|(_, slot), _| *slot < index);
+        Ok(())
+    }
+
+    // Joins scan local frames quadratically; index permutations if large frames become common.
+    fn join_stack(&mut self, target: &[StackItem]) -> Result<(), String> {
+        if self.stack == target {
+            return Ok(());
+        }
+        for index in (0..self.stack.len()).rev() {
+            if !target.contains(&self.stack[index]) {
+                self.drop_binding(index)?;
+            }
+        }
+        for item in target {
+            if !self.stack.contains(item) {
+                let StackItem::Binding { name, .. } = item else {
+                    return Err("internal compiler error: temporary at branch join".into());
+                };
+                // Returning paths share the join frame; direct return lowering could remove this padding.
+                self.push_temporary(OP_0);
+                self.bind_local(name)?;
+            }
+        }
+        if self.stack != target {
+            let start = self
+                .stack
+                .iter()
+                .zip(target)
+                .take_while(|(left, right)| left == right)
+                .count();
+            for item in &target[start..] {
+                let index = self
+                    .stack
+                    .iter()
+                    .position(|slot| slot == item)
+                    .ok_or("internal compiler error: missing branch binding")?;
+                let depth = self.stack.len() - index - 1;
+                if depth != 0 {
+                    if depth == 1 {
+                        self.swap()?;
+                    } else {
+                        self.push_integer_temporary(depth);
+                        self.pop_temporaries(1, OP_ROLL)?;
+                        self.asm.push(OP_ROLL.into());
+                        let item = self.stack.remove(index);
+                        self.stack.push(item);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_branches(
+        &mut self,
+        then_body: &[LocatedStatement],
+        else_body: Option<&[LocatedStatement]>,
+        implicit_else_continues: bool,
+    ) -> Result<(), String> {
+        let baseline = self.stack.clone();
+        let deferred = self.deferred.clone();
+        let start = self.asm.len();
+        self.enter_scope();
+        generate_asm_from_statements_recursive(then_body, self)?;
+        self.exit_scope()?;
+        let left = self.stack.clone();
+        let left_deferred = self.deferred.clone();
+        let left_asm = self.asm.split_off(start);
+        self.stack = baseline.clone();
+        self.deferred = deferred.clone();
+        self.last_reads
+            .retain(|(_, slot), _| *slot < baseline.len());
+        if let Some(body) = else_body {
+            self.enter_scope();
+            generate_asm_from_statements_recursive(body, self)?;
+            self.exit_scope()?;
+        }
+        let right = self.stack.clone();
+        let right_deferred = self.deferred.clone();
+        let right_asm = self.asm.split_off(start);
+        let left_continues = crate::validator::falls_through(then_body);
+        // A missing else continues only for a real if; the return guard's absent
+        // branch is the already-returned path and never reaches later statements.
+        let right_continues = match else_body {
+            Some(body) => crate::validator::falls_through(body),
+            None => implicit_else_continues,
+        };
+        let initialized: std::collections::HashSet<_> = deferred
+            .iter()
+            .filter(|name| {
+                (left_continues || right_continues)
+                    && (!left_continues || !left_deferred.contains(*name))
+                    && (!right_continues || !right_deferred.contains(*name))
+            })
+            .cloned()
+            .collect();
+        let mut initialized_leaves = std::collections::HashSet::new();
+        for name in &initialized {
+            let ty = self
+                .scope
+                .get(name)
+                .ok_or("internal compiler error: missing declaration type")?;
+            for leaf in self.value_leaves(name, &ty.as_str())? {
+                initialized_leaves.insert(Self::internal_binding_name(&leaf.access_name));
+            }
+        }
+        let mut target = baseline.clone();
+        let preferred = if left_continues { &left } else { &right };
+        target.extend(preferred.iter().skip(baseline.len()).filter(|item| {
+            matches!(item, StackItem::Binding { name, .. } if initialized_leaves.contains(name))
+        }).cloned());
+        if !left.starts_with(&baseline) || !right.starts_with(&baseline) {
+            return Err("internal compiler error: branch changed outer stack layout".into());
+        }
+        self.stack = left;
+        self.asm.extend(left_asm);
+        self.join_stack(&target)?;
+        let left_joined = self.asm.split_off(start);
+        self.stack = right;
+        self.asm.extend(right_asm);
+        self.join_stack(&target)?;
+        let right_joined = self.asm.split_off(start);
+        self.asm.extend(left_joined);
+        if else_body.is_some() || !right_joined.is_empty() {
+            self.asm.push(OP_ELSE.into());
+            self.asm.extend(right_joined);
+        }
+        self.asm.push(OP_ENDIF.into());
+        self.deferred = deferred.difference(&initialized).cloned().collect();
+        self.last_reads
+            .retain(|(_, slot), _| *slot < baseline.len());
         Ok(())
     }
 
@@ -1024,29 +1171,7 @@ fn generate_asm_from_statements_recursive(
             } => {
                 generator.emit_expression(condition)?;
                 generator.apply(OP_IF, 1, 0)?;
-                let baseline = generator.stack.clone();
-                generator.enter_scope();
-                generate_asm_from_statements_recursive(then_body, generator)?;
-                generator.exit_scope()?;
-                if generator.stack != baseline {
-                    return Err(
-                        "internal compiler error: then branch changed outer stack layout"
-                            .to_string(),
-                    );
-                }
-                if let Some(else_stmts) = else_body {
-                    generator.asm.push(OP_ELSE.to_string());
-                    generator.enter_scope();
-                    generate_asm_from_statements_recursive(else_stmts, generator)?;
-                    generator.exit_scope()?;
-                    if generator.stack != baseline {
-                        return Err(
-                            "internal compiler error: else branch changed outer stack layout"
-                                .to_string(),
-                        );
-                    }
-                }
-                generator.asm.push(OP_ENDIF.to_string());
+                generator.emit_branches(then_body, else_body.as_deref(), true)?;
             }
             Statement::ForIn {
                 index_var,
@@ -1075,10 +1200,8 @@ fn generate_asm_from_statements_recursive(
                         generate_asm_from_statements_recursive(&substituted, generator)?;
                     }
                     generator.exit_scope()?;
-                    if generator.stack != baseline {
-                        return Err(format!(
-                            "internal compiler error: loop iteration {k} changed outer stack layout"
-                        ));
+                    if !generator.stack.starts_with(&baseline) {
+                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
                     }
                 }
             }
@@ -1101,12 +1224,17 @@ fn generate_asm_from_statements_recursive(
                         generate_asm_from_statements_recursive(body, generator)?;
                     }
                     generator.exit_scope()?;
-                    if generator.stack != baseline {
-                        return Err(format!(
-                            "internal compiler error: loop iteration {k} changed outer stack layout"
-                        ));
+                    if !generator.stack.starts_with(&baseline) {
+                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
                     }
                 }
+            }
+            Statement::Declaration {
+                name,
+                declared_type,
+            } => {
+                generator.bind_type(name, declared_type);
+                generator.deferred.insert(name.clone());
             }
             Statement::LetBinding {
                 name,
@@ -1160,6 +1288,15 @@ fn generate_asm_from_statements_recursive(
                     AssignmentTarget::Access(access) => access.kind.clone(),
                 });
                 types::annotate_expression(&mut access, &generator.scope);
+                if let AssignmentTarget::Binding(name) = target {
+                    if generator.deferred.remove(name) {
+                        generator.emit_typed_value(value, &access.ty.as_str())?;
+                        generator.bind_value(name, &access.ty.as_str())?;
+                        generator.replacement = previous_replacement;
+                        generator.assert_statement_boundary()?;
+                        continue;
+                    }
+                }
                 if matches!(
                     access.ty,
                     types::ArkType::Struct(_) | types::ArkType::Array(..)
@@ -1174,6 +1311,9 @@ fn generate_asm_from_statements_recursive(
             }
         }
         generator.assert_statement_boundary()?;
+        if !crate::validator::falls_through(std::slice::from_ref(stmt)) {
+            return Ok(());
+        }
         if functions::contains_return(std::slice::from_ref(stmt)) && index + 1 < statements.len() {
             generator.emit_unless_returned(&statements[index + 1..])?;
             return Ok(());

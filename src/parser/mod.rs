@@ -575,15 +575,16 @@ fn parse_statement(
                 .ok_or_else(|| "Parse error: Missing variable name".to_string())?
                 .as_str()
                 .to_string();
-            let value_pair = inner
-                .next()
-                .ok_or_else(|| "Parse error: Missing value".to_string())?;
-            let value = parse_general_expression(value_pair)?;
-
-            Statement::LetBinding {
-                name,
-                declared_type: Some(declared_type),
-                value,
+            match inner.next() {
+                Some(value) => Statement::LetBinding {
+                    name,
+                    declared_type: Some(declared_type),
+                    value: parse_general_expression(value)?,
+                },
+                None => Statement::Declaration {
+                    name,
+                    declared_type,
+                },
             }
         }
         _ => return Ok(None),
@@ -662,6 +663,45 @@ mod tests {
     use super::parse;
     use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
     use crate::operators::UnaryOperator;
+
+    #[test]
+    fn typed_declarations_may_omit_initializers() {
+        let contract = parse("contract C() { function spend() { int x; int[2] values; x = 7; values = [7, 9]; require(x == values[0]); } }").unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(
+            matches!(&statements[0].statement, Statement::Declaration { name, declared_type } if name == "x" && declared_type == "int")
+        );
+        assert!(
+            matches!(&statements[1].statement, Statement::Declaration { name, declared_type } if name == "values" && declared_type == "int[2]")
+        );
+        assert!(matches!(
+            &statements[2].statement,
+            Statement::VarAssign { .. }
+        ));
+        assert!(parse("contract C() { function spend() { let x; } }").is_err());
+        assert!(parse("contract C() { const int X; }").is_err());
+    }
+
+    #[test]
+    fn let_prefix_assignments_are_not_declarations() {
+        for name in ["letter", "letValue", "let_value", "let2"] {
+            let source = format!(
+                "contract C() {{ function spend() {{ int {name}; {name} = 6; let alias = {name}; require(alias == 6); }} }}"
+            );
+            let contract = parse(&source).unwrap();
+            let statements = &contract.functions[0].statements;
+            assert!(matches!(
+                &statements[1].statement,
+                Statement::VarAssign { target: AssignmentTarget::Binding(target), .. }
+                    if target == name
+            ));
+            assert!(matches!(
+                &statements[2].statement,
+                Statement::LetBinding { name, declared_type: None, .. } if name == "alias"
+            ));
+            crate::compile(&source).unwrap();
+        }
+    }
 
     #[test]
     fn expression_spans_cover_their_source_and_nest() {

@@ -269,6 +269,18 @@ impl Typing<'_> {
                         self.expression(value, scope);
                     }
                 }
+                Statement::Declaration {
+                    name,
+                    declared_type,
+                } => {
+                    bind_local_type(
+                        scope,
+                        name,
+                        Some(declared_type),
+                        ArkType::parse(declared_type),
+                        self.structs,
+                    );
+                }
                 Statement::LetBinding {
                     name,
                     declared_type,

@@ -152,7 +152,10 @@ fn validate_body(
             Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
                 validate_body(body, function, contract, issues);
             }
-            Statement::Call(_) | Statement::Require(_) | Statement::VarAssign { .. } => {}
+            Statement::Declaration { .. }
+            | Statement::Call(_)
+            | Statement::Require(_)
+            | Statement::VarAssign { .. } => {}
         }
         locate(&mut issues[first..], located.span);
     }
@@ -318,7 +321,7 @@ fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
         Statement::IfElse { condition, .. } => vec![condition],
         Statement::ForIn { iterable, .. } => vec![iterable],
         Statement::ForCount { count, .. } => vec![count],
-        Statement::Return(None) => vec![],
+        Statement::Return(None) | Statement::Declaration { .. } => vec![],
     }
 }
 
@@ -476,8 +479,16 @@ fn flow_block(
                 flow.returned |= body.returned;
             }
             Statement::ForCount { .. } => {}
-            Statement::Call(_) | Statement::LetBinding { .. } | Statement::VarAssign { .. } => {}
+            Statement::Declaration { .. }
+            | Statement::Call(_)
+            | Statement::LetBinding { .. }
+            | Statement::VarAssign { .. } => {}
         }
     }
     flow
+}
+
+/// Whether any path reaches the next statement, independent of spend conditions.
+pub(crate) fn falls_through(statements: &[LocatedStatement]) -> bool {
+    flow_block(statements, 1, &HashMap::new()).fallthrough != 0
 }

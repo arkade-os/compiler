@@ -434,6 +434,7 @@ require(<expr>);
 require(<expr>, "message");
 let x = <expr>;                    // inferred type
 int fee = amount / 100;            // declared type
+int result;                       // no value or stack slot until assignment
 Policy p = { primary: {...}, limits: [1, 2], exitDelay: 10 };
 int[3] scale = [1, 2, 3];
 x = <expr>;                        // reassignment keeps the declared type
@@ -445,6 +446,8 @@ for (COUNT) { ... }                // COUNT is a non-negative compile-time int e
 ```
 
 Each live binding has a unique name. Constructor parameters are immutable.
+
+Typed locals may omit the initializer: `int result;`, `Policy policy;`, or `int[3] values;`. A declaration emits no assembly; the first assignment binds the computed value directly, without zero filling or replacing a placeholder. Every read must follow initialization on all paths that reach it. Both continuing branches of an `if` must initialize the binding; a loop with zero iterations does not initialize it. Separate conditions are checked independently, even if their predicates match. Arrays and structs must first receive a whole value before their fields or elements can be read or reassigned; their static `.length` is available before initialization. Inferred `let` bindings still require an initializer.
 
 ### Expressions
 
