@@ -503,7 +503,10 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::AssetLookup { .. } => ArkType::Int,
         ExprKind::AssetHas { .. } => ArkType::Bool,
         ExprKind::AssetCount { .. } => ArkType::Int,
-        ExprKind::AssetAt { property, .. } => ArkType::parse(property.value_type()),
+        ExprKind::AssetTryLookup { .. } => ArkType::Struct("AssetLookup".to_string()),
+        ExprKind::AssetAt { property, .. } => {
+            ArkType::parse(property.map_or("AssetEntry", |p| p.value_type()))
+        }
 
         // Asset group introspection
         ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,

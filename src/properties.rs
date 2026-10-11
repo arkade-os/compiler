@@ -56,6 +56,7 @@ properties!(
         Outpoint => ("outpoint", "Outpoint"),
         ArkadeScriptHash => ("arkadeScriptHash", "bytes32"),
         ArkadeWitnessHash => ("arkadeWitnessHash", "bytes32"),
+        Script => ("script", "ScriptPubKey"),
     }
 );
 
@@ -65,6 +66,7 @@ properties!(
         Value => ("value", "int"),
         ScriptPubKey => ("scriptPubKey", "bytes"),
         WitnessVersion => ("witnessVersion", "int"),
+        Script => ("script", "ScriptPubKey"),
     }
 );
 
