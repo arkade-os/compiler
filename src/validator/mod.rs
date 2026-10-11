@@ -478,6 +478,7 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         "in",
         "return",
         "const",
+        "let",
         "import",
         "pragma",
         "true",
