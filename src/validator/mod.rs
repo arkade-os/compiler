@@ -22,7 +22,7 @@
 use crate::models::child_exprs;
 use crate::models::{
     AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
-    Path, Requirement, Statement, TapItem,
+    Path, Requirement, Statement, TapItem, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::types::{build_scope_with_structs, ArkType, Scope};
@@ -235,18 +235,18 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                     ts.name, p.name
                 )));
             }
-            if crate::models::array_type_parts(&p.param_type).is_some() {
+            if p.param_type.array_parts().is_some() {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' has array type '{}'; array witnesses are not \
                      supported in tapscript functions",
                     ts.name, p.name, p.param_type
                 )));
             }
-            if crate::models::is_builtin_struct(&p.param_type)
+            if p.param_type.is_builtin_struct()
                 || contract
                     .structs
                     .iter()
-                    .any(|definition| definition.name == p.param_type)
+                    .any(|definition| p.param_type.name() == Some(&definition.name))
             {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' has struct type '{}'; struct witnesses are not supported in tapscript functions",
@@ -367,7 +367,7 @@ fn validate_local_types(
                 declared_type: Some(declared_type),
                 ..
             } => {
-                if !crate::models::is_builtin_struct(declared_type) {
+                if !declared_type.is_builtin_struct() {
                     validate_declared_type(
                         declared_type,
                         &format!("local declaration in function '{function_name}'"),
@@ -418,7 +418,7 @@ fn validate_struct_fields<'a>(
     }
     stack.push(&definition.name);
     for field in &definition.fields {
-        if !crate::models::is_builtin_struct(&field.param_type) {
+        if !field.param_type.is_builtin_struct() {
             validate_declared_type(
                 &field.param_type,
                 &format!("field '{}.{}'", definition.name, field.name),
@@ -426,10 +426,7 @@ fn validate_struct_fields<'a>(
                 issues,
             );
         }
-        let base = crate::models::array_type_parts(&field.param_type)
-            .map(|(base, _)| base)
-            .unwrap_or(&field.param_type);
-        if let Some(nested) = definitions.get(base) {
+        if let Some(nested) = definitions.get(field.param_type.base_name()) {
             validate_struct_fields(nested, definitions, stack, validated, issues);
         }
     }
@@ -437,13 +434,12 @@ fn validate_struct_fields<'a>(
 }
 
 fn validate_declared_type(
-    declared_type: &str,
+    declared_type: &crate::models::TypeName,
     context: &str,
     definitions: &HashMap<&str, &crate::models::StructDefinition>,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let array = crate::models::array_type_parts(declared_type);
-    let base = array.map(|(base, _)| base).unwrap_or(declared_type);
+    let base = declared_type.base_name();
     if !crate::models::is_builtin_type(base)
         && !crate::models::is_builtin_struct(base)
         && !definitions.contains_key(base)
@@ -774,7 +770,7 @@ contract Demo() {
             structs: vec![],
             parameters: vec![Parameter {
                 name: "owner".to_string(),
-                param_type: "pubkey".to_string(),
+                param_type: "pubkey".into(),
             }],
             functions: vec![Function {
                 name: "spend".to_string(),
@@ -782,11 +778,11 @@ contract Demo() {
                 parameters: vec![
                     Parameter {
                         name: "ownerSig".to_string(),
-                        param_type: "signature".to_string(),
+                        param_type: "signature".into(),
                     },
                     Parameter {
                         name: "flag".to_string(),
-                        param_type: "bool".to_string(),
+                        param_type: "bool".into(),
                     },
                 ],
                 statements: vec![located(Statement::Require(Requirement::Expression(

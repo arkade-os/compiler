@@ -655,7 +655,7 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
             function exit(signature sig) tapscript { require(older(72)); require(checkSig(sig, keys[1])); }
         }
     "#).unwrap();
-    assert_eq!(output.parameters[0].param_type, "pubkey[2]");
+    assert_eq!(output.parameters[0].param_type.to_string(), "pubkey[2]");
     assert_eq!(
         arkade_asm_tokens(&output, "spend"),
         arkade_asm_tokens(&literal, "spend")

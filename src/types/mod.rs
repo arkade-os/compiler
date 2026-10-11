@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement,
+    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
@@ -55,9 +55,11 @@ pub enum ArkType {
 impl ArkType {
     /// Parse from a grammar `data_type` string (e.g., `"pubkey"`, `"bytes32[4]"`).
     pub fn parse(s: &str) -> ArkType {
-        if let Some((element, length)) = crate::models::array_type_parts(s) {
-            return ArkType::Array(Box::new(ArkType::parse(element)), length);
-        }
+        crate::models::TypeName::parse(s).ark_type()
+    }
+
+    /// The type a builtin or struct name denotes.
+    pub(crate) fn named(s: &str) -> ArkType {
         match s {
             "signature" => ArkType::Signature,
             "bytes" | "pubkey" => ArkType::Bytes,
@@ -110,6 +112,15 @@ impl ArkType {
     }
 }
 
+impl From<&ArkType> for TypeName {
+    fn from(ty: &ArkType) -> Self {
+        match ty {
+            ArkType::Array(element, length) => TypeName::array((&**element).into(), *length),
+            _ => TypeName::Named(ty.as_str()),
+        }
+    }
+}
+
 // ─── Scope ────────────────────────────────────────────────────────────────────
 
 pub type Scope = HashMap<String, ArkType>;
@@ -128,28 +139,28 @@ pub fn build_scope_with_structs(
 fn insert_type_bindings(
     scope: &mut Scope,
     name: &str,
-    declared_type: &str,
+    declared_type: &TypeName,
     structs: &[crate::models::StructDefinition],
     stack: &mut Vec<String>,
 ) {
-    if let Some((base, length)) = crate::models::array_type_parts(declared_type) {
-        let element_type = ArkType::parse(base);
+    if let Some((base, length)) = declared_type.array_parts() {
         scope.insert(
             name.to_string(),
-            ArkType::Array(Box::new(element_type.clone()), length),
+            ArkType::Array(Box::new(base.ark_type()), length),
         );
         for index in 0..length {
             insert_type_bindings(scope, &format!("{name}[{index}]"), base, structs, stack);
         }
         return;
     }
-    if let Some(fields) = crate::models::builtin_struct_fields(declared_type) {
-        scope.insert(name.to_string(), ArkType::Struct(declared_type.to_string()));
+    let type_name = declared_type.name().unwrap_or_default();
+    if let Some(fields) = crate::models::builtin_struct_fields(type_name) {
+        scope.insert(name.to_string(), ArkType::Struct(type_name.to_string()));
         for (field_name, field_type) in fields {
             insert_type_bindings(
                 scope,
                 &format!("{name}.{field_name}"),
-                field_type,
+                &TypeName::parse(field_type),
                 structs,
                 stack,
             );
@@ -158,13 +169,13 @@ fn insert_type_bindings(
     }
     if let Some(definition) = structs
         .iter()
-        .find(|definition| definition.name == declared_type)
+        .find(|definition| definition.name == type_name)
     {
-        scope.insert(name.to_string(), ArkType::Struct(declared_type.to_string()));
-        if stack.iter().any(|name| name == declared_type) {
+        scope.insert(name.to_string(), ArkType::Struct(type_name.to_string()));
+        if stack.iter().any(|name| name == type_name) {
             return;
         }
-        stack.push(declared_type.to_string());
+        stack.push(type_name.to_string());
         for field in &definition.fields {
             insert_type_bindings(
                 scope,
@@ -177,20 +188,20 @@ fn insert_type_bindings(
         stack.pop();
         return;
     }
-    scope.insert(name.to_string(), ArkType::parse(declared_type));
+    scope.insert(name.to_string(), declared_type.ark_type());
 }
 
 pub(crate) fn bind_local_type(
     scope: &mut Scope,
     name: &str,
-    declared_type: Option<&str>,
+    declared_type: Option<&TypeName>,
     inferred: ArkType,
     structs: &[crate::models::StructDefinition],
 ) {
     let expanded = match declared_type {
-        Some(declared_type) => Some(declared_type.to_string()),
+        Some(declared_type) => Some(declared_type.clone()),
         None if matches!(inferred, ArkType::Struct(_) | ArkType::Array(..)) => {
-            Some(inferred.as_str())
+            Some(TypeName::from(&inferred))
         }
         None => None,
     };
@@ -253,7 +264,7 @@ pub(crate) fn annotate_expression(expression: &mut Expression, scope: &Scope) {
 struct Typing<'a> {
     structs: &'a [crate::models::StructDefinition],
     /// Present on the first pass, which also resolves names.
-    returns: Option<&'a HashMap<String, Option<String>>>,
+    returns: Option<&'a HashMap<String, Option<TypeName>>>,
 }
 
 impl Typing<'_> {
@@ -277,7 +288,7 @@ impl Typing<'_> {
                         scope,
                         name,
                         Some(declared_type),
-                        ArkType::parse(declared_type),
+                        declared_type.ark_type(),
                         self.structs,
                     );
                 }
@@ -288,10 +299,10 @@ impl Typing<'_> {
                 } => {
                     self.expression(value, scope);
                     let ty = declared_type
-                        .as_deref()
-                        .map(ArkType::parse)
+                        .as_ref()
+                        .map(TypeName::ark_type)
                         .unwrap_or_else(|| value.ty.clone());
-                    bind_local_type(scope, name, declared_type.as_deref(), ty, self.structs);
+                    bind_local_type(scope, name, declared_type.as_ref(), ty, self.structs);
                 }
                 Statement::VarAssign { target, value } => {
                     if let AssignmentTarget::Access(index)
@@ -449,9 +460,8 @@ pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bo
 fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     match &expr.kind {
         ExprKind::Call { return_type, .. } => return_type
-            .as_deref()
-            .map(ArkType::parse)
-            .unwrap_or(ArkType::Unknown),
+            .as_ref()
+            .map_or(ArkType::Unknown, TypeName::ark_type),
         ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         ExprKind::Literal(value) if value.starts_with("0x") => {
             bytes_of_width(static_byte_width(expr))

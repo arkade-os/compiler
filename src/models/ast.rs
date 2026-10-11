@@ -106,7 +106,7 @@ pub struct Contract {
 #[derive(Debug, Clone)]
 pub struct Constant {
     pub name: String,
-    pub const_type: String,
+    pub const_type: TypeName,
     pub value: Expression,
 }
 
@@ -128,7 +128,7 @@ pub struct Function {
     /// Whether this helper can be called from a directly importing file.
     pub is_exported: bool,
     /// Explicit result type; None means the function returns no value.
-    pub return_type: Option<String>,
+    pub return_type: Option<TypeName>,
 }
 
 impl Function {
@@ -155,11 +155,14 @@ pub enum Statement {
     /// require(expr, "message");
     Require(Requirement),
     /// type name; — no value or stack slot until assignment.
-    Declaration { name: String, declared_type: String },
+    Declaration {
+        name: String,
+        declared_type: TypeName,
+    },
     /// let name = expr; or type name = expr;
     LetBinding {
         name: String,
-        declared_type: Option<String>,
+        declared_type: Option<TypeName>,
         value: Expression,
     },
     /// name = expr; or name[index] = expr; (variable reassignment)
@@ -414,7 +417,7 @@ pub enum ExprKind {
     Call {
         name: String,
         args: Vec<Expression>,
-        return_type: Option<String>,
+        return_type: Option<TypeName>,
     },
     /// A builtin function call; its arguments are in parameter order.
     Builtin {

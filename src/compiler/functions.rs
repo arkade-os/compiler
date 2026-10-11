@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{child_exprs_mut, is_builtin_type, TypeLeaf};
+use crate::models::{child_exprs_mut, TypeLeaf, TypeName};
 
 pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expression>) {
     if matches!(
@@ -77,11 +77,16 @@ fn assigns_parameter(statements: &[LocatedStatement], name: &str) -> bool {
 }
 
 impl Generator {
-    pub(super) fn value_leaves(&self, path: &Path, ty: &str) -> Result<Vec<TypeLeaf>, String> {
+    pub(super) fn value_leaves(&self, path: &Path, ty: &TypeName) -> Result<Vec<TypeLeaf>, String> {
         crate::models::flatten_value(path, ty, &self.structs)
     }
 
-    pub(super) fn bind_value(&mut self, name: &str, ty: &str) -> Result<(), String> {
+    /// Stack slots a value of `ty` occupies.
+    pub(super) fn width(&self, ty: &TypeName) -> Result<usize, String> {
+        Ok(self.value_leaves(&Path::new(""), ty)?.len())
+    }
+
+    pub(super) fn bind_value(&mut self, name: &str, ty: &TypeName) -> Result<(), String> {
         let leaves = self.value_leaves(&Path::new(name), ty)?;
         if self.stack.len() < leaves.len() {
             return Err("missing function result".to_string());
@@ -102,12 +107,12 @@ impl Generator {
     pub(super) fn emit_typed_value(
         &mut self,
         expression: &Expression,
-        ty: &str,
+        ty: &TypeName,
     ) -> Result<(), String> {
         if matches!(&expression.kind, ExprKind::Call { .. }) {
             return self.emit_call(expression);
         }
-        if is_builtin_type(ty) {
+        if ty.is_builtin() {
             return self.emit_expression(expression);
         }
         if matches!(
@@ -124,7 +129,7 @@ impl Generator {
             }
             return Ok(());
         }
-        if let Some((element, length)) = crate::models::array_type_parts(ty) {
+        if let Some((element, length)) = ty.array_parts() {
             let ExprKind::ArrayLiteral(elements) = &expression.kind else {
                 return Err(format!("expected array value of type '{ty}'"));
             };
@@ -136,8 +141,8 @@ impl Generator {
             }
             return Ok(());
         }
-        if crate::models::expression_result_struct(expression) == Some(ty) {
-            let width = self.value_leaves(&Path::new(""), ty)?.len();
+        if crate::models::expression_result_struct(expression) == ty.name() {
+            let width = self.width(ty)?;
             self.emit_expression_items(expression, width)?;
             // Native results are first deepest; reverse them so the first leaf is on top.
             for depth in 1..width {
@@ -153,18 +158,19 @@ impl Generator {
         let ExprKind::StructLiteral(values) = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'"));
         };
-        let fields = if let Some(fields) = crate::models::builtin_struct_fields(ty) {
+        let fields = if let Some(fields) = ty.name().and_then(crate::models::builtin_struct_fields)
+        {
             fields
                 .iter()
                 .map(|(name, ty)| Parameter {
                     name: name.to_string(),
-                    param_type: ty.to_string(),
+                    param_type: TypeName::parse(ty),
                 })
                 .collect()
         } else {
             self.structs
                 .iter()
-                .find(|s| s.name == ty)
+                .find(|s| ty.name() == Some(&s.name))
                 .ok_or_else(|| format!("unknown struct '{ty}'"))?
                 .fields
                 .clone()
@@ -202,7 +208,7 @@ impl Generator {
         let mut arguments = Vec::new();
         let mut aliases = std::collections::HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
-            if is_builtin_type(&parameter.param_type)
+            if parameter.param_type.is_builtin()
                 && !assigns_parameter(&function.statements, &parameter.name)
             {
                 let source = match &argument.kind {
@@ -285,7 +291,7 @@ impl Generator {
         let previous_direct_return = std::mem::replace(&mut self.direct_return, direct_return);
         let results = function
             .return_type
-            .as_deref()
+            .as_ref()
             .map(|ty| self.value_leaves(&Path::new("$result"), ty))
             .transpose()?
             .unwrap_or_default();
@@ -349,7 +355,7 @@ impl Generator {
             .return_type
             .clone()
             .ok_or("return outside private function")?;
-        match (ty.as_deref(), value) {
+        match (ty.as_ref(), value) {
             (Some(ty), Some(value)) => {
                 self.emit_typed_value(value, ty)?;
                 if !self.direct_return {

@@ -30,11 +30,7 @@ impl Generator {
                 ));
             }
             Some(_) => {}
-            None => indices.push((
-                index,
-                *length,
-                self.value_leaves(&Path::new(""), &element.as_str())?.len(),
-            )),
+            None => indices.push((index, *length, self.width(&(&**element).into())?)),
         }
         Ok(path)
     }
@@ -57,7 +53,11 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn emit_access_value(&mut self, value: &Expression, ty: &str) -> Result<(), String> {
+    pub(super) fn emit_access_value(
+        &mut self,
+        value: &Expression,
+        ty: &TypeName,
+    ) -> Result<(), String> {
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
         let length = name
@@ -107,7 +107,7 @@ impl Generator {
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<(), String> {
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
-        let leaves = self.value_leaves(&name, &value.ty.as_str())?;
+        let leaves = self.value_leaves(&name, &TypeName::from(&value.ty))?;
         if indices.is_empty() {
             for leaf in leaves {
                 self.assign_static_binding(leaf.access)?;
@@ -180,7 +180,7 @@ impl Generator {
             let baseline = self.stack.len();
             let scope = self.scope.clone();
             let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
-            let ty = keys.ty.as_str();
+            let ty = TypeName::from(&keys.ty);
             let name = format!("$multisig:{baseline}");
             self.emit_typed_value(keys, &ty)?;
             self.bind_value(&name, &ty)?;
@@ -199,7 +199,8 @@ impl Generator {
             return Ok(());
         }
         // Signatures need no binding: array emission leaves sig[0] on top for the checks.
-        self.emit_typed_value(signatures, &format!("signature[{count}]"))?;
+        let signatures_type = TypeName::array(TypeName::Named("signature".into()), count);
+        self.emit_typed_value(signatures, &signatures_type)?;
         for index in 0..count {
             let mut key = match &keys.kind {
                 ExprKind::ArrayLiteral(elements) => elements[index].clone(),
@@ -330,7 +331,7 @@ impl Generator {
                         value: Box::new(element.clone()),
                         field: field.to_string(),
                     });
-                    self.emit_access_value(&leaf, field_type)?;
+                    self.emit_access_value(&leaf, &TypeName::parse(field_type))?;
                 }
             }
         }

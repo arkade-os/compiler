@@ -456,7 +456,7 @@ mod symbolic_stack_tests {
             .into_iter()
             .map(|name| Parameter {
                 name: name.to_string(),
-                param_type: "int".to_string(),
+                param_type: "int".into(),
             })
             .collect::<Vec<_>>();
         let mut generator =
@@ -489,7 +489,7 @@ mod symbolic_stack_tests {
             .into_iter()
             .map(|name| Parameter {
                 name: name.to_string(),
-                param_type: "int".to_string(),
+                param_type: "int".into(),
             })
             .collect::<Vec<_>>();
         let mut generator =
@@ -563,11 +563,11 @@ mod symbolic_stack_tests {
         let inputs = [
             Parameter {
                 name: "values".to_string(),
-                param_type: "int[3]".to_string(),
+                param_type: "int[3]".into(),
             },
             Parameter {
                 name: "i".to_string(),
-                param_type: "int".to_string(),
+                param_type: "int".into(),
             },
         ];
         let mut generator =

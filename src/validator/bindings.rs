@@ -109,7 +109,7 @@ fn validate_binding_statements(
                     &mut local,
                     name,
                     Some(declared_type),
-                    ArkType::parse(declared_type),
+                    declared_type.ark_type(),
                     structs,
                 );
                 scopes
@@ -136,8 +136,8 @@ fn validate_binding_statements(
                 match &value.kind {
                     ExprKind::StructLiteral(_) => {
                         if !declared_type
-                            .as_deref()
-                            .is_some_and(|ty| matches!(ArkType::parse(ty), ArkType::Struct(_)))
+                            .as_ref()
+                            .is_some_and(|ty| matches!(ty.ark_type(), ArkType::Struct(_)))
                         {
                             issues.push(ValidationIssue::error(format!(
                                 "function '{function_name}': struct literal needs a declared struct type"
@@ -162,9 +162,8 @@ fn validate_binding_statements(
                 }
                 let inferred = value.ty.clone();
                 let binding_type = declared_type
-                    .as_deref()
-                    .map(ArkType::parse)
-                    .unwrap_or_else(|| inferred.clone());
+                    .as_ref()
+                    .map_or_else(|| inferred.clone(), TypeName::ark_type);
                 if declared_type.is_some()
                     && !matches!(&inferred, ArkType::Array(element, _) if **element == ArkType::Unknown)
                     && inferred != ArkType::Unknown
@@ -180,8 +179,8 @@ fn validate_binding_statements(
                 }
                 if matches!(&value.kind, ExprKind::ArrayLiteral(_))
                     && declared_type
-                        .as_deref()
-                        .and_then(crate::models::array_type_parts)
+                        .as_ref()
+                        .and_then(TypeName::array_parts)
                         .is_none()
                 {
                     issues.push(ValidationIssue::error(format!(
@@ -212,7 +211,7 @@ fn validate_binding_statements(
                 crate::types::bind_local_type(
                     &mut local,
                     name,
-                    declared_type.as_deref(),
+                    declared_type.as_ref(),
                     binding_type,
                     structs,
                 );
@@ -269,7 +268,7 @@ fn validate_binding_statements(
                     (&target_type, &value.kind)
                 {
                     super::functions::validate_value(
-                        &expected.as_str(),
+                        &TypeName::from(expected),
                         value,
                         structs,
                         &format!("assignment in '{function_name}'"),

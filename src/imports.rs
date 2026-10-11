@@ -501,10 +501,8 @@ fn validate_scope(
     for constant in &contract.constants {
         check_binding(&constant.name)?;
     }
-    let check_type = |ty: &str| {
-        let base = models::array_type_parts(ty)
-            .map(|(base, _)| base)
-            .unwrap_or(ty);
+    let check_type = |ty: &models::TypeName| {
+        let base = ty.base_name();
         if models::is_builtin_type(base)
             || models::is_builtin_struct(base)
             || structs.contains(base)
@@ -590,7 +588,7 @@ fn validate_scope(
                         let actual = arg.ty;
                         if actual != types::ArkType::Unknown
                             && !crate::validator::binding_types_compatible(
-                                &types::ArkType::parse(&param.param_type),
+                                &param.param_type.ark_type(),
                                 &actual,
                             )
                         {
@@ -613,7 +611,7 @@ fn validate_scope(
 
 fn validate_local_types(
     statements: &[LocatedStatement],
-    check: &impl Fn(&str) -> Result<(), String>,
+    check: &impl Fn(&models::TypeName) -> Result<(), String>,
     binding: &impl Fn(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     for statement in statements {

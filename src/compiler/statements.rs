@@ -49,7 +49,7 @@ impl Generator {
                 .scope
                 .get(name)
                 .ok_or("internal compiler error: missing declaration type")?;
-            for leaf in self.value_leaves(&Path::new(name), &ty.as_str())? {
+            for leaf in self.value_leaves(&Path::new(name), &TypeName::from(ty))? {
                 initialized_leaves.insert(leaf.access);
             }
         }
@@ -203,15 +203,14 @@ pub(super) fn generate_asm_from_statements_recursive(
                 declared_type,
                 value,
             } => {
-                let composite_type = generator.composite_type(value);
                 let result_type = declared_type
-                    .as_deref()
+                    .clone()
                     .or_else(|| match &value.kind {
-                        ExprKind::Call { return_type, .. } => return_type.as_deref(),
-                        _ => crate::models::expression_result_struct(value),
+                        ExprKind::Call { return_type, .. } => return_type.clone(),
+                        _ => crate::models::expression_result_struct(value).map(TypeName::from),
                     })
-                    .or(composite_type.as_deref());
-                if let Some(ty) = result_type {
+                    .or_else(|| generator.composite_type(value));
+                if let Some(ty) = &result_type {
                     generator.emit_typed_value(value, ty)?;
                     generator.bind_value(name, ty)?;
                     generator.bind_type(name, ty);
@@ -252,8 +251,8 @@ pub(super) fn generate_asm_from_statements_recursive(
                 types::annotate_expression(&mut access, &generator.scope);
                 if let AssignmentTarget::Binding(name) = target {
                     if generator.deferred.remove(&name.key()) {
-                        generator.emit_typed_value(value, &access.ty.as_str())?;
-                        generator.bind_value(&name.key(), &access.ty.as_str())?;
+                        generator.emit_typed_value(value, &TypeName::from(&access.ty))?;
+                        generator.bind_value(&name.key(), &TypeName::from(&access.ty))?;
                         generator.replacement = previous_replacement;
                         generator.assert_statement_boundary()?;
                         continue;
@@ -263,7 +262,7 @@ pub(super) fn generate_asm_from_statements_recursive(
                     access.ty,
                     types::ArkType::Struct(_) | types::ArkType::Array(..)
                 ) {
-                    generator.emit_typed_value(value, &access.ty.as_str())?;
+                    generator.emit_typed_value(value, &TypeName::from(&access.ty))?;
                     generator.assign_access(&access)?;
                 } else {
                     generator.emit_expression(value)?;

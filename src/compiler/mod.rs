@@ -2,6 +2,7 @@ use crate::diagnostics::Diagnostic;
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
     Function, FunctionInput, LocatedStatement, Parameter, Path, Requirement, Segment, Statement,
+    TypeName,
 };
 use crate::opcodes::Opcode::{
     self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,
@@ -98,7 +99,7 @@ struct Generator {
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<Path, usize>,
     // None outside a helper; Some(None) inside a void helper.
-    return_type: Option<Option<String>>,
+    return_type: Option<Option<TypeName>>,
     direct_return: bool,
     // Record reads once, then replay final uses at their new stack depths.
     final_reads: Vec<bool>,
@@ -160,7 +161,7 @@ impl Generator {
         // Witness inputs carry any length; pin fixed-width ones before the body reads them.
         let prologue = asm.len();
         for (index, (_, leaf_type)) in function_bindings.iter().enumerate() {
-            let width = match types::ArkType::parse(leaf_type) {
+            let width = match leaf_type.ark_type() {
                 types::ArkType::Bytes20 => "20",
                 types::ArkType::Bytes32 => "32",
                 _ => continue,
@@ -355,8 +356,7 @@ impl Generator {
                     ) {
                         self.emit_group_input(value)?;
                     } else {
-                        let ty = value.ty.as_str();
-                        self.emit_access_value(value, &ty)?;
+                        self.emit_access_value(value, &TypeName::from(&value.ty))?;
                     }
                 }
                 op => self.lower_op(op)?,
@@ -657,7 +657,7 @@ fn covenant_for(
     let mut widths = std::collections::HashMap::new();
     for parameter in &retained_parameters {
         for leaf in crate::models::flatten_parameter(parameter, structs)? {
-            let width = match types::ArkType::parse(&leaf.leaf_type) {
+            let width = match leaf.leaf_type.ark_type() {
                 types::ArkType::Signature => 64,
                 types::ArkType::Bytes32 | types::ArkType::Asset => 32,
                 types::ArkType::Bytes20 => 20,
@@ -683,7 +683,7 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
         .iter()
         .map(|param| FunctionInput {
             name: param.name.clone(),
-            param_type: param.param_type.clone(),
+            param_type: param.param_type.to_string(),
         })
         .collect()
 }
@@ -691,7 +691,7 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
 fn for_each_expanded_param(
     param: &Parameter,
     structs: &[crate::models::StructDefinition],
-    mut f: impl FnMut(String, Path, String),
+    mut f: impl FnMut(String, Path, TypeName),
 ) -> Result<(), String> {
     for leaf in crate::models::flatten_parameter(param, structs)? {
         f(leaf.emitted_name, leaf.access, leaf.leaf_type);

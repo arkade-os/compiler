@@ -29,17 +29,17 @@ fn test_fuji_safe_contract() {
     // Verify parameters
     assert_eq!(output.parameters.len(), 11);
     assert_eq!(output.parameters[9].name, "treasuryBurnScript");
-    assert_eq!(output.parameters[9].param_type, "bytes32");
+    assert_eq!(output.parameters[9].param_type.to_string(), "bytes32");
     assert_eq!(output.parameters[10].name, "borrowerBurnScript");
-    assert_eq!(output.parameters[10].param_type, "bytes32");
+    assert_eq!(output.parameters[10].param_type.to_string(), "bytes32");
     assert_eq!(output.parameters[0].name, "assetCommitmentHash");
-    assert_eq!(output.parameters[0].param_type, "bytes");
+    assert_eq!(output.parameters[0].param_type.to_string(), "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
-    assert_eq!(output.parameters[1].param_type, "int");
+    assert_eq!(output.parameters[1].param_type.to_string(), "int");
     assert_eq!(output.parameters[2].name, "borrowerPk");
-    assert_eq!(output.parameters[2].param_type, "pubkey");
+    assert_eq!(output.parameters[2].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[3].name, "treasuryPk");
-    assert_eq!(output.parameters[3].param_type, "pubkey");
+    assert_eq!(output.parameters[3].param_type.to_string(), "pubkey");
 
     // 4 covenant functions + 1 standalone unilateral = 5 groups
     assert_eq!(

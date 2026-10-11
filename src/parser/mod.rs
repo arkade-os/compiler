@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, ExprKind, Expression, Function, LocatedStatement,
-    Parameter, Statement, StructDefinition,
+    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, Function,
+    LocatedStatement, Parameter, Statement, StructDefinition, TypeName,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -620,16 +620,16 @@ fn parse_block(
     Ok(statements)
 }
 
-/// Canonical declared-type text: `pubkey`, or `pubkey[3]` for array types.
-pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> String {
+pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> TypeName {
     let text = type_pair.as_str().trim().to_string();
     let mut inner = type_pair.into_inner();
     let Some(base) = inner.next() else {
-        return text;
+        return TypeName::Named(text);
     };
+    let base = TypeName::Named(base.as_str().to_string());
     match inner.next() {
-        Some(size) => format!("{}[{}]", base.as_str(), size.as_str()),
-        None => base.as_str().to_string(),
+        Some(size) => TypeName::Array(Box::new(base), ArraySize::parse(size.as_str())),
+        None => base,
     }
 }
 
@@ -668,10 +668,10 @@ mod tests {
         let contract = parse("contract C() { function spend() { int x; int[2] values; x = 7; values = [7, 9]; require(x == values[0]); } }").unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::Declaration { name, declared_type } if name == "x" && declared_type == "int")
+            matches!(&statements[0].statement, Statement::Declaration { name, declared_type } if name == "x" && declared_type.to_string() == "int")
         );
         assert!(
-            matches!(&statements[1].statement, Statement::Declaration { name, declared_type } if name == "values" && declared_type == "int[2]")
+            matches!(&statements[1].statement, Statement::Declaration { name, declared_type } if name == "values" && declared_type.to_string() == "int[2]")
         );
         assert!(matches!(
             &statements[2].statement,
@@ -826,11 +826,17 @@ mod tests {
         let contract = parse(
             "struct State { int[N] values; } contract C(pubkey[C.N] keys) { const int N = 2; function spend(int[N] values) { int[N] local = [1, 2]; local[N - 1] = values[0]; require(true); } }",
         ).unwrap();
-        assert_eq!(contract.structs[0].fields[0].param_type, "int[N]");
-        assert_eq!(contract.parameters[0].param_type, "pubkey[C.N]");
-        assert_eq!(contract.functions[0].parameters[0].param_type, "int[N]");
+        assert_eq!(
+            contract.structs[0].fields[0].param_type.to_string(),
+            "int[N]"
+        );
+        assert_eq!(contract.parameters[0].param_type.to_string(), "pubkey[C.N]");
+        assert_eq!(
+            contract.functions[0].parameters[0].param_type.to_string(),
+            "int[N]"
+        );
         assert!(
-            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
+            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty.to_string() == "int[N]")
         );
         assert!(
             matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "-"))
@@ -894,7 +900,7 @@ mod tests {
         .unwrap();
         assert!(!contract.functions[0].is_private);
         assert!(contract.functions[1].is_private);
-        assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
+        assert_eq!(contract.functions[2].return_type, Some("bool".into()));
         assert!(!contract.functions[3].is_private);
         assert!(
             matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression { kind: ExprKind::Call { name, args, .. }, .. }) if name == "check" && matches!(&args[0].kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+"))
@@ -1077,7 +1083,7 @@ contract Demo(pubkey first, pubkey second) {
                 name,
                 declared_type: Some(declared_type),
                 ..
-            } if name == "explicit" && declared_type == "int"
+            } if name == "explicit" && declared_type.to_string() == "int"
         ));
         assert!(matches!(
             &statements[2].statement,

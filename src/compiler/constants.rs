@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr, LocatedStatement, Path,
-    Requirement, Statement, TapItem,
+    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr,
+    LocatedStatement, Path, Requirement, Statement, TapItem, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
@@ -81,7 +81,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         {
             return Err(format!("constant '{name}' collides with function '{name}'"));
         }
-        if !matches!(const_type.as_str(), "int" | "bool" | "bytes") {
+        if !matches!(const_type.name(), Some("int" | "bool" | "bytes")) {
             return Err(format!("constant '{name}' must be int, bool or bytes"));
         }
         declarations.insert(name.clone(), constant);
@@ -141,7 +141,7 @@ fn resolve_value(
             false => format!("constant '{name}': {error}"),
         })?;
     active.pop();
-    if kind(&value) != constant.const_type {
+    if constant.const_type.name() != Some(kind(&value)) {
         return Err(format!(
             "constant '{name}' is not a valid '{}' literal",
             constant.const_type
@@ -330,21 +330,23 @@ pub(crate) fn evaluate(
     }
 }
 
-fn fold_type(declared_type: &mut String, values: &HashMap<String, String>) -> Result<(), String> {
-    if let Some((base, size)) = declared_type
-        .strip_suffix(']')
-        .and_then(|ty| ty.split_once('['))
-    {
-        let value = values.get(size).map(String::as_str).unwrap_or(size);
-        let size = value
-            .parse::<usize>()
-            .ok()
-            .filter(|size| *size > 0)
-            .ok_or_else(|| {
-                format!("array size '{size}' must be a positive integer literal or int constant")
-            })?;
-        *declared_type = format!("{base}[{size}]");
-    }
+fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> Result<(), String> {
+    let TypeName::Array(_, size) = declared_type else {
+        return Ok(());
+    };
+    let length = match size {
+        ArraySize::Fixed(length) => Some(*length),
+        ArraySize::Const(name) => values
+            .get(name.as_str())
+            .and_then(|value| value.parse().ok()),
+    };
+    *size = ArraySize::Fixed(length.filter(|length| *length > 0).ok_or_else(|| {
+        let written = match size {
+            ArraySize::Fixed(length) => length.to_string(),
+            ArraySize::Const(name) => name.clone(),
+        };
+        format!("array size '{written}' must be a positive integer literal or int constant")
+    })?);
     Ok(())
 }
 
