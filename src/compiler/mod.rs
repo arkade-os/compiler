@@ -77,6 +77,7 @@ struct Generator {
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
     scope: types::Scope,
+    constructor_scope: types::Scope,
     functions: Vec<Function>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<String, usize>,
@@ -139,7 +140,8 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        let mut scope = types::build_scope_with_structs(constructor_parameters, structs);
+        let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
+        let mut scope = constructor_scope.clone();
         scope.extend(types::build_scope_with_structs(
             function_parameters,
             structs,
@@ -152,6 +154,7 @@ impl Generator {
             constructor_array_expansions,
             structs: structs.to_vec(),
             scope,
+            constructor_scope,
             functions: Vec::new(),
             aliases: std::collections::HashMap::new(),
             return_type: None,

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
 
 func TestDeferredInitialization(t *testing.T) {
@@ -54,6 +56,12 @@ func TestDeferredInitialization(t *testing.T) {
                 int x;
                 for (2) { if (choose) { return input; } else { x = input; } }
                 return x;
+            }`},
+		{"helper loop local matches caller local", `int x = input; require(counter() == 2); require(x == input);`, `
+            private function counter() int {
+                int result = 0;
+                for (2) { int x = result + 1; result = x; }
+                return result;
             }`},
 		{"bytes and bool", `bytes data; bool ok;
             if (choose) { data = 0xabcd; ok = input == 7; }
@@ -115,6 +123,85 @@ func TestDeferredInitializationScriptSize(t *testing.T) {
 				t.Fatalf("deferred script = %d bytes, zero-filled = %d", sizes[0], sizes[1])
 			}
 			t.Logf("deferred: %d bytes; zero-filled: %d bytes", sizes[0], sizes[1])
+		})
+	}
+}
+
+func TestHelperLocalNamesDoNotBypassSignatureChecks(t *testing.T) {
+	verifier := `function verifyBoth(pubkey[2] keys, signature[2] signatures) {
+        for (i, candidate) in keys {
+            pubkey key = candidate;
+            require(checkSig(signatures[i], key));
+        }
+    }`
+	for _, tc := range []struct {
+		name, helpers, call string
+		library             bool
+	}{
+		{"private", "private " + verifier, "verifyBoth(keys, signatures);", false},
+		{"nested", "private " + verifier + `
+            private function wrapper(pubkey[2] keys, signature[2] signatures) {
+                pubkey key = keys[0];
+                verifyBoth(keys, signatures);
+                require(key == keys[0]);
+            }`, "wrapper(keys, signatures);", false},
+		{"caller block", "private " + verifier, `for (2) {
+            if (ownerA == ownerA) { verifyBoth(keys, signatures); } else { require(false); }
+        }`, false},
+		{"static", "static " + verifier, "verifyBoth(keys, signatures);", false},
+		{"imported", verifier, "Verification.verifyBoth(keys, signatures);", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			directory := t.TempDir()
+			imports, helpers := "", tc.helpers
+			if tc.library {
+				imports = `import "verification.ark";`
+				if err := os.WriteFile(filepath.Join(directory, "verification.ark"), []byte("library Verification {"+helpers+"}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				helpers = ""
+			}
+			source := filepath.Join(directory, "authorization.ark")
+			code := fmt.Sprintf(`%s contract Authorization(pubkey ownerA, pubkey ownerB) {
+                function spend(signature[2] signatures) {
+                    pubkey key = ownerA;
+                    pubkey[2] keys = [ownerA, ownerB];
+                    %s
+                    require(key == ownerA);
+                }
+                %s
+            }`, imports, tc.call, helpers)
+			if err := os.WriteFile(source, []byte(code), 0600); err != nil {
+				t.Fatal(err)
+			}
+			contract := compileArtifact(t, source)
+			serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+			ownerA, ownerB := fixedPrivateKey(4), fixedPrivateKey(5)
+			instance := instantiateGroup(t, contract, "spend", map[string][]byte{
+				"ownerA": schnorr.SerializePubKey(ownerA.PubKey()),
+				"ownerB": schnorr.SerializePubKey(ownerB.PubKey()),
+			}, serverKey.PubKey(), emulatorKey.PubKey())
+			group := covenantGroup(t, contract, "spend")
+			deployment := fundingTx(instance.pkScript, 10_000)
+			values := map[string][]byte{"signatures.0": nil, "signatures.1": nil}
+			unsigned := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			signatureA := signArkadeSighash(t, unsigned, 0, ownerA)
+			signatureB := signArkadeSighash(t, unsigned, 0, ownerB)
+			for _, witness := range []struct {
+				name    string
+				second  []byte
+				wantErr string
+			}{
+				{"both owners", signatureB, ""},
+				{"owner A alone", signatureA, "signature not empty"},
+			} {
+				t.Run(witness.name, func(t *testing.T) {
+					values["signatures.0"] = signatureA
+					values["signatures.1"] = witness.second
+					spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+					requireVMResult(t, spend, emulatorKey.PubKey(), witness.wantErr)
+				})
+			}
 		})
 	}
 }
