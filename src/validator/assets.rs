@@ -84,6 +84,11 @@ fn check_asset_id_expr(expr: &Expression, fname: &str, issues: &mut Vec<Validati
             asset_gidx,
             ..
         }
+        | ExprKind::AssetTryLookup {
+            asset_txid,
+            asset_gidx,
+            ..
+        }
         | ExprKind::GroupFind {
             asset_txid,
             asset_gidx,

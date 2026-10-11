@@ -127,7 +127,7 @@ pub(crate) fn emit_asset_at_asm(
     source: &AssetLookupSource,
     io_index: &Expression,
     asset_index: &Expression,
-    property: AssetProperty,
+    property: Option<AssetProperty>,
     asm: &mut Vec<String>,
 ) {
     // Push io_index
@@ -149,11 +149,12 @@ pub(crate) fn emit_asset_at_asm(
     // Stack after opcode: txid32, gidx_u16, amount_u64 (top)
     // Extract based on property
     match property {
-        AssetProperty::AssetId => {
+        None => {}
+        Some(AssetProperty::AssetId) => {
             // Drop the amount, keep the canonical Asset ID (asset_txid, asset_gidx).
             asm.push(OP_DROP.to_string());
         }
-        AssetProperty::Amount => {
+        Some(AssetProperty::Amount) => {
             asm.push(OP_NIP.to_string()); // Remove gidx_u16
             asm.push(OP_NIP.to_string()); // Remove txid32
         }

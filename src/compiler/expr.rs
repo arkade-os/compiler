@@ -108,6 +108,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
         } => {
             emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
         }
+        ExprKind::AssetTryLookup {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
+        }
         ExprKind::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
         }
