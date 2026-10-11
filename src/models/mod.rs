@@ -36,6 +36,10 @@ pub fn builtin_struct_fields(
     match declared_type {
         "AssetId" => Some(&[("txid", "bytes32"), ("gidx", "int")]),
         "Outpoint" => Some(&[("txid", "bytes32"), ("vout", "int")]),
+        // An inspected scriptPubKey: witness program, then witness version (-1 for non-witness).
+        "ScriptPubKey" => Some(&[("program", "bytes"), ("version", "int")]),
+        "AssetEntry" => Some(&[("assetId", "AssetId"), ("amount", "int")]),
+        "AssetLookup" => Some(&[("amount", "int"), ("found", "bool")]),
         "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
         // alt_bn128 G2 point; each coordinate is an Fp2 element `c1 * i + c0`.
         "G2Point" => Some(&[
@@ -667,17 +671,27 @@ pub enum ExprKind {
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
     },
+    /// Non-aborting asset lookup: tx.inputs[i].assets.tryLookup(txid, gidx) or
+    /// tx.outputs[o].assets.tryLookup(txid, gidx). An `AssetLookup` holding the
+    /// amount and the opcode success flag.
+    AssetTryLookup {
+        source: AssetLookupSource,
+        index: Box<Expression>,
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
     /// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
     AssetCount {
         source: AssetLookupSource,
         index: Box<Expression>,
     },
-    /// Indexed asset access: tx.inputs[i].assets[t].assetId or tx.outputs[o].assets[t].amount
+    /// Indexed asset access: tx.inputs[i].assets[t].assetId or tx.outputs[o].assets[t].amount;
+    /// without a property, the whole `AssetEntry`.
     AssetAt {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: crate::properties::AssetProperty,
+        property: Option<crate::properties::AssetProperty>,
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
     TxIntrospection {
@@ -758,7 +772,7 @@ pub enum ExprKind {
     },
     // ─── Byte-string Manipulation (introspector extensions) ────────────
     /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
-    /// or a scalar conversion: int(bool), bool(int)
+    /// or a scalar conversion: int(bool), bool(int), bytes(int), bytes(bool); bytes(bytes-like) widens.
     Cast {
         target: String,
         data: Box<Expression>,
@@ -780,9 +794,13 @@ pub enum ExprKind {
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match &expression.kind {
         ExprKind::Builtin { builtin, .. } => builtin.result,
-        ExprKind::AssetAt { property, .. } => Some(property.value_type()),
+        ExprKind::AssetAt { property, .. } => {
+            Some(property.map_or("AssetEntry", |p| p.value_type()))
+        }
+        ExprKind::AssetTryLookup { .. } => Some("AssetLookup"),
         ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
         ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
+        ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
     }
     .filter(|result| builtin_struct_fields(result).is_some())
@@ -820,6 +838,12 @@ macro_rules! expression_children {
                     ..
                 }
                 | ExprKind::AssetHas {
+                    index,
+                    asset_txid,
+                    asset_gidx,
+                    ..
+                }
+                | ExprKind::AssetTryLookup {
                     index,
                     asset_txid,
                     asset_gidx,

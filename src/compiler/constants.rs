@@ -160,11 +160,14 @@ fn kind(value: &str) -> &'static str {
     }
 }
 
-// ponytail: constants are i64 while the VM allows 520-byte numbers, so results past i64
-// (e.g. 1 << 63) are rejected; widen to a bignum here if contracts need them.
-fn integer(text: &str) -> Result<i64, String> {
+// ponytail: literals, negation and equality are unbounded like BigNum, but arithmetic and
+// ordering fold in i128, so larger operands are rejected; use a bignum if contracts need them.
+fn integer(text: &str) -> Result<i128, String> {
+    if kind(text) != "int" {
+        return Err(format!("expected an integer, got '{text}'"));
+    }
     text.parse()
-        .map_err(|_| format!("expected a signed 64-bit integer, got '{text}'"))
+        .map_err(|_| format!("constant arithmetic exceeds 128 bits, got '{text}'"))
 }
 
 // Validate skipped operands without evaluating their arithmetic.
@@ -173,12 +176,7 @@ fn validate_expression(
     resolve: &mut impl FnMut(&str) -> Result<String, String>,
 ) -> Result<&'static str, String> {
     match &expression.kind {
-        ExprKind::Literal(text) => {
-            if kind(text) == "int" {
-                integer(text)?;
-            }
-            Ok(kind(text))
-        }
+        ExprKind::Literal(text) => Ok(kind(text)),
         ExprKind::Variable(name) | ExprKind::Property(name) => Ok(kind(&resolve(name)?)),
         ExprKind::Unary { op, value } => {
             let expected = match op {
@@ -189,19 +187,13 @@ fn validate_expression(
                     ))
                 }
                 UnaryOperator::Not => "bool",
-                UnaryOperator::Neg => {
-                    if let ExprKind::Literal(text) = &value.as_ref().kind {
-                        integer(&format!("-{text}"))?;
-                        return Ok("int");
-                    }
-                    "int"
-                }
+                UnaryOperator::Neg => "int",
             };
             if validate_expression(value, resolve)? != expected {
                 return Err(if expected == "bool" {
                     "operator '!' requires a bool constant".to_string()
                 } else {
-                    "expected a signed 64-bit integer".to_string()
+                    "expected an integer".to_string()
                 });
             }
             Ok(expected)
@@ -227,7 +219,7 @@ fn validate_expression(
                     OperatorClass::Equality => {
                         format!("operator '{op}' requires constants of the same type")
                     }
-                    _ => "expected a signed 64-bit integer".to_string(),
+                    _ => "expected an integer".to_string(),
                 });
             }
             Ok(
@@ -248,23 +240,21 @@ pub(crate) fn evaluate(
 ) -> Result<String, String> {
     let overflow = || "integer overflow in constant expression".to_string();
     match &expression.kind {
-        ExprKind::Literal(text) => match kind(text) {
-            "int" => Ok(integer(text)?.to_string()),
-            _ => Ok(text.clone()),
-        },
+        ExprKind::Literal(text) => Ok(text.clone()),
         ExprKind::Variable(name) | ExprKind::Property(name) => resolve(name),
         ExprKind::Unary {
             op: UnaryOperator::Neg,
             value,
         } => {
-            if let ExprKind::Literal(text) = &value.as_ref().kind {
-                return Ok(integer(&format!("-{text}"))?.to_string());
-            }
             let value = evaluate(value, resolve)?;
-            Ok(integer(&value)?
-                .checked_neg()
-                .ok_or_else(overflow)?
-                .to_string())
+            if kind(&value) != "int" {
+                return Err(format!("expected an integer, got '{value}'"));
+            }
+            Ok(match value.strip_prefix('-') {
+                Some(magnitude) => magnitude.to_string(),
+                None if value == "0" => value,
+                None => format!("-{value}"),
+            })
         }
         ExprKind::Unary {
             op: UnaryOperator::Not,
@@ -316,7 +306,7 @@ pub(crate) fn evaluate(
                     return Err("negative shift count in constant expression".to_string())
                 }
                 // OP_LSHIFT and OP_RSHIFT read the count as a 4-byte script number.
-                BinaryOperator::Shl | BinaryOperator::Shr if right > i64::from(i32::MAX) => {
+                BinaryOperator::Shl | BinaryOperator::Shr if right > i128::from(i32::MAX) => {
                     return Err("shift count exceeds 4-byte script number".to_string())
                 }
                 // OP_LSHIFT leaves zero as zero for any count.
@@ -327,7 +317,7 @@ pub(crate) fn evaluate(
                         .filter(|value| value >> count == left)
                 }),
                 // Arithmetic shift rounds toward negative infinity, as OP_RSHIFT does.
-                BinaryOperator::Shr => Some(left >> right.min(63)),
+                BinaryOperator::Shr => Some(left >> right.min(127)),
                 BinaryOperator::Lt => return Ok((left < right).to_string()),
                 BinaryOperator::Le => return Ok((left <= right).to_string()),
                 BinaryOperator::Gt => return Ok((left > right).to_string()),

@@ -222,10 +222,10 @@ pub(super) fn validate_binding_expression(
                     [("left", left), ("right", right)].iter().zip(&types)
                 {
                     if *actual != ArkType::Unknown && !crate::types::is_bytes_like(actual) {
-                        let hint = if matches!(actual, ArkType::Int | ArkType::Bool) {
-                            "convert it explicitly with num2bin(value, width) — the compiler will not choose a width for you"
-                        } else {
-                            "both operands must be bytes-like"
+                        let hint = match actual {
+                            ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or num2bin(value, width) for fixed-width encoding",
+                            ArkType::Bool => "convert it explicitly with bytes(value) for minimal Script-number encoding",
+                            _ => "both operands must be bytes-like",
                         };
                         issues.push(
                             ValidationIssue::type_error(format!(
@@ -322,9 +322,6 @@ pub(super) fn validate_binding_expression(
                 // Composite operands are emitted field by field, so their type must be known.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
-                // A hex literal carries its own width, so 32 bytes need no cast.
-                let literal_bytes32 = expected == ArkType::Bytes32
-                    && matches!(&operand.kind, ExprKind::Literal(value) if value.starts_with("0x") && value.len() == 66);
                 if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
                     (&operand.kind, &expected)
                 {
@@ -346,7 +343,7 @@ pub(super) fn validate_binding_expression(
                     }
                     continue;
                 }
-                if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
+                if known && !binding_types_compatible(&expected, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "function '{function_name}': {name} operand has type '{}', expected '{}'",
@@ -372,10 +369,15 @@ pub(super) fn validate_binding_expression(
                     "only bool converts to int; use int(0x..) for a hex constant or bin2num for bytes",
                 ),
                 "bool" => (ArkType::Int, "only int converts to bool"),
+                "bytes" => (ArkType::Int, "only int, bool or bytes-like values convert to bytes"),
                 _ => (ArkType::Bytes, "only bytes can be cast"),
             };
             // Same-type casts are no-ops; emission drops them.
-            if actual != source && actual != ArkType::parse(target) && actual != ArkType::Unknown {
+            if actual != source
+                && !binding_types_compatible(&ArkType::parse(target), &actual)
+                && actual != ArkType::Unknown
+                && !(target == "bytes" && actual == ArkType::Bool)
+            {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
                     actual.as_str()

@@ -124,6 +124,21 @@ pub(crate) fn parse_asset_has_to_expression(pair: Pair<Rule>) -> Result<Expressi
     ))
 }
 
+/// Parse an asset_try_lookup pair into an ExprKind::AssetTryLookup
+pub(crate) fn parse_asset_try_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+    let span: crate::diagnostics::Span = pair.as_span().into();
+    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
+    Ok(Expression::new(
+        ExprKind::AssetTryLookup {
+            source,
+            index: Box::new(index),
+            asset_txid: Box::new(asset_txid),
+            asset_gidx: Box::new(asset_gidx),
+        },
+        span,
+    ))
+}
+
 /// Parse an asset_count pair into an ExprKind::AssetCount
 /// tx.inputs[i].assets.length or tx.outputs[o].assets.length
 pub(crate) fn parse_asset_count_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
@@ -190,10 +205,10 @@ pub(crate) fn parse_asset_at_to_expression(pair: Pair<Rule>) -> Result<Expressio
         .ok_or("Missing asset index value")?;
     let asset_index = parse_general_expression(asset_index_pair)?;
 
-    let property = super::introspection::named(
-        inner.next().ok_or("Missing asset property")?,
-        crate::properties::AssetProperty::from_name,
-    )?;
+    let property = inner
+        .next()
+        .map(|pair| super::introspection::named(pair, crate::properties::AssetProperty::from_name))
+        .transpose()?;
 
     Ok(Expression::new(
         ExprKind::AssetAt {

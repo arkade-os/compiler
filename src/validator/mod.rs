@@ -32,6 +32,7 @@ mod assets;
 mod bindings;
 mod expressions;
 mod functions;
+mod inspections;
 mod operands;
 mod output;
 pub(crate) mod references;
@@ -283,6 +284,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     check_unused(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
+    inspections::check_repeated_inspections(contract, &mut issues);
 
     issues
 }

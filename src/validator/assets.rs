@@ -84,6 +84,11 @@ fn check_asset_id_expr(expr: &Expression, fname: &str, issues: &mut Vec<Validati
             asset_gidx,
             ..
         }
+        | ExprKind::AssetTryLookup {
+            asset_txid,
+            asset_gidx,
+            ..
+        }
         | ExprKind::GroupFind {
             asset_txid,
             asset_gidx,
@@ -135,14 +140,8 @@ fn validate_asset_id(
             gidx_type.as_str()
         )));
     } else if is_constant(asset_gidx) {
-        let value = crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into()))
-            .and_then(|value| {
-                value
-                    .parse::<i64>()
-                    .map_err(|_| format!("'{value}' is not a valid integer"))
-            });
-        match value {
-            Ok(v) if (0..=65535).contains(&v) => {}
+        match crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into())) {
+            Ok(v) if v.parse::<u16>().is_ok() => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
                 "function '{}': asset id gidx {} is out of range 0..65535",
                 fname, v

@@ -28,6 +28,8 @@ mod general_comparisons;
 mod group_properties;
 #[path = "features/io_introspection.rs"]
 mod io_introspection;
+#[path = "features/multi_result.rs"]
+mod multi_result;
 #[path = "features/new_opcodes.rs"]
 mod new_opcodes;
 #[path = "features/no_shadowing.rs"]

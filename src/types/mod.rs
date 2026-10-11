@@ -463,7 +463,9 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .cloned()
             .unwrap_or(ArkType::Unknown),
         ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
-        ExprKind::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
+        ExprKind::Literal(value) if value.starts_with("0x") => {
+            bytes_of_width(static_byte_width(expr))
+        }
         ExprKind::Literal(_) => ArkType::Int,
         ExprKind::ArrayLiteral(elements) => ArkType::Array(
             Box::new(
@@ -515,7 +517,10 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::AssetLookup { .. } => ArkType::Int,
         ExprKind::AssetHas { .. } => ArkType::Bool,
         ExprKind::AssetCount { .. } => ArkType::Int,
-        ExprKind::AssetAt { property, .. } => ArkType::parse(property.value_type()),
+        ExprKind::AssetTryLookup { .. } => ArkType::Struct("AssetLookup".to_string()),
+        ExprKind::AssetAt { property, .. } => {
+            ArkType::parse(property.map_or("AssetEntry", |p| p.value_type()))
+        }
 
         // Asset group introspection
         ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,

@@ -138,14 +138,17 @@ impl Generator {
         }
         if crate::models::expression_result_struct(expression) == Some(ty) {
             let width = self.value_leaves("", ty)?.len();
-            if width != 2 {
-                return Err(format!(
-                    "native struct '{ty}' has unsupported width {width}"
-                ));
-            }
             self.emit_expression_items(expression, width)?;
-            // Native results are first deepest; wider native structs need a general reversal.
-            return self.swap();
+            // Native results are first deepest; reverse them so the first leaf is on top.
+            for depth in 1..width {
+                if depth == 1 {
+                    self.swap()?;
+                } else {
+                    self.push_integer_temporary(depth);
+                    self.apply(OP_ROLL, depth + 2, depth + 1)?;
+                }
+            }
+            return Ok(());
         }
         let ExprKind::StructLiteral(values) = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'"));
