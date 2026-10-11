@@ -57,6 +57,18 @@ func TestDeferredInitialization(t *testing.T) {
                 for (2) { if (choose) { return input; } else { x = input; } }
                 return x;
             }`},
+		{"deferred init after return guard", `require(counted(choose, input) == input); require(arrays(choose, input) == input);`, `
+            private function counted(bool choose, int input) int {
+                int x;
+                for (2) { if (choose) { return input; } x = input; }
+                return x;
+            }
+            private function arrays(bool choose, int input) int {
+                int x;
+                int[2] values = [input, input];
+                for (i, value) in values { if (choose) { return input; } x = value; }
+                return x;
+            }`},
 		{"helper loop local matches caller local", `int x = input; require(counter() == 2); require(x == input);`, `
             private function counter() int {
                 int result = 0;

@@ -143,6 +143,37 @@ fn deferred_initialization_supports_helpers_returns_and_constant_array_sizes() {
 }
 
 #[test]
+fn deferred_initialization_after_conditional_return_in_loops() {
+    let source = r#"
+        contract Deferred() {
+            function spend(bool choose, int input) {
+                require(counted(choose, input) == input);
+                require(arrays(choose, input) == input);
+            }
+            private function counted(bool choose, int input) int {
+                int x;
+                for (2) { if (choose) { return input; } x = input; }
+                return x;
+            }
+            private function arrays(bool choose, int input) int {
+                int x;
+                int[2] values = [7, 9];
+                for (i, value) in values { if (choose) { return input; } x = value; }
+                return x;
+            }
+        }
+    "#;
+    for optimize in [false, true] {
+        compile_sources_with_options(
+            "main.ark",
+            &[("main.ark".into(), source.into())].into_iter().collect(),
+            CompileOptions { optimize },
+        )
+        .unwrap();
+    }
+}
+
+#[test]
 fn imported_helpers_can_initialize_deferred_composites() {
     let files = [
         ("main.ark".into(), "import \"values.ark\"; contract Main() { function spend(int input) { int[Values.SIZE] values; values = Values.make(input); require(values[1] == input + 1); } }".into()),

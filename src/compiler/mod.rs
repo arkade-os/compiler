@@ -834,6 +834,7 @@ impl Generator {
         &mut self,
         then_body: &[LocatedStatement],
         else_body: Option<&[LocatedStatement]>,
+        implicit_else_continues: bool,
     ) -> Result<(), String> {
         let baseline = self.stack.clone();
         let deferred = self.deferred.clone();
@@ -857,7 +858,12 @@ impl Generator {
         let right_deferred = self.deferred.clone();
         let right_asm = self.asm.split_off(start);
         let left_continues = crate::validator::falls_through(then_body);
-        let right_continues = crate::validator::falls_through(else_body.unwrap_or_default());
+        // A missing else continues only for a real if; the return guard's absent
+        // branch is the already-returned path and never reaches later statements.
+        let right_continues = match else_body {
+            Some(body) => crate::validator::falls_through(body),
+            None => implicit_else_continues,
+        };
         let initialized: std::collections::HashSet<_> = deferred
             .iter()
             .filter(|name| {
@@ -1165,7 +1171,7 @@ fn generate_asm_from_statements_recursive(
             } => {
                 generator.emit_expression(condition)?;
                 generator.apply(OP_IF, 1, 0)?;
-                generator.emit_branches(then_body, else_body.as_deref())?;
+                generator.emit_branches(then_body, else_body.as_deref(), true)?;
             }
             Statement::ForIn {
                 index_var,
