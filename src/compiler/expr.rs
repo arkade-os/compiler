@@ -209,9 +209,16 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 return;
             }
             match target.as_str() {
+                // Normalize spender-supplied integers before exposing their encoding.
+                "bytes" if data.ty == crate::types::ArkType::Int => {
+                    asm.push(OP_BIN2NUM.to_string())
+                }
                 "bytes20" => asm.extend([OP_SIZE, "20", OP_EQUALVERIFY].map(String::from)),
                 "bytes32" => asm.extend([OP_SIZE, "32", OP_EQUALVERIFY].map(String::from)),
                 // Witness bools are spender-supplied scriptnums; normalize to 0/1.
+                "bytes" if data.ty == crate::types::ArkType::Bool => {
+                    asm.push(OP_0NOTEQUAL.to_string())
+                }
                 "int" | "bool" => asm.push(OP_0NOTEQUAL.to_string()),
                 _ => {}
             }

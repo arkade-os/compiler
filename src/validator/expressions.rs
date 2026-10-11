@@ -372,10 +372,16 @@ pub(super) fn validate_binding_expression(
                     "only bool converts to int; use int(0x..) for a hex constant or bin2num for bytes",
                 ),
                 "bool" => (ArkType::Int, "only int converts to bool"),
+                "bytes" => (ArkType::Int, "only int, bool or bytes-like values convert to bytes"),
                 _ => (ArkType::Bytes, "only bytes can be cast"),
             };
             // Same-type casts are no-ops; emission drops them.
-            if actual != source && actual != ArkType::parse(target) && actual != ArkType::Unknown {
+            if actual != source
+                && actual != ArkType::parse(target)
+                && actual != ArkType::Unknown
+                && !(target == "bytes"
+                    && (actual == ArkType::Bool || crate::types::is_bytes_like(&actual)))
+            {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
                     actual.as_str()

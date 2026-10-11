@@ -365,6 +365,7 @@ fn parse_function(
                     | "le32ToLe64"
                     | "pubkey"
                     | "signature"
+                    | "bytes"
                     | "bytes20"
                     | "bytes32"
                     | "int"
