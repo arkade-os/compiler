@@ -45,6 +45,61 @@ contract Structs(Account account) {
     require(local != supplied, "mutated struct differs");
     require(supplied.weights == [41, 43, 47], "whole array equality");
 
+    local = { a_b: local.a.b, a: { b: local.a_b }, weights: local.weights };
+    require(local.a_b == 54, "whole struct assignment reads old nested field");
+    require(local.a.b == 29, "whole struct assignment reads old first field");
+    local = supplied;
+    local = local;
+    require(local == supplied, "whole struct copy and self assignment");
+    if (index == 1) {
+      local = rotateRules(local);
+    } else {
+      local = supplied;
+    }
+    for (2) {
+      local = rotateRules(local);
+    }
+    require(local.a_b == 37, "struct helper assignment in branches and loops");
+    require(local.a.b == 29, "struct helper field order");
+    supplied = local;
+    require(supplied == local, "whole struct function input assignment");
+    Rules[2] rows = [account.rules, local];
+    rows[index] = account.rules;
+    require(rows[index] == account.rules, "whole indexed struct assignment");
+    require(rows[0] == account.rules, "indexed assignment preserves neighbor");
+    rows[index] = { a_b: 5, a: { b: 7 }, weights: [11, 13, 17] };
+    rows[0] = rows[index];
+    require(rows[0] == rows[1], "whole static struct element assignment");
+    rows[index].a = { b: rows[index].a_b };
+    require(rows[index].a.b == 5, "nested indexed struct assignment");
+    local.a = rows[index].a;
+    require(local.a.b == 5, "nested struct copy");
+
+    int[3] values = [1, 2, 3];
+    values = [values[2], values[0], values[1]];
+    require(values == [3, 1, 2], "whole array assignment reads all old elements");
+    values = values;
+    values = rotateValues(values);
+    require(values == [2, 3, 1], "whole array self assignment and helper result");
+    for (2) { values = rotateValues(values); }
+    require(values == [3, 1, 2], "whole array assignment in loops");
+    if (index == 1) { values = [5, 7, 11]; } else { values = [13, 17, 19]; }
+    local.weights = values;
+    require(local.weights == [5, 7, 11], "array field assignment in branches");
+    rows[index].weights = local.weights;
+    require(rows[index].weights == values, "whole indexed array field assignment");
+    require(rows[0].weights == [11, 13, 17], "indexed array assignment preserves neighbor");
+    rows = [rows[1], rows[0]];
+    require(rows[0].weights == values, "whole struct array permutation");
+    require(rows[1].weights == [11, 13, 17], "whole struct array field order");
+    rows = copyRules(rows);
+    require(rows[0].weights == values, "whole struct array helper result");
+    rows = [{ a_b: local.a_b, a: { b: local.a.b }, weights: local.weights }, account.rules];
+    require(rows[0] == local, "whole struct array literal assignment");
+    require(rows[1] == account.rules, "whole struct array literal second element");
+    supplied.weights = rows[0].weights;
+    require(supplied.weights == values, "whole array function input field assignment");
+
     let indexedOutpoint = tx.inputs[0].outpoint;
     Outpoint currentOutpoint = tx.input.current.outpoint;
     require(indexedOutpoint.txid == currentOutpoint.txid, "outpoint txid");
@@ -66,12 +121,28 @@ contract Structs(Account account) {
     require(added.x == multiplied.x, "ecAdd x");
     require(added.y == multiplied.y, "ecAdd y");
     require(added == multiplied, "whole ec point equality");
+    added = ecAdd(added, generator, 0);
+    require(added == ecMul(generator, 3, 0), "whole native struct assignment");
+    added = ecMul(added, 2, 0);
+    require(added == ecMul(generator, 6, 0), "native assignment reads previous point");
+    currentOutpoint = tx.inputs[0].outpoint;
+    require(currentOutpoint == indexedOutpoint, "whole outpoint assignment");
     require(ecMul(generator, 1, 0) == generator, "ecMul identity");
     ECPoint identity = { x: 0, y: 0 };
     require(ecAdd(identity, generator, 0) == generator, "ecAdd identity point");
     require(ecAdd((ecAdd(generator, generator, 0)), generator, 0) == ecMul(generator, 3, 0), "nested ecAdd");
 
     require(checkSig(ownerSig, account.owner));
+  }
+
+  private function rotateValues(int[3] values) int[3] {
+    values = [values[2], values[0], values[1]];
+    return values;
+  }
+
+  private function rotateRules(Rules item) Rules {
+    item = { a_b: item.a.b, a: { b: item.a_b }, weights: item.weights };
+    return item;
   }
 
   private function copyRules(Rules[2] items) Rules[2] {

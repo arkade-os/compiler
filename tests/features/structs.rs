@@ -735,3 +735,127 @@ contract C(Packet packet, Wrapper wrapper, ArrayField array) {
         "the field must be read from its own stack leaf: {asm:?}"
     );
 }
+
+#[test]
+fn whole_composite_assignments_preserve_the_covenant_and_witness_shape() {
+    let output = compile(
+        r#"
+struct Point { int x; int y; }
+struct State { Point point; int[2] values; }
+contract C() {
+    private function advance(State state) State {
+        state = { point: { x: state.point.y, y: state.point.x }, values: state.values };
+        return state;
+    }
+    function spend(ECPoint base, State next, int index, bool condition) {
+        ECPoint sc = { x: 0, y: 0 };
+        sc = ecAdd(sc, base, 0);
+        sc = ecMul(sc, 2, 0);
+        require(sc == ecMul(base, 2, 0));
+        State state = { point: { x: 1, y: 2 }, values: [3, 4] };
+        state = next;
+        state = state;
+        if (condition) { state = advance(state); } else { state = next; }
+        for (2) { state = advance(state); }
+        State[2] states = [state, next];
+        states[index] = state;
+        states[0] = states[index];
+        states = states;
+        states = [states[1], states[0]];
+        states = [{ point: { x: 1, y: 2 }, values: [3, 4] }, state];
+        state.values = next.values;
+        state.values = [state.values[1], state.values[0]];
+        states[index].values = state.values;
+        states[index].point = { x: state.point.y, y: state.point.x };
+        state.point = states[index].point;
+        require(state.point == states[index].point);
+    }
+}
+"#,
+    )
+    .expect("whole struct reassignment uses the existing flattened layout");
+
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["base", "next", "index", "condition"]
+    );
+    assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
+    assert_eq!(
+        crate::common::witness_names(&output, "spend", "spend"),
+        ["serverSig", "emulatorSig"]
+    );
+    assert_eq!(
+        crate::common::leaf_asm(&output, "spend", "spend"),
+        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+    );
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(asm.iter().any(|op| op == "OP_ECADD"));
+    assert!(asm.iter().any(|op| op == "OP_ECMUL"));
+    assert!(asm.iter().any(|op| op == OP_PUT));
+}
+
+#[test]
+fn whole_composite_assignments_validate_types_shapes_and_mutability() {
+    let cases = [
+        ("point = true;", "changes its type from 'Point' to 'bool'"),
+        (
+            "point = ecAdd(base, base, 0);",
+            "changes its type from 'Point' to 'ECPoint'",
+        ),
+        ("point = { x: 1 };", "missing field 'y'"),
+        ("point = { x: 1, y: 2, z: 3 };", "unknown field 'z'"),
+        ("point = { x: 1, y: 2, y: 3 };", "duplicate field 'y'"),
+        ("point = { x: true, y: 2 };", "expected 'int', got 'bool'"),
+        (
+            "initial = point;",
+            "cannot assign to constructor parameter 'initial'",
+        ),
+        (
+            "initials[index] = point;",
+            "cannot assign to constructor parameter 'initials'",
+        ),
+        ("points[2] = point;", "out of range"),
+        ("points[true] = point;", "expected 'int'"),
+        ("points[index] = { x: 1 };", "missing field 'y'"),
+        (
+            "points[index] = base;",
+            "changes its type from 'Point' to 'ECPoint'",
+        ),
+        ("points = [{ x: 1, y: 2 }];", "expected 2 array elements"),
+        ("points = [{ x: 1, y: 2 }, { x: 3 }];", "missing field 'y'"),
+        ("values = [1];", "expected 2 array elements"),
+        ("values = [1, 2, 3];", "expected 2 array elements"),
+        ("values = [true, 2];", "expected 'int', got 'bool'"),
+        (
+            "values = points;",
+            "changes its type from 'int[2]' to 'Point[2]'",
+        ),
+        (
+            "initials = points;",
+            "cannot assign to constructor parameter 'initials'",
+        ),
+        (
+            "values = shorter;",
+            "changes its type from 'int[2]' to 'int[1]'",
+        ),
+    ];
+    for (statement, expected) in cases {
+        let source = format!(
+            r#"
+struct Point {{ int x; int y; }}
+contract C(Point initial, Point[2] initials) {{
+    function spend(ECPoint base, int index) {{
+        Point point = {{ x: 1, y: 2 }};
+        Point[2] points = [{{ x: 3, y: 4 }}, {{ x: 5, y: 6 }}];
+        int[2] values = [1, 2];
+        int[1] shorter = [3];
+        {statement}
+        require(true);
+    }}
+}}
+"#
+        );
+        let error = compile(&source).expect_err(expected).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+    }
+}

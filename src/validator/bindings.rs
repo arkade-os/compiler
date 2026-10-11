@@ -202,12 +202,53 @@ fn validate_binding_statements(
                 }
             }
             Statement::VarAssign { target, value } => {
-                validate_binding_expression(value, function_name, scopes, issues, true);
-                let inferred = value.ty.clone();
+                let target_type = match target {
+                    AssignmentTarget::Binding(name) => {
+                        find_binding(scopes, name).map(|binding| binding.binding_type.clone())
+                    }
+                    AssignmentTarget::ArrayIndex { array, .. } => find_binding(scopes, array)
+                        .and_then(|binding| match &binding.binding_type {
+                            ArkType::Array(element, _) => Some((**element).clone()),
+                            _ => None,
+                        }),
+                    AssignmentTarget::Access(access) => Some(access.ty.clone()),
+                };
+                let composite_target =
+                    matches!(target_type, Some(ArkType::Struct(_) | ArkType::Array(..)));
+                validate_binding_expression(
+                    value,
+                    function_name,
+                    scopes,
+                    issues,
+                    !composite_target,
+                );
+                if let (Some(expected), ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)) =
+                    (&target_type, &value.kind)
+                {
+                    super::functions::validate_value(
+                        &expected.as_str(),
+                        value,
+                        structs,
+                        &format!("assignment in '{function_name}'"),
+                        issues,
+                    );
+                }
+                // Array literal elements are checked against the target's complete shape.
+                let inferred = if matches!(&value.kind, ExprKind::ArrayLiteral(_)) {
+                    ArkType::Unknown
+                } else {
+                    value.ty.clone()
+                };
                 match target {
                     AssignmentTarget::Access(access) => {
                         let before = issues.len();
-                        validate_binding_expression(access, function_name, scopes, issues, true);
+                        validate_binding_expression(
+                            access,
+                            function_name,
+                            scopes,
+                            issues,
+                            !composite_target,
+                        );
                         // An invalid access already explains the target.
                         if issues.len() == before {
                             let expected = access.ty.clone();

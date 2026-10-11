@@ -1151,8 +1151,25 @@ fn generate_asm_from_statements_recursive(
                     }
                     _ => None,
                 };
-                generator.emit_expression(value)?;
-                generator.assign(target)?;
+                let mut access = value.with_kind(match target {
+                    AssignmentTarget::Binding(name) => ExprKind::Variable(name.clone()),
+                    AssignmentTarget::ArrayIndex { array, index } => ExprKind::ArrayIndex {
+                        array: array.clone(),
+                        index: index.clone(),
+                    },
+                    AssignmentTarget::Access(access) => access.kind.clone(),
+                });
+                types::annotate_expression(&mut access, &generator.scope);
+                if matches!(
+                    access.ty,
+                    types::ArkType::Struct(_) | types::ArkType::Array(..)
+                ) {
+                    generator.emit_typed_value(value, &access.ty.as_str())?;
+                    generator.assign_access(&access)?;
+                } else {
+                    generator.emit_expression(value)?;
+                    generator.assign(target)?;
+                }
                 generator.replacement = previous_replacement;
             }
         }

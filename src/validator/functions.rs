@@ -87,7 +87,7 @@ fn validate_body(
                             validate_value(
                                 &expected.as_str(),
                                 value,
-                                contract,
+                                &contract.structs,
                                 &format!("comparison in '{}'", function.name),
                                 issues,
                             );
@@ -106,7 +106,7 @@ fn validate_body(
                     (Some(expected), Some(value)) => validate_value(
                         expected,
                         value,
-                        contract,
+                        &contract.structs,
                         &format!("return from '{}'", function.name),
                         issues,
                     ),
@@ -133,7 +133,7 @@ fn validate_body(
                     validate_value(
                         expected,
                         value,
-                        contract,
+                        &contract.structs,
                         &format!("binding '{name}' in '{}'", function.name),
                         issues,
                     );
@@ -203,7 +203,7 @@ fn validate_calls(
                     validate_value(
                         &parameter.param_type,
                         argument,
-                        contract,
+                        &contract.structs,
                         &format!("argument '{}' to '{name}'", parameter.name),
                         issues,
                     );
@@ -217,10 +217,10 @@ fn validate_calls(
     }
 }
 
-fn validate_value(
+pub(super) fn validate_value(
     expected: &str,
     value: &Expression,
-    contract: &Contract,
+    structs: &[StructDefinition],
     context: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -238,7 +238,7 @@ fn validate_value(
                 validate_value(
                     &element.as_str(),
                     value,
-                    contract,
+                    structs,
                     &format!("{context}, element {index}"),
                     issues,
                 );
@@ -258,7 +258,7 @@ fn validate_value(
                 });
             if let Some(definition) = native
                 .as_ref()
-                .or_else(|| contract.structs.iter().find(|s| s.name == *name))
+                .or_else(|| structs.iter().find(|s| s.name == *name))
             {
                 let mut seen = HashSet::new();
                 for (name, value) in fields {
@@ -271,7 +271,7 @@ fn validate_value(
                         validate_value(
                             &field.param_type,
                             value,
-                            contract,
+                            structs,
                             &format!("{context}, field '{name}'"),
                             issues,
                         );
