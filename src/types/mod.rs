@@ -451,7 +451,9 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .cloned()
             .unwrap_or(ArkType::Unknown),
         ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
-        ExprKind::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
+        ExprKind::Literal(value) if value.starts_with("0x") => {
+            bytes_of_width(static_byte_width(expr))
+        }
         ExprKind::Literal(_) => ArkType::Int,
         ExprKind::ArrayLiteral(elements) => ArkType::Array(
             Box::new(

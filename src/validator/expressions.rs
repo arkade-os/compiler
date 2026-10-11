@@ -322,9 +322,6 @@ pub(super) fn validate_binding_expression(
                 // Composite operands are emitted field by field, so their type must be known.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
-                // A hex literal carries its own width, so 32 bytes need no cast.
-                let literal_bytes32 = expected == ArkType::Bytes32
-                    && matches!(&operand.kind, ExprKind::Literal(value) if value.starts_with("0x") && value.len() == 66);
                 if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
                     (&operand.kind, &expected)
                 {
@@ -346,7 +343,7 @@ pub(super) fn validate_binding_expression(
                     }
                     continue;
                 }
-                if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
+                if known && !binding_types_compatible(&expected, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "function '{function_name}': {name} operand has type '{}', expected '{}'",
@@ -377,10 +374,9 @@ pub(super) fn validate_binding_expression(
             };
             // Same-type casts are no-ops; emission drops them.
             if actual != source
-                && actual != ArkType::parse(target)
+                && !binding_types_compatible(&ArkType::parse(target), &actual)
                 && actual != ArkType::Unknown
-                && !(target == "bytes"
-                    && (actual == ArkType::Bool || crate::types::is_bytes_like(&actual)))
+                && !(target == "bytes" && actual == ArkType::Bool)
             {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
