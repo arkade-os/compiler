@@ -5,8 +5,8 @@ use crate::properties::{GroupIoProperty, ThisProperty};
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<Op>) {
     match lit {
-        "true" => asm.push(Op::Opcode(Int1)),
-        "false" | "0x" => asm.push(Op::Opcode(Int0)),
+        "true" => asm.push(Int1.into()),
+        "false" | "0x" => asm.push(Int0.into()),
         _ => asm.push(Op::Push(lit.to_string())),
     }
 }
@@ -23,7 +23,7 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
             emit_expression_asm(value, asm);
             // Helpers return structs first-field-on-top.
             if matches!(&value.kind, ExprKind::Extracted(_)) {
-                asm.push(Op::Opcode(Swap));
+                asm.push(Swap.into());
             }
         }
     }
@@ -43,7 +43,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             presence_only,
         } => {
             emit_expression_asm(path, asm);
-            asm.push(Op::Opcode(InspectIntentMessage));
+            asm.push(InspectIntentMessage.into());
             // The opcode leaves the value below its presence flag.
             asm.push(Op::Opcode(if *presence_only { Nip } else { Verify }));
         }
@@ -66,7 +66,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 emit_native_struct_asm(exception, fields, asm);
             }
             asm.push(Op::Push(exceptions.len().to_string()));
-            asm.push(Op::Opcode(Tunnel));
+            asm.push(Tunnel.into());
         }
         // Rejected before emission; array declarations emit their elements directly.
         ExprKind::ArrayLiteral(_) => {}
@@ -156,7 +156,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             emit_group_property_asm(group, *property, asm);
         }
         ExprKind::AssetGroupsLength => {
-            asm.push(Op::Opcode(InspectNumAssetGroups));
+            asm.push(InspectNumAssetGroups.into());
         }
         ExprKind::AssetGroupAt { index } => emit_expression_asm(index, asm),
         ExprKind::GroupIOAccess {
@@ -168,23 +168,23 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             emit_expression_asm(group, asm);
             emit_expression_asm(io_index, asm);
             match source {
-                GroupIOSource::Inputs => asm.push(Op::Opcode(Int0)),
-                GroupIOSource::Outputs => asm.push(Op::Opcode(Int1)),
+                GroupIOSource::Inputs => asm.push(Int0.into()),
+                GroupIOSource::Outputs => asm.push(Int1.into()),
             }
-            asm.push(Op::Opcode(InspectAssetGroup));
+            asm.push(InspectAssetGroup.into());
             // Extract property if specified
             match property {
                 Some(GroupIoProperty::Amount) => {
-                    asm.push(Op::Opcode(Nip));
-                    asm.push(Op::Opcode(Nip));
+                    asm.push(Nip.into());
+                    asm.push(Nip.into());
                 }
                 Some(GroupIoProperty::Type) => {
-                    asm.push(Op::Opcode(Drop)); // amount
-                    asm.push(Op::Opcode(Drop)); // data
+                    asm.push(Drop.into()); // amount
+                    asm.push(Drop.into()); // data
                 }
                 Some(GroupIoProperty::Index) => {
-                    asm.push(Op::Opcode(Drop)); // amount
-                    asm.push(Op::Opcode(Nip)); // type
+                    asm.push(Drop.into()); // amount
+                    asm.push(Nip.into()); // type
                 }
                 Some(GroupIoProperty::Txid) => {
                     unreachable!("input records are extracted first; output txid fails validation")
@@ -208,11 +208,11 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                     None => emit_expression_asm(arg, asm),
                 }
             }
-            asm.extend(opcodes.iter().map(|&opcode| Op::Opcode(opcode)));
+            asm.extend(opcodes.iter().copied().map(Op::from));
         }
         ExprKind::Unary { op, value } => {
             emit_expression_asm(value, asm);
-            asm.push(Op::Opcode(op.opcode()));
+            asm.push(op.opcode().into());
         }
         ExprKind::Cast { target, data } => {
             emit_expression_asm(data, asm);
@@ -221,22 +221,12 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             }
             match target.as_str() {
                 // Normalize spender-supplied integers before exposing their encoding.
-                "bytes" if data.ty == crate::types::ArkType::Int => asm.push(Op::Opcode(Bin2Num)),
+                "bytes" if data.ty == crate::types::ArkType::Int => asm.push(Bin2Num.into()),
                 // Witness bools are spender-supplied scriptnums; normalize to 0/1.
-                "bytes" if data.ty == crate::types::ArkType::Bool => {
-                    asm.push(Op::Opcode(NotEqual0))
-                }
-                "int" | "bool" => asm.push(Op::Opcode(NotEqual0)),
-                "bytes20" => asm.extend([
-                    Op::Opcode(Size),
-                    Op::Push("20".into()),
-                    Op::Opcode(EqualVerify),
-                ]),
-                "bytes32" => asm.extend([
-                    Op::Opcode(Size),
-                    Op::Push("32".into()),
-                    Op::Opcode(EqualVerify),
-                ]),
+                "bytes" if data.ty == crate::types::ArkType::Bool => asm.push(NotEqual0.into()),
+                "int" | "bool" => asm.push(NotEqual0.into()),
+                "bytes20" => asm.extend([Size.into(), Op::Push("20".into()), EqualVerify.into()]),
+                "bytes32" => asm.extend([Size.into(), Op::Push("32".into()), EqualVerify.into()]),
                 _ => {}
             }
         }
@@ -246,7 +236,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             presence_only,
         } => {
             emit_expression_asm(packet_type, asm);
-            asm.push(Op::Opcode(InspectPacket));
+            asm.push(InspectPacket.into());
             emit_packet_result_asm(*presence_only, asm);
         }
         ExprKind::InputPacketInspect {
@@ -256,7 +246,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         } => {
             emit_expression_asm(packet_type, asm);
             emit_expression_asm(index, asm);
-            asm.push(Op::Opcode(InspectInputPacket));
+            asm.push(InspectInputPacket.into());
             emit_packet_result_asm(*presence_only, asm);
         }
     }
@@ -265,10 +255,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
 /// Reduce a packet inspection's `[bytes, found]` to the flag or to the asserted bytes.
 fn emit_packet_result_asm(presence_only: bool, asm: &mut Vec<Op>) {
     if presence_only {
-        asm.push(Op::Opcode(Nip));
+        asm.push(Nip.into());
     } else {
-        asm.push(Op::Opcode(Int1));
-        asm.push(Op::Opcode(EqualVerify));
+        asm.push(Int1.into());
+        asm.push(EqualVerify.into());
     }
 }
 
@@ -324,19 +314,19 @@ pub(crate) fn emit_binary_op_asm(
 ) {
     emit_expression_asm(left, asm);
     if op.class() == OperatorClass::Logical {
-        asm.push(Op::Opcode(If));
+        asm.push(If.into());
         if op == BinaryOperator::And {
             emit_expression_asm(right, asm);
         } else {
-            asm.push(Op::Opcode(Int1));
+            asm.push(Int1.into());
         }
-        asm.push(Op::Opcode(Else));
+        asm.push(Else.into());
         if op == BinaryOperator::Or {
             emit_expression_asm(right, asm);
         } else {
-            asm.push(Op::Opcode(Int0));
+            asm.push(Int0.into());
         }
-        asm.push(Op::Opcode(EndIf));
+        asm.push(EndIf.into());
         return;
     }
     emit_expression_asm(right, asm);
@@ -345,8 +335,8 @@ pub(crate) fn emit_binary_op_asm(
             .iter()
             .any(|operand| crate::types::is_bytes_like(&operand.ty));
     if concat {
-        asm.push(Op::Opcode(Cat));
+        asm.push(Cat.into());
     } else {
-        asm.extend(op.opcodes().iter().map(|&opcode| Op::Opcode(opcode)));
+        asm.extend(op.opcodes().iter().copied().map(Op::from));
     }
 }

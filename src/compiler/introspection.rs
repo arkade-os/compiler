@@ -21,14 +21,14 @@ pub(crate) fn emit_tx_introspection_asm(property: TxProperty, asm: &mut Vec<Op>)
 /// (`==`, `let`, hashing) consumes a single value, so the version is dropped
 /// and the witness program is what a scriptPubKey compares against.
 pub(crate) fn emit_script_pubkey_asm(opcode: Opcode, asm: &mut Vec<Op>) {
-    asm.push(Op::Opcode(opcode));
-    asm.push(Op::Opcode(Drop));
+    asm.push(opcode.into());
+    asm.push(Drop.into());
 }
 
 /// Emit a scriptPubKey inspection opcode and keep only the witness version.
 pub(crate) fn emit_witness_version_asm(opcode: Opcode, asm: &mut Vec<Op>) {
-    asm.push(Op::Opcode(opcode));
-    asm.push(Op::Opcode(Nip));
+    asm.push(opcode.into());
+    asm.push(Nip.into());
 }
 
 /// Emit assembly for input introspection: tx.inputs[i].property
@@ -39,14 +39,14 @@ pub(crate) fn emit_input_introspection_asm(
 ) {
     emit_expression_asm(index, asm);
     match property {
-        InputProperty::Value => asm.push(Op::Opcode(InspectInputValue)),
+        InputProperty::Value => asm.push(InspectInputValue.into()),
         InputProperty::ScriptPubKey => emit_script_pubkey_asm(InspectInputScriptPubKey, asm),
         InputProperty::WitnessVersion => emit_witness_version_asm(InspectInputScriptPubKey, asm),
-        InputProperty::Sequence => asm.push(Op::Opcode(InspectInputSequence)),
-        InputProperty::Outpoint => asm.push(Op::Opcode(InspectInputOutpoint)),
-        InputProperty::ArkadeScriptHash => asm.push(Op::Opcode(InspectInputArkadeScriptHash)),
-        InputProperty::ArkadeWitnessHash => asm.push(Op::Opcode(InspectInputArkadeWitnessHash)),
-        InputProperty::Script => asm.push(Op::Opcode(InspectInputScriptPubKey)),
+        InputProperty::Sequence => asm.push(InspectInputSequence.into()),
+        InputProperty::Outpoint => asm.push(InspectInputOutpoint.into()),
+        InputProperty::ArkadeScriptHash => asm.push(InspectInputArkadeScriptHash.into()),
+        InputProperty::ArkadeWitnessHash => asm.push(InspectInputArkadeWitnessHash.into()),
+        InputProperty::Script => asm.push(InspectInputScriptPubKey.into()),
     }
 }
 
@@ -58,9 +58,9 @@ pub(crate) fn emit_output_introspection_asm(
 ) {
     emit_expression_asm(index, asm);
     match property {
-        OutputProperty::Value => asm.push(Op::Opcode(InspectOutputValue)),
+        OutputProperty::Value => asm.push(InspectOutputValue.into()),
         OutputProperty::ScriptPubKey => emit_script_pubkey_asm(InspectOutputScriptPubKey, asm),
         OutputProperty::WitnessVersion => emit_witness_version_asm(InspectOutputScriptPubKey, asm),
-        OutputProperty::Script => asm.push(Op::Opcode(InspectOutputScriptPubKey)),
+        OutputProperty::Script => asm.push(InspectOutputScriptPubKey.into()),
     }
 }

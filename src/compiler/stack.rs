@@ -4,8 +4,8 @@
 use super::*;
 
 impl Generator {
-    pub(super) fn push_temporary(&mut self, op: Op) {
-        self.asm.push(op);
+    pub(super) fn push_temporary(&mut self, op: impl Into<Op>) {
+        self.asm.push(op.into());
         self.stack.push(StackItem::Temporary);
         self.max_depth = self.max_depth.max(self.stack.len());
     }
@@ -176,7 +176,7 @@ impl Generator {
         outputs: usize,
     ) -> Result<(), String> {
         self.pop_temporaries(inputs, opcode)?;
-        self.asm.push(Op::Opcode(opcode));
+        self.asm.push(opcode.into());
         self.stack
             .extend(std::iter::repeat_n(StackItem::Temporary, outputs));
         self.max_depth = self.max_depth.max(self.stack.len());
@@ -189,7 +189,7 @@ impl Generator {
         }
         let index = self.stack.len() - 2;
         self.stack.remove(index);
-        self.asm.push(Op::Opcode(Nip));
+        self.asm.push(Nip.into());
         Ok(())
     }
 
@@ -199,7 +199,7 @@ impl Generator {
         }
         let len = self.stack.len();
         self.stack.swap(len - 2, len - 1);
-        self.asm.push(Op::Opcode(Swap));
+        self.asm.push(Swap.into());
         Ok(())
     }
 
@@ -369,12 +369,12 @@ impl Generator {
     pub(super) fn drop_binding(&mut self, index: usize) -> Result<(), String> {
         let depth = self.stack.len() - index - 1;
         match depth {
-            0 => self.asm.push(Op::Opcode(Drop)),
-            1 => self.asm.push(Op::Opcode(Nip)),
+            0 => self.asm.push(Drop.into()),
+            1 => self.asm.push(Nip.into()),
             _ => {
                 self.push_integer_temporary(depth);
                 self.pop_temporaries(1, Roll)?;
-                self.asm.extend([Op::Opcode(Roll), Op::Opcode(Drop)]);
+                self.asm.extend([Roll.into(), Drop.into()]);
             }
         }
         self.stack.remove(index);
@@ -398,7 +398,7 @@ impl Generator {
                     return Err("internal compiler error: temporary at branch join".into());
                 };
                 // Returning paths share the join frame; direct return lowering could remove this padding.
-                self.push_temporary(Op::Opcode(Int0));
+                self.push_temporary(Int0);
                 self.bind_local(name.clone())?;
             }
         }
@@ -422,7 +422,7 @@ impl Generator {
                     } else {
                         self.push_integer_temporary(depth);
                         self.pop_temporaries(1, Roll)?;
-                        self.asm.push(Op::Opcode(Roll));
+                        self.asm.push(Roll.into());
                         let item = self.stack.remove(index);
                         self.stack.push(item);
                     }

@@ -23,6 +23,12 @@ pub(crate) enum Op {
     Contract { name: String, args: Vec<Vec<Op>> },
 }
 
+impl From<Opcode> for Op {
+    fn from(opcode: Opcode) -> Self {
+        Op::Opcode(opcode)
+    }
+}
+
 impl Op {
     /// The assembly token, as an artifact placeholder spells nested arguments.
     pub(crate) fn spell(&self) -> String {

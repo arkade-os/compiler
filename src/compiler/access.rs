@@ -247,46 +247,41 @@ impl Generator {
         };
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
-        self.push_temporary(Op::Opcode(Int0));
+        self.push_temporary(Int0);
         self.apply(InspectAssetGroup, 3, 1)?;
         // The record is up to four items before the normalization below keeps one.
         self.max_depth = self.max_depth.max(self.stack.len() + 3);
         // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
         // sequence takes back what it puts on the alt stack.
-        let size_32 = [Op::Opcode(Size), Op::Push("32".into())];
-        let drop_txid = [
-            Op::Opcode(Equal),
-            Op::Opcode(If),
-            Op::Opcode(Drop),
-            Op::Opcode(EndIf),
-        ];
-        let restore = [Op::Opcode(Drop), Op::Opcode(FromAltStack)];
+        let size_32 = [Size.into(), Op::Push("32".into())];
+        let drop_txid = [Equal.into(), If.into(), Drop.into(), EndIf.into()];
+        let restore = [Drop.into(), FromAltStack.into()];
         let ops: Vec<Op> = match property {
             GroupIoProperty::Amount => [
-                vec![Op::Opcode(ToAltStack), Op::Opcode(Drop)],
+                vec![ToAltStack.into(), Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
             GroupIoProperty::Index => [
-                vec![Op::Opcode(Drop), Op::Opcode(ToAltStack)],
+                vec![Drop.into(), ToAltStack.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
             GroupIoProperty::Type => [
-                vec![Op::Opcode(Drop), Op::Opcode(Drop)],
+                vec![Drop.into(), Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
             ]
             .concat(),
             // A local input has no txid, so the size check fails the spend.
             GroupIoProperty::Txid => [
-                vec![Op::Opcode(Drop), Op::Opcode(Drop)],
+                vec![Drop.into(), Drop.into()],
                 size_32.to_vec(),
-                vec![Op::Opcode(EqualVerify), Op::Opcode(Nip)],
+                vec![EqualVerify.into(), Nip.into()],
             ]
             .concat(),
         };

@@ -73,7 +73,7 @@ fn integer_op(value: usize) -> Op {
         Int14, Int15, Int16,
     ];
     match SMALL.get(value) {
-        Some(&opcode) => Op::Opcode(opcode),
+        Some(&opcode) => opcode.into(),
         None => Op::Push(value.to_string()),
     }
 }
@@ -168,15 +168,11 @@ impl Generator {
             };
             let depth = prologue + index;
             if depth > 0 {
-                asm.extend([integer_op(depth), Op::Opcode(Pick)]);
+                asm.extend([integer_op(depth), Pick.into()]);
             }
-            asm.extend([
-                Op::Opcode(Size),
-                Op::Push(width.into()),
-                Op::Opcode(EqualVerify),
-            ]);
+            asm.extend([Size.into(), Op::Push(width.into()), EqualVerify.into()]);
             if depth > 0 {
-                asm.push(Op::Opcode(Drop));
+                asm.push(Drop.into());
             }
         }
         let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
@@ -335,7 +331,7 @@ impl Generator {
                         branches.pop();
                         self.stack.push(StackItem::Temporary);
                     }
-                    self.asm.push(Op::Opcode(token));
+                    self.asm.push(token.into());
                 }
                 Op::Value(index) => {
                     let value = values.get(index).ok_or("invalid call marker")?;
@@ -391,7 +387,7 @@ impl Generator {
         if !self.scopes.is_empty() {
             return Err("internal compiler error: unbalanced generator scope".to_string());
         }
-        self.push_temporary(Op::Opcode(Int1));
+        self.push_temporary(Int1);
         while self.stack.len() > 1 {
             self.nip()?;
         }

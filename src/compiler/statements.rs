@@ -71,10 +71,10 @@ impl Generator {
         let right_joined = self.asm.split_off(start);
         self.asm.extend(left_joined);
         if else_body.is_some() || !right_joined.is_empty() {
-            self.asm.push(Op::Opcode(Else));
+            self.asm.push(Else.into());
             self.asm.extend(right_joined);
         }
-        self.asm.push(Op::Opcode(EndIf));
+        self.asm.push(EndIf.into());
         self.deferred = deferred.difference(&initialized).cloned().collect();
         self.last_reads
             .retain(|(_, slot), _| *slot < baseline.len());
@@ -295,7 +295,7 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 ExprKind::GroupFind { .. } => {
                     generator.emit_expression(expr)?;
                     generator.apply(Drop, 1, 0)?;
-                    generator.push_temporary(Op::Opcode(Int1));
+                    generator.push_temporary(Int1);
                     generator.apply(Verify, 1, 0)?;
                 }
                 ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {

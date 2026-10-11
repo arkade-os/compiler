@@ -296,10 +296,10 @@ impl Generator {
             .transpose()?
             .unwrap_or_default();
         if !direct_return {
-            self.push_temporary(Op::Opcode(Int0));
+            self.push_temporary(Int0);
             self.bind_local(Path::new("$returned"))?;
             for leaf in results.iter().rev() {
-                self.push_temporary(Op::Opcode(Int0));
+                self.push_temporary(Int0);
                 self.bind_local(leaf.access.clone())?;
             }
         }
@@ -334,15 +334,15 @@ impl Generator {
         while self.stack.len() > baseline + results {
             match results {
                 0 => {
-                    self.asm.push(Op::Opcode(Drop));
+                    self.asm.push(Drop.into());
                     self.stack.pop();
                 }
                 1 => self.nip()?,
                 _ => {
                     self.push_integer_temporary(results);
                     self.pop_temporaries(1, Roll)?;
-                    self.asm.push(Op::Opcode(Roll));
-                    self.asm.push(Op::Opcode(Drop));
+                    self.asm.push(Roll.into());
+                    self.asm.push(Drop.into());
                     self.stack.remove(self.stack.len() - results - 1);
                 }
             }
@@ -370,7 +370,7 @@ impl Generator {
         if self.direct_return {
             Ok(())
         } else {
-            self.push_temporary(Op::Opcode(Int1));
+            self.push_temporary(Int1);
             self.assign_static_binding(Path::new("$returned"))
         }
     }

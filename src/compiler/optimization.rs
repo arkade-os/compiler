@@ -268,9 +268,9 @@ pub(super) fn optimize(mut asm: Vec<Op>) -> Vec<Op> {
     // Verifying the final value first lets the cleared items go in pairs with Drop2; a failing
     // last requirement then reports `Verify failed`.
     asm.truncate(body);
-    asm.push(Op::Opcode(Verify));
-    asm.extend(std::iter::repeat_n(Op::Opcode(Drop), nips));
-    asm.push(Op::Opcode(Int1));
+    asm.push(Verify.into());
+    asm.extend(std::iter::repeat_n(Drop.into(), nips));
+    asm.push(Int1.into());
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
     if dropped.len() < kept.len() {
@@ -306,7 +306,7 @@ fn rewrite(asm: Vec<Op>) -> Vec<Op> {
                 break;
             };
             optimized.truncate(len - from.len());
-            optimized.extend(to.iter().map(|&opcode| Op::Opcode(opcode)));
+            optimized.extend(to.iter().copied().map(Op::from));
         }
     }
     optimized
@@ -323,7 +323,7 @@ mod tests {
             .into_iter()
             .map(
                 |token| match Opcode::ALL.iter().find(|opcode| opcode.name() == token) {
-                    Some(&opcode) => Op::Opcode(opcode),
+                    Some(&opcode) => opcode.into(),
                     None if token.starts_with('<') => {
                         Op::Read(crate::models::Path::from_key(&token[1..token.len() - 1]))
                     }
