@@ -48,9 +48,8 @@ pub(super) fn check_repeated_inspections(contract: &Contract, issues: &mut Vec<V
                 warned.insert(read.whole.clone());
                 issues.push(
                     ValidationIssue::warning(format!(
-                        "`{}` is inspected {} times in function '{}'; bind `let x = {};` once and read {}",
+                        "`{}` is inspected more than once in function '{}'; bind `let x = {};` once and read {}",
                         read.whole,
-                        same.len(),
                         function.name,
                         read.whole,
                         read.fields
@@ -177,14 +176,14 @@ impl Walk {
                 } else {
                     format!("tx.inputs[{}].script", index.source_text())
                 };
-                (whole, "program and version", vec![index])
+                (whole, "`x.program` and `x.version`", vec![index])
             }
             ExprKind::OutputIntrospection {
                 index,
                 property: OutputProperty::ScriptPubKey | OutputProperty::WitnessVersion,
             } => (
                 format!("tx.outputs[{}].script", index.source_text()),
-                "program and version",
+                "`x.program` and `x.version`",
                 vec![index],
             ),
             ExprKind::AssetAt {
@@ -199,7 +198,7 @@ impl Walk {
                     io_index.source_text(),
                     asset_index.source_text()
                 ),
-                "assetId and amount",
+                "`x.assetId` and `x.amount`",
                 vec![io_index, asset_index],
             ),
             ExprKind::AssetLookup {
@@ -221,7 +220,7 @@ impl Walk {
                     asset_txid.source_text(),
                     asset_gidx.source_text()
                 ),
-                "amount and found",
+                "`x.amount` and `x.found`, adding `require(x.found);` where `lookup` aborted on a missing asset",
                 vec![index, asset_txid, asset_gidx],
             ),
             _ => return None,

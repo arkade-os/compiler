@@ -18,6 +18,12 @@ contract WitnessVersion() {
         require(tx.inputs[0].witnessVersion == 1);
         require(tx.inputs[1].witnessVersion == 0);
         require(tx.outputs[0].witnessVersion == version);
+        let input = tx.inputs[1].script;
+        require(input.version == 0);
+        require(input.program == tx.inputs[1].scriptPubKey);
+        let output = tx.outputs[0].script;
+        require(output.version == version);
+        require(output.program == tx.outputs[0].scriptPubKey);
     }
 }`), 0600)
 	if err != nil {
@@ -36,7 +42,7 @@ contract WitnessVersion() {
 	}{
 		{"taproot output", group.pkScript, 1, ""},
 		{"segwit v0 output", p2wpkh, 0, ""},
-		{"wrong version", group.pkScript, 0, "false stack entry"},
+		{"wrong version", group.pkScript, 0, "OP_EQUALVERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, wire.TxWitness{scriptInt(t, tc.version)})

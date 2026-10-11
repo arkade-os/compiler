@@ -55,6 +55,13 @@ contract Structs(Account account) {
     let outputAssetId = tx.outputs[0].assets[0].assetId;
     require(outputAssetId.gidx == 0, "asset group index");
     require(tx.outputs[0].assets.lookup(outputAssetId.txid, outputAssetId.gidx) == 7, "asset lookup");
+    let outputEntry = tx.outputs[0].assets[0];
+    require(outputEntry.assetId == outputAssetId, "asset entry id");
+    require(outputEntry.amount == 7, "asset entry amount");
+    let present = tx.outputs[0].assets.tryLookup(outputAssetId.txid, outputAssetId.gidx);
+    require(present.found && present.amount == 7, "tryLookup present");
+    let absent = tx.outputs[0].assets.tryLookup(outputAssetId.txid, 1);
+    require(!absent.found && absent.amount == 0, "tryLookup absent");
     let assetGroup = tx.assetGroups.find(outputAssetId.txid, outputAssetId.gidx);
     AssetId groupAssetId = assetGroup.assetId;
     require(groupAssetId.txid == outputAssetId.txid, "group asset txid");
