@@ -412,7 +412,8 @@ fn validate_binding_statements(
                 let right_continues = super::falls_through(else_body);
                 for (frame, left) in scopes.iter_mut().zip(left) {
                     for (name, binding) in frame {
-                        binding.initialized = (!left_continues || left[name].initialized)
+                        binding.initialized = (!left_continues
+                            || left.get(name).is_some_and(|binding| binding.initialized))
                             && (!right_continues || binding.initialized);
                     }
                 }
