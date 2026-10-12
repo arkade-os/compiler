@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="Arkade Compiler logo" width="240"></p>
+
 # Arkade Compiler
 
 [![Build](https://github.com/arkade-os/compiler/actions/workflows/build.yml/badge.svg)](https://github.com/arkade-os/compiler/actions/workflows/build.yml)
