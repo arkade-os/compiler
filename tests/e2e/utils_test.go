@@ -496,10 +496,12 @@ func requireVMResult(
 		return
 	}
 	// Unoptimized covenants verify with an unfused OP_VERIFY where the optimizer
-	// emits OP_EQUALVERIFY or leaves the result for the final stack check.
-	unfused := os.Getenv("ARKADEC_NO_OPTIMIZE") != "" &&
-		(strings.HasSuffix(wantErr, "VERIFY failed") || wantErr == "false stack entry") &&
-		strings.Contains(err.Error(), "failed to execute arkade script: OP_VERIFY failed")
+	// emits OP_EQUALVERIFY or leaves the result for the final stack check. The
+	// optimizer also verifies a final result early when that lets OP_2DROP clear
+	// the stack below it.
+	unfused := strings.Contains(err.Error(), "failed to execute arkade script: OP_VERIFY failed") &&
+		(wantErr == "false stack entry" ||
+			os.Getenv("ARKADEC_NO_OPTIMIZE") != "" && strings.HasSuffix(wantErr, "VERIFY failed"))
 	if !unfused {
 		t.Fatalf("VM error %q does not contain %q", err, wantErr)
 	}
