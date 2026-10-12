@@ -150,19 +150,19 @@ contract Vault(Policy policy) {
     let arkade = output.functions[0].arkade.as_ref().expect("covenant");
     assert_eq!(arkade.inputs[0].name, "candidate");
     assert_eq!(arkade.inputs[0].param_type, "Policy");
-    assert_eq!(
-        &arkade.asm[..4],
-        [
-            "<policy.limits.1>",
-            "<policy.limits.0>",
-            "<policy.primary.weight>",
-            "<policy.primary.key>",
-        ]
+    // Constructor leaves are pushed at their only read; `limits` is only measured.
+    let asm = arkade.asm.join(" ");
+    assert!(
+        asm.contains(&format!(
+            "OP_4 OP_ROLL <policy.primary.key> OP_6 OP_ROLL OP_SWAP {OP_CHECKSIGFROMSTACK}"
+        )),
+        "{asm}"
     );
-    assert!(arkade.asm.iter().any(|token| token == OP_CHECKSIGFROMSTACK));
-    assert!(arkade.asm[4..]
-        .iter()
-        .all(|token| !token.contains("policy.")));
+    assert!(
+        asm.contains("OP_3 OP_PICK <policy.primary.weight> OP_GREATERTHANOREQUAL"),
+        "{asm}"
+    );
+    assert!(!asm.contains("policy.limits"), "{asm}");
 }
 
 #[test]
@@ -463,7 +463,7 @@ contract C(Ambiguous value) {
 
     assert_eq!(
         &output.functions[0].arkade.as_ref().expect("covenant").asm[..2],
-        ["<value.a.b>", "<value.a_b>"]
+        ["<value.a_b>", "<value.a.b>"]
     );
 }
 
@@ -481,7 +481,7 @@ contract C(Token token) {
 
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
     assert!(asm.iter().all(|token| token != OP_INSPECTASSETGROUPASSETID));
-    assert!(asm.iter().any(|token| token == OP_ROLL));
+    assert_eq!(asm[0], "<token.assetId>");
 }
 
 #[test]
@@ -530,14 +530,11 @@ contract C(Snapshot expected) {
     .expect("native struct result nested in a user struct");
 
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
-    assert_eq!(
-        &asm[..3],
-        [
-            "<expected.minimumVout>",
-            "<expected.outpoint.vout>",
-            "<expected.outpoint.txid>",
-        ]
-    );
+    assert_eq!(asm[0], "<expected.minimumVout>");
+    assert!(asm
+        .windows(2)
+        .any(|tokens| tokens == ["<expected.outpoint.vout>", "OP_GREATERTHANOREQUAL"]));
+    assert!(asm.iter().all(|token| token != "<expected.outpoint.txid>"));
     assert!(asm.iter().any(|token| token == OP_INSPECTINPUTOUTPOINT));
     assert!(asm.iter().any(|token| token == OP_SWAP));
     assert!(asm.iter().filter(|token| *token == OP_ROLL).count() >= 2);
@@ -702,11 +699,15 @@ contract C(AssetId expected) {
     assert_eq!(output.parameters[0].param_type, "AssetId");
     let covenant = output.functions[0].arkade.as_ref().expect("covenant");
     assert_eq!(covenant.inputs[0].param_type, "Outpoint");
-    assert_eq!(
-        &covenant.asm[..2],
-        ["<expected.gidx>", "<expected.txid>"],
-        "constructor leaves push in reverse flattened order"
+    assert!(
+        covenant
+            .asm
+            .windows(2)
+            .any(|tokens| tokens == ["<expected.txid>", "OP_EQUAL"]),
+        "{:?}",
+        covenant.asm
     );
+    assert!(covenant.asm.iter().all(|token| token != "<expected.gidx>"));
 }
 
 #[test]

@@ -38,16 +38,10 @@ contract Vault(Policy policy, pubkey owner) {
         ["serverSig", "emulatorSig"]
     );
     let asm = arkade_asm_tokens(&output, "spend");
-    assert_eq!(
-        &asm[..4],
-        [
-            "<owner>",
-            "<policy.limits.1>",
-            "<policy.limits.0>",
-            "<policy.minimum>"
-        ]
-    );
-    assert!(asm.iter().any(|s| s == "OP_CHECKSIG"));
+    // Twice-read leaves keep slots; `owner` is read once and `limits[1]` never.
+    assert_eq!(&asm[..2], ["<policy.limits.0>", "<policy.minimum>"]);
+    assert!(asm.windows(2).any(|w| w == ["<owner>", "OP_CHECKSIG"]));
+    assert!(!asm.iter().any(|s| s == "<policy.limits.1>"));
     assert!(asm.iter().any(|s| s == "OP_PUT"));
     assert!(asm.iter().all(|s| !s.contains('$') && s != "OP_RETURN"));
     assert_eq!(
