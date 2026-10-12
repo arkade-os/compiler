@@ -1,13 +1,14 @@
 use crate::opcodes::{
     OP_0, OP_0NOTEQUAL, OP_1, OP_1ADD, OP_2, OP_2DROP, OP_2DUP, OP_2OVER, OP_2ROT, OP_2SWAP, OP_3,
-    OP_3DUP, OP_4, OP_5, OP_ADD, OP_BOOLAND, OP_BOOLOR, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
-    OP_DUP, OP_EQUAL, OP_EQUALVERIFY, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_INSPECTINPUTPACKET,
-    OP_INSPECTPACKET, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_OVER,
-    OP_PICK, OP_PUT, OP_ROLL, OP_ROT, OP_SWAP, OP_VERIFY,
+    OP_3DUP, OP_4, OP_5, OP_ADD, OP_BOOLAND, OP_BOOLOR, OP_CHECKSIG, OP_CHECKSIGFROMSTACK,
+    OP_CHECKSIGVERIFY, OP_DROP, OP_DUP, OP_EQUAL, OP_EQUALVERIFY, OP_GREATERTHAN,
+    OP_GREATERTHANOREQUAL, OP_INSPECTINPUTPACKET, OP_INSPECTPACKET, OP_LESSTHAN,
+    OP_LESSTHANOREQUAL, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_OVER, OP_PICK, OP_PUT,
+    OP_ROLL, OP_ROT, OP_SWAP, OP_VERIFY,
 };
 
 /// Opcodes that leave a minimal 0 or 1, which `OP_0NOTEQUAL` returns unchanged.
-const BOOLEAN_RESULTS: [&str; 11] = [
+const BOOLEAN_RESULTS: [&str; 12] = [
     OP_EQUAL,
     OP_NUMEQUAL,
     OP_LESSTHAN,
@@ -19,6 +20,7 @@ const BOOLEAN_RESULTS: [&str; 11] = [
     OP_BOOLAND,
     OP_BOOLOR,
     OP_CHECKSIG,
+    OP_CHECKSIGFROMSTACK,
 ];
 
 pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
@@ -83,6 +85,7 @@ fn rewrite(asm: Vec<String>) -> Vec<String> {
                 [.., OP_1 | "1", OP_1ADD] => (2, &[OP_2]),
                 [.., OP_1 | "1", OP_VERIFY] => (2, &[]),
                 [.., OP_EQUAL, OP_VERIFY] => (2, &[OP_EQUALVERIFY]),
+                [.., OP_NUMEQUAL, OP_VERIFY] => (2, &[OP_NUMEQUALVERIFY]),
                 [.., OP_DUP, OP_EQUALVERIFY] => (2, &[OP_DROP]),
                 // Packet lookups push a 0 or 1 presence flag.
                 [.., OP_INSPECTPACKET | OP_INSPECTINPUTPACKET, OP_1, OP_EQUALVERIFY] => {
@@ -194,6 +197,16 @@ mod tests {
         assert_eq!(
             optimize(&["<x>", OP_0NOTEQUAL, OP_NOT, "<y>", OP_0NOTEQUAL]),
             ["<x>", OP_NOT, "<y>", OP_0NOTEQUAL]
+        );
+        assert_eq!(
+            optimize(&[
+                OP_CHECKSIGFROMSTACK,
+                OP_0NOTEQUAL,
+                OP_NUMEQUAL,
+                OP_VERIFY,
+                "<z>"
+            ]),
+            [OP_CHECKSIGFROMSTACK, OP_NUMEQUALVERIFY, "<z>"]
         );
         assert_eq!(
             optimize(&[
