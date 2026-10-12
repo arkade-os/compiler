@@ -1,3 +1,4 @@
+use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
 use crate::opcodes::{
     OP_0, OP_0NOTEQUAL, OP_1, OP_1ADD, OP_2, OP_2DROP, OP_2DUP, OP_2OVER, OP_2ROT, OP_2SWAP, OP_3,
     OP_3DUP, OP_4, OP_5, OP_ADD, OP_BOOLAND, OP_BOOLOR, OP_CHECKSIG, OP_CHECKSIGFROMSTACK,
@@ -6,6 +7,191 @@ use crate::opcodes::{
     OP_LESSTHANOREQUAL, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_OVER, OP_PICK, OP_PUT,
     OP_ROLL, OP_ROT, OP_SWAP, OP_VERIFY,
 };
+
+use crate::operators::{BinaryOperator, UnaryOperator};
+use crate::types::{ArkType, Scope};
+
+const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
+
+pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result<(), String> {
+    match statement {
+        Statement::Call(value)
+        | Statement::Return(Some(value))
+        | Statement::LetBinding { value, .. } => fold_expression(value, scope)?,
+        Statement::Require(requirement) => {
+            if let Requirement::Comparison { left, op, right } = requirement {
+                let mut expression = left.with_kind(ExprKind::BinaryOp {
+                    left: Box::new(left.clone()),
+                    op: *op,
+                    right: Box::new(right.clone()),
+                });
+                expression.ty = ArkType::Bool;
+                fold_expression(&mut expression, scope)?;
+                if matches!(expression.kind, ExprKind::Literal(_)) {
+                    *requirement = Requirement::Expression(expression);
+                } else if let ExprKind::BinaryOp {
+                    left: folded_left,
+                    right: folded_right,
+                    ..
+                } = expression.kind
+                {
+                    *left = *folded_left;
+                    *right = *folded_right;
+                }
+            } else {
+                for expression in requirement.expressions_mut() {
+                    fold_expression(expression, scope)?;
+                }
+            }
+        }
+        Statement::VarAssign { target, value } => {
+            match target {
+                AssignmentTarget::Access(access) => fold_expression(access, scope)?,
+                AssignmentTarget::ArrayIndex { array, index } => {
+                    let mut access = index.with_kind(ExprKind::ArrayIndex {
+                        array: array.clone(),
+                        index: index.clone(),
+                    });
+                    fold_expression(&mut access, scope)?;
+                    let ExprKind::ArrayIndex { index: folded, .. } = access.kind else {
+                        unreachable!()
+                    };
+                    *index = folded;
+                }
+                AssignmentTarget::Binding(_) => {}
+            }
+            fold_expression(value, scope)?;
+        }
+        Statement::IfElse { condition, .. } => fold_expression(condition, scope)?,
+        Statement::ForIn { iterable, .. } => fold_expression(iterable, scope)?,
+        Statement::ForCount { count, .. } => fold_expression(count, scope)?,
+        Statement::Return(None) | Statement::Declaration { .. } => {}
+    }
+    Ok(())
+}
+
+fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), String> {
+    if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
+        if matches!(op, BinaryOperator::And | BinaryOperator::Or) {
+            fold_expression(left, scope)?;
+            if let ExprKind::Literal(value) = &left.kind {
+                if (*op == BinaryOperator::And && value == "false")
+                    || (*op == BinaryOperator::Or && value == "true")
+                {
+                    expression.kind = left.kind.clone();
+                    return Ok(());
+                }
+            }
+            fold_expression(right, scope)?;
+            if matches!(&left.kind, ExprKind::Literal(value) if value == "true" || value == "false")
+            {
+                expression.kind = right.kind.clone();
+            }
+            return Ok(());
+        }
+    }
+    for child in crate::models::child_exprs_mut(expression) {
+        fold_expression(child, scope)?;
+    }
+    let access = match &expression.kind {
+        ExprKind::ArrayIndex { array, index } => Some((array.clone(), index)),
+        ExprKind::IndexAccess { value, index } => value.binding_path().map(|array| (array, index)),
+        _ => None,
+    };
+    if let Some((array, index)) = access {
+        if let (Some(ArkType::Array(_, length)), ExprKind::Literal(index)) =
+            (scope.get(&array), &index.kind)
+        {
+            if !index.parse::<usize>().is_ok_and(|index| index < *length) {
+                return Err(format!(
+                    "array index '{index}' is out of range for '{array}[{length}]'"
+                ));
+            }
+        }
+    }
+    let literal = match &expression.kind {
+        ExprKind::Literal(value) if expression.ty == ArkType::Int => {
+            value.parse::<i128>().ok().map(|value| value.to_string())
+        }
+        ExprKind::Property(name) if !scope.contains_key(name) => name
+            .strip_suffix(".length")
+            .and_then(|array| match scope.get(array) {
+                Some(ArkType::Array(_, length)) => Some(length.to_string()),
+                _ => None,
+            }),
+        ExprKind::Builtin { builtin, args } if builtin.name == "num2bin" => match args.as_slice() {
+            [Expression {
+                kind: ExprKind::Literal(value),
+                ..
+            }, Expression {
+                kind: ExprKind::Literal(width),
+                ..
+            }] => value
+                .parse::<i128>()
+                .ok()
+                .zip(width.parse::<usize>().ok())
+                .and_then(|(value, width)| fixed_bytes(value, width)),
+            _ => None,
+        },
+        ExprKind::Unary {
+            op: UnaryOperator::Neg,
+            value,
+        } if matches!(value.kind, ExprKind::Literal(_)) => {
+            super::constants::evaluate(expression, &mut |_| Err("runtime value".into()))
+                .ok()
+                .and_then(|value| value.parse::<i128>().ok())
+                .map(|value| value.to_string())
+        }
+        ExprKind::Unary { .. } | ExprKind::BinaryOp { .. }
+            if crate::models::child_exprs(expression)
+                .iter()
+                .all(|child| match &child.kind {
+                    ExprKind::Literal(value) => {
+                        matches!(value.as_str(), "true" | "false")
+                            || value.parse::<i128>().is_ok()
+                            || (value.starts_with("0x")
+                                && value.len() <= 2 + 2 * MAX_SCRIPT_ELEMENT_SIZE)
+                    }
+                    _ => false,
+                }) =>
+        {
+            // ponytail: the evaluator uses i128; larger or failing computations stay at runtime.
+            super::constants::evaluate(expression, &mut |_| Err("runtime value".into())).ok()
+        }
+        _ => None,
+    };
+    if let Some(literal) = literal {
+        expression.kind = ExprKind::Literal(literal);
+    }
+    Ok(())
+}
+
+fn fixed_bytes(value: i128, width: usize) -> Option<String> {
+    if width > MAX_SCRIPT_ELEMENT_SIZE {
+        return None;
+    }
+    let mut bytes = value.unsigned_abs().to_le_bytes().to_vec();
+    while bytes.last() == Some(&0) {
+        bytes.pop();
+    }
+    if bytes.last().is_some_and(|byte| byte & 0x80 != 0) {
+        bytes.push(0);
+    }
+    if bytes.len() > width {
+        return None;
+    }
+    bytes.resize(width, 0);
+    if value < 0 {
+        *bytes.last_mut()? |= 0x80;
+    }
+    Some(format!(
+        "0x{}",
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    ))
+}
 
 /// Opcodes that leave a minimal 0 or 1, which `OP_0NOTEQUAL` returns unchanged.
 const BOOLEAN_RESULTS: [&str; 12] = [

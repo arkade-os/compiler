@@ -14,6 +14,8 @@ mod beacon;
 mod bytes_literals;
 #[path = "features/concat_op.rs"]
 mod concat_op;
+#[path = "features/constant_folding.rs"]
+mod constant_folding;
 #[path = "features/constants.rs"]
 mod constants;
 #[path = "features/contract_import_instantiation.rs"]

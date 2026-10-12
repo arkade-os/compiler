@@ -70,6 +70,7 @@ fn internal_array_binding_name(array: &str, index: &str) -> String {
 }
 
 struct Generator {
+    optimize: bool,
     asm: Vec<String>,
     stack: Vec<StackItem>,
     scopes: Vec<(usize, types::Scope)>,
@@ -157,6 +158,7 @@ impl Generator {
             structs,
         ));
         Ok(Self {
+            optimize: false,
             asm,
             stack,
             scopes: Vec::new(),
@@ -885,12 +887,12 @@ impl Generator {
         then_body: &[LocatedStatement],
         else_body: Option<&[LocatedStatement]>,
         implicit_else_continues: bool,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let baseline = self.stack.clone();
         let deferred = self.deferred.clone();
         let start = self.asm.len();
         self.enter_scope();
-        generate_asm_from_statements_recursive(then_body, self)?;
+        let left_continues = generate_asm_from_statements_recursive(then_body, self)?;
         self.exit_scope()?;
         let left = self.stack.clone();
         let left_deferred = self.deferred.clone();
@@ -899,21 +901,18 @@ impl Generator {
         self.deferred = deferred.clone();
         self.last_reads
             .retain(|(_, slot), _| *slot < baseline.len());
-        if let Some(body) = else_body {
+        // A return guard's absent branch has already returned and cannot continue.
+        let right_continues = if let Some(body) = else_body {
             self.enter_scope();
-            generate_asm_from_statements_recursive(body, self)?;
+            let continues = generate_asm_from_statements_recursive(body, self)?;
             self.exit_scope()?;
-        }
+            continues
+        } else {
+            implicit_else_continues
+        };
         let right = self.stack.clone();
         let right_deferred = self.deferred.clone();
         let right_asm = self.asm.split_off(start);
-        let left_continues = crate::validator::falls_through(then_body);
-        // A missing else continues only for a real if; the return guard's absent
-        // branch is the already-returned path and never reaches later statements.
-        let right_continues = match else_body {
-            Some(body) => crate::validator::falls_through(body),
-            None => implicit_else_continues,
-        };
         let initialized: std::collections::HashSet<_> = deferred
             .iter()
             .filter(|name| {
@@ -958,7 +957,7 @@ impl Generator {
         self.deferred = deferred.difference(&initialized).cloned().collect();
         self.last_reads
             .retain(|(_, slot), _| *slot < baseline.len());
-        Ok(())
+        Ok(left_continues || right_continues)
     }
 
     fn assert_statement_boundary(&self) -> Result<(), String> {
@@ -1090,6 +1089,7 @@ pub(crate) fn emit(
                 &contract.parameters,
                 &contract.structs,
                 &contract.functions,
+                options.optimize,
             )?,
         );
     }
@@ -1151,6 +1151,7 @@ fn covenant_for(
     constructor_parameters: &[Parameter],
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
+    optimize: bool,
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
     let references =
@@ -1160,12 +1161,26 @@ fn covenant_for(
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
+    if !optimize {
+        // ponytail: validate folded lowering with an extra emission pass; use a dedicated
+        // validation walk if this becomes costly for large unoptimized contracts.
+        let mut validation = Generator::new(
+            &function.parameters,
+            &retained_parameters,
+            structs,
+            &Default::default(),
+        )?;
+        validation.optimize = true;
+        validation.functions = functions.to_vec();
+        generate_asm_from_statements_recursive(&function.statements, &mut validation)?;
+    }
     let mut counting = Generator::new(
         &function.parameters,
         &retained_parameters,
         structs,
         &Default::default(),
     )?;
+    counting.optimize = optimize;
     counting.functions = functions.to_vec();
     generate_asm_from_statements_recursive(&function.statements, &mut counting)?;
     // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
@@ -1193,6 +1208,7 @@ fn covenant_for(
             structs,
             &inlined,
         )?;
+        analysis.optimize = optimize;
         analysis.functions = functions.to_vec();
         generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
         analysis
@@ -1203,6 +1219,7 @@ fn covenant_for(
         structs,
         &inlined,
     )?;
+    generator.optimize = optimize;
     generator.functions = functions.to_vec();
     generator.final_reads = analysis.final_reads;
     generator.read_cursor = Some(0);
@@ -1238,17 +1255,26 @@ fn for_each_expanded_param(
     Ok(())
 }
 
-/// Recursively generate assembly from statements
+/// Generate assembly and report whether an emitted path falls through.
 fn generate_asm_from_statements_recursive(
     statements: &[LocatedStatement],
     generator: &mut Generator,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     for (index, stmt) in statements.iter().enumerate() {
+        let mut folded;
+        let stmt = if generator.optimize {
+            folded = stmt.clone();
+            optimization::fold_statement(&mut folded.statement, &generator.scope)?;
+            &folded
+        } else {
+            stmt
+        };
+        let mut continues = true;
         match &stmt.statement {
             Statement::Call(expression) => generator.emit_call(expression)?,
             Statement::Return(value) => {
                 generator.emit_return(value.as_ref())?;
-                return Ok(());
+                return Ok(false);
             }
             Statement::Require(req) => {
                 generate_requirement_asm(req, generator)?;
@@ -1258,9 +1284,23 @@ fn generate_asm_from_statements_recursive(
                 then_body,
                 else_body,
             } => {
-                generator.emit_expression(condition)?;
-                generator.apply(OP_IF, 1, 0)?;
-                generator.emit_branches(then_body, else_body.as_deref(), true)?;
+                if generator.optimize
+                    && matches!(&condition.kind, ExprKind::Literal(value) if value == "true" || value == "false")
+                {
+                    let body = if matches!(&condition.kind, ExprKind::Literal(value) if value == "true")
+                    {
+                        then_body.as_slice()
+                    } else {
+                        else_body.as_deref().unwrap_or_default()
+                    };
+                    generator.enter_scope();
+                    continues = generate_asm_from_statements_recursive(body, generator)?;
+                    generator.exit_scope()?;
+                } else {
+                    generator.emit_expression(condition)?;
+                    generator.apply(OP_IF, 1, 0)?;
+                    continues = generator.emit_branches(then_body, else_body.as_deref(), true)?;
+                }
             }
             Statement::ForIn {
                 index_var,
@@ -1283,14 +1323,17 @@ fn generate_asm_from_statements_recursive(
                     );
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
-                    if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(&substituted)?;
+                    continues = if k > 0 && functions::contains_return(body) {
+                        generator.emit_unless_returned(&substituted)?
                     } else {
-                        generate_asm_from_statements_recursive(&substituted, generator)?;
-                    }
+                        generate_asm_from_statements_recursive(&substituted, generator)?
+                    };
                     generator.exit_scope()?;
                     if !generator.stack.starts_with(&baseline) {
                         return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
+                    }
+                    if !continues && generator.optimize {
+                        break;
                     }
                 }
             }
@@ -1307,14 +1350,17 @@ fn generate_asm_from_statements_recursive(
                 for k in 0..count {
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
-                    if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(body)?;
+                    continues = if k > 0 && functions::contains_return(body) {
+                        generator.emit_unless_returned(body)?
                     } else {
-                        generate_asm_from_statements_recursive(body, generator)?;
-                    }
+                        generate_asm_from_statements_recursive(body, generator)?
+                    };
                     generator.exit_scope()?;
                     if !generator.stack.starts_with(&baseline) {
                         return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
+                    }
+                    if !continues && generator.optimize {
+                        break;
                     }
                 }
             }
@@ -1400,19 +1446,23 @@ fn generate_asm_from_statements_recursive(
             }
         }
         generator.assert_statement_boundary()?;
-        if !crate::validator::falls_through(std::slice::from_ref(stmt)) {
-            return Ok(());
+        if !continues {
+            return Ok(false);
         }
         if functions::contains_return(std::slice::from_ref(stmt)) && index + 1 < statements.len() {
-            generator.emit_unless_returned(&statements[index + 1..])?;
-            return Ok(());
+            return generator.emit_unless_returned(&statements[index + 1..]);
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Generate assembly for a single requirement
 fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<(), String> {
+    if generator.optimize
+        && matches!(req, Requirement::Expression(Expression { kind: ExprKind::Literal(value), .. }) if value == "true")
+    {
+        return Ok(());
+    }
     match req {
         Requirement::Expression(expr) => {
             match &expr.kind {

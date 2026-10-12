@@ -195,7 +195,7 @@ cargo install arkade-bindgen --locked
 cargo install --path . --locked          # installs arkadec from a checkout
 arkadec contract.ark                     # writes contract.json in the current directory
 arkadec contract.ark -o out.json
-arkadec contract.ark --no-optimize       # skips peephole optimization of Arkade covenants
+arkadec contract.ark --no-optimize       # skips constant folding, static branch removal, and assembly optimization
 ```
 
 Warnings go to stderr; type and validation errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
@@ -535,7 +535,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
-| `compiler.options` | Effective compilation settings; `optimize` applies to Arkade covenant assembly |
+| `compiler.options` | Effective compilation settings; `optimize` enables constant folding, static branch removal, and assembly optimization for Arkade covenants |
 | `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, and unresolved script templates |
 
 The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
