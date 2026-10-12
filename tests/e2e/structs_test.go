@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
@@ -40,13 +41,18 @@ func TestStructs(t *testing.T) {
 
 	group := covenantGroup(t, contract, "spend")
 	constructorInputs := expandInput(contract.ConstructorInputs[0], contract.Structs)
-	if got, want := len(group.Arkade.ASM), len(constructorInputs); got < want {
-		t.Fatalf("covenant asm has %d tokens, need at least %d constructor prologue tokens", got, want)
-	}
-	for index, name := range constructorInputs {
-		if got, want := group.Arkade.ASM[index], "<"+name+">"; got != want {
-			t.Fatalf("constructor prologue token %d = %q, want %q", index, got, want)
+	// Each constructor leaf is pushed once: in the prologue or at its single read.
+	pushed := map[string]bool{}
+	for _, token := range group.Arkade.ASM {
+		name, ok := strings.CutPrefix(token, "<")
+		if !ok {
+			continue
 		}
+		name = strings.TrimSuffix(name, ">")
+		if !slices.Contains(constructorInputs, name) || pushed[name] {
+			t.Fatalf("covenant placeholder %q is not a single constructor leaf push", token)
+		}
+		pushed[name] = true
 	}
 	if got, want := inputTypes(group.Arkade.Inputs), []string{"Rules", "ECPoint", "int", "int", "signature"}; !slices.Equal(got, want) {
 		t.Fatalf("covenant input types = %v, want %v", got, want)

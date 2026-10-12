@@ -219,6 +219,7 @@ impl Generator {
                     if let Some(source_index) =
                         self.binding_index(&source).filter(|&i| i < baseline)
                     {
+                        self.count_constructor_reads(source_index, 2);
                         if self.read_cursor.is_none() {
                             if let Some(previous) = self.last_reads.get(&(source, source_index)) {
                                 self.final_reads[*previous] = false;
@@ -238,6 +239,9 @@ impl Generator {
             ));
         }
         // Static calls hide all caller bindings; instance helpers retain constructor state.
+        let caller_inlined = function
+            .is_static
+            .then(|| std::mem::take(&mut self.inlined));
         for (index, item) in self.stack[..baseline].iter_mut().enumerate() {
             if function.is_static
                 || !matches!(
@@ -309,6 +313,9 @@ impl Generator {
         self.scopes = caller_scopes;
         self.deferred = caller_deferred;
         self.aliases = previous_aliases;
+        if let Some(inlined) = caller_inlined {
+            self.inlined = inlined;
+        }
         self.return_type = previous_return;
         self.direct_return = previous_direct_return;
         self.pinned_stack_len = pinned;

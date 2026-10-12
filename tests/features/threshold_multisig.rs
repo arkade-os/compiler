@@ -62,9 +62,11 @@ fn test_threshold_multisig() {
     assert_eq!(tof_inputs[0], "signerSig");
     assert_eq!(tof_inputs[1], "signer1Sig");
 
-    // Covenant ASM: reversed constructor prologue plus symbolic signature/key reads.
+    // Covenant ASM: each key is read once, so it is pushed at its checksig.
     let tof_tokens = arkade_asm_tokens(&output, "twoOfTwo");
-    assert_eq!(&tof_tokens[..2], ["<signer1>", "<signer>"]);
+    assert!(tof_tokens
+        .windows(4)
+        .any(|tokens| tokens == ["<signer>", OP_CHECKSIG, "<signer1>", OP_CHECKSIGADD]));
     assert_eq!(
         tof_tokens
             .iter()

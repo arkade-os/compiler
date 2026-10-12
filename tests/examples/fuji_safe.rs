@@ -62,19 +62,18 @@ fn test_fuji_safe_contract() {
         "missing unilateral group"
     );
 
-    for (function, script, script_read, value_read, inputs) in [
+    // Every constructor parameter is read once per path, so each is pushed inline.
+    for (function, script_read, value_read, inputs) in [
         (
             "claim",
             "<treasuryBurnScript>",
-            "OP_3 OP_PICK",
-            "OP_OVER",
+            "<borrowAmount>",
             &[("treasurySig", "signature")][..],
         ),
         (
             "liquidate",
             "<treasuryBurnScript>",
-            "OP_3 OP_PICK",
-            "OP_OVER",
+            "<borrowAmount>",
             &[
                 ("currentPrice", "int"),
                 ("oracleSig", "signature"),
@@ -84,13 +83,11 @@ fn test_fuji_safe_contract() {
         (
             "redeem",
             "<borrowerBurnScript>",
-            "OP_3 OP_ROLL",
-            "OP_SWAP",
+            "<borrowAmount>",
             &[("borrowerSig", "signature")][..],
         ),
         (
             "renew",
-            "<borrowerBurnScript>",
             concat!(
                 "<CONTRACT:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
                 "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,",
@@ -111,7 +108,6 @@ fn test_fuji_safe_contract() {
             inputs
         );
         let asm = crate::common::arkade_asm_tokens(&output, function);
-        assert_eq!(asm.first().map(String::as_str), Some(script));
         for (opcode, operand) in [
             ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP", script_read),
             ("OP_INSPECTOUTPUTVALUE", value_read),
