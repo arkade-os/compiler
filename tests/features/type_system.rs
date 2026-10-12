@@ -468,7 +468,8 @@ contract BytesCasts(pubkey owner) {
     );
     let asm = crate::common::arkade_asm(&output, "spend");
     assert_eq!(asm.matches("OP_BIN2NUM").count(), 4, "{asm}");
-    assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 5, "{asm}");
+    // `bytes(n > 0)` needs no normalization: the comparison already leaves 0 or 1.
+    assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 4, "{asm}");
     assert!(
         !asm.contains("OP_NUM2BIN") && !asm.contains("OP_SIZE"),
         "{asm}"
