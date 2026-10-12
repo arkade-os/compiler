@@ -368,11 +368,10 @@ impl Generator {
     pub(super) fn emit_unless_returned(
         &mut self,
         statements: &[LocatedStatement],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         self.read_binding("$returned")?;
         self.apply(OP_NOT, 1, 1)?;
         self.apply(OP_IF, 1, 0)?;
-        self.emit_branches(statements, None, false)?;
-        Ok(())
+        self.emit_branches(statements, None, false)
     }
 }

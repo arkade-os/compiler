@@ -31,7 +31,7 @@ contract Remainder() {
 		{"positive operands", 17, 5, 2, ""},
 		{"sign of the dividend", -7, 2, -1, ""},
 		{"negative divisor", 7, -2, 1, ""},
-		{"wrong remainder", 17, 5, 3, "OP_EQUALVERIFY failed"},
+		{"wrong remainder", 17, 5, 3, "false stack entry"},
 		{"modulo by zero", 17, 0, 0, "modulo by zero"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
