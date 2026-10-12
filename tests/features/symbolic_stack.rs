@@ -528,6 +528,24 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
 }
 
 #[test]
+fn short_circuit_operands_move_outside_open_branches() {
+    for (body, expected) in [
+        (
+            "require(x == y || z > 0);",
+            "OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_IF OP_1 OP_ELSE OP_0 OP_PICK 0 OP_GREATERTHAN OP_ENDIF OP_VERIFY OP_1 OP_NIP",
+        ),
+        (
+            "require(z > 0 || z < x); require(y == 1);",
+            "OP_2 OP_PICK 0 OP_GREATERTHAN OP_IF OP_1 OP_ELSE OP_2 OP_PICK OP_1 OP_PICK OP_LESSTHAN OP_ENDIF OP_VERIFY OP_1 OP_ROLL 1 OP_EQUAL OP_VERIFY OP_1 OP_NIP OP_NIP",
+        ),
+    ] {
+        let source =
+            format!("contract ShortCircuit() {{ function spend(int x, int y, int z) {{ {body} }} }}");
+        assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
+    }
+}
+
+#[test]
 fn top_binding_reassignment_keeps_branch_layouts() {
     let covenant = covenant(
         r#"

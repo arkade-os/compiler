@@ -536,11 +536,12 @@ impl Generator {
         let mut values = Vec::new();
         functions::extract_values(&mut expression, &mut values);
         emit_expression_asm(&expression, &mut raw);
-        // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
+        // ponytail: short-circuit joins need identical layouts, so reads inside an open branch stay
+        // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
-        self.preserve_bindings |= raw.iter().any(|token| token == OP_IF);
         let mut branches = Vec::new();
         for token in raw {
+            self.preserve_bindings = preserved || !branches.is_empty();
             if token == OP_IF {
                 self.apply(OP_IF, 1, 0)?;
                 branches.push(self.stack.clone());

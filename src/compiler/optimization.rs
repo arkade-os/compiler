@@ -4,9 +4,34 @@ use crate::opcodes::{
     OP_VERIFY,
 };
 
-pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
+pub(super) fn optimize(asm: Vec<String>) -> Vec<String> {
+    // `OP_1` plus k `OP_NIP`s clears k leftovers; dropping them before `OP_1` pairs into OP_2DROP
+    // but keeps a final `OP_VERIFY`, so the shorter rewrite wins. A failing last requirement then
+    // reports `OP_VERIFY failed` instead of a false stack entry.
+    let paired = asm
+        .iter()
+        .rposition(|token| token != OP_NIP)
+        .filter(|&tail| asm[tail] == OP_1 && asm.len() - tail > 2)
+        .map(|tail| {
+            let mut paired = asm[..tail].to_vec();
+            paired.extend(std::iter::repeat_n(
+                OP_DROP.to_string(),
+                asm.len() - tail - 1,
+            ));
+            paired.push(OP_1.to_string());
+            rewrite(paired)
+        });
+    let nipped = rewrite(asm);
+    match paired {
+        Some(paired) if paired.len() < nipped.len() => paired,
+        _ => nipped,
+    }
+}
+
+fn rewrite(mut asm: Vec<String>) -> Vec<String> {
     // The final clean-stack truth check already enforces a trailing `OP_VERIFY OP_1`, so a
-    // failing last requirement reports a false stack entry instead. The NIPs clear items below it.
+    // failing last requirement reports a false stack entry instead when this tail is kept.
+    // The NIPs clear items below it.
     let tail = asm.iter().rposition(|token| token != OP_NIP).unwrap_or(0);
     if tail > 0 && asm[tail - 1] == OP_VERIFY && asm[tail] == OP_1 {
         asm.drain(tail - 1..=tail);
@@ -119,6 +144,34 @@ mod tests {
             optimize([OP_DUP, OP_EQUAL].map(String::from).to_vec()),
             [OP_DUP, OP_EQUAL]
         );
+    }
+
+    #[test]
+    fn wide_clean_stack_tails_drop_in_pairs() {
+        let nips = |count| std::iter::repeat_n(OP_NIP, count);
+        let tail = |prefix: &[&'static str], count| {
+            prefix
+                .iter()
+                .copied()
+                .chain([OP_1])
+                .chain(nips(count))
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            optimize(tail(&[OP_EQUAL, OP_VERIFY], 4)),
+            [OP_EQUALVERIFY, OP_2DROP, OP_2DROP, OP_1]
+        );
+        assert_eq!(
+            optimize(tail(&["<x>"], 3)),
+            ["<x>", OP_2DROP, OP_DROP, OP_1]
+        );
+        // A tie keeps the NIPs and the removed final `OP_VERIFY OP_1`.
+        assert_eq!(
+            optimize(tail(&["<x>", OP_VERIFY], 5)),
+            ["<x>", OP_NIP, OP_NIP, OP_NIP, OP_NIP, OP_NIP]
+        );
+        assert_eq!(optimize(tail(&["<x>"], 1)), ["<x>", OP_1, OP_NIP]);
     }
 
     #[test]
