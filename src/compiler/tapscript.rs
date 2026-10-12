@@ -8,7 +8,7 @@ use crate::models::{
 use crate::models::{EMULATOR, SERVER, SERVER_EXIT_DELAY};
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
-    OP_EQUAL, OP_VERIFY,
+    OP_EQUAL, OP_EQUALVERIFY, OP_SIZE, OP_VERIFY,
 };
 use crate::types::{digest_accepts, ArkType};
 
@@ -40,6 +40,7 @@ impl ClosureClass {
 pub struct Closure {
     pub class: ClosureClass,
     pub condition: Option<(HashFn, String)>, // (hashFn, hash value name)
+    pub preimage_width: Option<usize>,
     pub timelock: Option<(String, Option<TimeUnit>)>, // CSV or CLTV bound and its unit
     pub keys: Vec<KeyExpr>,
     pub threshold: Option<u16>,
@@ -51,6 +52,7 @@ pub struct Closure {
 /// combination is an error (§4.4, §5.2).
 pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     let mut condition: Option<(HashFn, String)> = None;
+    let mut preimage_width = None;
     let mut timelock: Option<(String, Option<TimeUnit>)> = None;
     let mut is_csv = false; // older() → CSV; after() → CLTV
     let mut multisig: Option<(Vec<KeyExpr>, Option<u16>)> = None;
@@ -59,7 +61,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
         match item {
             TapItem::Hash {
                 hash_fn,
-                preimage: _,
+                preimage,
                 hash,
             } => {
                 if multisig.is_some() {
@@ -81,6 +83,14 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                     ));
                 }
                 condition = Some((hash_fn.clone(), hash.clone()));
+                preimage_width =
+                    ts.inputs.iter().find(|p| p.name == *preimage).and_then(
+                        |p| match ArkType::parse(&p.param_type) {
+                            ArkType::Bytes20 => Some(20),
+                            ArkType::Bytes32 => Some(32),
+                            _ => None,
+                        },
+                    );
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 if multisig.is_some() {
@@ -139,6 +149,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     Ok(Closure {
         class,
         condition,
+        preimage_width,
         timelock,
         keys,
         threshold,
@@ -585,6 +596,13 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
 
     // Condition prefix.
     if let Some((hash_fn, hash)) = &c.condition {
+        if let Some(width) = c.preimage_width {
+            asm.extend([
+                OP_SIZE.to_string(),
+                width.to_string(),
+                OP_EQUALVERIFY.to_string(),
+            ]);
+        }
         asm.push(hash_fn.opcode().to_string());
         asm.push(if hash == "0x" {
             "OP_0".to_string()
@@ -760,6 +778,7 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
     let closure = Closure {
         class: ClosureClass::Multisig,
         condition: None,
+        preimage_width: None,
         timelock: None,
         keys: vec![
             KeyExpr::Ident(SERVER.into()),
