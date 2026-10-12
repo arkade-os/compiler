@@ -80,6 +80,10 @@ struct Generator {
     scope: types::Scope,
     constructor_scope: types::Scope,
     functions: Vec<Function>,
+    // Constructor leaves pushed at their single read instead of in the prologue.
+    inlined: std::collections::HashMap<String, String>,
+    // Emitted reads per constructor slot; runtime-indexed slots count as two.
+    constructor_reads: std::collections::HashMap<String, usize>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<String, usize>,
     // None outside a helper; Some(None) inside a void helper.
@@ -100,6 +104,7 @@ impl Generator {
         function_parameters: &[Parameter],
         constructor_parameters: &[Parameter],
         structs: &[crate::models::StructDefinition],
+        inlined_bindings: &std::collections::HashSet<String>,
     ) -> Result<Self, String> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
@@ -134,7 +139,12 @@ impl Generator {
             }
         }
         let mut asm = Vec::new();
+        let mut inlined = std::collections::HashMap::new();
         for (placeholder, binding_name) in constructor_bindings.into_iter().rev() {
+            if inlined_bindings.contains(&binding_name) {
+                inlined.insert(binding_name, placeholder);
+                continue;
+            }
             asm.push(format!("<{placeholder}>"));
             stack.push(StackItem::Binding {
                 name: binding_name,
@@ -158,6 +168,8 @@ impl Generator {
             scope,
             constructor_scope,
             functions: Vec::new(),
+            inlined,
+            constructor_reads: std::collections::HashMap::new(),
             aliases: std::collections::HashMap::new(),
             return_type: None,
             direct_return: false,
@@ -213,9 +225,9 @@ impl Generator {
             return Ok(());
         }
         // A field named `length` outranks synthetic array length.
-        let is_binding = self
-            .binding_index(&Self::internal_binding_name(name))
-            .is_some();
+        let binding = Self::internal_binding_name(name);
+        let is_binding =
+            self.binding_index(&binding).is_some() || self.inlined.contains_key(&binding);
         if let Some(array) = name.trim().strip_suffix(".length").filter(|_| !is_binding) {
             let length = self.array_length(array);
             if length == 0 {
@@ -224,14 +236,22 @@ impl Generator {
             self.push_integer_temporary(length);
             return Ok(());
         }
-        let name = Self::internal_binding_name(name);
-        self.read_static_binding(&name, false)
+        self.read_static_binding(&binding, false)
     }
 
     fn read_static_binding(&mut self, name: &str, take: bool) -> Result<(), String> {
-        let index = self
-            .binding_index(name)
-            .ok_or_else(|| format!("undefined binding '{name}'"))?;
+        let Some(index) = self.binding_index(name) else {
+            let placeholder = self
+                .inlined
+                .get(name)
+                .ok_or_else(|| format!("undefined binding '{name}'"))?;
+            self.push_temporary(format!("<{placeholder}>"));
+            return Ok(());
+        };
+        // An inlined alias source is copied once at the call, however often the helper reads it.
+        if !self.aliases.contains_key(name) {
+            self.count_constructor_reads(index, 1);
+        }
         let depth = self.stack.len() - 1 - index;
         let consume = if let Some(cursor) = self.read_cursor.as_mut() {
             let consume = *self
@@ -269,6 +289,34 @@ impl Generator {
         self.apply(if consume { OP_ROLL } else { OP_PICK }, 1, 1)
     }
 
+    fn count_constructor_reads(&mut self, index: usize, reads: usize) {
+        if let StackItem::Binding {
+            name,
+            kind: BindingKind::Constructor,
+        } = &self.stack[index]
+        {
+            *self.constructor_reads.entry(name.clone()).or_default() += reads;
+        }
+    }
+
+    /// Runtime indexes address leaves by their prologue slots.
+    // ponytail: pins every leaf of the indexed parameter, so unread siblings keep slots;
+    // pin only the indexed array's leaves if wide runtime-indexed structs become common.
+    fn pin_constructor_slots(&mut self, path: &str) {
+        fn root(name: &str) -> &str {
+            let name = name
+                .strip_prefix(INTERNAL_ARRAY_BINDING_PREFIX)
+                .unwrap_or(name);
+            name.split(['.', '[', ':']).next().unwrap_or(name)
+        }
+        let path = root(path).to_string();
+        for index in 0..self.stack.len() {
+            if matches!(&self.stack[index], StackItem::Binding { name, .. } if root(name) == path) {
+                self.count_constructor_reads(index, 2);
+            }
+        }
+    }
+
     fn push_integer_temporary(&mut self, value: usize) {
         self.push_temporary(if value <= 16 {
             format!("OP_{value}")
@@ -294,6 +342,7 @@ impl Generator {
         let first_index = self
             .binding_index(&first_element)
             .ok_or_else(|| format!("undefined array binding '{array}'"))?;
+        self.pin_constructor_slots(array);
         let first_depth_without_index =
             self.stack
                 .len()
@@ -538,11 +587,12 @@ impl Generator {
         let mut values = Vec::new();
         functions::extract_values(&mut expression, &mut values);
         emit_expression_asm(&expression, &mut raw);
-        // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
+        // ponytail: short-circuit joins need identical layouts, so reads inside an open branch stay
+        // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
-        self.preserve_bindings |= raw.iter().any(|token| token == OP_IF);
         let mut branches = Vec::new();
         for token in raw {
+            self.preserve_bindings = preserved || !branches.is_empty();
             if token == OP_IF {
                 self.apply(OP_IF, 1, 0)?;
                 branches.push(self.stack.clone());
@@ -1114,16 +1164,61 @@ fn covenant_for(
     if !optimize {
         // ponytail: validate folded lowering with an extra emission pass; use a dedicated
         // validation walk if this becomes costly for large unoptimized contracts.
-        let mut validation = Generator::new(&function.parameters, &retained_parameters, structs)?;
+        let mut validation = Generator::new(
+            &function.parameters,
+            &retained_parameters,
+            structs,
+            &Default::default(),
+        )?;
         validation.optimize = true;
         validation.functions = functions.to_vec();
         generate_asm_from_statements_recursive(&function.statements, &mut validation)?;
     }
-    let mut analysis = Generator::new(&function.parameters, &retained_parameters, structs)?;
-    analysis.optimize = optimize;
-    analysis.functions = functions.to_vec();
-    generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
-    let mut generator = Generator::new(&function.parameters, &retained_parameters, structs)?;
+    let mut counting = Generator::new(
+        &function.parameters,
+        &retained_parameters,
+        structs,
+        &Default::default(),
+    )?;
+    counting.optimize = optimize;
+    counting.functions = functions.to_vec();
+    generate_asm_from_statements_recursive(&function.statements, &mut counting)?;
+    // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
+    let mut inlined = std::collections::HashSet::new();
+    for parameter in &retained_parameters {
+        for_each_expanded_param(parameter, structs, |_, binding_name, _| {
+            if counting
+                .constructor_reads
+                .get(&binding_name)
+                .copied()
+                .unwrap_or(0)
+                <= 1
+            {
+                inlined.insert(binding_name);
+            }
+        })?;
+    }
+    // Without inlined leaves the counting pass already has the emission layout.
+    let analysis = if inlined.is_empty() {
+        counting
+    } else {
+        let mut analysis = Generator::new(
+            &function.parameters,
+            &retained_parameters,
+            structs,
+            &inlined,
+        )?;
+        analysis.optimize = optimize;
+        analysis.functions = functions.to_vec();
+        generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
+        analysis
+    };
+    let mut generator = Generator::new(
+        &function.parameters,
+        &retained_parameters,
+        structs,
+        &inlined,
+    )?;
     generator.optimize = optimize;
     generator.functions = functions.to_vec();
     generator.final_reads = analysis.final_reads;
@@ -1418,7 +1513,8 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             })
             .collect::<Vec<_>>();
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
 
         generator.push_temporary("9");
         generator
@@ -1447,7 +1543,8 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             })
             .collect::<Vec<_>>();
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
 
         generator.push_temporary("9");
         generator
@@ -1479,7 +1576,8 @@ mod symbolic_stack_tests {
                 param_type: "int".into(),
             },
         ];
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("array test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
         let bindings = generator.stack.clone();
         generator.push_temporary("9");
         generator
@@ -1520,7 +1618,8 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             },
         ];
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("array test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
         generator.push_temporary("7");
         generator.bind_local("above").expect("local above array");
 

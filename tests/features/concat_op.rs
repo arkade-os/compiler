@@ -85,7 +85,7 @@ contract LoopHash(bytes32 tag) {
   }
 }
 "#;
-    let out = compile(code).expect("compile");
+    let out = crate::common::compile_unoptimized(code).expect("compile");
     let asm = crate::common::arkade_asm(&out, "check");
     for (k, depth) in [2, 3, 4].into_iter().enumerate() {
         assert!(

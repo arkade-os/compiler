@@ -135,9 +135,9 @@ func TestECPairing(t *testing.T) {
 		wantErr  string
 	}{
 		{name: "balanced pairs", function: "pairing", inputs: pairs("", g1, negG1)},
-		{name: "unbalanced pairs", function: "pairing", inputs: pairs("", g1, g1), wantErr: "false stack entry"},
+		{name: "unbalanced pairs", function: "pairing", inputs: pairs("", g1, g1), wantErr: "OP_VERIFY failed"},
 		{name: "selected balanced proof", function: "pairingProof", inputs: proofs(negG1)},
-		{name: "selected unbalanced proof", function: "pairingProof", inputs: proofs(g1), wantErr: "false stack entry"},
+		{name: "selected unbalanced proof", function: "pairingProof", inputs: proofs(g1), wantErr: "OP_VERIFY failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			group := covenantGroup(t, contract, test.function)

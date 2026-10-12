@@ -82,6 +82,7 @@ impl Generator {
             }
             return Ok(());
         }
+        self.pin_constructor_slots(&name);
         self.emit_access_offset(&indices)?;
         if let Some(length) = length {
             self.apply(OP_DROP, 1, 0)?;

@@ -444,6 +444,20 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
                 "OP_NIP" => {
                     stack.remove(stack.len() - 2);
                 }
+                "OP_2DUP" | "OP_3DUP" | "OP_2OVER" => {
+                    let (from, count) = match token.as_str() {
+                        "OP_2DUP" => (2, 2),
+                        "OP_3DUP" => (3, 3),
+                        _ => (4, 2),
+                    };
+                    let start = stack.len() - from;
+                    stack.extend_from_within(start..start + count);
+                }
+                "OP_2SWAP" | "OP_2ROT" => {
+                    let start = stack.len() - if token == "OP_2SWAP" { 4 } else { 6 };
+                    let moved = stack.drain(start..start + 2).collect::<Vec<_>>();
+                    stack.extend(moved);
+                }
                 "OP_SWAP" => {
                     let length = stack.len();
                     stack.swap(length - 1, length - 2);
@@ -467,10 +481,11 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
                         stack.push(value);
                     }
                 }
-                "OP_NOT" | "OP_NEGATE" | "OP_1ADD" => {
+                "OP_NOT" | "OP_0NOTEQUAL" | "OP_NEGATE" | "OP_1ADD" => {
                     let value = stack.pop().unwrap();
                     stack.push(match token.as_str() {
                         "OP_NOT" => i128::from(value == 0),
+                        "OP_0NOTEQUAL" => i128::from(value != 0),
                         "OP_NEGATE" => -value,
                         _ => value + 1,
                     });
@@ -481,6 +496,8 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
                 | "OP_MOD"
                 | "OP_EQUAL"
                 | "OP_EQUALVERIFY"
+                | "OP_NUMEQUAL"
+                | "OP_NUMEQUALVERIFY"
                 | "OP_GREATERTHAN"
                 | "OP_GREATERTHANOREQUAL"
                 | "OP_LESSTHAN"
@@ -498,7 +515,7 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
                         "OP_LESSTHANOREQUAL" => i128::from(left <= right),
                         _ => i128::from(left == right),
                     };
-                    if token == "OP_EQUALVERIFY" {
+                    if token.ends_with("VERIFY") {
                         if value == 0 {
                             return false;
                         }

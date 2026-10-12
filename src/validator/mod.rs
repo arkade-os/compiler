@@ -605,22 +605,24 @@ mod tests {
     use crate::models::{AbiFunctionGroup, AbiLeaf, Contract, Function, Parameter, WitnessElement};
 
     #[test]
-    fn output_validation_checks_filtered_constructor_layouts() {
+    fn output_validation_checks_constructor_placeholders() {
         let output = crate::compile("contract C(int unused, int[2] values, int limit) { function spend() { require(values[0] > limit); } }").unwrap();
-        for prologue in [
-            vec!["<values.1>", "<values.0>", "<limit>"],
-            vec!["<limit>", "<values.0>"],
-            vec!["<limit>", "<limit>"],
-            vec!["<unknown>"],
-            vec!["OP_1", "<limit>"],
+        assert_eq!(
+            output.functions[0].arkade.as_ref().unwrap().asm,
+            ["<values.0>", "<limit>", "OP_GREATERTHAN"]
+        );
+        for (placeholders, valid) in [
+            (["<values.0>", "<limit>"], true),
+            (["<limit>", "<limit>"], false),
+            (["<unknown>", "<limit>"], false),
         ] {
-            let mut invalid = output.clone();
-            let asm = &mut invalid.functions[0].arkade.as_mut().unwrap().asm;
-            asm.splice(..3, prologue.into_iter().map(String::from));
-            assert!(
-                has_errors(&validate_output(&invalid)),
-                "{:?}",
-                invalid.functions[0].arkade.as_ref().unwrap().asm
+            let mut output = output.clone();
+            let asm = &mut output.functions[0].arkade.as_mut().unwrap().asm;
+            asm.splice(..2, placeholders.into_iter().map(String::from));
+            assert_eq!(
+                !has_errors(&validate_output(&output)),
+                valid,
+                "{placeholders:?}"
             );
         }
     }
