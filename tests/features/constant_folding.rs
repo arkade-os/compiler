@@ -257,6 +257,49 @@ fn computed_out_of_range_indexes_fail_for_reads_and_writes() {
         let source = format!("struct Data {{ ECPoint[3] points; }} contract C() {{ private function identity(int n) int {{ return n; }} function spend(int[3] values, Data value, int input) {{ require(values[0] == input); require(value.points[0].x == input); {body} }} }}");
         let error = compile(&source).unwrap_err().to_string();
         assert!(error.contains("out of range"), "{body}: {error}");
+        let raw_error = compile_unoptimized(&source).unwrap_err().to_string();
+        assert!(raw_error.contains("out of range"), "{body}: {raw_error}");
+    }
+}
+
+#[test]
+fn constant_index_diagnostics_are_independent_of_optimization() {
+    for index in [
+        "1 + 2",
+        "1 - 2",
+        "values.length",
+        "-(1 + 1)",
+        "(1 << 2) - 1",
+    ] {
+        let source = format!("contract C() {{ function spend(int[3] values, int input) {{ require(values[{index}] == input); }} }}");
+        let optimized = compile(&source).unwrap_err().to_string();
+        let raw = compile_unoptimized(&source).unwrap_err().to_string();
+        assert_eq!(optimized, raw, "{index}");
+        let files = [("main.ark".to_string(), source.clone())].into();
+        let diagnostics = arkade_compiler::check("main.ark", &files);
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains("out of range"))
+            .unwrap();
+        let span = diagnostic.span.unwrap();
+        assert_eq!(&source[span.start..span.end], index);
+    }
+    let source = "contract C() { function spend(int[3] values, int input) { require(values[1 + 1] == input); } }";
+    let raw = arkade_asm_tokens(&compile_unoptimized(source).unwrap(), "spend");
+    assert!(raw.iter().any(|token| token == "OP_ADD"));
+    assert!(raw.iter().any(|token| token == "OP_LESSTHAN"));
+}
+
+#[test]
+fn unrolled_index_validation_skips_dead_branches_and_returned_iterations_in_both_modes() {
+    for body in [
+        "for (i, unused) in values { if (i < 3) { require(true); } else { require(values[i + 1] == input); } }",
+        "for (i, unused) in values { if (i >= 3) { require(values[i + 1] == input); } else { require(true); } }",
+        "require(helper(values, input) == input);",
+        "require(true || bad(values, input));",
+    ] {
+        let source = format!("contract C() {{ private function helper(int[3] values, int input) int {{ for (i, unused) in values {{ if (i == 0) {{ return input; }} require(values[i + 1] == input); }} return 0; }} private function bad(int[3] values, int input) bool {{ for (i, unused) in values {{ require(values[i + 1] == input); }} return true; }} function spend(int[3] values, int input) {{ {body} }} }}");
+        compile(&source).unwrap();
         compile_unoptimized(&source).unwrap();
     }
 }

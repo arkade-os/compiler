@@ -609,9 +609,25 @@ pub(super) fn validate_array_index(
             .at(index.span),
         );
     }
-    if let (Some((negative, literal)), Some((_, length, _))) =
-        (literal_index(index), array_info.as_ref())
-    {
+    let evaluated = crate::compiler::constants::evaluate(index, &mut |name| {
+        let array = name
+            .strip_suffix(".length")
+            .filter(|_| find_binding(scopes, name).is_none());
+        match array.and_then(|array| find_binding(scopes, array)) {
+            Some(BindingInfo {
+                binding_type: ArkType::Array(_, length),
+                ..
+            }) => Ok(length.to_string()),
+            _ => Err(name.to_string()),
+        }
+    })
+    .ok()
+    .filter(|_| index_type == ArkType::Int);
+    if let (Some(literal), Some((_, length, _))) = (evaluated.as_deref(), array_info.as_ref()) {
+        let (negative, literal) = match literal.strip_prefix('-') {
+            Some(magnitude) => (true, magnitude),
+            None => (false, literal),
+        };
         let in_bounds = if negative {
             literal == "0"
         } else {

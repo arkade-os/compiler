@@ -1111,6 +1111,14 @@ fn covenant_for(
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
+    if !optimize {
+        // ponytail: validate folded lowering with an extra emission pass; use a dedicated
+        // validation walk if this becomes costly for large unoptimized contracts.
+        let mut validation = Generator::new(&function.parameters, &retained_parameters, structs)?;
+        validation.optimize = true;
+        validation.functions = functions.to_vec();
+        generate_asm_from_statements_recursive(&function.statements, &mut validation)?;
+    }
     let mut analysis = Generator::new(&function.parameters, &retained_parameters, structs)?;
     analysis.optimize = optimize;
     analysis.functions = functions.to_vec();
