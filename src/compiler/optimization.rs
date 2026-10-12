@@ -26,7 +26,7 @@ const BOOLEAN_RESULTS: [&str; 12] = [
 pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
     // already enforces a trailing `OP_VERIFY OP_1`, so a failing last requirement reports a false
-    // stack entry instead.
+    // stack entry instead when the NIPs are kept.
     let nips = asm
         .iter()
         .rev()
@@ -37,7 +37,8 @@ pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
     if body >= 2 && kept[body - 2] == OP_VERIFY && kept[body - 1] == OP_1 {
         kept.drain(body - 2..body);
     }
-    // Verifying the final value first lets the cleared items go in pairs with OP_2DROP.
+    // Verifying the final value first lets the cleared items go in pairs with OP_2DROP; a failing
+    // last requirement then reports `OP_VERIFY failed`.
     asm.truncate(body);
     asm.push(OP_VERIFY.to_string());
     asm.extend(std::iter::repeat_n(OP_DROP.to_string(), nips));
@@ -296,6 +297,34 @@ mod tests {
                 "{asm:?} -> {rewritten:?}"
             );
         }
+    }
+
+    #[test]
+    fn wide_clean_stack_tails_drop_in_pairs() {
+        let nips = |count| std::iter::repeat_n(OP_NIP, count);
+        let tail = |prefix: &[&'static str], count| {
+            prefix
+                .iter()
+                .copied()
+                .chain([OP_1])
+                .chain(nips(count))
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            optimize(tail(&[OP_EQUAL, OP_VERIFY], 4)),
+            [OP_EQUALVERIFY, OP_2DROP, OP_2DROP, OP_1]
+        );
+        assert_eq!(
+            optimize(tail(&["<x>"], 3)),
+            ["<x>", OP_2DROP, OP_DROP, OP_1]
+        );
+        // A tie keeps the NIPs and the removed final `OP_VERIFY OP_1`.
+        assert_eq!(
+            optimize(tail(&["<x>", OP_VERIFY], 5)),
+            ["<x>", OP_NIP, OP_NIP, OP_NIP, OP_NIP, OP_NIP]
+        );
+        assert_eq!(optimize(tail(&["<x>"], 1)), ["<x>", OP_1, OP_NIP]);
     }
 
     #[test]
