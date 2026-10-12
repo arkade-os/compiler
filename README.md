@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.png" alt="Arkade Compiler logo" width="240"></p>
+<p align="center"><img src="docs/logo.png" alt="Arkade Compiler logo" width="400"></p>
 
 # Arkade Compiler
 
