@@ -780,14 +780,16 @@ pub enum ExprKind {
     // ─── Packet Introspection ──────────────────────────────────────────
     /// Current-tx packet content: tx.packet(packetType)
     /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
-    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`.
+    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `<packetType> OP_INSPECTPACKET OP_NIP` for `presence_only`.
     PacketInspect {
         packet_type: Box<Expression>,
         /// `tx.packet.has(type)`: the presence flag instead of the bytes
         presence_only: bool,
     },
-    /// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
-    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`.
+    /// Packet of the Arkade transaction that created input i: tx.inputs[i].packet(packetType)
+    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `<packetType> <i> OP_INSPECTINPUTPACKET OP_NIP` for `presence_only`.
     InputPacketInspect {
         index: Box<Expression>,
         packet_type: Box<Expression>,

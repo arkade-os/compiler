@@ -185,7 +185,7 @@ const arkadeMembers = {
     ],
     'tx.input': [prop('current', 'Input being spent')],
     'tx.input.current': inputProps,
-    'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the previous Arkade transaction')],
+    'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the Arkade transaction that created this input')],
     'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
     'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
@@ -193,7 +193,7 @@ const arkadeMembers = {
     'tx.assetGroups[]': groupMembers,
     'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
     'tx.packet': [method('has', '${1:packetType}', 'Whether this transaction carries the packet')],
-    'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the previous Arkade transaction carries the packet')],
+    'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the Arkade transaction that created this input carries the packet')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),
         prop('activeBytecode', 'Script being executed'),

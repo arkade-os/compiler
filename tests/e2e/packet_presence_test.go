@@ -49,6 +49,7 @@ contract Packets() {
 		{"only current", false, true, [2]int64{1, 0}, ""},
 		{"only previous", true, false, [2]int64{0, 1}, ""},
 		{"absent packet claimed", false, false, [2]int64{1, 0}, "OP_EQUALVERIFY failed"},
+		{"absent input packet claimed", false, false, [2]int64{0, 1}, "OP_EQUALVERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deployment := fundingTx(instance.pkScript, 10_000)
