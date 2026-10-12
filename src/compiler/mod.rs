@@ -1167,7 +1167,7 @@ fn covenant_for(
     )?;
     counting.functions = functions.to_vec();
     generate_asm_from_statements_recursive(&function.statements, &mut counting)?;
-    // A leaf read at most once costs no more as an inline push than as a prologue slot.
+    // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
     let mut inlined = std::collections::HashSet::new();
     for parameter in &retained_parameters {
         for_each_expanded_param(parameter, structs, |_, binding_name, _| {
