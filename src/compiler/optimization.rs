@@ -81,7 +81,7 @@ fn rewrite(asm: Vec<String>) -> Vec<String> {
                 [.., OP_4, OP_ROLL, OP_5, OP_ROLL] => (4, &[OP_2ROT, OP_SWAP]),
                 [.., OP_1 | "1", OP_ADD] => (2, &[OP_1ADD]),
                 [.., OP_1 | "1", OP_1ADD] => (2, &[OP_2]),
-                [.., OP_1 | "1", OP_VERIFY] => (2, &[]),
+                [.., OP_1, OP_VERIFY] => (2, &[]),
                 [.., OP_EQUAL, OP_VERIFY] => (2, &[OP_EQUALVERIFY]),
                 [.., OP_DUP, OP_EQUALVERIFY] => (2, &[OP_DROP]),
                 // Packet lookups push a 0 or 1 presence flag.
@@ -89,8 +89,6 @@ fn rewrite(asm: Vec<String>) -> Vec<String> {
                     (2, &[OP_VERIFY])
                 }
                 [.., OP_CHECKSIG, OP_VERIFY] => (2, &[OP_CHECKSIGVERIFY]),
-                [.., OP_NOT, OP_NOT] => (2, &[OP_0NOTEQUAL]),
-                [.., OP_0NOTEQUAL, OP_NOT] => (2, &[OP_NOT]),
                 _ => break,
             };
             optimized.truncate(len - matched);
@@ -180,20 +178,12 @@ mod tests {
     fn boolean_presence_and_trailing_cleanup_rewrites() {
         let optimize = |asm: &[&str]| optimize(asm.iter().map(|token| token.to_string()).collect());
         assert_eq!(
-            optimize(&[
-                "<a>",
-                "<b>",
-                OP_LESSTHAN,
-                OP_0NOTEQUAL,
-                OP_NOT,
-                OP_NOT,
-                "<c>"
-            ]),
+            optimize(&["<a>", "<b>", OP_LESSTHAN, OP_0NOTEQUAL, "<c>"]),
             ["<a>", "<b>", OP_LESSTHAN, "<c>"]
         );
         assert_eq!(
-            optimize(&["<x>", OP_0NOTEQUAL, OP_NOT, "<y>", OP_0NOTEQUAL]),
-            ["<x>", OP_NOT, "<y>", OP_0NOTEQUAL]
+            optimize(&["<x>", OP_0NOTEQUAL, "<y>", OP_NOT, OP_0NOTEQUAL]),
+            ["<x>", OP_0NOTEQUAL, "<y>", OP_NOT]
         );
         assert_eq!(
             optimize(&[
