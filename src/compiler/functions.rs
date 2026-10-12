@@ -219,7 +219,7 @@ impl Generator {
                     if let Some(source_index) =
                         self.binding_index(&source).filter(|&i| i < baseline)
                     {
-                        self.count_constructor_reads(source_index, 2);
+                        self.count_constructor_reads(source_index, 1);
                         if self.read_cursor.is_none() {
                             if let Some(previous) = self.last_reads.get(&(source, source_index)) {
                                 self.final_reads[*previous] = false;

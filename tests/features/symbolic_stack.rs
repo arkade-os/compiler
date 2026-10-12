@@ -401,7 +401,7 @@ fn single_read_constructor_leaves_are_pushed_at_their_read() {
         ),
         (
             "contract C(int k, pubkey owner) { function spend(signature s) { require(check(s, owner)); require(k > 0); } private function check(signature s, pubkey p) bool { return checkSig(s, p); } }",
-            "<owner> OP_1 OP_PICK OP_1 OP_PICK OP_CHECKSIG OP_VERIFY <k> 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP",
+            "<owner> OP_1 OP_PICK OP_1 OP_ROLL OP_CHECKSIG OP_VERIFY <k> 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP",
         ),
         (
             "struct S { int length; int[2] xs; } contract C(S s) { function spend() { require(s.length == 3); require(s.xs.length == 2); } }",

@@ -612,7 +612,7 @@ mod tests {
             ["<values.0>", "<limit>", "OP_GREATERTHAN"]
         );
         for (placeholders, valid) in [
-            (["<limit>", "<values.1>"], true),
+            (["<values.0>", "<limit>"], true),
             (["<limit>", "<limit>"], false),
             (["<unknown>", "<limit>"], false),
         ] {

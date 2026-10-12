@@ -45,7 +45,7 @@ func TestStructs(t *testing.T) {
 	pushed := map[string]bool{}
 	for _, token := range group.Arkade.ASM {
 		name, ok := strings.CutPrefix(token, "<")
-		if !ok {
+		if !ok || strings.HasPrefix(name, "CONTRACT:") {
 			continue
 		}
 		name = strings.TrimSuffix(name, ">")

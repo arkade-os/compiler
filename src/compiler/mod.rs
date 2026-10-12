@@ -81,7 +81,7 @@ struct Generator {
     functions: Vec<Function>,
     // Constructor leaves pushed at their single read instead of in the prologue.
     inlined: std::collections::HashMap<String, String>,
-    // Emitted reads per constructor slot; runtime-indexed and aliased slots count as two.
+    // Emitted reads per constructor slot; runtime-indexed slots count as two.
     constructor_reads: std::collections::HashMap<String, usize>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<String, usize>,
@@ -246,7 +246,10 @@ impl Generator {
             self.push_temporary(format!("<{placeholder}>"));
             return Ok(());
         };
-        self.count_constructor_reads(index, 1);
+        // An inlined alias source is copied once at the call, however often the helper reads it.
+        if !self.aliases.contains_key(name) {
+            self.count_constructor_reads(index, 1);
+        }
         let depth = self.stack.len() - 1 - index;
         let consume = if let Some(cursor) = self.read_cursor.as_mut() {
             let consume = *self
@@ -298,15 +301,13 @@ impl Generator {
     // ponytail: pins every leaf of the indexed parameter, so unread siblings keep slots;
     // pin only the indexed array's leaves if wide runtime-indexed structs become common.
     fn pin_constructor_slots(&mut self, path: &str) {
-        let root = |name: &str| {
-            name.strip_prefix(INTERNAL_ARRAY_BINDING_PREFIX)
-                .unwrap_or(name)
-                .split(['.', '[', ':'])
-                .next()
-                .unwrap_or_default()
-                .to_string()
-        };
-        let path = root(path);
+        fn root(name: &str) -> &str {
+            let name = name
+                .strip_prefix(INTERNAL_ARRAY_BINDING_PREFIX)
+                .unwrap_or(name);
+            name.split(['.', '[', ':']).next().unwrap_or(name)
+        }
+        let path = root(path).to_string();
         for index in 0..self.stack.len() {
             if matches!(&self.stack[index], StackItem::Binding { name, .. } if root(name) == path) {
                 self.count_constructor_reads(index, 2);
@@ -1181,14 +1182,20 @@ fn covenant_for(
             }
         })?;
     }
-    let mut analysis = Generator::new(
-        &function.parameters,
-        &retained_parameters,
-        structs,
-        &inlined,
-    )?;
-    analysis.functions = functions.to_vec();
-    generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
+    // Without inlined leaves the counting pass already has the emission layout.
+    let analysis = if inlined.is_empty() {
+        counting
+    } else {
+        let mut analysis = Generator::new(
+            &function.parameters,
+            &retained_parameters,
+            structs,
+            &inlined,
+        )?;
+        analysis.functions = functions.to_vec();
+        generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
+        analysis
+    };
     let mut generator = Generator::new(
         &function.parameters,
         &retained_parameters,
