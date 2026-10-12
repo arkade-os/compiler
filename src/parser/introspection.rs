@@ -16,10 +16,8 @@ pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, Strin
         if !is_intent_path(&text) {
             return Err(format!("invalid intent message path '{text}'"));
         }
-        Expression::new(
-            ExprKind::Literal(parse_named_operand(operand.clone())?),
-            operand.as_span().into(),
-        )
+        let span = operand.as_span().into();
+        Expression::new(ExprKind::Literal(parse_named_operand(operand)?), span)
     } else {
         parse_general_expression(operand)?
     };

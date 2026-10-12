@@ -802,7 +802,6 @@ macro_rules! expression_children {
                 | ExprKind::Property(_)
                 | ExprKind::This(_)
                 | ExprKind::TxIntrospection { .. }
-
                 | ExprKind::AssetGroupsLength => vec![],
 
                 ExprKind::FieldAccess { value, .. } => vec![value],

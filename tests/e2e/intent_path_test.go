@@ -18,27 +18,31 @@ contract IntentPath() {
             require(tx.intent.field(path) == expected);
         }
     }
+    function read(bytes path, bytes expected) {
+        require(tx.intent.field(path) == expected);
+    }
 }`), 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
-	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	message := arkade.WithIntentMessage(`{"type":"register","owner":{"name":"alice"}}`)
 	for _, tc := range []struct {
-		name, path, expected string
-		present              int64
-		wantErr              string
+		name, function, path, expected string
+		present                        int64
+		wantErr                        string
 	}{
-		{"top-level field", "type", "register", 1, ""},
-		{"nested field", "owner.name", "alice", 1, ""},
-		{"missing field", "fee", "", 0, ""},
-		{"wrong value", "type", "redeem", 1, "OP_EQUALVERIFY failed"},
-		{"invalid path", "Type", "", 0, "invalid intent message path"},
+		{"top-level field", "spend", "type", "register", 1, ""},
+		{"nested field", "spend", "owner.name", "alice", 1, ""},
+		{"missing field", "spend", "fee", "", 0, ""},
+		{"wrong value", "spend", "type", "redeem", 1, "OP_EQUALVERIFY failed"},
+		{"invalid path", "spend", "Type", "", 0, "invalid intent message path"},
+		{"invalid field path", "read", "Type", "", 0, "invalid intent message path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			group := covenantGroup(t, contract, tc.function)
+			instance := instantiateGroup(t, contract, tc.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
 			values := map[string][]byte{"path": []byte(tc.path), "expected": []byte(tc.expected), "present": scriptInt(t, tc.present)}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
