@@ -31,7 +31,7 @@ Every pull request gets its own build at `https://arkade-os.github.io/compiler/p
 
 ## Compile from JavaScript or TypeScript
 
-The [`@arkade-os/compiler` package](npm/README.md) provides `compile({ entry, files })` and `version()` for Node.js ESM/CommonJS and browser bundles. It includes prebuilt WASM and declarations, selects the runtime loader automatically, and preserves compiler artifacts, source provenance, and warnings. The npm package is ready for local packing; publication is pending organization permissions. See the package README for usage and tarball installation.
+The [`@arkade-os/compiler` package](npm/README.md) provides `compile({ entry, files }, { optimize })`, `symbols({ entry, files })`, and `version()` for Node.js ESM/CommonJS and browsers. It includes prebuilt WASM and declarations, selects the runtime loader automatically, and preserves compiler artifacts, source provenance, and warnings. The playground uses this package. The npm package is ready for local packing; publication is pending organization permissions. See the package README for usage and tarball installation.
 
 ## A tour by example
 
@@ -215,17 +215,17 @@ cargo run -p arkade-bindgen -- --list-targets
 
 The TypeScript SDK reads the artifact directly with `programFromArtifact`; generating bindings is optional.
 
-Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `validate`, and `version`; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string, warnings: string[] }` for the playground.
+Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `symbols`, `validate`, and `version`; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string, warnings: string[] }`. The npm package wraps these bindings for JavaScript consumers, including the playground.
 
 ### Run the playground locally
 
 ```bash
 cargo install wasm-pack
-./playground/build.sh     # regenerates contracts.js from examples/ and builds pkg/ with wasm-pack
+./playground/build.sh     # generates examples and installs packed compiler browser assets
 ./playground/serve.sh     # http://localhost:8080, pass a port to override
 ```
 
-`playground/contracts.js` and `playground/pkg/` are generated and git-ignored. Add a contract to the playground by adding a `.ark` file under `examples/` and registering it in `playground/main.js`.
+Node.js 22.12 or newer is required. The build script installs locked npm development dependencies and packs `@arkade-os/compiler` locally; it needs no npm publishing credentials. `playground/contracts.js` and `playground/pkg/` are generated and git-ignored. Add a contract to the playground by adding a `.ark` file under `examples/` and registering it in `playground/main.js`.
 
 ### Tests
 

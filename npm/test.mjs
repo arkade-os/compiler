@@ -82,6 +82,16 @@ try {
     for (const result of concurrent) assert.deepEqual(normalized(result), normalized(artifact));
     const raw = JSON.parse(require(wasmPath).compile_sources_with_diagnostics(input.entry, JSON.stringify(input.files)));
     assert.deepEqual(normalized(artifact), normalized({ ...JSON.parse(raw.artifact), warnings: raw.warnings }));
+    const unoptimized = await esm.compile(input, { optimize: false });
+    const rawUnoptimized = JSON.parse(require(wasmPath).compile_sources_with_diagnostics(input.entry, JSON.stringify(input.files), false));
+    assert.deepEqual(normalized(unoptimized), normalized({ ...JSON.parse(rawUnoptimized.artifact), warnings: rawUnoptimized.warnings }));
+    assert.equal(unoptimized.compiler.options.optimize, false);
+    assert.notEqual(unoptimized.fingerprint, artifact.fingerprint);
+    const sourceSymbols = await esm.symbols(input);
+    assert.deepEqual(sourceSymbols, JSON.parse(require(wasmPath).symbols(input.entry, JSON.stringify(input.files))));
+    assert(sourceSymbols.symbols.some(symbol => symbol.name === 'Vault' && symbol.kind === 'contract'));
+    assert(sourceSymbols.symbols.some(symbol => symbol.name === 'Policy' && symbol.file === 'shared/policy.ark'));
+    assert(sourceSymbols.members.Fees.some(symbol => symbol.name === 'check' && symbol.type === undefined));
     assert.match(artifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
     assert.equal(artifact.formatVersion, 1);
     assert(artifact.warnings.some(warning => warning.includes("constructor parameter 'unused'")));
@@ -102,8 +112,14 @@ try {
     assert.deepEqual(normalized(await esm.compile(artifact.source)), normalized(artifact));
     for (const bad of [null, {}, Object.assign([], standalone), { entry: 1, files: {} }, { entry: 'main.ark', files: [] }, { entry: 'main.ark', files: { 'main.ark': 1 } }]) {
         await assert.rejects(esm.compile(bad), TypeError);
+        await assert.rejects(esm.symbols(bad), TypeError);
+    }
+    for (const options of [null, true, [], { optimize: 'false' }, { optimize: 0 }]) {
+        await assert.rejects(esm.compile(input, options), TypeError);
     }
     await assert.rejects(esm.compile(invalidSource), /Parse error/);
+    await assert.rejects(esm.symbols(invalidSource), /Parse error/);
+    await assert.rejects(esm.symbols({ entry: 'missing.ark', files: {} }), /not found/);
     await assert.rejects(esm.compile({ ...input, files: { 'contracts/main.ark': input.files['contracts/main.ark'] } }), /policy\.ark.*not found/);
     await assert.rejects(esm.compile({ entry: '../main.ark', files: {} }), /escapes the source root/);
     await assert.rejects(esm.compile({ entry: '/main.ark', files: {} }), /relative \.ark path/);
@@ -116,6 +132,10 @@ try {
     snapshot.entry = 'missing.ark';
     snapshot.files['exit.ark'] = 'invalid';
     assert.equal((await pending).contractName, 'Exit');
+    const options = { optimize: false };
+    const pendingOptions = esm.compile(input, options);
+    options.optimize = true;
+    assert.equal((await pendingOptions).compiler.options.optimize, false);
     run(process.execPath, ['--input-type=module', '-e', `
         import assert from 'node:assert/strict';
         import { compile } from '@arkade-os/compiler';
@@ -127,13 +147,18 @@ try {
         assert.equal((await compile(${JSON.stringify(standalone)})).contractName, 'Exit');
     `]);
 
-    const typecheck = `import { compile, version, type CompileInput, type CompilerArtifact } from '@arkade-os/compiler';
+    const typecheck = `import { compile, symbols, version, type CompileInput, type CompileOptions, type CompilerArtifact, type SourceSymbols } from '@arkade-os/compiler';
 const input: CompileInput = { entry: 'main.ark', files: { 'main.ark': '' } };
 const result: Promise<CompilerArtifact> = compile(input);
+const options: CompileOptions = { optimize: false };
+const detailed: Promise<CompilerArtifact> = compile(input, options);
+const table: Promise<SourceSymbols> = symbols(input);
 const compilerVersion: Promise<string> = version();
-void result; void compilerVersion;
+void result; void detailed; void table; void compilerVersion;
 // @ts-expect-error Source content must be a string.
 compile({ entry: 'main.ark', files: { 'main.ark': 42 } });
+// @ts-expect-error Optimization must be a boolean.
+compile(input, { optimize: 'false' });
 // @ts-expect-error Runtime source does not infer contract names.
 const name: 'Vault' = (await compile(input)).contractName;
 `;
@@ -144,7 +169,7 @@ const name: 'Vault' = (await compile(input)).contractName;
     run(process.execPath, [tsc, '--noEmit', '--strict', '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'bundler', '--customConditions', 'browser', 'consumer.mts']);
 
     writeFileSync(path.join(temporary, 'index.html'), '<!doctype html><html lang="en"><title>Compiler test</title><script type="module" src="/main.js"></script></html>');
-    writeFileSync(path.join(temporary, 'main.js'), "import { compile, version } from '@arkade-os/compiler'; window.compiler = { compile, version };\n");
+    writeFileSync(path.join(temporary, 'main.js'), "import { compile, symbols, version } from '@arkade-os/compiler'; window.compiler = { compile, symbols, version };\n");
     await build({ root: temporary, configFile: false, logLevel: 'warn', base: '/compiler-test/', build: { assetsInlineLimit: 0 } });
     assert(readdirSync(path.join(temporary, 'dist/assets')).some(file => file.endsWith('.wasm')), 'browser bundle missing WASM');
     server = await preview({ root: temporary, configFile: false, logLevel: 'warn', base: '/compiler-test/', preview: { host: '127.0.0.1', port: 0 } });
@@ -156,14 +181,16 @@ const name: 'Vault' = (await compile(input)).contractName;
     await page.waitForFunction(() => window.compiler);
     assert.equal(requests.filter(url => url.endsWith('.wasm')).length, 0, 'browser import initializes WASM eagerly');
     const browserResult = await page.evaluate(async input => {
-        const [compilerVersion, ...artifacts] = await Promise.all([window.compiler.version(), ...Array.from({ length: 12 }, () => window.compiler.compile(input))]);
-        return { compilerVersion, artifacts };
+        const [compilerVersion, sourceSymbols, ...artifacts] = await Promise.all([window.compiler.version(), window.compiler.symbols(input), ...Array.from({ length: 12 }, () => window.compiler.compile(input))]);
+        return { compilerVersion, sourceSymbols, artifacts };
     }, input);
     assert.equal(browserResult.compilerVersion, manifest.version);
+    assert.deepEqual(browserResult.sourceSymbols, sourceSymbols);
     for (const result of browserResult.artifacts) assert.deepEqual(normalized(result), normalized(artifact));
     assert.equal(requests.filter(url => url.endsWith('.wasm')).length, 1, 'concurrent browser initialization fetched WASM more than once');
     assert(requests.every(url => url.startsWith(server.resolvedUrls.local[0])), 'bundle fetched remote compiler assets');
     assert.deepEqual(normalized(await page.evaluate(input => window.compiler.compile(input), standalone)), normalized(exit));
+    assert.deepEqual(normalized(await page.evaluate(input => window.compiler.compile(input, { optimize: false }), input)), normalized(unoptimized));
     const browserError = await page.evaluate(async input => {
         try { await window.compiler.compile(input); } catch (error) { return { name: error.name, message: error.message }; }
     }, invalidSource);
@@ -181,7 +208,33 @@ const name: 'Vault' = (await compile(input)).contractName;
     assert.match(initializationError.message, /fetch/i);
     await failedPage.unroute('**/*.wasm');
     assert.equal((await failedPage.evaluate(input => window.compiler.compile(input), standalone)).contractName, 'Exit');
-    console.log(`Packed @arkade-os/compiler ${manifest.version}: Node ESM/CommonJS, declarations, and Chromium browser bundle passed.`);
+
+    const importMap = readFileSync(path.join(directory, '../playground/index.html'), 'utf8').match(/<script type="importmap">[\s\S]*?<\/script>/);
+    assert(importMap, 'playground compiler import map missing');
+    const nativeUrl = `${server.resolvedUrls.local[0]}pr-previews/pr-1/`;
+    const nativePage = await browser.newPage();
+    await nativePage.route(`${nativeUrl}**`, route => {
+        const file = route.request().url().slice(nativeUrl.length);
+        if (!file) {
+            return route.fulfill({ contentType: 'text/html', body: `<!doctype html>${importMap[0]}<script type="module">import * as compiler from '@arkade-os/compiler'; window.compiler = compiler;</script>` });
+        }
+        assert(file.startsWith('pkg/'), `unexpected native browser asset: ${file}`);
+        return route.fulfill({
+            contentType: file.endsWith('.wasm') ? 'application/wasm' : 'text/javascript',
+            body: readFileSync(path.join(temporary, 'node_modules/@arkade-os/compiler/dist/browser', file.slice(4))),
+        });
+    });
+    await nativePage.goto(nativeUrl);
+    await nativePage.waitForFunction(() => window.compiler);
+    const nativeResult = await nativePage.evaluate(async input => ({
+        artifact: await window.compiler.compile(input, { optimize: false }),
+        symbols: await window.compiler.symbols(input),
+        version: await window.compiler.version(),
+    }), input);
+    assert.deepEqual(normalized(nativeResult.artifact), normalized(unoptimized));
+    assert.deepEqual(nativeResult.symbols, sourceSymbols);
+    assert.equal(nativeResult.version, manifest.version);
+    console.log(`Packed @arkade-os/compiler ${manifest.version}: Node ESM/CommonJS, declarations, browser bundle, and playground import map passed.`);
 } finally {
     await browser?.close();
     await new Promise(resolve => server ? server.httpServer.close(resolve) : resolve());

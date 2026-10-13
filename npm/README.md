@@ -36,11 +36,13 @@ CommonJS consumers can use `const { compile, version } = require("@arkade-os/com
 
 ## API
 
-`compile(input: CompileInput): Promise<CompilerArtifact>` accepts an entry path and an object mapping relative `.ark` paths to source strings. Imports resolve relative to the importing file. The compiler normalizes paths and rejects source-root escapes, absolute paths, and duplicate normalized paths. Input is captured when `compile` is called. Optimizations use the Rust compiler's default of `true`.
+`compile(input: CompileInput, options?: CompileOptions): Promise<CompilerArtifact>` accepts an entry path and an object mapping relative `.ark` paths to source strings. Imports resolve relative to the importing file. The compiler normalizes paths and rejects source-root escapes, absolute paths, and duplicate normalized paths. Input and settings are captured when `compile` is called. Optimizations default to `true`; pass `{ optimize: false }` as the second argument to disable them. The artifact's `compiler.options` records the settings used.
 
 The returned object preserves the compiler's JSON artifact, including constructor inputs, struct layouts, all spend groups and leaves, witness order and injected fields, source provenance, compiler version and settings, format version, timestamp, and fingerprint. Its additional `warnings: string[]` field retains compilation diagnostics; Rust's serialized artifacts omit warnings, and warnings do not participate in the fingerprint. The artifact is the compiler model, not an SDK `Program`. SDK conversion belongs to the separate SDK integration.
 
-`version(): Promise<string>` reports the installed WASM compiler version. Both functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling either function again. Compilation failures reject with an `Error` containing the original compiler diagnostic; initialization errors retain their original cause.
+`symbols(input: CompileInput): Promise<SourceSymbols>` returns parsed declarations, struct layouts, and directly imported members for editor tooling. Each symbol includes its name, kind, optional type, 1-based `[line, column]` position, optional `[startLine, endLine]` scope, and optional imported file path. This parses source without semantic validation, so a library can be the entry file. Missing or invalid imports contribute no imported symbols; an invalid entry file rejects with an `Error`.
+
+`version(): Promise<string>` reports the installed WASM compiler version. All three functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. Compilation and parsing failures reject with an `Error` containing the original compiler diagnostic; initialization errors retain their original cause.
 
 ## Runtime selection
 
@@ -49,6 +51,8 @@ Package exports automatically select the Node loader for Node.js ESM and CommonJ
 Node.js 22.12 or newer is supported. Browser production bundles are tested with Vite and Chromium, including deployment under a URL prefix. Bundlers must preserve and emit the package's `new URL(..., import.meta.url)` WASM asset references; serve `.wasm` files with the `application/wasm` content type. The compiler uses no remote release lookup. Loading a browser bundle's local WASM asset may make an HTTP request to the application's own origin.
 
 Compilation currently runs synchronously inside WASM after initialization; the Promise API does not move compilation off the JavaScript thread. Applications needing background compilation can import this package in a worker. Other runtimes, including Expo, require separate verification.
+
+The static playground consumes the browser assets from a locally packed package through an import map. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it.
 
 ## Development and packing
 

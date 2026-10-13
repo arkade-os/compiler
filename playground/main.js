@@ -1,6 +1,5 @@
 // Arkade Playground - Main Application
-// Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, compile_sources_with_diagnostics, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import { compile, symbols, version } from '@arkade-os/compiler';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -70,7 +69,7 @@ const bundledExamples = Object.fromEntries(
 
 // Global state
 let editor = null;
-let wasmReady = false;
+let compilerReady = false;
 let currentProject = null;
 let currentFile = null;
 let openTabs = [];
@@ -276,10 +275,10 @@ async function shareContract() {
     let encoded;
     try {
         const { entry, files } = compilationSources();
-        const bundle = canonicalShareBundle(JSON.parse(compile_sources(entry, JSON.stringify(files))).source);
+        const bundle = canonicalShareBundle((await compile({ entry, files })).source);
         encoded = await compressCode(JSON.stringify(bundle));
     } catch (error) {
-        showError(error.toString());
+        showError(error.message);
         return;
     }
     const url = `${location.origin}${location.pathname}#project=${encoded}`;
@@ -770,22 +769,19 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-// Initialize WASM module
+// Load the installed compiler version after the editor is ready.
 async function initCompiler() {
     try {
-        await initWasm();
-        initPanicHook();
-        wasmReady = true;
-
-        const ver = version();
+        const ver = await version();
+        compilerReady = true;
         document.getElementById('compiler-version').textContent = `v${ver}`;
         document.getElementById('footer-version').textContent = `v${ver}`;
 
         // Show button as ready to compile
         markDirty();
     } catch (err) {
-        console.error('Failed to initialize WASM:', err);
-        showError('Failed to load compiler. Make sure the WASM module is built.');
+        console.error('Failed to initialize compiler:', err);
+        showError(`Failed to load compiler: ${err.message}`);
     }
 }
 
@@ -1193,7 +1189,7 @@ function initMonaco() {
         // Register completions
         monaco.languages.registerCompletionItemProvider('arkade', {
             triggerCharacters: ['.'],
-            provideCompletionItems: (model, position) => {
+            provideCompletionItems: async (model, position) => {
                 const word = model.getWordUntilPosition(position);
                 const insert = {
                     startLineNumber: position.lineNumber,
@@ -1204,7 +1200,7 @@ function initMonaco() {
                 // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
                 const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
-                const table = symbolTable(position.lineNumber);
+                const table = await symbolTable(position.lineNumber);
                 const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
@@ -1259,7 +1255,7 @@ function initMonaco() {
             }
         });
 
-        // Initialize WASM after editor is ready
+        // Load the compiler version after the editor is ready.
         initCompiler();
     });
 }
@@ -1315,8 +1311,7 @@ function sourceFiles() {
 const lastSymbols = {};
 
 // The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
-function symbolTable(lineNumber) {
-    if (!wasmReady) return null;
+async function symbolTable(lineNumber) {
     let entry;
     try {
         const sources = sourceFiles();
@@ -1324,14 +1319,14 @@ function symbolTable(lineNumber) {
         const lines = sources.files[entry].split('\n');
         lines[lineNumber - 1] = '';
         sources.files[entry] = lines.join('\n');
-        lastSymbols[entry] = JSON.parse(symbols(entry, JSON.stringify(sources.files)));
+        lastSymbols[entry] = await symbols(sources);
     } catch {}
     return lastSymbols[entry] || null;
 }
 
 // Compile the source code
-function doCompile() {
-    if (!wasmReady || !editor) return;
+async function doCompile() {
+    if (!compilerReady || !editor) return;
 
     const source = editor.getValue();
     clearErrors();
@@ -1342,7 +1337,8 @@ function doCompile() {
         entry = sources.entry;
         const files = sources.files;
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact: result, warnings } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        const { warnings, ...artifact } = await compile({ entry, files }, { optimize });
+        const result = JSON.stringify(artifact, null, 2);
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
@@ -1351,7 +1347,7 @@ function doCompile() {
         showWarnings(warnings);
         markCompiled();
     } catch (err) {
-        showError(err.toString(), entry);
+        showError(err.message, entry);
     }
 }
 

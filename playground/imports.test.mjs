@@ -4,11 +4,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, compile_sources, compile_sources_with_diagnostics } from './pkg/arkade_compiler.js';
-
-initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
+import { compile, symbols, version } from '../npm/dist/node/index.js';
 const context = vm.createContext({
-    contracts, compile_sources, compile_sources_with_diagnostics,
+    contracts, compile, symbols, version,
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
@@ -19,9 +17,8 @@ const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 
 const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
-const detailed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ 'main.ark': warningSource }), false));
-const warningArtifact = JSON.parse(detailed.artifact);
-assert(detailed.warnings.some(warning => warning.startsWith('warning[validation]')));
+const { warnings, ...warningArtifact } = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
+assert(warnings.some(warning => warning.startsWith('warning[validation]')));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
@@ -38,9 +35,9 @@ for (const [project, file] of selections) {
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    const output = JSON.parse(compile_sources(input.entry, JSON.stringify(input.files)));
+    const output = await compile(input);
     const bundle = output.source;
-    const rebuilt = JSON.parse(compile_sources(bundle.entry, JSON.stringify(bundle.files)));
+    const rebuilt = await compile(bundle);
     rebuilt.updatedAt = output.updatedAt;
     assert.deepEqual(rebuilt, output);
 }
@@ -53,7 +50,7 @@ for (const [project, file] of selections.filter(([, file]) => file !== 'single_s
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    compile_sources(input.entry, JSON.stringify(input.files));
+    await compile(input);
 }
 
 context.bundle = {
@@ -76,12 +73,12 @@ const sharedInput = vm.runInContext(`
     editor = { getValue: () => projects.shared.files[currentFile] };
     compilationSources();
 `, context);
-assert.equal(JSON.parse(compile_sources(sharedInput.entry, JSON.stringify(sharedInput.files))).contractName, 'Vault');
+assert.equal((await compile(sharedInput)).contractName, 'Vault');
 
 // Compilation reads edits in dependencies, including files that are not selected.
 vm.runInContext(`projects.shared.files['shared/fees.ark'] = projects.shared.files['shared/fees.ark'].replace('VALUE = 7', 'VALUE = 8');`, context);
 const edited = vm.runInContext('compilationSources()', context);
-assert.match(JSON.parse(compile_sources(edited.entry, JSON.stringify(edited.files))).source.files['shared/shared/fees.ark'], /VALUE = 8/);
+assert.match((await compile(edited)).source.files['shared/shared/fees.ark'], /VALUE = 8/);
 
 context.bundle = { entry: '<img>.ark', files: { '<img>.ark': 'contract Invalid() {}' } };
 await vm.runInContext(`compressCode(JSON.stringify(bundle)).then(encoded => { location.hash = '#project=' + encoded; });`, context);
@@ -145,7 +142,7 @@ const resharedInput = vm.runInContext(`
     editor = { getValue: () => projects[currentProject].files[currentFile] };
     compilationSources();
 `, context);
-context.bundle = JSON.parse(compile_sources(resharedInput.entry, JSON.stringify(resharedInput.files))).source;
+context.bundle = (await compile(resharedInput)).source;
 assert.equal(context.bundle.entry, `${imported.project}/escrow/escrow.ark`);
 assert.equal(vm.runInContext('canonicalShareBundle(bundle).entry', context), 'escrow/escrow.ark');
 const fromReshare = vm.runInContext('resolveSharedBundle(bundle)', context);
@@ -173,6 +170,22 @@ assert.equal(vaultAgain.project, 'shared');
 assert.equal(vaultAgain.file, 'vault/main.ark');
 assert.equal(sharedFolderCount(), foldersBefore + 1);
 
+context.completionFiles = {
+    'main.ark': 'import "fees.ark";\ncontract C(int value) {\n function spend(int amount) {\n Fees.\n }\n}',
+    'fees.ark': 'library Fees { function double(int value) int { return value * 2; } }',
+};
+vm.runInContext(`
+    projects.completions = { files: completionFiles };
+    currentProject = 'completions';
+    currentFile = 'main.ark';
+    editor = { getValue: () => projects.completions.files[currentFile] };
+`, context);
+const table = await vm.runInContext('symbolTable(4)', context);
+assert(table.members.Fees.some(symbol => symbol.name === 'double' && symbol.file === 'completions/fees.ark'));
+assert(table.symbols.some(symbol => symbol.name === 'amount' && symbol.type === 'int'));
+vm.runInContext("projects.completions.files['main.ark'] = 'invalid';", context);
+assert.equal(await vm.runInContext('symbolTable(4)', context), table);
+
 const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status'].map(id => {
     const classes = new Set();
     return [id, {
@@ -188,8 +201,8 @@ elements['optimize-toggle'] = { checked: false };
 context.document.getElementById = id => elements[id];
 context.warningSource = warningSource;
 context.renderedArtifact = null;
-vm.runInContext(`
-    wasmReady = true;
+await vm.runInContext(`
+    compilerReady = true;
     editor = { getValue: () => warningSource };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
     displayJson = json => { renderedArtifact = JSON.parse(json); };
@@ -199,14 +212,30 @@ vm.runInContext(`
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
-assert.equal(elements['errors-output'].textContent, detailed.warnings.join('\n'));
+assert(!Object.hasOwn(context.renderedArtifact, 'warnings'));
+assert.equal(elements['errors-output'].textContent, warnings.join('\n'));
 assert(elements['error-count'].classList.contains('warning'));
-assert.equal(elements['error-count'].textContent, String(detailed.warnings.length));
+assert.equal(elements['error-count'].textContent, String(warnings.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
 context.warningSource = 'contract Clean() { function spend() { require(true); } }';
-vm.runInContext('doCompile()', context);
+await vm.runInContext('doCompile()', context);
 assert.equal(elements['errors-output'].textContent, '');
 assert(!elements['error-count'].classList.contains('visible'));
 assert.equal(elements['compile-status'].className, 'compile-status success');
+
+const selected = [];
+const highlighted = [];
+context.document.querySelectorAll = () => [];
+context.warningSource = 'contract Broken() {\n function spend() {\n require(missing);\n }\n}';
+context.editorForError = {
+    getValue: () => context.warningSource,
+    revealLineInCenter: line => highlighted.push(line),
+    setSelection: selection => selected.push(selection),
+};
+vm.runInContext('editor = editorForError;', context);
+await vm.runInContext('doCompile()', context);
+assert.match(elements['errors-output'].textContent, /^main\.ark: /);
+assert.deepEqual(highlighted, [3]);
+assert.equal(selected[0].startLineNumber, 3);
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);
