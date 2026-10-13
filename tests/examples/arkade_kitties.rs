@@ -53,13 +53,11 @@ fn test_breed_function_has_is_fresh() {
     // isFresh emits: <group> OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPASSETID),
-        "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check in breed: {}",
-        asm_str
+        "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check in breed: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_TXID),
-        "Expected {OP_TXID} for isFresh check in breed: {}",
-        asm_str
+        "Expected {OP_TXID} for isFresh check in breed: {asm_str}"
     );
 }
 
@@ -71,8 +69,7 @@ fn test_breed_function_has_metadata_hash() {
 
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPMETADATAHASH),
-        "Expected {OP_INSPECTASSETGROUPMETADATAHASH} in breed: {}",
-        asm_str
+        "Expected {OP_INSPECTASSETGROUPMETADATAHASH} in breed: {asm_str}"
     );
 }
 
@@ -84,8 +81,7 @@ fn test_breed_function_has_control_check() {
 
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPCTRL),
-        "Expected {OP_INSPECTASSETGROUPCTRL} in breed: {}",
-        asm_str
+        "Expected {OP_INSPECTASSETGROUPCTRL} in breed: {asm_str}"
     );
 }
 
@@ -98,13 +94,11 @@ fn test_breed_function_has_delta_checks() {
     // delta uses OP_INSPECTASSETGROUPSUM twice (outputs - inputs) and OP_SUB
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPSUM),
-        "Expected {OP_INSPECTASSETGROUPSUM} for delta in breed: {}",
-        asm_str
+        "Expected {OP_INSPECTASSETGROUPSUM} for delta in breed: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_SUB),
-        "Expected {OP_SUB} for delta calculation in breed: {}",
-        asm_str
+        "Expected {OP_SUB} for delta calculation in breed: {asm_str}"
     );
 }
 
@@ -117,13 +111,11 @@ fn test_transfer_verifies_not_fresh() {
     // Transfer checks isFresh == 0, so it should have the isFresh opcode sequence
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPASSETID),
-        "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check in transfer: {}",
-        asm_str
+        "Expected {OP_INSPECTASSETGROUPASSETID} for isFresh check in transfer: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_TXID),
-        "Expected {OP_TXID} for isFresh check in transfer: {}",
-        asm_str
+        "Expected {OP_TXID} for isFresh check in transfer: {asm_str}"
     );
 }
 
@@ -135,8 +127,7 @@ fn test_transfer_has_control_check() {
 
     assert!(
         asm_str.contains(OP_INSPECTASSETGROUPCTRL),
-        "Expected {OP_INSPECTASSETGROUPCTRL} in transfer: {}",
-        asm_str
+        "Expected {OP_INSPECTASSETGROUPCTRL} in transfer: {asm_str}"
     );
 }
 
@@ -177,7 +168,6 @@ fn test_breed_has_asset_lookups() {
     // Breed verifies outputs contain all assets
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETLOOKUP),
-        "Expected {OP_INSPECTOUTASSETLOOKUP} in breed for output verification: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTASSETLOOKUP} in breed for output verification: {asm_str}"
     );
 }

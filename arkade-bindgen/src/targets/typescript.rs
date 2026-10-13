@@ -108,7 +108,7 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
                 if i == 0 {
                     s.to_string()
                 } else {
-                    format!("type {}", s)
+                    format!("type {s}")
                 }
             })
             .collect::<Vec<_>>()
@@ -122,10 +122,7 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
             out.push_str(&format!("\nconst artifact = {} as const;\n", json.trim()));
         }
     } else {
-        out.push_str(&format!(
-            "import artifact from \"./{}.json\";\n",
-            snake_name
-        ));
+        out.push_str(&format!("import artifact from \"./{snake_name}.json\";\n"));
     }
     out.push('\n');
 
@@ -166,7 +163,7 @@ fn generate_typescript(ir: &ContractIR, options: &CodegenOptions) -> String {
     // Per-group spend methods: an object keyed by leaf name.
     for group in &ir.groups {
         let method_name = to_camel_case(&group.name);
-        out.push_str(&format!("\n  {} = {{\n", method_name));
+        out.push_str(&format!("\n  {method_name} = {{\n"));
         for leaf in &group.leaves {
             let iface = witness_iface_name(ir, group, leaf);
             out.push_str(&format!(
@@ -192,7 +189,7 @@ fn emit_witness_interface(out: &mut String, ir: &ContractIR, group: &GroupIR, le
         "/** Witness for {}.{} (leaf: {}) */\n",
         ir.name, group.name, leaf.name,
     ));
-    out.push_str(&format!("export interface {} {{\n", iface_name));
+    out.push_str(&format!("export interface {iface_name} {{\n"));
 
     for field in leaf.user_fields() {
         out.push_str(&format!(

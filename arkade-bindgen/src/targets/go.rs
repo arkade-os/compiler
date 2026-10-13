@@ -63,13 +63,13 @@ fn value_expr(field: &Field, prefix: &str) -> String {
     match field.encoding {
         Encoding::ScriptNum => {
             if field.ark_type == "bool" {
-                format!("ark.EncodeBool({}.{})", prefix, go_name)
+                format!("ark.EncodeBool({prefix}.{go_name})")
             } else {
-                format!("ark.EncodeScriptNum({}.{})", prefix, go_name)
+                format!("ark.EncodeScriptNum({prefix}.{go_name})")
             }
         }
-        _ if is_fixed_array(&field.encoding) => format!("{}.{}[:]", prefix, go_name),
-        _ => format!("{}.{}", prefix, go_name),
+        _ if is_fixed_array(&field.encoding) => format!("{prefix}.{go_name}[:]"),
+        _ => format!("{prefix}.{go_name}"),
     }
 }
 
@@ -160,8 +160,7 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
         ir.name, ir.name, ir.name,
     ));
     out.push_str(&format!(
-        "\tc, err := ark.NewContract({}Artifact, ark.ConstructorArgs{{\n",
-        camel_name,
+        "\tc, err := ark.NewContract({camel_name}Artifact, ark.ConstructorArgs{{\n",
     ));
     for field in &ir.constructor_fields {
         out.push_str(&format!(
@@ -191,15 +190,13 @@ fn generate_go(ir: &ContractIR, options: &CodegenOptions) -> String {
         if let Some(ref json) = options.artifact_json {
             let escaped = escape_go_string(json.trim());
             out.push_str(&format!(
-                "var {}Artifact = []byte(\"{}\")\n",
-                camel_name, escaped,
+                "var {camel_name}Artifact = []byte(\"{escaped}\")\n",
             ));
         }
     } else {
         let snake_name = to_snake_case(&ir.name);
         out.push_str(&format!(
-            "//go:embed {}.json\nvar {}Artifact []byte\n",
-            snake_name, camel_name,
+            "//go:embed {snake_name}.json\nvar {camel_name}Artifact []byte\n",
         ));
     }
 
@@ -213,7 +210,7 @@ fn emit_witness_struct(out: &mut String, ir: &ContractIR, group: &GroupIR, leaf:
         "// {} holds witness data for {}.{} (leaf: {}).\n",
         struct_name, ir.name, group.name, leaf.name,
     ));
-    out.push_str(&format!("type {} struct {{\n", struct_name));
+    out.push_str(&format!("type {struct_name} struct {{\n"));
     for field in leaf.user_fields() {
         out.push_str(&format!(
             "\t{} {} // {} ({})\n",

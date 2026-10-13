@@ -143,8 +143,7 @@ fn validate_asset_id(
         match crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into())) {
             Ok(v) if v.parse::<u16>().is_ok() => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx {} is out of range 0..65535",
-                fname, v
+                "function '{fname}': asset id gidx {v} is out of range 0..65535"
             ))),
             Err(error) => issues.push(ValidationIssue::error(format!(
                 "function '{}': asset id gidx '{}': {}",

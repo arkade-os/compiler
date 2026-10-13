@@ -30,8 +30,7 @@ fn test_asset_count_parsing() {
     let asm_str = crate::common::arkade_asm(&output, "checkAssetCount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETCOUNT),
-        "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {asm_str}"
     );
 }
 
@@ -59,14 +58,12 @@ fn test_asset_at_amount_parsing() {
     let asm_str = crate::common::arkade_asm(&output, "checkAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETAT),
-        "Expected {OP_INSPECTOUTASSETAT} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTASSETAT} in ASM: {asm_str}"
     );
     // Should have OP_NIP to extract amount (drops txid and gidx)
     assert!(
         asm_str.contains(OP_NIP),
-        "Expected {OP_NIP} for amount extraction in ASM: {}",
-        asm_str
+        "Expected {OP_NIP} for amount extraction in ASM: {asm_str}"
     );
 }
 
@@ -114,8 +111,7 @@ fn test_input_asset_count() {
     let asm_str = crate::common::arkade_asm(&output, "checkInputAssets");
     assert!(
         asm_str.contains(OP_INSPECTINASSETCOUNT),
-        "Expected {OP_INSPECTINASSETCOUNT} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTINASSETCOUNT} in ASM: {asm_str}"
     );
 }
 
@@ -143,8 +139,7 @@ fn test_input_asset_at() {
     let asm_str = crate::common::arkade_asm(&output, "checkInputAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTINASSETAT),
-        "Expected {OP_INSPECTINASSETAT} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTINASSETAT} in ASM: {asm_str}"
     );
 }
 
@@ -179,7 +174,6 @@ fn test_asset_count_with_variable_index() {
     );
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETCOUNT),
-        "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {}",
-        asm_str
+        "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {asm_str}"
     );
 }

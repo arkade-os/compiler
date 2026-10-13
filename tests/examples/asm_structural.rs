@@ -31,16 +31,15 @@ fn local_check_asm_structure(asm: &[String]) -> Vec<String> {
     let mut depth: i32 = 0;
     for (i, tok) in asm.iter().enumerate() {
         if tok.is_empty() {
-            errors.push(format!("empty instruction at index {}", i));
+            errors.push(format!("empty instruction at index {i}"));
             continue;
         }
         if tok.starts_with('<') {
             if tok == "<>" {
-                errors.push(format!("empty placeholder '<>' at index {}", i));
+                errors.push(format!("empty placeholder '<>' at index {i}"));
             } else if !tok.ends_with('>') {
                 errors.push(format!(
-                    "malformed placeholder (missing '>') at index {}: {}",
-                    i, tok
+                    "malformed placeholder (missing '>') at index {i}: {tok}"
                 ));
             }
         }
@@ -48,25 +47,19 @@ fn local_check_asm_structure(asm: &[String]) -> Vec<String> {
             "OP_IF" | "OP_NOTIF" => depth += 1,
             "OP_ENDIF" => {
                 if depth <= 0 {
-                    errors.push(format!(
-                        "stray OP_ENDIF at index {} (depth was {})",
-                        i, depth
-                    ));
+                    errors.push(format!("stray OP_ENDIF at index {i} (depth was {depth})"));
                 }
                 depth -= 1;
             }
             "OP_ELSE" if depth <= 0 => {
-                errors.push(format!(
-                    "stray OP_ELSE at index {} without matching OP_IF",
-                    i
-                ));
+                errors.push(format!("stray OP_ELSE at index {i} without matching OP_IF"));
             }
             "OP_ELSE" => {}
             _ => {}
         }
     }
     if depth > 0 {
-        errors.push(format!("unclosed OP_IF: missing {} OP_ENDIF(s)", depth));
+        errors.push(format!("unclosed OP_IF: missing {depth} OP_ENDIF(s)"));
     }
     errors
 }
@@ -98,8 +91,7 @@ fn local_check_placeholder_consistency(
         }
         if !witness_names.contains(&inner) && !ctor_names.contains(&inner) {
             warnings.push(format!(
-                "placeholder <{}> cannot be constructed from witness or constructor inputs",
-                inner
+                "placeholder <{inner}> cannot be constructed from witness or constructor inputs"
             ));
         }
     }
@@ -137,7 +129,7 @@ fn all_examples_have_balanced_if_else_endif() {
     for entry in entries {
         let path = entry.path();
         let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {filename}: {e}"));
 
         for group in &output.functions {
             if let Some(arkade) = &group.arkade {
@@ -173,7 +165,7 @@ fn all_examples_have_no_empty_asm_instructions() {
     for entry in entries {
         let path = entry.path();
         let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {filename}: {e}"));
 
         for group in &output.functions {
             if let Some(arkade) = &group.arkade {
@@ -220,7 +212,7 @@ fn all_examples_have_well_formed_placeholders() {
     for entry in entries {
         let path = entry.path();
         let filename = path.file_name().unwrap().to_string_lossy().into_owned();
-        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {filename}: {e}"));
 
         for group in &output.functions {
             if let Some(arkade) = &group.arkade {
@@ -264,7 +256,7 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
     let simple = ["single_sig/single_sig.ark", "htlc/htlc.ark"];
     for filename in &simple {
         let path = examples_dir().join(filename);
-        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {}: {}", filename, e));
+        let output = compile_file(&path).unwrap_or_else(|e| panic!("compile {filename}: {e}"));
 
         let ctor_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
 
@@ -331,8 +323,7 @@ fn local_variable_placeholders_are_resolved() {
                 .collect();
             assert!(
                 unresolved.is_empty(),
-                "arkade_kitties breed has unresolved local placeholders: {:?}",
-                unresolved
+                "arkade_kitties breed has unresolved local placeholders: {unresolved:?}"
             );
         }
     }
@@ -353,7 +344,7 @@ fn balanced_if_endif_is_clean() {
         "OP_ENDIF".to_string(),
     ];
     let errors = local_check_asm_structure(&asm);
-    assert!(errors.is_empty(), "balanced IF/ELSE/ENDIF: {:?}", errors);
+    assert!(errors.is_empty(), "balanced IF/ELSE/ENDIF: {errors:?}");
 }
 
 #[test]
@@ -371,8 +362,7 @@ fn unbalanced_if_without_endif_is_error() {
         errors
             .iter()
             .any(|e| e.contains("unclosed") || e.contains("missing")),
-        "error message must mention unclosed branch; got: {:?}",
-        errors
+        "error message must mention unclosed branch; got: {errors:?}"
     );
 }
 
@@ -456,8 +446,7 @@ fn placeholder_in_witness_schema_is_clean() {
     let warnings = local_check_placeholder_consistency(&asm, &witness_names, &[]);
     assert!(
         warnings.is_empty(),
-        "known witness placeholder must produce no issues: {:?}",
-        warnings
+        "known witness placeholder must produce no issues: {warnings:?}"
     );
 }
 
@@ -484,8 +473,7 @@ fn placeholder_in_constructor_inputs_is_clean() {
     let warnings = local_check_placeholder_consistency(&asm, &witness_names, &ctor_names);
     assert!(
         warnings.is_empty(),
-        "constructor-bound placeholder must produce no issues: {:?}",
-        warnings
+        "constructor-bound placeholder must produce no issues: {warnings:?}"
     );
 }
 

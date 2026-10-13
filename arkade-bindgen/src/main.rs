@@ -41,7 +41,7 @@ fn main() {
     if cli.list_targets {
         println!("Available targets:");
         for target in AVAILABLE_TARGETS {
-            println!("  {}", target);
+            println!("  {target}");
         }
         return;
     }
@@ -59,10 +59,7 @@ fn main() {
         .iter()
         .map(|name| {
             targets::get_target(name).unwrap_or_else(|| {
-                eprintln!(
-                    "Error: unknown target '{}'. Use --list-targets to see available.",
-                    name
-                );
+                eprintln!("Error: unknown target '{name}'. Use --list-targets to see available.");
                 std::process::exit(1);
             })
         })
@@ -103,7 +100,7 @@ fn main() {
         }
     }
 
-    println!("Generated {} file(s)", generated_count);
+    println!("Generated {generated_count} file(s)");
 }
 
 fn process_artifact(

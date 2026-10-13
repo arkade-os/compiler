@@ -24,21 +24,19 @@ fn examples_dir() -> PathBuf {
 
 fn compile_example(filename: &str) -> arkade_compiler::models::ContractJson {
     let path = examples_dir().join(filename);
-    compile_file(path).unwrap_or_else(|e| panic!("failed to compile {}: {}", filename, e))
+    compile_file(path).unwrap_or_else(|e| panic!("failed to compile {filename}: {e}"))
 }
 
 /// Assert every structural invariant on a compiled `ContractJson`.
 fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, filename: &str) {
     assert!(
         !output.name.is_empty(),
-        "{}: contractName must not be empty",
-        filename
+        "{filename}: contractName must not be empty"
     );
 
     assert!(
         !output.functions.is_empty(),
-        "{}: functions (spend groups) array must not be empty",
-        filename
+        "{filename}: functions (spend groups) array must not be empty"
     );
 
     for group in &output.functions {
@@ -83,9 +81,7 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
         .collect();
     assert!(
         invariant_errors.is_empty(),
-        "{}: compiler self-check found output invariant errors: {:?}",
-        filename,
-        invariant_errors
+        "{filename}: compiler self-check found output invariant errors: {invariant_errors:?}"
     );
 }
 
@@ -293,13 +289,12 @@ fn all_examples_compile_and_satisfy_invariants() {
         let rel = path.strip_prefix(&dir).unwrap_or(path);
         let label = rel.display().to_string();
         let output =
-            compile_file(path).unwrap_or_else(|e| panic!("failed to compile {}: {}", label, e));
+            compile_file(path).unwrap_or_else(|e| panic!("failed to compile {label}: {e}"));
         assert_output_invariants(&output, &label);
     }
 
     assert!(
         count >= 14,
-        "expected at least 14 example contracts, found {}",
-        count
+        "expected at least 14 example contracts, found {count}"
     );
 }

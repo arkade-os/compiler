@@ -47,49 +47,41 @@ fn test_htlc_contract() {
         claim_cov.contains(&format!(
             "{OP_INSPECTOUTPUTVALUE} 0 {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
-        "claim covenant should enforce output >= input value: {}",
-        claim_cov
+        "claim covenant should enforce output >= input value: {claim_cov}"
     );
 
     // Leaf: hash-preimage check + server/emulator multisig
     let claim_leaf = crate::common::leaf_asm(&output, "claim", "claim");
     assert!(
         claim_leaf.contains(OP_HASH160),
-        "claim leaf should hash the preimage: {}",
-        claim_leaf
+        "claim leaf should hash the preimage: {claim_leaf}"
     );
     assert!(
         claim_leaf.contains("<SERVER_KEY>"),
-        "claim leaf should require server cosig: {}",
-        claim_leaf
+        "claim leaf should require server cosig: {claim_leaf}"
     );
     assert!(
         claim_leaf.contains(OP_CHECKSIGVERIFY),
-        "claim leaf should have CHECKSIGVERIFY: {}",
-        claim_leaf
+        "claim leaf should have CHECKSIGVERIFY: {claim_leaf}"
     );
     assert!(
         claim_leaf.contains(OP_CHECKSIG),
-        "claim leaf should have final CHECKSIG: {}",
-        claim_leaf
+        "claim leaf should have final CHECKSIG: {claim_leaf}"
     );
 
     // Witness: preimage + serverSig + emulatorSig
     let claim_witnesses = crate::common::witness_names(&output, "claim", "claim");
     assert!(
         claim_witnesses.contains(&"preimage".to_string()),
-        "claim leaf should require preimage: {:?}",
-        claim_witnesses
+        "claim leaf should require preimage: {claim_witnesses:?}"
     );
     assert!(
         claim_witnesses.contains(&"serverSig".to_string()),
-        "claim leaf should require serverSig: {:?}",
-        claim_witnesses
+        "claim leaf should require serverSig: {claim_witnesses:?}"
     );
     assert!(
         claim_witnesses.contains(&"emulatorSig".to_string()),
-        "claim leaf should require emulatorSig: {:?}",
-        claim_witnesses
+        "claim leaf should require emulatorSig: {claim_witnesses:?}"
     );
 
     // --- refund group ------------------------------------------------------
@@ -99,39 +91,33 @@ fn test_htlc_contract() {
         refund_cov.contains(&format!(
             "{OP_INSPECTOUTPUTVALUE} 0 {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
-        "refund covenant should enforce output >= input value: {}",
-        refund_cov
+        "refund covenant should enforce output >= input value: {refund_cov}"
     );
 
     // Leaf: absolute timelock (CLTV) + server/emulator multisig
     let refund_leaf = crate::common::leaf_asm(&output, "refund", "refund");
     assert!(
         refund_leaf.contains("<refundTime>"),
-        "refund leaf should push refundTime: {}",
-        refund_leaf
+        "refund leaf should push refundTime: {refund_leaf}"
     );
     assert!(
         refund_leaf.contains(OP_CHECKLOCKTIMEVERIFY),
-        "refund leaf should enforce timelock: {}",
-        refund_leaf
+        "refund leaf should enforce timelock: {refund_leaf}"
     );
     assert!(
         refund_leaf.contains("<SERVER_KEY>"),
-        "refund leaf should require server cosig: {}",
-        refund_leaf
+        "refund leaf should require server cosig: {refund_leaf}"
     );
 
     // Witness: serverSig + emulatorSig
     let refund_witnesses = crate::common::witness_names(&output, "refund", "refund");
     assert!(
         refund_witnesses.contains(&"serverSig".to_string()),
-        "refund leaf should require serverSig: {:?}",
-        refund_witnesses
+        "refund leaf should require serverSig: {refund_witnesses:?}"
     );
     assert!(
         refund_witnesses.contains(&"emulatorSig".to_string()),
-        "refund leaf should require emulatorSig: {:?}",
-        refund_witnesses
+        "refund leaf should require emulatorSig: {refund_witnesses:?}"
     );
 
     // --- unilateral group --------------------------------------------------
@@ -145,23 +131,19 @@ fn test_htlc_contract() {
     let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_leaf.contains("<SERVER_EXIT_DELAY>"),
-        "unilateral leaf should push the server exit delay: {}",
-        unilateral_leaf
+        "unilateral leaf should push the server exit delay: {unilateral_leaf}"
     );
     assert!(
         unilateral_leaf.contains(OP_CHECKSEQUENCEVERIFY),
-        "unilateral leaf should have CSV: {}",
-        unilateral_leaf
+        "unilateral leaf should have CSV: {unilateral_leaf}"
     );
     assert!(
         unilateral_leaf.contains("<sender>"),
-        "unilateral leaf should check sender key: {}",
-        unilateral_leaf
+        "unilateral leaf should check sender key: {unilateral_leaf}"
     );
     assert!(
         unilateral_leaf.contains(OP_CHECKSIG),
-        "unilateral leaf should have CHECKSIG: {}",
-        unilateral_leaf
+        "unilateral leaf should have CHECKSIG: {unilateral_leaf}"
     );
 }
 

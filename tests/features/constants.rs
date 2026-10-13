@@ -257,6 +257,7 @@ fn reserved_names_cannot_be_constants() {
         "emulator",
         "serverExitDelay",
         "SERVER_KEY",
+        "SERVER_EXIT_DELAY",
     ] {
         let source = format!(
             "contract Vault() {{ const int {name} = 10; function spend() {{ require(true); }} }}"

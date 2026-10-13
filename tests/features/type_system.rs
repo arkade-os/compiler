@@ -17,7 +17,7 @@ use arkade_compiler::compile;
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn compile_ok(source: &str) -> arkade_compiler::models::ContractJson {
-    compile(source).unwrap_or_else(|e| panic!("unexpected compile error: {}", e))
+    compile(source).unwrap_or_else(|e| panic!("unexpected compile error: {e}"))
 }
 
 fn compile_error(source: &str) -> String {

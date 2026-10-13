@@ -62,10 +62,10 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         let Constant {
             name, const_type, ..
         } = constant;
-        if matches!(
-            name.as_str(),
-            "true" | "false" | "server" | "emulator" | "serverExitDelay" | "SERVER_KEY"
-        ) {
+        if matches!(name.as_str(), "true" | "false")
+            || crate::models::RESERVED_NAMES.contains(&name.as_str())
+            || crate::models::RESERVED_PLACEHOLDERS.contains(&name.as_str())
+        {
             return Err(format!("constant name '{name}' is reserved"));
         }
         if declarations.contains_key(name) {

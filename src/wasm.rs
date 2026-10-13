@@ -23,7 +23,7 @@ pub fn init() {
 pub fn compile(source: &str) -> Result<String, String> {
     match crate::compiler::compile(source) {
         Ok(contract_json) => serde_json::to_string_pretty(&contract_json)
-            .map_err(|e| format!("Serialization error: {}", e)),
+            .map_err(|e| format!("Serialization error: {e}")),
         Err(e) => Err(e),
     }
 }

@@ -153,8 +153,7 @@ fn test_sha256_initialize() {
     let asm_str = crate::common::arkade_asm(&output, "initHash");
     assert!(
         asm_str.contains(OP_SHA256INITIALIZE),
-        "Expected {OP_SHA256INITIALIZE} in ASM: {}",
-        asm_str
+        "Expected {OP_SHA256INITIALIZE} in ASM: {asm_str}"
     );
 }
 
@@ -181,8 +180,7 @@ fn test_sha256_update() {
     let asm_str = crate::common::arkade_asm(&output, "updateHash");
     assert!(
         asm_str.contains(OP_SHA256UPDATE),
-        "Expected {OP_SHA256UPDATE} in ASM: {}",
-        asm_str
+        "Expected {OP_SHA256UPDATE} in ASM: {asm_str}"
     );
 }
 
@@ -209,8 +207,7 @@ fn test_sha256_finalize() {
     let asm_str = crate::common::arkade_asm(&output, "finalizeHash");
     assert!(
         asm_str.contains(OP_SHA256FINALIZE),
-        "Expected {OP_SHA256FINALIZE} in ASM: {}",
-        asm_str
+        "Expected {OP_SHA256FINALIZE} in ASM: {asm_str}"
     );
 }
 
@@ -787,18 +784,15 @@ fn test_streaming_hash_full_workflow() {
     let asm_str = crate::common::arkade_asm(&output, "computeHash");
     assert!(
         asm_str.contains(OP_SHA256INITIALIZE),
-        "Expected {OP_SHA256INITIALIZE} in ASM: {}",
-        asm_str
+        "Expected {OP_SHA256INITIALIZE} in ASM: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_SHA256UPDATE),
-        "Expected {OP_SHA256UPDATE} in ASM: {}",
-        asm_str
+        "Expected {OP_SHA256UPDATE} in ASM: {asm_str}"
     );
     assert!(
         asm_str.contains(OP_SHA256FINALIZE),
-        "Expected {OP_SHA256FINALIZE} in ASM: {}",
-        asm_str
+        "Expected {OP_SHA256FINALIZE} in ASM: {asm_str}"
     );
 }
 

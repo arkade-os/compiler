@@ -25,8 +25,7 @@ fn test_fee_adapter_contract() {
 
     assert!(
         param_names.contains(&"paymentAssetIdTxid"),
-        "missing explicit paymentAssetIdTxid, got: {:?}",
-        param_names
+        "missing explicit paymentAssetIdTxid, got: {param_names:?}"
     );
     assert!(
         param_names.contains(&"paymentAssetIdGidx"),
@@ -50,32 +49,27 @@ fn test_fee_adapter_contract() {
     // fee >= minFee comparison
     assert!(
         execute_asm.contains(OP_GREATERTHANOREQUAL),
-        "missing {OP_GREATERTHANOREQUAL} (fee >= minFee) in execute: {}",
-        execute_asm
+        "missing {OP_GREATERTHANOREQUAL} (fee >= minFee) in execute: {execute_asm}"
     );
 
     // Asset lookup opcodes for payment asset verification
     assert!(
         execute_asm.contains(OP_INSPECTINASSETLOOKUP),
-        "missing {OP_INSPECTINASSETLOOKUP} in execute: {}",
-        execute_asm
+        "missing {OP_INSPECTINASSETLOOKUP} in execute: {execute_asm}"
     );
     assert!(
         execute_asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "missing {OP_INSPECTOUTASSETLOOKUP} in execute: {}",
-        execute_asm
+        "missing {OP_INSPECTOUTASSETLOOKUP} in execute: {execute_asm}"
     );
 
     // Lookups assert presence by consuming the opcode success flag with OP_VERIFY
     assert!(
         execute_asm.contains(&format!("{OP_INSPECTINASSETLOOKUP} {OP_VERIFY}")),
-        "input lookup must be followed by OP_VERIFY flag-consume: {}",
-        execute_asm
+        "input lookup must be followed by OP_VERIFY flag-consume: {execute_asm}"
     );
     assert!(
         execute_asm.contains(&format!("{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY}")),
-        "output lookup must be followed by OP_VERIFY flag-consume: {}",
-        execute_asm
+        "output lookup must be followed by OP_VERIFY flag-consume: {execute_asm}"
     );
 
     // Both lookup amounts must be positive.
@@ -83,30 +77,26 @@ fn test_fee_adapter_contract() {
         execute_asm.contains(&format!(
             "{OP_INSPECTINASSETLOOKUP} {OP_VERIFY} 0 {OP_GREATERTHAN}"
         )),
-        "input amount must be compared with zero: {}",
-        execute_asm
+        "input amount must be compared with zero: {execute_asm}"
     );
     assert!(
         execute_asm.contains(&format!(
             "{OP_INSPECTOUTASSETLOOKUP} {OP_VERIFY} 0 {OP_GREATERTHAN}"
         )),
-        "output amount must be compared with zero: {}",
-        execute_asm
+        "output amount must be compared with zero: {execute_asm}"
     );
 
     // Sender signature check
     assert!(
         execute_asm.contains(OP_CHECKSIG),
-        "missing {OP_CHECKSIG} in execute: {}",
-        execute_asm
+        "missing {OP_CHECKSIG} in execute: {execute_asm}"
     );
 
     // execute leaf carries server + emulator cosig
     let execute_leaf = crate::common::leaf_asm(&output, "execute", "execute");
     assert!(
         execute_leaf.contains("<SERVER_KEY>"),
-        "execute leaf should have SERVER_KEY: {}",
-        execute_leaf
+        "execute leaf should have SERVER_KEY: {execute_leaf}"
     );
 
     // Verify adjust function
@@ -120,23 +110,19 @@ fn test_fee_adapter_contract() {
 
     assert!(
         unilateral_asm.contains(OP_CHECKSIG),
-        "missing {OP_CHECKSIG} in unilateral exit: {}",
-        unilateral_asm
+        "missing {OP_CHECKSIG} in unilateral exit: {unilateral_asm}"
     );
     assert!(
         unilateral_asm.contains(OP_CHECKSEQUENCEVERIFY),
-        "missing CSV exit timelock in unilateral leaf: {}",
-        unilateral_asm
+        "missing CSV exit timelock in unilateral leaf: {unilateral_asm}"
     );
     assert!(
         !unilateral_asm.contains(OP_INSPECTINASSETLOOKUP),
-        "exit leaf should not have introspection: {}",
-        unilateral_asm
+        "exit leaf should not have introspection: {unilateral_asm}"
     );
     assert!(
         !unilateral_asm.contains(OP_INSPECTOUTASSETLOOKUP),
-        "exit leaf should not have introspection: {}",
-        unilateral_asm
+        "exit leaf should not have introspection: {unilateral_asm}"
     );
 }
 

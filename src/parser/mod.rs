@@ -413,8 +413,7 @@ fn parse_statement(
                 Some(expr) => expr,
                 None => {
                     return Err(format!(
-                        "Parse error: Invalid arguments to function {}",
-                        function_name
+                        "Parse error: Invalid arguments to function {function_name}"
                     ))
                 }
             };

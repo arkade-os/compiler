@@ -72,8 +72,8 @@ fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Box<dyn std::e
 }
 
 fn load_example(name: &str) -> String {
-    let path = format!("examples/layerzero/{}.ark", name);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path, e))
+    let path = format!("examples/layerzero/{name}.ark");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }
 
 #[test]
@@ -131,9 +131,7 @@ fn test_endpoint_receive_verifies_both_dvn_signatures() {
 
     assert!(
         sig_count >= 2,
-        "endpoint.receive() must verify both DVN signatures via {}; found {} occurrences",
-        OP_CHECKSIGFROMSTACK,
-        sig_count
+        "endpoint.receive() must verify both DVN signatures via {OP_CHECKSIGFROMSTACK}; found {sig_count} occurrences"
     );
 }
 
@@ -149,8 +147,7 @@ fn test_endpoint_receive_uses_packet_introspection() {
     for op in [OP_INSPECTPACKET, OP_SUBSTR, OP_SHA256] {
         assert!(
             receive.iter().any(|s| s == op),
-            "endpoint.receive() must use {} for native packet enforcement",
-            op
+            "endpoint.receive() must use {op} for native packet enforcement"
         );
     }
 }
@@ -166,22 +163,19 @@ fn test_endpoint_receive_emits_receive_marker_output() {
         .any(|s| s.contains("CONTRACT:ReceiveMarker("));
     assert!(
         has_receive_marker,
-        "endpoint.receive() must pin output[1] to the canonical ReceiveMarker pkScript: {:?}",
-        receive
+        "endpoint.receive() must pin output[1] to the canonical ReceiveMarker pkScript: {receive:?}"
     );
 
     assert!(
         has_self_continuation(receive),
         "endpoint.receive() must continue Endpoint state via the recursive \
-         covenant (output pkScript == current input pkScript): {:?}",
-        receive
+         covenant (output pkScript == current input pkScript): {receive:?}"
     );
 
     let has_asset_lookup = receive.iter().any(|s| s.contains(OP_INSPECTOUTASSETLOOKUP));
     assert!(
         has_asset_lookup,
-        "endpoint.receive() must check output asset balances via {}",
-        OP_INSPECTOUTASSETLOOKUP
+        "endpoint.receive() must check output asset balances via {OP_INSPECTOUTASSETLOOKUP}"
     );
 }
 
@@ -201,8 +195,7 @@ fn test_endpoint_send_burns_send_marker() {
     let has_find = send.iter().any(|s| s.contains(OP_FINDASSETGROUPBYASSETID));
     assert!(
         has_find,
-        "endpoint.send() must locate OAppID asset group via {}",
-        OP_FINDASSETGROUPBYASSETID
+        "endpoint.send() must locate OAppID asset group via {OP_FINDASSETGROUPBYASSETID}"
     );
 }
 
@@ -241,8 +234,7 @@ fn test_oapp_receive_consumes_endpoint_marker_and_mints_usdt0() {
     // to read the LzReceivePacket from the marker input.
     assert!(
         receive.iter().any(|s| s == OP_INSPECTINPUTPACKET),
-        "oapp.receive() must read the LzReceive packet via {}",
-        OP_INSPECTINPUTPACKET
+        "oapp.receive() must read the LzReceive packet via {OP_INSPECTINPUTPACKET}"
     );
 
     // The recipient output's scriptPubKey is pinned to the credit message
@@ -272,15 +264,11 @@ fn test_marker_contracts_use_input_arkade_script_hash() {
         let consume = covenant(&output, "consume");
         assert!(
             consume.iter().any(|s| s == OP_INSPECTINPUTARKADESCRIPTHASH),
-            "{}.consume() must check the consumer's Arkade-script hash via {}",
-            name,
-            OP_INSPECTINPUTARKADESCRIPTHASH
+            "{name}.consume() must check the consumer's Arkade-script hash via {OP_INSPECTINPUTARKADESCRIPTHASH}"
         );
         assert!(
             consume.iter().any(|s| s == OP_PUSHCURRENTINPUTINDEX),
-            "{}.consume() must pin its own input position via {}",
-            name,
-            OP_PUSHCURRENTINPUTINDEX
+            "{name}.consume() must pin its own input position via {OP_PUSHCURRENTINPUTINDEX}"
         );
     }
 }
@@ -389,8 +377,7 @@ fn test_layerzero_contracts_continue_via_taproot_introspection() {
         });
         assert!(
             any_has_inspect,
-            "{} must continue state via {}",
-            name, OP_INSPECTOUTPUTSCRIPTPUBKEY
+            "{name} must continue state via {OP_INSPECTOUTPUTSCRIPTPUBKEY}"
         );
     }
 }

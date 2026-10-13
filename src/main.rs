@@ -62,14 +62,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         Ok(json) => json,
         Err(err) => {
-            eprintln!("Compilation error: {}", err);
+            eprintln!("Compilation error: {err}");
             return Err(err);
         }
     };
 
     // Print any type-check warnings to stderr
     for w in &output.warnings {
-        eprintln!("{}", w);
+        eprintln!("{w}");
     }
 
     // Determine output path
@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => path,
         None => {
             let stem = file_path.file_stem().unwrap_or_default().to_string_lossy();
-            format!("{}.json", stem)
+            format!("{stem}.json")
         }
     };
 
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let json = serde_json::to_string_pretty(&output)?;
     fs::write(&output_path, json)?;
 
-    println!("Compilation successful. Output written to {}", output_path);
+    println!("Compilation successful. Output written to {output_path}");
 
     Ok(())
 }
