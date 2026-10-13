@@ -31,7 +31,7 @@ Every pull request gets its own build at `https://arkade-os.github.io/compiler/p
 
 ## Compile from JavaScript or TypeScript
 
-The [`@arkade-os/compiler` package](npm/README.md) provides `compile({ entry, files }, { optimize })`, `symbols({ entry, files })`, and `version()` for Node.js ESM/CommonJS and browsers. It includes prebuilt WASM and declarations, selects the runtime loader automatically, and preserves compiler artifacts, source provenance, and warnings. The playground uses this package. The npm package is ready for local packing; publication is pending organization permissions. See the package README for usage and tarball installation.
+The [`@arkade-os/compiler` package](npm/README.md) provides `compile({ entry, files }, { optimize })`, `check({ entry, files })`, `symbols({ entry, files })`, and `version()` for Node.js ESM/CommonJS and browsers. It includes prebuilt WASM and declarations, selects the runtime loader automatically, and preserves compiler artifacts, source provenance, warnings, and structured diagnostics. The playground uses this package in a module worker. The npm package is ready for local packing; publication is pending organization permissions. See the package README for usage, worker integration, and tarball installation.
 
 ## A tour by example
 

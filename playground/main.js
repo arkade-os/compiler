@@ -1,5 +1,5 @@
 // Arkade Playground - Main Application
-import { compile, symbols, version } from '@arkade-os/compiler';
+import { compile, check, symbols, version } from './compiler-client.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -69,7 +69,7 @@ const bundledExamples = Object.fromEntries(
 
 // Global state
 let editor = null;
-let compilerReady = false;
+let compileRequest = 0;
 let currentProject = null;
 let currentFile = null;
 let openTabs = [];
@@ -771,18 +771,19 @@ function promptNewStandaloneFile() {
 
 // Load the installed compiler version after the editor is ready.
 async function initCompiler() {
+    const request = compileRequest;
     try {
         const ver = await version();
-        compilerReady = true;
-        document.getElementById('compiler-version').textContent = `v${ver}`;
-        document.getElementById('footer-version').textContent = `v${ver}`;
-
-        // Show button as ready to compile
-        markDirty();
+        displayVersion(ver);
     } catch (err) {
         console.error('Failed to initialize compiler:', err);
-        showError(`Failed to load compiler: ${err.message}`);
+        if (request === compileRequest) showError(`Failed to load compiler: ${err.message}`);
     }
+}
+
+function displayVersion(ver) {
+    document.getElementById('compiler-version').textContent = `v${ver}`;
+    document.getElementById('footer-version').textContent = `v${ver}`;
 }
 
 // Render file tree
@@ -1190,6 +1191,7 @@ function initMonaco() {
         monaco.languages.registerCompletionItemProvider('arkade', {
             triggerCharacters: ['.'],
             provideCompletionItems: async (model, position) => {
+                const revision = model.getVersionId();
                 const word = model.getWordUntilPosition(position);
                 const insert = {
                     startLineNumber: position.lineNumber,
@@ -1201,6 +1203,7 @@ function initMonaco() {
                 const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
                 const table = await symbolTable(position.lineNumber);
+                if (model.isDisposed() || revision !== model.getVersionId()) return { suggestions: [] };
                 const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
@@ -1242,6 +1245,8 @@ function initMonaco() {
 
         // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
+            compileRequest++;
+            monaco.editor.setModelMarkers(editor.getModel(), 'arkade', []);
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
             }
@@ -1256,6 +1261,7 @@ function initMonaco() {
         });
 
         // Load the compiler version after the editor is ready.
+        markDirty();
         initCompiler();
     });
 }
@@ -1326,19 +1332,20 @@ async function symbolTable(lineNumber) {
 
 // Compile the source code
 async function doCompile() {
-    if (!compilerReady || !editor) return;
+    if (!editor) return;
 
+    const request = ++compileRequest;
     const source = editor.getValue();
     clearErrors();
 
-    let entry;
+    let sources;
     try {
-        const sources = compilationSources();
-        entry = sources.entry;
-        const files = sources.files;
+        sources = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { warnings, ...artifact } = await compile({ entry, files }, { optimize });
+        const { warnings, ...artifact } = await compile(sources, { optimize });
+        if (request !== compileRequest) return;
         const result = JSON.stringify(artifact, null, 2);
+        displayVersion(artifact.compiler.version);
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
@@ -1347,7 +1354,15 @@ async function doCompile() {
         showWarnings(warnings);
         markCompiled();
     } catch (err) {
-        showError(err.message, entry);
+        if (request !== compileRequest) return;
+        // Only recheck failures, avoiding a second semantic pass on successful compiles.
+        let diagnostics;
+        if (sources) {
+            try { diagnostics = await check(sources); } catch {}
+        }
+        if (request !== compileRequest) return;
+        if (diagnostics?.some(d => d.severity === 'error')) showDiagnostics(diagnostics, sources);
+        else showError(err.message, sources?.entry);
     }
 }
 
@@ -1541,8 +1556,34 @@ function showError(message, entry) {
     }
 }
 
+function showDiagnostics(diagnostics, { entry, files }) {
+    showError(diagnostics.map(d => `${d.file}: ${d.message}`).join('\n'));
+    document.getElementById('error-count').textContent = String(diagnostics.filter(d => d.severity === 'error').length);
+    const model = editor.getModel();
+    const bytes = new TextEncoder().encode(files[entry]);
+    const decoder = new TextDecoder();
+    const markers = diagnostics.filter(d => d.file === entry).map(d => {
+        const start = model.getPositionAt(decoder.decode(bytes.subarray(0, d.span?.start ?? 0)).length);
+        const end = model.getPositionAt(decoder.decode(bytes.subarray(0, d.span?.end ?? 0)).length);
+        return {
+            message: d.message,
+            code: d.code,
+            severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+            startLineNumber: start.lineNumber, startColumn: start.column,
+            endLineNumber: end.lineNumber, endColumn: end.column,
+        };
+    });
+    monaco.editor.setModelMarkers(model, 'arkade', markers);
+    const first = markers.find(marker => marker.severity === monaco.MarkerSeverity.Error);
+    if (first) {
+        editor.revealLineInCenter(first.startLineNumber);
+        editor.setSelection(first);
+    }
+}
+
 // Clear errors
 function clearErrors() {
+    monaco.editor.setModelMarkers(editor.getModel(), 'arkade', []);
     const output = document.getElementById('errors-output');
     const count = document.getElementById('error-count');
     output.textContent = '';

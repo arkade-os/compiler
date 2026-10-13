@@ -4,7 +4,7 @@
 //! renders them the same way it always has.
 
 /// A byte-offset range into one file's source text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -19,7 +19,8 @@ impl From<pest::Span<'_>> for Span {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,
     Warning,
@@ -27,14 +28,16 @@ pub enum Severity {
 
 /// One diagnostic, tied to the file (and, where known, the byte span) that
 /// produced it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Diagnostic {
     pub severity: Severity,
     /// Which pass raised this: `"validation"` (semantic checks) or `"type"`
     /// (type checker) today. `None` for parse errors.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     pub message: String,
     pub file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
 }
 

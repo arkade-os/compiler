@@ -9,6 +9,15 @@ export interface CompileOptions {
     optimize?: boolean;
 }
 
+export interface Diagnostic {
+    severity: "error" | "warning";
+    message: string;
+    file: string;
+    code?: string;
+    /** UTF-8 byte offsets into the diagnostic's source file. */
+    span?: { start: number; end: number };
+}
+
 export interface Parameter {
     name: string;
     type: string;
@@ -129,6 +138,17 @@ export async function symbols(input: CompileInput): Promise<SourceSymbols> {
     const wasm = await initialize();
     try {
         return JSON.parse(wasm.symbols(entry, files));
+    } catch (error) {
+        throw error instanceof Error ? error : new Error(String(error));
+    }
+}
+
+/** Check source without generating an artifact; source errors are returned as data. */
+export async function check(input: CompileInput): Promise<Diagnostic[]> {
+    const { entry, files } = serializeInput(input);
+    const wasm = await initialize();
+    try {
+        return JSON.parse(wasm.check(entry, files));
     } catch (error) {
         throw error instanceof Error ? error : new Error(String(error));
     }

@@ -4,14 +4,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { compile, symbols, version } from '../npm/dist/node/index.js';
+import { compile, check, symbols, version } from '../npm/dist/node/index.js';
 const context = vm.createContext({
-    contracts, compile, symbols, version,
+    contracts, compile, check, symbols, version,
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
     Blob, CompressionStream, DecompressionStream, TextEncoder, TextDecoder, btoa, atob,
-    console: { warn() {} },
+    console: { warn() {}, error() {} },
 });
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
@@ -186,7 +186,7 @@ assert(table.symbols.some(symbol => symbol.name === 'amount' && symbol.type === 
 vm.runInContext("projects.completions.files['main.ark'] = 'invalid';", context);
 assert.equal(await vm.runInContext('symbolTable(4)', context), table);
 
-const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status'].map(id => {
+const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compiler-version', 'footer-version'].map(id => {
     const classes = new Set();
     return [id, {
         textContent: '',
@@ -199,11 +199,26 @@ const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-st
 }));
 elements['optimize-toggle'] = { checked: false };
 context.document.getElementById = id => elements[id];
+context.document.querySelectorAll = () => [];
+const model = {
+    getPositionAt: offset => {
+        const lines = context.warningSource.slice(0, offset).split('\n');
+        return { lineNumber: lines.length, column: lines.at(-1).length + 1 };
+    },
+};
+let markers = [];
+context.monaco = {
+    MarkerSeverity: { Error: 8, Warning: 4 },
+    editor: { setModelMarkers: (_model, owner, values) => { assert.equal(owner, 'arkade'); markers = values; } },
+};
+context.model = model;
 context.warningSource = warningSource;
 context.renderedArtifact = null;
+context.version = async () => { throw new Error('Transient WASM failure'); };
+await vm.runInContext('initCompiler()', context);
+assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
 await vm.runInContext(`
-    compilerReady = true;
-    editor = { getValue: () => warningSource };
+    editor = { getValue: () => warningSource, getModel: () => model };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
     displayJson = json => { renderedArtifact = JSON.parse(json); };
     displayAsm = () => {};
@@ -212,6 +227,7 @@ await vm.runInContext(`
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
+assert.equal(elements['compiler-version'].textContent, `v${await version()}`);
 assert(!Object.hasOwn(context.renderedArtifact, 'warnings'));
 assert.equal(elements['errors-output'].textContent, warnings.join('\n'));
 assert(elements['error-count'].classList.contains('warning'));
@@ -225,17 +241,40 @@ assert.equal(elements['compile-status'].className, 'compile-status success');
 
 const selected = [];
 const highlighted = [];
-context.document.querySelectorAll = () => [];
-context.warningSource = 'contract Broken() {\n function spend() {\n require(missing);\n }\n}';
+context.warningSource = '// 🐴 café\r\ncontract Broken() {\r\n function spend() {\r\n require(missing); require(other);\r\n }\r\n}';
 context.editorForError = {
     getValue: () => context.warningSource,
+    getModel: () => model,
     revealLineInCenter: line => highlighted.push(line),
     setSelection: selection => selected.push(selection),
 };
 vm.runInContext('editor = editorForError;', context);
 await vm.runInContext('doCompile()', context);
 assert.match(elements['errors-output'].textContent, /^main\.ark: /);
-assert.deepEqual(highlighted, [3]);
-assert.equal(selected[0].startLineNumber, 3);
+assert.deepEqual(highlighted, [4]);
+assert.equal(selected[0].startLineNumber, 4);
+assert.equal(selected[0].startColumn, 10);
+assert.equal(selected[0].endColumn, 17);
+assert.equal(markers.length, 2);
+assert.equal(elements['error-count'].textContent, '2');
+
+// Imported diagnostics must not select or mark text in the entry model.
+context.check = async () => [{ severity: 'error', file: 'dependency.ark', message: 'Broken import', span: { start: 0, end: 5 } }];
+await vm.runInContext('doCompile()', context);
+assert.equal(markers.length, 0);
+assert.equal(selected.length, 1);
+assert.match(elements['errors-output'].textContent, /^dependency\.ark: /);
+context.check = check;
+
+// A result arriving after an edit must not replace the current output.
+let finish;
+context.compile = () => new Promise(resolve => { finish = resolve; });
+const delayed = vm.runInContext('doCompile()', context);
+vm.runInContext('compileRequest++;', context);
+const before = context.renderedArtifact;
+finish({ ...warningArtifact, warnings: [] });
+await delayed;
+assert.equal(context.renderedArtifact, before);
+context.compile = compile;
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);
