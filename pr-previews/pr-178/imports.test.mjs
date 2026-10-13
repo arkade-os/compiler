@@ -5,10 +5,12 @@ import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
 import { compile, check, symbols, version } from '../npm/dist/node/index.js';
+import { generateBindings } from './codegen.js';
+const storage = new Map();
 const context = vm.createContext({
     contracts, compile, check, symbols, version,
     document: { addEventListener() {} },
-    localStorage: { setItem() {} },
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { hash: '' },
     Blob, CompressionStream, DecompressionStream, TextEncoder, TextDecoder, btoa, atob,
     console: { warn() {}, error() {} },
@@ -23,6 +25,11 @@ assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
 assert.match(warningArtifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
+for (const target of ['typescript', 'go']) {
+    const bindings = generateBindings(warningArtifact, target);
+    assert.match(bindings, /HasWarnings/);
+    assert.match(bindings, /spend|Spend/);
+}
 
 const selections = vm.runInContext(`[
     ...Object.entries(projects).flatMap(([id, project]) => Object.keys(project.files).map(file => [id, file])),
@@ -214,13 +221,15 @@ context.monaco = {
 context.model = model;
 context.warningSource = warningSource;
 context.renderedArtifact = null;
+const originalCompilationSources = vm.runInContext('compilationSources', context);
+const displayAsm = vm.runInContext('displayAsm', context);
 context.version = async () => { throw new Error('Transient WASM failure'); };
 await vm.runInContext('initCompiler()', context);
 assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
 await vm.runInContext(`
     editor = { getValue: () => warningSource, getModel: () => model };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
-    displayJson = json => { renderedArtifact = JSON.parse(json); };
+    displayJson = artifact => { renderedArtifact = artifact; };
     displayAsm = () => {};
     displayBindings = () => {};
     markCompiled = () => {};
@@ -276,5 +285,51 @@ finish({ ...warningArtifact, warnings: [] });
 await delayed;
 assert.equal(context.renderedArtifact, before);
 context.compile = compile;
+
+// Renames, moves and dependency deletions invalidate work even when the editor text stays unchanged.
+context.compilationSources = originalCompilationSources;
+vm.runInContext(`
+    projects.race = { files: { 'main.ark': warningSource, 'dependency.ark': 'library Dependency {}' } };
+    projects.destination = { files: {} };
+    currentProject = 'race'; currentFile = 'main.ark';
+    updateFileTabs = renderFileTree = updateCurrentFileName = () => {};
+`, context);
+for (const mutation of [
+    "renameFileInFolder('race', 'main.ark', 'renamed.ark')",
+    "moveProjectFileToFolder('race', 'renamed.ark', 'destination')",
+    "deleteFileInFolder('race', 'dependency.ark')",
+]) {
+    context.compile = () => new Promise(resolve => { finish = resolve; });
+    const pending = vm.runInContext('doCompile()', context);
+    const previous = context.renderedArtifact;
+    vm.runInContext(mutation, context);
+    finish({ ...warningArtifact, warnings: [] });
+    await pending;
+    assert.equal(context.renderedArtifact, previous, mutation);
+}
+context.compile = compile;
+
+// Saving unchanged sources, such as while sharing, must not cancel a current compile.
+context.compile = () => new Promise(resolve => { finish = resolve; });
+const stillCurrent = vm.runInContext('doCompile()', context);
+vm.runInContext('compilationSources()', context);
+finish({ ...warningArtifact, contractName: 'StillCurrent', warnings: [] });
+await stillCurrent;
+assert.equal(context.renderedArtifact.contractName, 'StillCurrent');
+context.compile = compile;
+
+// Storage failures remain visible and prevent compilation from using unsaved sources.
+context.localStorage.setItem = () => { throw new Error('Storage quota exceeded'); };
+context.warningSource += '\n// unsaved edit\n';
+await vm.runInContext('doCompile()', context);
+assert.equal(elements['errors-output'].textContent, 'Storage quota exceeded');
+
+// Assembly rendering accepts the artifact directly and retains both covenant and leaf sections.
+elements['asm-output'] = {};
+context.artifact = warningArtifact;
+context.displayAsm = displayAsm;
+vm.runInContext('displayAsm(artifact)', context);
+assert.match(elements['asm-output'].innerHTML, /arkade covenant/);
+assert.match(elements['asm-output'].innerHTML, /tapscript leaf/);
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);

@@ -1,6 +1,6 @@
 // Arkade Playground — Client-side binding generator
 // Mirrors arkade-bindgen's TypeScript and Go backends in JavaScript.
-// Takes a compiled JSON artifact string and produces typed SDK code.
+// Takes a compiled artifact and produces typed SDK code.
 
 // ─── Naming utilities ────────────────────────────────────────────────
 
@@ -331,8 +331,7 @@ function generateGo(ir) {
 
 // ─── Public API ──────────────────────────────────────────────────────
 
-export function generateBindings(jsonStr, target) {
-    const artifact = JSON.parse(jsonStr);
+export function generateBindings(artifact, target) {
     const ir = buildIR(artifact);
     switch (target) {
         case 'typescript': return generateTypeScript(ir);
