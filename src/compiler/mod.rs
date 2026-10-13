@@ -160,6 +160,7 @@ impl Generator {
         }
         // Witness inputs carry any length; pin fixed-width ones before the body reads them.
         let prologue = asm.len();
+        let mut prologue_peak = 0;
         for (index, (_, leaf_type)) in function_bindings.iter().enumerate() {
             let width = match leaf_type.ark_type() {
                 types::ArkType::Bytes20 => "20",
@@ -167,6 +168,8 @@ impl Generator {
                 _ => continue,
             };
             let depth = prologue + index;
+            // The copy, its size and the expected width.
+            prologue_peak = prologue_peak.max(2 + usize::from(depth > 0));
             if depth > 0 {
                 asm.extend([integer_op(depth), Pick.into()]);
             }
@@ -184,7 +187,7 @@ impl Generator {
         Ok(Self {
             optimize: false,
             asm,
-            max_depth: stack.len(),
+            max_depth: stack.len() + prologue_peak,
             stack,
             scopes: Vec::new(),
             deferred: std::collections::HashSet::new(),

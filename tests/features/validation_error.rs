@@ -602,6 +602,23 @@ fn covenants_over_the_vm_stack_limit_do_not_compile() {
 }
 
 #[test]
+fn witness_length_checks_count_toward_the_stack_limit() {
+    let source = |items: usize| {
+        format!(
+            "contract C() {{ function spend(bytes32[{items}] xs) {{ require(xs[0] == xs[1]); }} }}"
+        )
+    };
+    assert!(compile(&source(997)).is_ok());
+    let error = compile(&source(998))
+        .expect_err("998 items and a length check peak above 1000")
+        .to_string();
+    assert!(
+        error.contains("can hold 1001 stack items, above the VM limit of 1000"),
+        "{error}"
+    );
+}
+
+#[test]
 fn covenants_over_the_vm_script_size_do_not_compile() {
     let source = |wide: usize| {
         let requires: String = (0..1428)

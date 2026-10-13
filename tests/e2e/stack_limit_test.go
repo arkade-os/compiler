@@ -39,3 +39,23 @@ func TestStackLimitMatchesTheVM(t *testing.T) {
 		t.Fatalf("999 items compiled or failed differently: %v\n%s", err, output)
 	}
 }
+
+// A fixed-width witness is length-checked on a copy: 997 inputs peak at 1000 items and run.
+func TestWitnessLengthChecksFitTheStackLimit(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "stack.ark")
+	contract := "contract Stack() { function spend(bytes32[997] xs) { require(xs[0] == xs[1]); } }"
+	if err := os.WriteFile(source, []byte(contract), 0600); err != nil {
+		t.Fatal(err)
+	}
+	artifact := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, artifact, "spend")
+	instance := instantiateGroup(t, artifact, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	values := map[string][]byte{}
+	for i := 0; i < 997; i++ {
+		values[fmt.Sprintf("xs.%d", i)] = make([]byte, 32)
+	}
+	spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000,
+		instance.pkScript, covenantWitness(t, artifact, group, values))
+	requireVMResult(t, spend, emulatorKey.PubKey(), "")
+}
