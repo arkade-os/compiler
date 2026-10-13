@@ -249,8 +249,9 @@ impl Generator {
         self.emit_expression(io_index)?;
         self.push_temporary(Int0);
         self.apply(InspectAssetGroup, 3, 1)?;
-        // The record is up to four items before the normalization below keeps one.
-        self.max_depth = self.max_depth.max(self.stack.len() + 3);
+        // An intent record is four items; the amount and index normalizations park one on
+        // the alt stack and then size the txid, five at most.
+        self.max_depth = self.max_depth.max(self.stack.len() + 4);
         // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
         // sequence takes back what it puts on the alt stack.
         let size_32 = [Size.into(), Op::Push("32".into())];

@@ -602,6 +602,21 @@ fn covenants_over_the_vm_stack_limit_do_not_compile() {
 }
 
 #[test]
+fn group_input_records_count_their_widest_normalization() {
+    let source = |items: usize| {
+        format!("contract C() {{ function spend(int[{items}] xs, int g, int i) {{ require(tx.assetGroups[g].inputs[i].amount == xs[0]); }} }}")
+    };
+    assert!(compile(&source(995)).is_ok());
+    let error = compile(&source(996))
+        .expect_err("996 items and a five-item record peak above 1000")
+        .to_string();
+    assert!(
+        error.contains("can hold 1001 stack items, above the VM limit of 1000"),
+        "{error}"
+    );
+}
+
+#[test]
 fn witness_length_checks_count_toward_the_stack_limit() {
     let source = |items: usize| {
         format!(
