@@ -93,3 +93,11 @@ pub fn symbols(entry: &str, files: &str) -> Result<String, String> {
     let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
     Ok(crate::imports::source_symbols(entry, &files)?.to_string())
 }
+
+/// Check a virtual project, returning source errors and warnings as diagnostics.
+#[wasm_bindgen]
+pub fn check(entry: &str, files: &str) -> Result<String, String> {
+    let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    serde_json::to_string(&crate::check(entry, &files))
+        .map_err(|e| format!("Serialization error: {e}"))
+}

@@ -45,6 +45,44 @@ jobs:
       - name: Run emulator E2E tests
         run: ./scripts/e2e.sh -v
 
+  npm-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: 22 }
+          - { os: macos-latest, node: 24 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: npm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: npm/package-lock.json
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: wasm-pack@0.15.0
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - name: Pack verified compiler
+        run: npm pack --ignore-scripts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-compiler-${{ matrix.os }}-node-${{ matrix.node }}
+          path: npm/*.tgz
+
   check-format:
 
     runs-on: ubuntu-latest

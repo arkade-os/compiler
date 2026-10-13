@@ -1,0 +1,43 @@
+{
+  "name": "@arkade-os/compiler",
+  "version": "0.1.0",
+  "description": "Compile Arkade source projects in Node.js and browsers",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arkade-os/compiler.git",
+    "directory": "npm"
+  },
+  "engines": { "node": ">=22.12.0" },
+  "main": "./dist/node/index.js",
+  "browser": "./dist/browser/index.js",
+  "types": "./dist/node/index.d.ts",
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./dist/browser/index.d.ts",
+        "default": "./dist/browser/index.js"
+      },
+      "node": {
+        "types": "./dist/node/index.d.ts",
+        "default": "./dist/node/index.js"
+      },
+      "types": "./dist/browser/index.d.ts",
+      "default": "./dist/browser/index.js"
+    }
+  },
+  "files": ["dist", "LICENSE"],
+  "sideEffects": false,
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepack": "npm run build",
+    "test": "node test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.64.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.4"
+  }
+}

@@ -1,6 +1,5 @@
 // Arkade Playground - Main Application
-// Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, compile_sources_with_diagnostics, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import { compile, check, symbols, version } from './compiler-client.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -70,7 +69,7 @@ const bundledExamples = Object.fromEntries(
 
 // Global state
 let editor = null;
-let wasmReady = false;
+let compileRequest = 0;
 let currentProject = null;
 let currentFile = null;
 let openTabs = [];
@@ -93,7 +92,10 @@ function saveToStorage() {
     for (const [id, ex] of Object.entries(examples)) {
         data.examples[id] = { name: ex.name, code: ex.code };
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const serialized = JSON.stringify(data);
+    if (localStorage.getItem(STORAGE_KEY) === serialized) return;
+    compileRequest++;
+    localStorage.setItem(STORAGE_KEY, serialized);
 }
 
 function loadFromStorage() {
@@ -276,10 +278,10 @@ async function shareContract() {
     let encoded;
     try {
         const { entry, files } = compilationSources();
-        const bundle = canonicalShareBundle(JSON.parse(compile_sources(entry, JSON.stringify(files))).source);
+        const bundle = canonicalShareBundle((await compile({ entry, files })).source);
         encoded = await compressCode(JSON.stringify(bundle));
     } catch (error) {
-        showError(error.toString());
+        showError(error.message);
         return;
     }
     const url = `${location.origin}${location.pathname}#project=${encoded}`;
@@ -770,23 +772,21 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-// Initialize WASM module
+// Load the installed compiler version after the editor is ready.
 async function initCompiler() {
+    const request = compileRequest;
     try {
-        await initWasm();
-        initPanicHook();
-        wasmReady = true;
-
-        const ver = version();
-        document.getElementById('compiler-version').textContent = `v${ver}`;
-        document.getElementById('footer-version').textContent = `v${ver}`;
-
-        // Show button as ready to compile
-        markDirty();
+        const ver = await version();
+        displayVersion(ver);
     } catch (err) {
-        console.error('Failed to initialize WASM:', err);
-        showError('Failed to load compiler. Make sure the WASM module is built.');
+        console.error('Failed to initialize compiler:', err);
+        if (request === compileRequest) showError(`Failed to load compiler: ${err.message}`);
     }
+}
+
+function displayVersion(ver) {
+    document.getElementById('compiler-version').textContent = `v${ver}`;
+    document.getElementById('footer-version').textContent = `v${ver}`;
 }
 
 // Render file tree
@@ -1193,7 +1193,8 @@ function initMonaco() {
         // Register completions
         monaco.languages.registerCompletionItemProvider('arkade', {
             triggerCharacters: ['.'],
-            provideCompletionItems: (model, position) => {
+            provideCompletionItems: async (model, position) => {
+                const revision = model.getVersionId();
                 const word = model.getWordUntilPosition(position);
                 const insert = {
                     startLineNumber: position.lineNumber,
@@ -1204,7 +1205,8 @@ function initMonaco() {
                 // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
                 const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
-                const table = symbolTable(position.lineNumber);
+                const table = await symbolTable(position.lineNumber);
+                if (model.isDisposed() || revision !== model.getVersionId()) return { suggestions: [] };
                 const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
@@ -1246,6 +1248,8 @@ function initMonaco() {
 
         // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
+            compileRequest++;
+            monaco.editor.setModelMarkers(editor.getModel(), 'arkade', []);
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
             }
@@ -1259,7 +1263,8 @@ function initMonaco() {
             }
         });
 
-        // Initialize WASM after editor is ready
+        // Load the compiler version after the editor is ready.
+        markDirty();
         initCompiler();
     });
 }
@@ -1315,8 +1320,7 @@ function sourceFiles() {
 const lastSymbols = {};
 
 // The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
-function symbolTable(lineNumber) {
-    if (!wasmReady) return null;
+async function symbolTable(lineNumber) {
     let entry;
     try {
         const sources = sourceFiles();
@@ -1324,50 +1328,58 @@ function symbolTable(lineNumber) {
         const lines = sources.files[entry].split('\n');
         lines[lineNumber - 1] = '';
         sources.files[entry] = lines.join('\n');
-        lastSymbols[entry] = JSON.parse(symbols(entry, JSON.stringify(sources.files)));
+        lastSymbols[entry] = await symbols(sources);
     } catch {}
     return lastSymbols[entry] || null;
 }
 
 // Compile the source code
-function doCompile() {
-    if (!wasmReady || !editor) return;
+async function doCompile() {
+    if (!editor) return;
 
     const source = editor.getValue();
     clearErrors();
 
-    let entry;
+    let sources;
     try {
-        const sources = compilationSources();
-        entry = sources.entry;
-        const files = sources.files;
+        sources = compilationSources();
+    } catch (err) {
+        showError(err.message);
+        return;
+    }
+    const request = ++compileRequest;
+    try {
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact: result, warnings } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        const { warnings, ...artifact } = await compile(sources, { optimize });
+        if (request !== compileRequest) return;
+        displayVersion(artifact.compiler.version);
         lastCompiledSource = source;
-        displayJson(result);
-        displayAsm(result);
-        displayBindings(result);
-        showSuccess(result, warnings.length);
+        displayJson(artifact);
+        displayAsm(artifact);
+        displayBindings(artifact);
+        showSuccess(artifact, warnings.length);
         showWarnings(warnings);
         markCompiled();
     } catch (err) {
-        showError(err.toString(), entry);
+        if (request !== compileRequest) return;
+        // Only recheck failures, avoiding a second semantic pass on successful compiles.
+        let diagnostics;
+        try { diagnostics = await check(sources); } catch {}
+        if (request !== compileRequest) return;
+        if (diagnostics?.some(d => d.severity === 'error')) showDiagnostics(diagnostics, sources);
+        else showError(err.message, sources.entry);
     }
 }
 
 // Display JSON output
-function displayJson(jsonStr) {
+function displayJson(artifact) {
     const container = document.getElementById('json-output');
-    container.innerHTML = syntaxHighlightJson(jsonStr);
+    container.innerHTML = syntaxHighlightJson(artifact);
 }
 
 // Syntax highlight JSON
-function syntaxHighlightJson(json) {
-    if (typeof json !== 'string') {
-        json = JSON.stringify(json, null, 2);
-    }
-
-    return json
+function syntaxHighlightJson(artifact) {
+    return JSON.stringify(artifact, null, 2)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -1391,39 +1403,25 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr) {
+function displayAsm(artifact) {
     const container = document.getElementById('asm-output');
-
-    try {
-        const data = JSON.parse(jsonStr);
-        let html = '';
-
-        if (data.functions && data.functions.length > 0) {
-            for (const group of data.functions) {
-                if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
-                    html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += highlightAsm(group.arkade.asm) + '\n\n';
-                }
-                for (const leaf of (group.leaves || [])) {
-                    const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
-                    html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
-                    if (leaf.asm && leaf.asm.length > 0) {
-                        html += highlightAsm(leaf.asm) + '\n\n';
-                    }
-                }
-            }
-        } else {
-            html = '<span class="comment">No functions compiled</span>';
+    let html = '';
+    for (const group of artifact.functions) {
+        if (group.arkade?.asm.length) {
+            html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
+            html += highlightAsm(group.arkade.asm) + '\n\n';
         }
-
-        container.innerHTML = html;
-    } catch (e) {
-        container.textContent = 'Failed to parse assembly output';
+        for (const leaf of group.leaves) {
+            const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
+            html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
+            html += highlightAsm(leaf.asm) + '\n\n';
+        }
     }
+    container.innerHTML = html || '<span class="comment">No functions compiled</span>';
 }
 
 // Display generated SDK bindings
-function displayBindings(jsonStr) {
+function displayBindings(artifact) {
     const container = document.getElementById('bindings-output');
 
     // Build target selector + content area if first time
@@ -1448,8 +1446,7 @@ function displayBindings(jsonStr) {
         });
     }
 
-    // Store the JSON for re-rendering on target switch
-    container.dataset.lastJson = jsonStr;
+    container.artifact = artifact;
 
     const activeLang = container.querySelector('.bindings-lang-btn.active')?.dataset.lang || 'typescript';
     renderBindings(container.querySelector('.bindings-code'), activeLang);
@@ -1457,11 +1454,11 @@ function displayBindings(jsonStr) {
 
 function renderBindings(contentEl, target) {
     const container = document.getElementById('bindings-output');
-    const jsonStr = container.dataset.lastJson;
-    if (!jsonStr) { contentEl.textContent = 'Compile a contract first'; return; }
+    const artifact = container.artifact;
+    if (!artifact) { contentEl.textContent = 'Compile a contract first'; return; }
 
     try {
-        const code = generateBindings(jsonStr, target);
+        const code = generateBindings(artifact, target);
         contentEl.innerHTML = escapeHtml(code);
     } catch (err) {
         contentEl.textContent = 'Codegen error: ' + err.message;
@@ -1489,14 +1486,10 @@ function highlightAsm(asm) {
 }
 
 // Show compilation success
-function showSuccess(jsonStr, warningCount = 0) {
+function showSuccess(artifact, warningCount = 0) {
     const statusEl = document.getElementById('compile-status');
-    let funcCount = '';
-    try {
-        const data = JSON.parse(jsonStr);
-        const count = data.functions?.length || 0;
-        funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
-    } catch (e) {}
+    const count = artifact.functions.length;
+    const funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
     const warningLabel = warningCount ? ` &mdash; ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : '';
     statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}${warningLabel}`;
     statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
@@ -1545,8 +1538,34 @@ function showError(message, entry) {
     }
 }
 
+function showDiagnostics(diagnostics, { entry, files }) {
+    showError(diagnostics.map(d => `${d.file}: ${d.message}`).join('\n'));
+    document.getElementById('error-count').textContent = String(diagnostics.filter(d => d.severity === 'error').length);
+    const model = editor.getModel();
+    const bytes = new TextEncoder().encode(files[entry]);
+    const decoder = new TextDecoder();
+    const markers = diagnostics.filter(d => d.file === entry).map(d => {
+        const start = model.getPositionAt(decoder.decode(bytes.subarray(0, d.span?.start ?? 0)).length);
+        const end = model.getPositionAt(decoder.decode(bytes.subarray(0, d.span?.end ?? 0)).length);
+        return {
+            message: d.message,
+            code: d.code,
+            severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+            startLineNumber: start.lineNumber, startColumn: start.column,
+            endLineNumber: end.lineNumber, endColumn: end.column,
+        };
+    });
+    monaco.editor.setModelMarkers(model, 'arkade', markers);
+    const first = markers.find(marker => marker.severity === monaco.MarkerSeverity.Error);
+    if (first) {
+        editor.revealLineInCenter(first.startLineNumber);
+        editor.setSelection(first);
+    }
+}
+
 // Clear errors
 function clearErrors() {
+    monaco.editor.setModelMarkers(editor.getModel(), 'arkade', []);
     const output = document.getElementById('errors-output');
     const count = document.getElementById('error-count');
     output.textContent = '';

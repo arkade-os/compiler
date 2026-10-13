@@ -4,28 +4,32 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, compile_sources, compile_sources_with_diagnostics } from './pkg/arkade_compiler.js';
-
-initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
+import { compile, check, symbols, version } from '../npm/dist/node/index.js';
+import { generateBindings } from './codegen.js';
+const storage = new Map();
 const context = vm.createContext({
-    contracts, compile_sources, compile_sources_with_diagnostics,
+    contracts, compile, check, symbols, version,
     document: { addEventListener() {} },
-    localStorage: { setItem() {} },
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { hash: '' },
     Blob, CompressionStream, DecompressionStream, TextEncoder, TextDecoder, btoa, atob,
-    console: { warn() {} },
+    console: { warn() {}, error() {} },
 });
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 
 const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
-const detailed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ 'main.ark': warningSource }), false));
-const warningArtifact = JSON.parse(detailed.artifact);
-assert(detailed.warnings.some(warning => warning.startsWith('warning[validation]')));
+const { warnings, ...warningArtifact } = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
+assert(warnings.some(warning => warning.startsWith('warning[validation]')));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
 assert.match(warningArtifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
+for (const target of ['typescript', 'go']) {
+    const bindings = generateBindings(warningArtifact, target);
+    assert.match(bindings, /HasWarnings/);
+    assert.match(bindings, /spend|Spend/);
+}
 
 const selections = vm.runInContext(`[
     ...Object.entries(projects).flatMap(([id, project]) => Object.keys(project.files).map(file => [id, file])),
@@ -38,9 +42,9 @@ for (const [project, file] of selections) {
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    const output = JSON.parse(compile_sources(input.entry, JSON.stringify(input.files)));
+    const output = await compile(input);
     const bundle = output.source;
-    const rebuilt = JSON.parse(compile_sources(bundle.entry, JSON.stringify(bundle.files)));
+    const rebuilt = await compile(bundle);
     rebuilt.updatedAt = output.updatedAt;
     assert.deepEqual(rebuilt, output);
 }
@@ -53,7 +57,7 @@ for (const [project, file] of selections.filter(([, file]) => file !== 'single_s
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    compile_sources(input.entry, JSON.stringify(input.files));
+    await compile(input);
 }
 
 context.bundle = {
@@ -76,12 +80,12 @@ const sharedInput = vm.runInContext(`
     editor = { getValue: () => projects.shared.files[currentFile] };
     compilationSources();
 `, context);
-assert.equal(JSON.parse(compile_sources(sharedInput.entry, JSON.stringify(sharedInput.files))).contractName, 'Vault');
+assert.equal((await compile(sharedInput)).contractName, 'Vault');
 
 // Compilation reads edits in dependencies, including files that are not selected.
 vm.runInContext(`projects.shared.files['shared/fees.ark'] = projects.shared.files['shared/fees.ark'].replace('VALUE = 7', 'VALUE = 8');`, context);
 const edited = vm.runInContext('compilationSources()', context);
-assert.match(JSON.parse(compile_sources(edited.entry, JSON.stringify(edited.files))).source.files['shared/shared/fees.ark'], /VALUE = 8/);
+assert.match((await compile(edited)).source.files['shared/shared/fees.ark'], /VALUE = 8/);
 
 context.bundle = { entry: '<img>.ark', files: { '<img>.ark': 'contract Invalid() {}' } };
 await vm.runInContext(`compressCode(JSON.stringify(bundle)).then(encoded => { location.hash = '#project=' + encoded; });`, context);
@@ -145,7 +149,7 @@ const resharedInput = vm.runInContext(`
     editor = { getValue: () => projects[currentProject].files[currentFile] };
     compilationSources();
 `, context);
-context.bundle = JSON.parse(compile_sources(resharedInput.entry, JSON.stringify(resharedInput.files))).source;
+context.bundle = (await compile(resharedInput)).source;
 assert.equal(context.bundle.entry, `${imported.project}/escrow/escrow.ark`);
 assert.equal(vm.runInContext('canonicalShareBundle(bundle).entry', context), 'escrow/escrow.ark');
 const fromReshare = vm.runInContext('resolveSharedBundle(bundle)', context);
@@ -173,7 +177,23 @@ assert.equal(vaultAgain.project, 'shared');
 assert.equal(vaultAgain.file, 'vault/main.ark');
 assert.equal(sharedFolderCount(), foldersBefore + 1);
 
-const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status'].map(id => {
+context.completionFiles = {
+    'main.ark': 'import "fees.ark";\ncontract C(int value) {\n function spend(int amount) {\n Fees.\n }\n}',
+    'fees.ark': 'library Fees { function double(int value) int { return value * 2; } }',
+};
+vm.runInContext(`
+    projects.completions = { files: completionFiles };
+    currentProject = 'completions';
+    currentFile = 'main.ark';
+    editor = { getValue: () => projects.completions.files[currentFile] };
+`, context);
+const table = await vm.runInContext('symbolTable(4)', context);
+assert(table.members.Fees.some(symbol => symbol.name === 'double' && symbol.file === 'completions/fees.ark'));
+assert(table.symbols.some(symbol => symbol.name === 'amount' && symbol.type === 'int'));
+vm.runInContext("projects.completions.files['main.ark'] = 'invalid';", context);
+assert.equal(await vm.runInContext('symbolTable(4)', context), table);
+
+const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compiler-version', 'footer-version'].map(id => {
     const classes = new Set();
     return [id, {
         textContent: '',
@@ -186,27 +206,130 @@ const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-st
 }));
 elements['optimize-toggle'] = { checked: false };
 context.document.getElementById = id => elements[id];
+context.document.querySelectorAll = () => [];
+const model = {
+    getPositionAt: offset => {
+        const lines = context.warningSource.slice(0, offset).split('\n');
+        return { lineNumber: lines.length, column: lines.at(-1).length + 1 };
+    },
+};
+let markers = [];
+context.monaco = {
+    MarkerSeverity: { Error: 8, Warning: 4 },
+    editor: { setModelMarkers: (_model, owner, values) => { assert.equal(owner, 'arkade'); markers = values; } },
+};
+context.model = model;
 context.warningSource = warningSource;
 context.renderedArtifact = null;
-vm.runInContext(`
-    wasmReady = true;
-    editor = { getValue: () => warningSource };
+const originalCompilationSources = vm.runInContext('compilationSources', context);
+const displayAsm = vm.runInContext('displayAsm', context);
+context.version = async () => { throw new Error('Transient WASM failure'); };
+await vm.runInContext('initCompiler()', context);
+assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
+await vm.runInContext(`
+    editor = { getValue: () => warningSource, getModel: () => model };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
-    displayJson = json => { renderedArtifact = JSON.parse(json); };
+    displayJson = artifact => { renderedArtifact = artifact; };
     displayAsm = () => {};
     displayBindings = () => {};
     markCompiled = () => {};
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
-assert.equal(elements['errors-output'].textContent, detailed.warnings.join('\n'));
+assert.equal(elements['compiler-version'].textContent, `v${await version()}`);
+assert(!Object.hasOwn(context.renderedArtifact, 'warnings'));
+assert.equal(elements['errors-output'].textContent, warnings.join('\n'));
 assert(elements['error-count'].classList.contains('warning'));
-assert.equal(elements['error-count'].textContent, String(detailed.warnings.length));
+assert.equal(elements['error-count'].textContent, String(warnings.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
 context.warningSource = 'contract Clean() { function spend() { require(true); } }';
-vm.runInContext('doCompile()', context);
+await vm.runInContext('doCompile()', context);
 assert.equal(elements['errors-output'].textContent, '');
 assert(!elements['error-count'].classList.contains('visible'));
 assert.equal(elements['compile-status'].className, 'compile-status success');
+
+const selected = [];
+const highlighted = [];
+context.warningSource = '// 🐴 café\r\ncontract Broken() {\r\n function spend() {\r\n require(missing); require(other);\r\n }\r\n}';
+context.editorForError = {
+    getValue: () => context.warningSource,
+    getModel: () => model,
+    revealLineInCenter: line => highlighted.push(line),
+    setSelection: selection => selected.push(selection),
+};
+vm.runInContext('editor = editorForError;', context);
+await vm.runInContext('doCompile()', context);
+assert.match(elements['errors-output'].textContent, /^main\.ark: /);
+assert.deepEqual(highlighted, [4]);
+assert.equal(selected[0].startLineNumber, 4);
+assert.equal(selected[0].startColumn, 10);
+assert.equal(selected[0].endColumn, 17);
+assert.equal(markers.length, 2);
+assert.equal(elements['error-count'].textContent, '2');
+
+// Imported diagnostics must not select or mark text in the entry model.
+context.check = async () => [{ severity: 'error', file: 'dependency.ark', message: 'Broken import', span: { start: 0, end: 5 } }];
+await vm.runInContext('doCompile()', context);
+assert.equal(markers.length, 0);
+assert.equal(selected.length, 1);
+assert.match(elements['errors-output'].textContent, /^dependency\.ark: /);
+context.check = check;
+
+// A result arriving after an edit must not replace the current output.
+let finish;
+context.compile = () => new Promise(resolve => { finish = resolve; });
+const delayed = vm.runInContext('doCompile()', context);
+vm.runInContext('compileRequest++;', context);
+const before = context.renderedArtifact;
+finish({ ...warningArtifact, warnings: [] });
+await delayed;
+assert.equal(context.renderedArtifact, before);
+context.compile = compile;
+
+// Renames, moves and dependency deletions invalidate work even when the editor text stays unchanged.
+context.compilationSources = originalCompilationSources;
+vm.runInContext(`
+    projects.race = { files: { 'main.ark': warningSource, 'dependency.ark': 'library Dependency {}' } };
+    projects.destination = { files: {} };
+    currentProject = 'race'; currentFile = 'main.ark';
+    updateFileTabs = renderFileTree = updateCurrentFileName = () => {};
+`, context);
+for (const mutation of [
+    "renameFileInFolder('race', 'main.ark', 'renamed.ark')",
+    "moveProjectFileToFolder('race', 'renamed.ark', 'destination')",
+    "deleteFileInFolder('race', 'dependency.ark')",
+]) {
+    context.compile = () => new Promise(resolve => { finish = resolve; });
+    const pending = vm.runInContext('doCompile()', context);
+    const previous = context.renderedArtifact;
+    vm.runInContext(mutation, context);
+    finish({ ...warningArtifact, warnings: [] });
+    await pending;
+    assert.equal(context.renderedArtifact, previous, mutation);
+}
+context.compile = compile;
+
+// Saving unchanged sources, such as while sharing, must not cancel a current compile.
+context.compile = () => new Promise(resolve => { finish = resolve; });
+const stillCurrent = vm.runInContext('doCompile()', context);
+vm.runInContext('compilationSources()', context);
+finish({ ...warningArtifact, contractName: 'StillCurrent', warnings: [] });
+await stillCurrent;
+assert.equal(context.renderedArtifact.contractName, 'StillCurrent');
+context.compile = compile;
+
+// Storage failures remain visible and prevent compilation from using unsaved sources.
+context.localStorage.setItem = () => { throw new Error('Storage quota exceeded'); };
+context.warningSource += '\n// unsaved edit\n';
+await vm.runInContext('doCompile()', context);
+assert.equal(elements['errors-output'].textContent, 'Storage quota exceeded');
+
+// Assembly rendering accepts the artifact directly and retains both covenant and leaf sections.
+elements['asm-output'] = {};
+context.artifact = warningArtifact;
+context.displayAsm = displayAsm;
+vm.runInContext('displayAsm(artifact)', context);
+assert.match(elements['asm-output'].innerHTML, /arkade covenant/);
+assert.match(elements['asm-output'].innerHTML, /tapscript leaf/);
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);

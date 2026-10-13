@@ -14,17 +14,16 @@ struct Module {
     warnings: Vec<Diagnostic>,
 }
 
-/// `load()`'s failure: either a single fail-fast message (I/O, cycle, unknown
-/// import, internal invariant) or the diagnostics `compiler::prepare`
-/// collected for one file, with that file's source.
+/// A fail-fast diagnostic with its original rendered message, or semantic
+/// diagnostics with their source.
 pub(crate) enum LoadError {
-    Message(String),
+    Message(String, Option<Box<Diagnostic>>),
     Diagnostics(Vec<Diagnostic>, String),
 }
 
 impl From<String> for LoadError {
     fn from(message: String) -> Self {
-        LoadError::Message(message)
+        LoadError::Message(message, None)
     }
 }
 
@@ -71,11 +70,8 @@ pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Ve
     match result {
         Ok(()) => modules.into_values().flat_map(|m| m.warnings).collect(),
         Err(LoadError::Diagnostics(diagnostics, _)) => diagnostics,
-        Err(LoadError::Message(message)) => {
-            let message = message
-                .strip_prefix(&format!("{entry}: "))
-                .unwrap_or(&message);
-            vec![Diagnostic::error(entry, message)]
+        Err(LoadError::Message(message, diagnostic)) => {
+            vec![*diagnostic.unwrap_or_else(|| Box::new(Diagnostic::error(entry, message)))]
         }
     }
 }
@@ -168,7 +164,7 @@ pub(crate) fn compile_file(
 }
 
 fn relative_path(path: &str) -> Result<String, String> {
-    if Path::new(path).is_absolute() || path.contains('\\') || path.contains(':') {
+    if path.starts_with('/') || path.contains('\\') || path.contains(':') {
         return Err(format!(
             "source path '{path}' must be a relative .ark path using '/'"
         ));
@@ -205,7 +201,7 @@ fn normalize(path: &Path) -> Result<String, String> {
 }
 
 fn import_path(importer: &str, import: &str) -> Result<String, String> {
-    if Path::new(import).is_absolute() || import.contains('\\') || import.contains(':') {
+    if import.starts_with('/') || import.contains('\\') || import.contains(':') {
         return Err(format!(
             "import '{import}' must be a relative .ark path using '/'"
         ));
@@ -236,7 +232,7 @@ fn compile_with_loader(
         &mut HashMap::new(),
     )
     .map_err(|e| match e {
-        LoadError::Message(message) => message,
+        LoadError::Message(message, _) => message,
         LoadError::Diagnostics(diagnostics, source) => format!(
             "{}: {}",
             diagnostics.first().map_or(entry, |d| d.file.as_str()),
@@ -316,21 +312,25 @@ fn load(
         return Ok(());
     }
     if active.iter().any(|p| p == path) {
-        return Err(LoadError::Message(format!(
-            "circular import: {} -> {path}",
-            active.join(" -> ")
-        )));
+        return Err(format!("circular import: {} -> {path}", active.join(" -> ")).into());
     }
     // Recursive loading is bounded; use an iterative traversal for deeper projects.
     if active.len() >= 128 {
-        return Err(LoadError::Message(
-            "import depth exceeds 128 files".to_string(),
-        ));
+        return Err("import depth exceeds 128 files".to_string().into());
     }
     active.push(path.to_string());
     let result = (|| {
         let source = read(path)?;
-        let imports = parser::imports(&source)?;
+        let imports =
+            parser::imports(&source).map_err(|message| match parser::try_parse(&source) {
+                Err(error) => LoadError::Message(
+                    message,
+                    Some(Box::new(parser::parse_error_diagnostic(
+                        &error, path, &source,
+                    ))),
+                ),
+                Ok(_) => message.into(),
+            })?;
         let mut dependencies = Vec::new();
         for import in imports {
             let dependency = import_path(path, &import)?;
@@ -362,10 +362,7 @@ fn load(
             || models::is_builtin_struct(&contract.name)
             || matches!(contract.name.as_str(), "tx" | "this")
         {
-            return Err(LoadError::Message(format!(
-                "contract name '{}' is reserved",
-                contract.name
-            )));
+            return Err(format!("contract name '{}' is reserved", contract.name).into());
         }
         for name in contract
             .structs
@@ -374,9 +371,9 @@ fn load(
             .chain((!contract.name.is_empty()).then_some(&contract.name))
         {
             if let Some(previous) = declarations.insert(name.clone(), path.to_string()) {
-                return Err(LoadError::Message(format!(
-                    "duplicate declaration '{name}' in '{previous}' and '{path}'"
-                )));
+                return Err(
+                    format!("duplicate declaration '{name}' in '{previous}' and '{path}'").into(),
+                );
             }
         }
         let mut visible_structs = own_structs.clone();
@@ -474,7 +471,11 @@ fn load(
     })();
     active.pop();
     result.map_err(|error| match error {
-        LoadError::Message(message) => LoadError::Message(format!("{path}: {message}")),
+        LoadError::Message(message, diagnostic) => {
+            let diagnostic =
+                diagnostic.unwrap_or_else(|| Box::new(Diagnostic::error(path, &message)));
+            LoadError::Message(format!("{path}: {message}"), Some(diagnostic))
+        }
         diagnostics @ LoadError::Diagnostics(..) => diagnostics,
     })
 }
@@ -935,5 +936,44 @@ library Fees {
             error.starts_with("lib.ark: validation error: line 3, column 13: "),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_dependency_syntax_failure_keeps_its_file_and_span() {
+        let files = BTreeMap::from([
+            (
+                "main.ark".into(),
+                "import \"lib.ark\"; contract C() { function spend() { require(true); } }".into(),
+            ),
+            ("lib.ark".into(), "// é 🐴\nlibrary Broken(".into()),
+        ]);
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.file, "lib.ark");
+        assert_eq!(diagnostic.severity, Severity::Error);
+        let span = diagnostic.span.unwrap();
+        assert_eq!(&files["lib.ark"][span.start..span.end], "(");
+        let error = super::compile_sources("main.ark", &files, Default::default()).unwrap_err();
+        assert!(
+            error.starts_with("main.ark: lib.ark: Parse error:"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_dependency_loader_failure_keeps_its_file() {
+        let files = BTreeMap::from([
+            (
+                "main.ark".into(),
+                "import \"lib.ark\"; contract C() { function spend() { require(true); } }".into(),
+            ),
+            (
+                "lib.ark".into(),
+                "library AssetId { function value() int { return 1; } }".into(),
+            ),
+        ]);
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.file, "lib.ark");
+        assert_eq!(diagnostic.message, "contract name 'AssetId' is reserved");
+        assert_eq!(diagnostic.span, None);
     }
 }

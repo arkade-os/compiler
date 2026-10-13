@@ -29,6 +29,10 @@ The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVa
 
 Every pull request gets its own build at `https://arkade-os.github.io/compiler/pr-previews/pr-<number>/`, posted as a comment on the PR.
 
+## Compile from JavaScript or TypeScript
+
+The [`@arkade-os/compiler` package](npm/README.md) provides `compile({ entry, files }, { optimize })`, `check({ entry, files })`, `symbols({ entry, files })`, and `version()` for Node.js ESM/CommonJS and browsers. It includes prebuilt WASM and declarations, selects the runtime loader automatically, and preserves compiler artifacts, source provenance, warnings, and structured diagnostics. The playground uses this package in a module worker. The npm package is ready for local packing; publication is pending organization permissions. See the package README for usage, worker integration, and tarball installation.
+
 ## A tour by example
 
 ### One key, one exit
@@ -211,17 +215,17 @@ cargo run -p arkade-bindgen -- --list-targets
 
 The TypeScript SDK reads the artifact directly with `programFromArtifact`; generating bindings is optional.
 
-Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `validate`, and `version`; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string, warnings: string[] }` for the playground.
+Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `symbols`, `validate`, and `version`; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string, warnings: string[] }`. The npm package wraps these bindings for JavaScript consumers, including the playground.
 
 ### Run the playground locally
 
 ```bash
 cargo install wasm-pack
-./playground/build.sh     # regenerates contracts.js from examples/ and builds pkg/ with wasm-pack
+./playground/build.sh     # generates examples and installs packed compiler browser assets
 ./playground/serve.sh     # http://localhost:8080, pass a port to override
 ```
 
-`playground/contracts.js` and `playground/pkg/` are generated and git-ignored. Add a contract to the playground by adding a `.ark` file under `examples/` and registering it in `playground/main.js`.
+Node.js 22.12 or newer is required. The build script installs locked npm development dependencies and packs `@arkade-os/compiler` locally; it needs no npm publishing credentials. `playground/contracts.js` and `playground/pkg/` are generated and git-ignored. Add a contract to the playground by adding a `.ark` file under `examples/` and registering it in `playground/main.js`.
 
 ### Tests
 
@@ -239,6 +243,8 @@ The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator
 ### Releasing
 
 `arkade-compiler` and `arkade-bindgen` share the version in the root `Cargo.toml` `[workspace.package]` table. To release, bump it in a PR (on a minor bump, also raise `arkade-bindgen`'s `arkade-compiler` requirement), merge, and push `v<version>` from the merge commit. `.github/workflows/release.yml` checks the tag against the version, builds binaries for five targets, creates a GitHub release with `SHA256SUMS`, and publishes both crates to crates.io through trusted publishing. A tag with a suffix such as `v0.1.0-test` creates a GitHub pre-release and skips crates.io; remove it with `gh release delete <tag> --cleanup-tag`.
+
+Keep the npm package version aligned with the Rust compiler: from `npm/`, run `npm version <version> --no-git-tag-version` to update its manifest and lockfile. Package CI builds, tests, and retains installable tarballs. npm publication requires organization permissions and must be configured separately.
 
 Trusted publishing can only be configured on existing crates, so the first crates.io release is manual: a crate owner runs `cargo publish --locked -p arkade-compiler && cargo publish --locked -p arkade-bindgen` from the commit to be tagged, enables trusted publishing for both crates (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`), and then pushes the tag. The workflow skips crates whose version is already published.
 
