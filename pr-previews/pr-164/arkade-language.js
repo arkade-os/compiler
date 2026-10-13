@@ -66,7 +66,12 @@ const inputProps = [
 ];
 const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'controlAssetId', 'metadataHash', 'assetId', 'isFresh']
     .map(name => prop(name, 'Asset group property'));
-const groupMembers = [...groupProps, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
+const groupRecords = [
+    S('inputs', 'Property', 'inputs[${1:j}]', 'Group input records'),
+    S('outputs', 'Property', 'outputs[${1:j}]', 'Group output records'),
+];
+const recordProps = [prop('amount', 'Record amount'), prop('type', 'Record type: 1 local, 2 intent'), prop('index', 'vout, vin, or the referenced intent output')];
+const groupMembers = [...groupProps, ...groupRecords, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
 
 const arkadeCompletions = [
     // Keywords
@@ -185,13 +190,17 @@ const arkadeMembers = {
     ],
     'tx.input': [prop('current', 'Input being spent')],
     'tx.input.current': inputProps,
-    'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the previous Arkade transaction')],
+    'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the Arkade transaction that created this input')],
     'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
     'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
     'tx.assetGroups[]': groupMembers,
+    'tx.assetGroups[].inputs[]': [...recordProps, prop('txid', 'Intent input source transaction')],
+    'tx.assetGroups[].outputs[]': recordProps,
     'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
+    'tx.packet': [method('has', '${1:packetType}', 'Whether this transaction carries the packet')],
+    'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the Arkade transaction that created this input carries the packet')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),
         prop('activeBytecode', 'Script being executed'),
@@ -226,7 +235,8 @@ function arkadeComplete(before, table, line) {
     if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
     const [, name, indexed] = path.match(/^(\w+)(\[\])?$/) || [];
     const type = visible.get(name)?.type || '';
-    if (type === 'AssetGroup' && !indexed) return groupMembers;
+    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
+    if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
     if (type.endsWith(']') && !indexed) return [prop('length', 'Array length')];
     const struct = structs.find(s => s.name === type.replace(/\[.*$/, ''));
     return struct ? struct.fields.map(field => prop(field.name, field.type)) : [];
