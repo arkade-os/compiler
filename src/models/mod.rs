@@ -625,7 +625,10 @@ pub enum ExprKind {
     /// Property access
     Property(String),
     /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
-    IntentInspect { path: String, presence_only: bool },
+    IntentInspect {
+        path: Box<Expression>,
+        presence_only: bool,
+    },
     /// Continue the current input at an output; policy order is script, value, assets.
     Tunnel {
         output_index: Box<Expression>,
@@ -750,7 +753,7 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<crate::properties::GroupIoProperty>, // "amount" or "type"; None returns the raw type/data/amount tuple
+        property: Option<crate::properties::GroupIoProperty>, // None returns the raw record
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
@@ -826,7 +829,6 @@ macro_rules! expression_children {
                 | ExprKind::Property(_)
                 | ExprKind::This(_)
                 | ExprKind::TxIntrospection { .. }
-                | ExprKind::IntentInspect { .. }
                 | ExprKind::AssetGroupsLength => vec![],
 
                 ExprKind::FieldAccess { value, .. } => vec![value],
@@ -897,6 +899,7 @@ macro_rules! expression_children {
                 ExprKind::ContractInstance { args, .. } => args.$iter().collect(),
                 ExprKind::Cast { data, .. } => vec![data],
                 ExprKind::PacketInspect { packet_type, .. } => vec![packet_type],
+                ExprKind::IntentInspect { path, .. } => vec![path],
                 ExprKind::InputPacketInspect {
                     index, packet_type, ..
                 } => vec![index, packet_type],

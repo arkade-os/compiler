@@ -43,7 +43,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             path,
             presence_only,
         } => {
-            push_literal_asm(path, asm);
+            emit_expression_asm(path, asm);
             asm.push(OP_INSPECTINTENTMESSAGE.to_string());
             // The opcode leaves the value below its presence flag.
             asm.push(if *presence_only { OP_NIP } else { OP_VERIFY }.to_string());
@@ -185,6 +185,13 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 Some(GroupIoProperty::Type) => {
                     asm.push(OP_DROP.to_string()); // amount
                     asm.push(OP_DROP.to_string()); // data
+                }
+                Some(GroupIoProperty::Index) => {
+                    asm.push(OP_DROP.to_string()); // amount
+                    asm.push(OP_NIP.to_string()); // type
+                }
+                Some(GroupIoProperty::Txid) => {
+                    unreachable!("input records are extracted first; output txid fails validation")
                 }
                 None => {}
             }

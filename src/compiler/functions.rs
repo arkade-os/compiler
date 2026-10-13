@@ -6,6 +6,13 @@ pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expre
         &expression.kind,
         ExprKind::Call { .. } | ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
     ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing | crate::builtins::Lowering::Multisig))
+        || matches!(
+            &expression.kind,
+            ExprKind::GroupIOAccess {
+                source: crate::models::GroupIOSource::Inputs,
+                ..
+            }
+        )
         || (matches!(&expression.kind, ExprKind::ArrayIndex { .. })
             && matches!(
                 expression.ty,
