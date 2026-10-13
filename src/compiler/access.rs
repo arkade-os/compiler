@@ -232,7 +232,6 @@ impl Generator {
         self.apply(OP_NUMEQUAL, 2, 1)
     }
 
-    /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
     /// One field of a group input record, which is `[type, txid, vin, amount]` for an
     /// intent input and `[type, vin, amount]` for a local one.
     pub(super) fn emit_group_input(&mut self, record: &Expression) -> Result<(), String> {
@@ -264,6 +263,7 @@ impl Generator {
         Ok(())
     }
 
+    /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
     pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<(), String> {
         let ExprKind::Builtin { args, .. } = &pairing.kind else {
             return Err("expected ecPairing".to_string());
