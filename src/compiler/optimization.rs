@@ -209,6 +209,50 @@ const BOOLEAN_RESULTS: [&str; 12] = [
     OP_CHECKSIGFROMSTACK,
 ];
 
+/// Rewrites of the output's last tokens, tried in order. A leading token that only guards a
+/// rewrite reappears in its replacement.
+const REWRITES: &[(&[&str], &[&str])] = &[
+    (&[OP_0, OP_PICK], &[OP_DUP]),
+    (&[OP_DUP, OP_SWAP], &[OP_DUP]),
+    (&[OP_0, OP_PUT], &[OP_NIP]),
+    (&[OP_1, OP_PICK], &[OP_OVER]),
+    (&[OP_0, OP_ROLL], &[]),
+    (&[OP_SWAP, OP_SWAP], &[]),
+    (&[OP_1, OP_ROLL], &[OP_SWAP]),
+    (&[OP_2, OP_ROLL], &[OP_ROT]),
+    (&[OP_SWAP, OP_DROP], &[OP_NIP]),
+    (&[OP_DROP, OP_DROP], &[OP_2DROP]),
+    (&[OP_OVER, OP_OVER], &[OP_2DUP]),
+    (&[OP_DUP, OP_2, OP_PICK], &[OP_2DUP, OP_SWAP]),
+    (&[OP_2, OP_PICK, OP_OVER], &[OP_3DUP, OP_NIP]),
+    (&[OP_2, OP_PICK, OP_4, OP_PICK], &[OP_2OVER, OP_SWAP]),
+    (&[OP_ROT, OP_SWAP, OP_ROT], &[OP_SWAP]),
+    (&[OP_ROT, OP_3, OP_ROLL], &[OP_2SWAP, OP_SWAP]),
+    (&[OP_3, OP_ROLL, OP_3, OP_ROLL], &[OP_2SWAP]),
+    (&[OP_4, OP_ROLL, OP_5, OP_ROLL], &[OP_2ROT, OP_SWAP]),
+    (&[OP_1, OP_ADD], &[OP_1ADD]),
+    (&["1", OP_ADD], &[OP_1ADD]),
+    (&[OP_1, OP_1ADD], &[OP_2]),
+    (&["1", OP_1ADD], &[OP_2]),
+    (&[OP_1, OP_VERIFY], &[]),
+    (&["1", OP_VERIFY], &[]),
+    (&[OP_EQUAL, OP_VERIFY], &[OP_EQUALVERIFY]),
+    (&[OP_NUMEQUAL, OP_VERIFY], &[OP_NUMEQUALVERIFY]),
+    (&[OP_DUP, OP_EQUALVERIFY], &[OP_DROP]),
+    // Packet lookups push a 0 or 1 presence flag.
+    (
+        &[OP_INSPECTPACKET, OP_1, OP_EQUALVERIFY],
+        &[OP_INSPECTPACKET, OP_VERIFY],
+    ),
+    (
+        &[OP_INSPECTINPUTPACKET, OP_1, OP_EQUALVERIFY],
+        &[OP_INSPECTINPUTPACKET, OP_VERIFY],
+    ),
+    (&[OP_CHECKSIG, OP_VERIFY], &[OP_CHECKSIGVERIFY]),
+    (&[OP_NOT, OP_NOT], &[OP_0NOTEQUAL]),
+    (&[OP_0NOTEQUAL, OP_NOT], &[OP_NOT]),
+];
+
 pub(super) fn optimize(mut asm: Vec<String>) -> Vec<String> {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
     // already enforces a trailing `OP_VERIFY OP_1`, so a failing last requirement reports a false
@@ -245,46 +289,24 @@ fn rewrite(asm: Vec<String>) -> Vec<String> {
         // Every rewrite shortens the window, so this terminates.
         loop {
             let len = optimized.len();
-            let window: Vec<&str> = optimized[len.saturating_sub(4)..]
-                .iter()
-                .map(String::as_str)
-                .collect();
-            let (matched, replacement): (usize, &[&str]) = match window.as_slice() {
-                [.., flag, OP_0NOTEQUAL] if BOOLEAN_RESULTS.contains(flag) => (1, &[]),
-                [.., OP_0, OP_PICK] => (2, &[OP_DUP]),
-                [.., OP_DUP, OP_SWAP] => (2, &[OP_DUP]),
-                [.., OP_0, OP_PUT] => (2, &[OP_NIP]),
-                [.., OP_1, OP_PICK] => (2, &[OP_OVER]),
-                [.., OP_0, OP_ROLL] | [.., OP_SWAP, OP_SWAP] => (2, &[]),
-                [.., OP_1, OP_ROLL] => (2, &[OP_SWAP]),
-                [.., OP_2, OP_ROLL] => (2, &[OP_ROT]),
-                [.., OP_SWAP, OP_DROP] => (2, &[OP_NIP]),
-                [.., OP_DROP, OP_DROP] => (2, &[OP_2DROP]),
-                [.., OP_OVER, OP_OVER] => (2, &[OP_2DUP]),
-                [.., OP_DUP, OP_2, OP_PICK] => (3, &[OP_2DUP, OP_SWAP]),
-                [.., OP_2, OP_PICK, OP_OVER] => (3, &[OP_3DUP, OP_NIP]),
-                [.., OP_2, OP_PICK, OP_4, OP_PICK] => (4, &[OP_2OVER, OP_SWAP]),
-                [.., OP_ROT, OP_SWAP, OP_ROT] => (3, &[OP_SWAP]),
-                [.., OP_ROT, OP_3, OP_ROLL] => (3, &[OP_2SWAP, OP_SWAP]),
-                [.., OP_3, OP_ROLL, OP_3, OP_ROLL] => (4, &[OP_2SWAP]),
-                [.., OP_4, OP_ROLL, OP_5, OP_ROLL] => (4, &[OP_2ROT, OP_SWAP]),
-                [.., OP_1 | "1", OP_ADD] => (2, &[OP_1ADD]),
-                [.., OP_1 | "1", OP_1ADD] => (2, &[OP_2]),
-                [.., OP_1 | "1", OP_VERIFY] => (2, &[]),
-                [.., OP_EQUAL, OP_VERIFY] => (2, &[OP_EQUALVERIFY]),
-                [.., OP_NUMEQUAL, OP_VERIFY] => (2, &[OP_NUMEQUALVERIFY]),
-                [.., OP_DUP, OP_EQUALVERIFY] => (2, &[OP_DROP]),
-                // Packet lookups push a 0 or 1 presence flag.
-                [.., OP_INSPECTPACKET | OP_INSPECTINPUTPACKET, OP_1, OP_EQUALVERIFY] => {
-                    (2, &[OP_VERIFY])
-                }
-                [.., OP_CHECKSIG, OP_VERIFY] => (2, &[OP_CHECKSIGVERIFY]),
-                [.., OP_NOT, OP_NOT] => (2, &[OP_0NOTEQUAL]),
-                [.., OP_0NOTEQUAL, OP_NOT] => (2, &[OP_NOT]),
-                _ => break,
+            if len >= 2
+                && optimized[len - 1] == OP_0NOTEQUAL
+                && BOOLEAN_RESULTS.contains(&optimized[len - 2].as_str())
+            {
+                optimized.pop();
+                continue;
+            }
+            let Some((from, to)) = REWRITES.iter().find(|(from, _)| {
+                len >= from.len()
+                    && optimized[len - from.len()..]
+                        .iter()
+                        .zip(*from)
+                        .all(|(token, op)| token == op)
+            }) else {
+                break;
             };
-            optimized.truncate(len - matched);
-            optimized.extend(replacement.iter().map(|token| token.to_string()));
+            optimized.truncate(len - from.len());
+            optimized.extend(to.iter().map(|token| token.to_string()));
         }
     }
     optimized
@@ -294,6 +316,33 @@ fn rewrite(asm: Vec<String>) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::opcodes::OP_ENDIF;
+
+    #[test]
+    fn rewrites_shorten_and_keep_the_stack_height() {
+        let height = |ops: &[&str]| -> isize {
+            ops.iter()
+                .map(|&op| {
+                    let (pops, pushes) = match op {
+                        "1" => (0, 1),
+                        _ => crate::opcodes::stack_effect(op)
+                            .unwrap_or_else(|| panic!("{op} has no effect")),
+                    };
+                    pushes as isize - pops as isize
+                })
+                .sum()
+        };
+        for &(from, to) in REWRITES {
+            assert!(to.len() < from.len(), "{from:?}");
+            // These take their depth from an operand; the shuffle test covers them.
+            if from
+                .iter()
+                .any(|op| [OP_PICK, OP_ROLL, OP_PUT].contains(op))
+            {
+                continue;
+            }
+            assert_eq!(height(from), height(to), "{from:?}");
+        }
+    }
 
     #[test]
     fn shallow_stack_operations_and_final_requirement() {
