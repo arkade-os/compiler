@@ -82,6 +82,7 @@ impl Generator {
             }
             return Ok(());
         }
+        self.pin_constructor_slots(&name);
         self.emit_access_offset(&indices)?;
         if let Some(length) = length {
             self.apply(OP_DROP, 1, 0)?;
@@ -109,30 +110,40 @@ impl Generator {
     }
 
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<(), String> {
-        if matches!(value.ty, ArkType::Array(..) | ArkType::Struct(_)) {
-            return Err("assignment requires a scalar field".to_string());
-        }
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
+        let leaves = self.value_leaves(&name, &value.ty.as_str())?;
         if indices.is_empty() {
-            return self.assign_static_binding(&name, &name);
+            for leaf in leaves {
+                self.assign_static_binding(&leaf.access_name, &leaf.access_name)?;
+            }
+            return Ok(());
         }
         self.emit_access_offset(&indices)?;
-        let slot = self
-            .binding_index(&Self::internal_binding_name(&name))
-            .ok_or_else(|| format!("undefined binding '{name}'"))?;
-        if matches!(
-            self.stack[slot],
-            StackItem::Binding {
-                kind: BindingKind::Constructor,
-                ..
+        for (assigned, leaf) in leaves.iter().enumerate() {
+            if assigned + 1 < leaves.len() {
+                // Keep the offset below the next value; runtime indexes are evaluated once.
+                self.swap()?;
+                self.push_integer_temporary(1);
+                self.apply(OP_PICK, 1, 1)?;
             }
-        ) {
-            return Err(format!("cannot assign to constructor parameter '{name}'"));
+            let slot = self
+                .binding_index(&Self::internal_binding_name(&leaf.access_name))
+                .ok_or_else(|| format!("undefined binding '{}'", leaf.access_name))?;
+            if matches!(
+                self.stack[slot],
+                StackItem::Binding {
+                    kind: BindingKind::Constructor,
+                    ..
+                }
+            ) {
+                return Err(format!("cannot assign to constructor parameter '{name}'"));
+            }
+            self.push_integer_temporary(self.stack.len() - slot - 3);
+            self.apply(OP_ADD, 2, 1)?;
+            self.apply(OP_PUT, 2, 0)?;
         }
-        self.push_integer_temporary(self.stack.len() - slot - 3);
-        self.apply(OP_ADD, 2, 1)?;
-        self.apply(OP_PUT, 2, 0)
+        Ok(())
     }
 
     pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<(), String> {

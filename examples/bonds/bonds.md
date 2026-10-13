@@ -65,19 +65,19 @@ Each pool function is gated to exactly one phase:
 
 | Function | Time gate | Extra gate | Caller |
 |---|---|---|---|
-| `issue` | `tx.time < maturity` | — | borrower (signed) + oracle witness |
-| `acceptRepayment` | `tx.time < maturity` | — | borrower co-spends `BondMint.repay` |
-| `liquidate` | `tx.time < maturity` | `collateralValue < liqThresholdBps × mintedAmount / 10000` | any auctioneer + oracle witness |
-| `acceptAuction` | `tx.time >= maturity AND tx.time < maturity + auctionWindow` | — | any auctioneer + oracle witness |
-| `redeem` | `tx.time >= maturity + auctionWindow` | — | credit holder (signed) |
+| `issue` | `!checkTime(maturity)` | — | borrower (signed) + oracle witness |
+| `acceptRepayment` | `!checkTime(maturity)` | — | borrower co-spends `BondMint.repay` |
+| `liquidate` | `!checkTime(maturity)` | `collateralValue < liqThresholdBps × mintedAmount / 10000` | any auctioneer + oracle witness |
+| `acceptAuction` | `checkTime(maturity) AND !checkTime(maturity + auctionWindow)` | — | any auctioneer + oracle witness |
+| `redeem` | `checkTime(maturity + auctionWindow)` | — | credit holder (signed) |
 
 Each `BondMint` function is gated to match:
 
 | Function | Time gate | Caller |
 |---|---|---|
-| `repay` | `tx.time < maturity` | borrower (signed) |
-| `liquidate` | `tx.time < maturity` | any auctioneer |
-| `auction` | `tx.time >= maturity AND tx.time < maturity + auctionWindow` | any auctioneer |
+| `repay` | `!checkTime(maturity)` | borrower (signed) |
+| `liquidate` | `!checkTime(maturity)` | any auctioneer |
+| `auction` | `checkTime(maturity) AND !checkTime(maturity + auctionWindow)` | any auctioneer |
 
 **Pre-maturity co-spend safety.** Five pool functions share the pre-maturity
 phase: `issue`, `acceptRepayment`, `rollOut`, `rollIn`, `liquidate`. They're
@@ -228,7 +228,7 @@ DIFFERENT failure modes:
 | | Margin call | Auction |
 |---|---|---|
 | **Trigger** | Vault's health: `collateralValue < liqThresholdBps × mintedAmount / 10000`. | Borrower didn't repay by maturity. |
-| **When** | At any block pre-maturity. | In `[maturity, maturity + auctionWindow)`. |
+| **When** | At any time pre-maturity. | In `[maturity, maturity + auctionWindow)`. |
 | **What it does** | Closes an *insolvent* vault before the bad debt can grow. | Closes a *defaulted* vault. |
 | **Why it exists** | Keeps every vault in the pool covenant-thresholded healthy at every block. | Closes positions that didn't voluntarily settle. |
 
@@ -276,7 +276,7 @@ any vault can be created:
   never fire, silently disabling the health invariant that backs credit
   fungibility.
 - `auctionWindow > 0` — a zero-length auction window collapses the
-  `tx.time >= maturity AND tx.time < maturity` gate to the empty set, so no
+  `checkTime(maturity) AND !checkTime(maturity)` gate to the empty set, so no
   defaulted vault can ever be settled via `acceptAuction`. `mintedAmount`
   stays in `totalDebitOutstanding` forever and credit holders absorb 100% of
   every default. Same class of deployment invariant as the ratio checks.
@@ -470,7 +470,7 @@ exact lines where each one would land.
 | **R1** | Add `minCollateral` + `minAmount` constructor params; reject dust-sized issuances. | Even with R2 ceiling division landed, very small but non-dust amounts can still produce vaults that are uneconomic to liquidate (auctioneer gas > spread). A configurable floor is the principled fix. | Add two int constructor params; `require(amount >= minAmount && collateral >= minCollateral)` at top of `issue`. |
 | **R2** | ~~Ceiling division on the origination collateral check~~ — **WIRED**. | `required = (amount * initRatioBps + 9999) / 10000` lands in both `issue` and `rollIn` (assert via `test_issue_uses_ceiling_division_on_required_collateral`). Closes the `amount=1, initRatioBps=14999` floor-rounding hole where 1 sat of collateral minted 1 credit + 1 debit. | — |
 | **R3** | Final-redemption residue path. | `redeem`'s `require(payout > 0)` rejects dust redemptions; the last few USDT are stranded forever once they round below the per-unit rate. | Add a `redeemAll(holderPk, holderSig)` branch gated on `amount == totalCreditOutstanding` that pays the full residual `usdtBalance` regardless of payout rounding. |
-| **R4** | ASM-level assertion of the strict time gate on `redeem`. | `test_redeem_is_pro_rata_post_window` currently relies on the constructor-param surface, not the gate's actual ASM placement. A refactor removing the gate would not be caught by the test. | Pattern-match the comparison sequence in `redeem`'s ASM that proves `tx.time >= maturity + auctionWindow` is enforced. |
+| **R4** | ASM-level assertion of the strict time gate on `redeem`. | `test_redeem_is_pro_rata_post_window` currently relies on the constructor-param surface, not the gate's actual ASM placement. A refactor removing the gate would not be caught by the test. | Pattern-match the comparison sequence in `redeem`'s ASM that proves `checkTime(maturity + auctionWindow)` is enforced. |
 
 ### Capability extensions
 
@@ -486,7 +486,7 @@ exact lines where each one would land.
 
 | # | Item | Why | Sketch |
 |---|---|---|---|
-| **T1** | ~~Unify time axis or document the conversion~~ — **PARTIALLY ADDRESSED.** The seconds-valued parameter is now named `oracleMaxAgeSeconds` and its declaration comment states the unit explicitly and contrasts it with the block-height fields (`maturity`, `auctionWindow`). Oracle freshness (`tx.offchainTime`, seconds) and the phase gates (`tx.time`, block height) remain two axes by design — that's inherent to oracle attestations being wall-clock-timestamped while Bitcoin locktime is height-based. Fully unifying (block-anchored oracle attestation) is still open. | A block-anchored oracle attestation would let freshness be gated on `tx.time` too; not pursued for the MVP since Fuji-style oracles timestamp in seconds. |
+| **T1** | ~~Unify time axis or document the conversion~~ — **PARTIALLY ADDRESSED.** `maturity` and `auctionWindow` are Unix seconds, the same axis as oracle freshness (`oracleMaxAgeSeconds`). `BondMint` gates them through `checkTime`; the `RepaymentPool` gates are written the same way but stay commented out until its functions are restored. | Restore the pool functions with their `checkTime` gates. |
 
 ### Monetisation surfaces (not yet wired)
 

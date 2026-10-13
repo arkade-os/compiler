@@ -106,7 +106,7 @@ const arkadeCompletions = [
     S('checkMultisig', 'Function', 'checkMultisig([${1:keys}], [${2:sigs}], ${3:threshold})', 'Verify multiple signatures'),
     S('checkSigFromStack', 'Function', 'checkSigFromStack(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message'),
     S('checkSigFromStackVerify', 'Function', 'checkSigFromStackVerify(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message or fail'),
-    S('checkTime', 'Function', 'checkTime(${1:timestamp})', 'Require the transaction time to have reached a timestamp'),
+    S('checkTime', 'Function', 'checkTime(${1:timestamp})', 'Whether the emulator clock has reached a Unix timestamp'),
     S('tweak', 'Function', 'tweak(${1:emulator}, ${2:functionName})', 'Tweaked emulator key'),
     S('sha256', 'Function', 'sha256(${1:data})', 'SHA256 hash'),
     S('hash256', 'Function', 'hash256(${1:data}) == ${2:hash}', 'Double SHA256 comparison'),
@@ -170,7 +170,6 @@ const arkadeMonarch = {
 // Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
 const arkadeMembers = {
     'tx': [
-        prop('time', 'Transaction time'),
         prop('version', 'Transaction version'),
         prop('locktime', 'Transaction locktime'),
         prop('numInputs', 'Number of inputs'),

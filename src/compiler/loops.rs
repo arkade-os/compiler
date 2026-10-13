@@ -41,6 +41,7 @@ pub(crate) fn substitute_statement(
         Statement::Require(req) => {
             Statement::Require(substitute_requirement(req, index_var, value_var, k, items))
         }
+        Statement::Declaration { .. } => stmt.clone(),
         Statement::LetBinding {
             name,
             declared_type,

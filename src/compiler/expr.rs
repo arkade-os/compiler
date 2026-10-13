@@ -43,7 +43,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             path,
             presence_only,
         } => {
-            push_literal_asm(path, asm);
+            emit_expression_asm(path, asm);
             asm.push(OP_INSPECTINTENTMESSAGE.to_string());
             // The opcode leaves the value below its presence flag.
             asm.push(if *presence_only { OP_NIP } else { OP_VERIFY }.to_string());
@@ -107,6 +107,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
             asset_gidx,
         } => {
             emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
+        }
+        ExprKind::AssetTryLookup {
+            source,
+            index,
+            asset_txid,
+            asset_gidx,
+        } => {
+            emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
         }
         ExprKind::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
@@ -209,10 +217,17 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<String>) {
                 return;
             }
             match target.as_str() {
+                // Normalize spender-supplied integers before exposing their encoding.
+                "bytes" if data.ty == crate::types::ArkType::Int => {
+                    asm.push(OP_BIN2NUM.to_string())
+                }
+                // Witness bools are spender-supplied scriptnums; normalize to 0/1.
+                "bytes" if data.ty == crate::types::ArkType::Bool => {
+                    asm.push(OP_0NOTEQUAL.to_string())
+                }
+                "int" | "bool" => asm.push(OP_0NOTEQUAL.to_string()),
                 "bytes20" => asm.extend([OP_SIZE, "20", OP_EQUALVERIFY].map(String::from)),
                 "bytes32" => asm.extend([OP_SIZE, "32", OP_EQUALVERIFY].map(String::from)),
-                // Witness bools are spender-supplied scriptnums; normalize to 0/1.
-                "int" | "bool" => asm.push(OP_0NOTEQUAL.to_string()),
                 _ => {}
             }
         }

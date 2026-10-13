@@ -1,9 +1,9 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
-    OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DIV, OP_FINDASSETGROUPBYASSETID,
+    OP_CAT, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIV, OP_FINDASSETGROUPBYASSETID,
     OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_LESSTHAN,
-    OP_LESSTHANOREQUAL, OP_MUL, OP_SHA256,
+    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
+    OP_LESSTHANOREQUAL, OP_MUL, OP_NOT, OP_SHA256,
 };
 
 use crate::common::{
@@ -252,8 +252,8 @@ fn test_issue_enforces_deployment_invariants() {
     //   - liqThresholdBps > 0: a non-positive threshold inverts the health
     //     gate (every vault liquidatable, or none).
     //   - auctionWindow > 0: a zero-length auction window means no defaulted
-    //     vault can ever be settled (`tx.time >= maturity && tx.time <
-    //     maturity` is empty), so totalDebitOutstanding accumulates forever.
+    //     vault can ever be settled (`checkTime(maturity) &&
+    //     !checkTime(maturity)` is empty), so totalDebitOutstanding accumulates forever.
     //   - auctionDiscountBps ∈ [0, 10000): an out-of-range discount bricks
     //     every liquidate + acceptAuction at the runtime check, leaving the
     //     pool unsettleable.
@@ -384,8 +384,8 @@ fn test_accept_repayment_validates_vault_and_burns_debit() {
         "acceptRepayment returns collateral"
     );
     assert!(
-        asm.contains(OP_LESSTHAN),
-        "acceptRepayment gated on tx.time < maturity"
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "acceptRepayment gated on !checkTime(maturity)"
     );
 }
 
@@ -393,7 +393,7 @@ fn test_accept_repayment_validates_vault_and_burns_debit() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_accept_auction_is_permissionless_oracle_priced_phased() {
     // Oracle witness only. Auctioneer identity = witness pubkey.
-    // Phased gate: tx.time >= maturity AND tx.time < maturity + auctionWindow.
+    // Phased gate: checkTime(maturity) AND !checkTime(maturity + auctionWindow).
     let output = compile_file(PATH).expect("compilation failed");
     let asm = arkade_asm(&output, "acceptAuction");
     assert!(
@@ -421,8 +421,12 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
         "acceptAuction pays collateral sats out"
     );
     assert!(
-        asm.contains(OP_LESSTHAN),
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
         "acceptAuction enforces auction-window upper bound"
+    );
+    assert!(
+        asm.contains(&format!("{OP_CHECKTIME} OP_VERIFY")),
+        "acceptAuction enforces checkTime(maturity)"
     );
 
     // Excluding serverSig/emulatorSig (in the leaf witness, not arkade.inputs),
@@ -479,19 +483,21 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
         asm.contains(OP_INSPECTOUTPUTVALUE),
         "liquidate pays collateral sats out"
     );
-    // liquidate carries exactly THREE strict less-than comparisons:
+    // liquidate carries exactly TWO strict less-than comparisons:
     //   1. auctionDiscountBps < 10000  (discount bound)
-    //   2. tx.time < maturity          (pre-maturity gate)
-    //   3. collateralValue < healthFloor (the margin-call trigger)
-    // Asserting the exact count (3) means removing ANY of them — in particular
-    // the health gate, the single most important liquidate invariant — fails
-    // the test. A `>= 2` lower bound would let the health gate be silently
-    // deleted (dropping 3 -> 2 while still passing).
+    //   2. collateralValue < healthFloor (the margin-call trigger)
+    // Asserting the exact count (2) means removing either of them — in
+    // particular the health gate, the single most important liquidate
+    // invariant — fails the test.
     let lt = opcode_count_in_arkade(&output, "liquidate", "OP_LESSTHAN");
     assert_eq!(
-        lt, 3,
-        "liquidate must gate on discount-bound AND tx.time<maturity AND \
-         collateralValue<healthFloor (expected exactly 3 OP_LESSTHAN, found {lt})"
+        lt, 2,
+        "liquidate must gate on discount-bound AND collateralValue<healthFloor \
+         (expected exactly 2 OP_LESSTHAN, found {lt})"
+    );
+    assert!(
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "liquidate must gate on !checkTime(maturity)"
     );
 
     let ws = arkade_inputs(&output, "liquidate");
@@ -516,20 +522,23 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_liquidate_and_accept_auction_are_phase_disjoint() {
     // Margin-call and post-maturity auction must NEVER both fire on the same
-    // vault in the same block: liquidate is gated on tx.time < maturity,
-    // acceptAuction on tx.time >= maturity. liquidate carries 3 OP_LESSTHAN
-    // (discount bound + pre-maturity gate + health gate); acceptAuction carries
-    // an OP_LESSTHAN for its window upper bound but its lower bound is a
-    // >= comparison — so the two paths can never both be valid at one height.
+    // vault at the same time: liquidate is gated on !checkTime(maturity),
+    // acceptAuction on checkTime(maturity), so the two paths can never both be
+    // valid at one time. liquidate also carries 2 OP_LESSTHAN (discount bound
+    // + health gate).
     let output = compile_file(PATH).expect("compilation failed");
     assert_eq!(
         opcode_count_in_arkade(&output, "liquidate", "OP_LESSTHAN"),
-        3,
-        "liquidate must carry its discount-bound, pre-maturity, and health-floor comparisons"
+        2,
+        "liquidate must carry its discount-bound and health-floor comparisons"
     );
     assert!(
-        arkade_asm(&output, "acceptAuction").contains(OP_LESSTHAN),
-        "acceptAuction must carry its window upper-bound comparison"
+        arkade_asm(&output, "liquidate").contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "liquidate must be gated on !checkTime(maturity)"
+    );
+    assert!(
+        arkade_asm(&output, "acceptAuction").contains(&format!("{OP_CHECKTIME} OP_VERIFY")),
+        "acceptAuction must be gated on checkTime(maturity)"
     );
 }
 
@@ -560,31 +569,21 @@ fn test_redeem_is_pro_rata_post_window() {
 
     // Redemption opens after maturity + auctionWindow.
     assert_eq!(
-        opcode_count_in_arkade(&output, "redeem", "OP_INSPECTLOCKTIME"),
+        opcode_count_in_arkade(&output, "redeem", OP_CHECKTIME),
         1,
-        "redeem must inspect locktime for the post-window gate"
+        "redeem must check the emulator clock for the post-window gate"
     );
     let tokens = arkade_asm_tokens(&output, "redeem");
     for parameter in ["<maturity>", "<auctionWindow>"] {
         assert!(tokens.iter().any(|token| token == parameter));
     }
     assert!(!tokens.iter().any(|token| token == "OP_CHECKLOCKTIMEVERIFY"));
-    // The inspected locktime must feed the gate, not be read and discarded.
-    let inspect = tokens
-        .iter()
-        .position(|token| token == "OP_INSPECTLOCKTIME")
-        .expect("OP_INSPECTLOCKTIME missing");
+    // The clock check must be required, not computed and discarded.
     let gate = tokens
         .iter()
-        .skip(inspect)
-        .position(|token| token == "OP_GREATERTHANOREQUAL")
-        .expect("locktime gate missing");
-    assert_eq!(tokens[inspect + gate + 1], "OP_VERIFY");
-    let bound = &tokens[inspect + 1..inspect + gate];
-    assert!(
-        bound.iter().any(|token| token == "OP_PICK"),
-        "locktime bound must read the redeemStart binding, not a literal: {bound:?}"
-    );
+        .position(|token| token == OP_CHECKTIME)
+        .expect("OP_CHECKTIME missing");
+    assert_eq!(tokens[gate + 1], "OP_VERIFY");
 }
 
 #[test]
@@ -621,8 +620,8 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
         "rollOut verifies usdt + control retention on the recreated pool"
     );
     assert!(
-        asm.contains(OP_LESSTHAN),
-        "rollOut gated on tx.time < maturity (pre-maturity)"
+        asm.contains(&format!("{OP_CHECKTIME} {OP_NOT} OP_VERIFY")),
+        "rollOut gated on !checkTime(maturity) (pre-maturity)"
     );
     assert!(
         asm.contains(OP_CHECKSIG),

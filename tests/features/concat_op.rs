@@ -85,7 +85,7 @@ contract LoopHash(bytes32 tag) {
   }
 }
 "#;
-    let out = compile(code).expect("compile");
+    let out = crate::common::compile_unoptimized(code).expect("compile");
     let asm = crate::common::arkade_asm(&out, "check");
     for (k, depth) in [2, 3, 4].into_iter().enumerate() {
         assert!(
@@ -101,7 +101,7 @@ contract LoopHash(bytes32 tag) {
 
 #[test]
 fn concatenation_rejects_non_byte_scalar_types() {
-    for ty in ["AssetGroup", "asset"] {
+    for ty in ["AssetGroup", "asset", "int", "bool"] {
         for (expression, side) in [
             ("0x01 + value", "right"),
             ("value + 0x01", "left"),
@@ -118,6 +118,22 @@ fn concatenation_rejects_non_byte_scalar_types() {
                 )),
                 "{source}: {error}"
             );
+            assert_eq!(
+                error.contains("bytes(value)"),
+                matches!(ty, "int" | "bool"),
+                "{error}"
+            );
+            assert_eq!(
+                error.contains("num2bin(value, width)"),
+                ty == "int",
+                "{error}"
+            );
+            if matches!(ty, "AssetGroup" | "asset") {
+                assert!(
+                    error.contains("both operands must be bytes-like"),
+                    "{error}"
+                );
+            }
         }
     }
 }

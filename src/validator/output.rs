@@ -26,35 +26,15 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
-            let prologue = arkade
-                .asm
-                .iter()
-                .take_while(|token| {
-                    token.starts_with('<')
-                        && token.ends_with('>')
-                        && !token.starts_with("<CONTRACT:")
-                })
-                .collect::<Vec<_>>();
-            let retained_names = prologue
-                .iter()
-                .map(|token| token[1..token.len() - 1].split('.').next().unwrap())
-                .collect::<HashSet<_>>();
-            let retained_parameters = output
-                .parameters
-                .iter()
-                .filter(|parameter| retained_names.contains(parameter.name.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
-            // Retained parameters push every scalar leaf in reverse declaration order.
-            let expected_prologue = match crate::compiler::expanded_placeholder_params(
-                &retained_parameters,
+            // Constructor leaves are pushed once: in the prologue, or inline at a single read.
+            let leaves = match crate::compiler::expanded_placeholder_params(
+                &output.parameters,
                 &output.structs,
             ) {
                 Ok(parameters) => parameters
-                    .iter()
-                    .rev()
+                    .into_iter()
                     .map(|parameter| format!("<{}>", parameter.name))
-                    .collect::<Vec<_>>(),
+                    .collect::<HashSet<_>>(),
                 Err(error) => {
                     issues.push(ValidationIssue::error(format!(
                         "group '{}' has an invalid type layout: {error}",
@@ -63,17 +43,19 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     continue;
                 }
             };
-            if !prologue.iter().copied().eq(expected_prologue.iter()) {
+            let mut pushed = HashSet::new();
+            if arkade
+                .asm
+                .iter()
+                .filter(|token| {
+                    token.starts_with('<')
+                        && token.ends_with('>')
+                        && !token.starts_with("<CONTRACT:")
+                })
+                .any(|token| !leaves.contains(token) || !pushed.insert(token))
+            {
                 issues.push(ValidationIssue::error(format!(
-                    "group '{}' arkade covenant has an invalid constructor prologue",
-                    group.name
-                )));
-            }
-            if arkade.asm[prologue.len()..].iter().any(|token| {
-                token.starts_with('<') && token.ends_with('>') && !token.starts_with("<CONTRACT:")
-            }) {
-                issues.push(ValidationIssue::error(format!(
-                    "group '{}' arkade covenant has a placeholder outside its constructor prologue",
+                    "group '{}' arkade covenant has an invalid constructor placeholder",
                     group.name
                 )));
             }

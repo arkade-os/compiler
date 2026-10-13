@@ -10,11 +10,11 @@ contract FujiSafe(
   pubkey borrowerPk,
   // The treasury's public key
   pubkey treasuryPk,
-  // The expiration timeout in blocks
+  // The expiration time in Unix seconds
   int expirationTimeout,
   // The price level for liquidation
   int priceLevel,
-  // The setup timestamp
+  // The setup time in Unix seconds
   int setupTimestamp,
   // The oracle's public key
   pubkey oraclePk,
@@ -33,7 +33,7 @@ contract FujiSafe(
   // Claim: Treasury can unlock all collateral after expiration when burning Fuji
   function claim(signature treasurySig) {
     // Check that expiration timeout has passed
-    require(tx.time >= expirationTimeout, "Expiration timeout not reached");
+    require(checkTime(expirationTimeout), "Expiration timeout not reached");
 
     // Verify burning of Fuji token using treasury key
     verifyTreasuryFujiBurning();
@@ -48,7 +48,7 @@ contract FujiSafe(
     require(currentPrice < priceLevel, "Price not below liquidation threshold");
 
     // Verify timestamp is after setup
-    require(tx.time >= setupTimestamp, "Timestamp before setup");
+    require(checkTime(setupTimestamp), "Timestamp before setup");
 
     // Create message for oracle signature verification
     bytes message = sha256(assetPair);

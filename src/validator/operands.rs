@@ -17,6 +17,7 @@ use crate::models::{ExprKind, Expression};
 
 pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("tx.packet", &["int"]),
+    ("tx.intent", &["bytes"]),
     ("tx.inputs[].packet", &["int", "int"]),
     ("tx.inputs[]", &["int"]),
     ("tx.outputs[]", &["int"]),
@@ -28,6 +29,7 @@ pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("tx.inputs[].assets[]", &["int", "int"]),
     ("tx.inputs[].assets.lookup", &["int"]),
     ("tx.inputs[].assets.has", &["int"]),
+    ("tx.inputs[].assets.tryLookup", &["int"]),
 ];
 
 pub(crate) fn find(name: &str) -> Option<Vec<&'static str>> {
@@ -48,6 +50,7 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
     Some(match &expr.kind {
         ExprKind::Builtin { builtin, args } => (builtin.name, args.iter().collect()),
         ExprKind::PacketInspect { packet_type } => ("tx.packet", vec![packet_type]),
+        ExprKind::IntentInspect { path, .. } => ("tx.intent", vec![path]),
         ExprKind::InputPacketInspect { index, packet_type } => {
             ("tx.inputs[].packet", vec![index, packet_type])
         }
@@ -67,6 +70,7 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
         } => ("tx.inputs[].assets[]", vec![io_index, asset_index]),
         ExprKind::AssetLookup { index, .. } => ("tx.inputs[].assets.lookup", vec![index]),
         ExprKind::AssetHas { index, .. } => ("tx.inputs[].assets.has", vec![index]),
+        ExprKind::AssetTryLookup { index, .. } => ("tx.inputs[].assets.tryLookup", vec![index]),
         _ => return None,
     })
 }

@@ -6,7 +6,7 @@ macro_rules! opcodes {
         $(pub const $name: &str = stringify!($name);)*
 
         /// Items an opcode pops and pushes; `None` when that depends on an operand
-        /// (`OP_PICK`, `OP_ROLL`, `OP_TUNNEL`) or the opcode is not modelled.
+        /// (`OP_PICK`, `OP_ROLL`, `OP_PUT`, `OP_TUNNEL`) or the opcode is not modelled.
         pub(crate) fn stack_effect(opcode: &str) -> Option<(usize, usize)> {
             match opcode {
                 $($(stringify!($name) => Some(($pops, $pushes)),)?)*
@@ -116,7 +116,7 @@ opcodes! {
 
     // Verify variants
     OP_EQUALVERIFY => (2, 0),
-    OP_NUMEQUALVERIFY,
+    OP_NUMEQUALVERIFY => (2, 0),
     OP_NUMNOTEQUAL,
     OP_BOOLOR,
 
@@ -132,7 +132,7 @@ opcodes! {
     OP_IFDUP,
     OP_DEPTH,
     OP_2DROP => (2, 0),
-    OP_2DUP,
+    OP_2DUP => (2, 4),
     OP_3DUP,
     OP_2OVER,
     OP_2ROT,

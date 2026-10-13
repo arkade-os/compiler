@@ -13,7 +13,7 @@
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_BIN2NUM, OP_CAT, OP_DROP, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
+    OP_BIN2NUM, OP_CAT, OP_DROP, OP_EQUAL, OP_INSPECTINPUTARKADESCRIPTHASH,
     OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
     OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN, OP_PUSHCURRENTINPUTINDEX, OP_REVERSEBYTES, OP_SHA256,
     OP_SIZE, OP_SUBSTR, OP_TXID,
@@ -78,14 +78,12 @@ contract PacketDemo(int exit) {{
         asm
     );
 
-    // Presence is asserted via "OP_1 OP_EQUALVERIFY" after the opcode.
+    // Presence is asserted by verifying the 0/1 flag the opcode pushes.
     let idx = asm
         .iter()
         .position(|s| s == OP_INSPECTPACKET)
         .expect("inspect packet present");
-    assert!(idx + 2 < asm.len(), "missing follow-on ops");
-    assert_eq!(asm[idx + 1], "OP_1");
-    assert_eq!(asm[idx + 2], OP_EQUALVERIFY);
+    assert_eq!(asm.get(idx + 1).map(String::as_str), Some("OP_VERIFY"));
 }
 
 #[test]

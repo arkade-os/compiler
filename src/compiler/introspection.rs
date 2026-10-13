@@ -49,6 +49,7 @@ pub(crate) fn emit_input_introspection_asm(
         InputProperty::Outpoint => asm.push(OP_INSPECTINPUTOUTPOINT.to_string()),
         InputProperty::ArkadeScriptHash => asm.push(OP_INSPECTINPUTARKADESCRIPTHASH.to_string()),
         InputProperty::ArkadeWitnessHash => asm.push(OP_INSPECTINPUTARKADEWITNESSHASH.to_string()),
+        InputProperty::Script => asm.push(OP_INSPECTINPUTSCRIPTPUBKEY.to_string()),
     }
 }
 
@@ -65,5 +66,6 @@ pub(crate) fn emit_output_introspection_asm(
         OutputProperty::WitnessVersion => {
             emit_witness_version_asm(OP_INSPECTOUTPUTSCRIPTPUBKEY, asm)
         }
+        OutputProperty::Script => asm.push(OP_INSPECTOUTPUTSCRIPTPUBKEY.to_string()),
     }
 }

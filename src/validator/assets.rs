@@ -29,7 +29,7 @@ fn walk_asset_id_stmts(stmts: &[LocatedStatement], fname: &str, issues: &mut Vec
                 check_asset_id_expr(left, fname, issues);
                 check_asset_id_expr(right, fname, issues);
             }
-            Statement::Return(None) => {}
+            Statement::Return(None) | Statement::Declaration { .. } => {}
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }
                 | AssignmentTarget::Access(index) = target
@@ -80,6 +80,11 @@ fn check_asset_id_expr(expr: &Expression, fname: &str, issues: &mut Vec<Validati
             ..
         }
         | ExprKind::AssetHas {
+            asset_txid,
+            asset_gidx,
+            ..
+        }
+        | ExprKind::AssetTryLookup {
             asset_txid,
             asset_gidx,
             ..
@@ -135,14 +140,8 @@ fn validate_asset_id(
             gidx_type.as_str()
         )));
     } else if is_constant(asset_gidx) {
-        let value = crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into()))
-            .and_then(|value| {
-                value
-                    .parse::<i64>()
-                    .map_err(|_| format!("'{value}' is not a valid integer"))
-            });
-        match value {
-            Ok(v) if (0..=65535).contains(&v) => {}
+        match crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into())) {
+            Ok(v) if v.parse::<u16>().is_ok() => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
                 "function '{}': asset id gidx {} is out of range 0..65535",
                 fname, v

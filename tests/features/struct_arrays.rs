@@ -244,9 +244,8 @@ contract C(Signer[2] signers) {
     // Iteration k checks signers[k].keys[k].
     assert_eq!(
         arkade_asm(&output, "spend"),
-        "<signers.1.keys.1> <signers.1.keys.0> <signers.0.keys.1> <signers.0.keys.0> \
-         OP_4 OP_PICK OP_1 OP_PICK OP_CHECKSIG OP_VERIFY \
-         OP_4 OP_PICK OP_4 OP_PICK OP_CHECKSIG OP_VERIFY OP_1 OP_NIP OP_NIP OP_NIP OP_NIP OP_NIP"
+        "OP_0 OP_PICK <signers.0.keys.0> OP_CHECKSIG OP_VERIFY \
+         OP_0 OP_PICK <signers.1.keys.1> OP_CHECKSIG OP_VERIFY OP_1 OP_NIP"
     );
 
     for body in [

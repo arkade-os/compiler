@@ -98,8 +98,9 @@ for_count_stmt = {
 block = { "{" ~ statement* ~ "}" }
 
 // Let binding (new variable with let keyword)
+let_keyword = @{ "let" ~ !(ASCII_ALPHANUMERIC | "_") }
 let_binding = {
-    "let" ~ identifier ~ "=" ~ general_expression ~ ";"
+    &let_keyword ~ "let" ~ identifier ~ "=" ~ general_expression ~ ";"
 }
 
 // Variable assignment (reassignment without let keyword)
@@ -128,7 +129,7 @@ function_call_stmt = {
 
 // Variable declaration (typed)
 variable_declaration = {
-    data_type ~ identifier ~ "=" ~ general_expression ~ ";"
+    !let_keyword ~ data_type ~ identifier ~ ("=" ~ general_expression)? ~ ";"
 }
 
 // General expression with operator precedence
@@ -180,6 +181,7 @@ primary_expr = {
     asset_count |
     asset_has |
     asset_lookup |
+    asset_try_lookup |
     input_introspection |
     output_introspection |
     tx_introspection |
@@ -236,6 +238,12 @@ asset_lookup = {
         ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
 }
 
+// Non-aborting lookup: tx.inputs[i].assets.tryLookup(txid, gidx) → AssetLookup
+asset_try_lookup = {
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
+        ~ "." ~ "tryLookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
+}
+
 // Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) → Bool
 asset_has = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
@@ -247,10 +255,10 @@ asset_count = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ "." ~ "length"
 }
 
-// Indexed asset access: tx.outputs[o].assets[t].property
-// Returns assetId (txid32, gidx_u16) or amount (u64)
+// Indexed asset access: tx.outputs[o].assets[t].property, or the whole AssetEntry
+// without a property. Returns assetId (txid32, gidx_u16) or amount (u64)
 asset_at = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ array_access ~ "." ~ asset_at_property
+    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ array_access ~ ("." ~ asset_at_property)?
 }
 
 // Properties for asset_at
@@ -271,8 +279,10 @@ tx_introspection = {
 // the SDK convention used in docs/arkade-script-with-assets.md).
 tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" | "id" }
 
-intent_field = { "tx" ~ "." ~ "intent" ~ "." ~ "field" ~ "(" ~ string_literal ~ ")" }
-intent_has = { "tx" ~ "." ~ "intent" ~ "." ~ "has" ~ "(" ~ string_literal ~ ")" }
+// A lone quoted path is checked at compile time; any other bytes expression is checked by the VM.
+intent_field = { "tx" ~ "." ~ "intent" ~ "." ~ "field" ~ "(" ~ intent_path ~ ")" }
+intent_has = { "tx" ~ "." ~ "intent" ~ "." ~ "has" ~ "(" ~ intent_path ~ ")" }
+intent_path = _{ string_literal ~ &")" | general_expression }
 
 // ─── Indexed Input/Output Introspection ─────────────────────────────────────────
 
@@ -287,7 +297,7 @@ input_introspection = {
 // a specific consuming Arkade closure.
 input_introspection_property = {
     "value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint" |
-    "arkadeScriptHash" | "arkadeWitnessHash"
+    "arkadeScriptHash" | "arkadeWitnessHash" | "script"
 }
 
 // Output introspection: tx.outputs[o].property
@@ -296,7 +306,7 @@ output_introspection = {
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" }
+output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" | "script" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
@@ -322,9 +332,9 @@ tunnel = {
 }
 tunnel_exceptions = { "[" ~ (general_expression ~ ("," ~ general_expression)*)? ~ "]" }
 
-// Time comparison (tx.time >= timelock)
+// Locktime comparison (tx.locktime >= timelock), rejected in tapscript
 time_comparison = {
-    "tx.time" ~ ">=" ~ additive_expr
+    "tx.locktime" ~ ">=" ~ additive_expr
 }
 
 // Generalized hash condition function name.
@@ -503,7 +513,9 @@ check_sig_from_stack_verify = {
 // Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
 // pubkey/signature are semantic because the VM validates them when consumed.
 // int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
-cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
+// bytes(int) produces minimal Script-number bytes; bytes-like casts widen unchanged.
+// bytes(bool) normalizes false to empty bytes and true to 0x01.
+cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "bytes" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
 cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 
 // ─── Packet Introspection ──────────────────────────────────────────────
