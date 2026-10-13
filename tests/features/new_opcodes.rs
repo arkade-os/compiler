@@ -179,6 +179,16 @@ fn intent_paths_can_be_runtime_bytes() {
     assert!(asm.contains("OP_INSPECTINTENTMESSAGE OP_VERIFY"), "{asm}");
     assert!(!asm.contains("0x"), "paths come from the stack: {asm}");
 
+    let output = compile(
+        "contract C() { function spend(bytes i) { require(tx.intent.has(\"cosigners.\" + i)); } }",
+    )
+    .expect("a quoted prefix starts a runtime path");
+    let asm = arkade_asm(&output, "spend");
+    assert!(
+        asm.contains("0x636f7369676e6572732e OP_SWAP OP_CAT OP_INSPECTINTENTMESSAGE OP_NIP"),
+        "{asm}"
+    );
+
     let error = compile("contract C() { function spend(int n) { require(tx.intent.has(n)); } }")
         .expect_err("a path is bytes")
         .to_string();
