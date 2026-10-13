@@ -59,6 +59,14 @@ fn test_tx_locktime() {
 }
 
 #[test]
+fn test_tx_time_is_not_a_locktime_alias() {
+    let err = compile("contract C(int t) { function f() { require(tx.time >= t); } }")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("undefined binding 'tx.time'"), "{err}");
+}
+
+#[test]
 fn test_tx_num_inputs() {
     let code = r#"
         contract InputCounter(pubkey owner) {

@@ -69,6 +69,7 @@ fn constructor_prologue_and_function_inputs_have_explicit_positions() {
 contract Frame(int left, int right) {
     function spend(int x, int y) {
         require((left + x) == (right + y));
+        require(left != right);
     }
 }
 "#,
@@ -85,7 +86,7 @@ contract Frame(int left, int right) {
     );
     assert_eq!(&covenant.asm[..2], ["<right>", "<left>"]);
     assert!(
-        contains_tokens(&covenant.asm, &["OP_0", OP_ROLL, "OP_2", OP_ROLL, OP_ADD]),
+        contains_tokens(&covenant.asm, &["OP_0", OP_PICK, "OP_3", OP_ROLL, OP_ADD]),
         "constructor and function inputs must be read by depth: {:?}",
         covenant.asm
     );
@@ -388,6 +389,30 @@ contract RuntimeIndex() {
 }
 
 #[test]
+fn single_read_constructor_leaves_are_pushed_at_their_read() {
+    for (source, expected) in [
+        (
+            "contract C(int k, int j) { function spend(bool c) { if (c) { require(k > 1); } else { require(k > 2); } require(j > 0); } }",
+            "<k> OP_1 OP_ROLL OP_IF OP_0 OP_PICK 1 OP_GREATERTHAN OP_VERIFY OP_ELSE OP_0 OP_PICK 2 OP_GREATERTHAN OP_VERIFY OP_ENDIF <j> 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP",
+        ),
+        (
+            "contract C(int k) { function spend(int a, int b) { require(over(a)); require(over(b)); } private function over(int v) bool { return v > k; } }",
+            "<k> OP_1 OP_PICK OP_1 OP_PICK OP_GREATERTHAN OP_VERIFY OP_2 OP_PICK OP_1 OP_PICK OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP OP_NIP",
+        ),
+        (
+            "contract C(int k, pubkey owner) { function spend(signature s) { require(check(s, owner)); require(k > 0); } private function check(signature s, pubkey p) bool { return checkSig(s, p); } }",
+            "<owner> OP_1 OP_PICK OP_1 OP_ROLL OP_CHECKSIG OP_VERIFY <k> 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP",
+        ),
+        (
+            "struct S { int length; int[2] xs; } contract C(S s) { function spend() { require(s.length == 3); require(s.xs.length == 2); } }",
+            "<s.length> 3 OP_EQUAL OP_VERIFY OP_2 2 OP_EQUAL OP_VERIFY OP_1",
+        ),
+    ] {
+        assert_eq!(covenant(source, "spend").asm.join(" "), expected, "{source}");
+    }
+}
+
+#[test]
 fn constructor_parameters_are_filtered_per_spending_path() {
     let output = compile(
         r#"
@@ -410,7 +435,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
         let covenant = group.arkade.as_ref().unwrap();
         assert_eq!(
             covenant.asm,
-            format!("<{parameter}> OP_1 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1")
+            format!("OP_0 OP_ROLL <{parameter}> OP_EQUAL OP_VERIFY OP_1")
                 .split_whitespace()
                 .map(String::from)
                 .collect::<Vec<_>>()
@@ -466,10 +491,10 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
     for (parameters, inputs, body, expected) in [
         ("int limit, int alternate, bool choose", "int value",
          "let total = 0; if (choose) { total = limit; } else { total = alternate; } require(total > value);",
-         vec!["<choose>", "<alternate>", "<limit>"]),
+         vec!["<choose>", "<limit>", "<alternate>"]),
         ("int[2] values, int limit", "",
          "for (i, value) in values { require(value > limit); }",
-         vec!["<limit>", "<values.1>", "<values.0>"]),
+         vec!["<limit>", "<values.0>", "<values.1>"]),
         ("int index, int amount", "",
          "int[2] values = [0, 0]; values[index] = amount; require(values[0] >= 0);",
          vec!["<amount>", "<index>"]),
@@ -478,26 +503,27 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          vec!["<policy.limits.1>", "<policy.limits.0>", "<policy.key>"]),
         ("pubkey[2] keys, int index, bytes32 message", "signature sig",
          "require(checkSigFromStack(sig, keys[index], message));",
-         vec!["<message>", "<index>", "<keys.1>", "<keys.0>"]),
+         vec!["<keys.1>", "<keys.0>", "<index>", "<message>"]),
         ("pubkey key", "signature sig",
          "if (checkSig(sig, key)) { require(true); } else { require(false); }",
          vec!["<key>"]),
         ("bytes32 digest, int deadline", "bytes preimage",
-         "require(sha256(preimage) == digest); require(tx.time >= deadline);",
-         vec!["<deadline>", "<digest>"]),
+         "require(sha256(preimage) == digest); require(tx.locktime >= deadline);",
+         vec!["<digest>", "<deadline>"]),
         ("AssetGroup groupIndex, bytes32 txid, int gidx", "",
          "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
-         vec!["<gidx>", "<txid>", "<groupIndex>"]),
+         vec!["<groupIndex>", "<gidx>", "<txid>"]),
         ("Policy policy", "",
          "require(tx.outputs[0].scriptPubKey == new Child(policy));",
-         vec!["<policy.limits.1>", "<policy.limits.0>", "<policy.key>"]),
+         vec![]),
     ] {
         let source = format!(
             "import \"policy.ark\"; import \"child.ark\"; contract C(int unused, Policy unusedPolicy, {parameters}, int unusedTail) {{ function spend({inputs}) {{ {body} }} }}"
         );
         let actual = covenant(&source, "spend");
-        let prologue = actual.asm.iter().take_while(|token| token.starts_with('<')).map(String::as_str).collect::<Vec<_>>();
-        assert_eq!(prologue, expected, "{body}");
+        // Prologue slots first, then single-read leaves at their reads.
+        let placeholders = actual.asm.iter().filter(|token| token.starts_with('<') && !token.starts_with("<CONTRACT:")).map(String::as_str).collect::<Vec<_>>();
+        assert_eq!(placeholders, expected, "{body}");
         let baseline = covenant(&source.replace("int unused, Policy unusedPolicy, ", "").replace(", int unusedTail", ""), "spend");
         assert_eq!(actual.asm, baseline.asm, "{body}");
         if body.contains("new Child") {
@@ -523,6 +549,24 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
         ),
     ] {
         let source = format!("contract FinalUse() {{ function spend(int x, int y) {{ {body} }} }}");
+        assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
+    }
+}
+
+#[test]
+fn short_circuit_operands_move_outside_open_branches() {
+    for (body, expected) in [
+        (
+            "require(x == y || z > 0);",
+            "OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_IF OP_1 OP_ELSE OP_0 OP_PICK 0 OP_GREATERTHAN OP_ENDIF OP_VERIFY OP_1 OP_NIP",
+        ),
+        (
+            "require(z > 0 || z < x); require(y == 1);",
+            "OP_2 OP_PICK 0 OP_GREATERTHAN OP_IF OP_1 OP_ELSE OP_2 OP_PICK OP_1 OP_PICK OP_LESSTHAN OP_ENDIF OP_VERIFY OP_1 OP_ROLL 1 OP_EQUAL OP_VERIFY OP_1 OP_NIP OP_NIP",
+        ),
+    ] {
+        let source =
+            format!("contract ShortCircuit() {{ function spend(int x, int y, int z) {{ {body} }} }}");
         assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
     }
 }

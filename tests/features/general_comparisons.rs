@@ -22,12 +22,12 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
 #[test]
 fn integer_comparisons_emit_all_boolean_operators() {
     let cases: [(&str, &[&str]); 6] = [
-        ("==", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_EQUAL]),
-        ("!=", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_EQUAL, OP_NOT]),
-        (">=", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_GREATERTHANOREQUAL]),
-        (">", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_GREATERTHAN]),
-        ("<=", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_LESSTHANOREQUAL]),
-        ("<", &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_LESSTHAN]),
+        ("==", &["<left>", "<right>", OP_EQUAL]),
+        ("!=", &["<left>", "<right>", OP_EQUAL, OP_NOT]),
+        (">=", &["<left>", "<right>", OP_GREATERTHANOREQUAL]),
+        (">", &["<left>", "<right>", OP_GREATERTHAN]),
+        ("<=", &["<left>", "<right>", OP_LESSTHANOREQUAL]),
+        ("<", &["<left>", "<right>", OP_LESSTHAN]),
     ];
 
     for (operator, expected) in cases {
@@ -125,14 +125,11 @@ fn require_accepts_direct_boolean_expressions() {
     );
 
     assert!(
-        contains_tokens(&asm, &[OP_1, OP_ROLL, OP_VERIFY]),
-        "a bool variable must be read from its symbolic stack slot: {asm:?}"
+        contains_tokens(&asm, &["<enabled>", OP_VERIFY]),
+        "a bool variable must be verified directly: {asm:?}"
     );
     assert!(
-        contains_tokens(
-            &asm,
-            &[OP_1, OP_ROLL, OP_1, OP_ROLL, OP_CHECKSIG, OP_VERIFY]
-        ),
+        contains_tokens(&asm, &[OP_0, OP_ROLL, "<owner>", OP_CHECKSIG, OP_VERIFY]),
         "checkSig must be accepted as a direct boolean requirement: {asm:?}"
     );
     assert!(
@@ -251,16 +248,7 @@ fn comparison_results_can_be_compared_as_boolean_operands() {
     assert!(
         contains_tokens(
             &asm,
-            &[
-                OP_0,
-                OP_ROLL,
-                OP_1,
-                OP_ROLL,
-                OP_LESSTHAN,
-                OP_1,
-                OP_ROLL,
-                OP_EQUAL
-            ]
+            &["<left>", "<right>", OP_LESSTHAN, "<expected>", OP_EQUAL]
         ),
         "nested comparison must leave a boolean for the outer comparison: {asm:?}"
     );
@@ -295,16 +283,15 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
     let asm = crate::common::arkade_asm_tokens(&output, "compare");
 
     assert!(
-        asm.windows(4).any(|window| {
-            window[0] == OP_1
-                && window[1] == OP_ROLL
-                && window[2].contains("CONTRACT:SingleSig(")
-                && window[3] == OP_EQUAL
+        asm.windows(3).any(|window| {
+            window[0] == "<expectedScript>"
+                && window[1].contains("CONTRACT:SingleSig(")
+                && window[2] == OP_EQUAL
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &[OP_1, OP_ROLL, "OP_TXID", OP_EQUAL]),
+        contains_tokens(&asm, &["<expectedTxid>", "OP_TXID", OP_EQUAL]),
         "introspection comparison must emit its native opcode: {asm:?}"
     );
 }
@@ -546,7 +533,7 @@ contract C(pubkey owner, bytes32 hash) {
         valid = valid && (sha256(preimage) == hash || sufficient(amount));
         if (valid && sufficient(amount)) { require(valid); } else { require(!valid); }
         require(checkSigFromStack(sig, owner, hash) || !enabled);
-        require(tx.time >= 0 && (amount > 0 || enabled));
+        require(tx.locktime >= 0 && (amount > 0 || enabled));
         require(sha256(preimage) == hash || checkSig(sig, owner));
         require(sufficient(amount) == (enabled || amount > 0));
     }

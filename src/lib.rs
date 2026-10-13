@@ -25,7 +25,7 @@ pub use types::ArkType;
 /// Per-call compiler settings. Optimizations are enabled by default.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompileOptions {
-    /// Apply assembly optimizations to Arkade covenants.
+    /// Fold constant expressions, remove static branches, and optimize Arkade assembly.
     pub optimize: bool,
 }
 

@@ -23,8 +23,8 @@ contract PaymentAuthorization(
   bytes processorScript,
   bytes customerScript,
 
-  // Refund timelock (block height)
-  int refundBlockHeight,
+  // Refund time in Unix seconds
+  int refundTime,
 
   // Authorization key
   pubkey merchantPubkey
@@ -93,9 +93,9 @@ contract PaymentAuthorization(
   }
 
   // Refund: timelocked fallback back to customer
-  // Becomes valid after refundBlockHeight - effectively anyone-can-spend into customerScript
+  // Becomes valid after refundTime - effectively anyone-can-spend into customerScript
   function refund() {
-    require(tx.time >= refundBlockHeight, "Refund timelock not reached");
+    require(checkTime(refundTime), "Refund timelock not reached");
 
     let vtxoValue = tx.input.current.value;
 

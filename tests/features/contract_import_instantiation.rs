@@ -231,10 +231,8 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // Covenant ASM includes the constructor prologue and final frame cleanup.
+    // Parameters read only by the instantiation token need no stack slots.
     let expected_arkade: Vec<&str> = vec![
-        "<exit>",
-        "<ownerPk>",
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
         "OP_DROP",
@@ -242,8 +240,6 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "OP_EQUAL",
         "OP_VERIFY",
         "OP_1",
-        "OP_NIP",
-        "OP_NIP",
     ];
     assert_eq!(
         arkade_asm_tokens(&result, "send"),

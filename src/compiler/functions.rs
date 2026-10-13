@@ -145,14 +145,17 @@ impl Generator {
         }
         if crate::models::expression_result_struct(expression) == Some(ty) {
             let width = self.value_leaves("", ty)?.len();
-            if width != 2 {
-                return Err(format!(
-                    "native struct '{ty}' has unsupported width {width}"
-                ));
-            }
             self.emit_expression_items(expression, width)?;
-            // Native results are first deepest; wider native structs need a general reversal.
-            return self.swap();
+            // Native results are first deepest; reverse them so the first leaf is on top.
+            for depth in 1..width {
+                if depth == 1 {
+                    self.swap()?;
+                } else {
+                    self.push_integer_temporary(depth);
+                    self.apply(OP_ROLL, depth + 2, depth + 1)?;
+                }
+            }
+            return Ok(());
         }
         let ExprKind::StructLiteral(values) = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'"));
@@ -198,6 +201,7 @@ impl Generator {
         }
         let caller = self.stack.clone();
         let caller_scope = self.scope.clone();
+        let caller_deferred = std::mem::take(&mut self.deferred);
         let baseline = caller.len();
         let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
         // A caller's top-slot rebinding must not match helper bindings with the same name.
@@ -222,6 +226,7 @@ impl Generator {
                     if let Some(source_index) =
                         self.binding_index(&source).filter(|&i| i < baseline)
                     {
+                        self.count_constructor_reads(source_index, 1);
                         if self.read_cursor.is_none() {
                             if let Some(previous) = self.last_reads.get(&(source, source_index)) {
                                 self.final_reads[*previous] = false;
@@ -241,6 +246,9 @@ impl Generator {
             ));
         }
         // Static calls hide all caller bindings; instance helpers retain constructor state.
+        let caller_inlined = function
+            .is_static
+            .then(|| std::mem::take(&mut self.inlined));
         for (index, item) in self.stack[..baseline].iter_mut().enumerate() {
             if function.is_static
                 || !matches!(
@@ -268,6 +276,12 @@ impl Generator {
                 };
             }
         }
+        let caller_scopes = std::mem::take(&mut self.scopes);
+        self.scope = if function.is_static {
+            types::Scope::new()
+        } else {
+            self.constructor_scope.clone()
+        };
         let previous_aliases = std::mem::replace(&mut self.aliases, aliases);
         for parameter in &function.parameters {
             self.bind_type(&parameter.name, &parameter.param_type);
@@ -303,7 +317,12 @@ impl Generator {
         self.last_reads.retain(|(_, index), _| *index < baseline);
         self.stack[..baseline].clone_from_slice(&caller);
         self.scope = caller_scope;
+        self.scopes = caller_scopes;
+        self.deferred = caller_deferred;
         self.aliases = previous_aliases;
+        if let Some(inlined) = caller_inlined {
+            self.inlined = inlined;
+        }
         self.return_type = previous_return;
         self.direct_return = previous_direct_return;
         self.pinned_stack_len = pinned;
@@ -363,18 +382,10 @@ impl Generator {
     pub(super) fn emit_unless_returned(
         &mut self,
         statements: &[LocatedStatement],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         self.read_binding("$returned")?;
         self.apply(OP_NOT, 1, 1)?;
         self.apply(OP_IF, 1, 0)?;
-        let baseline = self.stack.clone();
-        self.enter_scope();
-        generate_asm_from_statements_recursive(statements, self)?;
-        self.exit_scope()?;
-        if self.stack != baseline {
-            return Err("private return changed outer stack layout".to_string());
-        }
-        self.asm.push(OP_ENDIF.to_string());
-        Ok(())
+        self.emit_branches(statements, None, false)
     }
 }

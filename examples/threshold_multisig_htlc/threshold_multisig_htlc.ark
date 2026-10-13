@@ -14,7 +14,7 @@ contract HTLC(
   // Refund path: sender reclaims after timeout
   function refund(signature senderSig) {
     require(checkSig(senderSig, sender));
-    require(tx.time >= refundTime);
+    require(checkTime(refundTime));
   }
 
   // Claim path: receiver claims with preimage

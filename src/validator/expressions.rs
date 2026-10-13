@@ -222,10 +222,10 @@ pub(super) fn validate_binding_expression(
                     [("left", left), ("right", right)].iter().zip(&types)
                 {
                     if *actual != ArkType::Unknown && !crate::types::is_bytes_like(actual) {
-                        let hint = if matches!(actual, ArkType::Int | ArkType::Bool) {
-                            "convert it explicitly with num2bin(value, width) — the compiler will not choose a width for you"
-                        } else {
-                            "both operands must be bytes-like"
+                        let hint = match actual {
+                            ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or num2bin(value, width) for fixed-width encoding",
+                            ArkType::Bool => "convert it explicitly with bytes(value) for minimal Script-number encoding",
+                            _ => "both operands must be bytes-like",
                         };
                         issues.push(
                             ValidationIssue::type_error(format!(
@@ -322,9 +322,6 @@ pub(super) fn validate_binding_expression(
                 // Composite operands are emitted field by field, so their type must be known.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
-                // A hex literal carries its own width, so 32 bytes need no cast.
-                let literal_bytes32 = expected == ArkType::Bytes32
-                    && matches!(&operand.kind, ExprKind::Literal(value) if value.starts_with("0x") && value.len() == 66);
                 if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
                     (&operand.kind, &expected)
                 {
@@ -346,7 +343,7 @@ pub(super) fn validate_binding_expression(
                     }
                     continue;
                 }
-                if known && !literal_bytes32 && !binding_types_compatible(&expected, &actual) {
+                if known && !binding_types_compatible(&expected, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "function '{function_name}': {name} operand has type '{}', expected '{}'",
@@ -372,10 +369,15 @@ pub(super) fn validate_binding_expression(
                     "only bool converts to int; use int(0x..) for a hex constant or bin2num for bytes",
                 ),
                 "bool" => (ArkType::Int, "only int converts to bool"),
+                "bytes" => (ArkType::Int, "only int, bool or bytes-like values convert to bytes"),
                 _ => (ArkType::Bytes, "only bytes can be cast"),
             };
             // Same-type casts are no-ops; emission drops them.
-            if actual != source && actual != ArkType::parse(target) && actual != ArkType::Unknown {
+            if actual != source
+                && !binding_types_compatible(&ArkType::parse(target), &actual)
+                && actual != ArkType::Unknown
+                && !(target == "bytes" && actual == ArkType::Bool)
+            {
                 issues.push(ValidationIssue::error(format!(
                     "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
                     actual.as_str()
@@ -432,6 +434,16 @@ pub(super) fn validate_binding_expression(
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
         ExprKind::FieldAccess { value, .. } => {
+            if let Some(array) = expression.binding_path().and_then(|name| {
+                name.strip_suffix(".length")
+                    .filter(|_| find_binding(scopes, &name).is_none())
+                    .map(str::to_owned)
+            }) {
+                if !array.contains('[') && find_binding(scopes, &array).is_some() {
+                    validate_array_length(&array, function_name, scopes, issues);
+                    return;
+                }
+            }
             let before = issues.len();
             validate_value_expression(value, function_name, scopes, issues);
             if issues.len() == before {
@@ -561,6 +573,9 @@ pub(super) fn validate_array_index(
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) -> Option<(ArkType, BindingSource)> {
+    if find_binding(scopes, array).is_some_and(|binding| !binding.initialized) {
+        validate_named_binding(array, None, "array", function_name, scopes, issues);
+    }
     let array_info = match find_binding(scopes, array) {
         None => {
             issues.push(ValidationIssue::error(format!(
@@ -572,6 +587,7 @@ pub(super) fn validate_array_index(
         Some(BindingInfo {
             binding_type: ArkType::Array(element, length),
             source,
+            ..
         }) => Some(((**element).clone(), *length, *source)),
         Some(_) => {
             issues.push(ValidationIssue::error(format!(
@@ -593,9 +609,25 @@ pub(super) fn validate_array_index(
             .at(index.span),
         );
     }
-    if let (Some((negative, literal)), Some((_, length, _))) =
-        (literal_index(index), array_info.as_ref())
-    {
+    let evaluated = crate::compiler::constants::evaluate(index, &mut |name| {
+        let array = name
+            .strip_suffix(".length")
+            .filter(|_| find_binding(scopes, name).is_none());
+        match array.and_then(|array| find_binding(scopes, array)) {
+            Some(BindingInfo {
+                binding_type: ArkType::Array(_, length),
+                ..
+            }) => Ok(length.to_string()),
+            _ => Err(name.to_string()),
+        }
+    })
+    .ok()
+    .filter(|_| index_type == ArkType::Int);
+    if let (Some(literal), Some((_, length, _))) = (evaluated.as_deref(), array_info.as_ref()) {
+        let (negative, literal) = match literal.strip_prefix('-') {
+            Some(magnitude) => (true, magnitude),
+            None => (false, literal),
+        };
         let in_bounds = if negative {
             literal == "0"
         } else {

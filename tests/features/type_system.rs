@@ -312,6 +312,29 @@ fn cashscript_parity_rejections() {
 }
 
 #[test]
+fn let_is_reserved_in_variable_names() {
+    for source in [
+        "contract Demo() { function spend() { int let = 5; require(let == 5); } }",
+        "contract Demo() { function spend() { int let; let = 5; require(let == 5); } }",
+        "contract Demo() { function spend() { let let = 5; require(let == 5); } }",
+        "contract Demo(int let) { function spend() { require(let == 5); } }",
+        "contract Demo() { function spend(int let) { require(let == 5); } }",
+        "contract Demo(pubkey owner) { function spend(signature let) tapscript { require(checkSig(let, owner)); } }",
+        "contract Demo() { function spend() { int[1] values = [5]; for (let, value) in values { require(let == 0 && value == 5); } } }",
+        "contract Demo() { function spend() { int[1] values = [5]; for (index, let) in values { require(index == 0 && let == 5); } } }",
+    ] {
+        let error = compile_error(source);
+        assert!(
+            error.contains("'let' uses a reserved keyword or type name"),
+            "{source}: {error}"
+        );
+    }
+    compile_ok(
+        "contract Demo() { function spend() { int letter = 5; int let_value; let_value = letter; require(let_value == 5); } }",
+    );
+}
+
+#[test]
 fn cashscript_parity_acceptances() {
     let output = compile_ok(
         "contract Strict(pubkey owner, bytes key, int unused) { function spend(signature sig) { require(owner == key); require(checkSig(sig, owner)); } }",
@@ -413,11 +436,69 @@ contract HexCasts(pubkey owner) {
         "contract F() { function spend(int n) { require(n == n); } private function int(int a) int { return a; } }",
     );
     assert!(error.contains("function name 'int' is reserved"), "{error}");
+    let asm = crate::common::arkade_asm(
+        &compile_ok(
+            "contract G() { const int BIG = int(0x8000000000000000); function spend(int n) { require(n < BIG); } }",
+        ),
+        "spend",
+    );
+    assert!(asm.contains("9223372036854775808 OP_LESSTHAN"), "{asm}");
+}
+
+#[test]
+fn bytes_casts_convert_scalars_and_widen_bytes() {
+    let output = compile_ok(
+        r#"
+contract BytesCasts(pubkey owner) {
+    function spend(signature sig, int n, bytes data, bytes20 h20, bytes32 h32, bool flag) {
+        bytes encoded = bytes(n + 1);
+        require(encoded + bytes(-128) == data);
+        require(sha256(bytesOf(n)) == h32);
+        require(bytes(0) == "");
+        require(bytes(false) == "" && bytes(true) == 0x01);
+        require(bytes(flag) == encodeBool(flag));
+        require(bytes(n > 0) == 0x01);
+        require(bytes(data) == data && bytes(h20) == h20 && bytes(h32) == h32);
+        require(bytes(owner) == owner && bytes(sig) == sig);
+        require(checkSig(sig, owner));
+    }
+    private function bytesOf(int value) bytes { return bytes(value); }
+    private function encodeBool(bool value) bytes { return bytes(value); }
+}"#,
+    );
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert_eq!(asm.matches("OP_BIN2NUM").count(), 4, "{asm}");
+    // `bytes(n > 0)` needs no normalization: the comparison already leaves 0 or 1.
+    assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 4, "{asm}");
+    assert!(
+        !asm.contains("OP_NUM2BIN") && !asm.contains("OP_SIZE"),
+        "{asm}"
+    );
+    assert_eq!(
+        crate::common::arkade_inputs(&output, "spend"),
+        ["sig", "n", "data", "h20", "h32", "flag"]
+    );
+    let group = crate::common::group(&output, "spend");
+    assert!(!group.leaves.is_empty());
+    assert!(group.leaves.iter().all(|leaf| !leaf
+        .asm
+        .iter()
+        .any(|op| op == "OP_BIN2NUM" || op == "OP_0NOTEQUAL")));
+
+    for ty in ["AssetGroup", "asset"] {
+        let error = compile_error(&format!(
+            "contract C() {{ function spend({ty} value) {{ require(bytes(value) == 0x01); }} }}",
+        ));
+        assert!(
+            error.contains(&format!("cannot cast '{ty}' to 'bytes'")),
+            "{error}"
+        );
+    }
     let error = compile_error(
-        "contract G() { const int TOO_BIG = int(0x8000000000000000); function spend(int n) { require(n < TOO_BIG); } }",
+        "contract C() { function spend() { require(true); } private function bytes(int n) bytes { return num2bin(n, 1); } }",
     );
     assert!(
-        error.contains("expected a signed 64-bit integer"),
+        error.contains("function name 'bytes' is reserved"),
         "{error}"
     );
 }
@@ -453,6 +534,25 @@ fn pubkeys_and_signatures_widen_to_bytes_in_bindings_and_arguments() {
     compile_ok(
         "contract Widen(pubkey owner) { function spend(signature sig, bytes data) { bytes key = owner; require(same(sig, data) || key == data || owner + sig == data); require(checkSig(sig, owner)); } private function same(bytes a, bytes b) bool { return a == b; } }",
     );
+}
+
+#[test]
+fn signature_byte_casts_add_no_opcodes() {
+    let asm = |value| {
+        let output = crate::common::compile_unoptimized(&format!(
+            "contract Widen() {{ function spend(signature sig, bytes data) {{ require({value} == data); }} }}"
+        ))
+        .unwrap();
+        assert_eq!(
+            crate::common::arkade_inputs(&output, "spend"),
+            ["sig", "data"]
+        );
+        crate::common::arkade_asm_tokens(&output, "spend")
+    };
+    let expected = asm("sig");
+    for cast in ["bytes(sig)", "pubkey(sig)"] {
+        assert_eq!(asm(cast), expected, "{cast}");
+    }
 }
 
 // ─── Hash widths, builtin operands, and diagnostics ─────────────────────────

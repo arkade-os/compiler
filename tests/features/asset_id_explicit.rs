@@ -53,7 +53,7 @@ fn general_expression_parses_group_find_with_literal_gidx_in_let_binding() {
         }";
     let asm = arkade_asm(src, "f");
     assert!(
-        asm.contains("OP_0 OP_ROLL 0 OP_FINDASSETGROUPBYASSETID OP_VERIFY"),
+        asm.contains("<fooTxid> 0 OP_FINDASSETGROUPBYASSETID OP_VERIFY"),
         "{asm}"
     );
 }
@@ -228,7 +228,7 @@ fn literal_zero_gidx_is_minimal() {
     let asm = arkade_asm(src, "f");
     // gidx pushes a single minimal "0" token, not a padded "00 00".
     assert!(
-        asm.contains("OP_1 OP_ROLL 0 OP_INSPECTOUTASSETLOOKUP"),
+        asm.contains("<fooTxid> 0 OP_INSPECTOUTASSETLOOKUP"),
         "{asm}"
     );
     assert!(!asm.contains("00 00"), "{asm}");
@@ -387,8 +387,14 @@ fn constant_gidx_expressions_are_typed_and_range_checked() {
         ("G + 1", "gidx 65536 is out of range"),
         ("-1", "gidx -1 is out of range"),
         ("0 - 1", "gidx -1 is out of range"),
-        ("99999999999999999999", "expected a signed 64-bit integer"),
-        ("9223372036854775807 + 1", "integer overflow"),
+        (
+            "99999999999999999999",
+            "gidx 99999999999999999999 is out of range",
+        ),
+        (
+            "170141183460469231731687303715884105727 + 1",
+            "integer overflow",
+        ),
         ("~0x0001", "must be int (0..65535), got bytes"),
         ("1 == 1", "must be int (0..65535), got bool"),
     ] {

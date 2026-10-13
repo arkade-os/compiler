@@ -4,7 +4,7 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
-/// Parse pubkey(x) / signature(x) / bytes20(x) / bytes32(x) / int(x) / bool(x) → ExprKind::Cast,
+/// Parse type(x) → ExprKind::Cast,
 /// folding int(0x..) into a decimal literal.
 pub(crate) fn parse_cast(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();

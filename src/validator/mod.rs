@@ -32,6 +32,7 @@ mod assets;
 mod bindings;
 mod expressions;
 mod functions;
+mod inspections;
 mod operands;
 mod output;
 pub(crate) mod references;
@@ -42,6 +43,7 @@ use bindings::check_binding_semantics;
 use shadowing::check_shadowing;
 
 pub(crate) use bindings::binding_types_compatible;
+pub(crate) use functions::falls_through;
 pub(crate) use output::validate_output;
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
@@ -282,6 +284,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     check_unused(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
+    inspections::check_repeated_inspections(contract, &mut issues);
 
     issues
 }
@@ -359,7 +362,8 @@ fn validate_local_types(
     for statement in statements {
         let first = issues.len();
         match &statement.statement {
-            Statement::LetBinding {
+            Statement::Declaration { declared_type, .. }
+            | Statement::LetBinding {
                 declared_type: Some(declared_type),
                 ..
             } => {
@@ -476,6 +480,7 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         "in",
         "return",
         "const",
+        "let",
         "import",
         "pragma",
         "true",
@@ -565,7 +570,7 @@ fn check_unused_locals(
 ) {
     for (index, statement) in statements.iter().enumerate() {
         match &statement.statement {
-            Statement::LetBinding { name, .. }
+            Statement::Declaration { name, .. } | Statement::LetBinding { name, .. }
                 if !references::referenced_parameters(&statements[index + 1..], &[])
                     .contains(name.as_str()) =>
             {
@@ -600,22 +605,24 @@ mod tests {
     use crate::models::{AbiFunctionGroup, AbiLeaf, Contract, Function, Parameter, WitnessElement};
 
     #[test]
-    fn output_validation_checks_filtered_constructor_layouts() {
+    fn output_validation_checks_constructor_placeholders() {
         let output = crate::compile("contract C(int unused, int[2] values, int limit) { function spend() { require(values[0] > limit); } }").unwrap();
-        for prologue in [
-            vec!["<values.1>", "<values.0>", "<limit>"],
-            vec!["<limit>", "<values.0>"],
-            vec!["<limit>", "<limit>"],
-            vec!["<unknown>"],
-            vec!["OP_1", "<limit>"],
+        assert_eq!(
+            output.functions[0].arkade.as_ref().unwrap().asm,
+            ["<values.0>", "<limit>", "OP_GREATERTHAN"]
+        );
+        for (placeholders, valid) in [
+            (["<values.0>", "<limit>"], true),
+            (["<limit>", "<limit>"], false),
+            (["<unknown>", "<limit>"], false),
         ] {
-            let mut invalid = output.clone();
-            let asm = &mut invalid.functions[0].arkade.as_mut().unwrap().asm;
-            asm.splice(..3, prologue.into_iter().map(String::from));
-            assert!(
-                has_errors(&validate_output(&invalid)),
-                "{:?}",
-                invalid.functions[0].arkade.as_ref().unwrap().asm
+            let mut output = output.clone();
+            let asm = &mut output.functions[0].arkade.as_mut().unwrap().asm;
+            asm.splice(..2, placeholders.into_iter().map(String::from));
+            assert_eq!(
+                !has_errors(&validate_output(&output)),
+                valid,
+                "{placeholders:?}"
             );
         }
     }

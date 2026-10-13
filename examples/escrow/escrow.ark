@@ -17,7 +17,7 @@ contract Escrow(
   bytes32 partyBScript,
   // Sats. `complete` pays at least this to party B on output 0.
   int     amount,
-  // Unix seconds. `cancel` requires the emulator clock to reach this. tx.time cannot
+  // Unix seconds. `cancel` requires the emulator clock to reach this. tx.locktime cannot
   // gate it: arkd rebuilds offchain spends of this leaf with nLockTime 0.
   int     timeoutAt
 ) {

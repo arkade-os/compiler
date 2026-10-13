@@ -114,7 +114,8 @@ fn check_ctor_assignment(
             Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
                 check_ctor_assignment(body, fname, ctor_names, const_names, issues);
             }
-            Statement::LetBinding { .. }
+            Statement::Declaration { .. }
+            | Statement::LetBinding { .. }
             | Statement::Require(_)
             | Statement::Call(_)
             | Statement::Return(_) => {}
@@ -139,7 +140,7 @@ fn walk_scope(
     for stmt in stmts {
         let first = issues.len();
         match &stmt.statement {
-            Statement::LetBinding { name, .. } => {
+            Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } => {
                 validate_source_identifier(name, &format!("binding in function '{fname}'"), issues);
                 if in_scope(stack, name) {
                     issues.push(ValidationIssue::error(format!(

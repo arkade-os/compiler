@@ -252,6 +252,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::input_packet_inspect => parse_input_packet_inspect(pair),
         Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
         Rule::asset_has => parse_asset_has_to_expression(pair),
+        Rule::asset_try_lookup => parse_asset_try_lookup_to_expression(pair),
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
         Rule::group_control_is => parse_group_control_is_to_expression(pair),

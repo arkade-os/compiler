@@ -503,7 +503,7 @@ fn introspection_diagnostics_name_normalized_operands() {
             "checkMultisig 'values[this.expiry]' has type 'bytes'",
         ),
         (
-            "checkMultisig([values[0]], [values[tx.time]])",
+            "checkMultisig([values[0]], [values[tx.locktime]])",
             "checkMultisig 'values[tx.locktime]' has type 'bytes'",
         ),
     ] {

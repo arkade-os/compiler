@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -314,12 +315,15 @@ func assemble(t *testing.T, tokens []string, values map[string][]byte) []byte {
 				t.Fatalf("ASM token %d: invalid byte literal %q: %v", index, token, err)
 			}
 		} else {
-			number, err := strconv.ParseInt(token, 10, 64)
-			if err != nil {
+			number, ok := new(big.Int).SetString(token, 10)
+			if !ok {
 				t.Fatalf("ASM token %d: unsupported token %q", index, token)
 			}
-			builder.AddInt64(number)
-			continue
+			if number.IsInt64() {
+				builder.AddInt64(number.Int64())
+				continue
+			}
+			data = scriptBigInt(t, number)
 		}
 		// AddData normalizes a single zero byte to empty ScriptNum zero.
 		if len(data) == 1 && data[0] == 0 {
@@ -408,7 +412,7 @@ func spendingPSBTWithWitness(
 }
 
 // spendingPSBTOutputs is the general form: an explicit output list and
-// locktime, for covenants that pin several payouts or read tx.time.
+// locktime, for covenants that pin several payouts or read tx.locktime.
 func spendingPSBTOutputs(
 	t *testing.T,
 	prevTx *wire.MsgTx,
@@ -698,6 +702,16 @@ func scriptInt(t *testing.T, value int64) []byte {
 	encoded, err := arkade.BigNumFromInt64(value).Bytes()
 	if err != nil {
 		t.Fatalf("encode script integer %d: %v", value, err)
+	}
+	return encoded
+}
+
+func scriptBigInt(t *testing.T, value *big.Int) []byte {
+	t.Helper()
+
+	encoded := scriptPositiveBigInt(t, new(big.Int).Abs(value).Bytes())
+	if value.Sign() < 0 {
+		encoded[len(encoded)-1] |= 0x80
 	}
 	return encoded
 }
