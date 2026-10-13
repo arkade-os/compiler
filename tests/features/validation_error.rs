@@ -587,6 +587,27 @@ fn check_reports_tapscript_leaf_errors() {
 }
 
 #[test]
+fn check_reports_emission_errors_at_their_statement() {
+    let source = "contract C() {\n    function spend(int[2] xs) {\n        for (i, x) in xs {\n            require(xs[i + 1] == x);\n        }\n    }\n}";
+    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let errors: Vec<_> = arkade_compiler::check("main.ark", &files)
+        .into_iter()
+        .filter(|d| d.severity == arkade_compiler::Severity::Error)
+        .collect();
+    let [error] = errors.as_slice() else {
+        panic!("{errors:?}");
+    };
+    assert_eq!(error.code.as_deref(), Some("emission"));
+    let span = error.span.expect("located");
+    assert_eq!(&source[span.start..span.end], "require(xs[i + 1] == x);");
+    let message = compile(source).unwrap_err().to_string();
+    assert!(
+        message.starts_with("line 4, column 13: array index '2' is out of range"),
+        "{message}"
+    );
+}
+
+#[test]
 fn covenants_over_the_vm_stack_limit_do_not_compile() {
     let source = |items: usize| {
         format!("contract C() {{ function spend(int[{items}] xs) {{ require(xs[0] == 1); }} }}")

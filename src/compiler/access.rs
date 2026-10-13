@@ -9,7 +9,7 @@ impl Generator {
         &self,
         value: &'a Expression,
         indices: &mut Vec<(&'a Expression, usize, usize)>,
-    ) -> Result<Path, String> {
+    ) -> Result<Path> {
         let path = value.binding_path().ok_or("expected a binding access")?;
         let (array, index) = match &value.kind {
             ExprKind::FieldAccess { value, .. } => {
@@ -21,13 +21,13 @@ impl Generator {
             _ => return Ok(path),
         };
         let Some(ArkType::Array(element, length)) = self.scope.get(&array.key()) else {
-            return Err(format!("'{array}' is not an array"));
+            return Err(format!("'{array}' is not an array").into());
         };
         match index.literal_index() {
             Some(literal) if literal >= *length => {
-                return Err(format!(
-                    "array index '{literal}' is out of range for '{array}'"
-                ));
+                return Err(
+                    format!("array index '{literal}' is out of range for '{array}'").into(),
+                );
             }
             Some(_) => {}
             None => indices.push((index, *length, self.width(&(&**element).into())?)),
@@ -35,10 +35,7 @@ impl Generator {
         Ok(path)
     }
 
-    fn emit_access_offset(
-        &mut self,
-        indices: &[(&Expression, usize, usize)],
-    ) -> Result<(), String> {
+    fn emit_access_offset(&mut self, indices: &[(&Expression, usize, usize)]) -> Result<()> {
         for (position, (index, length, stride)) in indices.iter().enumerate() {
             self.emit_expression(index)?;
             self.check_array_index(*length)?;
@@ -53,11 +50,7 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn emit_access_value(
-        &mut self,
-        value: &Expression,
-        ty: &TypeName,
-    ) -> Result<(), String> {
+    pub(super) fn emit_access_value(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
         let length = name
@@ -104,7 +97,7 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn assign_access(&mut self, value: &Expression) -> Result<(), String> {
+    pub(super) fn assign_access(&mut self, value: &Expression) -> Result<()> {
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
         let leaves = self.value_leaves(&name, &TypeName::from(&value.ty))?;
@@ -132,7 +125,7 @@ impl Generator {
                     ..
                 }
             ) {
-                return Err(format!("cannot assign to constructor parameter '{name}'"));
+                return Err(format!("cannot assign to constructor parameter '{name}'").into());
             }
             self.push_integer_temporary(self.stack.len() - slot - 3);
             self.apply(Add, 2, 1)?;
@@ -141,20 +134,20 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<(), String> {
+    pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<()> {
         let ExprKind::Builtin { args, .. } = &expression.kind else {
-            return Err("expected checkMultisig".to_string());
+            return Err("expected checkMultisig".into());
         };
         let keys = &args[0];
         let signatures = &args[1];
         let ArkType::Array(element, count) = keys.ty.clone() else {
-            return Err("checkMultisig public keys must be an array".to_string());
+            return Err("checkMultisig public keys must be an array".into());
         };
         if count == 0 || count > 999 {
-            return Err("checkMultisig needs between 1 and 999 public keys".to_string());
+            return Err("checkMultisig needs between 1 and 999 public keys".into());
         }
         if !matches!(signatures.ty, ArkType::Array(_, length) if length == count) {
-            return Err("checkMultisig key and signature counts must match".to_string());
+            return Err("checkMultisig key and signature counts must match".into());
         }
         let threshold = args.get(2);
         let literal_threshold = match threshold {
@@ -171,8 +164,7 @@ impl Generator {
         };
         if literal_threshold.is_some_and(|threshold| threshold == 0 || threshold > count) {
             return Err(
-                "checkMultisig threshold must be between 1 and the number of public keys"
-                    .to_string(),
+                "checkMultisig threshold must be between 1 and the number of public keys".into(),
             );
         }
         // Keys need indexed reads, so computed arrays are bound once.
@@ -235,7 +227,7 @@ impl Generator {
 
     /// One field of a group input record, which is `[type, txid, vin, amount]` for an
     /// intent input and `[type, vin, amount]` for a local one.
-    pub(super) fn emit_group_input(&mut self, record: &Expression) -> Result<(), String> {
+    pub(super) fn emit_group_input(&mut self, record: &Expression) -> Result<()> {
         let ExprKind::GroupIOAccess {
             group,
             io_index,
@@ -243,7 +235,7 @@ impl Generator {
             ..
         } = &record.kind
         else {
-            return Err("asset group input records need a field".to_string());
+            return Err("asset group input records need a field".into());
         };
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
@@ -292,23 +284,20 @@ impl Generator {
     }
 
     /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
-    pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<(), String> {
+    pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<()> {
         let ExprKind::Builtin { args, .. } = &pairing.kind else {
-            return Err("expected ecPairing".to_string());
+            return Err("expected ecPairing".into());
         };
         let [g1, g2, curve_id] = args.as_slice() else {
-            return Err("ecPairing takes three arguments".to_string());
+            return Err("ecPairing takes three arguments".into());
         };
         let ArkType::Array(_, pairs) = g1.ty else {
-            return Err("ecPairing G1 points must be an ECPoint array".to_string());
+            return Err("ecPairing G1 points must be an ECPoint array".into());
         };
         for index in 0..pairs {
             for (points, ty) in [(g1, "ECPoint"), (g2, "G2Point")] {
                 if points.binding_path().is_none() {
-                    return Err(
-                        "ecPairing points must be array bindings; bind computed arrays with `let` first"
-                            .to_string(),
-                    );
+                    return Err("ecPairing points must be array bindings; bind computed arrays with `let` first".into());
                 }
                 let index = Box::new(points.with_kind(ExprKind::Literal(index.to_string())));
                 let element = points.with_kind(match &points.kind {
@@ -322,7 +311,7 @@ impl Generator {
                     },
                 });
                 for (field, field_type) in crate::models::builtin_struct_fields(ty)
-                    .ok_or("internal compiler error: missing native point layout")?
+                    .ok_or_else(|| CompileError::internal("missing native point layout"))?
                 {
                     let leaf = points.with_kind(ExprKind::FieldAccess {
                         value: Box::new(element.clone()),

@@ -8,7 +8,7 @@ impl Generator {
         then_body: &[LocatedStatement],
         else_body: Option<&[LocatedStatement]>,
         implicit_else_continues: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<bool> {
         let baseline = self.stack.clone();
         let deferred = self.deferred.clone();
         let start = self.asm.len();
@@ -48,7 +48,7 @@ impl Generator {
             let ty = self
                 .scope
                 .get(name)
-                .ok_or("internal compiler error: missing declaration type")?;
+                .ok_or_else(|| CompileError::internal("missing declaration type"))?;
             for leaf in self.value_leaves(&Path::new(name), &TypeName::from(ty))? {
                 initialized_leaves.insert(leaf.access);
             }
@@ -59,7 +59,7 @@ impl Generator {
             matches!(item, StackItem::Binding { name, .. } if initialized_leaves.contains(name))
         }).cloned());
         if !left.starts_with(&baseline) || !right.starts_with(&baseline) {
-            return Err("internal compiler error: branch changed outer stack layout".into());
+            return Err(CompileError::internal("branch changed outer stack layout"));
         }
         self.stack = left;
         self.asm.extend(left_asm);
@@ -86,191 +86,21 @@ impl Generator {
 pub(super) fn generate_asm_from_statements_recursive(
     statements: &[LocatedStatement],
     generator: &mut Generator,
-) -> Result<bool, String> {
+) -> Result<bool> {
     for (index, stmt) in statements.iter().enumerate() {
         let mut folded;
         let stmt = if generator.optimize {
             folded = stmt.clone();
-            optimization::fold_statement(&mut folded.statement, &generator.scope)?;
+            optimization::fold_statement(&mut folded.statement, &generator.scope)
+                .map_err(|error| CompileError::from(error).at(stmt.span))?;
             &folded
         } else {
             stmt
         };
-        let mut continues = true;
-        match &stmt.statement {
-            Statement::Call(expression) => generator.emit_call(expression)?,
-            Statement::Return(value) => {
-                generator.emit_return(value.as_ref())?;
-                return Ok(false);
-            }
-            Statement::Require(req) => {
-                generate_requirement_asm(req, generator)?;
-            }
-            Statement::IfElse {
-                condition,
-                then_body,
-                else_body,
-            } => {
-                if generator.optimize
-                    && matches!(&condition.kind, ExprKind::Literal(value) if value == "true" || value == "false")
-                {
-                    let body = if matches!(&condition.kind, ExprKind::Literal(value) if value == "true")
-                    {
-                        then_body.as_slice()
-                    } else {
-                        else_body.as_deref().unwrap_or_default()
-                    };
-                    generator.enter_scope();
-                    continues = generate_asm_from_statements_recursive(body, generator)?;
-                    generator.exit_scope()?;
-                } else {
-                    generator.emit_expression(condition)?;
-                    generator.apply(If, 1, 0)?;
-                    continues = generator.emit_branches(then_body, else_body.as_deref(), true)?;
-                }
-            }
-            Statement::ForIn {
-                index_var,
-                value_var,
-                iterable,
-                body,
-            } => {
-                let types::ArkType::Array(_, length) = iterable.ty else {
-                    return Err("unsupported loop iterable".to_string());
-                };
-                for k in 0..length {
-                    let mut substituted =
-                        substitute_loop_body(body, index_var, value_var, k, iterable);
-                    // Substitution builds untyped nodes; return types and group members
-                    // were resolved on the original body and survive the copy.
-                    types::annotate_statements(
-                        &mut substituted,
-                        &mut generator.scope.clone(),
-                        &generator.structs,
-                    );
-                    let baseline = generator.stack.clone();
-                    generator.enter_scope();
-                    continues = if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(&substituted)?
-                    } else {
-                        generate_asm_from_statements_recursive(&substituted, generator)?
-                    };
-                    generator.exit_scope()?;
-                    if !generator.stack.starts_with(&baseline) {
-                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
-                    }
-                    if !continues && generator.optimize {
-                        break;
-                    }
-                }
-            }
-            Statement::ForCount { count, body } => {
-                let ExprKind::Literal(count) = &count.kind else {
-                    return Err(
-                        "loop count must be a non-negative integer compile-time constant"
-                            .to_string(),
-                    );
-                };
-                let count = count.parse::<usize>().map_err(|_| {
-                    "loop count must be a non-negative integer compile-time constant".to_string()
-                })?;
-                for k in 0..count {
-                    let baseline = generator.stack.clone();
-                    generator.enter_scope();
-                    continues = if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(body)?
-                    } else {
-                        generate_asm_from_statements_recursive(body, generator)?
-                    };
-                    generator.exit_scope()?;
-                    if !generator.stack.starts_with(&baseline) {
-                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
-                    }
-                    if !continues && generator.optimize {
-                        break;
-                    }
-                }
-            }
-            Statement::Declaration {
-                name,
-                declared_type,
-            } => {
-                generator.bind_type(name, declared_type);
-                generator.deferred.insert(name.clone());
-            }
-            Statement::LetBinding {
-                name,
-                declared_type,
-                value,
-            } => {
-                let result_type = declared_type
-                    .clone()
-                    .or_else(|| match &value.kind {
-                        ExprKind::Call { return_type, .. } => return_type.clone(),
-                        _ => crate::models::expression_result_struct(value).map(TypeName::from),
-                    })
-                    .or_else(|| generator.composite_type(value));
-                if let Some(ty) = &result_type {
-                    generator.emit_typed_value(value, ty)?;
-                    generator.bind_value(name, ty)?;
-                    generator.bind_type(name, ty);
-                } else {
-                    generator.emit_expression(value)?;
-                    generator.bind_local(Path::new(name))?;
-                    let ty = value.ty.clone();
-                    generator.scope.insert(name.clone(), ty);
-                }
-            }
-            Statement::VarAssign { target, value } => {
-                let previous_replacement = generator.replacement.take();
-                // Deeper targets use OP_PUT; moving them needs scope and branch layout repair.
-                generator.replacement = match (target, generator.stack.last()) {
-                    (
-                        AssignmentTarget::Binding(name),
-                        Some(StackItem::Binding { name: top, kind }),
-                    ) if name == top
-                        && *kind != BindingKind::Constructor
-                        && !generator.preserve_bindings =>
-                    {
-                        Some((
-                            name.clone(),
-                            kind.clone(),
-                            generator.read_cursor.unwrap_or(generator.final_reads.len()),
-                        ))
-                    }
-                    _ => None,
-                };
-                let mut access = value.with_kind(match target {
-                    AssignmentTarget::Binding(name) => ExprKind::Name(name.clone()),
-                    AssignmentTarget::ArrayIndex { array, index } => ExprKind::ArrayIndex {
-                        array: array.clone(),
-                        index: index.clone(),
-                    },
-                    AssignmentTarget::Access(access) => access.kind.clone(),
-                });
-                types::annotate_expression(&mut access, &generator.scope);
-                // Only a bare name can be declared without a value.
-                if let AssignmentTarget::Binding(name) = target {
-                    if name.segments.is_empty() && generator.deferred.remove(&name.root) {
-                        generator.emit_typed_value(value, &TypeName::from(&access.ty))?;
-                        generator.bind_value(&name.key(), &TypeName::from(&access.ty))?;
-                        generator.replacement = previous_replacement;
-                        generator.assert_statement_boundary()?;
-                        continue;
-                    }
-                }
-                if matches!(
-                    access.ty,
-                    types::ArkType::Struct(_) | types::ArkType::Array(..)
-                ) {
-                    generator.emit_typed_value(value, &TypeName::from(&access.ty))?;
-                    generator.assign_access(&access)?;
-                } else {
-                    generator.emit_expression(value)?;
-                    generator.assign(target)?;
-                }
-                generator.replacement = previous_replacement;
-            }
+        let continues = emit_statement(stmt, generator).map_err(|error| error.at(stmt.span))?;
+        // A return leaves its value for the caller.
+        if matches!(stmt.statement, Statement::Return(_)) {
+            return Ok(false);
         }
         generator.assert_statement_boundary()?;
         if !continues {
@@ -283,8 +113,188 @@ pub(super) fn generate_asm_from_statements_recursive(
     Ok(true)
 }
 
+/// Emit one statement and report whether its path falls through.
+fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<bool> {
+    let mut continues = true;
+    match &stmt.statement {
+        Statement::Call(expression) => generator.emit_call(expression)?,
+        Statement::Return(value) => {
+            generator.emit_return(value.as_ref())?;
+            return Ok(false);
+        }
+        Statement::Require(req) => {
+            generate_requirement_asm(req, generator)?;
+        }
+        Statement::IfElse {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            if generator.optimize
+                && matches!(&condition.kind, ExprKind::Literal(value) if value == "true" || value == "false")
+            {
+                let body = if matches!(&condition.kind, ExprKind::Literal(value) if value == "true")
+                {
+                    then_body.as_slice()
+                } else {
+                    else_body.as_deref().unwrap_or_default()
+                };
+                generator.enter_scope();
+                continues = generate_asm_from_statements_recursive(body, generator)?;
+                generator.exit_scope()?;
+            } else {
+                generator.emit_expression(condition)?;
+                generator.apply(If, 1, 0)?;
+                continues = generator.emit_branches(then_body, else_body.as_deref(), true)?;
+            }
+        }
+        Statement::ForIn {
+            index_var,
+            value_var,
+            iterable,
+            body,
+        } => {
+            let types::ArkType::Array(_, length) = iterable.ty else {
+                return Err("unsupported loop iterable".into());
+            };
+            for k in 0..length {
+                let mut substituted = substitute_loop_body(body, index_var, value_var, k, iterable);
+                // Substitution builds untyped nodes; return types and group members
+                // were resolved on the original body and survive the copy.
+                types::annotate_statements(
+                    &mut substituted,
+                    &mut generator.scope.clone(),
+                    &generator.structs,
+                );
+                let baseline = generator.stack.clone();
+                generator.enter_scope();
+                continues = if k > 0 && functions::contains_return(body) {
+                    generator.emit_unless_returned(&substituted)?
+                } else {
+                    generate_asm_from_statements_recursive(&substituted, generator)?
+                };
+                generator.exit_scope()?;
+                if !generator.stack.starts_with(&baseline) {
+                    return Err(CompileError::internal(format!(
+                        "loop iteration {k} changed outer stack layout"
+                    )));
+                }
+                if !continues && generator.optimize {
+                    break;
+                }
+            }
+        }
+        Statement::ForCount { count, body } => {
+            let ExprKind::Literal(count) = &count.kind else {
+                return Err(
+                    "loop count must be a non-negative integer compile-time constant".into(),
+                );
+            };
+            let count = count.parse::<usize>().map_err(|_| {
+                "loop count must be a non-negative integer compile-time constant".to_string()
+            })?;
+            for k in 0..count {
+                let baseline = generator.stack.clone();
+                generator.enter_scope();
+                continues = if k > 0 && functions::contains_return(body) {
+                    generator.emit_unless_returned(body)?
+                } else {
+                    generate_asm_from_statements_recursive(body, generator)?
+                };
+                generator.exit_scope()?;
+                if !generator.stack.starts_with(&baseline) {
+                    return Err(CompileError::internal(format!(
+                        "loop iteration {k} changed outer stack layout"
+                    )));
+                }
+                if !continues && generator.optimize {
+                    break;
+                }
+            }
+        }
+        Statement::Declaration {
+            name,
+            declared_type,
+        } => {
+            generator.bind_type(name, declared_type);
+            generator.deferred.insert(name.clone());
+        }
+        Statement::LetBinding {
+            name,
+            declared_type,
+            value,
+        } => {
+            let result_type = declared_type
+                .clone()
+                .or_else(|| match &value.kind {
+                    ExprKind::Call { return_type, .. } => return_type.clone(),
+                    _ => crate::models::expression_result_struct(value).map(TypeName::from),
+                })
+                .or_else(|| generator.composite_type(value));
+            if let Some(ty) = &result_type {
+                generator.emit_typed_value(value, ty)?;
+                generator.bind_value(name, ty)?;
+                generator.bind_type(name, ty);
+            } else {
+                generator.emit_expression(value)?;
+                generator.bind_local(Path::new(name))?;
+                let ty = value.ty.clone();
+                generator.scope.insert(name.clone(), ty);
+            }
+        }
+        Statement::VarAssign { target, value } => {
+            let previous_replacement = generator.replacement.take();
+            // Deeper targets use OP_PUT; moving them needs scope and branch layout repair.
+            generator.replacement = match (target, generator.stack.last()) {
+                (AssignmentTarget::Binding(name), Some(StackItem::Binding { name: top, kind }))
+                    if name == top
+                        && *kind != BindingKind::Constructor
+                        && !generator.preserve_bindings =>
+                {
+                    Some((
+                        name.clone(),
+                        kind.clone(),
+                        generator.read_cursor.unwrap_or(generator.final_reads.len()),
+                    ))
+                }
+                _ => None,
+            };
+            let mut access = value.with_kind(match target {
+                AssignmentTarget::Binding(name) => ExprKind::Name(name.clone()),
+                AssignmentTarget::ArrayIndex { array, index } => ExprKind::ArrayIndex {
+                    array: array.clone(),
+                    index: index.clone(),
+                },
+                AssignmentTarget::Access(access) => access.kind.clone(),
+            });
+            types::annotate_expression(&mut access, &generator.scope);
+            // Only a bare name can be declared without a value.
+            if let AssignmentTarget::Binding(name) = target {
+                if name.segments.is_empty() && generator.deferred.remove(&name.root) {
+                    generator.emit_typed_value(value, &TypeName::from(&access.ty))?;
+                    generator.bind_value(&name.key(), &TypeName::from(&access.ty))?;
+                    generator.replacement = previous_replacement;
+                    return Ok(true);
+                }
+            }
+            if matches!(
+                access.ty,
+                types::ArkType::Struct(_) | types::ArkType::Array(..)
+            ) {
+                generator.emit_typed_value(value, &TypeName::from(&access.ty))?;
+                generator.assign_access(&access)?;
+            } else {
+                generator.emit_expression(value)?;
+                generator.assign(target)?;
+            }
+            generator.replacement = previous_replacement;
+        }
+    }
+    Ok(continues)
+}
+
 /// Generate assembly for a single requirement
-fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<(), String> {
+fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<()> {
     if generator.optimize
         && matches!(req, Requirement::Expression(Expression { kind: ExprKind::Literal(value), .. }) if value == "true")
     {

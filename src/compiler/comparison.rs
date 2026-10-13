@@ -28,9 +28,9 @@ impl Generator {
         op: BinaryOperator,
         right: &Expression,
         ty: &TypeName,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         if op.class() != OperatorClass::Equality {
-            return Err(format!("'{op}' is not defined for '{ty}' values"));
+            return Err(format!("'{op}' is not defined for '{ty}' values").into());
         }
         let width = self.width(ty)?;
         self.emit_typed_value(left, ty)?;
@@ -58,7 +58,7 @@ impl Generator {
         Ok(())
     }
 
-    fn roll(&mut self, depth: usize) -> Result<(), String> {
+    fn roll(&mut self, depth: usize) -> Result<()> {
         self.push_integer_temporary(depth);
         self.pop_temporaries(1, Roll)?;
         self.asm.push(Roll.into());

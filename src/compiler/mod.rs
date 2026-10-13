@@ -1,4 +1,4 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{CompileError, Diagnostic};
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
     Function, FunctionInput, LocatedStatement, Parameter, Path, Requirement, Segment, Statement,
@@ -24,6 +24,8 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 
 pub mod tapscript;
+
+type Result<T, E = CompileError> = std::result::Result<T, E>;
 
 // ASM codegen and rewrite passes split into submodules;
 // siblings reach each other via `use super::*`.
@@ -117,7 +119,7 @@ impl Generator {
         constructor_parameters: &[Parameter],
         structs: &[crate::models::StructDefinition],
         inlined_bindings: &std::collections::HashSet<Path>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
             for_each_expanded_param(parameter, structs, |_, binding_name, leaf_type| {
@@ -210,7 +212,7 @@ impl Generator {
         })
     }
 
-    fn lower_raw_opcode(&mut self, opcode: Opcode) -> Result<(), String> {
+    fn lower_raw_opcode(&mut self, opcode: Opcode) -> Result<()> {
         match opcode {
             // These move bindings as well as temporaries.
             Nip => self.nip(),
@@ -230,14 +232,14 @@ impl Generator {
             }
             _ => {
                 let (inputs, outputs) = opcode.stack_effect().ok_or_else(|| {
-                    format!("internal compiler error: unknown expression opcode {opcode}")
+                    CompileError::internal(format!("unknown expression opcode {opcode}"))
                 })?;
                 self.apply(opcode, inputs, outputs)
             }
         }
     }
 
-    fn lower_op(&mut self, op: Op) -> Result<(), String> {
+    fn lower_op(&mut self, op: Op) -> Result<()> {
         match op {
             Op::Opcode(opcode) => self.lower_raw_opcode(opcode),
             Op::Push(value) => {
@@ -269,36 +271,26 @@ impl Generator {
                 self.push_temporary(Op::Contract { name, args });
                 Ok(())
             }
-            Op::Value(_) => {
-                Err("internal compiler error: extracted value outside an expression".to_string())
-            }
-            Op::Param(_) => Err(
-                "internal compiler error: constructor parameter inside an expression".to_string(),
-            ),
+            Op::Value(_) => Err(CompileError::internal(
+                "extracted value outside an expression",
+            )),
+            Op::Param(_) => Err(CompileError::internal(
+                "constructor parameter inside an expression",
+            )),
         }
     }
 
-    fn emit_expression(&mut self, expression: &Expression) -> Result<(), String> {
+    fn emit_expression(&mut self, expression: &Expression) -> Result<()> {
         if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
-            return Err(
-                "array literals may only initialize an array declaration; composite values are not supported"
-                    .to_string(),
-            );
+            return Err("array literals may only initialize an array declaration; composite values are not supported".into());
         }
         if matches!(&expression.kind, ExprKind::StructLiteral(_)) {
-            return Err(
-                "struct literals may only initialize a typed struct declaration; composite values are not supported"
-                    .to_string(),
-            );
+            return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
         }
         self.emit_expression_items(expression, 1)
     }
 
-    fn emit_expression_items(
-        &mut self,
-        expression: &Expression,
-        expected: usize,
-    ) -> Result<(), String> {
+    fn emit_expression_items(&mut self, expression: &Expression, expected: usize) -> Result<()> {
         // Counts temporaries instead of a stack watermark: a consuming read can
         // remove a binding below the watermark, so only the top `expected` items
         // are checked for being temporaries.
@@ -326,9 +318,7 @@ impl Generator {
                 Op::Opcode(token @ (Else | EndIf)) => {
                     self.pop_temporaries(1, token)?;
                     if branches.last() != Some(&self.stack) {
-                        return Err(
-                            "logical branch must produce exactly one stack item".to_string()
-                        );
+                        return Err("logical branch must produce exactly one stack item".into());
                     }
                     if token == EndIf {
                         branches.pop();
@@ -363,7 +353,7 @@ impl Generator {
         }
         self.preserve_bindings = preserved;
         if !branches.is_empty() {
-            return Err("unclosed logical branch".to_string());
+            return Err("unclosed logical branch".into());
         }
         let after = self
             .stack
@@ -381,22 +371,23 @@ impl Generator {
             return Err(format!(
                 "expression produces {} stack items; exactly {expected} required",
                 after.saturating_sub(before),
-            ));
+            )
+            .into());
         }
         Ok(())
     }
 
     /// The covenant's instructions and its stack peak.
-    fn finish(mut self) -> Result<(Vec<Op>, usize), String> {
+    fn finish(mut self) -> Result<(Vec<Op>, usize)> {
         if !self.scopes.is_empty() {
-            return Err("internal compiler error: unbalanced generator scope".to_string());
+            return Err(CompileError::internal("unbalanced generator scope"));
         }
         self.push_temporary(Int1);
         while self.stack.len() > 1 {
             self.nip()?;
         }
         if self.stack != vec![StackItem::Temporary] {
-            return Err("internal compiler error: covenant did not finish cleanly".to_string());
+            return Err(CompileError::internal("covenant did not finish cleanly"));
         }
         Ok((self.asm, self.max_depth))
     }
@@ -481,7 +472,7 @@ pub(crate) fn emit(
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
-) -> Result<ContractJson, String> {
+) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
@@ -513,7 +504,8 @@ pub(crate) fn emit(
                 &contract.structs,
                 &contract.functions,
                 options.optimize,
-            )?,
+            )
+            .map_err(|error| error.at(function.span))?,
         );
     }
 
@@ -528,7 +520,8 @@ pub(crate) fn emit(
             .filter(|issue| matches!(issue.severity, Severity::Error))
             .map(|issue| format!("output validation error: {}", issue.message))
             .collect::<Vec<_>>()
-            .join("; "));
+            .join("; ")
+            .into());
     }
     for issue in &output_issues {
         json.warnings
@@ -550,7 +543,7 @@ pub(crate) fn emit(
 pub(crate) fn expanded_placeholder_params(
     params: &[Parameter],
     structs: &[crate::models::StructDefinition],
-) -> Result<Vec<Parameter>, String> {
+) -> Result<Vec<Parameter>> {
     let mut result = Vec::new();
     for param in params {
         for_each_expanded_param(param, structs, |name, _, param_type| {
@@ -567,7 +560,7 @@ fn covenant_for(
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<ArkadeCovenant, String> {
+) -> Result<ArkadeCovenant> {
     let inputs = function_inputs(&function.parameters);
     let references =
         crate::validator::references::referenced_parameters(&function.statements, functions);
@@ -640,9 +633,9 @@ fn covenant_for(
     generator.read_cursor = Some(0);
     generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
     if generator.read_cursor != Some(generator.final_reads.len()) {
-        return Err(
-            "internal compiler error: final-use analysis diverged from emission".to_string(),
-        );
+        return Err(CompileError::internal(
+            "final-use analysis diverged from emission",
+        ));
     }
     let (mut ops, mut peak) = generator.finish()?;
     if optimize {
@@ -654,7 +647,8 @@ fn covenant_for(
         return Err(format!(
             "function '{}' can hold {peak} stack items, above the VM limit of {MAX_STACK_ITEMS}",
             function.name
-        ));
+        )
+        .into());
     }
     let mut widths = std::collections::HashMap::new();
     for parameter in &retained_parameters {
@@ -676,7 +670,7 @@ fn covenant_for(
         return Err(format!(
             "function '{}' assembles to at least {size} bytes, above the VM limit of {MAX_SCRIPT_SIZE}",
             function.name
-        ));
+        ).into());
     }
     let asm = ops.iter().map(Op::spell).collect();
     Ok(ArkadeCovenant { inputs, asm })
@@ -696,7 +690,7 @@ fn for_each_expanded_param(
     param: &Parameter,
     structs: &[crate::models::StructDefinition],
     mut f: impl FnMut(String, Path, TypeName),
-) -> Result<(), String> {
+) -> Result<()> {
     for leaf in crate::models::flatten_parameter(param, structs)? {
         f(leaf.emitted_name, leaf.access, leaf.leaf_type);
     }

@@ -69,7 +69,25 @@ pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Ve
     );
 
     match result {
-        Ok(()) => modules.into_values().flat_map(|m| m.warnings).collect(),
+        Ok(()) => {
+            let mut diagnostics: Vec<_> = modules
+                .values()
+                .flat_map(|module| module.warnings.clone())
+                .collect();
+            let root = &modules[&entry];
+            // Code generation alone finds some errors, such as the VM's stack and script limits.
+            if !root.contract.is_library {
+                let bundle = SourceBundle {
+                    entry: entry.clone(),
+                    files: loaded_files,
+                };
+                let options = crate::CompileOptions::default();
+                if let Err(error) = compiler::emit(&root.contract, bundle, Vec::new(), options) {
+                    diagnostics.push(error.diagnostic(&entry));
+                }
+            }
+            diagnostics
+        }
         Err(LoadError::Diagnostics(diagnostics, _)) => diagnostics,
         Err(LoadError::Message(message)) => {
             let message = message
@@ -300,7 +318,9 @@ fn compile_with_loader(
             })
         })
         .collect();
+    let source = bundle.files.get(&bundle.entry).cloned().unwrap_or_default();
     compiler::emit(&root.contract, bundle, warnings, options)
+        .map_err(|error| crate::diagnostics::located(&error.to_string(), error.span, &source))
 }
 
 fn load(

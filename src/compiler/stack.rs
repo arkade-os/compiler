@@ -26,13 +26,13 @@ impl Generator {
         }
     }
 
-    pub(super) fn read_binding(&mut self, name: &Path) -> Result<(), String> {
+    pub(super) fn read_binding(&mut self, name: &Path) -> Result<()> {
         // A field named `length` outranks synthetic array length.
         let is_binding = self.binding_index(name).is_some() || self.inlined.contains_key(name);
         if let Some((array, "length")) = name.split_last().filter(|_| !is_binding) {
             let length = self.array_length(&array);
             if length == 0 {
-                return Err(format!("'{array}' is not an array; '.length' is undefined"));
+                return Err(format!("'{array}' is not an array; '.length' is undefined").into());
             }
             self.push_integer_temporary(length);
             return Ok(());
@@ -40,7 +40,7 @@ impl Generator {
         self.read_static_binding(name, false)
     }
 
-    pub(super) fn read_static_binding(&mut self, name: &Path, take: bool) -> Result<(), String> {
+    pub(super) fn read_static_binding(&mut self, name: &Path, take: bool) -> Result<()> {
         let Some(index) = self.binding_index(name) else {
             let placeholder = self
                 .inlined
@@ -55,10 +55,9 @@ impl Generator {
         }
         let depth = self.stack.len() - 1 - index;
         let consume = if let Some(cursor) = self.read_cursor.as_mut() {
-            let consume = *self
-                .final_reads
-                .get(*cursor)
-                .ok_or("internal compiler error: final-use analysis diverged from emission")?;
+            let consume = *self.final_reads.get(*cursor).ok_or_else(|| {
+                CompileError::internal("final-use analysis diverged from emission")
+            })?;
             *cursor += 1;
             consume
         } else {
@@ -119,7 +118,7 @@ impl Generator {
         self.push_temporary(integer_op(value));
     }
 
-    pub(super) fn check_array_index(&mut self, length: usize) -> Result<(), String> {
+    pub(super) fn check_array_index(&mut self, length: usize) -> Result<()> {
         self.apply(Dup, 1, 2)?;
         self.push_integer_temporary(0);
         self.apply(GreaterThanOrEqual, 2, 1)?;
@@ -131,7 +130,7 @@ impl Generator {
         self.apply(Verify, 1, 0)
     }
 
-    pub(super) fn select_indexed_value(&mut self, array: &Path) -> Result<(), String> {
+    pub(super) fn select_indexed_value(&mut self, array: &Path) -> Result<()> {
         let first_element = array.clone().index(0);
         let first_index = self
             .binding_index(&first_element)
@@ -142,9 +141,7 @@ impl Generator {
                 .len()
                 .checked_sub(first_index + 2)
                 .ok_or_else(|| {
-                    format!(
-                        "internal compiler error: array index for '{array}' is not on the stack"
-                    )
+                    CompileError::internal(format!("array index for '{array}' is not on the stack"))
                 })?;
 
         self.check_array_index(self.array_length(array))?;
@@ -155,26 +152,21 @@ impl Generator {
         self.apply(Pick, 1, 1)
     }
 
-    pub(super) fn pop_temporaries(&mut self, count: usize, opcode: Opcode) -> Result<(), String> {
+    pub(super) fn pop_temporaries(&mut self, count: usize, opcode: Opcode) -> Result<()> {
         if count > self.stack.len()
             || self.stack[self.stack.len() - count..]
                 .iter()
                 .any(|item| !matches!(item, StackItem::Temporary))
         {
-            return Err(format!(
-                "internal compiler error: {opcode} expected {count} temporary stack operands"
-            ));
+            return Err(CompileError::internal(format!(
+                "{opcode} expected {count} temporary stack operands"
+            )));
         }
         self.stack.truncate(self.stack.len() - count);
         Ok(())
     }
 
-    pub(super) fn apply(
-        &mut self,
-        opcode: Opcode,
-        inputs: usize,
-        outputs: usize,
-    ) -> Result<(), String> {
+    pub(super) fn apply(&mut self, opcode: Opcode, inputs: usize, outputs: usize) -> Result<()> {
         self.pop_temporaries(inputs, opcode)?;
         self.asm.push(opcode.into());
         self.stack
@@ -183,9 +175,9 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn nip(&mut self) -> Result<(), String> {
+    pub(super) fn nip(&mut self) -> Result<()> {
         if self.stack.len() < 2 {
-            return Err("internal compiler error: OP_NIP stack underflow".to_string());
+            return Err(CompileError::internal("OP_NIP stack underflow"));
         }
         let index = self.stack.len() - 2;
         self.stack.remove(index);
@@ -193,9 +185,9 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn swap(&mut self) -> Result<(), String> {
+    pub(super) fn swap(&mut self) -> Result<()> {
         if self.stack.len() < 2 {
-            return Err("internal compiler error: OP_SWAP stack underflow".to_string());
+            return Err(CompileError::internal("OP_SWAP stack underflow"));
         }
         let len = self.stack.len();
         self.stack.swap(len - 2, len - 1);
@@ -203,14 +195,15 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn bind_local(&mut self, name: Path) -> Result<(), String> {
-        let top = self.stack.last_mut().ok_or_else(|| {
-            "internal compiler error: local initializer produced no value".to_string()
-        })?;
+    pub(super) fn bind_local(&mut self, name: Path) -> Result<()> {
+        let top = self
+            .stack
+            .last_mut()
+            .ok_or_else(|| CompileError::internal("local initializer produced no value"))?;
         if !matches!(top, StackItem::Temporary) {
-            return Err(
-                "internal compiler error: local initializer did not leave a temporary".to_string(),
-            );
+            return Err(CompileError::internal(
+                "local initializer did not leave a temporary",
+            ));
         }
         *top = StackItem::Binding {
             name,
@@ -219,34 +212,32 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn assign(&mut self, target: &AssignmentTarget) -> Result<(), String> {
+    pub(super) fn assign(&mut self, target: &AssignmentTarget) -> Result<()> {
         match target {
             AssignmentTarget::Access(value) => self.assign_access(value),
             AssignmentTarget::Binding(name) => self.assign_static_binding(name.clone()),
             AssignmentTarget::ArrayIndex { array, index } => match &index.kind {
                 ExprKind::Literal(literal) => match literal.parse() {
                     Ok(index) => self.assign_static_binding(array.clone().index(index)),
-                    Err(_) => Err(format!(
-                        "assignment to undeclared binding '{array}[{literal}]'"
-                    )),
+                    Err(_) => {
+                        Err(format!("assignment to undeclared binding '{array}[{literal}]'").into())
+                    }
                 },
                 _ => self.assign_indexed_binding(array, index),
             },
         }
     }
 
-    pub(super) fn assign_static_binding(&mut self, name: Path) -> Result<(), String> {
+    pub(super) fn assign_static_binding(&mut self, name: Path) -> Result<()> {
         if self.aliases.contains_key(&name) {
-            return Err(format!(
-                "internal compiler error: aliased parameter '{name}' is assigned"
-            ));
+            return Err(CompileError::internal(format!(
+                "aliased parameter '{name}' is assigned"
+            )));
         }
         if let Some((target, kind, start)) = self.replacement.clone() {
             if target == name && !self.preserve_bindings {
                 if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
-                    return Err(
-                        "internal compiler error: assignment has no result value".to_string()
-                    );
+                    return Err(CompileError::internal("assignment has no result value"));
                 }
                 if let Some(index) = self.stack.len().checked_sub(2) {
                     if let Some(previous) = self.last_reads.remove(&(name.clone(), index)) {
@@ -257,17 +248,16 @@ impl Generator {
                 }
                 if let Some(index) = self.binding_index(&name) {
                     if index + 2 != self.stack.len() {
-                        return Err(
-                            "internal compiler error: assignment target moved below the top slot"
-                                .to_string(),
-                        );
+                        return Err(CompileError::internal(
+                            "assignment target moved below the top slot",
+                        ));
                     }
                     self.nip()?;
                 }
                 *self
                     .stack
                     .last_mut()
-                    .ok_or("internal compiler error: assignment has no result value")? =
+                    .ok_or_else(|| CompileError::internal("assignment has no result value"))? =
                     StackItem::Binding { name, kind };
                 return Ok(());
             }
@@ -284,17 +274,18 @@ impl Generator {
         ) {
             return Err(format!(
                 "cannot assign to constructor parameter '{name}'; constructor parameters are immutable"
-            ));
+            ).into());
         }
         if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
-            return Err("internal compiler error: assignment has no result value".to_string());
+            return Err(CompileError::internal("assignment has no result value"));
         }
         if let Some(previous) = self.last_reads.remove(&(name.clone(), index)) {
             self.final_reads[previous] = false;
         }
-        let depth = self.stack.len().checked_sub(index + 2).ok_or_else(|| {
-            format!("internal compiler error: invalid assignment target '{name}'")
-        })?;
+        let depth =
+            self.stack.len().checked_sub(index + 2).ok_or_else(|| {
+                CompileError::internal(format!("invalid assignment target '{name}'"))
+            })?;
         self.push_integer_temporary(depth);
         self.apply(Put, 2, 0)
     }
@@ -303,9 +294,9 @@ impl Generator {
         &mut self,
         array: &Path,
         index: &Expression,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
-            return Err("internal compiler error: assignment has no result value".to_string());
+            return Err(CompileError::internal("assignment has no result value"));
         }
         // The index expression may consume a binding, so resolve the array slot after it.
         self.emit_expression(index)?;
@@ -321,17 +312,17 @@ impl Generator {
         ) {
             return Err(format!(
                 "cannot assign to constructor parameter '{array}'; constructor parameters are immutable"
-            ));
+            ).into());
         }
-        let first_depth_without_operands =
-            self.stack
-                .len()
-                .checked_sub(first_index + 3)
-                .ok_or_else(|| {
-                    format!(
-                        "internal compiler error: array assignment operands for '{array}' are not on the stack"
-                    )
-                })?;
+        let first_depth_without_operands = self
+            .stack
+            .len()
+            .checked_sub(first_index + 3)
+            .ok_or_else(|| {
+                CompileError::internal(format!(
+                    "array assignment operands for '{array}' are not on the stack"
+                ))
+            })?;
         self.check_array_index(self.array_length(array))?;
         if first_depth_without_operands != 0 {
             self.push_integer_temporary(first_depth_without_operands);
@@ -344,11 +335,11 @@ impl Generator {
         self.scopes.push((self.stack.len(), self.scope.clone()));
     }
 
-    pub(super) fn exit_scope(&mut self) -> Result<(), String> {
+    pub(super) fn exit_scope(&mut self) -> Result<()> {
         let (baseline, scope) = self
             .scopes
             .pop()
-            .ok_or("internal compiler error: scope stack underflow")?;
+            .ok_or_else(|| CompileError::internal("scope stack underflow"))?;
         for index in (baseline..self.stack.len()).rev() {
             match &self.stack[index] {
                 StackItem::Binding {
@@ -357,7 +348,7 @@ impl Generator {
                 } if !scope.contains_key(&name.key()) => self.drop_binding(index)?,
                 StackItem::Binding { .. } => {}
                 StackItem::Temporary => {
-                    return Err("internal compiler error: scope ended with a temporary".into())
+                    return Err(CompileError::internal("scope ended with a temporary"))
                 }
             }
         }
@@ -366,7 +357,7 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn drop_binding(&mut self, index: usize) -> Result<(), String> {
+    pub(super) fn drop_binding(&mut self, index: usize) -> Result<()> {
         let depth = self.stack.len() - index - 1;
         match depth {
             0 => self.asm.push(Drop.into()),
@@ -383,7 +374,7 @@ impl Generator {
     }
 
     // Joins scan local frames quadratically; index permutations if large frames become common.
-    pub(super) fn join_stack(&mut self, target: &[StackItem]) -> Result<(), String> {
+    pub(super) fn join_stack(&mut self, target: &[StackItem]) -> Result<()> {
         if self.stack == target {
             return Ok(());
         }
@@ -395,7 +386,7 @@ impl Generator {
         for item in target {
             if !self.stack.contains(item) {
                 let StackItem::Binding { name, .. } = item else {
-                    return Err("internal compiler error: temporary at branch join".into());
+                    return Err(CompileError::internal("temporary at branch join"));
                 };
                 // Returning paths share the join frame; direct return lowering could remove this padding.
                 self.push_temporary(Int0);
@@ -414,7 +405,7 @@ impl Generator {
                     .stack
                     .iter()
                     .position(|slot| slot == item)
-                    .ok_or("internal compiler error: missing branch binding")?;
+                    .ok_or_else(|| CompileError::internal("missing branch binding"))?;
                 let depth = self.stack.len() - index - 1;
                 if depth != 0 {
                     if depth == 1 {
@@ -432,15 +423,15 @@ impl Generator {
         Ok(())
     }
 
-    pub(super) fn assert_statement_boundary(&self) -> Result<(), String> {
+    pub(super) fn assert_statement_boundary(&self) -> Result<()> {
         if self
             .stack
             .iter()
             .any(|item| matches!(item, StackItem::Temporary))
         {
-            return Err(
-                "internal compiler error: statement left a temporary stack value".to_string(),
-            );
+            return Err(CompileError::internal(
+                "statement left a temporary stack value",
+            ));
         }
         Ok(())
     }
