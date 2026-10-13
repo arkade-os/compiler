@@ -3,7 +3,6 @@ package e2e
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,8 +45,7 @@ func TestScriptSizeLimitMatchesTheVM(t *testing.T) {
 		instance.pkScript, covenantWitness(t, contract, group, values))
 	requireVMResult(t, spend, emulatorKey.PubKey(), "")
 
-	compiler := os.Getenv("ARKADEC")
-	output, err := exec.Command(compiler, write(7), "-o", filepath.Join(t.TempDir(), "a.json")).CombinedOutput()
+	output, err := compile(t, write(7), filepath.Join(t.TempDir(), "a.json"))
 	if err == nil || !strings.Contains(string(output), "at least 10001 bytes, above the VM limit of 10000") {
 		t.Fatalf("10001 bytes compiled or failed differently: %v\n%s", err, output)
 	}

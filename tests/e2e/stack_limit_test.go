@@ -3,7 +3,6 @@ package e2e
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,8 +32,7 @@ func TestStackLimitMatchesTheVM(t *testing.T) {
 		instance.pkScript, covenantWitness(t, contract, group, values))
 	requireVMResult(t, spend, emulatorKey.PubKey(), "")
 
-	compiler := os.Getenv("ARKADEC")
-	output, err := exec.Command(compiler, write(999), "-o", filepath.Join(t.TempDir(), "a.json")).CombinedOutput()
+	output, err := compile(t, write(999), filepath.Join(t.TempDir(), "a.json"))
 	if err == nil || !strings.Contains(string(output), "above the VM limit of 1000") {
 		t.Fatalf("999 items compiled or failed differently: %v\n%s", err, output)
 	}
