@@ -68,7 +68,7 @@ The static playground consumes the browser assets from a locally packed package 
 
 ## Worker example
 
-The repository's [compiler-client.js](https://github.com/arkade-os/compiler/blob/main/playground/compiler-client.js) and [compiler-worker.js](https://github.com/arkade-os/compiler/blob/main/playground/compiler-worker.js) are a tested consumer example. Copy both into the same directory in your application. In a bundler such as Vite, change the worker's compiler import to `import { compile, check, symbols, version } from "@arkade-os/compiler"`. Then call the client:
+The repository's [compiler-client.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-client.js) and [compiler-worker.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-worker.js) are a tested consumer example. Copy both into the same directory in your application. In a bundler such as Vite, change the worker's compiler import to `import { compile, check, symbols, version } from "@arkade-os/compiler"`. Then call the client:
 
 ```js
 import { compile, check } from "./compiler-client.js";

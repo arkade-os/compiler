@@ -114,6 +114,13 @@ try {
         'bad.ark': 'library Bad { function bad() { require(missing); } }',
     } });
     assert(importedDiagnostics.some(d => d.file === 'bad.ark' && d.severity === 'error' && d.span));
+    const [importedSyntax] = await esm.check({ entry: 'main.ark', files: {
+        'main.ark': 'import "bad.ark"; contract C() { function spend() { require(true); } }',
+        'bad.ark': '// é 🐴\nlibrary Broken(',
+    } });
+    assert.equal(importedSyntax.file, 'bad.ark');
+    assert.equal(importedSyntax.severity, 'error');
+    assert.equal(Buffer.from('// é 🐴\nlibrary Broken(').subarray(importedSyntax.span.start, importedSyntax.span.end).toString(), '(');
     for (const invalid of [invalidSource, { entry: '/main.ark', files: {} }, { entry: 'missing.ark', files: {} }]) {
         const [diagnostic] = await esm.check(invalid);
         assert.equal(diagnostic.severity, 'error');
@@ -165,6 +172,16 @@ try {
     const pendingOptions = esm.compile(input, options);
     options.optimize = true;
     assert.equal((await pendingOptions).compiler.options.optimize, false);
+    for (const call of [esm.compile, esm.check, esm.symbols]) {
+        let entryReads = 0, fileReads = 0, sourceReads = 0;
+        const files = { get 'exit.ark'() { sourceReads++; return standalone.files['exit.ark']; } };
+        await call({
+            get entry() { return ++entryReads === 1 ? 'exit.ark' : 42; },
+            get files() { return ++fileReads === 1 ? files : null; },
+        });
+        assert.deepEqual([entryReads, fileReads, sourceReads], [1, 1, 1]);
+        await assert.rejects(call({ get entry() { return 42; }, files }), TypeError);
+    }
     run(process.execPath, ['--input-type=module', '-e', `
         import assert from 'node:assert/strict';
         import { compile } from '@arkade-os/compiler';

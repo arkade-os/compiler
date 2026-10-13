@@ -100,13 +100,14 @@ function initialize(): ReturnType<typeof load> {
 }
 
 function serializeInput(input: CompileInput): { entry: string; files: string } {
+    const entry = input?.entry;
+    const sources = input?.files;
     if (!input || typeof input !== "object" || Array.isArray(input)
-        || typeof input.entry !== "string"
-        || !input.files || typeof input.files !== "object" || Array.isArray(input.files)) {
+        || typeof entry !== "string"
+        || !sources || typeof sources !== "object" || Array.isArray(sources)) {
         throw new TypeError("Expected { entry: string, files: Record<string, string> }");
     }
-    const entry = input.entry;
-    const files = Object.entries(input.files);
+    const files = Object.entries(sources);
     if (files.some(([, source]) => typeof source !== "string")) {
         throw new TypeError("Every source file must contain a string");
     }

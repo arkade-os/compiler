@@ -92,7 +92,10 @@ function saveToStorage() {
     for (const [id, ex] of Object.entries(examples)) {
         data.examples[id] = { name: ex.name, code: ex.code };
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const serialized = JSON.stringify(data);
+    if (localStorage.getItem(STORAGE_KEY) === serialized) return;
+    compileRequest++;
+    localStorage.setItem(STORAGE_KEY, serialized);
 }
 
 function loadFromStorage() {
@@ -1334,51 +1337,49 @@ async function symbolTable(lineNumber) {
 async function doCompile() {
     if (!editor) return;
 
-    const request = ++compileRequest;
     const source = editor.getValue();
     clearErrors();
 
     let sources;
     try {
         sources = compilationSources();
+    } catch (err) {
+        showError(err.message);
+        return;
+    }
+    const request = ++compileRequest;
+    try {
         const optimize = document.getElementById('optimize-toggle').checked;
         const { warnings, ...artifact } = await compile(sources, { optimize });
         if (request !== compileRequest) return;
-        const result = JSON.stringify(artifact, null, 2);
         displayVersion(artifact.compiler.version);
         lastCompiledSource = source;
-        displayJson(result);
-        displayAsm(result);
-        displayBindings(result);
-        showSuccess(result, warnings.length);
+        displayJson(artifact);
+        displayAsm(artifact);
+        displayBindings(artifact);
+        showSuccess(artifact, warnings.length);
         showWarnings(warnings);
         markCompiled();
     } catch (err) {
         if (request !== compileRequest) return;
         // Only recheck failures, avoiding a second semantic pass on successful compiles.
         let diagnostics;
-        if (sources) {
-            try { diagnostics = await check(sources); } catch {}
-        }
+        try { diagnostics = await check(sources); } catch {}
         if (request !== compileRequest) return;
         if (diagnostics?.some(d => d.severity === 'error')) showDiagnostics(diagnostics, sources);
-        else showError(err.message, sources?.entry);
+        else showError(err.message, sources.entry);
     }
 }
 
 // Display JSON output
-function displayJson(jsonStr) {
+function displayJson(artifact) {
     const container = document.getElementById('json-output');
-    container.innerHTML = syntaxHighlightJson(jsonStr);
+    container.innerHTML = syntaxHighlightJson(artifact);
 }
 
 // Syntax highlight JSON
-function syntaxHighlightJson(json) {
-    if (typeof json !== 'string') {
-        json = JSON.stringify(json, null, 2);
-    }
-
-    return json
+function syntaxHighlightJson(artifact) {
+    return JSON.stringify(artifact, null, 2)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -1402,39 +1403,25 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr) {
+function displayAsm(artifact) {
     const container = document.getElementById('asm-output');
-
-    try {
-        const data = JSON.parse(jsonStr);
-        let html = '';
-
-        if (data.functions && data.functions.length > 0) {
-            for (const group of data.functions) {
-                if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
-                    html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += highlightAsm(group.arkade.asm) + '\n\n';
-                }
-                for (const leaf of (group.leaves || [])) {
-                    const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
-                    html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
-                    if (leaf.asm && leaf.asm.length > 0) {
-                        html += highlightAsm(leaf.asm) + '\n\n';
-                    }
-                }
-            }
-        } else {
-            html = '<span class="comment">No functions compiled</span>';
+    let html = '';
+    for (const group of artifact.functions) {
+        if (group.arkade?.asm.length) {
+            html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
+            html += highlightAsm(group.arkade.asm) + '\n\n';
         }
-
-        container.innerHTML = html;
-    } catch (e) {
-        container.textContent = 'Failed to parse assembly output';
+        for (const leaf of group.leaves) {
+            const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
+            html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
+            html += highlightAsm(leaf.asm) + '\n\n';
+        }
     }
+    container.innerHTML = html || '<span class="comment">No functions compiled</span>';
 }
 
 // Display generated SDK bindings
-function displayBindings(jsonStr) {
+function displayBindings(artifact) {
     const container = document.getElementById('bindings-output');
 
     // Build target selector + content area if first time
@@ -1459,8 +1446,7 @@ function displayBindings(jsonStr) {
         });
     }
 
-    // Store the JSON for re-rendering on target switch
-    container.dataset.lastJson = jsonStr;
+    container.artifact = artifact;
 
     const activeLang = container.querySelector('.bindings-lang-btn.active')?.dataset.lang || 'typescript';
     renderBindings(container.querySelector('.bindings-code'), activeLang);
@@ -1468,11 +1454,11 @@ function displayBindings(jsonStr) {
 
 function renderBindings(contentEl, target) {
     const container = document.getElementById('bindings-output');
-    const jsonStr = container.dataset.lastJson;
-    if (!jsonStr) { contentEl.textContent = 'Compile a contract first'; return; }
+    const artifact = container.artifact;
+    if (!artifact) { contentEl.textContent = 'Compile a contract first'; return; }
 
     try {
-        const code = generateBindings(jsonStr, target);
+        const code = generateBindings(artifact, target);
         contentEl.innerHTML = escapeHtml(code);
     } catch (err) {
         contentEl.textContent = 'Codegen error: ' + err.message;
@@ -1500,14 +1486,10 @@ function highlightAsm(asm) {
 }
 
 // Show compilation success
-function showSuccess(jsonStr, warningCount = 0) {
+function showSuccess(artifact, warningCount = 0) {
     const statusEl = document.getElementById('compile-status');
-    let funcCount = '';
-    try {
-        const data = JSON.parse(jsonStr);
-        const count = data.functions?.length || 0;
-        funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
-    } catch (e) {}
+    const count = artifact.functions.length;
+    const funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
     const warningLabel = warningCount ? ` &mdash; ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : '';
     statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}${warningLabel}`;
     statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
