@@ -168,7 +168,7 @@ pub(crate) fn compile_file(
 }
 
 fn relative_path(path: &str) -> Result<String, String> {
-    if Path::new(path).is_absolute() || path.contains('\\') || path.contains(':') {
+    if path.starts_with('/') || path.contains('\\') || path.contains(':') {
         return Err(format!(
             "source path '{path}' must be a relative .ark path using '/'"
         ));
@@ -205,7 +205,7 @@ fn normalize(path: &Path) -> Result<String, String> {
 }
 
 fn import_path(importer: &str, import: &str) -> Result<String, String> {
-    if Path::new(import).is_absolute() || import.contains('\\') || import.contains(':') {
+    if import.starts_with('/') || import.contains('\\') || import.contains(':') {
         return Err(format!(
             "import '{import}' must be a relative .ark path using '/'"
         ));

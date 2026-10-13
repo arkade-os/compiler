@@ -29,6 +29,10 @@ The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVa
 
 Every pull request gets its own build at `https://arkade-os.github.io/compiler/pr-previews/pr-<number>/`, posted as a comment on the PR.
 
+## Compile from JavaScript or TypeScript
+
+The [`@arkade-os/compiler` package](npm/README.md) provides `compile({ entry, files })` and `version()` for Node.js ESM/CommonJS and browser bundles. It includes prebuilt WASM and declarations, selects the runtime loader automatically, and preserves compiler artifacts, source provenance, and warnings. The npm package is ready for local packing; publication is pending organization permissions. See the package README for usage and tarball installation.
+
 ## A tour by example
 
 ### One key, one exit
@@ -239,6 +243,8 @@ The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator
 ### Releasing
 
 `arkade-compiler` and `arkade-bindgen` share the version in the root `Cargo.toml` `[workspace.package]` table. To release, bump it in a PR (on a minor bump, also raise `arkade-bindgen`'s `arkade-compiler` requirement), merge, and push `v<version>` from the merge commit. `.github/workflows/release.yml` checks the tag against the version, builds binaries for five targets, creates a GitHub release with `SHA256SUMS`, and publishes both crates to crates.io through trusted publishing. A tag with a suffix such as `v0.1.0-test` creates a GitHub pre-release and skips crates.io; remove it with `gh release delete <tag> --cleanup-tag`.
+
+Keep the npm package version aligned with the Rust compiler: from `npm/`, run `npm version <version> --no-git-tag-version` to update its manifest and lockfile. Package CI builds, tests, and retains installable tarballs. npm publication requires organization permissions and must be configured separately.
 
 Trusted publishing can only be configured on existing crates, so the first crates.io release is manual: a crate owner runs `cargo publish --locked -p arkade-compiler && cargo publish --locked -p arkade-bindgen` from the commit to be tagged, enables trusted publishing for both crates (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`), and then pushes the tag. The workflow skips crates whose version is already published.
 
