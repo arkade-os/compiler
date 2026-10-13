@@ -233,7 +233,8 @@ function arkadeComplete(before, table, line) {
     if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
     const [, name, indexed] = path.match(/^(\w+)(\[\])?$/) || [];
     const type = visible.get(name)?.type || '';
-    if (type === 'AssetGroup' && !indexed) return groupMembers;
+    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
+    if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
     if (type.endsWith(']') && !indexed) return [prop('length', 'Array length')];
     const struct = structs.find(s => s.name === type.replace(/\[.*$/, ''));
     return struct ? struct.fields.map(field => prop(field.name, field.type)) : [];
