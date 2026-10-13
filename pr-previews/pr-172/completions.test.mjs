@@ -18,7 +18,7 @@ const table = {
         { name: 'amounts', kind: 'parameter', type: 'int[3]' },
         { name: 'spend', kind: 'function' },
         { name: 'sig', kind: 'parameter', type: 'signature', position: [4, 20], scope: [4, 9] },
-        { name: 'group', kind: 'variable', type: 'assetGroup', position: [5, 9], scope: [4, 9] },
+        { name: 'group', kind: 'variable', type: 'AssetGroup', position: [5, 9], scope: [4, 9] },
         { name: 'point', kind: 'variable', type: 'Point', position: [5, 20], scope: [4, 9] },
         { name: 'later', kind: 'variable', position: [7, 9], scope: [4, 9] },
         { name: 'other', kind: 'variable', position: [11, 9], scope: [10, 12] },
@@ -43,9 +43,9 @@ assert(labels('').includes('checkSig'));
 
 assert(labels('tx.').includes('inputs'));
 assert(labels('require(tx . ').includes('assetGroups'));
-assert.deepEqual(labels('tx.outputs[0].'), ['value', 'scriptPubKey', 'assets']);
+assert.deepEqual(labels('tx.outputs[0].'), ['value', 'scriptPubKey', 'witnessVersion', 'assets']);
 assert(labels('tx.inputs[this.activeInputIndex].').includes('arkadeScriptHash'));
-assert.deepEqual(labels('tx.outputs[idx[0]].'), ['value', 'scriptPubKey', 'assets']);
+assert.deepEqual(labels('tx.outputs[idx[0]].'), ['value', 'scriptPubKey', 'witnessVersion', 'assets']);
 assert(!top.includes('older'));
 assert(labels('tx.inputs[i].assets.').includes('lookup'));
 assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['assetId', 'amount']);
@@ -53,6 +53,9 @@ assert(labels('tx.assetGroups[k].').includes('sumOutputs'));
 assert(labels('tx.input.current.').includes('value'));
 assert(labels('this.').includes('activeInputIndex'));
 assert(labels('group.', table, 5).includes('controlIs'));
+assert.deepEqual(labels('group.inputs[j].', table, 5), ['amount', 'type', 'index', 'txid']);
+assert.deepEqual(labels('tx.assetGroups[k].outputs[0].'), ['amount', 'type', 'index']);
+assert.deepEqual(labels('group[0].', table, 5), []);
 assert.deepEqual(labels('points[1].', table, 5), ['x', 'y']);
 assert.deepEqual(labels('point.', table, 5), ['x', 'y']);
 assert.deepEqual(labels('amounts.', table, 5), ['length']);
