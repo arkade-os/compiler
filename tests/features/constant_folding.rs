@@ -592,3 +592,11 @@ fn folding_keeps_byte_size_failures_and_concatenation() {
         "contract C() { function spend(bytes expected) { require(0x01 + 0x02 == expected); } }";
     assert!(asm(source).iter().any(|token| token == "OP_CAT"));
 }
+
+#[test]
+fn a_pruned_return_leaves_no_return_guard() {
+    let source = |dead: &str| {
+        format!("contract C() {{ private function f(int x) int {{ {dead} require(x > 0); if (x > 5) {{ return 1; }} return 0; }} function spend(int x) {{ require(f(x) == 1); }} }}")
+    };
+    assert_eq!(asm(&source("if (1 > 2) { return 7; }")), asm(&source("")));
+}

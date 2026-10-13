@@ -40,10 +40,12 @@ mod ir;
 pub(crate) use ir::Op;
 mod introspection;
 mod loops;
+mod lowering;
 mod optimization;
 mod stack;
 mod statements;
-use statements::generate_asm_from_statements_recursive;
+use lowering::Lowered;
+use statements::emit_body;
 
 pub(crate) use asset::*;
 pub(crate) use expr::*;
@@ -569,19 +571,6 @@ fn covenant_for(
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    if !optimize {
-        // ponytail: validate folded lowering with an extra emission pass; use a dedicated
-        // validation walk if this becomes costly for large unoptimized contracts.
-        let mut validation = Generator::new(
-            &function.parameters,
-            &retained_parameters,
-            structs,
-            &Default::default(),
-        )?;
-        validation.optimize = true;
-        validation.functions = functions.to_vec();
-        generate_asm_from_statements_recursive(&function.statements, &mut validation)?;
-    }
     let mut counting = Generator::new(
         &function.parameters,
         &retained_parameters,
@@ -590,7 +579,18 @@ fn covenant_for(
     )?;
     counting.optimize = optimize;
     counting.functions = functions.to_vec();
-    generate_asm_from_statements_recursive(&function.statements, &mut counting)?;
+    if !optimize {
+        let mut checked = std::collections::HashSet::new();
+        lowering::check_folded(
+            &function.statements,
+            &counting.scope,
+            structs,
+            functions,
+            &mut checked,
+        )?;
+    }
+    let body = counting.lower(&function.statements)?;
+    emit_body(&body, &mut counting)?;
     // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
     let mut inlined = std::collections::HashSet::new();
     for parameter in &retained_parameters {
@@ -618,7 +618,7 @@ fn covenant_for(
         )?;
         analysis.optimize = optimize;
         analysis.functions = functions.to_vec();
-        generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
+        emit_body(&body, &mut analysis)?;
         analysis
     };
     let mut generator = Generator::new(
@@ -631,7 +631,7 @@ fn covenant_for(
     generator.functions = functions.to_vec();
     generator.final_reads = analysis.final_reads;
     generator.read_cursor = Some(0);
-    generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
+    emit_body(&body, &mut generator)?;
     if generator.read_cursor != Some(generator.final_reads.len()) {
         return Err(CompileError::internal(
             "final-use analysis diverged from emission",

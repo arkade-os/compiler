@@ -303,15 +303,15 @@ impl Generator {
                 self.bind_local(leaf.access.clone())?;
             }
         }
-        generate_asm_from_statements_recursive(&function.statements, self).map_err(
-            |mut error| {
+        self.lower(&function.statements)
+            .and_then(|body| emit_body(&body, self))
+            .map_err(|mut error| {
                 // An imported helper's spans index its own file; the call locates the error instead.
                 if function.is_imported() {
                     error.span = None;
                 }
                 error
-            },
-        )?;
+            })?;
         if !direct_return {
             for leaf in results.iter().rev() {
                 self.read_static_binding(&leaf.access, true)?;
@@ -379,7 +379,17 @@ impl Generator {
         }
     }
 
-    pub(super) fn emit_unless_returned(&mut self, statements: &[LocatedStatement]) -> Result<bool> {
+    /// Lowers a body in the current scope, folded when optimizing.
+    pub(super) fn lower(&self, statements: &[LocatedStatement]) -> Result<Vec<Lowered>> {
+        lowering::lower(
+            statements,
+            &mut self.scope.clone(),
+            &self.structs,
+            self.optimize,
+        )
+    }
+
+    pub(super) fn emit_unless_returned(&mut self, statements: &[Lowered]) -> Result<bool> {
         self.read_binding(&Path::new("$returned"))?;
         self.apply(Not, 1, 1)?;
         self.apply(If, 1, 0)?;

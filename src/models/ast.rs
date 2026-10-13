@@ -198,6 +198,27 @@ pub enum AssignmentTarget {
     ArrayIndex { array: Path, index: Box<Expression> },
 }
 
+impl Statement {
+    /// The expressions the statement itself evaluates, not those of nested statements.
+    pub(crate) fn expressions(&self) -> Vec<&Expression> {
+        match self {
+            Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
+            Statement::Require(Requirement::Expression(expression)) => vec![expression],
+            Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
+            Statement::LetBinding { value, .. } => vec![value],
+            Statement::VarAssign {
+                target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
+                value,
+            } => vec![value, index],
+            Statement::VarAssign { value, .. } => vec![value],
+            Statement::IfElse { condition, .. } => vec![condition],
+            Statement::ForIn { iterable, .. } => vec![iterable],
+            Statement::ForCount { count, .. } => vec![count],
+            Statement::Return(None) | Statement::Declaration { .. } => vec![],
+        }
+    }
+}
+
 impl Requirement {
     pub(crate) fn expressions_mut(&mut self) -> Vec<&mut Expression> {
         match self {

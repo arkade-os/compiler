@@ -1,19 +1,19 @@
-//! Statement lowering onto the generator.
+//! Emission of lowered statements onto the generator.
 
 use super::*;
 
 impl Generator {
     pub(super) fn emit_branches(
         &mut self,
-        then_body: &[LocatedStatement],
-        else_body: Option<&[LocatedStatement]>,
+        then_body: &[Lowered],
+        else_body: Option<&[Lowered]>,
         implicit_else_continues: bool,
     ) -> Result<bool> {
         let baseline = self.stack.clone();
         let deferred = self.deferred.clone();
         let start = self.asm.len();
         self.enter_scope();
-        let left_continues = generate_asm_from_statements_recursive(then_body, self)?;
+        let left_continues = emit_body(then_body, self)?;
         self.exit_scope()?;
         let left = self.stack.clone();
         let left_deferred = self.deferred.clone();
@@ -25,7 +25,7 @@ impl Generator {
         // A return guard's absent branch has already returned and cannot continue.
         let right_continues = if let Some(body) = else_body {
             self.enter_scope();
-            let continues = generate_asm_from_statements_recursive(body, self)?;
+            let continues = emit_body(body, self)?;
             self.exit_scope()?;
             continues
         } else {
@@ -82,40 +82,66 @@ impl Generator {
     }
 }
 
-/// Generate assembly and report whether an emitted path falls through.
-pub(super) fn generate_asm_from_statements_recursive(
-    statements: &[LocatedStatement],
-    generator: &mut Generator,
-) -> Result<bool> {
-    for (index, stmt) in statements.iter().enumerate() {
-        let mut folded;
-        let stmt = if generator.optimize {
-            folded = stmt.clone();
-            optimization::fold_statement(&mut folded.statement, &generator.scope)
-                .map_err(|error| CompileError::from(error).at(stmt.span))?;
-            &folded
-        } else {
-            stmt
-        };
-        let continues = emit_statement(stmt, generator).map_err(|error| error.at(stmt.span))?;
+/// Emit `body` and report whether an emitted path falls through.
+pub(super) fn emit_body(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
+    for (index, item) in body.iter().enumerate() {
+        let continues = emit_lowered(item, generator).map_err(|error| error.at(item.span()))?;
         // A return leaves its value for the caller.
-        if matches!(stmt.statement, Statement::Return(_)) {
+        if item.is_return() {
             return Ok(false);
         }
         generator.assert_statement_boundary()?;
         if !continues {
             return Ok(false);
         }
-        if functions::contains_return(std::slice::from_ref(stmt)) && index + 1 < statements.len() {
-            return generator.emit_unless_returned(&statements[index + 1..]);
+        if lowering::contains_return(std::slice::from_ref(item)) && index + 1 < body.len() {
+            return generator.emit_unless_returned(&body[index + 1..]);
         }
     }
     Ok(true)
 }
 
+fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
+    match item {
+        Lowered::Simple(statement) => emit_statement(statement, generator),
+        Lowered::If {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            generator.emit_expression(condition)?;
+            generator.apply(If, 1, 0)?;
+            generator.emit_branches(then_body, else_body.as_deref(), true)
+        }
+        Lowered::Unrolled {
+            iterations,
+            guarded,
+            ..
+        } => {
+            let mut continues = true;
+            for (k, iteration) in iterations.iter().enumerate() {
+                let baseline = generator.stack.clone();
+                generator.enter_scope();
+                continues = if k > 0 && *guarded {
+                    generator.emit_unless_returned(iteration)?
+                } else {
+                    emit_body(iteration, generator)?
+                };
+                generator.exit_scope()?;
+                if !generator.stack.starts_with(&baseline) {
+                    return Err(CompileError::internal(format!(
+                        "loop iteration {k} changed outer stack layout"
+                    )));
+                }
+            }
+            Ok(continues)
+        }
+    }
+}
+
 /// Emit one statement and report whether its path falls through.
 fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<bool> {
-    let mut continues = true;
     match &stmt.statement {
         Statement::Call(expression) => generator.emit_call(expression)?,
         Statement::Return(value) => {
@@ -125,89 +151,10 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
         Statement::Require(req) => {
             generate_requirement_asm(req, generator)?;
         }
-        Statement::IfElse {
-            condition,
-            then_body,
-            else_body,
-        } => {
-            if generator.optimize
-                && matches!(&condition.kind, ExprKind::Literal(value) if value == "true" || value == "false")
-            {
-                let body = if matches!(&condition.kind, ExprKind::Literal(value) if value == "true")
-                {
-                    then_body.as_slice()
-                } else {
-                    else_body.as_deref().unwrap_or_default()
-                };
-                generator.enter_scope();
-                continues = generate_asm_from_statements_recursive(body, generator)?;
-                generator.exit_scope()?;
-            } else {
-                generator.emit_expression(condition)?;
-                generator.apply(If, 1, 0)?;
-                continues = generator.emit_branches(then_body, else_body.as_deref(), true)?;
-            }
-        }
-        Statement::ForIn {
-            index_var,
-            value_var,
-            iterable,
-            body,
-        } => {
-            let types::ArkType::Array(_, length) = iterable.ty else {
-                return Err("unsupported loop iterable".into());
-            };
-            for k in 0..length {
-                let mut substituted = substitute_loop_body(body, index_var, value_var, k, iterable);
-                // Substitution builds untyped nodes; return types and group members
-                // were resolved on the original body and survive the copy.
-                types::annotate_statements(
-                    &mut substituted,
-                    &mut generator.scope.clone(),
-                    &generator.structs,
-                );
-                let baseline = generator.stack.clone();
-                generator.enter_scope();
-                continues = if k > 0 && functions::contains_return(body) {
-                    generator.emit_unless_returned(&substituted)?
-                } else {
-                    generate_asm_from_statements_recursive(&substituted, generator)?
-                };
-                generator.exit_scope()?;
-                if !generator.stack.starts_with(&baseline) {
-                    return Err(CompileError::internal(format!(
-                        "loop iteration {k} changed outer stack layout"
-                    )));
-                }
-                if !continues && generator.optimize {
-                    break;
-                }
-            }
-        }
-        Statement::ForCount { count, body } => {
-            let count = match &count.kind {
-                ExprKind::Literal(count) => count.parse::<usize>().ok(),
-                _ => None,
-            }
-            .ok_or("loop count must be a non-negative integer compile-time constant")?;
-            for k in 0..count {
-                let baseline = generator.stack.clone();
-                generator.enter_scope();
-                continues = if k > 0 && functions::contains_return(body) {
-                    generator.emit_unless_returned(body)?
-                } else {
-                    generate_asm_from_statements_recursive(body, generator)?
-                };
-                generator.exit_scope()?;
-                if !generator.stack.starts_with(&baseline) {
-                    return Err(CompileError::internal(format!(
-                        "loop iteration {k} changed outer stack layout"
-                    )));
-                }
-                if !continues && generator.optimize {
-                    break;
-                }
-            }
+        Statement::IfElse { .. } | Statement::ForIn { .. } | Statement::ForCount { .. } => {
+            return Err(CompileError::internal(
+                "control flow reached emission unlowered",
+            ));
         }
         Statement::Declaration {
             name,
@@ -287,16 +234,11 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
             generator.replacement = previous_replacement;
         }
     }
-    Ok(continues)
+    Ok(true)
 }
 
 /// Generate assembly for a single requirement
 fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<()> {
-    if generator.optimize
-        && matches!(req, Requirement::Expression(Expression { kind: ExprKind::Literal(value), .. }) if value == "true")
-    {
-        return Ok(());
-    }
     match req {
         Requirement::Expression(expr) => {
             match &expr.kind {

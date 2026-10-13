@@ -66,7 +66,7 @@ fn validate_body(
     for located in statements {
         let first = issues.len();
         let statement = &located.statement;
-        for expression in statement_expressions(statement) {
+        for expression in statement.expressions() {
             validate_calls(
                 expression,
                 !matches!(statement, Statement::Call(_)),
@@ -307,24 +307,6 @@ pub(super) fn validate_value(
     locate(&mut issues[first..], value.span);
 }
 
-fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
-    match statement {
-        Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
-        Statement::Require(Requirement::Expression(expression)) => vec![expression],
-        Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
-        Statement::LetBinding { value, .. } => vec![value],
-        Statement::VarAssign {
-            target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
-            value,
-        } => vec![value, index],
-        Statement::VarAssign { value, .. } => vec![value],
-        Statement::IfElse { condition, .. } => vec![condition],
-        Statement::ForIn { iterable, .. } => vec![iterable],
-        Statement::ForCount { count, .. } => vec![count],
-        Statement::Return(None) | Statement::Declaration { .. } => vec![],
-    }
-}
-
 fn analyze_function(
     function: &Function,
     contract: &Contract,
@@ -360,7 +342,7 @@ fn analyze_calls(
 ) -> Result<(), String> {
     for statement in statements {
         let statement = &statement.statement;
-        for expression in statement_expressions(statement) {
+        for expression in statement.expressions() {
             analyze_expression(expression, contract, visiting, guarantees)?;
         }
         match statement {
@@ -434,7 +416,8 @@ fn flow_block(
             break;
         }
         let statement = &statement.statement;
-        if statement_expressions(statement)
+        if statement
+            .expressions()
             .into_iter()
             .any(|e| expression_enforces(e, guarantees))
         {
