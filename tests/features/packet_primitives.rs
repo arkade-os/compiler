@@ -76,14 +76,12 @@ contract PacketDemo(int exit) {{
         "expected OP_INSPECTPACKET; got {asm:?}"
     );
 
-    // Presence is asserted via "OP_1 OP_EQUALVERIFY" after the opcode.
+    // Presence is asserted by verifying the 0/1 flag the opcode pushes.
     let idx = asm
         .iter()
         .position(|s| s == OP_INSPECTPACKET)
         .expect("inspect packet present");
-    assert!(idx + 2 < asm.len(), "missing follow-on ops");
-    assert_eq!(asm[idx + 1], "OP_1");
-    assert_eq!(asm[idx + 2], OP_EQUALVERIFY);
+    assert_eq!(asm.get(idx + 1).map(String::as_str), Some("OP_VERIFY"));
 }
 
 #[test]
@@ -101,6 +99,36 @@ contract InputPacketDemo(int exit) {{
     assert!(
         asm.iter().any(|s| s == OP_INSPECTINPUTPACKET),
         "expected OP_INSPECTINPUTPACKET; got {asm:?}"
+    );
+}
+
+#[test]
+fn packet_has_keeps_only_the_presence_flag() {
+    let asm = compile_first_function_asm(
+        r#"
+contract PacketHas() {
+  function probe(int packetType, int i) {
+    require(tx.packet.has(packetType) && !tx.inputs[i].packet.has(packetType));
+  }
+}"#,
+    );
+    for opcode in [OP_INSPECTPACKET, OP_INSPECTINPUTPACKET] {
+        let at = asm
+            .iter()
+            .position(|s| s == opcode)
+            .unwrap_or_else(|| panic!("{asm:?}"));
+        assert_eq!(asm[at + 1], OP_NIP, "{asm:?}");
+    }
+    assert!(!asm.iter().any(|s| s == OP_EQUALVERIFY), "{asm:?}");
+
+    let error = compile(
+        "contract C() { function probe() { bytes b = tx.packet.has(1); require(size(b) > 0); } }",
+    )
+    .expect_err("presence is a bool")
+    .to_string();
+    assert!(
+        error.contains("declares type 'bytes' but initializer has type 'bool'"),
+        "{error}"
     );
 }
 

@@ -38,6 +38,10 @@ pub fn builtin_struct_fields(
     match declared_type {
         "AssetId" => Some(&[("txid", "bytes32"), ("gidx", "int")]),
         "Outpoint" => Some(&[("txid", "bytes32"), ("vout", "int")]),
+        // An inspected scriptPubKey: witness program, then witness version (-1 for non-witness).
+        "ScriptPubKey" => Some(&[("program", "bytes"), ("version", "int")]),
+        "AssetEntry" => Some(&[("assetId", "AssetId"), ("amount", "int")]),
+        "AssetLookup" => Some(&[("amount", "int"), ("found", "bool")]),
         "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
         // alt_bn128 G2 point; each coordinate is an Fp2 element `c1 * i + c0`.
         "G2Point" => Some(&[

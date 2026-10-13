@@ -20,6 +20,7 @@ fn declared_sizes_drive_input_expansion_per_array() {
 contract Sized(pubkey[2] owners) {
     function spend(signature[4] sigs, bytes32 msg) {
         require(checkSigFromStack(sigs[0], owners[1], msg));
+        require(checkSigFromStack(sigs[1], owners[0], msg));
     }
 }
 "#,

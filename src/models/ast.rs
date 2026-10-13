@@ -75,6 +75,8 @@ pub enum Statement {
     Return(Option<Expression>),
     /// require(expr, "message");
     Require(Requirement),
+    /// type name; — no value or stack slot until assignment.
+    Declaration { name: String, declared_type: String },
     /// let name = expr; or type name = expr;
     LetBinding {
         name: String,
@@ -350,7 +352,10 @@ pub enum ExprKind {
     /// Property access
     Property(String),
     /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
-    IntentInspect { path: String, presence_only: bool },
+    IntentInspect {
+        path: Box<Expression>,
+        presence_only: bool,
+    },
     /// Continue the current input at an output; policy order is script, value, assets.
     Tunnel {
         output_index: Box<Expression>,
@@ -396,17 +401,27 @@ pub enum ExprKind {
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
     },
+    /// Non-aborting asset lookup: tx.inputs[i].assets.tryLookup(txid, gidx) or
+    /// tx.outputs[o].assets.tryLookup(txid, gidx). An `AssetLookup` holding the
+    /// amount and the opcode success flag.
+    AssetTryLookup {
+        source: AssetLookupSource,
+        index: Box<Expression>,
+        asset_txid: Box<Expression>,
+        asset_gidx: Box<Expression>,
+    },
     /// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
     AssetCount {
         source: AssetLookupSource,
         index: Box<Expression>,
     },
-    /// Indexed asset access: tx.inputs[i].assets[t].assetId or tx.outputs[o].assets[t].amount
+    /// Indexed asset access: tx.inputs[i].assets[t].assetId or tx.outputs[o].assets[t].amount;
+    /// without a property, the whole `AssetEntry`.
     AssetAt {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: crate::properties::AssetProperty,
+        property: Option<crate::properties::AssetProperty>,
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
     TxIntrospection {
@@ -465,7 +480,7 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<crate::properties::GroupIoProperty>, // "amount" or "type"; None returns the raw type/data/amount tuple
+        property: Option<crate::properties::GroupIoProperty>, // None returns the raw record
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
@@ -487,7 +502,7 @@ pub enum ExprKind {
     },
     // ─── Byte-string Manipulation (introspector extensions) ────────────
     /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
-    /// or a scalar conversion: int(bool), bool(int)
+    /// or a scalar conversion: int(bool), bool(int), bytes(int), bytes(bool); bytes(bytes-like) widens.
     Cast {
         target: String,
         data: Box<Expression>,
@@ -495,13 +510,20 @@ pub enum ExprKind {
     // ─── Packet Introspection ──────────────────────────────────────────
     /// Current-tx packet content: tx.packet(packetType)
     /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
-    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`.
-    PacketInspect { packet_type: Box<Expression> },
-    /// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
-    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`.
+    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `<packetType> OP_INSPECTPACKET OP_NIP` for `presence_only`.
+    PacketInspect {
+        packet_type: Box<Expression>,
+        /// `tx.packet.has(type)`: the presence flag instead of the bytes
+        presence_only: bool,
+    },
+    /// Packet of the Arkade transaction that created input i: tx.inputs[i].packet(packetType)
+    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `<packetType> <i> OP_INSPECTINPUTPACKET OP_NIP` for `presence_only`.
     InputPacketInspect {
         index: Box<Expression>,
         packet_type: Box<Expression>,
+        presence_only: bool,
     },
 }
 
@@ -509,9 +531,13 @@ pub enum ExprKind {
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match &expression.kind {
         ExprKind::Builtin { builtin, .. } => builtin.result,
-        ExprKind::AssetAt { property, .. } => Some(property.value_type()),
+        ExprKind::AssetAt { property, .. } => {
+            Some(property.map_or("AssetEntry", |p| p.value_type()))
+        }
+        ExprKind::AssetTryLookup { .. } => Some("AssetLookup"),
         ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
         ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
+        ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
     }
     .filter(|result| builtin_struct_fields(result).is_some())
@@ -530,7 +556,6 @@ macro_rules! expression_children {
                 | ExprKind::Property(_)
                 | ExprKind::This(_)
                 | ExprKind::TxIntrospection { .. }
-                | ExprKind::IntentInspect { .. }
                 | ExprKind::AssetGroupsLength => vec![],
 
                 ExprKind::FieldAccess { value, .. } => vec![value],
@@ -549,6 +574,12 @@ macro_rules! expression_children {
                     ..
                 }
                 | ExprKind::AssetHas {
+                    index,
+                    asset_txid,
+                    asset_gidx,
+                    ..
+                }
+                | ExprKind::AssetTryLookup {
                     index,
                     asset_txid,
                     asset_gidx,
@@ -594,8 +625,11 @@ macro_rules! expression_children {
                     .collect(),
                 ExprKind::ContractInstance { args, .. } => args.$iter().collect(),
                 ExprKind::Cast { data, .. } => vec![data],
-                ExprKind::PacketInspect { packet_type } => vec![packet_type],
-                ExprKind::InputPacketInspect { index, packet_type } => vec![index, packet_type],
+                ExprKind::PacketInspect { packet_type, .. } => vec![packet_type],
+                ExprKind::IntentInspect { path, .. } => vec![path],
+                ExprKind::InputPacketInspect {
+                    index, packet_type, ..
+                } => vec![index, packet_type],
             }
         }
     };

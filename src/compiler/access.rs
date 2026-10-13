@@ -1,4 +1,6 @@
 use super::*;
+use crate::opcodes::{OP_FROMALTSTACK, OP_TOALTSTACK};
+use crate::properties::GroupIoProperty;
 use crate::types::ArkType;
 
 impl Generator {
@@ -82,6 +84,7 @@ impl Generator {
             }
             return Ok(());
         }
+        self.pin_constructor_slots(&name);
         self.emit_access_offset(&indices)?;
         if let Some(length) = length {
             self.apply(OP_DROP, 1, 0)?;
@@ -109,30 +112,40 @@ impl Generator {
     }
 
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<(), String> {
-        if matches!(value.ty, ArkType::Array(..) | ArkType::Struct(_)) {
-            return Err("assignment requires a scalar field".to_string());
-        }
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
+        let leaves = self.value_leaves(&name, &value.ty.as_str())?;
         if indices.is_empty() {
-            return self.assign_static_binding(&name, &name);
+            for leaf in leaves {
+                self.assign_static_binding(&leaf.access_name, &leaf.access_name)?;
+            }
+            return Ok(());
         }
         self.emit_access_offset(&indices)?;
-        let slot = self
-            .binding_index(&Self::internal_binding_name(&name))
-            .ok_or_else(|| format!("undefined binding '{name}'"))?;
-        if matches!(
-            self.stack[slot],
-            StackItem::Binding {
-                kind: BindingKind::Constructor,
-                ..
+        for (assigned, leaf) in leaves.iter().enumerate() {
+            if assigned + 1 < leaves.len() {
+                // Keep the offset below the next value; runtime indexes are evaluated once.
+                self.swap()?;
+                self.push_integer_temporary(1);
+                self.apply(OP_PICK, 1, 1)?;
             }
-        ) {
-            return Err(format!("cannot assign to constructor parameter '{name}'"));
+            let slot = self
+                .binding_index(&Self::internal_binding_name(&leaf.access_name))
+                .ok_or_else(|| format!("undefined binding '{}'", leaf.access_name))?;
+            if matches!(
+                self.stack[slot],
+                StackItem::Binding {
+                    kind: BindingKind::Constructor,
+                    ..
+                }
+            ) {
+                return Err(format!("cannot assign to constructor parameter '{name}'"));
+            }
+            self.push_integer_temporary(self.stack.len() - slot - 3);
+            self.apply(OP_ADD, 2, 1)?;
+            self.apply(OP_PUT, 2, 0)?;
         }
-        self.push_integer_temporary(self.stack.len() - slot - 3);
-        self.apply(OP_ADD, 2, 1)?;
-        self.apply(OP_PUT, 2, 0)
+        Ok(())
     }
 
     pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<(), String> {
@@ -228,6 +241,37 @@ impl Generator {
             self.apply(OP_VERIFY, 1, 0)?;
         }
         self.apply(OP_NUMEQUAL, 2, 1)
+    }
+
+    /// One field of a group input record, which is `[type, txid, vin, amount]` for an
+    /// intent input and `[type, vin, amount]` for a local one.
+    pub(super) fn emit_group_input(&mut self, record: &Expression) -> Result<(), String> {
+        let ExprKind::GroupIOAccess {
+            group,
+            io_index,
+            property: Some(property),
+            ..
+        } = &record.kind
+        else {
+            return Err("asset group input records need a field".to_string());
+        };
+        self.emit_expression(group)?;
+        self.emit_expression(io_index)?;
+        self.push_temporary(OP_0);
+        self.apply(OP_INSPECTASSETGROUP, 3, 1)?;
+        // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
+        // sequence takes back what it puts on the alt stack.
+        const DROP_TXID: &[&str] = &[OP_SIZE, "32", OP_EQUAL, OP_IF, OP_DROP, OP_ENDIF];
+        let restore: &[&str] = &[OP_DROP, OP_FROMALTSTACK];
+        let ops = match property {
+            GroupIoProperty::Amount => [&[OP_TOALTSTACK, OP_DROP], DROP_TXID, restore].concat(),
+            GroupIoProperty::Index => [&[OP_DROP, OP_TOALTSTACK], DROP_TXID, restore].concat(),
+            GroupIoProperty::Type => [&[OP_DROP, OP_DROP], DROP_TXID].concat(),
+            // A local input has no txid, so the size check fails the spend.
+            GroupIoProperty::Txid => vec![OP_DROP, OP_DROP, OP_SIZE, "32", OP_EQUALVERIFY, OP_NIP],
+        };
+        self.asm.extend(ops.iter().map(|op| op.to_string()));
+        Ok(())
     }
 
     /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.

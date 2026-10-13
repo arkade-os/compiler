@@ -4,24 +4,19 @@ use crate::models::{
     Function, FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
 };
 use crate::opcodes::{
-    OP_0, OP_0NOTEQUAL, OP_1, OP_ABS, OP_ADD, OP_AND, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG,
-    OP_CHECKSIGADD, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIGEST, OP_DIV, OP_DROP, OP_DUP,
-    OP_ECADD, OP_ECMUL, OP_ECMULSCALARVERIFY, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL,
-    OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF,
-    OP_INSPECTASSETGROUP, OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL,
-    OP_INSPECTASSETGROUPMETADATAHASH, OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM,
-    OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTINASSETLOOKUP,
-    OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTOUTPOINT,
-    OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
-    OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME, OP_INSPECTNUMASSETGROUPS,
-    OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
-    OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE,
-    OP_INSPECTPACKET, OP_INSPECTVERSION, OP_INVERT, OP_LEFT, OP_LESSTHAN, OP_LESSTHANOREQUAL,
-    OP_LSHIFT, OP_MAX, OP_MERKLEBRANCHVERIFY, OP_MIN, OP_MOD, OP_MODEXP, OP_MUL, OP_NEGATE, OP_NIP,
-    OP_NOT, OP_NUM2BIN, OP_NUMEQUAL, OP_OR, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY,
-    OP_PUT, OP_REVERSEBYTES, OP_RIGHT, OP_ROLL, OP_RSHIFT, OP_SHA1, OP_SHA256, OP_SHA256FINALIZE,
-    OP_SHA256INITIALIZE, OP_SHA256UPDATE, OP_SIGHASH, OP_SIZE, OP_SUB, OP_SUBSTR, OP_SWAP,
-    OP_TUNNEL, OP_TWEAKVERIFY, OP_TXID, OP_TXWEIGHT, OP_VERIFY, OP_WITHIN, OP_XOR,
+    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
+    OP_DROP, OP_DUP, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
+    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
+    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
+    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
+    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME,
+    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
+    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
+    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL,
+    OP_MUL, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT,
+    OP_ROLL, OP_SIZE, OP_SUB, OP_SWAP, OP_TUNNEL, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
 };
 use crate::types::{self};
 use crate::validator::{self, Severity};
@@ -70,13 +65,20 @@ fn internal_array_binding_name(array: &str, index: &str) -> String {
 }
 
 struct Generator {
+    optimize: bool,
     asm: Vec<String>,
     stack: Vec<StackItem>,
     scopes: Vec<(usize, types::Scope)>,
+    deferred: std::collections::HashSet<String>,
     constructor_array_expansions: Vec<(String, String)>,
     structs: Vec<crate::models::StructDefinition>,
     scope: types::Scope,
+    constructor_scope: types::Scope,
     functions: Vec<Function>,
+    // Constructor leaves pushed at their single read instead of in the prologue.
+    inlined: std::collections::HashMap<String, String>,
+    // Emitted reads per constructor slot; runtime-indexed slots count as two.
+    constructor_reads: std::collections::HashMap<String, usize>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
     aliases: std::collections::HashMap<String, usize>,
     // None outside a helper; Some(None) inside a void helper.
@@ -97,6 +99,7 @@ impl Generator {
         function_parameters: &[Parameter],
         constructor_parameters: &[Parameter],
         structs: &[crate::models::StructDefinition],
+        inlined_bindings: &std::collections::HashSet<String>,
     ) -> Result<Self, String> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
@@ -131,26 +134,37 @@ impl Generator {
             }
         }
         let mut asm = Vec::new();
+        let mut inlined = std::collections::HashMap::new();
         for (placeholder, binding_name) in constructor_bindings.into_iter().rev() {
+            if inlined_bindings.contains(&binding_name) {
+                inlined.insert(binding_name, placeholder);
+                continue;
+            }
             asm.push(format!("<{placeholder}>"));
             stack.push(StackItem::Binding {
                 name: binding_name,
                 kind: BindingKind::Constructor,
             });
         }
-        let mut scope = types::build_scope_with_structs(constructor_parameters, structs);
+        let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
+        let mut scope = constructor_scope.clone();
         scope.extend(types::build_scope_with_structs(
             function_parameters,
             structs,
         ));
         Ok(Self {
+            optimize: false,
             asm,
             stack,
             scopes: Vec::new(),
+            deferred: std::collections::HashSet::new(),
             constructor_array_expansions,
             structs: structs.to_vec(),
             scope,
+            constructor_scope,
             functions: Vec::new(),
+            inlined,
+            constructor_reads: std::collections::HashMap::new(),
             aliases: std::collections::HashMap::new(),
             return_type: None,
             direct_return: false,
@@ -206,9 +220,9 @@ impl Generator {
             return Ok(());
         }
         // A field named `length` outranks synthetic array length.
-        let is_binding = self
-            .binding_index(&Self::internal_binding_name(name))
-            .is_some();
+        let binding = Self::internal_binding_name(name);
+        let is_binding =
+            self.binding_index(&binding).is_some() || self.inlined.contains_key(&binding);
         if let Some(array) = name.trim().strip_suffix(".length").filter(|_| !is_binding) {
             let length = self.array_length(array);
             if length == 0 {
@@ -217,14 +231,22 @@ impl Generator {
             self.push_integer_temporary(length);
             return Ok(());
         }
-        let name = Self::internal_binding_name(name);
-        self.read_static_binding(&name, false)
+        self.read_static_binding(&binding, false)
     }
 
     fn read_static_binding(&mut self, name: &str, take: bool) -> Result<(), String> {
-        let index = self
-            .binding_index(name)
-            .ok_or_else(|| format!("undefined binding '{name}'"))?;
+        let Some(index) = self.binding_index(name) else {
+            let placeholder = self
+                .inlined
+                .get(name)
+                .ok_or_else(|| format!("undefined binding '{name}'"))?;
+            self.push_temporary(format!("<{placeholder}>"));
+            return Ok(());
+        };
+        // An inlined alias source is copied once at the call, however often the helper reads it.
+        if !self.aliases.contains_key(name) {
+            self.count_constructor_reads(index, 1);
+        }
         let depth = self.stack.len() - 1 - index;
         let consume = if let Some(cursor) = self.read_cursor.as_mut() {
             let consume = *self
@@ -246,14 +268,12 @@ impl Generator {
                     && index >= self.pinned_stack_len
                     && !name.starts_with('$')
                     && !name.contains('[')
-                    && (self
-                        .scopes
-                        .last()
-                        .is_none_or(|(baseline, _)| index >= *baseline)
-                        || self
-                            .replacement
-                            .as_ref()
-                            .is_some_and(|(target, _, _)| target == name))),
+                    && (self.scopes.last().is_none_or(|(baseline, scope)| {
+                        index >= *baseline && !scope.contains_key(name)
+                    }) || self
+                        .replacement
+                        .as_ref()
+                        .is_some_and(|(target, _, _)| target == name))),
             );
             false
         };
@@ -262,6 +282,34 @@ impl Generator {
             self.stack.remove(index);
         }
         self.apply(if consume { OP_ROLL } else { OP_PICK }, 1, 1)
+    }
+
+    fn count_constructor_reads(&mut self, index: usize, reads: usize) {
+        if let StackItem::Binding {
+            name,
+            kind: BindingKind::Constructor,
+        } = &self.stack[index]
+        {
+            *self.constructor_reads.entry(name.clone()).or_default() += reads;
+        }
+    }
+
+    /// Runtime indexes address leaves by their prologue slots.
+    // ponytail: pins every leaf of the indexed parameter, so unread siblings keep slots;
+    // pin only the indexed array's leaves if wide runtime-indexed structs become common.
+    fn pin_constructor_slots(&mut self, path: &str) {
+        fn root(name: &str) -> &str {
+            let name = name
+                .strip_prefix(INTERNAL_ARRAY_BINDING_PREFIX)
+                .unwrap_or(name);
+            name.split(['.', '[', ':']).next().unwrap_or(name)
+        }
+        let path = root(path).to_string();
+        for index in 0..self.stack.len() {
+            if matches!(&self.stack[index], StackItem::Binding { name, .. } if root(name) == path) {
+                self.count_constructor_reads(index, 2);
+            }
+        }
     }
 
     fn push_integer_temporary(&mut self, value: usize) {
@@ -289,6 +337,7 @@ impl Generator {
         let first_index = self
             .binding_index(&first_element)
             .ok_or_else(|| format!("undefined array binding '{array}'"))?;
+        self.pin_constructor_slots(array);
         let first_depth_without_index =
             self.stack
                 .len()
@@ -351,94 +400,9 @@ impl Generator {
 
     fn lower_raw_opcode(&mut self, opcode: &str) -> Result<(), String> {
         match opcode {
-            OP_0 | OP_1 | "OP_2" | "OP_3" | "OP_4" | "OP_5" | "OP_6" | "OP_7" | "OP_8" | "OP_9"
-            | "OP_10" | "OP_11" | "OP_12" | "OP_13" | "OP_14" | "OP_15" | "OP_16" => {
-                self.push_temporary(opcode);
-                Ok(())
-            }
-            OP_DROP => self.apply(opcode, 1, 0),
-            OP_DUP => self.apply(opcode, 1, 2),
+            // These move bindings as well as temporaries.
             OP_NIP => self.nip(),
             OP_SWAP => self.swap(),
-            OP_VERIFY => self.apply(opcode, 1, 0),
-            OP_EQUALVERIFY => self.apply(opcode, 2, 0),
-            OP_PUSHCURRENTINPUTINDEX
-            | OP_PUSHEXPIRY
-            | OP_INSPECTVERSION
-            | OP_INSPECTLOCKTIME
-            | OP_INSPECTNUMINPUTS
-            | OP_INSPECTNUMOUTPUTS
-            | OP_INSPECTNUMASSETGROUPS
-            | OP_TXID
-            | OP_TXWEIGHT => {
-                self.push_temporary(opcode);
-                Ok(())
-            }
-            OP_NEGATE
-            | OP_ABS
-            | OP_CHECKTIME
-            | OP_NOT
-            | OP_0NOTEQUAL
-            | OP_SHA256
-            | OP_SHA1
-            | "OP_HASH160"
-            | "OP_HASH256"
-            | "OP_RIPEMD160"
-            | OP_SHA256INITIALIZE
-            | OP_SIGHASH
-            | OP_BIN2NUM
-            | OP_REVERSEBYTES
-            | OP_INVERT
-            | OP_INSPECTINPUTVALUE
-            | OP_INSPECTINPUTSEQUENCE
-            | OP_INSPECTINPUTARKADESCRIPTHASH
-            | OP_INSPECTINPUTARKADEWITNESSHASH
-            | OP_INSPECTOUTPUTVALUE
-            | OP_INSPECTINASSETCOUNT
-            | OP_INSPECTOUTASSETCOUNT
-            | OP_INSPECTASSETGROUPMETADATAHASH => self.apply(opcode, 1, 1),
-            OP_ADD
-            | OP_MIN
-            | OP_MAX
-            | OP_LEFT
-            | OP_RIGHT
-            | OP_SUB
-            | OP_AND
-            | OP_OR
-            | OP_XOR
-            | OP_LSHIFT
-            | OP_RSHIFT
-            | OP_MUL
-            | OP_DIV
-            | OP_MOD
-            | OP_EQUAL
-            | OP_GREATERTHAN
-            | OP_GREATERTHANOREQUAL
-            | OP_LESSTHAN
-            | OP_LESSTHANOREQUAL
-            | OP_NUMEQUAL
-            | OP_BOOLAND
-            | OP_CAT
-            | OP_SHA256UPDATE
-            | OP_SHA256FINALIZE
-            | OP_DIGEST
-            | OP_NUM2BIN
-            | OP_CHECKSIG
-            | OP_INSPECTASSETGROUPSUM
-            | OP_INSPECTASSETGROUPNUM => self.apply(opcode, 2, 1),
-            OP_MODEXP | OP_SUBSTR | OP_WITHIN | OP_CHECKSIGADD | OP_CHECKSIGFROMSTACK => {
-                self.apply(opcode, 3, 1)
-            }
-            OP_MERKLEBRANCHVERIFY => self.apply(opcode, 4, 1),
-            OP_INSPECTINPUTSCRIPTPUBKEY | OP_INSPECTOUTPUTSCRIPTPUBKEY => self.apply(opcode, 1, 2),
-            OP_INSPECTINPUTOUTPOINT => self.apply(opcode, 1, 2),
-            OP_INSPECTINASSETLOOKUP | OP_INSPECTOUTASSETLOOKUP => self.apply(opcode, 3, 2),
-            OP_FINDASSETGROUPBYASSETID => self.apply(opcode, 2, 2),
-            OP_INSPECTINASSETAT | OP_INSPECTOUTASSETAT => self.apply(opcode, 2, 3),
-            OP_INSPECTASSETGROUPCTRL => self.apply(opcode, 1, 3),
-            OP_INSPECTASSETGROUPASSETID => self.apply(opcode, 1, 2),
-            OP_INSPECTPACKET | OP_INSPECTINTENTMESSAGE => self.apply(opcode, 1, 2),
-            OP_INSPECTINPUTPACKET => self.apply(opcode, 2, 2),
             OP_TUNNEL => {
                 // Fixed exception counts are emitted immediately before the opcode.
                 let inputs = self
@@ -449,14 +413,12 @@ impl Generator {
                     .ok_or("invalid tunnel exception count")?;
                 self.apply(opcode, inputs, 1)
             }
-            OP_SIZE => self.apply(opcode, 1, 2),
-            OP_ECADD => self.apply(opcode, 5, 2),
-            OP_ECMUL => self.apply(opcode, 4, 2),
-            OP_ECMULSCALARVERIFY | OP_TWEAKVERIFY => self.apply(opcode, 3, 0),
-            OP_INSPECTASSETGROUP => self.apply(opcode, 3, 3),
-            _ => Err(format!(
-                "internal compiler error: unknown expression opcode {opcode}"
-            )),
+            _ => {
+                let (inputs, outputs) = crate::opcodes::stack_effect(opcode).ok_or_else(|| {
+                    format!("internal compiler error: unknown expression opcode {opcode}")
+                })?;
+                self.apply(opcode, inputs, outputs)
+            }
         }
     }
 
@@ -500,18 +462,6 @@ impl Generator {
                     .to_string(),
             );
         }
-        if matches!(
-            &expression.kind,
-            ExprKind::GroupIOAccess {
-                source: crate::models::GroupIOSource::Inputs,
-                ..
-            }
-        ) {
-            return Err(
-                "asset-group input inspection has a variable-width result and cannot be used as a value"
-                    .to_string(),
-            );
-        }
         self.emit_expression_items(expression, 1)
     }
 
@@ -533,11 +483,12 @@ impl Generator {
         let mut values = Vec::new();
         functions::extract_values(&mut expression, &mut values);
         emit_expression_asm(&expression, &mut raw);
-        // Short-circuit joins need identical layouts; releasing slots requires path-sensitive liveness.
+        // ponytail: short-circuit joins need identical layouts, so reads inside an open branch stay
+        // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
-        self.preserve_bindings |= raw.iter().any(|token| token == OP_IF);
         let mut branches = Vec::new();
         for token in raw {
+            self.preserve_bindings = preserved || !branches.is_empty();
             if token == OP_IF {
                 self.apply(OP_IF, 1, 0)?;
                 branches.push(self.stack.clone());
@@ -565,6 +516,14 @@ impl Generator {
                 } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
                 {
                     self.emit_multisig(value)?;
+                } else if matches!(
+                    &value.kind,
+                    ExprKind::GroupIOAccess {
+                        source: crate::models::GroupIOSource::Inputs,
+                        ..
+                    }
+                ) {
+                    self.emit_group_input(value)?;
                 } else {
                     let ty = value.ty.as_str();
                     self.emit_access_value(value, &ty)?;
@@ -739,29 +698,170 @@ impl Generator {
         let (baseline, scope) = self
             .scopes
             .pop()
-            .ok_or_else(|| "internal compiler error: scope stack underflow".to_string())?;
-        self.scope = scope;
-        while self.stack.len() > baseline {
-            match self.stack.last() {
-                Some(StackItem::Binding {
+            .ok_or("internal compiler error: scope stack underflow")?;
+        let outer: std::collections::HashSet<_> = scope
+            .keys()
+            .map(|name| Self::internal_binding_name(name))
+            .collect();
+        for index in (baseline..self.stack.len()).rev() {
+            match &self.stack[index] {
+                StackItem::Binding {
                     name,
                     kind: BindingKind::Local,
-                }) => {
-                    // Analysis-pass stack positions are stable (nothing is consumed
-                    // there), so the drop position equals the recorded read position.
-                    self.last_reads.remove(&(name.clone(), self.stack.len() - 1));
-                    self.asm.push(OP_DROP.to_string());
-                    self.stack.pop();
+                } if !outer.contains(name) => self.drop_binding(index)?,
+                StackItem::Binding { .. } => {}
+                StackItem::Temporary => {
+                    return Err("internal compiler error: scope ended with a temporary".into())
                 }
-                _ => {
-                    return Err(
-                        "internal compiler error: scope ended with a temporary or outer binding above its locals"
-                            .to_string(),
-                    )
+            }
+        }
+        self.deferred.retain(|name| scope.contains_key(name));
+        self.scope = scope;
+        Ok(())
+    }
+
+    fn drop_binding(&mut self, index: usize) -> Result<(), String> {
+        let depth = self.stack.len() - index - 1;
+        match depth {
+            0 => self.asm.push(OP_DROP.into()),
+            1 => self.asm.push(OP_NIP.into()),
+            _ => {
+                self.push_integer_temporary(depth);
+                self.pop_temporaries(1, OP_ROLL)?;
+                self.asm.extend([OP_ROLL.into(), OP_DROP.into()]);
+            }
+        }
+        self.stack.remove(index);
+        self.last_reads.retain(|(_, slot), _| *slot < index);
+        Ok(())
+    }
+
+    // Joins scan local frames quadratically; index permutations if large frames become common.
+    fn join_stack(&mut self, target: &[StackItem]) -> Result<(), String> {
+        if self.stack == target {
+            return Ok(());
+        }
+        for index in (0..self.stack.len()).rev() {
+            if !target.contains(&self.stack[index]) {
+                self.drop_binding(index)?;
+            }
+        }
+        for item in target {
+            if !self.stack.contains(item) {
+                let StackItem::Binding { name, .. } = item else {
+                    return Err("internal compiler error: temporary at branch join".into());
+                };
+                // Returning paths share the join frame; direct return lowering could remove this padding.
+                self.push_temporary(OP_0);
+                self.bind_local(name)?;
+            }
+        }
+        if self.stack != target {
+            let start = self
+                .stack
+                .iter()
+                .zip(target)
+                .take_while(|(left, right)| left == right)
+                .count();
+            for item in &target[start..] {
+                let index = self
+                    .stack
+                    .iter()
+                    .position(|slot| slot == item)
+                    .ok_or("internal compiler error: missing branch binding")?;
+                let depth = self.stack.len() - index - 1;
+                if depth != 0 {
+                    if depth == 1 {
+                        self.swap()?;
+                    } else {
+                        self.push_integer_temporary(depth);
+                        self.pop_temporaries(1, OP_ROLL)?;
+                        self.asm.push(OP_ROLL.into());
+                        let item = self.stack.remove(index);
+                        self.stack.push(item);
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    fn emit_branches(
+        &mut self,
+        then_body: &[LocatedStatement],
+        else_body: Option<&[LocatedStatement]>,
+        implicit_else_continues: bool,
+    ) -> Result<bool, String> {
+        let baseline = self.stack.clone();
+        let deferred = self.deferred.clone();
+        let start = self.asm.len();
+        self.enter_scope();
+        let left_continues = generate_asm_from_statements_recursive(then_body, self)?;
+        self.exit_scope()?;
+        let left = self.stack.clone();
+        let left_deferred = self.deferred.clone();
+        let left_asm = self.asm.split_off(start);
+        self.stack = baseline.clone();
+        self.deferred = deferred.clone();
+        self.last_reads
+            .retain(|(_, slot), _| *slot < baseline.len());
+        // A return guard's absent branch has already returned and cannot continue.
+        let right_continues = if let Some(body) = else_body {
+            self.enter_scope();
+            let continues = generate_asm_from_statements_recursive(body, self)?;
+            self.exit_scope()?;
+            continues
+        } else {
+            implicit_else_continues
+        };
+        let right = self.stack.clone();
+        let right_deferred = self.deferred.clone();
+        let right_asm = self.asm.split_off(start);
+        let initialized: std::collections::HashSet<_> = deferred
+            .iter()
+            .filter(|name| {
+                (left_continues || right_continues)
+                    && (!left_continues || !left_deferred.contains(*name))
+                    && (!right_continues || !right_deferred.contains(*name))
+            })
+            .cloned()
+            .collect();
+        let mut initialized_leaves = std::collections::HashSet::new();
+        for name in &initialized {
+            let ty = self
+                .scope
+                .get(name)
+                .ok_or("internal compiler error: missing declaration type")?;
+            for leaf in self.value_leaves(name, &ty.as_str())? {
+                initialized_leaves.insert(Self::internal_binding_name(&leaf.access_name));
+            }
+        }
+        let mut target = baseline.clone();
+        let preferred = if left_continues { &left } else { &right };
+        target.extend(preferred.iter().skip(baseline.len()).filter(|item| {
+            matches!(item, StackItem::Binding { name, .. } if initialized_leaves.contains(name))
+        }).cloned());
+        if !left.starts_with(&baseline) || !right.starts_with(&baseline) {
+            return Err("internal compiler error: branch changed outer stack layout".into());
+        }
+        self.stack = left;
+        self.asm.extend(left_asm);
+        self.join_stack(&target)?;
+        let left_joined = self.asm.split_off(start);
+        self.stack = right;
+        self.asm.extend(right_asm);
+        self.join_stack(&target)?;
+        let right_joined = self.asm.split_off(start);
+        self.asm.extend(left_joined);
+        if else_body.is_some() || !right_joined.is_empty() {
+            self.asm.push(OP_ELSE.into());
+            self.asm.extend(right_joined);
+        }
+        self.asm.push(OP_ENDIF.into());
+        self.deferred = deferred.difference(&initialized).cloned().collect();
+        self.last_reads
+            .retain(|(_, slot), _| *slot < baseline.len());
+        Ok(left_continues || right_continues)
     }
 
     fn assert_statement_boundary(&self) -> Result<(), String> {
@@ -902,6 +1002,7 @@ pub(crate) fn emit(
                 &contract.parameters,
                 &contract.structs,
                 &contract.functions,
+                options.optimize,
             )?,
         );
     }
@@ -963,6 +1064,7 @@ fn covenant_for(
     constructor_parameters: &[Parameter],
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
+    optimize: bool,
 ) -> Result<ArkadeCovenant, String> {
     let inputs = function_inputs(&function.parameters);
     let references =
@@ -972,10 +1074,65 @@ fn covenant_for(
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let mut analysis = Generator::new(&function.parameters, &retained_parameters, structs)?;
-    analysis.functions = functions.to_vec();
-    generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
-    let mut generator = Generator::new(&function.parameters, &retained_parameters, structs)?;
+    if !optimize {
+        // ponytail: validate folded lowering with an extra emission pass; use a dedicated
+        // validation walk if this becomes costly for large unoptimized contracts.
+        let mut validation = Generator::new(
+            &function.parameters,
+            &retained_parameters,
+            structs,
+            &Default::default(),
+        )?;
+        validation.optimize = true;
+        validation.functions = functions.to_vec();
+        generate_asm_from_statements_recursive(&function.statements, &mut validation)?;
+    }
+    let mut counting = Generator::new(
+        &function.parameters,
+        &retained_parameters,
+        structs,
+        &Default::default(),
+    )?;
+    counting.optimize = optimize;
+    counting.functions = functions.to_vec();
+    generate_asm_from_statements_recursive(&function.statements, &mut counting)?;
+    // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
+    let mut inlined = std::collections::HashSet::new();
+    for parameter in &retained_parameters {
+        for_each_expanded_param(parameter, structs, |_, binding_name, _| {
+            if counting
+                .constructor_reads
+                .get(&binding_name)
+                .copied()
+                .unwrap_or(0)
+                <= 1
+            {
+                inlined.insert(binding_name);
+            }
+        })?;
+    }
+    // Without inlined leaves the counting pass already has the emission layout.
+    let analysis = if inlined.is_empty() {
+        counting
+    } else {
+        let mut analysis = Generator::new(
+            &function.parameters,
+            &retained_parameters,
+            structs,
+            &inlined,
+        )?;
+        analysis.optimize = optimize;
+        analysis.functions = functions.to_vec();
+        generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
+        analysis
+    };
+    let mut generator = Generator::new(
+        &function.parameters,
+        &retained_parameters,
+        structs,
+        &inlined,
+    )?;
+    generator.optimize = optimize;
     generator.functions = functions.to_vec();
     generator.final_reads = analysis.final_reads;
     generator.read_cursor = Some(0);
@@ -1011,17 +1168,26 @@ fn for_each_expanded_param(
     Ok(())
 }
 
-/// Recursively generate assembly from statements
+/// Generate assembly and report whether an emitted path falls through.
 fn generate_asm_from_statements_recursive(
     statements: &[LocatedStatement],
     generator: &mut Generator,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     for (index, stmt) in statements.iter().enumerate() {
+        let mut folded;
+        let stmt = if generator.optimize {
+            folded = stmt.clone();
+            optimization::fold_statement(&mut folded.statement, &generator.scope)?;
+            &folded
+        } else {
+            stmt
+        };
+        let mut continues = true;
         match &stmt.statement {
             Statement::Call(expression) => generator.emit_call(expression)?,
             Statement::Return(value) => {
                 generator.emit_return(value.as_ref())?;
-                return Ok(());
+                return Ok(false);
             }
             Statement::Require(req) => {
                 generate_requirement_asm(req, generator)?;
@@ -1031,31 +1197,23 @@ fn generate_asm_from_statements_recursive(
                 then_body,
                 else_body,
             } => {
-                generator.emit_expression(condition)?;
-                generator.apply(OP_IF, 1, 0)?;
-                let baseline = generator.stack.clone();
-                generator.enter_scope();
-                generate_asm_from_statements_recursive(then_body, generator)?;
-                generator.exit_scope()?;
-                if generator.stack != baseline {
-                    return Err(
-                        "internal compiler error: then branch changed outer stack layout"
-                            .to_string(),
-                    );
-                }
-                if let Some(else_stmts) = else_body {
-                    generator.asm.push(OP_ELSE.to_string());
+                if generator.optimize
+                    && matches!(&condition.kind, ExprKind::Literal(value) if value == "true" || value == "false")
+                {
+                    let body = if matches!(&condition.kind, ExprKind::Literal(value) if value == "true")
+                    {
+                        then_body.as_slice()
+                    } else {
+                        else_body.as_deref().unwrap_or_default()
+                    };
                     generator.enter_scope();
-                    generate_asm_from_statements_recursive(else_stmts, generator)?;
+                    continues = generate_asm_from_statements_recursive(body, generator)?;
                     generator.exit_scope()?;
-                    if generator.stack != baseline {
-                        return Err(
-                            "internal compiler error: else branch changed outer stack layout"
-                                .to_string(),
-                        );
-                    }
+                } else {
+                    generator.emit_expression(condition)?;
+                    generator.apply(OP_IF, 1, 0)?;
+                    continues = generator.emit_branches(then_body, else_body.as_deref(), true)?;
                 }
-                generator.asm.push(OP_ENDIF.to_string());
             }
             Statement::ForIn {
                 index_var,
@@ -1078,16 +1236,17 @@ fn generate_asm_from_statements_recursive(
                     );
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
-                    if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(&substituted)?;
+                    continues = if k > 0 && functions::contains_return(body) {
+                        generator.emit_unless_returned(&substituted)?
                     } else {
-                        generate_asm_from_statements_recursive(&substituted, generator)?;
-                    }
+                        generate_asm_from_statements_recursive(&substituted, generator)?
+                    };
                     generator.exit_scope()?;
-                    if generator.stack != baseline {
-                        return Err(format!(
-                            "internal compiler error: loop iteration {k} changed outer stack layout"
-                        ));
+                    if !generator.stack.starts_with(&baseline) {
+                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
+                    }
+                    if !continues && generator.optimize {
+                        break;
                     }
                 }
             }
@@ -1104,18 +1263,26 @@ fn generate_asm_from_statements_recursive(
                 for k in 0..count {
                     let baseline = generator.stack.clone();
                     generator.enter_scope();
-                    if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(body)?;
+                    continues = if k > 0 && functions::contains_return(body) {
+                        generator.emit_unless_returned(body)?
                     } else {
-                        generate_asm_from_statements_recursive(body, generator)?;
-                    }
+                        generate_asm_from_statements_recursive(body, generator)?
+                    };
                     generator.exit_scope()?;
-                    if generator.stack != baseline {
-                        return Err(format!(
-                            "internal compiler error: loop iteration {k} changed outer stack layout"
-                        ));
+                    if !generator.stack.starts_with(&baseline) {
+                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
+                    }
+                    if !continues && generator.optimize {
+                        break;
                     }
                 }
+            }
+            Statement::Declaration {
+                name,
+                declared_type,
+            } => {
+                generator.bind_type(name, declared_type);
+                generator.deferred.insert(name.clone());
             }
             Statement::LetBinding {
                 name,
@@ -1160,22 +1327,55 @@ fn generate_asm_from_statements_recursive(
                     }
                     _ => None,
                 };
-                generator.emit_expression(value)?;
-                generator.assign(target)?;
+                let mut access = value.with_kind(match target {
+                    AssignmentTarget::Binding(name) => ExprKind::Variable(name.clone()),
+                    AssignmentTarget::ArrayIndex { array, index } => ExprKind::ArrayIndex {
+                        array: array.clone(),
+                        index: index.clone(),
+                    },
+                    AssignmentTarget::Access(access) => access.kind.clone(),
+                });
+                types::annotate_expression(&mut access, &generator.scope);
+                if let AssignmentTarget::Binding(name) = target {
+                    if generator.deferred.remove(name) {
+                        generator.emit_typed_value(value, &access.ty.as_str())?;
+                        generator.bind_value(name, &access.ty.as_str())?;
+                        generator.replacement = previous_replacement;
+                        generator.assert_statement_boundary()?;
+                        continue;
+                    }
+                }
+                if matches!(
+                    access.ty,
+                    types::ArkType::Struct(_) | types::ArkType::Array(..)
+                ) {
+                    generator.emit_typed_value(value, &access.ty.as_str())?;
+                    generator.assign_access(&access)?;
+                } else {
+                    generator.emit_expression(value)?;
+                    generator.assign(target)?;
+                }
                 generator.replacement = previous_replacement;
             }
         }
         generator.assert_statement_boundary()?;
+        if !continues {
+            return Ok(false);
+        }
         if functions::contains_return(std::slice::from_ref(stmt)) && index + 1 < statements.len() {
-            generator.emit_unless_returned(&statements[index + 1..])?;
-            return Ok(());
+            return generator.emit_unless_returned(&statements[index + 1..]);
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Generate assembly for a single requirement
 fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<(), String> {
+    if generator.optimize
+        && matches!(req, Requirement::Expression(Expression { kind: ExprKind::Literal(value), .. }) if value == "true")
+    {
+        return Ok(());
+    }
     match req {
         Requirement::Expression(expr) => {
             match &expr.kind {
@@ -1226,7 +1426,8 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             })
             .collect::<Vec<_>>();
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
 
         generator.push_temporary("9");
         generator
@@ -1255,7 +1456,8 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             })
             .collect::<Vec<_>>();
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("scalar test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
 
         generator.push_temporary("9");
         generator
@@ -1287,7 +1489,8 @@ mod symbolic_stack_tests {
                 param_type: "int".into(),
             },
         ];
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("array test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
         let bindings = generator.stack.clone();
         generator.push_temporary("9");
         generator
@@ -1328,7 +1531,8 @@ mod symbolic_stack_tests {
                 param_type: "int".to_string(),
             },
         ];
-        let mut generator = Generator::new(&inputs, &[], &[]).expect("array test inputs");
+        let mut generator =
+            Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
         generator.push_temporary("7");
         generator.bind_local("above").expect("local above array");
 

@@ -64,7 +64,7 @@ fn test_threshold_oracle_constructor_array_is_one_grouped_input() {
         "array elements must not appear as separate inputs. Got: {param_names:?}"
     );
 
-    // The asm prologue still pushes one placeholder per element.
+    // Each element is read once, so its placeholder is pushed at its read.
     let asm = crate::common::arkade_asm(&output, "attest");
     for placeholder in ["<oracles.0>", "<oracles.1>", "<oracles.2>"] {
         assert!(asm.contains(placeholder), "missing {placeholder} in: {asm}");

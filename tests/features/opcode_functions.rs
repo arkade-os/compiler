@@ -225,7 +225,7 @@ fn test_digest() {
     let output = compile(code).expect("compile digest");
     let asm = crate::common::arkade_asm_tokens(&output, "hash");
     assert!(
-        contains_tokens(&asm, &[OP_1, OP_ROLL, OP_1, OP_ROLL, OP_DIGEST]),
+        contains_tokens(&asm, &[OP_0, OP_ROLL, "<hashType>", OP_DIGEST]),
         "Expected ordered {OP_DIGEST} operand reads in ASM: {asm:?}"
     );
 }
@@ -248,7 +248,7 @@ fn test_digest_concatenates_bytes_operands() {
     assert!(
         contains_tokens(
             &asm,
-            &[OP_0, OP_PICK, "OP_2", OP_ROLL, OP_CAT, "OP_2", OP_ROLL, OP_DIGEST]
+            &[OP_0, OP_PICK, "<b>", OP_CAT, "<hashType>", OP_DIGEST]
         ),
         "Expected digest operands to be concatenated; asm: {asm:?}"
     );
@@ -321,7 +321,7 @@ fn test_binary_minus_still_subtracts() {
     let output = compile(code).expect("compile subtraction");
     let asm = crate::common::arkade_asm_tokens(&output, "diff");
     assert!(
-        contains_tokens(&asm, &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_SUB]),
+        contains_tokens(&asm, &["<a>", "<b>", OP_SUB]),
         "Expected a binary subtraction; asm: {asm:?}"
     );
     assert!(
@@ -346,7 +346,7 @@ fn test_mod_exp() {
     assert!(
         contains_tokens(
             &asm,
-            &[OP_1, OP_ROLL, "OP_2", OP_ROLL, "OP_2", OP_ROLL, OP_MODEXP]
+            &[OP_0, OP_ROLL, OP_1, OP_ROLL, "<modulus>", OP_MODEXP]
         ),
         "Expected ordered {OP_MODEXP} operand reads in ASM: {asm:?}"
     );
@@ -732,7 +732,7 @@ fn test_sighash() {
     let output = compile(code).expect("compile sighash");
     let asm = crate::common::arkade_asm_tokens(&output, "hashCurrentInput");
     assert!(
-        contains_tokens(&asm, &[OP_0, OP_ROLL, OP_SIGHASH]),
+        contains_tokens(&asm, &["<hashType>", OP_SIGHASH]),
         "Expected ordered {OP_SIGHASH} operand read in ASM: {asm:?}"
     );
 }
@@ -1422,7 +1422,7 @@ fn merkle_root_pushes_operands_in_vm_order() {
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert_eq!(
         asm,
-        "<root> 0x6c656166 0x6272616e6368 OP_4 OP_ROLL OP_4 OP_ROLL OP_MERKLEBRANCHVERIFY OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1"
+        "0x6c656166 0x6272616e6368 OP_3 OP_ROLL OP_3 OP_ROLL OP_MERKLEBRANCHVERIFY <root> OP_EQUAL OP_VERIFY OP_1"
             .split_whitespace().collect::<Vec<_>>()
     );
 

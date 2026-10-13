@@ -10,10 +10,30 @@ use pest::iterators::Pair;
 pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();
     let presence_only = pair.as_rule() == Rule::intent_has;
-    let literal = pair.into_inner().next().ok_or("Missing intent path")?;
-    let path = parse_string_literal(literal.as_str())?;
-    if path.len() > 520
-        || !path
+    let operand = pair.into_inner().next().ok_or("Missing intent path")?;
+    let path = if operand.as_rule() == Rule::string_literal {
+        let text = parse_string_literal(operand.as_str())?;
+        if !is_intent_path(&text) {
+            return Err(format!("invalid intent message path '{text}'"));
+        }
+        let span = operand.as_span().into();
+        Expression::new(ExprKind::Literal(parse_named_operand(operand)?), span)
+    } else {
+        parse_general_expression(operand)?
+    };
+    Ok(Expression::new(
+        ExprKind::IntentInspect {
+            path: Box::new(path),
+            presence_only,
+        },
+        span,
+    ))
+}
+
+/// The VM's simple path syntax: dot-separated lowercase keys and array indexes.
+fn is_intent_path(path: &str) -> bool {
+    path.len() <= 520
+        && path
             .split('.')
             .all(|segment| match segment.as_bytes().first() {
                 Some(b'0'..=b'9') => {
@@ -27,16 +47,6 @@ pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, Strin
                     .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
                 _ => false,
             })
-    {
-        return Err(format!("invalid intent message path '{path}'"));
-    }
-    Ok(Expression::new(
-        ExprKind::IntentInspect {
-            path: parse_named_operand(literal)?,
-            presence_only,
-        },
-        span,
-    ))
 }
 
 pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
@@ -190,12 +200,14 @@ pub(crate) fn current_input(property: InputProperty, span: crate::diagnostics::S
 /// Parse tx.packet(packetType) → ExprKind::PacketInspect
 pub(crate) fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();
+    let presence_only = pair.as_rule() == Rule::packet_has;
     let mut inner = pair.into_inner();
     let packet_type =
         parse_general_expression(inner.next().ok_or("Missing packet type in tx.packet()")?)?;
     Ok(Expression::new(
         ExprKind::PacketInspect {
             packet_type: Box::new(packet_type),
+            presence_only,
         },
         span,
     ))
@@ -204,6 +216,7 @@ pub(crate) fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, Strin
 /// Parse tx.inputs[i].packet(packetType) → ExprKind::InputPacketInspect
 pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();
+    let presence_only = pair.as_rule() == Rule::input_packet_has;
     let mut inner = pair.into_inner();
 
     // First child: array_access — extract the index expression
@@ -226,6 +239,7 @@ pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression,
         ExprKind::InputPacketInspect {
             index: Box::new(index),
             packet_type: Box::new(packet_type),
+            presence_only,
         },
         span,
     ))

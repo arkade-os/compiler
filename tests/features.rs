@@ -14,10 +14,14 @@ mod beacon;
 mod bytes_literals;
 #[path = "features/concat_op.rs"]
 mod concat_op;
+#[path = "features/constant_folding.rs"]
+mod constant_folding;
 #[path = "features/constants.rs"]
 mod constants;
 #[path = "features/contract_import_instantiation.rs"]
 mod contract_import_instantiation;
+#[path = "features/deferred_initialization.rs"]
+mod deferred_initialization;
 #[path = "features/epoch_limiter.rs"]
 mod epoch_limiter;
 #[path = "features/general_comparisons.rs"]
@@ -26,6 +30,8 @@ mod general_comparisons;
 mod group_properties;
 #[path = "features/io_introspection.rs"]
 mod io_introspection;
+#[path = "features/multi_result.rs"]
+mod multi_result;
 #[path = "features/new_opcodes.rs"]
 mod new_opcodes;
 #[path = "features/no_shadowing.rs"]

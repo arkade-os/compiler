@@ -269,6 +269,18 @@ impl Typing<'_> {
                         self.expression(value, scope);
                     }
                 }
+                Statement::Declaration {
+                    name,
+                    declared_type,
+                } => {
+                    bind_local_type(
+                        scope,
+                        name,
+                        Some(declared_type),
+                        ArkType::parse(declared_type),
+                        self.structs,
+                    );
+                }
                 Statement::LetBinding {
                     name,
                     declared_type,
@@ -451,7 +463,9 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .cloned()
             .unwrap_or(ArkType::Unknown),
         ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
-        ExprKind::Literal(value) if value.starts_with("0x") => ArkType::Bytes,
+        ExprKind::Literal(value) if value.starts_with("0x") => {
+            bytes_of_width(static_byte_width(expr))
+        }
         ExprKind::Literal(_) => ArkType::Int,
         ExprKind::ArrayLiteral(elements) => ArkType::Array(
             Box::new(
@@ -503,7 +517,10 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::AssetLookup { .. } => ArkType::Int,
         ExprKind::AssetHas { .. } => ArkType::Bool,
         ExprKind::AssetCount { .. } => ArkType::Int,
-        ExprKind::AssetAt { property, .. } => ArkType::parse(property.value_type()),
+        ExprKind::AssetTryLookup { .. } => ArkType::Struct("AssetLookup".to_string()),
+        ExprKind::AssetAt { property, .. } => {
+            ArkType::parse(property.map_or("AssetEntry", |p| p.value_type()))
+        }
 
         // Asset group introspection
         ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
@@ -531,7 +548,14 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::Cast { target, .. } => ArkType::parse(target),
 
         // Packet introspection — returns raw packet bytes.
-        ExprKind::PacketInspect { .. } => ArkType::Bytes,
+        ExprKind::PacketInspect { presence_only, .. }
+        | ExprKind::InputPacketInspect { presence_only, .. } => {
+            if *presence_only {
+                ArkType::Bool
+            } else {
+                ArkType::Bytes
+            }
+        }
         ExprKind::IntentInspect { presence_only, .. } => {
             if *presence_only {
                 ArkType::Bool
@@ -539,7 +563,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                 ArkType::Bytes
             }
         }
-        ExprKind::InputPacketInspect { .. } => ArkType::Bytes,
 
         // Binary operations — type is determined by operand types and operator.
         ExprKind::BinaryOp { left, op, right } => {

@@ -30,7 +30,7 @@ struct Args {
     #[arg(short, long)]
     output: Option<String>,
 
-    /// Emit Arkade covenant assembly without peephole optimizations
+    /// Disable constant folding, static branch removal, and assembly optimizations
     #[arg(long)]
     no_optimize: bool,
 }
