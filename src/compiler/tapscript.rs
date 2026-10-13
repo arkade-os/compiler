@@ -648,10 +648,6 @@ fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElemen
     });
 }
 
-/// Build the unified `functions[]` ABI: one group per covenant function plus
-/// one group per pure-standalone leaf. Runs validation per leaf. `covenants`
-/// holds each function's emulator covenant (built by mod.rs to avoid a cycle);
-/// it is consumed as groups are assembled.
 /// Every check on one author-written leaf: closure shape, emulator binding, arkd
 /// rules and its spend group. Returns what emission needs from them.
 pub(crate) fn check_tapscript(
@@ -666,6 +662,10 @@ pub(crate) fn check_tapscript(
     Ok((closure, binding, group_key))
 }
 
+/// Build the unified `functions[]` ABI: one group per covenant function plus
+/// one group per pure-standalone leaf. Runs validation per leaf. `covenants`
+/// holds each function's emulator covenant (built by mod.rs to avoid a cycle);
+/// it is consumed as groups are assembled.
 pub fn build_function_groups(
     contract: &Contract,
     mut covenants: std::collections::HashMap<String, ArkadeCovenant>,
