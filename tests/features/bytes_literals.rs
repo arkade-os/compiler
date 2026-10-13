@@ -41,7 +41,12 @@ fn sized_byte_literals_work_in_bindings_and_calls_without_size_checks() {
             for out in [compile(&source), compile_unoptimized(&source)] {
                 let out = out.unwrap_or_else(|error| panic!("{ty} {literal}: {error}"));
                 let asm = arkade_asm_tokens(&out, "spend");
-                assert!(!asm.iter().any(|token| token == "OP_SIZE"), "{asm:?}");
+                // Only the `expected` witness input is width-checked.
+                assert_eq!(
+                    asm.iter().filter(|token| *token == "OP_SIZE").count(),
+                    1,
+                    "{asm:?}"
+                );
                 assert!(asm.iter().any(|token| token == "OP_EQUAL"), "{asm:?}");
                 assert_eq!(arkade_inputs(&out, "spend"), ["expected"]);
                 assert_eq!(group(&out, "spend").leaves.len(), 1);

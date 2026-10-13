@@ -118,3 +118,68 @@ fn timelock_units_encode_literals_and_constants() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn sized_hashlock_preimages_emit_runtime_width_checks() {
+    for (preimage_type, width) in [("bytes20", 20), ("bytes32", 32)] {
+        for (hash, digest_type, opcode) in [
+            ("hash160", "bytes20", "OP_HASH160"),
+            ("ripemd160", "bytes20", "OP_RIPEMD160"),
+            ("sha256", "bytes32", "OP_SHA256"),
+            ("hash256", "bytes32", "OP_HASH256"),
+        ] {
+            for (covenant, timelock, keys, signatures) in [
+                ("", "", "server, owner", "serverSig, sig"),
+                (
+                    "",
+                    "require(older(144));",
+                    "server, owner",
+                    "serverSig, sig",
+                ),
+                (
+                    "function claim() { require(tx.outputs[0].value >= 1); }",
+                    "",
+                    "server, emulator",
+                    "serverSig, sig",
+                ),
+            ] {
+                let source = format!(
+                    "contract C(pubkey owner, {digest_type} digest) {{ {covenant} function claim({preimage_type} preimage, signature serverSig, signature sig) tapscript {{ require({hash}(preimage) == digest); {timelock} require(checkMultisig([{keys}], [{signatures}], 2)); }} }}"
+                );
+                for optimize in [false, true] {
+                    let output = arkade_compiler::compile_sources_with_options(
+                        "main.ark",
+                        &std::collections::BTreeMap::from([("main.ark".into(), source.clone())]),
+                        arkade_compiler::CompileOptions { optimize },
+                    )
+                    .unwrap();
+                    let leaf = &crate::common::group(&output, "claim").leaves[0];
+                    assert_eq!(
+                        leaf.asm[..4],
+                        ["OP_SIZE", &width.to_string(), "OP_EQUALVERIFY", opcode],
+                        "{preimage_type}/{hash}/optimize={optimize}: {:?}",
+                        leaf.asm
+                    );
+                    assert_eq!(leaf.witness[0].name, "preimage");
+                    assert_eq!(leaf.witness[0].elem_type, preimage_type);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn unsized_hashlock_preimage_preserves_existing_leaf() {
+    for optimize in [false, true] {
+        let output = arkade_compiler::compile_sources_with_options(
+            "main.ark",
+            &std::collections::BTreeMap::from([("main.ark".into(), HTLC.into())]),
+            arkade_compiler::CompileOptions { optimize },
+        )
+        .unwrap();
+        assert_eq!(
+            crate::common::leaf_asm(&output, "claim", "claim"),
+            "OP_HASH160 <preimageHash> OP_EQUAL OP_VERIFY <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:claim> OP_CHECKSIG"
+        );
+    }
+}

@@ -470,10 +470,9 @@ contract BytesCasts(pubkey owner) {
     assert_eq!(asm.matches("OP_BIN2NUM").count(), 4, "{asm}");
     // `bytes(n > 0)` needs no normalization: the comparison already leaves 0 or 1.
     assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 4, "{asm}");
-    assert!(
-        !asm.contains("OP_NUM2BIN") && !asm.contains("OP_SIZE"),
-        "{asm}"
-    );
+    assert!(!asm.contains("OP_NUM2BIN"), "{asm}");
+    // Only the h20 and h32 witness inputs are width-checked; widening casts add none.
+    assert_eq!(asm.matches("OP_SIZE").count(), 2, "{asm}");
     assert_eq!(
         crate::common::arkade_inputs(&output, "spend"),
         ["sig", "n", "data", "h20", "h32", "flag"]
@@ -523,10 +522,28 @@ contract SameType(pubkey owner) {
         1,
         "only bool(2) converts: {asm}"
     );
-    assert!(
-        !asm.contains("OP_SIZE"),
-        "bytes20(bytes20) is unchecked: {asm}"
+    assert_eq!(
+        asm.matches("OP_SIZE").count(),
+        1,
+        "only the witness input h is checked; bytes20(bytes20) adds none: {asm}"
     );
+}
+
+#[test]
+fn sized_witness_inputs_check_width_at_entry() {
+    let source = "contract C(bytes32 d) { function spend(bytes20 a, int n, bytes32[2] xs, bytes raw) { require(hash160(a) == hash160(raw)); require(sha256(xs[0]) == d); require(sha256(xs[1]) == d); require(n > 0); } }";
+    let asm = crate::common::arkade_asm(
+        &crate::common::compile_unoptimized(source).unwrap(),
+        "spend",
+    );
+    // Inputs sit below the constructor prologue, first input on top.
+    assert!(
+        asm.starts_with("<d> OP_1 OP_PICK OP_SIZE 20 OP_EQUALVERIFY OP_DROP OP_3 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP OP_4 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP "),
+        "{asm}"
+    );
+    assert_eq!(asm.matches("OP_SIZE").count(), 3, "{asm}");
+    let optimized = crate::common::arkade_asm(&compile_ok(source), "spend");
+    assert_eq!(optimized.matches("OP_SIZE").count(), 3, "{optimized}");
 }
 
 #[test]

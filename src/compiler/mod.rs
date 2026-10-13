@@ -60,6 +60,14 @@ enum StackItem {
 const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
 const INTERNAL_ARRAY_INDEX_PREFIX: &str = "$array-index:";
 
+fn integer_token(value: usize) -> String {
+    if value <= 16 {
+        format!("OP_{value}")
+    } else {
+        value.to_string()
+    }
+}
+
 fn internal_array_binding_name(array: &str, index: &str) -> String {
     format!("{INTERNAL_ARRAY_BINDING_PREFIX}{array}:{index}")
 }
@@ -103,15 +111,15 @@ impl Generator {
     ) -> Result<Self, String> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
-            for_each_expanded_param(parameter, structs, |_, binding_name, _| {
-                function_bindings.push(binding_name);
+            for_each_expanded_param(parameter, structs, |_, binding_name, leaf_type| {
+                function_bindings.push((binding_name, leaf_type));
             })?;
         }
         let mut stack = function_bindings
-            .into_iter()
+            .iter()
             .rev()
-            .map(|name| StackItem::Binding {
-                name,
+            .map(|(name, _)| StackItem::Binding {
+                name: name.clone(),
                 kind: BindingKind::FunctionInput,
             })
             .collect::<Vec<_>>();
@@ -145,6 +153,23 @@ impl Generator {
                 name: binding_name,
                 kind: BindingKind::Constructor,
             });
+        }
+        // Witness inputs carry any length; pin fixed-width ones before the body reads them.
+        let prologue = asm.len();
+        for (index, (_, leaf_type)) in function_bindings.iter().enumerate() {
+            let width = match types::ArkType::parse(leaf_type) {
+                types::ArkType::Bytes20 => "20",
+                types::ArkType::Bytes32 => "32",
+                _ => continue,
+            };
+            let depth = prologue + index;
+            if depth > 0 {
+                asm.extend([integer_token(depth), OP_PICK.to_string()]);
+            }
+            asm.extend([OP_SIZE, width, OP_EQUALVERIFY].map(String::from));
+            if depth > 0 {
+                asm.push(OP_DROP.to_string());
+            }
         }
         let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
         let mut scope = constructor_scope.clone();
@@ -313,11 +338,7 @@ impl Generator {
     }
 
     fn push_integer_temporary(&mut self, value: usize) {
-        self.push_temporary(if value <= 16 {
-            format!("OP_{value}")
-        } else {
-            value.to_string()
-        });
+        self.push_temporary(integer_token(value));
     }
 
     fn check_array_index(&mut self, length: usize) -> Result<(), String> {
