@@ -753,7 +753,7 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<crate::properties::GroupIoProperty>, // "amount" or "type"; None returns the raw type/data/amount tuple
+        property: Option<crate::properties::GroupIoProperty>, // None returns the raw record
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value

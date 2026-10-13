@@ -428,24 +428,44 @@ fn test_group_accesses_ignore_whitespace_and_comments() {
     }
 }
 
-/// The input side is rejected as a value: LOCAL and INTENT inputs don't share
-/// a stack shape, so "amount" isn't at a fixed position.
 #[test]
-fn test_group_io_access_input_amount_is_rejected() {
-    let code = r#"
+fn group_input_fields_normalize_both_record_widths() {
+    let output = compile(
+        r#"
         contract GroupIOTest(pubkey owner) {
             function spend(signature sig) {
                 require(checkSig(sig, owner));
-                let result = tx.assetGroups[0].inputs[0].amount;
-                require(result >= 0);
+                let amount = tx.assetGroups[0].inputs[0].amount;
+                require(amount >= tx.assetGroups[0].inputs[1].index + tx.assetGroups[0].inputs[2].type);
             }
         }
-    "#;
+    "#,
+    )
+    .expect("input record fields are single values");
+    let asm = crate::common::arkade_asm(&output, "spend");
+    assert_eq!(asm.matches("OP_0 OP_INSPECTASSETGROUP").count(), 3, "{asm}");
+    assert_eq!(
+        asm.matches("OP_SIZE 32 OP_EQUAL OP_IF OP_DROP OP_ENDIF")
+            .count(),
+        3,
+        "{asm}"
+    );
+}
 
-    let error = compile(code)
-        .expect_err("input-side group IO access must not bind a value")
+#[test]
+fn only_input_records_have_a_txid() {
+    let body = |record: &str| {
+        format!("contract C(bytes32 t) {{ function spend() {{ require(tx.assetGroups[0].{record}[0].txid == t); }} }}")
+    };
+    let asm = crate::common::arkade_asm(&compile(&body("inputs")).expect("input txid"), "spend");
+    assert!(asm.contains("OP_SIZE 32 OP_EQUALVERIFY OP_NIP"), "{asm}");
+    let error = compile(&body("outputs"))
+        .expect_err("outputs have no txid")
         .to_string();
-    assert!(error.contains("variable-width result"), "{error}");
+    assert!(
+        error.contains("asset group output records have no txid"),
+        "{error}"
+    );
 }
 
 /// Without a property, the raw (type, data..., amount) tuple isn't one
