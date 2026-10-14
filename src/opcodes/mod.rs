@@ -157,10 +157,10 @@ opcodes! {
     Depth = OP_DEPTH,
     Drop2 = OP_2DROP => (2, 0),
     Dup2 = OP_2DUP => (2, 4),
-    Dup3 = OP_3DUP,
-    Over2 = OP_2OVER,
-    Rot2 = OP_2ROT,
-    Swap2 = OP_2SWAP,
+    Dup3 = OP_3DUP => (3, 6),
+    Over2 = OP_2OVER => (4, 6),
+    Rot2 = OP_2ROT => (6, 6),
+    Swap2 = OP_2SWAP => (4, 4),
 
     // Byte-string manipulation (introspector extensions)
     Substr = OP_SUBSTR => (3, 1),

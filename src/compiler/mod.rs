@@ -386,7 +386,8 @@ impl Generator {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<Vec<Op>, String> {
+    /// The covenant's instructions and its stack peak.
+    fn finish(mut self) -> Result<(Vec<Op>, usize), String> {
         if !self.scopes.is_empty() {
             return Err("internal compiler error: unbalanced generator scope".to_string());
         }
@@ -397,7 +398,7 @@ impl Generator {
         if self.stack != vec![StackItem::Temporary] {
             return Err("internal compiler error: covenant did not finish cleanly".to_string());
         }
-        Ok(self.asm)
+        Ok((self.asm, self.max_depth))
     }
 }
 
@@ -643,15 +644,17 @@ fn covenant_for(
             "internal compiler error: final-use analysis diverged from emission".to_string(),
         );
     }
-    if generator.max_depth > MAX_STACK_ITEMS {
-        return Err(format!(
-            "function '{}' can hold {} stack items, above the VM limit of {MAX_STACK_ITEMS}",
-            function.name, generator.max_depth
-        ));
-    }
-    let mut ops = generator.finish()?;
+    let (mut ops, mut peak) = generator.finish()?;
     if optimize {
-        ops = optimization::optimize(ops);
+        let (optimized, raise) = optimization::optimize(ops);
+        ops = optimized;
+        peak += raise;
+    }
+    if peak > MAX_STACK_ITEMS {
+        return Err(format!(
+            "function '{}' can hold {peak} stack items, above the VM limit of {MAX_STACK_ITEMS}",
+            function.name
+        ));
     }
     let mut widths = std::collections::HashMap::new();
     for parameter in &retained_parameters {

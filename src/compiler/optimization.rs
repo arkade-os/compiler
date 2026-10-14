@@ -255,7 +255,9 @@ fn matches(op: &Op, opcode: Opcode) -> bool {
     }
 }
 
-pub(super) fn optimize(mut asm: Vec<Op>) -> Vec<Op> {
+/// The optimized instructions, and how many items the rewrites can add to the unoptimized
+/// stack peak.
+pub(super) fn optimize(mut asm: Vec<Op>) -> (Vec<Op>, usize) {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
     // already enforces a trailing `Verify Int1`, so a failing last requirement reports a false
     // stack entry instead when the NIPs are kept.
@@ -273,15 +275,16 @@ pub(super) fn optimize(mut asm: Vec<Op>) -> Vec<Op> {
     asm.push(Int1.into());
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
-    if dropped.len() < kept.len() {
+    if dropped.0.len() < kept.0.len() {
         dropped
     } else {
         kept
     }
 }
 
-fn rewrite(asm: Vec<Op>) -> Vec<Op> {
+fn rewrite(asm: Vec<Op>) -> (Vec<Op>, usize) {
     let mut optimized: Vec<Op> = Vec::with_capacity(asm.len());
+    let mut raise = 0;
     for op in asm {
         optimized.push(op);
         // Every rewrite shortens the window, so this terminates.
@@ -307,9 +310,32 @@ fn rewrite(asm: Vec<Op>) -> Vec<Op> {
             };
             optimized.truncate(len - from.len());
             optimized.extend(to.iter().copied().map(Op::from));
+            raise = raise.max(peak(to).saturating_sub(peak(from)));
         }
     }
-    optimized
+    (optimized, raise)
+}
+
+/// The most items `ops` holds above where they start.
+// ponytail: summing each rewrite's raise is conservative; simulate the final script for an
+// exact peak if contracts sit at the VM limit.
+fn peak(ops: &[Opcode]) -> usize {
+    let mut height = 0isize;
+    let mut peak = 0;
+    for op in ops {
+        let (pops, pushes) = match op {
+            // Their depth is the operand pushed before them.
+            Pick => (1, 1),
+            Roll => (1, 0),
+            Put => (2, 0),
+            op => op
+                .stack_effect()
+                .expect("rewrite opcodes have a stack effect"),
+        };
+        height += pushes as isize - pops as isize;
+        peak = peak.max(height);
+    }
+    peak as usize
 }
 
 #[cfg(test)]
@@ -334,11 +360,30 @@ mod tests {
     }
 
     fn optimize(tokens: Vec<String>) -> Vec<String> {
-        super::optimize(ops(tokens)).iter().map(Op::spell).collect()
+        super::optimize(ops(tokens))
+            .0
+            .iter()
+            .map(Op::spell)
+            .collect()
     }
 
     fn rewrite(tokens: Vec<String>) -> Vec<String> {
-        super::rewrite(ops(tokens)).iter().map(Op::spell).collect()
+        super::rewrite(ops(tokens))
+            .0
+            .iter()
+            .map(Op::spell)
+            .collect()
+    }
+
+    #[test]
+    fn only_three_dup_raises_the_stack_peak() {
+        let raising: Vec<_> = REWRITES
+            .iter()
+            .filter(|(from, to)| peak(to) > peak(from))
+            .collect();
+        assert_eq!(raising, [&(&[Int2, Pick, Over][..], &[Dup3, Nip][..])]);
+        let asm = ["<a>", "<b>", "<c>", OP_2, OP_PICK, OP_OVER].map(String::from);
+        assert_eq!(super::rewrite(ops(asm.to_vec())).1, 1);
     }
 
     #[test]
