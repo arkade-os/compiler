@@ -185,14 +185,11 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
             }
         }
         Statement::ForCount { count, body } => {
-            let ExprKind::Literal(count) = &count.kind else {
-                return Err(
-                    "loop count must be a non-negative integer compile-time constant".into(),
-                );
-            };
-            let count = count.parse::<usize>().map_err(|_| {
-                "loop count must be a non-negative integer compile-time constant".to_string()
-            })?;
+            let count = match &count.kind {
+                ExprKind::Literal(count) => count.parse::<usize>().ok(),
+                _ => None,
+            }
+            .ok_or("loop count must be a non-negative integer compile-time constant")?;
             for k in 0..count {
                 let baseline = generator.stack.clone();
                 generator.enter_scope();
