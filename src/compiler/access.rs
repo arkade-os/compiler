@@ -253,7 +253,8 @@ impl Generator {
         // the alt stack and then size the txid, five at most.
         self.max_depth = self.max_depth.max(self.stack.len() + 4);
         // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
-        // sequence takes back what it puts on the alt stack.
+        // sequence takes back what it puts on the alt stack and leaves the one item the
+        // model holds, so the stack model needs no update.
         let size_32 = [Size.into(), Op::Push("32".into())];
         let drop_txid = [Equal.into(), If.into(), Drop.into(), EndIf.into()];
         let restore = [Drop.into(), FromAltStack.into()];

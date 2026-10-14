@@ -249,8 +249,9 @@ pub(super) fn generate_asm_from_statements_recursive(
                     AssignmentTarget::Access(access) => access.kind.clone(),
                 });
                 types::annotate_expression(&mut access, &generator.scope);
+                // Only a bare name can be declared without a value.
                 if let AssignmentTarget::Binding(name) = target {
-                    if generator.deferred.remove(&name.key()) {
+                    if name.segments.is_empty() && generator.deferred.remove(&name.root) {
                         generator.emit_typed_value(value, &TypeName::from(&access.ty))?;
                         generator.bind_value(&name.key(), &TypeName::from(&access.ty))?;
                         generator.replacement = previous_replacement;

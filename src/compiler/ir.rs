@@ -66,6 +66,7 @@ impl Op {
             },
             Op::Param(name) => push_size(param_width(name)),
             Op::Contract { .. } => push_size(32),
+            // The generator replaces these before a covenant is assembled.
             Op::Read(_) | Op::Value(_) | Op::ArrayElement(_) => 0,
         }
     }
@@ -84,6 +85,9 @@ fn push_size(len: usize) -> usize {
 
 fn scriptnum_len(number: i64) -> usize {
     let magnitude = number.unsigned_abs();
+    if magnitude == 0 {
+        return 0;
+    }
     let bytes = (u64::BITS - magnitude.leading_zeros()).div_ceil(8) as usize;
     // A set top bit needs an extra byte for the sign.
     bytes + usize::from(magnitude >> (bytes * 8 - 1) & 1 == 1)
@@ -97,6 +101,7 @@ mod tests {
     fn sizes_match_canonical_pushes() {
         let none = |_: &str| 0;
         let size = |value: &str| Op::Push(value.into()).min_size(&none);
+        assert_eq!(scriptnum_len(0), 0);
         assert_eq!(size("16"), 1);
         assert_eq!(size("-1"), 1);
         assert_eq!(size("17"), 2);

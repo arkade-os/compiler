@@ -669,6 +669,8 @@ fn covenant_for(
         }
     }
     let width = |name: &str| widths.get(name).copied().unwrap_or(0);
+    // A lower bound: a variable-width parameter counts as its shortest push, so an instance
+    // with long values can still exceed the limit.
     let size: usize = ops.iter().map(|op| op.min_size(&width)).sum();
     if size > MAX_SCRIPT_SIZE {
         return Err(format!(
