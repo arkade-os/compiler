@@ -1,0 +1,53 @@
+name: Differential Fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Seed to replay; defaults to today's date"
+        required: false
+      cases:
+        description: "Generated contracts"
+        required: false
+        default: "5000"
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+      - name: Build compiler
+        run: cargo build --bin arkadec
+      - name: Fuzz optimized against unoptimized covenants
+        env:
+          SEED: ${{ inputs.seed }}
+          CASES: ${{ inputs.cases || '5000' }}
+        run: |
+          export ARKADE_FUZZ_SEED="${SEED:-$(date -u +%Y%m%d)}"
+          echo "seed $ARKADE_FUZZ_SEED"
+          ARKADEC="$PWD/target/debug/arkadec" ARKADE_FUZZ_CASES="$CASES" \
+            ARKADE_FUZZ_OUT="$PWD/fuzz-failures" \
+            go test -C tests/e2e -run TestDifferentialFuzz -count=1 -timeout 60m -v
+      - name: Keep the failing contract
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-failures
+          path: fuzz-failures
+          if-no-files-found: ignore
