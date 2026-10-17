@@ -8,7 +8,6 @@ pub mod models;
 pub mod opcodes;
 pub mod operators;
 mod parser;
-pub mod program;
 pub mod properties;
 mod types;
 mod validator;
@@ -16,26 +15,13 @@ mod validator;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+pub use arkade_artifact::CompileOptions;
 pub use diagnostics::{Diagnostic, Severity, Span};
 pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
     WitnessElement,
 };
-pub use program::{program_from_artifact, program_from_json, Program};
 pub use types::ArkType;
-
-/// Per-call compiler settings. Optimizations are enabled by default.
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
-pub struct CompileOptions {
-    /// Fold constant expressions, remove static branches, and optimize Arkade assembly.
-    pub optimize: bool,
-}
-
-impl Default for CompileOptions {
-    fn default() -> Self {
-        Self { optimize: true }
-    }
-}
 
 /// Compile Arkade Script source code to a JSON-serializable structure
 ///

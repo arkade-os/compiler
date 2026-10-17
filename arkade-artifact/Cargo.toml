@@ -1,0 +1,13 @@
+[package]
+name = "arkade-artifact"
+version.workspace = true
+edition.workspace = true
+description = "Compiled Arkade artifact models and program reader"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+include = ["src/**/*.rs", "LICENSE"]
+
+[dependencies]
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
