@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::models::{
     flatten_parameter, is_builtin_struct, is_builtin_type, AbiLeaf, ContractJson, Parameter,
-    StructDefinition, WitnessElement,
+    StructDefinition, WitnessElement, ARTIFACT_FORMAT_VERSION,
 };
 use crate::opcodes;
 
@@ -51,6 +51,8 @@ pub enum ValueType {
     Bytes20,
     Bytes32,
     Asset,
+    #[serde(rename = "AssetGroup")]
+    AssetGroup,
     Int,
     Bool,
 }
@@ -64,6 +66,7 @@ impl ValueType {
             "bytes20" => Ok(Self::Bytes20),
             "bytes32" => Ok(Self::Bytes32),
             "asset" => Ok(Self::Asset),
+            "AssetGroup" => Ok(Self::AssetGroup),
             "int" => Ok(Self::Int),
             "bool" => Ok(Self::Bool),
             other => Err(err(format!("unknown type '{other}'"))),
@@ -89,12 +92,15 @@ pub enum LockValue {
     Number(u64),
 }
 
-/// CSV operand. A placeholder stays a name. A literal is a BIP68 sequence
+/// CSV operand. Constructor placeholders stay names; the server delay is a role.
+/// A literal is a BIP68 sequence
 /// decoded to blocks, or to seconds (512-second units, bit 22 set).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CsvValue {
     Param(String),
+    /// The server-configured unilateral exit delay (`<SERVER_EXIT_DELAY>`).
+    ServerExitDelay,
     Blocks(u64),
     Seconds(u64),
 }
@@ -110,11 +116,12 @@ pub enum AsmToken {
     Param(String),
 }
 
-/// L1 tapleaf. `condition` is the hash prefix with its trailing `OP_VERIFY` removed.
+/// L1 tapleaf. `condition` keeps preimage length checks and the hash comparison,
+/// with only the trailing `OP_VERIFY` removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Tapscript {
     pub signers: Vec<Signer>,
-    /// Hash condition (`OP_SHA256` / `OP_HASH160` / `OP_HASH256` / `OP_RIPEMD160`).
+    /// Optional preimage length check followed by the hash comparison.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub condition: Vec<AsmToken>,
     /// Relative lock. A literal is decoded from its BIP68 sequence.
@@ -157,6 +164,13 @@ pub struct Function {
 /// become extra `bytes32` parameters in the order they appear. The name is
 /// `contract_` plus the sanitized body.
 pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String> {
+    if let Some(version) = artifact.format_version {
+        if version != ARTIFACT_FORMAT_VERSION {
+            return Err(err(format!(
+                "unsupported artifact format version: {version}"
+            )));
+        }
+    }
     if artifact.functions.is_empty() {
         return Err(err(
             "expected a complete arkadec artifact with contractName, constructorInputs, and non-empty functions",
@@ -412,7 +426,7 @@ fn placeholder(token: &str) -> Option<&str> {
 }
 
 fn decode_hex(hex: &str) -> Result<Vec<u8>, ()> {
-    if !hex.len().is_multiple_of(2) {
+    if !hex.is_ascii() || !hex.len().is_multiple_of(2) {
         return Err(());
     }
     (0..hex.len())
@@ -451,6 +465,9 @@ fn decode_bip68(operand: u64) -> Option<CsvValue> {
 }
 
 fn csv_value(leaf: &str, token: &str) -> Result<CsvValue, String> {
+    if token == "<SERVER_EXIT_DELAY>" {
+        return Ok(CsvValue::ServerExitDelay);
+    }
     if let Some(inner) = placeholder(token) {
         if inner.is_empty() {
             return Err(err(format!("unrecognized timelock '{token}'")));
@@ -498,17 +515,26 @@ fn parse_leaf(
     let mut index = 0;
     let mut condition = Vec::new();
 
-    if asm.len() >= 4 && is_hash_opcode(&asm[0]) && asm[2] == opcodes::OP_EQUAL {
-        if asm[3] != opcodes::OP_VERIFY {
+    if asm.len() >= 7
+        && asm[0] == opcodes::OP_SIZE
+        && matches!(asm[1].as_str(), "20" | "32")
+        && asm[2] == opcodes::OP_EQUALVERIFY
+        && is_hash_opcode(&asm[3])
+    {
+        index = 3;
+    }
+    if asm.len() >= index + 4 && is_hash_opcode(&asm[index]) && asm[index + 2] == opcodes::OP_EQUAL
+    {
+        if asm[index + 3] != opcodes::OP_VERIFY {
             return Err(err(format!(
                 "leaf '{}': hash condition must end in OP_VERIFY",
                 leaf.name
             )));
         }
-        for token in &asm[..3] {
+        for token in &asm[..index + 3] {
             condition.push(asm_token(token, instantiations)?);
         }
-        index = 4;
+        index += 4;
     }
 
     let mut csv = None;
@@ -639,6 +665,118 @@ mod tests {
     }
 
     #[test]
+    fn artifact_versions_are_checked_for_both_entry_points() {
+        let source = "contract Demo(pubkey user) { function spend(signature sig) { require(checkSig(sig, user)); } }";
+        let mut artifact = crate::compile(source).unwrap();
+        assert_eq!(artifact.format_version, Some(ARTIFACT_FORMAT_VERSION));
+        let current = program_from_artifact(&artifact).unwrap();
+        artifact.format_version = None;
+        assert_eq!(program_from_artifact(&artifact).unwrap(), current);
+        artifact.format_version = Some(ARTIFACT_FORMAT_VERSION + 1);
+        let expected = format!(
+            "program_from_artifact: unsupported artifact format version: {}",
+            ARTIFACT_FORMAT_VERSION + 1
+        );
+        assert_eq!(program_from_artifact(&artifact).unwrap_err(), expected);
+        assert_eq!(
+            program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap_err(),
+            expected
+        );
+    }
+
+    #[test]
+    fn sized_preimage_checks_remain_in_the_condition() {
+        for (declared_type, value_type, width) in [
+            ("bytes20", ValueType::Bytes20, 20),
+            ("bytes32", ValueType::Bytes32, 32),
+        ] {
+            let source = format!(
+                "contract Lock(pubkey user, bytes32 digest) {{
+                    function claim({declared_type} preimage, signature sig) tapscript {{
+                        require(sha256(preimage) == digest);
+                        require(older(serverExitDelay));
+                        require(checkSig(sig, user));
+                    }}
+                }}"
+            );
+            let artifact = crate::compile(&source).unwrap();
+            let json = serde_json::to_string(&artifact).unwrap();
+            let program = program_from_json(&json).unwrap();
+            assert_eq!(program, program_from_artifact(&artifact).unwrap());
+            let claim = program.function("claim").unwrap();
+            assert_eq!(claim.inputs, vec![param("preimage", value_type)]);
+            assert_eq!(claim.tapscript.witness, vec!["preimage"]);
+            assert_eq!(claim.tapscript.csv, Some(CsvValue::ServerExitDelay));
+            assert_eq!(claim.tapscript.signers, vec![Signer::Param("user".into())]);
+            assert!(claim.arkade.is_none());
+            assert_eq!(
+                claim.tapscript.condition,
+                vec![
+                    AsmToken::Opcode(opcodes::OP_SIZE.into()),
+                    AsmToken::Number(width),
+                    AsmToken::Opcode(opcodes::OP_EQUALVERIFY.into()),
+                    AsmToken::Opcode(opcodes::OP_SHA256.into()),
+                    AsmToken::Param("digest".into()),
+                    AsmToken::Opcode(OP_EQUAL.into()),
+                ]
+            );
+            assert_eq!(
+                serde_json::to_value(&claim.tapscript).unwrap()["csv"],
+                "serverExitDelay"
+            );
+        }
+    }
+
+    #[test]
+    fn native_record_fields_and_asset_groups_keep_compiler_types() {
+        let artifact = crate::compile(
+            "contract Records(AssetId assetId) {
+                function spend(AssetGroup group, Outpoint previous) {
+                    require(group.delta >= 0);
+                    require(previous.txid == assetId.txid);
+                }
+            }",
+        )
+        .unwrap();
+        let program = program_from_artifact(&artifact).unwrap();
+        assert_eq!(
+            program.params,
+            vec![
+                param("assetId.txid", ValueType::Bytes32),
+                param("assetId.gidx", ValueType::Int),
+                param("server", ValueType::Pubkey),
+            ]
+        );
+        let spend = program.function("spend").unwrap();
+        assert_eq!(
+            spend.inputs,
+            vec![
+                param("group", ValueType::AssetGroup),
+                param("previous.txid", ValueType::Bytes32),
+                param("previous.vout", ValueType::Int),
+            ]
+        );
+        assert_eq!(
+            spend.arkade.as_ref().unwrap().witness,
+            vec!["previous.vout", "previous.txid", "group"]
+        );
+        assert_eq!(
+            serde_json::to_value(&spend.inputs[0]).unwrap()["type"],
+            "AssetGroup"
+        );
+    }
+
+    #[test]
+    fn malformed_hex_returns_an_error() {
+        assert!(asm_token("0x0é0", &mut Vec::new()).is_err());
+        assert!(asm_token("0x0", &mut Vec::new()).is_err());
+        assert_eq!(
+            asm_token("0x00ff", &mut Vec::new()).unwrap(),
+            AsmToken::Bytes(vec![0, 255])
+        );
+    }
+
+    #[test]
     fn single_sig_splits_the_covenant_from_the_csv_exit() {
         let program = example("single_sig/single_sig.ark");
         assert_eq!(program.version, PROGRAM_VERSION);
@@ -647,7 +785,6 @@ mod tests {
             program.params,
             vec![
                 param("user", ValueType::Pubkey),
-                param("exit", ValueType::Int),
                 param("server", ValueType::Pubkey),
             ]
         );
@@ -670,7 +807,7 @@ mod tests {
         assert!(exit.arkade.is_none());
         assert_eq!(exit.tapscript.signers, vec![Signer::Param("user".into())]);
         assert_eq!(exit.tapscript.emulator, None);
-        assert_eq!(exit.tapscript.csv, Some(CsvValue::Param("exit".into())));
+        assert_eq!(exit.tapscript.csv, Some(CsvValue::ServerExitDelay));
     }
 
     #[test]
@@ -683,7 +820,6 @@ mod tests {
                 param("receiver", ValueType::Pubkey),
                 param("preimageHash", ValueType::Bytes20),
                 param("refundTime", ValueType::Int),
-                param("exit", ValueType::Int),
                 param("server", ValueType::Pubkey),
             ]
         );
@@ -715,7 +851,7 @@ mod tests {
         assert_eq!(refund.tapscript.emulator.as_deref(), Some("refund"));
 
         let exit = program.function("unilateral").unwrap();
-        assert_eq!(exit.tapscript.csv, Some(CsvValue::Param("exit".into())));
+        assert_eq!(exit.tapscript.csv, Some(CsvValue::ServerExitDelay));
         assert_eq!(exit.tapscript.signers, vec![Signer::Param("sender".into())]);
         assert!(exit.tapscript.emulator.is_none());
 
