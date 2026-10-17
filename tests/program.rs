@@ -26,6 +26,7 @@ fn artifact_versions_are_checked_for_both_entry_points() {
     let mut artifact = arkade_compiler::compile(source).unwrap();
     assert_eq!(artifact.format_version, Some(ARTIFACT_FORMAT_VERSION));
     let current = program_from_artifact(&artifact).unwrap();
+    assert_eq!(current.version, 1);
     artifact.format_version = None;
     assert_eq!(program_from_artifact(&artifact).unwrap(), current);
     artifact.format_version = Some(ARTIFACT_FORMAT_VERSION + 1);
@@ -209,13 +210,13 @@ fn emulator_signers_keep_their_position_and_can_sign_alone() {
 }
 
 #[test]
-fn colliding_tapleaf_inputs_keep_distinct_bindings_and_references() {
-    for (input_type, body) in [
-        ("bytes", "require(sha256(shared) == digest);"),
-        ("bytes32", "require(sha256(preimage) == shared);"),
-        ("int", "require(older(shared));"),
-        ("int", "require(after(shared));"),
-        ("pubkey", "require(older(blocks(10)));"),
+fn tapleaf_inputs_used_in_scripts_are_rejected() {
+    for (input_type, body, fixed_operand) in [
+        ("bytes", "require(sha256(shared) == digest);", false),
+        ("bytes32", "require(sha256(preimage) == shared);", true),
+        ("int", "require(older(shared));", true),
+        ("int", "require(after(shared));", true),
+        ("pubkey", "require(older(blocks(10)));", true),
     ] {
         let constructor = if input_type == "bytes" {
             "bytes32 digest"
@@ -242,6 +243,15 @@ fn colliding_tapleaf_inputs_keep_distinct_bindings_and_references() {
             }}"
         ))
         .unwrap();
+        if fixed_operand {
+            let error = program_from_artifact(&artifact).unwrap_err();
+            assert!(error.contains("call input 'shared' is a script operand"));
+            assert_eq!(
+                program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap_err(),
+                error
+            );
+            continue;
+        }
         let program = program_from_artifact(&artifact).unwrap();
         assert_eq!(
             program,
@@ -264,51 +274,24 @@ fn colliding_tapleaf_inputs_keep_distinct_bindings_and_references() {
         );
         assert_eq!(spend.arkade.as_ref().unwrap().witness, vec!["shared"]);
         assert_eq!(spend.tapscript.witness[0], "tapscript:shared");
-        if input_type == "bytes32" {
-            assert!(spend
-                .tapscript
-                .condition
-                .contains(&AsmToken::Param("tapscript:shared".into())));
-        } else if input_type == "int" && body.contains("older") {
-            assert_eq!(
-                spend.tapscript.csv,
-                Some(CsvValue::Param("tapscript:shared".into()))
-            );
-        } else if input_type == "int" {
-            assert_eq!(
-                spend.tapscript.cltv,
-                Some(LockValue::Param("tapscript:shared".into()))
-            );
-        } else if input_type == "pubkey" {
-            assert_eq!(
-                spend.tapscript.signers[0],
-                Signer::Param("tapscript:shared".into())
-            );
-        }
     }
 }
 
 #[test]
-fn compiled_raw_csv_literals_preserve_all_bits() {
-    for operand in [70000, 1 << 30, (1 << 31) - 1] {
+fn compiled_noncanonical_csv_literals_are_rejected() {
+    for operand in [70000u64, 1 << 30, (1 << 31) - 1] {
         let artifact = arkade_compiler::compile(&format!(
             "contract C(pubkey user) {{ function exit(signature sig) tapscript {{
                 require(older({operand})); require(checkSig(sig, user));
             }} }}"
         ))
         .unwrap();
-        let program = program_from_artifact(&artifact).unwrap();
+        let error = program_from_artifact(&artifact).unwrap_err();
+        assert!(error.contains("not a canonical BIP68 sequence"));
         assert_eq!(
-            program,
-            program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap()
+            error,
+            program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap_err()
         );
-        let exit = program.function("exit").unwrap();
-        assert_eq!(exit.tapscript.csv, Some(CsvValue::Raw(operand)));
-        assert_eq!(
-            serde_json::to_value(&exit.tapscript.csv).unwrap()["raw"],
-            operand
-        );
-        assert!(exit.arkade.is_none());
     }
 }
 
@@ -322,6 +305,7 @@ fn single_sig_splits_the_covenant_from_the_csv_exit() {
         vec![
             param("user", ValueType::Pubkey),
             param("server", ValueType::Pubkey),
+            param("SERVER_EXIT_DELAY", ValueType::Int),
         ]
     );
 
@@ -358,6 +342,7 @@ fn htlc_keeps_hash_timelock_and_preimage_witness() {
             param("preimageHash", ValueType::Bytes20),
             param("refundTime", ValueType::Int),
             param("server", ValueType::Pubkey),
+            param("SERVER_EXIT_DELAY", ValueType::Int),
         ]
     );
 
@@ -540,7 +525,6 @@ fn csv_literals_decode_bip68_blocks_and_seconds() {
     for (literal, expected) in [
         ("144", CsvValue::Blocks(144)),
         ("4194314", CsvValue::Seconds(5120)),
-        ("70000", CsvValue::Raw(70000)),
     ] {
         let program = program_from_json(&leaf(&[
             literal,
@@ -565,7 +549,7 @@ fn csv_literals_decode_bip68_blocks_and_seconds() {
     ]));
     assert_eq!(
         rejected.unwrap_err(),
-        "program_from_artifact: leaf 'spend': CSV literal 2147483648 must fit in 31 bits without the disable flag"
+        "program_from_artifact: leaf 'spend': CSV literal 2147483648 is not a canonical BIP68 sequence"
     );
 }
 
@@ -610,7 +594,8 @@ fn constructor_tweak_stays_on_the_covenant() {
         .signers
         .contains(&Signer::Emulator("claim".into())));
     assert!(claim.arkade.is_some());
-    let race = program.function("claim/1:race").unwrap();
+    let race = program.function("race").unwrap();
+    assert_eq!(race.group, "claim");
     assert_eq!(
         race.tapscript.signers,
         vec![
@@ -725,6 +710,10 @@ fn hash_condition_drops_verify_and_keeps_the_preimage() {
     let claim = program.function("claim").unwrap();
     assert_eq!(claim.tapscript.witness, vec!["preimage".to_string()]);
     assert_eq!(claim.inputs, vec![param("preimage", ValueType::Bytes32)]);
+    assert_eq!(
+        claim.tapscript.signatures,
+        vec![param("userSig", ValueType::Signature)]
+    );
     assert!(claim
         .tapscript
         .condition
@@ -742,7 +731,7 @@ fn hash_condition_drops_verify_and_keeps_the_preimage() {
 }
 
 #[test]
-fn later_leaves_are_named_by_group_and_index() {
+fn source_leaf_names_and_group_order_are_preserved() {
     let json = r#"{
         "contractName": "Demo",
         "constructorInputs": [{"name": "user", "type": "pubkey"}],
@@ -761,8 +750,9 @@ fn later_leaves_are_named_by_group_and_index() {
             .iter()
             .map(|f| f.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["spend", "spend/1:second"]
+        vec!["first", "second"]
     );
+    assert!(program.functions.iter().all(|f| f.group == "spend"));
 }
 
 #[test]

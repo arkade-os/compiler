@@ -11,6 +11,9 @@ pub use artifact::*;
 /// array type.
 pub fn array_type_parts(declared_type: &str) -> Option<(&str, usize)> {
     let (element, length) = declared_type.strip_suffix(']')?.split_once('[')?;
+    if element.is_empty() || !length.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
     Some((element, length.parse().ok()?))
 }
 
@@ -108,6 +111,9 @@ fn flatten_type(
     leaves: &mut Vec<TypeLeaf>,
 ) -> Result<(), String> {
     if let Some((element_type, length)) = array_type_parts(declared_type) {
+        if length == 0 {
+            return Err(format!("invalid array type '{declared_type}'"));
+        }
         for index in 0..length {
             flatten_type(
                 &format!("{access_name}[{index}]"),
@@ -119,6 +125,9 @@ fn flatten_type(
             )?;
         }
         return Ok(());
+    }
+    if declared_type.contains(['[', ']']) {
+        return Err(format!("invalid array type '{declared_type}'"));
     }
     if is_builtin_type(declared_type) {
         leaves.push(TypeLeaf {

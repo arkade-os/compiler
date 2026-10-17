@@ -1,6 +1,7 @@
 //! Compiled Arkade artifact models and artifact-to-program conversion.
 
 pub mod models;
+pub mod opcodes;
 pub mod program;
 
 pub use models::*;

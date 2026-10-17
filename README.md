@@ -219,6 +219,8 @@ For Rust applications that only consume compiled artifacts, depend on `arkade-ar
 let program = arkade_artifact::program_from_json(&artifact_json)?;
 ```
 
+The reader produces Program v1 with one call per source tapleaf, preserving artifact order and spend-group names. It flattens constructor and covenant inputs, keeps caller signatures separate from condition witnesses, and adds the `server` and, when needed, `SERVER_EXIT_DELAY` bindings. CSV literals must be canonical BIP68 sequences; tapleaf call inputs used as script operands are rejected because they cannot define a fixed Taproot tree. The Rust `Program` uses typed tokens and an ordered function list; its serialized shape is separate from the TypeScript SDK's normalized Program JSON.
+
 ### Run the playground locally
 
 ```bash

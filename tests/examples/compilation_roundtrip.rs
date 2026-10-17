@@ -83,6 +83,27 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
         invariant_errors.is_empty(),
         "{filename}: compiler self-check found output invariant errors: {invariant_errors:?}"
     );
+
+    let program = arkade_artifact::program_from_artifact(output)
+        .unwrap_or_else(|e| panic!("{filename}: {e}"));
+    assert_eq!(
+        program,
+        arkade_artifact::program_from_json(&serde_json::to_string(output).unwrap()).unwrap(),
+        "{filename}"
+    );
+    assert_eq!(
+        program
+            .functions
+            .iter()
+            .map(|f| (&f.group, &f.name))
+            .collect::<Vec<_>>(),
+        output
+            .functions
+            .iter()
+            .flat_map(|group| group.leaves.iter().map(|leaf| (&group.name, &leaf.name)))
+            .collect::<Vec<_>>(),
+        "{filename}"
+    );
 }
 
 #[test]

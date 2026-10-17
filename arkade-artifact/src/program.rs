@@ -14,7 +14,7 @@ use crate::models::{
 };
 
 /// Program shape produced by [`program_from_artifact`].
-pub const PROGRAM_VERSION: u32 = 0;
+pub const PROGRAM_VERSION: u32 = 1;
 
 /// A compiled contract, ready for a caller to bind constructor arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -57,6 +57,16 @@ pub enum ValueType {
 }
 
 impl ValueType {
+    fn encoding(self) -> &'static str {
+        match self {
+            Self::Pubkey | Self::Bytes => "raw",
+            Self::Signature => "schnorr-64",
+            Self::Bytes20 => "raw-20",
+            Self::Bytes32 | Self::Asset => "raw-32",
+            Self::Int | Self::Bool | Self::AssetGroup => "scriptnum",
+        }
+    }
+
     fn from_artifact(ark_type: &str) -> Result<Self, String> {
         match ark_type {
             "pubkey" => Ok(Self::Pubkey),
@@ -95,7 +105,6 @@ pub enum LockValue {
 
 /// CSV operand. Constructor placeholders stay names; the server delay is a role.
 /// Canonical literals decode to blocks or seconds (512-second units, bit 22 set).
-/// Other enabled sequences retain their raw operand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CsvValue {
@@ -104,8 +113,6 @@ pub enum CsvValue {
     ServerExitDelay,
     Blocks(u64),
     Seconds(u64),
-    /// Raw sequence with reserved bits preserved.
-    Raw(u64),
 }
 
 /// One token of a condition or covenant script.
@@ -128,7 +135,7 @@ pub struct Tapscript {
     /// Optional preimage length check followed by the hash comparison.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub condition: Vec<AsmToken>,
-    /// Relative lock, retaining raw sequences when decoding would lose bits.
+    /// Relative lock decoded from a canonical BIP68 sequence.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csv: Option<CsvValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -136,6 +143,9 @@ pub struct Tapscript {
     /// Non-signature witness values the caller supplies (a preimage, for example).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub witness: Vec<String>,
+    /// Caller signatures supplied through transaction signing, in artifact order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signatures: Vec<Param>,
 }
 
 /// Emulator covenant copied onto every leaf of its spend group.
@@ -146,11 +156,12 @@ pub struct ArkadeScript {
     pub witness: Vec<String>,
 }
 
-/// One spend path. The first leaf of a group keeps the group name; later leaves
-/// are `{group}/{index}:{leaf}`.
+/// One spend path, named after its source tapleaf, in artifact order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Function {
     pub name: String,
+    /// Compiler spend group used to resolve named covenant commitments.
+    pub group: String,
     /// Colliding tapleaf inputs use a `tapscript:` prefix.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<Param>,
@@ -172,7 +183,7 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
             )));
         }
     }
-    if artifact.functions.is_empty() {
+    if artifact.name.is_empty() || artifact.functions.is_empty() {
         return Err(err(
             "expected a complete arkadec artifact with contractName, constructorInputs, and non-empty functions",
         ));
@@ -180,9 +191,6 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
 
     let mut struct_names = HashSet::new();
     for definition in &artifact.structs {
-        if definition.name.is_empty() {
-            return Err(err("struct name is empty"));
-        }
         if is_builtin_type(&definition.name) || is_builtin_struct(&definition.name) {
             return Err(err(format!(
                 "struct name '{}' shadows a built-in type",
@@ -190,6 +198,16 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
             )));
         }
         claim(&mut struct_names, &definition.name, "struct")?;
+        let mut fields = HashSet::new();
+        for field in &definition.fields {
+            if field.name.is_empty() || field.param_type.is_empty() {
+                return Err(err(format!(
+                    "struct '{}': field needs a name and type",
+                    definition.name
+                )));
+            }
+            claim(&mut fields, &field.name, "struct field")?;
+        }
     }
 
     let mut instantiations = Vec::new();
@@ -211,6 +229,10 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
                     .map(|input| (input.name.as_str(), input.param_type.as_str())),
                 &artifact.structs,
             )?;
+            let mut input_names = HashSet::new();
+            for input in &inputs {
+                claim(&mut input_names, &input.name, "covenant input")?;
+            }
             let script = ArkadeScript {
                 asm: covenant
                     .asm
@@ -228,29 +250,37 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
             (Vec::new(), None)
         };
 
-        for (index, leaf) in group.leaves.iter().enumerate() {
-            let name = if index == 0 {
-                group.name.clone()
-            } else {
-                format!("{}/{index}:{}", group.name, leaf.name)
-            };
-            claim(&mut leaf_names, &name, "function name")?;
-            let mut extras = witness_extras(&leaf.witness, &artifact.structs)?;
-            let mut leaf = leaf.clone();
+        for leaf in &group.leaves {
+            claim(&mut leaf_names, &leaf.name, "function name")?;
+            if leaf.asm.is_empty() {
+                return Err(err(format!("leaf '{}': assembly is empty", leaf.name)));
+            }
+            let (mut extras, signatures) = witness_fields(&leaf.witness)?;
             // ponytail: scan each small leaf per collision; index tokens if leaves grow large.
             for extra in &mut extras {
+                if leaf.asm.contains(&format!("<{}>", extra.name)) {
+                    return Err(err(format!(
+                        "leaf '{}': call input '{}' is a script operand; it must be a constructor binding to derive a fixed Taproot tree",
+                        leaf.name, extra.name
+                    )));
+                }
                 if covenant_inputs.iter().any(|input| input.name == extra.name) {
-                    let placeholder = format!("<{}>", extra.name);
                     extra.name.insert_str(0, "tapscript:");
-                    for token in &mut leaf.asm {
-                        if *token == placeholder {
-                            *token = format!("<{}>", extra.name);
-                        }
+                }
+            }
+            let mut tapscript =
+                parse_leaf(leaf, group.arkade.is_some(), &mut instantiations, &extras)?;
+            for signer in &tapscript.signers {
+                if let Signer::Emulator(covenant) = signer {
+                    if covenant != &group.name {
+                        return Err(err(format!(
+                            "leaf '{}': emulator covenant '{covenant}' must match group '{}'",
+                            leaf.name, group.name
+                        )));
                     }
                 }
             }
-            let tapscript =
-                parse_leaf(&leaf, group.arkade.is_some(), &mut instantiations, &extras)?;
+            tapscript.signatures = signatures;
             let mut inputs = covenant_inputs.clone();
             inputs.extend(extras);
             let mut input_names = HashSet::new();
@@ -258,7 +288,8 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
                 claim(&mut input_names, &input.name, "function input")?;
             }
             functions.push(Function {
-                name,
+                name: leaf.name.clone(),
+                group: group.name.clone(),
                 inputs,
                 tapscript,
                 arkade: arkade.clone(),
@@ -277,6 +308,15 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
         name: "server".to_string(),
         value_type: ValueType::Pubkey,
     });
+    if functions
+        .iter()
+        .any(|function| function.tapscript.csv == Some(CsvValue::ServerExitDelay))
+    {
+        params.push(Param {
+            name: "SERVER_EXIT_DELAY".to_string(),
+            value_type: ValueType::Int,
+        });
+    }
     for (name, _) in &instantiations {
         params.push(Param {
             name: name.clone(),
@@ -307,6 +347,9 @@ fn err(detail: impl Display) -> String {
 }
 
 fn claim(seen: &mut HashSet<String>, name: &str, kind: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err(err(format!("empty {kind}")));
+    }
     if !seen.insert(name.to_string()) {
         return Err(err(format!("duplicate {kind} '{name}'")));
     }
@@ -329,6 +372,9 @@ fn flatten_named(
     declared_type: &str,
     structs: &[StructDefinition],
 ) -> Result<Vec<Param>, String> {
+    if name.is_empty() || declared_type.is_empty() {
+        return Err(err("parameter needs a name and a type"));
+    }
     let parameter = Parameter {
         name: name.to_string(),
         param_type: declared_type.to_string(),
@@ -345,23 +391,41 @@ fn flatten_named(
         .collect()
 }
 
-fn witness_extras(
-    witness: &[WitnessElement],
-    structs: &[StructDefinition],
-) -> Result<Vec<Param>, String> {
+fn witness_fields(witness: &[WitnessElement]) -> Result<(Vec<Param>, Vec<Param>), String> {
     let mut extras = Vec::new();
+    let mut signatures = Vec::new();
+    let mut names = HashSet::new();
     for item in witness {
         if item.name.is_empty() || item.elem_type.is_empty() {
             return Err(err("witness item needs a name and a type"));
         }
-        if item.injected || item.elem_type == "signature" {
-            continue;
+        claim(&mut names, &item.name, "leaf witness")?;
+        let value_type = ValueType::from_artifact(&item.elem_type)?;
+        if item.injected && value_type != ValueType::Signature {
+            return Err(err(format!(
+                "witness '{}': only infrastructure signatures can be injected",
+                item.name
+            )));
         }
-        let mut params = flatten_named(&item.name, &item.elem_type, structs)?;
-        params.retain(|param| param.value_type != ValueType::Signature);
-        extras.extend(params);
+        if item.encoding != value_type.encoding() {
+            return Err(err(format!(
+                "witness '{}': encoding '{}' does not match type '{}'",
+                item.name, item.encoding, item.elem_type
+            )));
+        }
+        if !item.injected {
+            let param = Param {
+                name: item.name.clone(),
+                value_type,
+            };
+            if value_type == ValueType::Signature {
+                signatures.push(param);
+            } else {
+                extras.push(param);
+            }
+        }
     }
-    Ok(extras)
+    Ok((extras, signatures))
 }
 
 /// `SingleSig(<sellerPk>,<exit>)` → `contract_SingleSig_sellerPk_exit`.
@@ -403,6 +467,9 @@ fn remember_instantiation(
 
 fn asm_token(token: &str, instantiations: &mut Vec<(String, String)>) -> Result<AsmToken, String> {
     if token.starts_with("OP_") {
+        if !crate::opcodes::is_opcode(token) {
+            return Err(err(format!("unknown opcode '{token}'")));
+        }
         return Ok(AsmToken::Opcode(token.to_string()));
     }
     if let Some(inner) = placeholder(token) {
@@ -460,7 +527,7 @@ const BIP68_DISABLE_FLAG: u64 = 1 << 31;
 const BIP68_VALUE_MASK: u64 = 0xffff;
 const BIP68_SECONDS_GRANULARITY: u64 = 512;
 
-/// Decode canonical BIP68 sequences; preserve reserved bits in raw operands.
+/// Decode only BIP68 sequences that re-encode to the same operand.
 fn decode_bip68(operand: u64) -> Option<CsvValue> {
     if operand >= BIP68_DISABLE_FLAG {
         return None;
@@ -473,7 +540,7 @@ fn decode_bip68(operand: u64) -> Option<CsvValue> {
         count
     };
     if canonical != operand {
-        return Some(CsvValue::Raw(operand));
+        return None;
     }
     if seconds {
         Some(CsvValue::Seconds(count * BIP68_SECONDS_GRANULARITY))
@@ -497,7 +564,7 @@ fn csv_value(leaf: &str, token: &str) -> Result<CsvValue, String> {
         .map_err(|_| err(format!("unrecognized timelock '{token}'")))?;
     decode_bip68(operand).ok_or_else(|| {
         err(format!(
-            "leaf '{leaf}': CSV literal {operand} must fit in 31 bits without the disable flag"
+            "leaf '{leaf}': CSV literal {operand} is not a canonical BIP68 sequence"
         ))
     })
 }
@@ -612,6 +679,15 @@ fn parse_leaf(
                     leaf.name
                 )));
             }
+            if signers
+                .iter()
+                .any(|signer| matches!(signer, Signer::Emulator(_)))
+            {
+                return Err(err(format!(
+                    "leaf '{}': duplicate emulator signer",
+                    leaf.name
+                )));
+            }
             signers.push(Signer::Emulator(func.to_string()));
         } else {
             signers.push(Signer::Param(inner.to_string()));
@@ -642,6 +718,7 @@ fn parse_leaf(
         csv,
         cltv,
         witness: extras.iter().map(|param| param.name.clone()).collect(),
+        signatures: Vec::new(),
     })
 }
 
@@ -655,6 +732,235 @@ fn is_hash_opcode(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn artifact() -> serde_json::Value {
+        json!({
+            "formatVersion": 1,
+            "contractName": "Demo",
+            "constructorInputs": [{"name": "digest", "type": "bytes32"}],
+            "structs": [],
+            "functions": [{
+                "name": "spend",
+                "arkade": {"inputs": [], "asm": ["OP_1"]},
+                "leaves": [{
+                    "name": "claim",
+                    "witness": [
+                        {"name": "preimage", "type": "bytes32", "encoding": "raw-32", "injected": false},
+                        {"name": "userSig", "type": "signature", "encoding": "schnorr-64"},
+                        {"name": "serverSig", "type": "signature", "encoding": "schnorr-64", "injected": true}
+                    ],
+                    "asm": ["OP_SIZE", "32", "OP_EQUALVERIFY", "OP_SHA256", "<digest>", "OP_EQUAL", "OP_VERIFY", "<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:spend>", "OP_CHECKSIG"]
+                }]
+            }]
+        })
+    }
+
+    #[test]
+    fn caller_signatures_are_separate_from_inputs_and_injected_signatures() {
+        let program = program_from_json(&artifact().to_string()).unwrap();
+        let claim = program.function("claim").unwrap();
+        assert_eq!(program.version, 1);
+        assert_eq!(claim.group, "spend");
+        assert_eq!(
+            claim.inputs,
+            vec![Param {
+                name: "preimage".into(),
+                value_type: ValueType::Bytes32,
+            }]
+        );
+        assert_eq!(claim.tapscript.witness, ["preimage"]);
+        assert_eq!(
+            claim.tapscript.signatures,
+            vec![Param {
+                name: "userSig".into(),
+                value_type: ValueType::Signature,
+            }]
+        );
+        assert_eq!(
+            serde_json::to_value(&claim.tapscript).unwrap()["signatures"],
+            json!([{"name": "userSig", "type": "signature"}])
+        );
+    }
+
+    #[test]
+    fn malformed_artifact_declarations_are_rejected_at_both_entry_points() {
+        for (pointer, replacement, expected) in [
+            ("/contractName", json!(""), "complete arkadec artifact"),
+            ("/functions/0/name", json!(""), "empty spend group"),
+            (
+                "/functions/0/leaves/0/name",
+                json!(""),
+                "empty function name",
+            ),
+            ("/functions/0/leaves/0/asm", json!([]), "assembly is empty"),
+            (
+                "/functions/0/leaves/0/asm",
+                json!(["<EMULATOR_KEY:other>", "OP_CHECKSIG"]),
+                "must match group 'spend'",
+            ),
+            (
+                "/functions/0/leaves/0/asm",
+                json!([
+                    "<EMULATOR_KEY:spend>",
+                    "OP_CHECKSIGVERIFY",
+                    "<EMULATOR_KEY:spend>",
+                    "OP_CHECKSIG"
+                ]),
+                "duplicate emulator signer",
+            ),
+            (
+                "/functions/0/arkade/asm",
+                json!(["OP_NOT_A_REAL_OPCODE"]),
+                "unknown opcode",
+            ),
+            (
+                "/functions/0/arkade/inputs",
+                json!([{"name": "n", "type": "int"}, {"name": "n", "type": "int"}]),
+                "duplicate covenant input",
+            ),
+            (
+                "/functions/0/leaves/0/witness/0/injected",
+                json!(true),
+                "only infrastructure signatures can be injected",
+            ),
+            (
+                "/functions/0/leaves/0/witness/2/type",
+                json!("unknown"),
+                "unknown type",
+            ),
+            (
+                "/functions/0/leaves/0/witness/2/encoding",
+                json!("raw"),
+                "does not match type",
+            ),
+            (
+                "/functions/0/leaves/0/witness/0/encoding",
+                json!("raw-20"),
+                "does not match type",
+            ),
+            (
+                "/functions/0/leaves/0/witness/1/name",
+                json!("serverSig"),
+                "duplicate leaf witness",
+            ),
+            (
+                "/functions/0/leaves/0/witness/0/name",
+                json!(""),
+                "witness item needs a name and a type",
+            ),
+            (
+                "/constructorInputs/0/name",
+                json!(""),
+                "parameter needs a name and a type",
+            ),
+            ("/constructorInputs/0/type", json!("hash"), "unknown type"),
+            (
+                "/structs",
+                json!([{"name": "S", "fields": [{"name": "x", "type": "int"}, {"name": "x", "type": "int"}]}]),
+                "duplicate struct field",
+            ),
+            (
+                "/structs",
+                json!([{"name": "S", "fields": [{"name": "", "type": "int"}]}]),
+                "field needs a name and type",
+            ),
+        ] {
+            let mut json = artifact();
+            *json.pointer_mut(pointer).unwrap() = replacement;
+            let typed: ContractJson = serde_json::from_value(json.clone()).unwrap();
+            let error = program_from_artifact(&typed).unwrap_err();
+            assert!(error.contains(expected), "{pointer}: {error}");
+            assert_eq!(program_from_json(&json.to_string()).unwrap_err(), error);
+        }
+    }
+
+    #[test]
+    fn duplicate_source_leaf_names_are_rejected_across_groups() {
+        let mut json = artifact();
+        json["functions"].as_array_mut().unwrap().push(json!({
+            "name": "other",
+            "leaves": [{"name": "claim", "witness": [], "asm": ["<SERVER_KEY>", "OP_CHECKSIG"]}]
+        }));
+        assert!(program_from_json(&json.to_string())
+            .unwrap_err()
+            .contains("duplicate function name 'claim'"));
+    }
+
+    #[test]
+    fn malformed_array_layouts_are_rejected() {
+        for declared_type in [
+            "int[0]",
+            "int[+1]",
+            "int[1e2]",
+            "int[]",
+            "int[1][2]",
+            "int[18446744073709551616]",
+        ] {
+            let mut json = artifact();
+            json["constructorInputs"][0]["type"] = json!(declared_type);
+            assert!(
+                program_from_json(&json.to_string())
+                    .unwrap_err()
+                    .contains("invalid array type"),
+                "{declared_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn arrays_of_structs_and_native_layouts_flatten_in_compiler_order() {
+        let mut json = artifact();
+        json["structs"] =
+            json!([{"name": "Policy", "fields": [{"name": "owners", "type": "Outpoint[2]"}]}]);
+        json["constructorInputs"] = json!([
+            {"name": "entries", "type": "AssetEntry[2]"},
+            {"name": "lookup", "type": "AssetLookup"},
+            {"name": "spk", "type": "ScriptPubKey"},
+            {"name": "point", "type": "ECPoint"},
+            {"name": "g2", "type": "G2Point"},
+            {"name": "policies", "type": "Policy[2]"}
+        ]);
+        let program = program_from_json(&json.to_string()).unwrap();
+        assert_eq!(
+            program
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "entries.0.assetId.txid",
+                "entries.0.assetId.gidx",
+                "entries.0.amount",
+                "entries.1.assetId.txid",
+                "entries.1.assetId.gidx",
+                "entries.1.amount",
+                "lookup.amount",
+                "lookup.found",
+                "spk.program",
+                "spk.version",
+                "point.x",
+                "point.y",
+                "g2.xC1",
+                "g2.xC0",
+                "g2.yC1",
+                "g2.yC0",
+                "policies.0.owners.0.txid",
+                "policies.0.owners.0.vout",
+                "policies.0.owners.1.txid",
+                "policies.0.owners.1.vout",
+                "policies.1.owners.0.txid",
+                "policies.1.owners.0.vout",
+                "policies.1.owners.1.txid",
+                "policies.1.owners.1.vout",
+                "server"
+            ]
+        );
+        json["structs"][0]["fields"][0]["type"] = json!("Policy[1]");
+        assert!(program_from_json(&json.to_string())
+            .unwrap_err()
+            .contains("recursive struct layout"));
+    }
 
     #[test]
     fn malformed_hex_returns_an_error() {
