@@ -21,22 +21,7 @@ pub(crate) fn parse_asset_id_txid(pair: Pair<Rule>) -> Result<Expression, String
 pub(crate) fn parse_asset_group_id_operands(
     pair: Pair<Rule>,
 ) -> Result<(Expression, Expression), String> {
-    let operand_parent = match pair.as_rule() {
-        Rule::tx_property_access => {
-            let mut inner = pair.into_inner();
-            let body = inner
-                .next()
-                .ok_or("asset id requires (txid, gidx) operands")?;
-            if body.as_rule() != Rule::tx_property_body || inner.next().is_some() {
-                return Err("asset id requires (txid, gidx) operands".to_string());
-            }
-            body
-        }
-        Rule::tx_property_body => pair,
-        rule => return Err(format!("unexpected asset group operand parent: {rule:?}")),
-    };
-
-    let mut operands = operand_parent.into_inner();
+    let mut operands = pair.into_inner();
     let txid_pair = operands
         .next()
         .ok_or("asset id requires (txid, gidx) operands")?;

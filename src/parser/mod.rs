@@ -123,9 +123,12 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::mul_op
         | Rule::div_op
         | Rule::rem_op => "an operator",
-        Rule::asset_lookup_source | Rule::tx_introspection_property | Rule::tx_property_part => {
-            "a transaction property"
-        }
+        Rule::asset_lookup_source
+        | Rule::tx_introspection_property
+        | Rule::tx_property_body
+        | Rule::tx_property_part
+        | Rule::tx_input_current
+        | Rule::tx_asset_groups => "a transaction property",
         Rule::input_introspection_property => "an input property",
         Rule::output_introspection_property => "an output property",
         Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
@@ -662,6 +665,50 @@ mod tests {
     use super::parse;
     use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
     use crate::operators::UnaryOperator;
+
+    #[test]
+    fn transaction_member_forms_parse_by_rule() {
+        let value = |expression: &str| {
+            let source = format!("contract C() {{ function spend(bytes32 t, int g) {{ let v = {expression}; require(v == v); }} }}");
+            match parse(&source)
+                .map(|contract| contract.functions[0].statements[0].statement.clone())
+            {
+                Ok(Statement::LetBinding { value, .. }) => Ok(value.kind),
+                Ok(other) => panic!("{other:?}"),
+                Err(error) => Err(error),
+            }
+        };
+        assert!(matches!(
+            value("tx.input.current.value"),
+            Ok(ExprKind::InputIntrospection { .. })
+        ));
+        assert!(matches!(
+            value("tx.assetGroups.has(t, g)"),
+            Ok(ExprKind::GroupHas { .. })
+        ));
+        assert!(matches!(
+            value("tx.assetGroups.length"),
+            Ok(ExprKind::AssetGroupsLength)
+        ));
+        assert!(matches!(
+            value("tx.assetGroups[g].delta"),
+            Ok(ExprKind::GroupProperty { .. })
+        ));
+        assert!(
+            matches!(value("tx.assetGroups"), Ok(ExprKind::Name(path)) if path.key() == "tx.assetGroups")
+        );
+        assert!(matches!(
+            value("tx.version"),
+            Ok(ExprKind::TxIntrospection { .. })
+        ));
+        for misuse in ["tx.input.current", "tx.input.current.weight"] {
+            let error = value(misuse).unwrap_err();
+            assert!(
+                error.contains("tx.input.current requires one of"),
+                "{misuse}: {error}"
+            );
+        }
+    }
 
     #[test]
     fn typed_declarations_may_omit_initializers() {
