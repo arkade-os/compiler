@@ -66,7 +66,12 @@ const inputProps = [
 ];
 const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'controlAssetId', 'metadataHash', 'assetId', 'isFresh']
     .map(name => prop(name, 'Asset group property'));
-const groupMembers = [...groupProps, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
+const groupRecords = [
+    S('inputs', 'Property', 'inputs[${1:j}]', 'Group input records'),
+    S('outputs', 'Property', 'outputs[${1:j}]', 'Group output records'),
+];
+const recordProps = [prop('amount', 'Record amount'), prop('type', 'Record type: 1 local, 2 intent'), prop('index', 'vout, vin, or the referenced intent output')];
+const groupMembers = [...groupProps, ...groupRecords, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
 
 const arkadeCompletions = [
     // Keywords
@@ -99,13 +104,14 @@ const arkadeCompletions = [
     S('this', 'Variable', 'this', 'Current contract'),
     S('server', 'Variable', 'server', 'Arkade server key'),
     S('emulator', 'Variable', 'emulator', 'Arkade emulator key'),
+    S('serverExitDelay', 'Variable', 'serverExitDelay', 'Arkade server unilateral exit delay'),
 
     // Functions
     S('checkSig', 'Function', 'checkSig(${1:sig}, ${2:pubkey})', 'Verify signature against pubkey'),
     S('checkMultisig', 'Function', 'checkMultisig([${1:keys}], [${2:sigs}], ${3:threshold})', 'Verify multiple signatures'),
     S('checkSigFromStack', 'Function', 'checkSigFromStack(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message'),
     S('checkSigFromStackVerify', 'Function', 'checkSigFromStackVerify(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message or fail'),
-    S('checkTime', 'Function', 'checkTime(${1:timestamp})', 'Require the transaction time to have reached a timestamp'),
+    S('checkTime', 'Function', 'checkTime(${1:timestamp})', 'Whether the emulator clock has reached a Unix timestamp'),
     S('tweak', 'Function', 'tweak(${1:emulator}, ${2:functionName})', 'Tweaked emulator key'),
     S('sha256', 'Function', 'sha256(${1:data})', 'SHA256 hash'),
     S('hash256', 'Function', 'hash256(${1:data}) == ${2:hash}', 'Double SHA256 comparison'),
@@ -116,6 +122,7 @@ const arkadeCompletions = [
     S('sha256Finalize', 'Function', 'sha256Finalize(${1:ctx}, ${2:lastChunk})', 'Finish a streaming SHA256'),
     S('digest', 'Function', 'digest(${1:data}, ${2:hashType})', 'Hash selected by hash type (20 or 32 bytes)'),
     S('sighash', 'Function', 'sighash(${1:hashType})', 'Transaction sighash'),
+    S('merkleRoot', 'Function', 'merkleRoot(${1:leafTag}, ${2:branchTag}, ${3:proof}, ${4:leaf})', 'Merkle root from a tagged-hash proof'),
     S('modExp', 'Function', 'modExp(${1:base}, ${2:exponent}, ${3:modulus})', 'Modular exponentiation'),
     S('ecAdd', 'Function', 'ecAdd(${1:P}, ${2:Q}, ${3:curveId})', 'EC point addition'),
     S('ecMul', 'Function', 'ecMul(${1:P}, ${2:scalar}, ${3:curveId})', 'EC scalar multiplication'),
@@ -137,7 +144,7 @@ const arkadeMonarch = {
     keywords: [...completionLabels('Keyword'), 'in'],
     typeKeywords: completionLabels('TypeParameter'),
     // Tapscript-only timelocks are highlighted but not offered as completions.
-    builtinFunctions: [...completionLabels('Function'), 'older', 'after'],
+    builtinFunctions: [...completionLabels('Function'), 'older', 'after', 'blocks', 'seconds'],
     implicitBindings: completionLabels('Variable'),
 
     tokenizer: {
@@ -168,7 +175,6 @@ const arkadeMonarch = {
 // Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
 const arkadeMembers = {
     'tx': [
-        prop('time', 'Transaction time'),
         prop('version', 'Transaction version'),
         prop('locktime', 'Transaction locktime'),
         prop('numInputs', 'Number of inputs'),
@@ -184,13 +190,17 @@ const arkadeMembers = {
     ],
     'tx.input': [prop('current', 'Input being spent')],
     'tx.input.current': inputProps,
-    'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the previous Arkade transaction')],
+    'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the Arkade transaction that created this input')],
     'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
     'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
     'tx.assetGroups[]': groupMembers,
+    'tx.assetGroups[].inputs[]': [...recordProps, prop('txid', 'Intent input source transaction')],
+    'tx.assetGroups[].outputs[]': recordProps,
     'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
+    'tx.packet': [method('has', '${1:packetType}', 'Whether this transaction carries the packet')],
+    'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the Arkade transaction that created this input carries the packet')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),
         prop('activeBytecode', 'Script being executed'),
@@ -225,7 +235,8 @@ function arkadeComplete(before, table, line) {
     if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
     const [, name, indexed] = path.match(/^(\w+)(\[\])?$/) || [];
     const type = visible.get(name)?.type || '';
-    if (type === 'AssetGroup' && !indexed) return groupMembers;
+    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
+    if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
     if (type.endsWith(']') && !indexed) return [prop('length', 'Array length')];
     const struct = structs.find(s => s.name === type.replace(/\[.*$/, ''));
     return struct ? struct.fields.map(field => prop(field.name, field.type)) : [];
