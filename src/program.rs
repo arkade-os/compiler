@@ -82,6 +82,8 @@ pub enum Signer {
     Param(String),
     /// `tweak(base, func)`: `base` signed by that function's covenant.
     Tweaked { base: String, func: String },
+    /// Function name from `<EMULATOR_KEY:fn>`, in script order.
+    Emulator(String),
 }
 
 /// CLTV operand. A placeholder is the flattened constructor name.
@@ -93,8 +95,8 @@ pub enum LockValue {
 }
 
 /// CSV operand. Constructor placeholders stay names; the server delay is a role.
-/// A literal is a BIP68 sequence
-/// decoded to blocks, or to seconds (512-second units, bit 22 set).
+/// Canonical literals decode to blocks or seconds (512-second units, bit 22 set).
+/// Other enabled sequences retain their raw operand.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CsvValue {
@@ -103,6 +105,8 @@ pub enum CsvValue {
     ServerExitDelay,
     Blocks(u64),
     Seconds(u64),
+    /// Raw sequence with reserved bits preserved.
+    Raw(u64),
 }
 
 /// One token of a condition or covenant script.
@@ -110,7 +114,8 @@ pub enum CsvValue {
 #[serde(rename_all = "camelCase")]
 pub enum AsmToken {
     Opcode(String),
-    Number(i64),
+    /// Decimal text, preserving integers of any width without JSON rounding.
+    Number(String),
     Bytes(Vec<u8>),
     /// Flattened placeholder name, including a child-output parameter.
     Param(String),
@@ -124,7 +129,7 @@ pub struct Tapscript {
     /// Optional preimage length check followed by the hash comparison.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub condition: Vec<AsmToken>,
-    /// Relative lock. A literal is decoded from its BIP68 sequence.
+    /// Relative lock, retaining raw sequences when decoding would lose bits.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csv: Option<CsvValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,10 +137,6 @@ pub struct Tapscript {
     /// Non-signature witness values the caller supplies (a preimage, for example).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub witness: Vec<String>,
-    /// Function name from `<EMULATOR_KEY:fn>`. Absent when the leaf signs with a
-    /// constructor-key tweak instead of the emulator.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub emulator: Option<String>,
 }
 
 /// Emulator covenant copied onto every leaf of its spend group.
@@ -151,6 +152,7 @@ pub struct ArkadeScript {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Function {
     pub name: String,
+    /// Colliding tapleaf inputs use a `tapscript:` prefix.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<Param>,
     pub tapscript: Tapscript,
@@ -234,10 +236,28 @@ pub fn program_from_artifact(artifact: &ContractJson) -> Result<Program, String>
                 format!("{}/{index}:{}", group.name, leaf.name)
             };
             claim(&mut leaf_names, &name, "function name")?;
-            let extras = witness_extras(&leaf.witness, &artifact.structs)?;
-            let tapscript = parse_leaf(leaf, group.arkade.is_some(), &mut instantiations, &extras)?;
+            let mut extras = witness_extras(&leaf.witness, &artifact.structs)?;
+            let mut leaf = leaf.clone();
+            // ponytail: scan each small leaf per collision; index tokens if leaves grow large.
+            for extra in &mut extras {
+                if covenant_inputs.iter().any(|input| input.name == extra.name) {
+                    let placeholder = format!("<{}>", extra.name);
+                    extra.name.insert_str(0, "tapscript:");
+                    for token in &mut leaf.asm {
+                        if *token == placeholder {
+                            *token = format!("<{}>", extra.name);
+                        }
+                    }
+                }
+            }
+            let tapscript =
+                parse_leaf(&leaf, group.arkade.is_some(), &mut instantiations, &extras)?;
             let mut inputs = covenant_inputs.clone();
             inputs.extend(extras);
+            let mut input_names = HashSet::new();
+            for input in &inputs {
+                claim(&mut input_names, &input.name, "function input")?;
+            }
             functions.push(Function {
                 name,
                 inputs,
@@ -413,8 +433,9 @@ fn asm_token(token: &str, instantiations: &mut Vec<(String, String)>) -> Result<
             .map(AsmToken::Bytes)
             .map_err(|_| err(format!("invalid hex '{token}'")));
     }
-    if let Ok(number) = token.parse::<i64>() {
-        return Ok(AsmToken::Number(number));
+    let digits = token.strip_prefix('-').unwrap_or(token);
+    if !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Ok(AsmToken::Number(token.to_string()));
     }
     Err(err(format!("unrecognized assembly token '{token}'")))
 }
@@ -440,9 +461,7 @@ const BIP68_DISABLE_FLAG: u64 = 1 << 31;
 const BIP68_VALUE_MASK: u64 = 0xffff;
 const BIP68_SECONDS_GRANULARITY: u64 = 512;
 
-/// Decode a CSV literal the way the TypeScript reader does: the lower 16 bits
-/// are the count, bit 22 selects 512-second units, and any other bit (including
-/// the disable flag) means the sequence would not round-trip through BIP68.
+/// Decode canonical BIP68 sequences; preserve reserved bits in raw operands.
 fn decode_bip68(operand: u64) -> Option<CsvValue> {
     if operand >= BIP68_DISABLE_FLAG {
         return None;
@@ -455,7 +474,7 @@ fn decode_bip68(operand: u64) -> Option<CsvValue> {
         count
     };
     if canonical != operand {
-        return None;
+        return Some(CsvValue::Raw(operand));
     }
     if seconds {
         Some(CsvValue::Seconds(count * BIP68_SECONDS_GRANULARITY))
@@ -479,7 +498,7 @@ fn csv_value(leaf: &str, token: &str) -> Result<CsvValue, String> {
         .map_err(|_| err(format!("unrecognized timelock '{token}'")))?;
     decode_bip68(operand).ok_or_else(|| {
         err(format!(
-            "leaf '{leaf}': CSV literal {operand} is not a canonical BIP68 sequence"
+            "leaf '{leaf}': CSV literal {operand} must fit in 31 bits without the disable flag"
         ))
     })
 }
@@ -554,12 +573,15 @@ fn parse_leaf(
     }
 
     let mut signers = Vec::new();
-    let mut emulator = None;
     while index < asm.len() {
         let key = &asm[index];
         let terminator = asm.get(index + 1).map(String::as_str).unwrap_or("");
-        let last = terminator == opcodes::OP_CHECKSIG;
-        if !last && terminator != opcodes::OP_CHECKSIGVERIFY {
+        let expected = if index + 2 == asm.len() {
+            opcodes::OP_CHECKSIG
+        } else {
+            opcodes::OP_CHECKSIGVERIFY
+        };
+        if terminator != expected {
             let found = if terminator.is_empty() {
                 "end of script"
             } else {
@@ -586,19 +608,13 @@ fn parse_leaf(
             if !has_covenant {
                 return Err(err(format!("leaf '{}': {key} needs a covenant", leaf.name)));
             }
-            if !last {
-                return Err(err(format!(
-                    "leaf '{}': {key} must be the last signer",
-                    leaf.name
-                )));
-            }
             if func.is_empty() {
                 return Err(err(format!(
                     "leaf '{}': malformed emulator '{key}'",
                     leaf.name
                 )));
             }
-            emulator = Some(func.to_string());
+            signers.push(Signer::Emulator(func.to_string()));
         } else {
             signers.push(Signer::Param(inner.to_string()));
         }
@@ -606,10 +622,9 @@ fn parse_leaf(
     }
 
     if has_covenant
-        && emulator.is_none()
         && !signers
             .iter()
-            .any(|signer| matches!(signer, Signer::Tweaked { .. }))
+            .any(|signer| matches!(signer, Signer::Tweaked { .. } | Signer::Emulator(_)))
     {
         return Err(err(format!(
             "leaf '{}': covenant leaf must sign with the emulator or a tweaked constructor key",
@@ -629,7 +644,6 @@ fn parse_leaf(
         csv,
         cltv,
         witness: extras.iter().map(|param| param.name.clone()).collect(),
-        emulator,
     })
 }
 
@@ -713,7 +727,7 @@ mod tests {
                 claim.tapscript.condition,
                 vec![
                     AsmToken::Opcode(opcodes::OP_SIZE.into()),
-                    AsmToken::Number(width),
+                    AsmToken::Number(width.to_string()),
                     AsmToken::Opcode(opcodes::OP_EQUALVERIFY.into()),
                     AsmToken::Opcode(opcodes::OP_SHA256.into()),
                     AsmToken::Param("digest".into()),
@@ -777,6 +791,196 @@ mod tests {
     }
 
     #[test]
+    fn integer_literals_remain_lossless_through_json() {
+        for literal in [
+            "9223372036854775808",
+            "-9223372036854775809",
+            "170141183460469231731687303715884105728",
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        ] {
+            let artifact = crate::compile(&format!(
+                "contract C() {{ function spend(int n) {{ require(n == {literal}); }} }}"
+            ))
+            .unwrap();
+            let program = program_from_artifact(&artifact).unwrap();
+            assert_eq!(
+                program,
+                program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap()
+            );
+            let asm = &program
+                .function("spend")
+                .unwrap()
+                .arkade
+                .as_ref()
+                .unwrap()
+                .asm;
+            let number = AsmToken::Number(literal.into());
+            assert!(asm.contains(&number), "{asm:?}");
+            assert_eq!(serde_json::to_value(number).unwrap()["number"], literal);
+        }
+        for invalid in ["-", "+1", "1.0", "1e3", "１２"] {
+            assert!(asm_token(invalid, &mut Vec::new()).is_err());
+        }
+    }
+
+    #[test]
+    fn emulator_signers_keep_their_position_and_can_sign_alone() {
+        for (keys, sigs, expected) in [
+            (
+                "[emulator, server]",
+                "[e, s]",
+                vec![
+                    Signer::Emulator("spend".into()),
+                    Signer::Param("server".into()),
+                ],
+            ),
+            (
+                "[server, emulator]",
+                "[s, e]",
+                vec![
+                    Signer::Param("server".into()),
+                    Signer::Emulator("spend".into()),
+                ],
+            ),
+            ("[emulator]", "[e]", vec![Signer::Emulator("spend".into())]),
+        ] {
+            let inputs = if keys.contains("server") {
+                "signature e, signature s"
+            } else {
+                "signature e"
+            };
+            let artifact = crate::compile(&format!(
+                "contract C() {{
+                    function spend() {{ require(true); }}
+                    function spend({inputs}) tapscript {{
+                        require(older(blocks(10)));
+                        require(checkMultisig({keys}, {sigs}));
+                    }}
+                }}"
+            ))
+            .unwrap();
+            let program = program_from_artifact(&artifact).unwrap();
+            assert_eq!(
+                program,
+                program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap()
+            );
+            let spend = program.function("spend").unwrap();
+            assert_eq!(spend.tapscript.signers, expected);
+            assert_eq!(spend.tapscript.csv, Some(CsvValue::Blocks(10)));
+            assert!(spend.arkade.is_some());
+            assert!(spend.inputs.is_empty());
+            assert!(spend.tapscript.witness.is_empty());
+        }
+        for asm in [
+            vec!["<user>", "OP_CHECKSIGVERIFY"],
+            vec!["<user>", "OP_CHECKSIG", "<SERVER_KEY>", "OP_CHECKSIG"],
+        ] {
+            assert!(program_from_json(&leaf(&asm)).is_err());
+        }
+    }
+
+    #[test]
+    fn colliding_tapleaf_inputs_keep_distinct_bindings_and_references() {
+        for (input_type, body) in [
+            ("bytes", "require(sha256(shared) == digest);"),
+            ("bytes32", "require(sha256(preimage) == shared);"),
+            ("int", "require(older(shared));"),
+            ("int", "require(after(shared));"),
+            ("pubkey", "require(older(blocks(10)));"),
+        ] {
+            let constructor = if input_type == "bytes" {
+                "bytes32 digest"
+            } else {
+                ""
+            };
+            let preimage = if input_type == "bytes32" {
+                ", bytes preimage"
+            } else {
+                ""
+            };
+            let (keys, sigs, signature_inputs) = if input_type == "pubkey" {
+                ("[shared, emulator]", "[u, e]", "signature u, signature e")
+            } else {
+                ("[server, emulator]", "[s, e]", "signature s, signature e")
+            };
+            let artifact = crate::compile(&format!(
+                "contract C({constructor}) {{
+                    function spend(int shared) {{ require(shared > 0); }}
+                    function spend({input_type} shared{preimage}, {signature_inputs}) tapscript {{
+                        {body}
+                        require(checkMultisig({keys}, {sigs}));
+                    }}
+                }}"
+            ))
+            .unwrap();
+            let program = program_from_artifact(&artifact).unwrap();
+            assert_eq!(
+                program,
+                program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap()
+            );
+            let spend = program.function("spend").unwrap();
+            assert_eq!(spend.inputs[0], param("shared", ValueType::Int));
+            assert_eq!(
+                spend.inputs[1],
+                param(
+                    "tapscript:shared",
+                    ValueType::from_artifact(input_type).unwrap()
+                )
+            );
+            assert_eq!(spend.arkade.as_ref().unwrap().witness, vec!["shared"]);
+            assert_eq!(spend.tapscript.witness[0], "tapscript:shared");
+            if input_type == "bytes32" {
+                assert!(spend
+                    .tapscript
+                    .condition
+                    .contains(&AsmToken::Param("tapscript:shared".into())));
+            } else if input_type == "int" && body.contains("older") {
+                assert_eq!(
+                    spend.tapscript.csv,
+                    Some(CsvValue::Param("tapscript:shared".into()))
+                );
+            } else if input_type == "int" {
+                assert_eq!(
+                    spend.tapscript.cltv,
+                    Some(LockValue::Param("tapscript:shared".into()))
+                );
+            } else if input_type == "pubkey" {
+                assert_eq!(
+                    spend.tapscript.signers[0],
+                    Signer::Param("tapscript:shared".into())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compiled_raw_csv_literals_preserve_all_bits() {
+        for operand in [70000, 1 << 30, (1 << 31) - 1] {
+            let artifact = crate::compile(&format!(
+                "contract C(pubkey user) {{ function exit(signature sig) tapscript {{
+                    require(older({operand})); require(checkSig(sig, user));
+                }} }}"
+            ))
+            .unwrap();
+            let program = program_from_artifact(&artifact).unwrap();
+            assert_eq!(
+                program,
+                program_from_json(&serde_json::to_string(&artifact).unwrap()).unwrap()
+            );
+            let exit = program.function("exit").unwrap();
+            assert_eq!(exit.tapscript.csv, Some(CsvValue::Raw(operand)));
+            assert_eq!(
+                serde_json::to_value(&exit.tapscript.csv).unwrap()["raw"],
+                operand
+            );
+            assert!(exit.arkade.is_none());
+        }
+        for operand in [1 << 31, u32::MAX as u64 + 1, u64::MAX] {
+            assert!(decode_bip68(operand).is_none());
+        }
+    }
+
+    #[test]
     fn single_sig_splits_the_covenant_from_the_csv_exit() {
         let program = example("single_sig/single_sig.ark");
         assert_eq!(program.version, PROGRAM_VERSION);
@@ -793,9 +997,11 @@ mod tests {
         assert_eq!(spend.inputs, vec![param("userSig", ValueType::Signature)]);
         assert_eq!(
             spend.tapscript.signers,
-            vec![Signer::Param("server".into())]
+            vec![
+                Signer::Param("server".into()),
+                Signer::Emulator("spend".into())
+            ]
         );
-        assert_eq!(spend.tapscript.emulator.as_deref(), Some("spend"));
         assert!(spend.tapscript.csv.is_none());
         assert_eq!(
             spend.arkade.as_ref().unwrap().witness,
@@ -806,7 +1012,6 @@ mod tests {
         assert!(exit.inputs.is_empty());
         assert!(exit.arkade.is_none());
         assert_eq!(exit.tapscript.signers, vec![Signer::Param("user".into())]);
-        assert_eq!(exit.tapscript.emulator, None);
         assert_eq!(exit.tapscript.csv, Some(CsvValue::ServerExitDelay));
     }
 
@@ -837,9 +1042,11 @@ mod tests {
         );
         assert_eq!(
             claim.tapscript.signers,
-            vec![Signer::Param("server".into())]
+            vec![
+                Signer::Param("server".into()),
+                Signer::Emulator("claim".into())
+            ]
         );
-        assert_eq!(claim.tapscript.emulator.as_deref(), Some("claim"));
         assert!(claim.arkade.is_some());
 
         let refund = program.function("refund").unwrap();
@@ -848,12 +1055,14 @@ mod tests {
             refund.tapscript.cltv,
             Some(LockValue::Param("refundTime".into()))
         );
-        assert_eq!(refund.tapscript.emulator.as_deref(), Some("refund"));
+        assert!(refund
+            .tapscript
+            .signers
+            .contains(&Signer::Emulator("refund".into())));
 
         let exit = program.function("unilateral").unwrap();
         assert_eq!(exit.tapscript.csv, Some(CsvValue::ServerExitDelay));
         assert_eq!(exit.tapscript.signers, vec![Signer::Param("sender".into())]);
-        assert!(exit.tapscript.emulator.is_none());
 
         let json = serde_json::to_string(&program).unwrap();
         assert!(json.contains("OP_HASH160"));
@@ -912,7 +1121,10 @@ mod tests {
                 .map(|input| input.name.clone())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(update.tapscript.emulator.as_deref(), Some("update"));
+        assert!(update
+            .tapscript
+            .signers
+            .contains(&Signer::Emulator("update".into())));
 
         let exit = program.function("unilateral").unwrap();
         assert_eq!(
@@ -996,6 +1208,7 @@ mod tests {
         for (literal, expected) in [
             ("144", CsvValue::Blocks(144)),
             ("4194314", CsvValue::Seconds(5120)),
+            ("70000", CsvValue::Raw(70000)),
         ] {
             let program = program_from_json(&leaf(&[
                 literal,
@@ -1012,7 +1225,7 @@ mod tests {
         }
 
         let rejected = program_from_json(&leaf(&[
-            "70000",
+            "2147483648",
             "OP_CHECKSEQUENCEVERIFY",
             "OP_DROP",
             "<SERVER_KEY>",
@@ -1020,7 +1233,7 @@ mod tests {
         ]));
         assert_eq!(
             rejected.unwrap_err(),
-            "program_from_artifact: leaf 'spend': CSV literal 70000 is not a canonical BIP68 sequence"
+            "program_from_artifact: leaf 'spend': CSV literal 2147483648 must fit in 31 bits without the disable flag"
         );
     }
 
@@ -1034,12 +1247,6 @@ mod tests {
                 func: "late".into(),
             }]
         );
-        assert!(program
-            .function("spend")
-            .unwrap()
-            .tapscript
-            .emulator
-            .is_none());
     }
 
     #[test]
@@ -1066,7 +1273,10 @@ mod tests {
         }"#;
         let program = program_from_json(json).unwrap();
         let claim = program.function("claim").unwrap();
-        assert_eq!(claim.tapscript.emulator.as_deref(), Some("claim"));
+        assert!(claim
+            .tapscript
+            .signers
+            .contains(&Signer::Emulator("claim".into())));
         assert!(claim.arkade.is_some());
         let race = program.function("claim/1:race").unwrap();
         assert_eq!(
@@ -1079,7 +1289,6 @@ mod tests {
                 },
             ]
         );
-        assert!(race.tapscript.emulator.is_none());
         assert_eq!(race.arkade, claim.arkade);
     }
 
