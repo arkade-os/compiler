@@ -317,8 +317,8 @@ fn rewrite(asm: Vec<Op>) -> (Vec<Op>, usize) {
 }
 
 /// The most items `ops` holds above where they start.
-// ponytail: summing each rewrite's raise is conservative; simulate the final script for an
-// exact peak if contracts sit at the VM limit.
+// ponytail: adding the largest rewrite raise to the unoptimized peak is conservative; simulate
+// the final script for an exact peak if contracts sit at the VM limit.
 fn peak(ops: &[Opcode]) -> usize {
     let mut height = 0isize;
     let mut peak = 0;
