@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,8 +34,9 @@ func TestDifferentialFuzz(t *testing.T) {
 		unoptimized, unoptimizedErr := compileMode(t, source, false)
 		fail := func(format string, args ...any) {
 			t.Helper()
-			saveFailure(t, seed, index, program.source)
-			t.Fatalf("seed %d case %d: %s\n%s", seed, index, fmt.Sprintf(format, args...), program.source)
+			reason := fmt.Sprintf(format, args...)
+			saveFailure(t, seed, index, reason, program.source)
+			t.Fatalf("seed %d case %d: %s\n%s", seed, index, reason, program.source)
 		}
 		if (optimizedErr == nil) != (unoptimizedErr == nil) {
 			fail("only one mode compiles: optimized %v, unoptimized %v", optimizedErr, unoptimizedErr)
@@ -62,6 +64,20 @@ func TestDifferentialFuzz(t *testing.T) {
 	// Mostly rejected programs would test nothing.
 	if compiled*10 < int(cases)*9 {
 		t.Fatalf("only %d of %d generated contracts compiled", compiled, cases)
+	}
+}
+
+func TestFuzzCasesReplayFromTheirSeed(t *testing.T) {
+	generate := func() (string, string) {
+		r := rand.New(rand.NewSource(42))
+		program := generateProgram(r)
+		return program.source, describe(program.randomWitness(r))
+	}
+	source, witness := generate()
+	for range 5 {
+		if again, againWitness := generate(); again != source || againWitness != witness {
+			t.Fatalf("seed 42 generated different cases:\n%s\n%s", source, again)
+		}
 	}
 }
 
@@ -111,13 +127,14 @@ func runCovenant(t *testing.T, contract artifact, values map[string][]byte) erro
 	return executeArkadeScripts(spend, emulatorKey.PubKey())
 }
 
-func saveFailure(t *testing.T, seed, index int64, source string) {
+func saveFailure(t *testing.T, seed, index int64, reason, source string) {
 	dir := os.Getenv("ARKADE_FUZZ_OUT")
 	if dir == "" {
 		return
 	}
 	name := filepath.Join(dir, fmt.Sprintf("seed-%d-case-%d.ark", seed, index))
-	if err := os.MkdirAll(dir, 0o755); err != nil || os.WriteFile(name, []byte(source), 0o600) != nil {
+	contents := fmt.Sprintf("// seed %d case %d: %s\n%s", seed, index, strings.ReplaceAll(reason, "\n", " "), source)
+	if err := os.MkdirAll(dir, 0o755); err != nil || os.WriteFile(name, []byte(contents), 0o600) != nil {
 		t.Logf("could not save %s", name)
 	}
 }
@@ -145,7 +162,7 @@ func (p program) values(t *testing.T, ints map[string]int64) map[string][]byte {
 // A random witness of the same shape, which usually fails some requirement.
 func (p program) randomWitness(r *rand.Rand) map[string]int64 {
 	ints := map[string]int64{}
-	for name := range p.passing {
+	for _, name := range slices.Sorted(maps.Keys(p.passing)) {
 		if strings.HasPrefix(name, "b") {
 			ints[name] = r.Int63n(2)
 		} else {
@@ -157,8 +174,8 @@ func (p program) randomWitness(r *rand.Rand) map[string]int64 {
 
 func describe(ints map[string]int64) string {
 	parts := make([]string, 0, len(ints))
-	for name, value := range ints {
-		parts = append(parts, fmt.Sprintf("%s=%d", name, value))
+	for _, name := range slices.Sorted(maps.Keys(ints)) {
+		parts = append(parts, fmt.Sprintf("%s=%d", name, ints[name]))
 	}
 	return strings.Join(parts, " ")
 }
@@ -208,10 +225,10 @@ func (s *scope) arrayNames() ([]string, map[string]int) {
 	lengths := map[string]int{}
 	var names []string
 	for c := s; c != nil; c = c.parent {
-		for name, length := range c.arrays {
+		for _, name := range slices.Sorted(maps.Keys(c.arrays)) {
 			if _, seen := lengths[name]; !seen {
 				names = append(names, name)
-				lengths[name] = length
+				lengths[name] = c.arrays[name]
 			}
 		}
 	}
@@ -444,7 +461,8 @@ func (g *generator) loop(s *scope, e env, indent int) {
 func (g *generator) readRemaining(s *scope, e env, indent int) {
 	var terms []boolExpr
 	var read []string
-	for name, kind := range s.unread {
+	for _, name := range slices.Sorted(maps.Keys(s.unread)) {
+		kind := s.unread[name]
 		read = append(read, name)
 		switch kind {
 		case "bool":
