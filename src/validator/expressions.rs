@@ -425,30 +425,35 @@ pub(super) fn validate_binding_expression(
                 "function '{function_name}': struct literals may only initialize typed struct declarations"
             )));
         }
-        ExprKind::Variable(name) => {
-            validate_named_binding(name, None, "binding", function_name, scopes, issues);
+        ExprKind::Name(path) if path.segments.is_empty() => {
+            validate_named_binding(&path.root, None, "binding", function_name, scopes, issues);
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
         ExprKind::FieldAccess { value, .. } => {
-            if let Some(array) = expression.binding_path().and_then(|name| {
-                name.strip_suffix(".length")
-                    .filter(|_| find_binding(scopes, &name).is_none())
-                    .map(str::to_owned)
+            if let Some(array) = expression.binding_path().and_then(|path| {
+                let (array, field) = path.split_last()?;
+                (field == "length" && find_binding(scopes, &path.key()).is_none()).then_some(array)
             }) {
-                if !array.contains('[') && find_binding(scopes, &array).is_some() {
-                    validate_array_length(&array, function_name, scopes, issues);
+                let indexed = array
+                    .segments
+                    .iter()
+                    .any(|segment| matches!(segment, crate::models::Segment::Index(_)));
+                if !indexed && find_binding(scopes, &array.key()).is_some() {
+                    validate_array_length(&array.key(), function_name, scopes, issues);
                     return;
                 }
             }
             let before = issues.len();
             validate_value_expression(value, function_name, scopes, issues);
             if issues.len() == before {
-                if let Some(name) = expression.binding_path() {
-                    if let Some(array) = name
-                        .strip_suffix(".length")
+                if let Some(path) = expression.binding_path() {
+                    let name = path.key();
+                    if let Some((array, _)) = path
+                        .split_last()
+                        .filter(|&(_, field)| field == "length")
                         .filter(|_| find_binding(scopes, &name).is_none())
                     {
-                        validate_array_length(array, function_name, scopes, issues);
+                        validate_array_length(&array.key(), function_name, scopes, issues);
                     } else if find_binding(scopes, &name).is_none() {
                         issues.push(ValidationIssue::error(format!(
                             "function '{function_name}': field '{}' is undefined",
@@ -466,7 +471,7 @@ pub(super) fn validate_binding_expression(
             if issues.len() == before {
                 if let Some(array) = value.binding_path() {
                     validate_array_index(
-                        &array,
+                        &array.key(),
                         &value.source_text(),
                         index,
                         function_name,
@@ -478,24 +483,31 @@ pub(super) fn validate_binding_expression(
             children_checked = true;
         }
         ExprKind::ArrayIndex { array, index } => {
-            validate_array_index(array, array, index, function_name, scopes, issues);
+            validate_array_index(
+                &array.key(),
+                &array.key(),
+                index,
+                function_name,
+                scopes,
+                issues,
+            );
         }
-        ExprKind::Property(name)
-            if name.ends_with(".length") && find_binding(scopes, name).is_none() =>
-        {
-            let array = name.strip_suffix(".length").expect("checked suffix");
-            validate_array_length(array, function_name, scopes, issues);
-        }
-        ExprKind::Property(name) => {
-            let root = name.split('.').next().unwrap_or(name);
-            if name.contains('.') && find_binding(scopes, root).is_some() {
-                validate_named_binding(name, None, "field", function_name, scopes, issues);
+        ExprKind::Name(path) => match path.split_last() {
+            Some((array, "length")) if find_binding(scopes, &path.key()).is_none() => {
+                validate_array_length(&array.key(), function_name, scopes, issues);
             }
-        }
+            _ if find_binding(scopes, &path.root).is_some() => {
+                validate_named_binding(&path.key(), None, "field", function_name, scopes, issues);
+            }
+            _ => {}
+        },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
                 match &argument.kind {
-                    ExprKind::Variable(name) => {
+                    ExprKind::Name(Path {
+                        root: name,
+                        segments,
+                    }) if segments.is_empty() => {
                         if let Some(binding) = find_binding(scopes, name) {
                             if !matches!(binding.source, BindingSource::Constructor) {
                                 issues.push(ValidationIssue::error(format!(
@@ -601,16 +613,16 @@ pub(super) fn validate_array_index(
             .at(index.span),
         );
     }
-    let evaluated = crate::compiler::constants::evaluate(index, &mut |name| {
-        let array = name
-            .strip_suffix(".length")
-            .filter(|_| find_binding(scopes, name).is_none());
-        match array.and_then(|array| find_binding(scopes, array)) {
+    let evaluated = crate::compiler::constants::evaluate(index, &mut |path| {
+        let array = path
+            .split_last()
+            .filter(|&(_, field)| field == "length" && find_binding(scopes, &path.key()).is_none());
+        match array.and_then(|(array, _)| find_binding(scopes, &array.key())) {
             Some(BindingInfo {
                 binding_type: ArkType::Array(_, length),
                 ..
             }) => Ok(length.to_string()),
-            _ => Err(name.to_string()),
+            _ => Err(path.key()),
         }
     })
     .ok()

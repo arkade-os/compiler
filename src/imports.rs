@@ -69,7 +69,25 @@ pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Ve
     );
 
     match result {
-        Ok(()) => modules.into_values().flat_map(|m| m.warnings).collect(),
+        Ok(()) => {
+            let mut diagnostics: Vec<_> = modules
+                .values()
+                .flat_map(|module| module.warnings.clone())
+                .collect();
+            let root = &modules[&entry];
+            // Code generation alone finds some errors, such as the VM's stack and script limits.
+            if !root.contract.is_library {
+                let bundle = SourceBundle {
+                    entry: entry.clone(),
+                    files: loaded_files,
+                };
+                let options = crate::CompileOptions::default();
+                if let Err(error) = compiler::emit(&root.contract, bundle, Vec::new(), options) {
+                    diagnostics.push(error.diagnostic(&entry));
+                }
+            }
+            diagnostics
+        }
         Err(LoadError::Diagnostics(diagnostics, _)) => diagnostics,
         Err(LoadError::Message(message)) => {
             let message = message
@@ -300,7 +318,9 @@ fn compile_with_loader(
             })
         })
         .collect();
+    let source = bundle.files.get(&bundle.entry).cloned().unwrap_or_default();
     compiler::emit(&root.contract, bundle, warnings, options)
+        .map_err(|error| crate::diagnostics::located(&error.to_string(), error.span, &source))
 }
 
 fn load(
@@ -397,9 +417,16 @@ fn load(
                 } = &expression.kind
                 {
                     // Only a bare name can be a library; other groups stay asset groups.
-                    let ExprKind::Variable(group) = &group.as_ref().kind else {
+                    let ExprKind::Name(models::Path {
+                        root: group,
+                        segments,
+                    }) = &group.as_ref().kind
+                    else {
                         return Ok(());
                     };
+                    if !segments.is_empty() {
+                        return Ok(());
+                    }
                     if group == &contract.name || visible_contracts.contains_key(group) {
                         expression.kind = ExprKind::Call {
                             name: format!("{group}.controlIs"),
@@ -494,10 +521,8 @@ fn validate_scope(
     for constant in &contract.constants {
         check_binding(&constant.name)?;
     }
-    let check_type = |ty: &str| {
-        let base = models::array_type_parts(ty)
-            .map(|(base, _)| base)
-            .unwrap_or(ty);
+    let check_type = |ty: &models::TypeName| {
+        let base = ty.base_name();
         if models::is_builtin_type(base)
             || models::is_builtin_struct(base)
             || structs.contains(base)
@@ -555,12 +580,10 @@ fn validate_scope(
                         return Err(format!("library function '{name}' is private"));
                     }
                 }
-                ExprKind::Property(name) => {
-                    if let Some((owner, _)) = name.split_once('.') {
-                        if contracts.contains_key(owner) {
-                            return Err(format!("unknown constant '{name}'"));
-                        }
-                    }
+                ExprKind::Name(path)
+                    if !path.segments.is_empty() && contracts.contains_key(&path.root) =>
+                {
+                    return Err(format!("unknown constant '{}'", path.key()));
                 }
                 ExprKind::ContractInstance {
                     contract_name,
@@ -585,7 +608,7 @@ fn validate_scope(
                         let actual = arg.ty;
                         if actual != types::ArkType::Unknown
                             && !crate::validator::binding_types_compatible(
-                                &types::ArkType::parse(&param.param_type),
+                                &param.param_type.ark_type(),
                                 &actual,
                             )
                         {
@@ -608,7 +631,7 @@ fn validate_scope(
 
 fn validate_local_types(
     statements: &[LocatedStatement],
-    check: &impl Fn(&str) -> Result<(), String>,
+    check: &impl Fn(&models::TypeName) -> Result<(), String>,
     binding: &impl Fn(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     for statement in statements {

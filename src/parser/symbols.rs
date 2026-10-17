@@ -59,7 +59,12 @@ pub(crate) fn symbols(source: &str) -> Result<(Vec<Symbol>, Vec<StructDefinition
                             let const_type =
                                 parse_data_type(decl.next().ok_or("Missing constant type")?);
                             let name = decl.next().ok_or("Missing constant name")?;
-                            symbols.push(symbol(&name, "constant", Some(const_type), None));
+                            symbols.push(symbol(
+                                &name,
+                                "constant",
+                                Some(const_type.to_string()),
+                                None,
+                            ));
                         }
                         Rule::function => {
                             function_symbols(member, kind == "library", &mut symbols)?
@@ -100,7 +105,7 @@ fn typed(
     let mut inner = pair.into_inner();
     let declared_type = parse_data_type(inner.next().ok_or("Missing type")?);
     let name = inner.next().ok_or("Missing name")?;
-    Ok(symbol(&name, kind, Some(declared_type), scope))
+    Ok(symbol(&name, kind, Some(declared_type.to_string()), scope))
 }
 
 // ponytail: locals are scoped to their whole function, not their block; track block spans if shadowing across blocks matters.
@@ -123,7 +128,12 @@ fn function_symbols(
         .map(parse_data_type);
     symbols.push(Symbol {
         exported: (in_library || visibility == "static") && visibility != "private",
-        ..symbol(&name, "function", return_type, None)
+        ..symbol(
+            &name,
+            "function",
+            return_type.map(|ty| ty.to_string()),
+            None,
+        )
     });
 
     for pair in function.into_inner().flatten() {

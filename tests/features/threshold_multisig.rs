@@ -43,15 +43,15 @@ fn test_threshold_multisig() {
 
     assert_eq!(output.parameters.len(), 5);
     assert_eq!(output.parameters[0].name, "signer");
-    assert_eq!(output.parameters[0].param_type, "pubkey");
+    assert_eq!(output.parameters[0].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[1].name, "signer1");
-    assert_eq!(output.parameters[1].param_type, "pubkey");
+    assert_eq!(output.parameters[1].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[2].name, "signer2");
-    assert_eq!(output.parameters[2].param_type, "pubkey");
+    assert_eq!(output.parameters[2].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[3].name, "signer3");
-    assert_eq!(output.parameters[3].param_type, "pubkey");
+    assert_eq!(output.parameters[3].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[4].name, "signer4");
-    assert_eq!(output.parameters[4].param_type, "pubkey");
+    assert_eq!(output.parameters[4].param_type.to_string(), "pubkey");
 
     assert_eq!(output.functions.len(), 3);
 

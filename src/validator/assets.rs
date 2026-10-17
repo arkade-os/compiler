@@ -140,7 +140,7 @@ fn validate_asset_id(
             gidx_type.as_str()
         )));
     } else if is_constant(asset_gidx) {
-        match crate::compiler::constants::evaluate(asset_gidx, &mut |name| Err(name.into())) {
+        match crate::compiler::constants::evaluate(asset_gidx, &mut |path| Err(path.key())) {
             Ok(v) if v.parse::<u16>().is_ok() => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
                 "function '{fname}': asset id gidx {v} is out of range 0..65535"

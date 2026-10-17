@@ -15,10 +15,6 @@ pub(crate) fn referenced_parameters<'a>(
     names
 }
 
-fn collect_name<'a>(name: &'a str, names: &mut HashSet<&'a str>) {
-    names.insert(name.split('.').next().unwrap_or(name));
-}
-
 fn collect_expression<'a>(
     expression: &'a Expression,
     names: &mut HashSet<&'a str>,
@@ -35,9 +31,9 @@ fn collect_expression<'a>(
                 collect_statements(&function.statements, names, functions, visited);
             }
         }
-        ExprKind::Variable(name)
-        | ExprKind::Property(name)
-        | ExprKind::ArrayIndex { array: name, .. } => collect_name(name, names),
+        ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. } => {
+            names.insert(&path.root);
+        }
         _ => {}
     }
     for child in child_exprs(expression) {

@@ -116,6 +116,7 @@ pub fn compile_sources_with_options(
 /// Every parse, validation and type diagnostic for `entry`, without writing
 /// an artifact. Unlike the `compile_*` functions, this does not stop at the
 /// first error: independent problems in `entry` each get their own entry.
+/// Code generation, which runs only when those pass, reports its first error.
 /// Diagnostics from imports name the imported file. `entry` may be a library
 /// file.
 pub fn check(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Vec<Diagnostic> {

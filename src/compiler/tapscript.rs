@@ -84,13 +84,14 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                 }
                 condition = Some((hash_fn.clone(), hash.clone()));
                 preimage_width =
-                    ts.inputs.iter().find(|p| p.name == *preimage).and_then(
-                        |p| match ArkType::parse(&p.param_type) {
+                    ts.inputs
+                        .iter()
+                        .find(|p| p.name == *preimage)
+                        .and_then(|p| match p.param_type.ark_type() {
                             ArkType::Bytes20 => Some(20),
                             ArkType::Bytes32 => Some(32),
                             _ => None,
-                        },
-                    );
+                        });
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 if multisig.is_some() {
@@ -312,7 +313,7 @@ pub fn validate_arkd_rules(
             || ts
                 .inputs
                 .iter()
-                .any(|p| p.name == name && p.param_type == "pubkey")
+                .any(|p| p.name == name && p.param_type.name() == Some("pubkey"))
     };
 
     // Key resolution.
@@ -372,14 +373,14 @@ pub fn validate_arkd_rules(
             ts.inputs
                 .iter()
                 .find(|p| p.name == name)
-                .map(|p| ArkType::parse(&p.param_type))
+                .map(|p| p.param_type.ark_type())
         })
     };
     // A declared `signature` input.
     let sig_input = |name: &str| -> bool {
         ts.inputs
             .iter()
-            .any(|p| p.name == name && p.param_type == "signature")
+            .any(|p| p.name == name && p.param_type.name() == Some("signature"))
     };
 
     // Signature-operand validation (§4.3, §8): every signature operand in a
@@ -660,8 +661,8 @@ fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<St
 fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElement>) {
     out.push(WitnessElement {
         name: p.name.clone(),
-        elem_type: p.param_type.clone(),
-        encoding: ArkType::parse(&p.param_type).encoding().to_string(),
+        elem_type: p.param_type.to_string(),
+        encoding: p.param_type.ark_type().encoding().to_string(),
         injected,
     });
 }
@@ -751,10 +752,10 @@ fn resolve_constructor_field_placeholders(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
-        .filter(|leaf| leaf.access_name != leaf.emitted_name)
+        .filter(|leaf| leaf.access.key() != leaf.emitted_name)
         .map(|leaf| {
             (
-                format!("<{}>", leaf.access_name),
+                format!("<{}>", leaf.access),
                 format!("<{}>", leaf.emitted_name),
             )
         })

@@ -35,9 +35,9 @@ contract SingleSig(
     // Parameters: user pubkey + exitDelay int (no serverPk — server is a reserved role).
     assert_eq!(output.parameters.len(), 2);
     assert_eq!(output.parameters[0].name, "user");
-    assert_eq!(output.parameters[0].param_type, "pubkey");
+    assert_eq!(output.parameters[0].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[1].name, "exitDelay");
-    assert_eq!(output.parameters[1].param_type, "int");
+    assert_eq!(output.parameters[1].param_type.to_string(), "int");
 
     assert_eq!(output.functions.len(), 2);
 
