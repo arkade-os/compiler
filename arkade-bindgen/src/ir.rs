@@ -1,4 +1,4 @@
-use arkade_compiler::ContractJson;
+use arkade_artifact::ContractJson;
 
 /// Wire-encoding descriptor, matching the compiler's `WitnessElement.encoding` field.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,7 +121,7 @@ pub struct ContractIR {
     /// Spend groups in artifact order.
     pub groups: Vec<GroupIR>,
     /// Original .ark source code, if embedded.
-    pub source: Option<arkade_compiler::models::SourceBundle>,
+    pub source: Option<arkade_artifact::SourceBundle>,
     /// Compiler version string.
     pub compiler_version: Option<String>,
 }
@@ -134,10 +134,10 @@ fn fields_from_ark_type(
     name: &str,
     ark_type: &str,
     is_injected: bool,
-    structs: &[arkade_compiler::StructDefinition],
+    structs: &[arkade_artifact::StructDefinition],
 ) -> Result<Vec<Field>, String> {
-    arkade_compiler::models::flatten_parameter(
-        &arkade_compiler::Parameter {
+    arkade_artifact::flatten_parameter(
+        &arkade_artifact::Parameter {
             name: name.to_string(),
             param_type: ark_type.to_string(),
         },

@@ -128,7 +128,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          for crate in arkade-compiler arkade-bindgen; do
+          for crate in arkade-artifact arkade-compiler arkade-bindgen; do
             if curl -sfA "arkade-os/compiler release" "https://crates.io/api/v1/crates/$crate/$version" > /dev/null; then
               echo "$crate $version is already published"
             else

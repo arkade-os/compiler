@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "arkade-bindgen"]
+members = [".", "arkade-artifact", "arkade-bindgen"]
 resolver = "2"
 
 [workspace.package]
@@ -20,6 +20,7 @@ repository.workspace = true
 include = ["src/**/*.rs", "src/**/*.pest", "LICENSE"]
 
 [dependencies]
+arkade-artifact = { path = "arkade-artifact", version = "0.1.0" }
 pest = "2.7.8"
 pest_derive = "2.7.8"
 serde = { version = "1.0.197", features = ["derive"] }

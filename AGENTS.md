@@ -25,11 +25,12 @@ Preserve unrelated worktree changes. Do not edit secrets or Git internals. Do no
 
 ## Project map
 
-This is a Cargo workspace containing the compiler crate at the repository root and the binding generator in `arkade-bindgen/`.
+This is a Cargo workspace containing the compiler crate at the repository root, the shared artifact models and reader in `arkade-artifact/`, and the binding generator in `arkade-bindgen/`.
 
 - `src/parser/grammar.pest` defines the language grammar.
 - `src/parser/` maps source text into the AST.
-- `src/models/mod.rs` contains AST and public artifact models.
+- `src/models/ast.rs` contains the AST; `arkade-artifact/src/models/` contains the public artifact models and parameter-flattening helpers.
+- `arkade-artifact/src/program.rs` reads compiled artifacts into spend programs without depending on the compiler.
 - `src/compiler/` emits Arkade covenant and tapscript assembly.
 - `src/types/` types every expression once; `src/validator/` enforces semantic and artifact invariants.
 - `src/main.rs`, `src/lib.rs`, and `src/wasm.rs` expose the CLI, Rust API, and optional WASM API.
