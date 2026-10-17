@@ -584,6 +584,7 @@ fn covenant_for(
         lowering::check_folded(
             &function.statements,
             &counting.scope,
+            &counting.constructor_scope,
             structs,
             functions,
             &mut checked,

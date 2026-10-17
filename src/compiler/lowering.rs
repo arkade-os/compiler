@@ -153,7 +153,7 @@ fn lower_statement(
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
                 substituted
             });
-            unroll(span, iterations, &body, scope, structs, fold)?
+            unroll(span, iterations, scope, structs, fold)?
         }
         Statement::ForCount { count, body } => {
             let count = match &count.kind {
@@ -161,14 +161,7 @@ fn lower_statement(
                 _ => None,
             }
             .ok_or("loop count must be a non-negative integer compile-time constant")?;
-            unroll(
-                span,
-                std::iter::repeat_n(body.clone(), count),
-                &body,
-                scope,
-                structs,
-                fold,
-            )?
+            unroll(span, std::iter::repeat_n(body, count), scope, structs, fold)?
         }
         Statement::Declaration {
             ref name,
@@ -218,7 +211,6 @@ fn lower_statement(
 fn unroll(
     span: Span,
     iterations: impl Iterator<Item = Vec<LocatedStatement>>,
-    body: &[LocatedStatement],
     scope: &types::Scope,
     structs: &[crate::models::StructDefinition],
     fold: bool,
@@ -234,8 +226,8 @@ fn unroll(
     }
     Ok(Lowered::Unrolled {
         span,
+        guarded: lowered.iter().any(|iteration| contains_return(iteration)),
         iterations: lowered,
-        guarded: functions::contains_return(body),
     })
 }
 
@@ -278,6 +270,7 @@ fn calls(body: &[Lowered], found: &mut Vec<(String, Span)>) {
 pub(super) fn check_folded(
     statements: &[LocatedStatement],
     scope: &types::Scope,
+    constructor_scope: &types::Scope,
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
     checked: &mut std::collections::HashSet<String>,
@@ -292,7 +285,12 @@ pub(super) fn check_folded(
         if !checked.insert(name) {
             continue;
         }
-        let mut scope = scope.clone();
+        // As at a call: the constructor's bindings, or none for a static helper, and the parameters.
+        let mut scope = if helper.is_static {
+            types::Scope::new()
+        } else {
+            constructor_scope.clone()
+        };
         for parameter in &helper.parameters {
             let ty = Some(&parameter.param_type);
             types::bind_local_type(
@@ -303,15 +301,21 @@ pub(super) fn check_folded(
                 structs,
             );
         }
-        check_folded(&helper.statements, &scope, structs, functions, checked).map_err(
-            |mut error| {
-                // An imported helper's spans index its own file; the call locates the error instead.
-                if helper.is_imported() {
-                    error.span = None;
-                }
-                error.at(span)
-            },
-        )?;
+        check_folded(
+            &helper.statements,
+            &scope,
+            constructor_scope,
+            structs,
+            functions,
+            checked,
+        )
+        .map_err(|mut error| {
+            // An imported helper's spans index its own file; the call locates the error instead.
+            if helper.is_imported() {
+                error.span = None;
+            }
+            error.at(span)
+        })?;
     }
     Ok(())
 }
