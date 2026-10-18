@@ -3,6 +3,27 @@ use crate::opcodes::Opcode::{FromAltStack, ToAltStack};
 use crate::properties::GroupIoProperty;
 use crate::types::ArkType;
 
+/// A `checkMultisig` threshold known at compile time: the key count when omitted, or a literal
+/// that must lie between 1 and `count`.
+pub(super) fn multisig_threshold(
+    threshold: Option<&Expression>,
+    count: usize,
+) -> std::result::Result<Option<usize>, String> {
+    let threshold = match threshold.map(|threshold| &threshold.kind) {
+        None => count,
+        Some(ExprKind::Literal(value)) => value
+            .parse::<usize>()
+            .map_err(|_| "invalid multisig threshold")?,
+        Some(_) => return Ok(None),
+    };
+    if threshold == 0 || threshold > count {
+        return Err(
+            "checkMultisig threshold must be between 1 and the number of public keys".into(),
+        );
+    }
+    Ok(Some(threshold))
+}
+
 impl Generator {
     /// Resolve an access to its layout path, collecting runtime indexes.
     fn access_indices<'a>(
@@ -150,23 +171,7 @@ impl Generator {
             return Err("checkMultisig key and signature counts must match".into());
         }
         let threshold = args.get(2);
-        let literal_threshold = match threshold {
-            None => Some(count),
-            Some(Expression {
-                kind: ExprKind::Literal(value),
-                ..
-            }) => Some(
-                value
-                    .parse::<usize>()
-                    .map_err(|_| "invalid multisig threshold")?,
-            ),
-            _ => None,
-        };
-        if literal_threshold.is_some_and(|threshold| threshold == 0 || threshold > count) {
-            return Err(
-                "checkMultisig threshold must be between 1 and the number of public keys".into(),
-            );
-        }
+        let literal_threshold = multisig_threshold(threshold, count)?;
         // Keys need indexed reads, so computed arrays are bound once.
         if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.binding_path().is_none() {
             let baseline = self.stack.len();

@@ -218,6 +218,16 @@ fn test_threshold_multisig_should_fail_on_m_greater_than_n() {
 }
 
 #[test]
+fn a_threshold_that_folds_above_the_key_count_fails_unoptimized() {
+    let code = "contract C(pubkey a, pubkey b, pubkey c) { function spend(signature sa, signature sb, signature sc) { require(checkMultisig([a, b, c], [sa, sb, sc], 2 + 2)); } }";
+    let error = compile(code).unwrap_err().to_string();
+    assert!(
+        error.contains("threshold must be between 1 and the number of public keys"),
+        "{error}"
+    );
+}
+
+#[test]
 fn test_threshold_multisig_should_fail_on_m_equal_to_zero() {
     let threshold_multisig_code = r#"contract ThresholdMultisig(
   pubkey signer,

@@ -88,6 +88,14 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
     for child in crate::models::child_exprs_mut(expression) {
         fold_expression(child, scope)?;
     }
+    // Unoptimized builds fold only to check, so a threshold that folds out of range fails here.
+    if let ExprKind::Builtin { builtin, args } = &expression.kind {
+        if let (crate::builtins::Lowering::Multisig, Some(ArkType::Array(_, count))) =
+            (&builtin.lowering, args.first().map(|keys| &keys.ty))
+        {
+            super::access::multisig_threshold(args.get(2), *count)?;
+        }
+    }
     let access = match &expression.kind {
         ExprKind::ArrayIndex { array, index } => Some((array.clone(), index)),
         ExprKind::IndexAccess { value, index } => value.binding_path().map(|array| (array, index)),
