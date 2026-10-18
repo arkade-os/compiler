@@ -160,7 +160,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             parse_general_expression(pair)
         }
         Rule::identifier | Rule::qualified_name => Ok(Expression::new(
-            ExprKind::Variable(pair.as_str().to_string()),
+            ExprKind::Name(Path::from_key(pair.as_str())),
             span,
         )),
         Rule::bool_literal | Rule::number_literal => Ok(Expression::new(
@@ -173,11 +173,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         )),
         Rule::array_index_access => {
             let mut inner = pair.into_inner();
-            let array = inner
-                .next()
-                .ok_or("Missing array name")?
-                .as_str()
-                .to_string();
+            let array = Path::from_key(inner.next().ok_or("Missing array name")?.as_str());
             let index = inner.next().ok_or("Missing array index")?;
             Ok(Expression::new(
                 ExprKind::ArrayIndex {
@@ -222,7 +218,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 .as_str()
                 .to_string();
             Ok(Expression::new(
-                ExprKind::Property(format!("{array}.length")),
+                ExprKind::Name(Path::from_key(&array).field("length")),
                 span,
             ))
         }
@@ -292,7 +288,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         _ => {
             // Default to treating as a property string
             Ok(Expression::new(
-                ExprKind::Property(pair.as_str().to_string()),
+                ExprKind::Name(Path::from_key(pair.as_str())),
                 span,
             ))
         }
@@ -334,7 +330,7 @@ pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, Stri
     let name = inner.next().ok_or("Missing binding name")?;
     let start = name.as_span().start();
     let mut value = Expression::new(
-        ExprKind::Variable(name.as_str().to_string()),
+        ExprKind::Name(Path::new(name.as_str())),
         name.as_span().into(),
     );
     for suffix in inner {
@@ -348,9 +344,9 @@ pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, Stri
                 let field = part.as_str().to_string();
                 match value {
                     Expression {
-                        kind: ExprKind::Variable(name) | ExprKind::Property(name),
+                        kind: ExprKind::Name(path),
                         ..
-                    } => ExprKind::Property(format!("{name}.{field}")),
+                    } => ExprKind::Name(path.field(field)),
                     value => ExprKind::FieldAccess {
                         value: Box::new(value),
                         field,
@@ -361,9 +357,9 @@ pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, Stri
                 let index = Box::new(parse_general_expression(part)?);
                 match value {
                     Expression {
-                        kind: ExprKind::Variable(array) | ExprKind::Property(array),
+                        kind: ExprKind::Name(path),
                         ..
-                    } => ExprKind::ArrayIndex { array, index },
+                    } => ExprKind::ArrayIndex { array: path, index },
                     value => ExprKind::IndexAccess {
                         value: Box::new(value),
                         index,

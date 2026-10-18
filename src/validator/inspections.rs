@@ -61,10 +61,6 @@ pub(super) fn check_repeated_inspections(contract: &Contract, issues: &mut Vec<V
     }
 }
 
-fn root(name: &str) -> &str {
-    name.split(['.', '[']).next().unwrap_or(name)
-}
-
 fn collect_assigned(statements: &[LocatedStatement], assigned: &mut HashSet<String>) {
     for statement in statements {
         match &statement.statement {
@@ -74,7 +70,7 @@ fn collect_assigned(statements: &[LocatedStatement], assigned: &mut HashSet<Stri
                     AssignmentTarget::ArrayIndex { array, .. } => Some(array.clone()),
                     AssignmentTarget::Access(value) => value.binding_path(),
                 };
-                assigned.extend(name.map(|name| root(&name).to_string()));
+                assigned.extend(name.map(|name| name.root));
             }
             Statement::IfElse {
                 then_body,
@@ -234,11 +230,11 @@ impl Walk {
     fn stable(&self, expression: &Expression) -> bool {
         match &expression.kind {
             ExprKind::Literal(_) | ExprKind::This(_) => true,
-            ExprKind::Variable(name) | ExprKind::Property(name) => {
-                !name.contains('[') && !self.assigned.contains(root(name))
+            ExprKind::Name(path) => {
+                !path.key().contains('[') && !self.assigned.contains(&path.root)
             }
             ExprKind::ArrayIndex { array, index } => {
-                !self.assigned.contains(root(array)) && self.stable(index)
+                !self.assigned.contains(&array.root) && self.stable(index)
             }
             ExprKind::IndexAccess { value, index } => self.stable(value) && self.stable(index),
             ExprKind::FieldAccess { value, .. } => self.stable(value),

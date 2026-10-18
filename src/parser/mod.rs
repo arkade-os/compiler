@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, ExprKind, Expression, Function, LocatedStatement,
-    Parameter, Statement, StructDefinition,
+    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, Function,
+    LocatedStatement, Parameter, Statement, StructDefinition, TypeName,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -123,9 +123,12 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::mul_op
         | Rule::div_op
         | Rule::rem_op => "an operator",
-        Rule::asset_lookup_source | Rule::tx_introspection_property | Rule::tx_property_part => {
-            "a transaction property"
-        }
+        Rule::asset_lookup_source
+        | Rule::tx_introspection_property
+        | Rule::tx_property_body
+        | Rule::tx_property_part
+        | Rule::tx_input_current
+        | Rule::tx_asset_groups => "a transaction property",
         Rule::input_introspection_property => "an input property",
         Rule::output_introspection_property => "an output property",
         Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
@@ -594,9 +597,9 @@ fn parse_statement(
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
     Ok(match expr::parse_property_access(pair)? {
         Expression {
-            kind: ExprKind::Variable(name) | ExprKind::Property(name),
+            kind: ExprKind::Name(path),
             ..
-        } => AssignmentTarget::Binding(name),
+        } => AssignmentTarget::Binding(path),
         Expression {
             kind: ExprKind::ArrayIndex { array, index },
             ..
@@ -620,16 +623,16 @@ fn parse_block(
     Ok(statements)
 }
 
-/// Canonical declared-type text: `pubkey`, or `pubkey[3]` for array types.
-pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> String {
+pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> TypeName {
     let text = type_pair.as_str().trim().to_string();
     let mut inner = type_pair.into_inner();
     let Some(base) = inner.next() else {
-        return text;
+        return TypeName::Named(text);
     };
+    let base = TypeName::Named(base.as_str().to_string());
     match inner.next() {
-        Some(size) => format!("{}[{}]", base.as_str(), size.as_str()),
-        None => base.as_str().to_string(),
+        Some(size) => TypeName::Array(Box::new(base), ArraySize::parse(size.as_str())),
+        None => base,
     }
 }
 
@@ -664,14 +667,58 @@ mod tests {
     use crate::operators::UnaryOperator;
 
     #[test]
+    fn transaction_member_forms_parse_by_rule() {
+        let value = |expression: &str| {
+            let source = format!("contract C() {{ function spend(bytes32 t, int g) {{ let v = {expression}; require(v == v); }} }}");
+            match parse(&source)
+                .map(|contract| contract.functions[0].statements[0].statement.clone())
+            {
+                Ok(Statement::LetBinding { value, .. }) => Ok(value.kind),
+                Ok(other) => panic!("{other:?}"),
+                Err(error) => Err(error),
+            }
+        };
+        assert!(matches!(
+            value("tx.input.current.value"),
+            Ok(ExprKind::InputIntrospection { .. })
+        ));
+        assert!(matches!(
+            value("tx.assetGroups.has(t, g)"),
+            Ok(ExprKind::GroupHas { .. })
+        ));
+        assert!(matches!(
+            value("tx.assetGroups.length"),
+            Ok(ExprKind::AssetGroupsLength)
+        ));
+        assert!(matches!(
+            value("tx.assetGroups[g].delta"),
+            Ok(ExprKind::GroupProperty { .. })
+        ));
+        assert!(
+            matches!(value("tx.assetGroups"), Ok(ExprKind::Name(path)) if path.key() == "tx.assetGroups")
+        );
+        assert!(matches!(
+            value("tx.version"),
+            Ok(ExprKind::TxIntrospection { .. })
+        ));
+        for misuse in ["tx.input.current", "tx.input.current.weight"] {
+            let error = value(misuse).unwrap_err();
+            assert!(
+                error.contains("tx.input.current requires one of"),
+                "{misuse}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn typed_declarations_may_omit_initializers() {
         let contract = parse("contract C() { function spend() { int x; int[2] values; x = 7; values = [7, 9]; require(x == values[0]); } }").unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::Declaration { name, declared_type } if name == "x" && declared_type == "int")
+            matches!(&statements[0].statement, Statement::Declaration { name, declared_type } if name == "x" && declared_type.to_string() == "int")
         );
         assert!(
-            matches!(&statements[1].statement, Statement::Declaration { name, declared_type } if name == "values" && declared_type == "int[2]")
+            matches!(&statements[1].statement, Statement::Declaration { name, declared_type } if name == "values" && declared_type.to_string() == "int[2]")
         );
         assert!(matches!(
             &statements[2].statement,
@@ -692,7 +739,7 @@ mod tests {
             assert!(matches!(
                 &statements[1].statement,
                 Statement::VarAssign { target: AssignmentTarget::Binding(target), .. }
-                    if target == name
+                    if target.key() == name
             ));
             assert!(matches!(
                 &statements[2].statement,
@@ -826,11 +873,17 @@ mod tests {
         let contract = parse(
             "struct State { int[N] values; } contract C(pubkey[C.N] keys) { const int N = 2; function spend(int[N] values) { int[N] local = [1, 2]; local[N - 1] = values[0]; require(true); } }",
         ).unwrap();
-        assert_eq!(contract.structs[0].fields[0].param_type, "int[N]");
-        assert_eq!(contract.parameters[0].param_type, "pubkey[C.N]");
-        assert_eq!(contract.functions[0].parameters[0].param_type, "int[N]");
+        assert_eq!(
+            contract.structs[0].fields[0].param_type.to_string(),
+            "int[N]"
+        );
+        assert_eq!(contract.parameters[0].param_type.to_string(), "pubkey[C.N]");
+        assert_eq!(
+            contract.functions[0].parameters[0].param_type.to_string(),
+            "int[N]"
+        );
         assert!(
-            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty == "int[N]")
+            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if ty.to_string() == "int[N]")
         );
         assert!(
             matches!(&contract.functions[0].statements[1].statement, Statement::VarAssign { target: AssignmentTarget::ArrayIndex { index, .. }, .. } if matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "-"))
@@ -873,7 +926,7 @@ mod tests {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Property(name), .. }, .. } if name == "x.field")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Name(path), .. }, .. } if path.key() == "x.field")
         );
         assert!(
             matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Call { name, args, .. }, .. }, .. } if name == "Helper.value" && args.is_empty())
@@ -894,7 +947,7 @@ mod tests {
         .unwrap();
         assert!(!contract.functions[0].is_private);
         assert!(contract.functions[1].is_private);
-        assert_eq!(contract.functions[2].return_type.as_deref(), Some("bool"));
+        assert_eq!(contract.functions[2].return_type, Some("bool".into()));
         assert!(!contract.functions[3].is_private);
         assert!(
             matches!(&contract.functions[0].statements[0].statement, Statement::Call(Expression { kind: ExprKind::Call { name, args, .. }, .. }) if name == "check" && matches!(&args[0].kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+"))
@@ -968,7 +1021,7 @@ mod tests {
         assert!(matches!(&value.kind, ExprKind::Literal(value) if value == "true"));
         assert!(matches!(&right.kind, ExprKind::Literal(value) if value == "false"));
         assert!(
-            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Unary { op: UnaryOperator::Not, value }, .. }, .. } if matches!(&value.kind, ExprKind::Variable(name) if name == "trueValue"))
+            matches!(&contract.functions[0].statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Unary { op: UnaryOperator::Not, value }, .. }, .. } if matches!(&value.kind, ExprKind::Name(path) if path.key() == "trueValue"))
         );
     }
 
@@ -997,7 +1050,7 @@ contract C() {
             Statement::LetBinding { value: Expression { kind: ExprKind::Builtin { builtin, args }, .. }, .. }
                 if builtin.name == "substr"
                     && matches!(&args[0].kind, ExprKind::FieldAccess { field, .. } if field == "data")
-                    && matches!(&args[1].kind, ExprKind::Property(name) if name == "p.offset")
+                    && matches!(&args[1].kind, ExprKind::Name(path) if path.key() == "p.offset")
         ));
     }
 
@@ -1028,14 +1081,14 @@ contract Demo() {
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
-            } if name == "state.enabled"
+            } if name.key() == "state.enabled"
         ));
         assert!(matches!(
             &statements[1].statement,
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { array, index },
                 ..
-            } if array == "state.values"
+            } if array.key() == "state.values"
                 && matches!(&index.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "+")
         ));
         assert!(matches!(
@@ -1043,7 +1096,7 @@ contract Demo() {
             Statement::VarAssign {
                 target: AssignmentTarget::Binding(name),
                 ..
-            } if name == "index"
+            } if name.key() == "index"
         ));
     }
 
@@ -1077,7 +1130,7 @@ contract Demo(pubkey first, pubkey second) {
                 name,
                 declared_type: Some(declared_type),
                 ..
-            } if name == "explicit" && declared_type == "int"
+            } if name == "explicit" && declared_type.to_string() == "int"
         ));
         assert!(matches!(
             &statements[2].statement,
@@ -1114,7 +1167,7 @@ contract Demo() {
             assert!(matches!(
                 &body[0].statement,
                 Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
-                    if builtin.name == "checkMultisig" && matches!(&args[2].kind, ExprKind::Variable(name) if name == "QUORUM")
+                    if builtin.name == "checkMultisig" && matches!(&args[2].kind, ExprKind::Name(path) if path.key() == "QUORUM")
             ));
         }
     }

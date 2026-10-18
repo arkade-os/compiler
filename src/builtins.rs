@@ -2,7 +2,7 @@
 //! is the single description of a builtin, read by the parser, the type checks
 //! and code generation.
 
-use crate::opcodes::*;
+use crate::opcodes::Opcode::{self, *};
 
 #[derive(Debug)]
 pub struct Builtin {
@@ -19,7 +19,7 @@ pub struct Builtin {
 pub enum Lowering {
     /// Push the arguments in call order, struct arguments field by field,
     /// then emit these opcodes.
-    Opcodes(&'static [&'static str]),
+    Opcodes(&'static [Opcode]),
     /// Push each (G1, G2) array element field by field, then the pair count
     /// and the curve.
     Pairing,
@@ -31,7 +31,7 @@ const fn builtin(
     name: &'static str,
     params: &'static [(&'static str, &'static str)],
     result: &'static str,
-    opcodes: &'static [&'static str],
+    opcodes: &'static [Opcode],
 ) -> Builtin {
     Builtin {
         name,
@@ -44,7 +44,7 @@ const fn builtin(
 const fn verify(
     name: &'static str,
     params: &'static [(&'static str, &'static str)],
-    opcode: &'static [&'static str],
+    opcode: &'static [Opcode],
 ) -> Builtin {
     Builtin {
         name,
@@ -59,56 +59,51 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "substr",
         &[("data", "bytes"), ("offset", "int"), ("size", "int")],
         "bytes",
-        &[OP_SUBSTR],
+        &[Substr],
     ),
     builtin(
         "left",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
-        &[OP_LEFT],
+        &[Left],
     ),
     builtin(
         "right",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
-        &[OP_RIGHT],
+        &[Right],
     ),
-    builtin("cat", &[("a", "bytes"), ("b", "bytes")], "bytes", &[OP_CAT]),
-    builtin("bin2num", &[("data", "bytes")], "int", &[OP_BIN2NUM]),
+    builtin("cat", &[("a", "bytes"), ("b", "bytes")], "bytes", &[Cat]),
+    builtin("bin2num", &[("data", "bytes")], "int", &[Bin2Num]),
     builtin(
         "num2bin",
         &[("value", "int"), ("size", "int")],
         "bytes",
-        &[OP_NUM2BIN],
+        &[Num2Bin],
     ),
     builtin(
         "reverseBytes",
         &[("data", "bytes")],
         "bytes",
-        &[OP_REVERSEBYTES],
+        &[ReverseBytes],
     ),
-    builtin("size", &[("data", "bytes")], "int", &[OP_SIZE, OP_NIP]),
+    builtin("size", &[("data", "bytes")], "int", &[Size, Nip]),
     builtin(
         "digest",
         &[("data", "bytes"), ("hashType", "int")],
         "bytes",
-        &[OP_DIGEST],
+        &[Digest],
     ),
-    builtin("sha1", &[("data", "bytes")], "bytes20", &[OP_SHA1]),
-    builtin("sha256", &[("data", "bytes")], "bytes32", &[OP_SHA256]),
-    builtin("hash256", &[("data", "bytes")], "bytes32", &[OP_HASH256]),
-    builtin("hash160", &[("data", "bytes")], "bytes20", &[OP_HASH160]),
-    builtin(
-        "ripemd160",
-        &[("data", "bytes")],
-        "bytes20",
-        &[OP_RIPEMD160],
-    ),
+    builtin("sha1", &[("data", "bytes")], "bytes20", &[Sha1]),
+    builtin("sha256", &[("data", "bytes")], "bytes32", &[Sha256]),
+    builtin("hash256", &[("data", "bytes")], "bytes32", &[Hash256]),
+    builtin("hash160", &[("data", "bytes")], "bytes20", &[Hash160]),
+    builtin("ripemd160", &[("data", "bytes")], "bytes20", &[Ripemd160]),
     builtin(
         "checkSig",
         &[("signature", "signature"), ("pubkey", "bytes")],
         "bool",
-        &[OP_CHECKSIG],
+        &[CheckSig],
     ),
     builtin(
         "checkSigFromStack",
@@ -118,7 +113,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("message", "bytes"),
         ],
         "bool",
-        &[OP_SWAP, OP_CHECKSIGFROMSTACK],
+        &[Swap, CheckSigFromStack],
     ),
     verify(
         "checkSigFromStackVerify",
@@ -127,7 +122,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("pubkey", "bytes"),
             ("message", "bytes"),
         ],
-        &[OP_SWAP, OP_CHECKSIGFROMSTACK, OP_VERIFY],
+        &[Swap, CheckSigFromStack, Verify],
     ),
     Builtin {
         name: "checkMultisig",
@@ -143,21 +138,21 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "sha256Initialize",
         &[("data", "bytes")],
         "bytes32",
-        &[OP_SHA256INITIALIZE],
+        &[Sha256Initialize],
     ),
     builtin(
         "sha256Update",
         &[("ctx", "bytes32"), ("chunk", "bytes")],
         "bytes32",
-        &[OP_SHA256UPDATE],
+        &[Sha256Update],
     ),
     builtin(
         "sha256Finalize",
         &[("ctx", "bytes32"), ("lastChunk", "bytes")],
         "bytes32",
-        &[OP_SHA256FINALIZE],
+        &[Sha256Finalize],
     ),
-    builtin("sighash", &[("hashType", "int")], "bytes32", &[OP_SIGHASH]),
+    builtin("sighash", &[("hashType", "int")], "bytes32", &[SigHash]),
     // An empty leafTag takes a 32-byte leaf as already hashed.
     builtin(
         "merkleRoot",
@@ -168,40 +163,35 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("leaf", "bytes"),
         ],
         "bytes32",
-        &[OP_MERKLEBRANCHVERIFY],
+        &[MerkleBranchVerify],
     ),
-    builtin(
-        "checkTime",
-        &[("timestamp", "int")],
-        "bool",
-        &[OP_CHECKTIME],
-    ),
+    builtin("checkTime", &[("timestamp", "int")], "bool", &[CheckTime]),
     builtin(
         "modExp",
         &[("base", "int"), ("exponent", "int"), ("modulus", "int")],
         "int",
-        &[OP_MODEXP],
+        &[ModExp],
     ),
-    builtin("abs", &[("value", "int")], "int", &[OP_ABS]),
-    builtin("min", &[("a", "int"), ("b", "int")], "int", &[OP_MIN]),
-    builtin("max", &[("a", "int"), ("b", "int")], "int", &[OP_MAX]),
+    builtin("abs", &[("value", "int")], "int", &[Abs]),
+    builtin("min", &[("a", "int"), ("b", "int")], "int", &[Min]),
+    builtin("max", &[("a", "int"), ("b", "int")], "int", &[Max]),
     builtin(
         "within",
         &[("value", "int"), ("lower", "int"), ("upper", "int")],
         "bool",
-        &[OP_WITHIN],
+        &[Within],
     ),
     builtin(
         "ecAdd",
         &[("P", "ECPoint"), ("Q", "ECPoint"), ("curveId", "int")],
         "ECPoint",
-        &[OP_ECADD],
+        &[EcAdd],
     ),
     builtin(
         "ecMul",
         &[("P", "ECPoint"), ("scalar", "int"), ("curveId", "int")],
         "ECPoint",
-        &[OP_ECMUL],
+        &[EcMul],
     ),
     Builtin {
         name: "ecPairing",
@@ -217,12 +207,12 @@ pub(crate) const BUILTINS: &[Builtin] = &[
     verify(
         "ecMulScalarVerify",
         &[("k", "bytes32"), ("P", "bytes"), ("Q", "bytes")],
-        &[OP_ECMULSCALARVERIFY],
+        &[EcMulScalarVerify],
     ),
     verify(
         "tweakVerify",
         &[("P", "bytes32"), ("k", "bytes32"), ("Q", "bytes")],
-        &[OP_TWEAKVERIFY],
+        &[TweakVerify],
     ),
 ];
 

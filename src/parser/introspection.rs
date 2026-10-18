@@ -251,58 +251,53 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
 
     reject_malformed_asset_call(&text)?;
 
-    // tx.assetGroups.find(txid, gidx) or tx.assetGroups[k], with an optional member
-    if let Some(body) = pair
-        .clone()
-        .into_inner()
-        .next()
-        .filter(|body| body.as_rule() == Rule::tx_property_body)
-    {
-        let mut parts = body.into_inner();
-        if let Some(group) = parts
-            .next()
-            .filter(|p| p.as_rule() == Rule::asset_group_ref)
-        {
-            return parse_asset_group_access(pair.as_span().start(), group, parts.next());
+    let body = pair.into_inner().next().ok_or("Missing tx property")?;
+    let mut parts = body.into_inner();
+    let first = parts.next().ok_or("Missing tx property")?;
+    match first.as_rule() {
+        Rule::tx_input_current => {
+            let property = first.into_inner().next().ok_or("Missing input property")?;
+            let property = InputProperty::from_name(property.as_str())
+                .ok_or_else(|| format!("unknown input property '{}'", property.as_str()))?;
+            Ok(current_input(property, span))
+        }
+        Rule::tx_asset_groups => {
+            let mut access = first.into_inner();
+            Ok(match access.next() {
+                None => Expression::new(ExprKind::Name(Path::from_key(&text)), span),
+                Some(has) if has.as_rule() == Rule::asset_groups_has => {
+                    let (asset_txid, asset_gidx) = parse_asset_group_id_operands(has)?;
+                    Expression::new(
+                        ExprKind::GroupHas {
+                            asset_txid: Box::new(asset_txid),
+                            asset_gidx: Box::new(asset_gidx),
+                        },
+                        span,
+                    )
+                }
+                Some(length) if length.as_rule() == Rule::asset_groups_length => {
+                    Expression::new(ExprKind::AssetGroupsLength, span)
+                }
+                Some(group) => return parse_asset_group_access(span.start, group, access.next()),
+            })
+        }
+        _ => {
+            // `tx.input.current` without a property it accepts reads as a plain property path.
+            let mut names = std::iter::once(first.as_str())
+                .chain(parts.map(|suffix| suffix.as_str().trim_start_matches('.').trim()));
+            if names.next() == Some("input") && names.next() == Some("current") {
+                return Err(format!(
+                    "tx.input.current requires one of: {} (got '{text}')",
+                    InputProperty::ALL
+                        .iter()
+                        .map(|property| property.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            Ok(Expression::new(ExprKind::Name(Path::from_key(&text)), span))
         }
     }
-
-    // Handle tx.assetGroups.has(txid, gidx)
-    if text.starts_with("tx.assetGroups.has(") && text.ends_with(')') {
-        let (asset_txid, asset_gidx) = parse_asset_group_id_operands(pair)?;
-        return Ok(Expression::new(
-            ExprKind::GroupHas {
-                asset_txid: Box::new(asset_txid),
-                asset_gidx: Box::new(asset_gidx),
-            },
-            span,
-        ));
-    }
-
-    // Handle tx.assetGroups.length
-    if text == "tx.assetGroups.length" {
-        return Ok(Expression::new(ExprKind::AssetGroupsLength, span));
-    }
-
-    if text.starts_with("tx.input.current") {
-        return match text
-            .strip_prefix("tx.input.current.")
-            .and_then(InputProperty::from_name)
-        {
-            Some(property) => Ok(current_input(property, span)),
-            None => Err(format!(
-                "tx.input.current requires one of: {} (got '{text}')",
-                InputProperty::ALL
-                    .iter()
-                    .map(|property| property.name())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
-        };
-    }
-
-    // Default: treat as a property string
-    Ok(Expression::new(ExprKind::Property(text), span))
 }
 
 /// An `AssetGroup` reference and the member accessed on it, if any.

@@ -31,8 +31,8 @@ contract Vault(Policy policy) {
     assert_eq!(output.structs.len(), 2);
     assert_eq!(output.structs[0].name, "Signer");
     assert_eq!(output.structs[0].fields[0].name, "key");
-    assert_eq!(output.structs[1].fields[0].param_type, "Signer");
-    assert_eq!(output.parameters[0].param_type, "Policy");
+    assert_eq!(output.structs[1].fields[0].param_type.to_string(), "Signer");
+    assert_eq!(output.parameters[0].param_type.to_string(), "Policy");
 }
 
 #[test]
@@ -146,7 +146,7 @@ contract Vault(Policy policy) {
     )
     .expect("nested struct fields should compile");
 
-    assert_eq!(output.parameters[0].param_type, "Policy");
+    assert_eq!(output.parameters[0].param_type.to_string(), "Policy");
     let arkade = output.functions[0].arkade.as_ref().expect("covenant");
     assert_eq!(arkade.inputs[0].name, "candidate");
     assert_eq!(arkade.inputs[0].param_type, "Policy");
@@ -696,7 +696,7 @@ contract C(AssetId expected) {
     )
     .expect("native result structs flatten like any other struct");
 
-    assert_eq!(output.parameters[0].param_type, "AssetId");
+    assert_eq!(output.parameters[0].param_type.to_string(), "AssetId");
     let covenant = output.functions[0].arkade.as_ref().expect("covenant");
     assert_eq!(covenant.inputs[0].param_type, "Outpoint");
     assert!(

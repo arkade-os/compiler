@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{Function, StructDefinition};
+use crate::models::{Function, StructDefinition, TypeName};
 
 pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let definitions = contract
@@ -66,7 +66,7 @@ fn validate_body(
     for located in statements {
         let first = issues.len();
         let statement = &located.statement;
-        for expression in statement_expressions(statement) {
+        for expression in statement.expressions() {
             validate_calls(
                 expression,
                 !matches!(statement, Statement::Call(_)),
@@ -85,7 +85,7 @@ fn validate_body(
                         let expected = &other.ty;
                         if matches!(expected, ArkType::Array(..) | ArkType::Struct(_)) {
                             validate_value(
-                                &expected.as_str(),
+                                &TypeName::from(expected),
                                 value,
                                 &contract.structs,
                                 &format!("comparison in '{}'", function.name),
@@ -221,17 +221,17 @@ fn validate_calls(
 }
 
 pub(super) fn validate_value(
-    expected: &str,
+    expected: &TypeName,
     value: &Expression,
     structs: &[StructDefinition],
     context: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
     let first = issues.len();
-    let expected_type = ArkType::parse(expected);
-    match (&value.kind, &expected_type) {
-        (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) => {
-            if elements.len() != *length {
+    let expected_type = expected.ark_type();
+    match (&value.kind, expected.array_parts(), &expected_type) {
+        (ExprKind::ArrayLiteral(elements), Some((element, length)), _) => {
+            if elements.len() != length {
                 issues.push(ValidationIssue::error(format!(
                     "{context}: expected {length} array elements, got {}",
                     elements.len()
@@ -239,7 +239,7 @@ pub(super) fn validate_value(
             }
             for (index, value) in elements.iter().enumerate() {
                 validate_value(
-                    &element.as_str(),
+                    element,
                     value,
                     structs,
                     &format!("{context}, element {index}"),
@@ -247,7 +247,7 @@ pub(super) fn validate_value(
                 );
             }
         }
-        (ExprKind::StructLiteral(fields), ArkType::Struct(name)) => {
+        (ExprKind::StructLiteral(fields), _, ArkType::Struct(name)) => {
             let native =
                 crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
                     name: name.clone(),
@@ -255,7 +255,7 @@ pub(super) fn validate_value(
                         .iter()
                         .map(|(name, ty)| crate::models::Parameter {
                             name: name.to_string(),
-                            param_type: ty.to_string(),
+                            param_type: TypeName::parse(ty),
                         })
                         .collect(),
                 });
@@ -307,24 +307,6 @@ pub(super) fn validate_value(
     locate(&mut issues[first..], value.span);
 }
 
-fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
-    match statement {
-        Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
-        Statement::Require(Requirement::Expression(expression)) => vec![expression],
-        Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
-        Statement::LetBinding { value, .. } => vec![value],
-        Statement::VarAssign {
-            target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
-            value,
-        } => vec![value, index],
-        Statement::VarAssign { value, .. } => vec![value],
-        Statement::IfElse { condition, .. } => vec![condition],
-        Statement::ForIn { iterable, .. } => vec![iterable],
-        Statement::ForCount { count, .. } => vec![count],
-        Statement::Return(None) | Statement::Declaration { .. } => vec![],
-    }
-}
-
 fn analyze_function(
     function: &Function,
     contract: &Contract,
@@ -360,7 +342,7 @@ fn analyze_calls(
 ) -> Result<(), String> {
     for statement in statements {
         let statement = &statement.statement;
-        for expression in statement_expressions(statement) {
+        for expression in statement.expressions() {
             analyze_expression(expression, contract, visiting, guarantees)?;
         }
         match statement {
@@ -434,7 +416,8 @@ fn flow_block(
             break;
         }
         let statement = &statement.statement;
-        if statement_expressions(statement)
+        if statement
+            .expressions()
             .into_iter()
             .any(|e| expression_enforces(e, guarantees))
         {

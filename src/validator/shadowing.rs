@@ -77,16 +77,14 @@ fn check_ctor_assignment(
         let first = issues.len();
         match &stmt.statement {
             Statement::VarAssign { target, .. } => {
-                let access_name;
                 let name = match target {
                     AssignmentTarget::Access(value) => {
-                        access_name = value.binding_path().unwrap_or_default();
-                        &access_name
+                        value.binding_path().unwrap_or(Path::new(""))
                     }
-                    AssignmentTarget::Binding(name) => name,
-                    AssignmentTarget::ArrayIndex { array, .. } => array,
+                    AssignmentTarget::Binding(name) => name.clone(),
+                    AssignmentTarget::ArrayIndex { array, .. } => array.clone(),
                 };
-                let root = name.split(['.', '[']).next().unwrap_or(name);
+                let root = name.root.as_str();
                 if ctor_names.contains(root) {
                     issues.push(ValidationIssue::error(format!(
                         "cannot assign to constructor parameter '{name}' in function '{fname}'; \

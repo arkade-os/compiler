@@ -466,7 +466,7 @@ fn placeholder_in_constructor_inputs_is_clean() {
     }];
     let ctor = [Parameter {
         name: "owner".to_string(),
-        param_type: "pubkey".to_string(),
+        param_type: "pubkey".into(),
     }];
     let witness_names: Vec<&str> = witness.iter().map(|w| w.name.as_str()).collect();
     let ctor_names: Vec<&str> = ctor.iter().map(|p| p.name.as_str()).collect();

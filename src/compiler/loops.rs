@@ -57,7 +57,7 @@ pub(crate) fn substitute_statement(
                 &match target {
                     AssignmentTarget::Access(value) => (**value).clone(),
                     AssignmentTarget::Binding(name) => {
-                        value.with_kind(ExprKind::Property(name.clone()))
+                        value.with_kind(ExprKind::Name(name.clone()))
                     }
                     AssignmentTarget::ArrayIndex { array, index } => {
                         index.with_kind(ExprKind::ArrayIndex {
@@ -72,9 +72,9 @@ pub(crate) fn substitute_statement(
                 items,
             ) {
                 Expression {
-                    kind: ExprKind::Variable(name) | ExprKind::Property(name),
+                    kind: ExprKind::Name(path),
                     ..
-                } => AssignmentTarget::Binding(name),
+                } => AssignmentTarget::Binding(path),
                 Expression {
                     kind: ExprKind::ArrayIndex { array, index },
                     ..
@@ -133,24 +133,23 @@ pub(crate) fn substitute_requirement(
 
 /// Resolve a dotted binding path, rooting `value_var` paths at element `k` of `items`.
 fn substitute_path(
-    path: &str,
+    path: &Path,
     at: &Expression,
     index_var: &str,
     value_var: &str,
     k: usize,
     items: &Expression,
 ) -> Option<Expression> {
-    if path == index_var {
+    if path.root == index_var && path.segments.is_empty() {
         return Some(at.with_kind(ExprKind::Literal(k.to_string())));
     }
-    let mut fields = path.split('.');
-    if fields.next() != Some(value_var) {
+    if path.root != value_var {
         return None;
     }
     let index = Box::new(at.with_kind(ExprKind::Literal(k.to_string())));
     let element = at.with_kind(match &items.kind {
-        ExprKind::Variable(array) | ExprKind::Property(array) => ExprKind::ArrayIndex {
-            array: array.clone(),
+        ExprKind::Name(path) => ExprKind::ArrayIndex {
+            array: path.clone(),
             index,
         },
         _ => ExprKind::IndexAccess {
@@ -158,10 +157,17 @@ fn substitute_path(
             index,
         },
     });
-    Some(fields.fold(element, |value, field| {
-        at.with_kind(ExprKind::FieldAccess {
-            value: Box::new(value),
-            field: field.to_string(),
+    Some(path.segments.iter().fold(element, |value, segment| {
+        let value = Box::new(value);
+        at.with_kind(match segment {
+            Segment::Field(field) => ExprKind::FieldAccess {
+                value,
+                field: field.clone(),
+            },
+            Segment::Index(index) => ExprKind::IndexAccess {
+                value,
+                index: Box::new(at.with_kind(ExprKind::Literal(index.to_string()))),
+            },
         })
     }))
 }
@@ -174,10 +180,8 @@ pub(crate) fn substitute_expression(
     items: &Expression,
 ) -> Expression {
     match &expr.kind {
-        ExprKind::Variable(path) | ExprKind::Property(path) => {
-            substitute_path(path, expr, index_var, value_var, k, items)
-                .unwrap_or_else(|| expr.clone())
-        }
+        ExprKind::Name(path) => substitute_path(path, expr, index_var, value_var, k, items)
+            .unwrap_or_else(|| expr.clone()),
         ExprKind::ArrayIndex { array, index } => {
             let index = Box::new(substitute_expression(index, index_var, value_var, k, items));
             expr.with_kind(
@@ -211,18 +215,27 @@ mod tests {
     #[test]
     fn loop_substitution_preserves_spans() {
         let span = Span { start: 10, end: 20 };
-        let index = Expression::new(ExprKind::Variable("i".into()), Span { start: 12, end: 13 });
-        let items = ExprKind::Variable("xs".into()).into();
+        let index = Expression::new(
+            ExprKind::Name(crate::models::Path::from_key("i")),
+            Span { start: 12, end: 13 },
+        );
+        let items = ExprKind::Name(crate::models::Path::from_key("xs")).into();
         for (kind, expected) in [
-            (ExprKind::Variable("i".into()), ["0", "1"]),
-            (ExprKind::Variable("x".into()), ["xs[0]", "xs[1]"]),
             (
-                ExprKind::Property("x.amount".into()),
+                ExprKind::Name(crate::models::Path::from_key("i")),
+                ["0", "1"],
+            ),
+            (
+                ExprKind::Name(crate::models::Path::from_key("x")),
+                ["xs[0]", "xs[1]"],
+            ),
+            (
+                ExprKind::Name(crate::models::Path::from_key("x.amount")),
                 ["xs[0].amount", "xs[1].amount"],
             ),
             (
                 ExprKind::ArrayIndex {
-                    array: "x".into(),
+                    array: Path::new("x"),
                     index: Box::new(index.clone()),
                 },
                 ["xs[0][0]", "xs[1][1]"],

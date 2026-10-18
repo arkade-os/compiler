@@ -585,3 +585,92 @@ fn check_reports_tapscript_leaf_errors() {
         ["tapscript `exit`: timelock must come before the multisig (out of order)"]
     );
 }
+
+#[test]
+fn check_reports_emission_errors_at_their_statement() {
+    let source = "contract C() {\n    function spend(int[2] xs) {\n        for (i, x) in xs {\n            require(xs[i + 1] == x);\n        }\n    }\n}";
+    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let errors: Vec<_> = arkade_compiler::check("main.ark", &files)
+        .into_iter()
+        .filter(|d| d.severity == arkade_compiler::Severity::Error)
+        .collect();
+    let [error] = errors.as_slice() else {
+        panic!("{errors:?}");
+    };
+    assert_eq!(error.code.as_deref(), Some("emission"));
+    let span = error.span.expect("located");
+    assert_eq!(&source[span.start..span.end], "require(xs[i + 1] == x);");
+    let message = compile(source).unwrap_err().to_string();
+    assert!(
+        message.starts_with("line 4, column 13: array index '2' is out of range"),
+        "{message}"
+    );
+}
+
+#[test]
+fn covenants_over_the_vm_stack_limit_do_not_compile() {
+    let source = |items: usize| {
+        format!("contract C() {{ function spend(int[{items}] xs) {{ require(xs[0] == 1); }} }}")
+    };
+    assert!(compile(&source(998)).is_ok());
+    let error = compile(&source(999))
+        .expect_err("999 items peak above 1000")
+        .to_string();
+    assert!(
+        error.contains("can hold 1001 stack items, above the VM limit of 1000"),
+        "{error}"
+    );
+}
+
+#[test]
+fn group_input_records_count_their_widest_normalization() {
+    let source = |items: usize| {
+        format!("contract C() {{ function spend(int[{items}] xs, int g, int i) {{ require(tx.assetGroups[g].inputs[i].amount == xs[0]); }} }}")
+    };
+    assert!(compile(&source(995)).is_ok());
+    let error = compile(&source(996))
+        .expect_err("996 items and a five-item record peak above 1000")
+        .to_string();
+    assert!(
+        error.contains("can hold 1001 stack items, above the VM limit of 1000"),
+        "{error}"
+    );
+}
+
+#[test]
+fn witness_length_checks_count_toward_the_stack_limit() {
+    let source = |items: usize| {
+        format!(
+            "contract C() {{ function spend(bytes32[{items}] xs) {{ require(xs[0] == xs[1]); }} }}"
+        )
+    };
+    assert!(compile(&source(997)).is_ok());
+    let error = compile(&source(998))
+        .expect_err("998 items and a length check peak above 1000")
+        .to_string();
+    assert!(
+        error.contains("can hold 1001 stack items, above the VM limit of 1000"),
+        "{error}"
+    );
+}
+
+#[test]
+fn covenants_over_the_vm_script_size_do_not_compile() {
+    let source = |wide: usize| {
+        let requires: String = (0..1428)
+            .map(|i| {
+                format!(
+                    "require(x != {});",
+                    if i < wide { 100000 + i } else { 1000 + i }
+                )
+            })
+            .collect();
+        format!("contract C() {{ function spend(int x) {{ {requires} }} }}")
+    };
+    assert!(compile(&source(6)).is_ok());
+    let error = compile(&source(7)).expect_err("10001 bytes").to_string();
+    assert!(
+        error.contains("at least 10001 bytes, above the VM limit of 10000"),
+        "{error}"
+    );
+}
