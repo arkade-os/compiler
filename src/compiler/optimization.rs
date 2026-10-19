@@ -283,7 +283,8 @@ pub(super) fn optimize(mut asm: Vec<Op>) -> (Vec<Op>, usize) {
     asm.push(Int1.into());
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
-    if dropped.0.len() < kept.0.len() {
+    // A covenant that only leaves its witness for the final check would be empty.
+    if dropped.0.len() < kept.0.len() || kept.0.is_empty() {
         dropped
     } else {
         kept

@@ -594,6 +594,14 @@ fn folding_keeps_byte_size_failures_and_concatenation() {
 }
 
 #[test]
+fn a_covenant_that_only_checks_its_witness_keeps_the_final_verify() {
+    for body in ["require(b);", "require(1 < 2); require((0 < 1 || b) && b);"] {
+        let source = format!("contract C() {{ function spend(bool b) {{ {body} }} }}");
+        assert_eq!(asm(&source), ["OP_VERIFY", "OP_1"], "{body}");
+    }
+}
+
+#[test]
 fn a_pruned_return_leaves_no_return_guard() {
     let source = |dead: &str| {
         format!("contract C() {{ private function f(int x) int {{ {dead} require(x > 0); if (x > 5) {{ return 1; }} return 0; }} function spend(int x) {{ require(f(x) == 1); }} }}")

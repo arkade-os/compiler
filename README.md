@@ -236,6 +236,8 @@ cp ./scripts/pre-commit .git/hooks                       # fmt + test before eve
 
 The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator checkout is needed.
 
+The suite includes a differential fuzzer that runs random contracts optimized and unoptimized on the VM: `ARKADE_FUZZ_SEED=7 ARKADE_FUZZ_CASES=5000 ./scripts/e2e.sh -run TestDifferentialFuzz` searches further. Each case is a subtest such as `TestDifferentialFuzz/seed7_case42`, and `-run 'TestDifferentialFuzz/seed7_case42$'` in that command replays only that case.
+
 ### Releasing
 
 `arkade-compiler` and `arkade-bindgen` share the version in the root `Cargo.toml` `[workspace.package]` table. To release, bump it in a PR (on a minor bump, also raise `arkade-bindgen`'s `arkade-compiler` requirement), merge, and push `v<version>` from the merge commit. `.github/workflows/release.yml` checks the tag against the version, builds binaries for five targets, creates a GitHub release with `SHA256SUMS`, and publishes both crates to crates.io through trusted publishing. A tag with a suffix such as `v0.1.0-test` creates a GitHub pre-release and skips crates.io; remove it with `gh release delete <tag> --cleanup-tag`.
