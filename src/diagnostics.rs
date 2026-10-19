@@ -30,8 +30,8 @@ pub enum Severity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
-    /// Which pass raised this: `"validation"` (semantic checks) or `"type"`
-    /// (type checker) today. `None` for parse errors.
+    /// Which pass raised this: `"validation"` (semantic checks), `"type"` (type checker),
+    /// `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse errors.
     pub code: Option<String>,
     pub message: String,
     pub file: String,
@@ -70,6 +70,65 @@ impl Diagnostic {
     }
 }
 
+/// A code generation failure: a problem in the source, or a broken compiler invariant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompileError {
+    pub message: String,
+    pub span: Option<Span>,
+    pub internal: bool,
+}
+
+impl CompileError {
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            span: None,
+            internal: true,
+        }
+    }
+
+    /// Locates the error at `span` unless a narrower span already does.
+    pub(crate) fn at(mut self, span: Span) -> Self {
+        self.span.get_or_insert(span);
+        self
+    }
+
+    pub(crate) fn diagnostic(&self, file: &str) -> Diagnostic {
+        Diagnostic::error(file, self.to_string())
+            .with_code(if self.internal {
+                "internal"
+            } else {
+                "emission"
+            })
+            .with_span(self.span)
+    }
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.internal {
+            f.write_str("internal compiler error: ")?;
+        }
+        f.write_str(&self.message)
+    }
+}
+
+impl From<String> for CompileError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            span: None,
+            internal: false,
+        }
+    }
+}
+
+impl From<&str> for CompileError {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
+}
+
 /// The string `compile`/`compile_file`/`compile_sources` return on failure:
 /// error-severity messages, `"; "`-joined, each still prefixed by its kind
 /// (`"validation error: "`, `"type error: "`) and, where a span is known, by
@@ -103,5 +162,32 @@ pub(crate) fn located(message: &str, span: Option<Span>, source: &str) -> String
             format!("line {line}, column {column}: {message}")
         }
         None => message.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compile_errors_keep_the_narrowest_span_and_mark_internal_ones() {
+        let narrow = Span { start: 4, end: 9 };
+        let error = CompileError::from("bad index")
+            .at(narrow)
+            .at(Span { start: 0, end: 20 });
+        assert_eq!(error.span, Some(narrow));
+        assert_eq!(
+            error.diagnostic("main.ark").code.as_deref(),
+            Some("emission")
+        );
+        let internal = CompileError::internal("unbalanced scope");
+        assert_eq!(
+            internal.to_string(),
+            "internal compiler error: unbalanced scope"
+        );
+        assert_eq!(
+            internal.diagnostic("main.ark").code.as_deref(),
+            Some("internal")
+        );
     }
 }

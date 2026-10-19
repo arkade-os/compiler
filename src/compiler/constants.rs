@@ -1,6 +1,6 @@
 use crate::models::{
-    AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr, LocatedStatement,
-    Requirement, Statement, TapItem,
+    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr,
+    LocatedStatement, Path, Requirement, Statement, TapItem, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
@@ -81,7 +81,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
         {
             return Err(format!("constant '{name}' collides with function '{name}'"));
         }
-        if !matches!(const_type.as_str(), "int" | "bool" | "bytes") {
+        if !matches!(const_type.name(), Some("int" | "bool" | "bytes")) {
             return Err(format!("constant '{name}' must be int, bool or bytes"));
         }
         declarations.insert(name.clone(), constant);
@@ -133,7 +133,7 @@ fn resolve_value(
     }
     active.push(name.clone());
     // A nested failure already names the constant it came from; keep that one name.
-    let mut resolve = |name: &str| resolve_value(name, declarations, values, active);
+    let mut resolve = |path: &Path| resolve_value(&path.key(), declarations, values, active);
     let value = validate_expression(&constant.value, &mut resolve)
         .and_then(|_| evaluate(&constant.value, &mut resolve))
         .map_err(|error| match error.starts_with("constant '") {
@@ -141,7 +141,7 @@ fn resolve_value(
             false => format!("constant '{name}': {error}"),
         })?;
     active.pop();
-    if kind(&value) != constant.const_type {
+    if constant.const_type.name() != Some(kind(&value)) {
         return Err(format!(
             "constant '{name}' is not a valid '{}' literal",
             constant.const_type
@@ -173,11 +173,11 @@ fn integer(text: &str) -> Result<i128, String> {
 // Validate skipped operands without evaluating their arithmetic.
 fn validate_expression(
     expression: &Expression,
-    resolve: &mut impl FnMut(&str) -> Result<String, String>,
+    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<&'static str, String> {
     match &expression.kind {
         ExprKind::Literal(text) => Ok(kind(text)),
-        ExprKind::Variable(name) | ExprKind::Property(name) => Ok(kind(&resolve(name)?)),
+        ExprKind::Name(path) => Ok(kind(&resolve(path)?)),
         ExprKind::Unary { op, value } => {
             let expected = match op {
                 UnaryOperator::Invert => {
@@ -236,12 +236,12 @@ fn validate_expression(
 
 pub(crate) fn evaluate(
     expression: &Expression,
-    resolve: &mut impl FnMut(&str) -> Result<String, String>,
+    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<String, String> {
     let overflow = || "integer overflow in constant expression".to_string();
     match &expression.kind {
         ExprKind::Literal(text) => Ok(text.clone()),
-        ExprKind::Variable(name) | ExprKind::Property(name) => resolve(name),
+        ExprKind::Name(path) => resolve(path),
         ExprKind::Unary {
             op: UnaryOperator::Neg,
             value,
@@ -330,21 +330,23 @@ pub(crate) fn evaluate(
     }
 }
 
-fn fold_type(declared_type: &mut String, values: &HashMap<String, String>) -> Result<(), String> {
-    if let Some((base, size)) = declared_type
-        .strip_suffix(']')
-        .and_then(|ty| ty.split_once('['))
-    {
-        let value = values.get(size).map(String::as_str).unwrap_or(size);
-        let size = value
-            .parse::<usize>()
-            .ok()
-            .filter(|size| *size > 0)
-            .ok_or_else(|| {
-                format!("array size '{size}' must be a positive integer literal or int constant")
-            })?;
-        *declared_type = format!("{base}[{size}]");
-    }
+fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> Result<(), String> {
+    let TypeName::Array(_, size) = declared_type else {
+        return Ok(());
+    };
+    let length = match size {
+        ArraySize::Fixed(length) => Some(*length),
+        ArraySize::Const(name) => values
+            .get(name.as_str())
+            .and_then(|value| value.parse().ok()),
+    };
+    *size = ArraySize::Fixed(length.filter(|length| *length > 0).ok_or_else(|| {
+        let written = match size {
+            ArraySize::Fixed(length) => length.to_string(),
+            ArraySize::Const(name) => name.clone(),
+        };
+        format!("array size '{written}' must be a positive integer literal or int constant")
+    })?);
     Ok(())
 }
 
@@ -416,19 +418,19 @@ fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, Stri
 }
 
 fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
-    if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
-        if let Some(value) = values.get(name) {
+    if let ExprKind::Name(path) = &expression.kind {
+        if let Some(value) = values.get(&path.key()) {
             expression.kind = ExprKind::Literal(value.clone());
             return;
         }
     }
     if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {
         for value in policy.iter_mut() {
-            if let Ok(literal) = evaluate(value, &mut |name| {
+            if let Ok(literal) = evaluate(value, &mut |path| {
                 values
-                    .get(name)
+                    .get(&path.key())
                     .cloned()
-                    .ok_or_else(|| format!("unknown constant '{name}'"))
+                    .ok_or_else(|| format!("unknown constant '{path}'"))
             }) {
                 value.kind = ExprKind::Literal(literal);
             }

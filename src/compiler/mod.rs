@@ -1,22 +1,22 @@
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{CompileError, Diagnostic};
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
-    Function, FunctionInput, LocatedStatement, Parameter, Requirement, Statement,
+    Function, FunctionInput, LocatedStatement, Parameter, Path, Requirement, Segment, Statement,
+    TypeName,
 };
-use crate::opcodes::{
-    OP_0, OP_0NOTEQUAL, OP_1, OP_ADD, OP_BIN2NUM, OP_BOOLAND, OP_CAT, OP_CHECKSIG, OP_CHECKSIGADD,
-    OP_DROP, OP_DUP, OP_ECPAIRING, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY,
-    OP_FINDASSETGROUPBYASSETID, OP_GREATERTHANOREQUAL, OP_IF, OP_INSPECTASSETGROUP,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT,
-    OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
-    OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTINPUTSEQUENCE, OP_INSPECTINPUTVALUE, OP_INSPECTINTENTMESSAGE, OP_INSPECTLOCKTIME,
-    OP_INSPECTNUMASSETGROUPS, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS, OP_INSPECTOUTASSETAT,
-    OP_INSPECTOUTASSETCOUNT, OP_INSPECTOUTASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY,
-    OP_INSPECTOUTPUTVALUE, OP_INSPECTPACKET, OP_INSPECTVERSION, OP_LESSTHAN, OP_LESSTHANOREQUAL,
-    OP_MUL, OP_NIP, OP_NOT, OP_NUMEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_PUSHEXPIRY, OP_PUT,
-    OP_ROLL, OP_SIZE, OP_SUB, OP_SWAP, OP_TUNNEL, OP_TXID, OP_TXWEIGHT, OP_VERIFY,
+use crate::opcodes::Opcode::{
+    self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,
+    Equal, EqualVerify, FindAssetGroupByAssetId, GreaterThanOrEqual, If, InspectAssetGroup,
+    InspectAssetGroupAssetId, InspectAssetGroupCtrl, InspectAssetGroupMetadataHash,
+    InspectAssetGroupNum, InspectAssetGroupSum, InspectInAssetAt, InspectInAssetCount,
+    InspectInAssetLookup, InspectInputArkadeScriptHash, InspectInputArkadeWitnessHash,
+    InspectInputOutpoint, InspectInputPacket, InspectInputScriptPubKey, InspectInputSequence,
+    InspectInputValue, InspectIntentMessage, InspectLockTime, InspectNumAssetGroups,
+    InspectNumInputs, InspectNumOutputs, InspectOutAssetAt, InspectOutAssetCount,
+    InspectOutAssetLookup, InspectOutputScriptPubKey, InspectOutputValue, InspectPacket,
+    InspectVersion, Int0, Int1, LessThan, LessThanOrEqual, Mul, Nip, Not, NotEqual0, NumEqual,
+    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Size, Sub, Swap, Tunnel, TxWeight, Txid,
+    Verify,
 };
 use crate::types::{self};
 use crate::validator::{self, Severity};
@@ -24,6 +24,8 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 
 pub mod tapscript;
+
+type Result<T, E = CompileError> = std::result::Result<T, E>;
 
 // ASM codegen and rewrite passes split into submodules;
 // siblings reach each other via `use super::*`.
@@ -34,9 +36,16 @@ pub(crate) mod constants;
 pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
 mod expr;
 mod functions;
+mod ir;
+pub(crate) use ir::Op;
 mod introspection;
 mod loops;
+mod lowering;
 mod optimization;
+mod stack;
+mod statements;
+use lowering::Lowered;
+use statements::emit_body;
 
 pub(crate) use asset::*;
 pub(crate) use expr::*;
@@ -52,54 +61,58 @@ enum BindingKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum StackItem {
-    Binding { name: String, kind: BindingKind },
+    Binding { name: Path, kind: BindingKind },
     Temporary,
 }
 
-// `$` is outside the source identifier grammar, so this namespace cannot collide with user bindings.
-const INTERNAL_ARRAY_BINDING_PREFIX: &str = "$array:";
-const INTERNAL_ARRAY_INDEX_PREFIX: &str = "$array-index:";
+/// Data and alt stack items the VM allows at once (`txscript.MaxStackSize`).
+const MAX_STACK_ITEMS: usize = 1000;
+/// Bytes the VM allows in a script (`txscript.MaxScriptSize`).
+const MAX_SCRIPT_SIZE: usize = 10_000;
 
-fn integer_token(value: usize) -> String {
-    if value <= 16 {
-        format!("OP_{value}")
-    } else {
-        value.to_string()
+fn integer_op(value: usize) -> Op {
+    use crate::opcodes::Opcode::*;
+    const SMALL: [Opcode; 17] = [
+        Int0, Int1, Int2, Int3, Int4, Int5, Int6, Int7, Int8, Int9, Int10, Int11, Int12, Int13,
+        Int14, Int15, Int16,
+    ];
+    match SMALL.get(value) {
+        Some(&opcode) => opcode.into(),
+        None => Op::Push(value.to_string()),
     }
-}
-
-fn internal_array_binding_name(array: &str, index: &str) -> String {
-    format!("{INTERNAL_ARRAY_BINDING_PREFIX}{array}:{index}")
 }
 
 struct Generator {
     optimize: bool,
-    asm: Vec<String>,
+    asm: Vec<Op>,
     stack: Vec<StackItem>,
+    /// The most items the stacks hold at once, data and alt together.
+    max_depth: usize,
     scopes: Vec<(usize, types::Scope)>,
     deferred: std::collections::HashSet<String>,
-    constructor_array_expansions: Vec<(String, String)>,
+    /// Placeholders of constructor parameters that flatten to other leaves.
+    constructor_expansions: Vec<(String, Vec<String>)>,
     structs: Vec<crate::models::StructDefinition>,
     scope: types::Scope,
     constructor_scope: types::Scope,
     functions: Vec<Function>,
     // Constructor leaves pushed at their single read instead of in the prologue.
-    inlined: std::collections::HashMap<String, String>,
+    inlined: std::collections::HashMap<Path, String>,
     // Emitted reads per constructor slot; runtime-indexed slots count as two.
-    constructor_reads: std::collections::HashMap<String, usize>,
+    constructor_reads: std::collections::HashMap<Path, usize>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
-    aliases: std::collections::HashMap<String, usize>,
+    aliases: std::collections::HashMap<Path, usize>,
     // None outside a helper; Some(None) inside a void helper.
-    return_type: Option<Option<String>>,
+    return_type: Option<Option<TypeName>>,
     direct_return: bool,
     // Record reads once, then replay final uses at their new stack depths.
     final_reads: Vec<bool>,
-    last_reads: std::collections::HashMap<(String, usize), usize>,
+    last_reads: std::collections::HashMap<(Path, usize), usize>,
     read_cursor: Option<usize>,
     preserve_bindings: bool,
     pinned_stack_len: usize,
     // Rebinding the top slot can consume its old value without changing a branch join.
-    replacement: Option<(String, BindingKind, usize)>,
+    replacement: Option<(Path, BindingKind, usize)>,
 }
 
 impl Generator {
@@ -107,8 +120,8 @@ impl Generator {
         function_parameters: &[Parameter],
         constructor_parameters: &[Parameter],
         structs: &[crate::models::StructDefinition],
-        inlined_bindings: &std::collections::HashSet<String>,
-    ) -> Result<Self, String> {
+        inlined_bindings: &std::collections::HashSet<Path>,
+    ) -> Result<Self> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
             for_each_expanded_param(parameter, structs, |_, binding_name, leaf_type| {
@@ -125,20 +138,15 @@ impl Generator {
             .collect::<Vec<_>>();
 
         let mut constructor_bindings = Vec::new();
-        let mut constructor_array_expansions = Vec::new();
+        let mut constructor_expansions = Vec::new();
         for parameter in constructor_parameters {
-            let mut expanded_placeholders = Vec::new();
+            let mut placeholders = Vec::new();
             for_each_expanded_param(parameter, structs, |placeholder, binding_name, _| {
-                expanded_placeholders.push(format!("<{placeholder}>"));
+                placeholders.push(placeholder.clone());
                 constructor_bindings.push((placeholder, binding_name));
             })?;
-            if expanded_placeholders.len() != 1
-                || expanded_placeholders[0] != format!("<{}>", parameter.name)
-            {
-                constructor_array_expansions.push((
-                    format!("<{}>", parameter.name),
-                    expanded_placeholders.join(","),
-                ));
+            if placeholders != [parameter.name.as_str()] {
+                constructor_expansions.push((parameter.name.clone(), placeholders));
             }
         }
         let mut asm = Vec::new();
@@ -148,7 +156,7 @@ impl Generator {
                 inlined.insert(binding_name, placeholder);
                 continue;
             }
-            asm.push(format!("<{placeholder}>"));
+            asm.push(Op::Param(placeholder));
             stack.push(StackItem::Binding {
                 name: binding_name,
                 kind: BindingKind::Constructor,
@@ -156,19 +164,22 @@ impl Generator {
         }
         // Witness inputs carry any length; pin fixed-width ones before the body reads them.
         let prologue = asm.len();
+        let mut prologue_peak = 0;
         for (index, (_, leaf_type)) in function_bindings.iter().enumerate() {
-            let width = match types::ArkType::parse(leaf_type) {
+            let width = match leaf_type.ark_type() {
                 types::ArkType::Bytes20 => "20",
                 types::ArkType::Bytes32 => "32",
                 _ => continue,
             };
             let depth = prologue + index;
+            // The copy, its size and the expected width.
+            prologue_peak = prologue_peak.max(2 + usize::from(depth > 0));
             if depth > 0 {
-                asm.extend([integer_token(depth), OP_PICK.to_string()]);
+                asm.extend([integer_op(depth), Pick.into()]);
             }
-            asm.extend([OP_SIZE, width, OP_EQUALVERIFY].map(String::from));
+            asm.extend([Size.into(), Op::Push(width.into()), EqualVerify.into()]);
             if depth > 0 {
-                asm.push(OP_DROP.to_string());
+                asm.push(Drop.into());
             }
         }
         let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
@@ -180,10 +191,11 @@ impl Generator {
         Ok(Self {
             optimize: false,
             asm,
+            max_depth: stack.len() + prologue_peak,
             stack,
             scopes: Vec::new(),
             deferred: std::collections::HashSet::new(),
-            constructor_array_expansions,
+            constructor_expansions,
             structs: structs.to_vec(),
             scope,
             constructor_scope,
@@ -202,295 +214,85 @@ impl Generator {
         })
     }
 
-    fn push_temporary(&mut self, token: impl Into<String>) {
-        self.asm.push(token.into());
-        self.stack.push(StackItem::Temporary);
-    }
-
-    fn binding_index(&self, name: &str) -> Option<usize> {
-        self.aliases.get(name).copied().or_else(|| {
-            self.stack.iter().position(
-                |item| matches!(item, StackItem::Binding { name: binding, .. } if binding == name),
-            )
-        })
-    }
-
-    /// Declared element count, independent of the flattened element width.
-    fn array_length(&self, array: &str) -> usize {
-        match self.scope.get(array) {
-            Some(types::ArkType::Array(_, length)) => *length,
-            _ => 0,
-        }
-    }
-
-    fn internal_binding_name(name: &str) -> String {
-        let name = name.trim();
-        if name.starts_with(INTERNAL_ARRAY_BINDING_PREFIX) {
-            return name.to_string();
-        }
-        if let Some((array, index)) = name
-            .strip_suffix(']')
-            .and_then(|name| name.rsplit_once('['))
-        {
-            if index.parse::<usize>().is_ok() {
-                return internal_array_binding_name(array, index);
-            }
-        }
-        name.to_string()
-    }
-
-    fn read_binding(&mut self, name: &str) -> Result<(), String> {
-        if name.starts_with("0x") {
-            self.push_temporary(if name == "0x" { "OP_0" } else { name });
-            return Ok(());
-        }
-        // A field named `length` outranks synthetic array length.
-        let binding = Self::internal_binding_name(name);
-        let is_binding =
-            self.binding_index(&binding).is_some() || self.inlined.contains_key(&binding);
-        if let Some(array) = name.trim().strip_suffix(".length").filter(|_| !is_binding) {
-            let length = self.array_length(array);
-            if length == 0 {
-                return Err(format!("'{array}' is not an array; '.length' is undefined"));
-            }
-            self.push_integer_temporary(length);
-            return Ok(());
-        }
-        self.read_static_binding(&binding, false)
-    }
-
-    fn read_static_binding(&mut self, name: &str, take: bool) -> Result<(), String> {
-        let Some(index) = self.binding_index(name) else {
-            let placeholder = self
-                .inlined
-                .get(name)
-                .ok_or_else(|| format!("undefined binding '{name}'"))?;
-            self.push_temporary(format!("<{placeholder}>"));
-            return Ok(());
-        };
-        // An inlined alias source is copied once at the call, however often the helper reads it.
-        if !self.aliases.contains_key(name) {
-            self.count_constructor_reads(index, 1);
-        }
-        let depth = self.stack.len() - 1 - index;
-        let consume = if let Some(cursor) = self.read_cursor.as_mut() {
-            let consume = *self
-                .final_reads
-                .get(*cursor)
-                .ok_or("internal compiler error: final-use analysis diverged from emission")?;
-            *cursor += 1;
-            consume
-        } else {
-            if let Some(previous) = self
-                .last_reads
-                .insert((name.to_string(), index), self.final_reads.len())
-            {
-                self.final_reads[previous] = false;
-            }
-            // Arrays and outer scope slots stay pinned unless reassignment restores the slot.
-            self.final_reads.push(
-                take || (!self.preserve_bindings
-                    && index >= self.pinned_stack_len
-                    && !name.starts_with('$')
-                    && !name.contains('[')
-                    && (self.scopes.last().is_none_or(|(baseline, scope)| {
-                        index >= *baseline && !scope.contains_key(name)
-                    }) || self
-                        .replacement
-                        .as_ref()
-                        .is_some_and(|(target, _, _)| target == name))),
-            );
-            false
-        };
-        self.push_integer_temporary(depth);
-        if consume {
-            self.stack.remove(index);
-        }
-        self.apply(if consume { OP_ROLL } else { OP_PICK }, 1, 1)
-    }
-
-    fn count_constructor_reads(&mut self, index: usize, reads: usize) {
-        if let StackItem::Binding {
-            name,
-            kind: BindingKind::Constructor,
-        } = &self.stack[index]
-        {
-            *self.constructor_reads.entry(name.clone()).or_default() += reads;
-        }
-    }
-
-    /// Runtime indexes address leaves by their prologue slots.
-    // ponytail: pins every leaf of the indexed parameter, so unread siblings keep slots;
-    // pin only the indexed array's leaves if wide runtime-indexed structs become common.
-    fn pin_constructor_slots(&mut self, path: &str) {
-        fn root(name: &str) -> &str {
-            let name = name
-                .strip_prefix(INTERNAL_ARRAY_BINDING_PREFIX)
-                .unwrap_or(name);
-            name.split(['.', '[', ':']).next().unwrap_or(name)
-        }
-        let path = root(path).to_string();
-        for index in 0..self.stack.len() {
-            if matches!(&self.stack[index], StackItem::Binding { name, .. } if root(name) == path) {
-                self.count_constructor_reads(index, 2);
-            }
-        }
-    }
-
-    fn push_integer_temporary(&mut self, value: usize) {
-        self.push_temporary(integer_token(value));
-    }
-
-    fn check_array_index(&mut self, length: usize) -> Result<(), String> {
-        self.apply(OP_DUP, 1, 2)?;
-        self.push_integer_temporary(0);
-        self.apply(OP_GREATERTHANOREQUAL, 2, 1)?;
-        self.apply(OP_VERIFY, 1, 0)?;
-
-        self.apply(OP_DUP, 1, 2)?;
-        self.push_integer_temporary(length);
-        self.apply(OP_LESSTHAN, 2, 1)?;
-        self.apply(OP_VERIFY, 1, 0)
-    }
-
-    fn select_indexed_value(&mut self, array: &str) -> Result<(), String> {
-        let first_element = internal_array_binding_name(array, "0");
-        let first_index = self
-            .binding_index(&first_element)
-            .ok_or_else(|| format!("undefined array binding '{array}'"))?;
-        self.pin_constructor_slots(array);
-        let first_depth_without_index =
-            self.stack
-                .len()
-                .checked_sub(first_index + 2)
-                .ok_or_else(|| {
-                    format!(
-                        "internal compiler error: array index for '{array}' is not on the stack"
-                    )
-                })?;
-
-        self.check_array_index(self.array_length(array))?;
-        if first_depth_without_index != 0 {
-            self.push_integer_temporary(first_depth_without_index);
-            self.apply(OP_ADD, 2, 1)?;
-        }
-        self.apply(OP_PICK, 1, 1)
-    }
-
-    fn pop_temporaries(&mut self, count: usize, opcode: &str) -> Result<(), String> {
-        if count > self.stack.len()
-            || self.stack[self.stack.len() - count..]
-                .iter()
-                .any(|item| !matches!(item, StackItem::Temporary))
-        {
-            return Err(format!(
-                "internal compiler error: {opcode} expected {count} temporary stack operands"
-            ));
-        }
-        self.stack.truncate(self.stack.len() - count);
-        Ok(())
-    }
-
-    fn apply(&mut self, opcode: &str, inputs: usize, outputs: usize) -> Result<(), String> {
-        self.pop_temporaries(inputs, opcode)?;
-        self.asm.push(opcode.to_string());
-        self.stack
-            .extend(std::iter::repeat_n(StackItem::Temporary, outputs));
-        Ok(())
-    }
-
-    fn nip(&mut self) -> Result<(), String> {
-        if self.stack.len() < 2 {
-            return Err("internal compiler error: OP_NIP stack underflow".to_string());
-        }
-        let index = self.stack.len() - 2;
-        self.stack.remove(index);
-        self.asm.push(OP_NIP.to_string());
-        Ok(())
-    }
-
-    fn swap(&mut self) -> Result<(), String> {
-        if self.stack.len() < 2 {
-            return Err("internal compiler error: OP_SWAP stack underflow".to_string());
-        }
-        let len = self.stack.len();
-        self.stack.swap(len - 2, len - 1);
-        self.asm.push(OP_SWAP.to_string());
-        Ok(())
-    }
-
-    fn lower_raw_opcode(&mut self, opcode: &str) -> Result<(), String> {
+    fn lower_raw_opcode(&mut self, opcode: Opcode) -> Result<()> {
         match opcode {
             // These move bindings as well as temporaries.
-            OP_NIP => self.nip(),
-            OP_SWAP => self.swap(),
-            OP_TUNNEL => {
+            Nip => self.nip(),
+            Swap => self.swap(),
+            Tunnel => {
                 // Fixed exception counts are emitted immediately before the opcode.
                 let inputs = self
                     .asm
                     .last()
-                    .and_then(|count| count.parse::<usize>().ok())
+                    .and_then(|count| match count {
+                        Op::Push(count) => count.parse::<usize>().ok(),
+                        _ => None,
+                    })
                     .and_then(|count| count.checked_mul(2)?.checked_add(3))
                     .ok_or("invalid tunnel exception count")?;
                 self.apply(opcode, inputs, 1)
             }
             _ => {
-                let (inputs, outputs) = crate::opcodes::stack_effect(opcode).ok_or_else(|| {
-                    format!("internal compiler error: unknown expression opcode {opcode}")
+                let (inputs, outputs) = opcode.stack_effect().ok_or_else(|| {
+                    CompileError::internal(format!("unknown expression opcode {opcode}"))
                 })?;
                 self.apply(opcode, inputs, outputs)
             }
         }
     }
 
-    fn lower_raw_token(&mut self, token: &str) -> Result<(), String> {
-        if let Some(array) = token.strip_prefix(INTERNAL_ARRAY_INDEX_PREFIX) {
-            return self.select_indexed_value(array);
-        }
-        if token.starts_with("<CONTRACT:") {
-            let mut token = token.to_string();
-            for (array, elements) in &self.constructor_array_expansions {
-                token = token.replace(array, elements);
+    fn lower_op(&mut self, op: Op) -> Result<()> {
+        match op {
+            Op::Opcode(opcode) => self.lower_raw_opcode(opcode),
+            Op::Push(value) => {
+                self.push_temporary(Op::Push(value));
+                Ok(())
             }
-            self.push_temporary(token);
-            return Ok(());
-        }
-        if token.starts_with('<') && token.ends_with('>') {
-            let value = &token[1..token.len() - 1];
-            if value.parse::<i64>().is_ok() {
-                self.push_temporary(value);
-                return Ok(());
+            Op::Read(path) => self.read_binding(&path),
+            Op::ArrayElement(array) => self.select_indexed_value(&array),
+            Op::Contract { name, args } => {
+                let args = args
+                    .into_iter()
+                    .flat_map(|arg| {
+                        let expansion = match arg.as_slice() {
+                            [Op::Param(param)] => self
+                                .constructor_expansions
+                                .iter()
+                                .find(|(name, _)| name == param),
+                            _ => None,
+                        };
+                        match expansion {
+                            Some((_, placeholders)) => placeholders
+                                .iter()
+                                .map(|placeholder| vec![Op::Param(placeholder.clone())])
+                                .collect(),
+                            None => vec![arg],
+                        }
+                    })
+                    .collect();
+                self.push_temporary(Op::Contract { name, args });
+                Ok(())
             }
-            return self.read_binding(value);
+            Op::Value(_) => Err(CompileError::internal(
+                "extracted value outside an expression",
+            )),
+            Op::Param(_) => Err(CompileError::internal(
+                "constructor parameter inside an expression",
+            )),
         }
-        if token.starts_with("OP_") {
-            return self.lower_raw_opcode(token);
-        }
-        self.push_temporary(token);
-        Ok(())
     }
 
-    fn emit_expression(&mut self, expression: &Expression) -> Result<(), String> {
+    fn emit_expression(&mut self, expression: &Expression) -> Result<()> {
         if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
-            return Err(
-                "array literals may only initialize an array declaration; composite values are not supported"
-                    .to_string(),
-            );
+            return Err("array literals may only initialize an array declaration; composite values are not supported".into());
         }
         if matches!(&expression.kind, ExprKind::StructLiteral(_)) {
-            return Err(
-                "struct literals may only initialize a typed struct declaration; composite values are not supported"
-                    .to_string(),
-            );
+            return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
         }
         self.emit_expression_items(expression, 1)
     }
 
-    fn emit_expression_items(
-        &mut self,
-        expression: &Expression,
-        expected: usize,
-    ) -> Result<(), String> {
+    fn emit_expression_items(&mut self, expression: &Expression, expected: usize) -> Result<()> {
         // Counts temporaries instead of a stack watermark: a consuming read can
         // remove a binding below the watermark, so only the top `expected` items
         // are checked for being temporaries.
@@ -508,54 +310,52 @@ impl Generator {
         // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
         let mut branches = Vec::new();
-        for token in raw {
+        for op in raw {
             self.preserve_bindings = preserved || !branches.is_empty();
-            if token == OP_IF {
-                self.apply(OP_IF, 1, 0)?;
-                branches.push(self.stack.clone());
-            } else if token == OP_ELSE || token == OP_ENDIF {
-                self.pop_temporaries(1, &token)?;
-                if branches.last() != Some(&self.stack) {
-                    return Err("logical branch must produce exactly one stack item".to_string());
+            match op {
+                Op::Opcode(If) => {
+                    self.apply(If, 1, 0)?;
+                    branches.push(self.stack.clone());
                 }
-                if token == OP_ENDIF {
-                    branches.pop();
-                    self.stack.push(StackItem::Temporary);
-                }
-                self.asm.push(token);
-            } else if let Some(index) = token
-                .strip_prefix("<$call:")
-                .and_then(|s| s.strip_suffix('>'))
-            {
-                let index = index.parse::<usize>().map_err(|_| "invalid call marker")?;
-                let value = values.get(index).ok_or("invalid call marker")?;
-                if matches!(&value.kind, ExprKind::Call { .. }) {
-                    self.emit_call(value)?;
-                } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
-                {
-                    self.emit_pairing(value)?;
-                } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
-                {
-                    self.emit_multisig(value)?;
-                } else if matches!(
-                    &value.kind,
-                    ExprKind::GroupIOAccess {
-                        source: crate::models::GroupIOSource::Inputs,
-                        ..
+                Op::Opcode(token @ (Else | EndIf)) => {
+                    self.pop_temporaries(1, token)?;
+                    if branches.last() != Some(&self.stack) {
+                        return Err("logical branch must produce exactly one stack item".into());
                     }
-                ) {
-                    self.emit_group_input(value)?;
-                } else {
-                    let ty = value.ty.as_str();
-                    self.emit_access_value(value, &ty)?;
+                    if token == EndIf {
+                        branches.pop();
+                        self.stack.push(StackItem::Temporary);
+                    }
+                    self.asm.push(token.into());
                 }
-            } else {
-                self.lower_raw_token(&token)?;
+                Op::Value(index) => {
+                    let value = values.get(index).ok_or("invalid call marker")?;
+                    if matches!(&value.kind, ExprKind::Call { .. }) {
+                        self.emit_call(value)?;
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+                    {
+                        self.emit_pairing(value)?;
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
+                    {
+                        self.emit_multisig(value)?;
+                    } else if matches!(
+                        &value.kind,
+                        ExprKind::GroupIOAccess {
+                            source: crate::models::GroupIOSource::Inputs,
+                            ..
+                        }
+                    ) {
+                        self.emit_group_input(value)?;
+                    } else {
+                        self.emit_access_value(value, &TypeName::from(&value.ty))?;
+                    }
+                }
+                op => self.lower_op(op)?,
             }
         }
         self.preserve_bindings = preserved;
         if !branches.is_empty() {
-            return Err("unclosed logical branch".to_string());
+            return Err("unclosed logical branch".into());
         }
         let after = self
             .stack
@@ -573,343 +373,25 @@ impl Generator {
             return Err(format!(
                 "expression produces {} stack items; exactly {expected} required",
                 after.saturating_sub(before),
-            ));
+            )
+            .into());
         }
         Ok(())
     }
 
-    fn bind_local(&mut self, name: &str) -> Result<(), String> {
-        let top = self.stack.last_mut().ok_or_else(|| {
-            "internal compiler error: local initializer produced no value".to_string()
-        })?;
-        if !matches!(top, StackItem::Temporary) {
-            return Err(
-                "internal compiler error: local initializer did not leave a temporary".to_string(),
-            );
-        }
-        *top = StackItem::Binding {
-            name: name.to_string(),
-            kind: BindingKind::Local,
-        };
-        Ok(())
-    }
-
-    fn assign(&mut self, target: &AssignmentTarget) -> Result<(), String> {
-        match target {
-            AssignmentTarget::Access(value) => self.assign_access(value),
-            AssignmentTarget::Binding(name) => self.assign_static_binding(name, name),
-            AssignmentTarget::ArrayIndex { array, index } => match &index.kind {
-                ExprKind::Literal(literal) => self.assign_static_binding(
-                    &internal_array_binding_name(array, literal),
-                    &format!("{array}[{literal}]"),
-                ),
-                _ => self.assign_indexed_binding(array, index),
-            },
-        }
-    }
-
-    fn assign_static_binding(&mut self, name: &str, display_name: &str) -> Result<(), String> {
-        let name = Self::internal_binding_name(name);
-        if self.aliases.contains_key(&name) {
-            return Err(format!(
-                "internal compiler error: aliased parameter '{display_name}' is assigned"
-            ));
-        }
-        if let Some((target, kind, start)) = self.replacement.clone() {
-            if target == name && !self.preserve_bindings {
-                if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
-                    return Err(
-                        "internal compiler error: assignment has no result value".to_string()
-                    );
-                }
-                if let Some(index) = self.stack.len().checked_sub(2) {
-                    if let Some(previous) = self.last_reads.remove(&(name.clone(), index)) {
-                        if previous < start {
-                            self.final_reads[previous] = false;
-                        }
-                    }
-                }
-                if let Some(index) = self.binding_index(&name) {
-                    if index + 2 != self.stack.len() {
-                        return Err(
-                            "internal compiler error: assignment target moved below the top slot"
-                                .to_string(),
-                        );
-                    }
-                    self.nip()?;
-                }
-                *self
-                    .stack
-                    .last_mut()
-                    .ok_or("internal compiler error: assignment has no result value")? =
-                    StackItem::Binding { name, kind };
-                return Ok(());
-            }
-        }
-        let index = self
-            .binding_index(&name)
-            .ok_or_else(|| format!("assignment to undeclared binding '{display_name}'"))?;
-        if matches!(
-            self.stack[index],
-            StackItem::Binding {
-                kind: BindingKind::Constructor,
-                ..
-            }
-        ) {
-            return Err(format!(
-                "cannot assign to constructor parameter '{display_name}'; constructor parameters are immutable"
-            ));
-        }
-        if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
-            return Err("internal compiler error: assignment has no result value".to_string());
-        }
-        if let Some(previous) = self.last_reads.remove(&(name, index)) {
-            self.final_reads[previous] = false;
-        }
-        let depth = self.stack.len().checked_sub(index + 2).ok_or_else(|| {
-            format!("internal compiler error: invalid assignment target '{display_name}'")
-        })?;
-        self.push_integer_temporary(depth);
-        self.apply(OP_PUT, 2, 0)
-    }
-
-    fn assign_indexed_binding(&mut self, array: &str, index: &Expression) -> Result<(), String> {
-        if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
-            return Err("internal compiler error: assignment has no result value".to_string());
-        }
-        // The index expression may consume a binding, so resolve the array slot after it.
-        self.emit_expression(index)?;
-        let first_element = internal_array_binding_name(array, "0");
-        let first_index = self
-            .binding_index(&first_element)
-            .ok_or_else(|| format!("undefined array binding '{array}'"))?;
-        if matches!(
-            self.stack[first_index],
-            StackItem::Binding {
-                kind: BindingKind::Constructor,
-                ..
-            }
-        ) {
-            return Err(format!(
-                "cannot assign to constructor parameter '{array}'; constructor parameters are immutable"
-            ));
-        }
-        let first_depth_without_operands =
-            self.stack
-                .len()
-                .checked_sub(first_index + 3)
-                .ok_or_else(|| {
-                    format!(
-                        "internal compiler error: array assignment operands for '{array}' are not on the stack"
-                    )
-                })?;
-        self.check_array_index(self.array_length(array))?;
-        if first_depth_without_operands != 0 {
-            self.push_integer_temporary(first_depth_without_operands);
-            self.apply(OP_ADD, 2, 1)?;
-        }
-        self.apply(OP_PUT, 2, 0)
-    }
-
-    fn enter_scope(&mut self) {
-        self.scopes.push((self.stack.len(), self.scope.clone()));
-    }
-
-    fn exit_scope(&mut self) -> Result<(), String> {
-        let (baseline, scope) = self
-            .scopes
-            .pop()
-            .ok_or("internal compiler error: scope stack underflow")?;
-        let outer: std::collections::HashSet<_> = scope
-            .keys()
-            .map(|name| Self::internal_binding_name(name))
-            .collect();
-        for index in (baseline..self.stack.len()).rev() {
-            match &self.stack[index] {
-                StackItem::Binding {
-                    name,
-                    kind: BindingKind::Local,
-                } if !outer.contains(name) => self.drop_binding(index)?,
-                StackItem::Binding { .. } => {}
-                StackItem::Temporary => {
-                    return Err("internal compiler error: scope ended with a temporary".into())
-                }
-            }
-        }
-        self.deferred.retain(|name| scope.contains_key(name));
-        self.scope = scope;
-        Ok(())
-    }
-
-    fn drop_binding(&mut self, index: usize) -> Result<(), String> {
-        let depth = self.stack.len() - index - 1;
-        match depth {
-            0 => self.asm.push(OP_DROP.into()),
-            1 => self.asm.push(OP_NIP.into()),
-            _ => {
-                self.push_integer_temporary(depth);
-                self.pop_temporaries(1, OP_ROLL)?;
-                self.asm.extend([OP_ROLL.into(), OP_DROP.into()]);
-            }
-        }
-        self.stack.remove(index);
-        self.last_reads.retain(|(_, slot), _| *slot < index);
-        Ok(())
-    }
-
-    // Joins scan local frames quadratically; index permutations if large frames become common.
-    fn join_stack(&mut self, target: &[StackItem]) -> Result<(), String> {
-        if self.stack == target {
-            return Ok(());
-        }
-        for index in (0..self.stack.len()).rev() {
-            if !target.contains(&self.stack[index]) {
-                self.drop_binding(index)?;
-            }
-        }
-        for item in target {
-            if !self.stack.contains(item) {
-                let StackItem::Binding { name, .. } = item else {
-                    return Err("internal compiler error: temporary at branch join".into());
-                };
-                // Returning paths share the join frame; direct return lowering could remove this padding.
-                self.push_temporary(OP_0);
-                self.bind_local(name)?;
-            }
-        }
-        if self.stack != target {
-            let start = self
-                .stack
-                .iter()
-                .zip(target)
-                .take_while(|(left, right)| left == right)
-                .count();
-            for item in &target[start..] {
-                let index = self
-                    .stack
-                    .iter()
-                    .position(|slot| slot == item)
-                    .ok_or("internal compiler error: missing branch binding")?;
-                let depth = self.stack.len() - index - 1;
-                if depth != 0 {
-                    if depth == 1 {
-                        self.swap()?;
-                    } else {
-                        self.push_integer_temporary(depth);
-                        self.pop_temporaries(1, OP_ROLL)?;
-                        self.asm.push(OP_ROLL.into());
-                        let item = self.stack.remove(index);
-                        self.stack.push(item);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn emit_branches(
-        &mut self,
-        then_body: &[LocatedStatement],
-        else_body: Option<&[LocatedStatement]>,
-        implicit_else_continues: bool,
-    ) -> Result<bool, String> {
-        let baseline = self.stack.clone();
-        let deferred = self.deferred.clone();
-        let start = self.asm.len();
-        self.enter_scope();
-        let left_continues = generate_asm_from_statements_recursive(then_body, self)?;
-        self.exit_scope()?;
-        let left = self.stack.clone();
-        let left_deferred = self.deferred.clone();
-        let left_asm = self.asm.split_off(start);
-        self.stack = baseline.clone();
-        self.deferred = deferred.clone();
-        self.last_reads
-            .retain(|(_, slot), _| *slot < baseline.len());
-        // A return guard's absent branch has already returned and cannot continue.
-        let right_continues = if let Some(body) = else_body {
-            self.enter_scope();
-            let continues = generate_asm_from_statements_recursive(body, self)?;
-            self.exit_scope()?;
-            continues
-        } else {
-            implicit_else_continues
-        };
-        let right = self.stack.clone();
-        let right_deferred = self.deferred.clone();
-        let right_asm = self.asm.split_off(start);
-        let initialized: std::collections::HashSet<_> = deferred
-            .iter()
-            .filter(|name| {
-                (left_continues || right_continues)
-                    && (!left_continues || !left_deferred.contains(*name))
-                    && (!right_continues || !right_deferred.contains(*name))
-            })
-            .cloned()
-            .collect();
-        let mut initialized_leaves = std::collections::HashSet::new();
-        for name in &initialized {
-            let ty = self
-                .scope
-                .get(name)
-                .ok_or("internal compiler error: missing declaration type")?;
-            for leaf in self.value_leaves(name, &ty.as_str())? {
-                initialized_leaves.insert(Self::internal_binding_name(&leaf.access_name));
-            }
-        }
-        let mut target = baseline.clone();
-        let preferred = if left_continues { &left } else { &right };
-        target.extend(preferred.iter().skip(baseline.len()).filter(|item| {
-            matches!(item, StackItem::Binding { name, .. } if initialized_leaves.contains(name))
-        }).cloned());
-        if !left.starts_with(&baseline) || !right.starts_with(&baseline) {
-            return Err("internal compiler error: branch changed outer stack layout".into());
-        }
-        self.stack = left;
-        self.asm.extend(left_asm);
-        self.join_stack(&target)?;
-        let left_joined = self.asm.split_off(start);
-        self.stack = right;
-        self.asm.extend(right_asm);
-        self.join_stack(&target)?;
-        let right_joined = self.asm.split_off(start);
-        self.asm.extend(left_joined);
-        if else_body.is_some() || !right_joined.is_empty() {
-            self.asm.push(OP_ELSE.into());
-            self.asm.extend(right_joined);
-        }
-        self.asm.push(OP_ENDIF.into());
-        self.deferred = deferred.difference(&initialized).cloned().collect();
-        self.last_reads
-            .retain(|(_, slot), _| *slot < baseline.len());
-        Ok(left_continues || right_continues)
-    }
-
-    fn assert_statement_boundary(&self) -> Result<(), String> {
-        if self
-            .stack
-            .iter()
-            .any(|item| matches!(item, StackItem::Temporary))
-        {
-            return Err(
-                "internal compiler error: statement left a temporary stack value".to_string(),
-            );
-        }
-        Ok(())
-    }
-
-    fn finish(mut self) -> Result<Vec<String>, String> {
+    /// The covenant's instructions and its stack peak.
+    fn finish(mut self) -> Result<(Vec<Op>, usize)> {
         if !self.scopes.is_empty() {
-            return Err("internal compiler error: unbalanced generator scope".to_string());
+            return Err(CompileError::internal("unbalanced generator scope"));
         }
-        self.push_temporary(OP_1);
+        self.push_temporary(Int1);
         while self.stack.len() > 1 {
             self.nip()?;
         }
         if self.stack != vec![StackItem::Temporary] {
-            return Err("internal compiler error: covenant did not finish cleanly".to_string());
+            return Err(CompileError::internal("covenant did not finish cleanly"));
         }
-        Ok(self.asm)
+        Ok((self.asm, self.max_depth))
     }
 }
 
@@ -992,7 +474,7 @@ pub(crate) fn emit(
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
-) -> Result<ContractJson, String> {
+) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
 
     let mut json = ContractJson {
@@ -1024,19 +506,12 @@ pub(crate) fn emit(
                 &contract.structs,
                 &contract.functions,
                 options.optimize,
-            )?,
+            )
+            .map_err(|error| error.at(function.span))?,
         );
     }
 
     json.functions = tapscript::build_function_groups(contract, covenants)?;
-
-    if options.optimize {
-        for group in &mut json.functions {
-            if let Some(covenant) = &mut group.arkade {
-                covenant.asm = optimization::optimize(std::mem::take(&mut covenant.asm));
-            }
-        }
-    }
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
@@ -1047,7 +522,8 @@ pub(crate) fn emit(
             .filter(|issue| matches!(issue.severity, Severity::Error))
             .map(|issue| format!("output validation error: {}", issue.message))
             .collect::<Vec<_>>()
-            .join("; "));
+            .join("; ")
+            .into());
     }
     for issue in &output_issues {
         json.warnings
@@ -1069,7 +545,7 @@ pub(crate) fn emit(
 pub(crate) fn expanded_placeholder_params(
     params: &[Parameter],
     structs: &[crate::models::StructDefinition],
-) -> Result<Vec<Parameter>, String> {
+) -> Result<Vec<Parameter>> {
     let mut result = Vec::new();
     for param in params {
         for_each_expanded_param(param, structs, |name, _, param_type| {
@@ -1086,7 +562,7 @@ fn covenant_for(
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<ArkadeCovenant, String> {
+) -> Result<ArkadeCovenant> {
     let inputs = function_inputs(&function.parameters);
     let references =
         crate::validator::references::referenced_parameters(&function.statements, functions);
@@ -1095,19 +571,6 @@ fn covenant_for(
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    if !optimize {
-        // ponytail: validate folded lowering with an extra emission pass; use a dedicated
-        // validation walk if this becomes costly for large unoptimized contracts.
-        let mut validation = Generator::new(
-            &function.parameters,
-            &retained_parameters,
-            structs,
-            &Default::default(),
-        )?;
-        validation.optimize = true;
-        validation.functions = functions.to_vec();
-        generate_asm_from_statements_recursive(&function.statements, &mut validation)?;
-    }
     let mut counting = Generator::new(
         &function.parameters,
         &retained_parameters,
@@ -1116,7 +579,19 @@ fn covenant_for(
     )?;
     counting.optimize = optimize;
     counting.functions = functions.to_vec();
-    generate_asm_from_statements_recursive(&function.statements, &mut counting)?;
+    if !optimize {
+        let mut checked = std::collections::HashSet::new();
+        lowering::check_folded(
+            &function.statements,
+            &counting.scope,
+            &counting.constructor_scope,
+            structs,
+            functions,
+            &mut checked,
+        )?;
+    }
+    let body = counting.lower(&function.statements)?;
+    emit_body(&body, &mut counting)?;
     // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
     let mut inlined = std::collections::HashSet::new();
     for parameter in &retained_parameters {
@@ -1144,7 +619,7 @@ fn covenant_for(
         )?;
         analysis.optimize = optimize;
         analysis.functions = functions.to_vec();
-        generate_asm_from_statements_recursive(&function.statements, &mut analysis)?;
+        emit_body(&body, &mut analysis)?;
         analysis
     };
     let mut generator = Generator::new(
@@ -1157,13 +632,48 @@ fn covenant_for(
     generator.functions = functions.to_vec();
     generator.final_reads = analysis.final_reads;
     generator.read_cursor = Some(0);
-    generate_asm_from_statements_recursive(&function.statements, &mut generator)?;
+    emit_body(&body, &mut generator)?;
     if generator.read_cursor != Some(generator.final_reads.len()) {
-        return Err(
-            "internal compiler error: final-use analysis diverged from emission".to_string(),
-        );
+        return Err(CompileError::internal(
+            "final-use analysis diverged from emission",
+        ));
     }
-    let asm = generator.finish()?;
+    let (mut ops, mut peak) = generator.finish()?;
+    if optimize {
+        let (optimized, raise) = optimization::optimize(ops);
+        ops = optimized;
+        peak += raise;
+    }
+    if peak > MAX_STACK_ITEMS {
+        return Err(format!(
+            "function '{}' can hold {peak} stack items, above the VM limit of {MAX_STACK_ITEMS}",
+            function.name
+        )
+        .into());
+    }
+    let mut widths = std::collections::HashMap::new();
+    for parameter in &retained_parameters {
+        for leaf in crate::models::flatten_parameter(parameter, structs)? {
+            let width = match leaf.leaf_type.ark_type() {
+                types::ArkType::Signature => 64,
+                types::ArkType::Bytes32 | types::ArkType::Asset => 32,
+                types::ArkType::Bytes20 => 20,
+                _ => 0,
+            };
+            widths.insert(leaf.emitted_name, width);
+        }
+    }
+    let width = |name: &str| widths.get(name).copied().unwrap_or(0);
+    // A lower bound: a variable-width parameter counts as its shortest push, so an instance
+    // with long values can still exceed the limit.
+    let size: usize = ops.iter().map(|op| op.min_size(&width)).sum();
+    if size > MAX_SCRIPT_SIZE {
+        return Err(format!(
+            "function '{}' assembles to at least {size} bytes, above the VM limit of {MAX_SCRIPT_SIZE}",
+            function.name
+        ).into());
+    }
+    let asm = ops.iter().map(Op::spell).collect();
     Ok(ArkadeCovenant { inputs, asm })
 }
 
@@ -1172,7 +682,7 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
         .iter()
         .map(|param| FunctionInput {
             name: param.name.clone(),
-            param_type: param.param_type.clone(),
+            param_type: param.param_type.to_string(),
         })
         .collect()
 }
@@ -1180,430 +690,10 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
 fn for_each_expanded_param(
     param: &Parameter,
     structs: &[crate::models::StructDefinition],
-    mut f: impl FnMut(String, String, String),
-) -> Result<(), String> {
+    mut f: impl FnMut(String, Path, TypeName),
+) -> Result<()> {
     for leaf in crate::models::flatten_parameter(param, structs)? {
-        let binding_name = Generator::internal_binding_name(&leaf.access_name);
-        f(leaf.emitted_name, binding_name, leaf.leaf_type);
+        f(leaf.emitted_name, leaf.access, leaf.leaf_type);
     }
     Ok(())
-}
-
-/// Generate assembly and report whether an emitted path falls through.
-fn generate_asm_from_statements_recursive(
-    statements: &[LocatedStatement],
-    generator: &mut Generator,
-) -> Result<bool, String> {
-    for (index, stmt) in statements.iter().enumerate() {
-        let mut folded;
-        let stmt = if generator.optimize {
-            folded = stmt.clone();
-            optimization::fold_statement(&mut folded.statement, &generator.scope)?;
-            &folded
-        } else {
-            stmt
-        };
-        let mut continues = true;
-        match &stmt.statement {
-            Statement::Call(expression) => generator.emit_call(expression)?,
-            Statement::Return(value) => {
-                generator.emit_return(value.as_ref())?;
-                return Ok(false);
-            }
-            Statement::Require(req) => {
-                generate_requirement_asm(req, generator)?;
-            }
-            Statement::IfElse {
-                condition,
-                then_body,
-                else_body,
-            } => {
-                if generator.optimize
-                    && matches!(&condition.kind, ExprKind::Literal(value) if value == "true" || value == "false")
-                {
-                    let body = if matches!(&condition.kind, ExprKind::Literal(value) if value == "true")
-                    {
-                        then_body.as_slice()
-                    } else {
-                        else_body.as_deref().unwrap_or_default()
-                    };
-                    generator.enter_scope();
-                    continues = generate_asm_from_statements_recursive(body, generator)?;
-                    generator.exit_scope()?;
-                } else {
-                    generator.emit_expression(condition)?;
-                    generator.apply(OP_IF, 1, 0)?;
-                    continues = generator.emit_branches(then_body, else_body.as_deref(), true)?;
-                }
-            }
-            Statement::ForIn {
-                index_var,
-                value_var,
-                iterable,
-                body,
-            } => {
-                let types::ArkType::Array(_, length) = iterable.ty else {
-                    return Err("unsupported loop iterable".to_string());
-                };
-                for k in 0..length {
-                    let mut substituted =
-                        substitute_loop_body(body, index_var, value_var, k, iterable);
-                    // Substitution builds untyped nodes; return types and group members
-                    // were resolved on the original body and survive the copy.
-                    types::annotate_statements(
-                        &mut substituted,
-                        &mut generator.scope.clone(),
-                        &generator.structs,
-                    );
-                    let baseline = generator.stack.clone();
-                    generator.enter_scope();
-                    continues = if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(&substituted)?
-                    } else {
-                        generate_asm_from_statements_recursive(&substituted, generator)?
-                    };
-                    generator.exit_scope()?;
-                    if !generator.stack.starts_with(&baseline) {
-                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
-                    }
-                    if !continues && generator.optimize {
-                        break;
-                    }
-                }
-            }
-            Statement::ForCount { count, body } => {
-                let ExprKind::Literal(count) = &count.kind else {
-                    return Err(
-                        "loop count must be a non-negative integer compile-time constant"
-                            .to_string(),
-                    );
-                };
-                let count = count.parse::<usize>().map_err(|_| {
-                    "loop count must be a non-negative integer compile-time constant".to_string()
-                })?;
-                for k in 0..count {
-                    let baseline = generator.stack.clone();
-                    generator.enter_scope();
-                    continues = if k > 0 && functions::contains_return(body) {
-                        generator.emit_unless_returned(body)?
-                    } else {
-                        generate_asm_from_statements_recursive(body, generator)?
-                    };
-                    generator.exit_scope()?;
-                    if !generator.stack.starts_with(&baseline) {
-                        return Err(format!("internal compiler error: loop iteration {k} changed outer stack layout"));
-                    }
-                    if !continues && generator.optimize {
-                        break;
-                    }
-                }
-            }
-            Statement::Declaration {
-                name,
-                declared_type,
-            } => {
-                generator.bind_type(name, declared_type);
-                generator.deferred.insert(name.clone());
-            }
-            Statement::LetBinding {
-                name,
-                declared_type,
-                value,
-            } => {
-                let composite_type = generator.composite_type(value);
-                let result_type = declared_type
-                    .as_deref()
-                    .or_else(|| match &value.kind {
-                        ExprKind::Call { return_type, .. } => return_type.as_deref(),
-                        _ => crate::models::expression_result_struct(value),
-                    })
-                    .or(composite_type.as_deref());
-                if let Some(ty) = result_type {
-                    generator.emit_typed_value(value, ty)?;
-                    generator.bind_value(name, ty)?;
-                    generator.bind_type(name, ty);
-                } else {
-                    generator.emit_expression(value)?;
-                    generator.bind_local(name)?;
-                    let ty = value.ty.clone();
-                    generator.scope.insert(name.clone(), ty);
-                }
-            }
-            Statement::VarAssign { target, value } => {
-                let previous_replacement = generator.replacement.take();
-                // Deeper targets use OP_PUT; moving them needs scope and branch layout repair.
-                generator.replacement = match (target, generator.stack.last()) {
-                    (
-                        AssignmentTarget::Binding(name),
-                        Some(StackItem::Binding { name: top, kind }),
-                    ) if name == top
-                        && *kind != BindingKind::Constructor
-                        && !generator.preserve_bindings =>
-                    {
-                        Some((
-                            name.clone(),
-                            kind.clone(),
-                            generator.read_cursor.unwrap_or(generator.final_reads.len()),
-                        ))
-                    }
-                    _ => None,
-                };
-                let mut access = value.with_kind(match target {
-                    AssignmentTarget::Binding(name) => ExprKind::Variable(name.clone()),
-                    AssignmentTarget::ArrayIndex { array, index } => ExprKind::ArrayIndex {
-                        array: array.clone(),
-                        index: index.clone(),
-                    },
-                    AssignmentTarget::Access(access) => access.kind.clone(),
-                });
-                types::annotate_expression(&mut access, &generator.scope);
-                if let AssignmentTarget::Binding(name) = target {
-                    if generator.deferred.remove(name) {
-                        generator.emit_typed_value(value, &access.ty.as_str())?;
-                        generator.bind_value(name, &access.ty.as_str())?;
-                        generator.replacement = previous_replacement;
-                        generator.assert_statement_boundary()?;
-                        continue;
-                    }
-                }
-                if matches!(
-                    access.ty,
-                    types::ArkType::Struct(_) | types::ArkType::Array(..)
-                ) {
-                    generator.emit_typed_value(value, &access.ty.as_str())?;
-                    generator.assign_access(&access)?;
-                } else {
-                    generator.emit_expression(value)?;
-                    generator.assign(target)?;
-                }
-                generator.replacement = previous_replacement;
-            }
-        }
-        generator.assert_statement_boundary()?;
-        if !continues {
-            return Ok(false);
-        }
-        if functions::contains_return(std::slice::from_ref(stmt)) && index + 1 < statements.len() {
-            return generator.emit_unless_returned(&statements[index + 1..]);
-        }
-    }
-    Ok(true)
-}
-
-/// Generate assembly for a single requirement
-fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<(), String> {
-    if generator.optimize
-        && matches!(req, Requirement::Expression(Expression { kind: ExprKind::Literal(value), .. }) if value == "true")
-    {
-        return Ok(());
-    }
-    match req {
-        Requirement::Expression(expr) => {
-            match &expr.kind {
-                ExprKind::GroupFind { .. } => {
-                    generator.emit_expression(expr)?;
-                    generator.apply(OP_DROP, 1, 0)?;
-                    generator.push_temporary(OP_1);
-                    generator.apply(OP_VERIFY, 1, 0)?;
-                }
-                ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {
-                    generator.emit_expression_items(expr, 0)?;
-                }
-                _ => {
-                    generator.emit_expression(expr)?;
-                    generator.apply(OP_VERIFY, 1, 0)?;
-                }
-            }
-            Ok(())
-        }
-        Requirement::Comparison { left, op, right } => {
-            if let Some(ty) = generator
-                .composite_type(left)
-                .or_else(|| generator.composite_type(right))
-            {
-                return generator.emit_composite_requirement(left, *op, right, &ty);
-            }
-            generator.emit_expression(left)?;
-            generator.emit_expression(right)?;
-            for opcode in op.opcodes() {
-                generator.lower_raw_opcode(opcode)?;
-            }
-            generator.apply(OP_VERIFY, 1, 0)?;
-            Ok(())
-        }
-    }
-}
-
-#[cfg(test)]
-mod symbolic_stack_tests {
-    use super::*;
-
-    #[test]
-    fn deep_assignment_uses_put_at_the_remaining_stack_depth() {
-        let inputs = ["a", "b", "c", "d"]
-            .into_iter()
-            .map(|name| Parameter {
-                name: name.to_string(),
-                param_type: "int".to_string(),
-            })
-            .collect::<Vec<_>>();
-        let mut generator =
-            Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
-
-        generator.push_temporary("9");
-        generator
-            .assign(&AssignmentTarget::Binding("d".to_string()))
-            .expect("deep assignment");
-
-        assert_eq!(generator.asm, ["9", "OP_3", "OP_PUT"]);
-        assert_eq!(
-            generator.stack,
-            ["d", "c", "b", "a"]
-                .into_iter()
-                .map(|name| StackItem::Binding {
-                    name: name.to_string(),
-                    kind: BindingKind::FunctionInput,
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn shallow_assignment_uses_zero_depth_put() {
-        let inputs = ["a", "b"]
-            .into_iter()
-            .map(|name| Parameter {
-                name: name.to_string(),
-                param_type: "int".to_string(),
-            })
-            .collect::<Vec<_>>();
-        let mut generator =
-            Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
-
-        generator.push_temporary("9");
-        generator
-            .assign(&AssignmentTarget::Binding("a".to_string()))
-            .expect("shallow assignment");
-
-        assert_eq!(generator.asm, ["9", "OP_0", "OP_PUT"]);
-        assert_eq!(
-            generator.stack,
-            ["b", "a"]
-                .into_iter()
-                .map(|name| StackItem::Binding {
-                    name: name.to_string(),
-                    kind: BindingKind::FunctionInput,
-                })
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn indexed_assignment_without_offset_preserves_bindings() {
-        let inputs = [
-            Parameter {
-                name: "values".into(),
-                param_type: "int[3]".into(),
-            },
-            Parameter {
-                name: "i".into(),
-                param_type: "int".into(),
-            },
-        ];
-        let mut generator =
-            Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
-        let bindings = generator.stack.clone();
-        generator.push_temporary("9");
-        generator
-            .assign(&AssignmentTarget::ArrayIndex {
-                array: "values".into(),
-                index: Box::new(ExprKind::Variable("i".into()).into()),
-            })
-            .expect("indexed assignment");
-        assert_eq!(
-            generator.asm,
-            [
-                "9",
-                "OP_4",
-                "OP_PICK",
-                "OP_DUP",
-                "OP_0",
-                "OP_GREATERTHANOREQUAL",
-                "OP_VERIFY",
-                "OP_DUP",
-                "OP_3",
-                "OP_LESSTHAN",
-                "OP_VERIFY",
-                "OP_PUT",
-            ]
-        );
-        assert_eq!(generator.stack, bindings);
-    }
-
-    #[test]
-    fn expression_index_assignment_checks_bounds_and_uses_put() {
-        let inputs = [
-            Parameter {
-                name: "values".to_string(),
-                param_type: "int[3]".to_string(),
-            },
-            Parameter {
-                name: "i".to_string(),
-                param_type: "int".to_string(),
-            },
-        ];
-        let mut generator =
-            Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
-        generator.push_temporary("7");
-        generator.bind_local("above").expect("local above array");
-
-        generator.push_temporary("9");
-        generator
-            .assign(&AssignmentTarget::ArrayIndex {
-                array: "values".to_string(),
-                index: Box::new(
-                    ExprKind::BinaryOp {
-                        left: Box::new(ExprKind::Variable("i".to_string()).into()),
-                        op: crate::operators::BinaryOperator::Add,
-                        right: Box::new(ExprKind::Literal("1".to_string()).into()),
-                    }
-                    .into(),
-                ),
-            })
-            .expect("expression index assignment");
-
-        assert_eq!(
-            generator.asm,
-            [
-                "7",
-                "9",
-                "OP_5",
-                "OP_PICK",
-                "1",
-                "OP_ADD",
-                "OP_DUP",
-                "OP_0",
-                "OP_GREATERTHANOREQUAL",
-                "OP_VERIFY",
-                "OP_DUP",
-                "OP_3",
-                "OP_LESSTHAN",
-                "OP_VERIFY",
-                "OP_1",
-                "OP_ADD",
-                "OP_PUT",
-            ]
-        );
-        assert!(generator
-            .stack
-            .iter()
-            .all(|item| !matches!(item, StackItem::Temporary)));
-        assert_eq!(
-            generator.stack.last(),
-            Some(&StackItem::Binding {
-                name: "above".to_string(),
-                kind: BindingKind::Local,
-            })
-        );
-    }
 }

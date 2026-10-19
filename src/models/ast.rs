@@ -2,6 +2,85 @@
 
 use super::*;
 
+/// A binding and the struct fields and constant array elements read through it,
+/// as in `s.inner.x` or `ps[0].x`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Path {
+    pub root: String,
+    pub segments: Vec<Segment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Segment {
+    Field(String),
+    Index(usize),
+}
+
+impl Path {
+    pub fn new(root: impl Into<String>) -> Self {
+        Self {
+            root: root.into(),
+            segments: Vec::new(),
+        }
+    }
+
+    /// The path a dotted name spells, field by field.
+    pub fn from_key(key: &str) -> Self {
+        let mut parts = key.split('.');
+        Self {
+            root: parts.next().unwrap_or_default().to_string(),
+            segments: parts
+                .map(|field| Segment::Field(field.to_string()))
+                .collect(),
+        }
+    }
+
+    /// The scope key and source spelling, such as `ps[0].x`.
+    pub fn key(&self) -> String {
+        let mut key = self.root.clone();
+        for segment in &self.segments {
+            match segment {
+                Segment::Field(field) => {
+                    key.push('.');
+                    key.push_str(field);
+                }
+                Segment::Index(index) => key.push_str(&format!("[{index}]")),
+            }
+        }
+        key
+    }
+
+    pub fn field(mut self, field: impl Into<String>) -> Self {
+        self.segments.push(Segment::Field(field.into()));
+        self
+    }
+
+    pub fn index(mut self, index: usize) -> Self {
+        self.segments.push(Segment::Index(index));
+        self
+    }
+
+    /// The path without its last field, and that field.
+    pub fn split_last(&self) -> Option<(Path, &str)> {
+        let (Segment::Field(last), segments) = self.segments.split_last()? else {
+            return None;
+        };
+        Some((
+            Path {
+                root: self.root.clone(),
+                segments: segments.to_vec(),
+            },
+            last,
+        ))
+    }
+}
+
+impl std::fmt::Display for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.key())
+    }
+}
+
 /// Contract AST
 #[derive(Debug, Clone)]
 pub struct Contract {
@@ -27,7 +106,7 @@ pub struct Contract {
 #[derive(Debug, Clone)]
 pub struct Constant {
     pub name: String,
-    pub const_type: String,
+    pub const_type: TypeName,
     pub value: Expression,
 }
 
@@ -49,7 +128,7 @@ pub struct Function {
     /// Whether this helper can be called from a directly importing file.
     pub is_exported: bool,
     /// Explicit result type; None means the function returns no value.
-    pub return_type: Option<String>,
+    pub return_type: Option<TypeName>,
 }
 
 impl Function {
@@ -76,11 +155,14 @@ pub enum Statement {
     /// require(expr, "message");
     Require(Requirement),
     /// type name; — no value or stack slot until assignment.
-    Declaration { name: String, declared_type: String },
+    Declaration {
+        name: String,
+        declared_type: TypeName,
+    },
     /// let name = expr; or type name = expr;
     LetBinding {
         name: String,
-        declared_type: Option<String>,
+        declared_type: Option<TypeName>,
         value: Expression,
     },
     /// name = expr; or name[index] = expr; (variable reassignment)
@@ -112,11 +194,29 @@ pub enum Statement {
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
     Access(Box<Expression>),
-    Binding(String),
-    ArrayIndex {
-        array: String,
-        index: Box<Expression>,
-    },
+    Binding(Path),
+    ArrayIndex { array: Path, index: Box<Expression> },
+}
+
+impl Statement {
+    /// The expressions the statement itself evaluates, not those of nested statements.
+    pub(crate) fn expressions(&self) -> Vec<&Expression> {
+        match self {
+            Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
+            Statement::Require(Requirement::Expression(expression)) => vec![expression],
+            Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
+            Statement::LetBinding { value, .. } => vec![value],
+            Statement::VarAssign {
+                target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
+                value,
+            } => vec![value, index],
+            Statement::VarAssign { value, .. } => vec![value],
+            Statement::IfElse { condition, .. } => vec![condition],
+            Statement::ForIn { iterable, .. } => vec![iterable],
+            Statement::ForCount { count, .. } => vec![count],
+            Statement::Return(None) | Statement::Declaration { .. } => vec![],
+        }
+    }
 }
 
 impl Requirement {
@@ -151,14 +251,14 @@ pub enum HashFn {
 }
 
 impl HashFn {
-    /// The Bitcoin opcode string this hash function emits.
-    pub fn opcode(&self) -> &'static str {
-        use crate::opcodes::{OP_HASH160, OP_HASH256, OP_RIPEMD160, OP_SHA256};
+    /// The opcode this hash function emits.
+    pub fn opcode(&self) -> crate::opcodes::Opcode {
+        use crate::opcodes::Opcode::{Hash160, Hash256, Ripemd160, Sha256};
         match self {
-            HashFn::Sha256 => OP_SHA256,
-            HashFn::Hash160 => OP_HASH160,
-            HashFn::Hash256 => OP_HASH256,
-            HashFn::Ripemd160 => OP_RIPEMD160,
+            HashFn::Sha256 => Sha256,
+            HashFn::Hash160 => Hash160,
+            HashFn::Hash256 => Hash256,
+            HashFn::Ripemd160 => Ripemd160,
         }
     }
 
@@ -338,19 +438,20 @@ pub enum ExprKind {
     Call {
         name: String,
         args: Vec<Expression>,
-        return_type: Option<String>,
+        return_type: Option<TypeName>,
     },
     /// A builtin function call; its arguments are in parameter order.
     Builtin {
         builtin: &'static crate::builtins::Builtin,
         args: Vec<Expression>,
     },
-    /// Variable reference
-    Variable(String),
+    /// A binding, or a field of one: `x`, `s.field`, `s.inner.x`.
+    Name(Path),
     /// Decimal integer, boolean, or 0x-prefixed byte data (including empty 0x).
     Literal(String),
-    /// Property access
-    Property(String),
+    /// A value the covenant generator takes out of an expression to emit itself.
+    #[doc(hidden)]
+    Extracted(usize),
     /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
     IntentInspect {
         path: Box<Expression>,
@@ -377,10 +478,7 @@ pub enum ExprKind {
         index: Box<Expression>,
     },
     /// Array element selected by an integer expression.
-    ArrayIndex {
-        array: String,
-        index: Box<Expression>,
-    },
+    ArrayIndex { array: Path, index: Box<Expression> },
     /// `this.activeInputIndex`, `this.expiry`
     This(crate::properties::ThisProperty),
     /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
@@ -551,10 +649,10 @@ macro_rules! expression_children {
         pub(crate) fn $name(expr: $expr) -> Vec<$expr> {
             match $($borrow)* expr.kind {
                 // Leaf nodes: no nested expressions.
-                ExprKind::Variable(_)
+                ExprKind::Name(_)
                 | ExprKind::Literal(_)
-                | ExprKind::Property(_)
                 | ExprKind::This(_)
+                | ExprKind::Extracted(_)
                 | ExprKind::TxIntrospection { .. }
                 | ExprKind::AssetGroupsLength => vec![],
 
@@ -639,12 +737,26 @@ expression_children!(child_exprs, &Expression, (&), iter, as_ref);
 expression_children!(child_exprs_mut, &mut Expression, (&mut), iter_mut, as_mut);
 
 impl Expression {
+    /// The array index a literal spells.
+    pub(crate) fn literal_index(&self) -> Option<usize> {
+        match &self.kind {
+            ExprKind::Literal(index) => index.parse().ok(),
+            _ => None,
+        }
+    }
+
     /// Resolve the layout path, using element zero for runtime indexes.
-    pub(crate) fn binding_path(&self) -> Option<String> {
-        self.access_path(&|index| match &index.kind {
-            ExprKind::Literal(index) if index.parse::<usize>().is_ok() => index.clone(),
-            _ => "0".to_string(),
-        })
+    pub(crate) fn binding_path(&self) -> Option<Path> {
+        let layout_index = |index: &Expression| index.literal_index().unwrap_or(0);
+        match &self.kind {
+            ExprKind::Name(path) => Some(path.clone()),
+            ExprKind::ArrayIndex { array, index } => Some(array.clone().index(layout_index(index))),
+            ExprKind::IndexAccess { value, index } => {
+                Some(value.binding_path()?.index(layout_index(index)))
+            }
+            ExprKind::FieldAccess { value, field } => Some(value.binding_path()?.field(field)),
+            _ => None,
+        }
     }
 
     /// Spell an operand for diagnostics, using canonical names for aliases.
@@ -667,7 +779,7 @@ impl Expression {
 
     fn access_path(&self, index_text: &dyn Fn(&Self) -> String) -> Option<String> {
         match &self.kind {
-            ExprKind::Variable(name) | ExprKind::Property(name) => Some(name.clone()),
+            ExprKind::Name(path) => Some(path.key()),
             ExprKind::ArrayIndex { array, index } => {
                 Some(format!("{array}[{}]", index_text(index)))
             }

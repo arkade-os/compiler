@@ -600,3 +600,19 @@ fn a_covenant_that_only_checks_its_witness_keeps_the_final_verify() {
         assert_eq!(asm(&source), ["OP_VERIFY", "OP_1"], "{body}");
     }
 }
+
+#[test]
+fn a_pruned_return_leaves_no_return_guard() {
+    let source = |dead: &str| {
+        format!("contract C() {{ private function f(int x) int {{ {dead} require(x > 0); if (x > 5) {{ return 1; }} return 0; }} function spend(int x) {{ require(f(x) == 1); }} }}")
+    };
+    assert_eq!(asm(&source("if (1 > 2) { return 7; }")), asm(&source("")));
+}
+
+#[test]
+fn a_pruned_return_in_a_loop_leaves_no_iteration_guard() {
+    let source = |dead: &str| {
+        format!("contract C() {{ private function f(int[3] xs, int x) int {{ for (i, v) in xs {{ {dead} require(v != x); }} if (x > 5) {{ return 1; }} return 0; }} function spend(int[3] xs, int x) {{ require(f(xs, x) == 1); }} }}")
+    };
+    assert_eq!(asm(&source("if (1 > 2) { return 7; }")), asm(&source("")));
+}
