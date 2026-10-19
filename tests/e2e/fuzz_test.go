@@ -1,12 +1,10 @@
 package e2e
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -14,56 +12,48 @@ import (
 	"testing"
 )
 
-// Random contracts must behave the same on the VM optimized and unoptimized. ARKADE_FUZZ_SEED
-// and ARKADE_FUZZ_CASES widen the search; a failure names the seed and case to replay.
+// Random contracts must compile and behave the same on the VM optimized and unoptimized.
+// ARKADE_FUZZ_SEED and ARKADE_FUZZ_CASES widen the search; each case is a subtest named by
+// its seed and index, so `-run 'TestDifferentialFuzz/seed7_case42$'` with the same settings
+// replays one failure.
 func TestDifferentialFuzz(t *testing.T) {
 	if os.Getenv("ARKADEC_NO_OPTIMIZE") != "" {
 		t.Skip("compiles both modes itself")
 	}
 	seed := envInt(t, "ARKADE_FUZZ_SEED", 1)
 	cases := envInt(t, "ARKADE_FUZZ_CASES", 200)
-	compiled := 0
 	for index := int64(0); index < cases; index++ {
-		r := rand.New(rand.NewSource(seed*1_000_003 + index))
-		program := generateProgram(r)
-		source := filepath.Join(t.TempDir(), "fuzz.ark")
-		if err := os.WriteFile(source, []byte(program.source), 0600); err != nil {
-			t.Fatal(err)
-		}
-		optimized, optimizedErr := compileMode(t, source, true)
-		unoptimized, unoptimizedErr := compileMode(t, source, false)
-		fail := func(format string, args ...any) {
-			t.Helper()
-			reason := fmt.Sprintf(format, args...)
-			saveFailure(t, seed, index, reason, program.source)
-			t.Fatalf("seed %d case %d: %s\n%s", seed, index, reason, program.source)
-		}
-		if (optimizedErr == nil) != (unoptimizedErr == nil) {
-			fail("only one mode compiles: optimized %v, unoptimized %v", optimizedErr, unoptimizedErr)
-		}
-		if optimizedErr != nil {
-			continue
-		}
-		compiled++
-		passing := program.values(t, program.passing)
-		for mode, contract := range map[string]artifact{"optimized": optimized, "unoptimized": unoptimized} {
-			if err := runCovenant(t, contract, passing); err != nil {
-				fail("%s rejects the witness %s that every requirement accepts: %v", mode, describe(program.passing), err)
+		t.Run(fmt.Sprintf("seed%d_case%d", seed, index), func(t *testing.T) {
+			r := rand.New(rand.NewSource(seed*1_000_003 + index))
+			program := generateProgram(r)
+			t.Cleanup(func() {
+				if t.Failed() {
+					t.Logf("contract:\n%s", program.source)
+				}
+			})
+			source := filepath.Join(t.TempDir(), "fuzz.ark")
+			if err := os.WriteFile(source, []byte(program.source), 0600); err != nil {
+				t.Fatal(err)
 			}
-		}
-		for run := 0; run < 4; run++ {
-			ints := program.randomWitness(r)
-			values := program.values(t, ints)
-			okOptimized := runCovenant(t, optimized, values)
-			okUnoptimized := runCovenant(t, unoptimized, values)
-			if (okOptimized == nil) != (okUnoptimized == nil) {
-				fail("witness %s: optimized %v, unoptimized %v", describe(ints), okOptimized, okUnoptimized)
+			optimized := compileArtifact(t, source)
+			t.Setenv("ARKADEC_NO_OPTIMIZE", "1")
+			unoptimized := compileArtifact(t, source)
+			passing := program.values(t, program.passing)
+			for mode, contract := range map[string]artifact{"optimized": optimized, "unoptimized": unoptimized} {
+				if err := runCovenant(t, contract, passing); err != nil {
+					t.Fatalf("%s rejects the witness %s that every requirement accepts: %v", mode, describe(program.passing), err)
+				}
 			}
-		}
-	}
-	// Mostly rejected programs would test nothing.
-	if compiled*10 < int(cases)*9 {
-		t.Fatalf("only %d of %d generated contracts compiled", compiled, cases)
+			for run := 0; run < 4; run++ {
+				ints := program.randomWitness(r)
+				values := program.values(t, ints)
+				okOptimized := runCovenant(t, optimized, values)
+				okUnoptimized := runCovenant(t, unoptimized, values)
+				if (okOptimized == nil) != (okUnoptimized == nil) {
+					t.Fatalf("witness %s: optimized %v, unoptimized %v", describe(ints), okOptimized, okUnoptimized)
+				}
+			}
+		})
 	}
 }
 
@@ -93,31 +83,6 @@ func envInt(t *testing.T, name string, fallback int64) int64 {
 	return value
 }
 
-func compileMode(t *testing.T, source string, optimize bool) (artifact, error) {
-	t.Helper()
-	compiler := os.Getenv("ARKADEC")
-	if compiler == "" {
-		compiler = filepath.Join("..", "..", "target", "debug", "arkadec")
-	}
-	output := filepath.Join(t.TempDir(), "artifact.json")
-	args := []string{source, "-o", output}
-	if !optimize {
-		args = append(args, "--no-optimize")
-	}
-	if combined, err := exec.Command(compiler, args...).CombinedOutput(); err != nil {
-		return artifact{}, fmt.Errorf("%v: %s", err, combined)
-	}
-	var contract artifact
-	data, err := os.ReadFile(output)
-	if err == nil {
-		err = json.Unmarshal(data, &contract)
-	}
-	if err != nil {
-		t.Fatalf("read artifact: %v", err)
-	}
-	return contract, nil
-}
-
 func runCovenant(t *testing.T, contract artifact, values map[string][]byte) error {
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	group := covenantGroup(t, contract, "spend")
@@ -127,26 +92,8 @@ func runCovenant(t *testing.T, contract artifact, values map[string][]byte) erro
 	return executeArkadeScripts(spend, emulatorKey.PubKey())
 }
 
-func saveFailure(t *testing.T, seed, index int64, reason, source string) {
-	dir := os.Getenv("ARKADE_FUZZ_OUT")
-	if dir == "" {
-		return
-	}
-	name := filepath.Join(dir, fmt.Sprintf("seed-%d-case-%d.ark", seed, index))
-	contents := fmt.Sprintf("// seed %d case %d: %s\n%s", seed, index, strings.ReplaceAll(reason, "\n", " "), source)
-	if err := os.MkdirAll(dir, 0o755); err != nil || os.WriteFile(name, []byte(contents), 0o600) != nil {
-		t.Logf("could not save %s", name)
-	}
-}
-
-type input struct {
-	name, kind string
-	length     int
-}
-
 type program struct {
 	source string
-	inputs []input
 	// A witness every requirement accepts, computed by evaluating the program in Go.
 	passing map[string]int64
 }
@@ -299,6 +246,10 @@ func (g *generator) int(s *scope, depth int) intExpr {
 	choice := g.r.Intn(10)
 	if depth <= 0 {
 		choice %= 4
+		// Leaves only: a missing variable kind becomes a literal.
+		if choice <= 2 && len(ints) == 0 || choice == 3 && len(arrays) == 0 {
+			choice = 0
+		}
 	}
 	switch {
 	case choice == 0 || len(ints) == 0 && len(arrays) == 0:
@@ -373,8 +324,8 @@ func (g *generator) bool(s *scope, depth int) boolExpr {
 	}
 }
 
-// require emits a requirement that holds in every one of `envs`, or nothing if none can.
-func (g *generator) require(indent int, condition boolExpr, envs []env) {
+// require emits a requirement that holds in every one of `envs`, or reports that none can.
+func (g *generator) require(indent int, condition boolExpr, envs []env) bool {
 	holds, fails := true, true
 	for _, e := range envs {
 		ok := condition.eval(e)
@@ -386,6 +337,7 @@ func (g *generator) require(indent int, condition boolExpr, envs []env) {
 	case fails:
 		g.line(indent, "require(!(%s));", condition.text)
 	}
+	return holds || fails
 }
 
 func (g *generator) block(s *scope, e env, indent, depth int) {
@@ -439,6 +391,11 @@ func (g *generator) loop(s *scope, e env, indent int) {
 	term := g.int(inner, 1)
 	inner.read(index)
 	inner.read(value)
+	// A condition that holds in only some iterations is not emitted, so its reads are undone.
+	unread := map[*scope]map[string]string{}
+	for c := inner; c != nil; c = c.parent {
+		unread[c] = maps.Clone(c.unread)
+	}
 	condition := g.bool(inner, 1)
 	iterations := make([]env, lengths[array])
 	for k := range iterations {
@@ -449,7 +406,11 @@ func (g *generator) loop(s *scope, e env, indent int) {
 	g.line(indent, "int %s = 0;", acc)
 	g.line(indent, "for (%s, %s) in %s {", index, value, array)
 	g.line(indent+1, "%s = %s + %s * (%s + 1) + %s;", acc, acc, value, index, term.text)
-	g.require(indent+1, condition, iterations)
+	if !g.require(indent+1, condition, iterations) {
+		for c, names := range unread {
+			c.unread = names
+		}
+	}
 	g.line(indent, "}")
 	total := int64(0)
 	for _, iteration := range iterations {
@@ -504,18 +465,16 @@ func generateProgram(r *rand.Rand) program {
 	root := (&scope{}).child()
 	e := env{}
 	var params []string
-	var inputs []input
 	for count := 1 + r.Intn(4); count > 0; count-- {
 		switch r.Intn(4) {
 		case 0:
 			name := g.fresh("b")
-			params, inputs = append(params, "bool "+name), append(inputs, input{name: name, kind: "bool"})
+			params = append(params, "bool "+name)
 			root.declare(name, "bool")
 			e[name] = r.Int63n(2)
 		case 1:
 			name, length := g.fresh("xs"), 1+r.Intn(3)
 			params = append(params, fmt.Sprintf("int[%d] %s", length, name))
-			inputs = append(inputs, input{name: name, kind: "array", length: length})
 			root.arrays[name] = length
 			root.unread[name] = "array"
 			for i := 0; i < length; i++ {
@@ -523,7 +482,7 @@ func generateProgram(r *rand.Rand) program {
 			}
 		default:
 			name := g.fresh("n")
-			params, inputs = append(params, "int "+name), append(inputs, input{name: name, kind: "int"})
+			params = append(params, "int "+name)
 			root.declare(name, "int")
 			e[name] = r.Int63n(41) - 20
 		}
@@ -542,5 +501,5 @@ func generateProgram(r *rand.Rand) program {
 	g.block(root, e, 2, 2)
 	g.line(1, "}")
 	g.line(0, "}")
-	return program{source: g.out.String(), inputs: inputs, passing: witness}
+	return program{source: g.out.String(), passing: witness}
 }
