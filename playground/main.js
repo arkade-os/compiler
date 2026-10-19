@@ -1336,13 +1336,15 @@ function doCompile() {
     const source = editor.getValue();
     clearErrors();
 
-    let entry;
     try {
-        const sources = compilationSources();
-        entry = sources.entry;
-        const files = sources.files;
+        const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact: result, warnings } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        const { artifact: result, warnings, diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        markDiagnostics(diagnostics, entry);
+        if (result === null) {
+            showErrors(diagnostics, entry);
+            return;
+        }
         lastCompiledSource = source;
         displayJson(result);
         displayAsm(result);
@@ -1351,7 +1353,7 @@ function doCompile() {
         showWarnings(warnings);
         markCompiled();
     } catch (err) {
-        showError(err.toString(), entry);
+        showError(err.toString());
     }
 }
 
@@ -1513,7 +1515,7 @@ function showWarnings(warnings) {
 }
 
 // Show error
-function showError(message, entry) {
+function showError(message, count = 1) {
     const statusEl = document.getElementById('compile-status');
     statusEl.innerHTML = `<i class="fas fa-times-circle"></i> Error`;
     statusEl.className = 'compile-status error';
@@ -1523,26 +1525,48 @@ function showError(message, entry) {
 
     errorsTab.textContent = message;
     errorsTab.classList.remove('warning');
-    errorCount.textContent = '1';
+    errorCount.textContent = String(count);
     errorCount.classList.remove('warning');
     errorCount.classList.add('visible');
 
     // Switch to errors tab
     switchTab('errors');
+}
 
-    // Highlight the line only when the error is located in the entry, the file in the editor.
-    const lineMatch = entry && message.startsWith(`${entry}: `)
-        && message.slice(entry.length + 2).match(/^(?:\w+ error: )?line (\d+)/);
-    if (lineMatch && editor) {
-        const lineNumber = parseInt(lineMatch[1], 10);
-        editor.revealLineInCenter(lineNumber);
-        editor.setSelection({
-            startLineNumber: lineNumber,
-            startColumn: 1,
-            endLineNumber: lineNumber,
-            endColumn: 1000
-        });
+function showErrors(diagnostics, entry) {
+    const errors = diagnostics.filter(d => d.severity === 'error');
+    showError(errors.map(formatDiagnostic).join('\n'), errors.length);
+
+    // Select the first error in the entry, the file in the editor.
+    const first = errors.find(d => d.file === entry && d.start);
+    if (first && editor) {
+        editor.revealLineInCenter(first.start.line);
+        editor.setSelection(markerRange(first));
     }
+}
+
+function formatDiagnostic(d) {
+    const location = d.start ? `${d.file}:${d.start.line}:${d.start.column}` : d.file;
+    return `${d.severity}${d.code ? `[${d.code}]` : ''}: ${d.message} (${location})`;
+}
+
+function markerRange(d) {
+    return {
+        startLineNumber: d.start.line,
+        startColumn: d.start.column,
+        endLineNumber: d.end.line,
+        endColumn: d.end.column,
+    };
+}
+
+function markDiagnostics(diagnostics, entry) {
+    if (typeof monaco === 'undefined' || !editor?.getModel) return;
+    const markers = diagnostics.filter(d => d.file === entry && d.start).map(d => ({
+        ...markerRange(d),
+        severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: d.code ? `[${d.code}] ${d.message}` : d.message,
+    }));
+    monaco.editor.setModelMarkers(editor.getModel(), 'arkade', markers);
 }
 
 // Clear errors
@@ -1556,6 +1580,7 @@ function clearErrors() {
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';
+    markDiagnostics([]);
 }
 
 // Switch output tab

@@ -57,21 +57,81 @@ pub fn compile_sources(entry: &str, files: &str, optimize: Option<bool>) -> Resu
     serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))
 }
 
-/// Compile a virtual project with warnings alongside the artifact.
+/// Compile a virtual project and report every diagnostic with its position. Compilation
+/// errors are diagnostics, not a thrown error: the result is
+/// `{ artifact: string | null, warnings: string[], diagnostics: Diagnostic[] }`, where each
+/// diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
+/// `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
 #[wasm_bindgen]
 pub fn compile_sources_with_diagnostics(
     entry: &str,
     files: &str,
     optimize: Option<bool>,
 ) -> Result<String, String> {
-    let output = compile_project(entry, files, optimize)?;
-    let artifact =
-        serde_json::to_string_pretty(&output).map_err(|e| format!("Serialization error: {e}"))?;
+    let files: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    let options = crate::CompileOptions {
+        optimize: optimize.unwrap_or(true),
+    };
+    let analysis = crate::analyze(entry, &files);
+    let mut diagnostics = analysis.diagnostics();
+    let mut artifact = None;
+    let mut warnings = Vec::new();
+    if analysis.contract().is_some() {
+        match analysis.compile(options) {
+            Ok(output) => {
+                warnings = output.warnings.clone();
+                artifact = Some(
+                    serde_json::to_string_pretty(&output)
+                        .map_err(|e| format!("Serialization error: {e}"))?,
+                );
+            }
+            Err(errors) => diagnostics.extend(errors),
+        }
+    }
+    let diagnostics: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| located(diagnostic, &files))
+        .collect();
     serde_json::to_string(&serde_json::json!({
         "artifact": artifact,
-        "warnings": output.warnings,
+        "warnings": warnings,
+        "diagnostics": diagnostics,
     }))
     .map_err(|e| format!("Serialization error: {e}"))
+}
+
+fn located(
+    diagnostic: &crate::Diagnostic,
+    files: &std::collections::BTreeMap<String, String>,
+) -> serde_json::Value {
+    let source = files
+        .iter()
+        .find(|(path, _)| {
+            crate::imports::relative_path(path).is_ok_and(|path| path == diagnostic.file)
+        })
+        .map(|(_, source)| source.as_str());
+    let position = |offset: usize| {
+        let source = source?;
+        let before = source.get(..offset)?;
+        let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+        Some(serde_json::json!({
+            "line": before.matches('\n').count() + 1,
+            "column": before[line_start..].encode_utf16().count() + 1,
+        }))
+    };
+    let span = diagnostic.span;
+    serde_json::json!({
+        "severity": match diagnostic.severity {
+            crate::Severity::Error => "error",
+            crate::Severity::Warning => "warning",
+        },
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "file": diagnostic.file,
+        "start": span.and_then(|span| position(span.start)),
+        "end": span.and_then(|span| position(span.end)),
+    })
 }
 
 fn compile_project(

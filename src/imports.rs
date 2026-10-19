@@ -214,7 +214,7 @@ pub(crate) fn compile_file(
     )
 }
 
-fn relative_path(path: &str) -> Result<String, String> {
+pub(crate) fn relative_path(path: &str) -> Result<String, String> {
     if Path::new(path).is_absolute() || path.contains('\\') || path.contains(':') {
         return Err(format!(
             "source path '{path}' must be a relative .ark path using '/'"

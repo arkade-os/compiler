@@ -209,4 +209,28 @@ assert.equal(elements['errors-output'].textContent, '');
 assert(!elements['error-count'].classList.contains('visible'));
 assert.equal(elements['compile-status'].className, 'compile-status success');
 
+// Every error is reported with its position, columns in UTF-16 units; nothing is thrown.
+const failingSource = 'contract Failing() {\n    function spend(int x) { require("é" == x); require(y == 1); }\n}';
+const failed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ './main.ark': failingSource })));
+assert.equal(failed.artifact, null);
+const errors = failed.diagnostics.filter(d => d.severity === 'error');
+assert(errors.length >= 2);
+for (const error of errors) {
+    assert.equal(error.file, 'main.ark');
+    assert.equal(error.start.line, 2);
+}
+const undefinedName = errors.find(d => d.message.includes("'y'"));
+assert.equal(undefinedName.start.column, failingSource.split('\n')[1].indexOf('y == 1') + 1);
+context.document.querySelectorAll = () => [];
+context.warningSource = failingSource;
+context.selected = null;
+vm.runInContext(`
+    editor = { getValue: () => warningSource, revealLineInCenter() {}, setSelection: range => { selected = range; } };
+    doCompile();
+`, context);
+assert.equal(context.selected.startColumn, errors[0].start.column);
+assert.equal(elements['error-count'].textContent, String(errors.length));
+assert.equal(elements['compile-status'].className, 'compile-status error');
+assert.match(elements['errors-output'].textContent, /\(main\.ark:2:\d+\)/);
+
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);
