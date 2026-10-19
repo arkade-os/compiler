@@ -75,6 +75,7 @@ opcodes! {
     // Comparisons
     Equal = OP_EQUAL => (2, 1),
     NumEqual = OP_NUMEQUAL => (2, 1),
+    NumNotEqual = OP_NUMNOTEQUAL => (2, 1),
     GreaterThanOrEqual = OP_GREATERTHANOREQUAL => (2, 1),
     LessThanOrEqual = OP_LESSTHANOREQUAL => (2, 1),
     GreaterThan = OP_GREATERTHAN => (2, 1),
@@ -141,7 +142,6 @@ opcodes! {
     // Verify variants
     EqualVerify = OP_EQUALVERIFY => (2, 0),
     NumEqualVerify = OP_NUMEQUALVERIFY => (2, 0),
-    NumNotEqual = OP_NUMNOTEQUAL,
     BoolOr = OP_BOOLOR,
 
     // Stack manipulation (extended)

@@ -96,7 +96,7 @@ fn fingerprint_identifies_artifact_content() {
     // This value pins the artifact's exact serialization, including field order.
     assert_eq!(
         fingerprint,
-        "sha256:64fc308645fcfd1da22b7f8930a509c0f1d30785e82969459e1d81826c07ce2b"
+        "sha256:6b773fb512fbd58dcd0f83dde87f75786c42d8dde9555c9474aea457f407a9d6"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
     assert_ne!(

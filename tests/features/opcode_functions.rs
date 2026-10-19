@@ -808,7 +808,7 @@ fn unary_negation_precedence_and_spend_shape() {
         ("!!true", "OP_1 OP_NOT OP_NOT"),
         ("!!false", "OP_0 OP_NOT OP_NOT"),
         ("!(1 < 2)", "1 2 OP_LESSTHAN OP_NOT"),
-        ("!true != false", "OP_1 OP_NOT OP_0 OP_EQUAL OP_NOT"),
+        ("!true != false", "OP_1 OP_NOT OP_0 OP_NUMNOTEQUAL"),
         ("num2bin(-1, 4)", "1 OP_NEGATE 4 OP_NUM2BIN"),
         ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
     ] {
@@ -1128,7 +1128,7 @@ fn bitwise_and_shift_operators_emit_their_opcodes_by_precedence() {
         (
             "int n, int k",
             "require(n + k % 2 == 1);",
-            &["OP_MOD", "OP_ADD", "OP_EQUAL"],
+            &["OP_MOD", "OP_ADD", "OP_NUMEQUAL"],
         ),
     ] {
         let source = format!("contract Ops({params}) {{ function spend() {{ {statement} }} }}");

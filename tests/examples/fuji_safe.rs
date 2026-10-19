@@ -108,11 +108,11 @@ fn test_fuji_safe_contract() {
             inputs
         );
         let asm = crate::common::arkade_asm_tokens(&output, function);
-        for (opcode, operand) in [
-            ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP", script_read),
-            ("OP_INSPECTOUTPUTVALUE", value_read),
+        for (opcode, operand, equal) in [
+            ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP", script_read, "OP_EQUALVERIFY"),
+            ("OP_INSPECTOUTPUTVALUE", value_read, "OP_NUMEQUALVERIFY"),
         ] {
-            let comparison = format!("0 {opcode} {operand} OP_EQUALVERIFY");
+            let comparison = format!("0 {opcode} {operand} {equal}");
             let expected = comparison.split_whitespace().collect::<Vec<_>>();
             assert!(
                 asm.windows(expected.len()).any(|window| window
