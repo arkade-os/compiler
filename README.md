@@ -236,7 +236,7 @@ cp ./scripts/pre-commit .git/hooks                       # fmt + test before eve
 
 The E2E suite pins its dependencies in `tests/e2e/go.mod`; no Docker or emulator checkout is needed.
 
-The suite includes a differential fuzzer that runs random contracts optimized and unoptimized on the VM: `ARKADE_FUZZ_SEED=7 ARKADE_FUZZ_CASES=5000 ./scripts/e2e.sh -run TestDifferentialFuzz` searches further, and a failure prints the seed and case to replay. A nightly workflow runs it with a new seed each day.
+The suite includes a differential fuzzer that runs random contracts optimized and unoptimized on the VM: `ARKADE_FUZZ_SEED=7 ARKADE_FUZZ_CASES=5000 ./scripts/e2e.sh -run TestDifferentialFuzz` searches further, and a failure prints the seed and case to replay.
 
 ### Releasing
 
