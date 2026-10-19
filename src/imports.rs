@@ -12,6 +12,7 @@ struct Module {
     contract: Contract,
     structs: HashSet<String>,
     warnings: Vec<Diagnostic>,
+    leaves: Vec<compiler::tapscript::CheckedLeaf>,
 }
 
 /// `load()`'s failure: either a single fail-fast message (I/O, cycle, unknown
@@ -386,7 +387,7 @@ impl Loaded {
             })
             .collect();
         let source = bundle.files.get(&bundle.entry).cloned().unwrap_or_default();
-        compiler::emit(&root.contract, bundle, warnings, options)
+        compiler::emit(&root.contract, &root.leaves, bundle, warnings, options)
             .map_err(|error| EmitError::Code(error, source))
     }
 }
@@ -554,7 +555,7 @@ fn load(
         }
         contract.functions.extend(helpers.into_values());
         let require_entrypoint = path == entry && !contract.is_library;
-        let warnings = compiler::prepare(&mut contract, require_entrypoint, path)
+        let prepared = compiler::prepare(&mut contract, require_entrypoint, path)
             .map_err(|diagnostics| LoadError::Diagnostics(diagnostics, source.clone()))?;
         files.insert(path.to_string(), source);
         modules.insert(
@@ -562,7 +563,8 @@ fn load(
             Module {
                 contract,
                 structs: own_structs,
-                warnings,
+                warnings: prepared.warnings,
+                leaves: prepared.leaves,
             },
         );
         Ok(())

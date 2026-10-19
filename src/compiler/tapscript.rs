@@ -667,26 +667,39 @@ fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElemen
     });
 }
 
+/// An author-written leaf that passed its checks, with what emission needs from them.
+pub(crate) struct CheckedLeaf {
+    closure: Closure,
+    binding: Binding,
+    group_key: String,
+}
+
 /// Every check on one author-written leaf: closure shape, emulator binding, arkd
-/// rules and its spend group. Returns what emission needs from them.
+/// rules and its spend group.
 pub(crate) fn check_tapscript(
     contract: &Contract,
     ts: &NamedTapscript,
-) -> Result<(Closure, Binding, String), String> {
+) -> Result<CheckedLeaf, String> {
     let closure = assemble_closure(ts)?;
     validate_closure_shape(&closure, &ts.name)?;
     let binding = resolve_binding(contract, ts)?;
     validate_arkd_rules(contract, ts, &closure)?;
     let group_key = shared_tweak_func(&ts.name, &closure.keys)?.unwrap_or_else(|| ts.name.clone());
-    Ok((closure, binding, group_key))
+    Ok(CheckedLeaf {
+        closure,
+        binding,
+        group_key,
+    })
 }
 
 /// Build the unified `functions[]` ABI: one group per covenant function plus
-/// one group per pure-standalone leaf. Runs validation per leaf. `covenants`
+/// one group per pure-standalone leaf. `leaves` are the contract's tapscripts as
+/// `prepare` checked them, in declaration order. `covenants`
 /// holds each function's emulator covenant (built by mod.rs to avoid a cycle);
 /// it is consumed as groups are assembled.
-pub fn build_function_groups(
+pub(crate) fn build_function_groups(
     contract: &Contract,
+    leaves: &[CheckedLeaf],
     mut covenants: std::collections::HashMap<String, ArkadeCovenant>,
 ) -> Result<Vec<AbiFunctionGroup>, String> {
     // Resolve + validate every author-written tapscript; bucket by group key.
@@ -694,16 +707,17 @@ pub fn build_function_groups(
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
 
-    for ts in &contract.tapscripts {
-        let (closure, binding, group_key) = check_tapscript(contract, ts)?;
-
-        let mut asm = emit_leaf_asm(&closure, &ts.name, &binding);
+    for (ts, leaf) in contract.tapscripts.iter().zip(leaves) {
+        let mut asm = emit_leaf_asm(&leaf.closure, &ts.name, &leaf.binding);
         resolve_constructor_field_placeholders(&mut asm, contract)?;
-        grouped.entry(group_key).or_default().push(AbiLeaf {
-            name: ts.name.clone(),
-            witness: leaf_witness(ts),
-            asm,
-        });
+        grouped
+            .entry(leaf.group_key.clone())
+            .or_default()
+            .push(AbiLeaf {
+                name: ts.name.clone(),
+                witness: leaf_witness(ts),
+                asm,
+            });
     }
 
     let mut groups = Vec::new();

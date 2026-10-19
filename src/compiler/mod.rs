@@ -422,11 +422,17 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 /// one message) on failure. Diagnostic messages carry no location prefix —
 /// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
 /// `"line N, column M: "` prefix only when rendering the legacy joined string.
+/// A validated contract's warnings and its checked tapscript leaves, in declaration order.
+pub(crate) struct Prepared {
+    pub warnings: Vec<Diagnostic>,
+    pub leaves: Vec<tapscript::CheckedLeaf>,
+}
+
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
     file: &str,
-) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
+) -> std::result::Result<Prepared, Vec<Diagnostic>> {
     types::annotate(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -444,12 +450,16 @@ pub(crate) fn prepare(
             })
             .collect());
     }
-    let leaf_errors: Vec<_> = contract
-        .tapscripts
-        .iter()
-        .filter_map(|ts| tapscript::check_tapscript(contract, ts).err())
-        .map(|message| Diagnostic::error(file, message).with_code("validation"))
-        .collect();
+    let mut leaves = Vec::new();
+    let mut leaf_errors = Vec::new();
+    for ts in &contract.tapscripts {
+        match tapscript::check_tapscript(contract, ts) {
+            Ok(leaf) => leaves.push(leaf),
+            Err(message) => {
+                leaf_errors.push(Diagnostic::error(file, message).with_code("validation"))
+            }
+        }
+    }
     if !leaf_errors.is_empty() {
         return Err(leaf_errors);
     }
@@ -466,11 +476,12 @@ pub(crate) fn prepare(
         }
     }
 
-    Ok(warnings)
+    Ok(Prepared { warnings, leaves })
 }
 
 pub(crate) fn emit(
     contract: &Contract,
+    leaves: &[tapscript::CheckedLeaf],
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
@@ -511,7 +522,7 @@ pub(crate) fn emit(
         );
     }
 
-    json.functions = tapscript::build_function_groups(contract, covenants)?;
+    json.functions = tapscript::build_function_groups(contract, leaves, covenants)?;
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
