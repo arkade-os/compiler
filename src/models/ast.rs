@@ -422,6 +422,11 @@ impl Expression {
     pub(crate) fn with_kind(&self, kind: ExprKind) -> Self {
         Self::new(kind, self.span)
     }
+
+    /// The type analysis gave this expression; `Unknown` before analysis.
+    pub fn ty(&self) -> &crate::types::ArkType {
+        &self.ty
+    }
 }
 
 #[cfg(test)]

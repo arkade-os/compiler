@@ -28,74 +28,102 @@ impl From<String> for LoadError {
     }
 }
 
-/// Every parse, validation and type diagnostic for `entry`, without writing
-/// an artifact. `entry` may be a library file, checked directly rather than
-/// through a synthetic importer. Unlike `compile_sources`, independent
-/// problems in `entry` each get their own diagnostic instead of being joined
-/// into one message. Diagnostics from imports name the imported file.
-pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
+/// A program after parsing, import resolution, typing and validation, before code generation.
+pub struct Analysis {
+    entry: String,
+    loaded: Result<Loaded, Vec<Diagnostic>>,
+}
+
+impl Analysis {
+    /// Every parse, validation and type diagnostic, warnings included. Independent problems in
+    /// the entry file each get their own; diagnostics from imports name the imported file.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        match &self.loaded {
+            Ok(loaded) => loaded
+                .modules
+                .values()
+                .flat_map(|module| module.warnings.clone())
+                .collect(),
+            Err(errors) => errors.clone(),
+        }
+    }
+
+    /// The entry file's typed AST, when it analyzed without errors.
+    pub fn contract(&self) -> Option<&Contract> {
+        let loaded = self.loaded.as_ref().ok()?;
+        Some(&loaded.modules[&self.entry].contract)
+    }
+
+    /// Generate the artifact. Fails with the analysis errors, or with code generation's first.
+    pub fn compile(&self, options: crate::CompileOptions) -> Result<ContractJson, Vec<Diagnostic>> {
+        let loaded = self.loaded.as_ref().map_err(Clone::clone)?;
+        loaded
+            .emit(&self.entry, false, options)
+            .map_err(|error| match error {
+                EmitError::Library => vec![Diagnostic::error(&self.entry, LIBRARY_ENTRY)],
+                EmitError::Code(error, _) => vec![error.diagnostic(&self.entry)],
+            })
+    }
+}
+
+/// Analyze `entry` and its imports from an in-memory map of relative paths to source text.
+/// `entry` may be a library file.
+pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis {
+    let failed = |entry: &str, message: String| Analysis {
+        entry: entry.to_string(),
+        loaded: Err(vec![Diagnostic::error(entry, message)]),
+    };
     let entry = match relative_path(entry) {
         Ok(entry) => entry,
-        Err(e) => return vec![Diagnostic::error(entry, e)],
+        Err(e) => return failed(entry, e),
     };
     let normalized = match normalize_files(files) {
         Ok(normalized) => normalized,
-        Err(e) => return vec![Diagnostic::error(entry, e)],
+        Err(e) => return failed(&entry, e),
     };
     let Some(source) = normalized.get(&entry) else {
         let message = format!(
             "source file '{entry}' not found; imports require source files supplied through compile_sources or compile_file"
         );
-        return vec![Diagnostic::error(entry, message)];
+        return failed(&entry, message);
     };
     if let Err(error) = parser::try_parse(source) {
-        return vec![parser::parse_error_diagnostic(&error, &entry, source)];
+        let diagnostic = parser::parse_error_diagnostic(&error, &entry, source);
+        return Analysis {
+            entry,
+            loaded: Err(vec![diagnostic]),
+        };
     }
-
-    let mut modules = BTreeMap::new();
-    let mut loaded_files = BTreeMap::new();
-    let result = load(
-        &entry,
-        &entry,
-        &mut |path| {
-            normalized.get(path).cloned().ok_or_else(|| {
+    let loaded = Loaded::load(&entry, &mut |path| {
+        normalized.get(path).cloned().ok_or_else(|| {
             format!("source file '{path}' not found; imports require source files supplied through compile_sources or compile_file")
         })
-        },
-        &mut modules,
-        &mut loaded_files,
-        &mut Vec::new(),
-        &mut HashMap::new(),
-    );
-
-    match result {
-        Ok(()) => {
-            let mut diagnostics: Vec<_> = modules
-                .values()
-                .flat_map(|module| module.warnings.clone())
-                .collect();
-            let root = &modules[&entry];
-            // Code generation alone finds some errors, such as the VM's stack and script limits.
-            if !root.contract.is_library {
-                let bundle = SourceBundle {
-                    entry: entry.clone(),
-                    files: loaded_files,
-                };
-                let options = crate::CompileOptions::default();
-                if let Err(error) = compiler::emit(&root.contract, bundle, Vec::new(), options) {
-                    diagnostics.push(error.diagnostic(&entry));
-                }
-            }
-            diagnostics
-        }
-        Err(LoadError::Diagnostics(diagnostics, _)) => diagnostics,
-        Err(LoadError::Message(message)) => {
+    })
+    .map_err(|error| match error {
+        LoadError::Diagnostics(diagnostics, _) => diagnostics,
+        LoadError::Message(message) => {
             let message = message
                 .strip_prefix(&format!("{entry}: "))
                 .unwrap_or(&message);
-            vec![Diagnostic::error(entry, message)]
+            vec![Diagnostic::error(&entry, message)]
+        }
+    });
+    Analysis { entry, loaded }
+}
+
+pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
+    let analysis = analyze(entry, files);
+    let mut diagnostics = analysis.diagnostics();
+    // Code generation alone finds some errors, such as the VM's stack and script limits.
+    if analysis
+        .contract()
+        .is_some_and(|contract| !contract.is_library)
+    {
+        if let Err(errors) = analysis.compile(crate::CompileOptions::default()) {
+            diagnostics.extend(errors);
         }
     }
+    diagnostics
 }
 
 pub(crate) fn compile_sources(
@@ -242,18 +270,7 @@ fn compile_with_loader(
     filesystem: bool,
     options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
-    let mut modules = BTreeMap::new();
-    let mut files = BTreeMap::new();
-    load(
-        entry,
-        entry,
-        &mut read,
-        &mut modules,
-        &mut files,
-        &mut Vec::new(),
-        &mut HashMap::new(),
-    )
-    .map_err(|e| match e {
+    let loaded = Loaded::load(entry, &mut read).map_err(|e| match e {
         LoadError::Message(message) => message,
         LoadError::Diagnostics(diagnostics, source) => format!(
             "{}: {}",
@@ -261,66 +278,117 @@ fn compile_with_loader(
             crate::diagnostics::render_errors(&diagnostics, &source)
         ),
     })?;
-    let root = &modules[entry];
-    if root.contract.is_library {
-        return Err(format!(
-            "{entry}: entry file must declare a contract, not a library"
-        ));
-    }
-    let mut bundle = SourceBundle {
-        entry: entry.to_string(),
-        files,
-    };
-    let mut base = PathBuf::new();
-    if filesystem {
-        base = Path::new(entry)
-            .parent()
-            .expect("absolute entry")
-            .to_path_buf();
-        for path in bundle.files.keys() {
-            while !Path::new(path).starts_with(&base) {
-                base.pop();
+    loaded
+        .emit(entry, filesystem, options)
+        .map_err(|error| match error {
+            EmitError::Library => format!("{entry}: {LIBRARY_ENTRY}"),
+            EmitError::Code(error, source) => {
+                crate::diagnostics::located(&error.to_string(), error.span, &source)
             }
-        }
-        bundle.entry = Path::new(entry)
-            .strip_prefix(&base)
-            .expect("common root")
-            .to_string_lossy()
-            .replace('\\', "/");
-        bundle.files = bundle
-            .files
-            .into_iter()
-            .map(|(path, source)| {
-                (
-                    Path::new(&path)
-                        .strip_prefix(&base)
-                        .expect("common root")
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                    source,
-                )
-            })
-            .collect();
+        })
+}
+
+const LIBRARY_ENTRY: &str = "entry file must declare a contract, not a library";
+
+/// Every module of a program, prepared, with the source text of each file.
+struct Loaded {
+    modules: BTreeMap<String, Module>,
+    files: BTreeMap<String, String>,
+}
+
+enum EmitError {
+    Library,
+    Code(crate::diagnostics::CompileError, String),
+}
+
+impl Loaded {
+    fn load(
+        entry: &str,
+        read: &mut impl FnMut(&str) -> Result<String, String>,
+    ) -> Result<Self, LoadError> {
+        let mut loaded = Loaded {
+            modules: BTreeMap::new(),
+            files: BTreeMap::new(),
+        };
+        load(
+            entry,
+            entry,
+            read,
+            &mut loaded.modules,
+            &mut loaded.files,
+            &mut Vec::new(),
+            &mut HashMap::new(),
+        )?;
+        Ok(loaded)
     }
-    let warnings = modules
-        .iter()
-        .flat_map(|(path, module)| {
-            let path = Path::new(path)
+
+    fn emit(
+        &self,
+        entry: &str,
+        filesystem: bool,
+        options: crate::CompileOptions,
+    ) -> Result<ContractJson, EmitError> {
+        let root = &self.modules[entry];
+        if root.contract.is_library {
+            return Err(EmitError::Library);
+        }
+        let mut bundle = SourceBundle {
+            entry: entry.to_string(),
+            files: self.files.clone(),
+        };
+        let mut base = PathBuf::new();
+        if filesystem {
+            base = Path::new(entry)
+                .parent()
+                .expect("absolute entry")
+                .to_path_buf();
+            for path in bundle.files.keys() {
+                while !Path::new(path).starts_with(&base) {
+                    base.pop();
+                }
+            }
+            bundle.entry = Path::new(entry)
                 .strip_prefix(&base)
                 .expect("common root")
                 .to_string_lossy()
                 .replace('\\', "/");
-            let source = bundle.files.get(&path).map(String::as_str).unwrap_or("");
-            module.warnings.iter().map(move |warning| {
-                let tag = warning.code.as_deref().unwrap_or("general");
-                let message = crate::diagnostics::located(&warning.message, warning.span, source);
-                format!("warning[{tag}]: {message} ({path})")
+            bundle.files = bundle
+                .files
+                .into_iter()
+                .map(|(path, source)| {
+                    (
+                        Path::new(&path)
+                            .strip_prefix(&base)
+                            .expect("common root")
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                        source,
+                    )
+                })
+                .collect();
+        }
+        let warnings = self
+            .modules
+            .iter()
+            .flat_map(|(path, module)| {
+                let path = Path::new(path)
+                    .strip_prefix(&base)
+                    .expect("common root")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let source = bundle.files.get(&path).map(String::as_str).unwrap_or("");
+                module.warnings.iter().map(move |warning| {
+                    let tag = warning.code.as_deref().unwrap_or("general");
+                    let message =
+                        crate::diagnostics::located(&warning.message, warning.span, source);
+                    format!("warning[{tag}]: {message} ({path})")
+                })
             })
-        })
-        .collect();
-    let source = bundle.files.get(&bundle.entry).cloned().unwrap_or_default();
-    compiler::emit(&root.contract, bundle, warnings, options)
-        .map_err(|error| crate::diagnostics::located(&error.to_string(), error.span, &source))
+            .collect();
+        let source = bundle.files.get(&bundle.entry).cloned().unwrap_or_default();
+        compiler::emit(&root.contract, bundle, warnings, options)
+            .map_err(|error| EmitError::Code(error, source))
+    }
 }
 
 fn load(

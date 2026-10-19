@@ -70,3 +70,6 @@ mod imports;
 
 #[path = "features/struct_arrays.rs"]
 mod struct_arrays;
+
+#[path = "features/staged_api.rs"]
+mod staged_api;

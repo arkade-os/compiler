@@ -16,6 +16,7 @@ mod validator;
 pub mod wasm;
 
 pub use diagnostics::{Diagnostic, Severity, Span};
+pub use imports::Analysis;
 pub use models::{
     Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
     WitnessElement,
@@ -111,6 +112,26 @@ pub fn compile_sources_with_options(
     options: CompileOptions,
 ) -> Result<ContractJson, Box<dyn std::error::Error>> {
     imports::compile_sources(entry, files, options).map_err(Into::into)
+}
+
+/// Parse, resolve imports, type and validate `entry` from an in-memory map of
+/// relative paths to source text, without generating code. Its diagnostics,
+/// typed AST and artifact all come from this one analysis.
+///
+/// ```
+/// let files = std::collections::BTreeMap::from([(
+///     "main.ark".to_string(),
+///     "contract C(pubkey owner) { function spend(signature s) { require(checkSig(s, owner)); } }"
+///         .to_string(),
+/// )]);
+/// let analysis = arkade_compiler::analyze("main.ark", &files);
+/// assert!(analysis.diagnostics().is_empty());
+/// assert_eq!(analysis.contract().unwrap().name, "C");
+/// let artifact = analysis.compile(Default::default()).unwrap();
+/// assert_eq!(artifact.name, "C");
+/// ```
+pub fn analyze(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Analysis {
+    imports::analyze(entry, files)
 }
 
 /// Every parse, validation and type diagnostic for `entry`, without writing
