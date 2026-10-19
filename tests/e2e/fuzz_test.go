@@ -206,6 +206,13 @@ type generator struct {
 	helperOp   string
 	helperMult int64
 	out        strings.Builder
+	// wide marks a value past ±2^31, beyond which int64 arithmetic may wrap where the VM's does not.
+	wide bool
+}
+
+func (g *generator) narrow(v int64) int64 {
+	g.wide = g.wide || v > 1<<31 || v < -1<<31
+	return v
 }
 
 func (g *generator) fresh(prefix string) string {
@@ -273,9 +280,9 @@ func (g *generator) int(s *scope, depth int) intExpr {
 		return intExpr{fmt.Sprintf("helper(%s, %s)", a.text, b.text), func(e env) int64 {
 			x, y := a.eval(e), b.eval(e)
 			if compare(op, x, y) {
-				return x - y
+				return g.narrow(x - y)
 			}
-			return y*mult + x
+			return g.narrow(y*mult + x)
 		}}
 	case choice == 5:
 		a := g.int(s, depth-1)
@@ -287,11 +294,11 @@ func (g *generator) int(s *scope, depth int) intExpr {
 			x, y := a.eval(e), b.eval(e)
 			switch op {
 			case "+":
-				return x + y
+				return g.narrow(x + y)
 			case "-":
-				return x - y
+				return g.narrow(x - y)
 			}
-			return x * y
+			return g.narrow(x * y)
 		}}
 	}
 }
@@ -455,7 +462,16 @@ func (g *generator) readRemaining(s *scope, e env, indent int) {
 	g.require(indent, joined, []env{e})
 }
 
+// generateProgram draws programs until one evaluates within narrow's range.
 func generateProgram(r *rand.Rand) program {
+	for {
+		if p, ok := tryProgram(r); ok {
+			return p
+		}
+	}
+}
+
+func tryProgram(r *rand.Rand) (program, bool) {
 	g := &generator{
 		r:          r,
 		helper:     r.Intn(2) == 0,
@@ -501,5 +517,5 @@ func generateProgram(r *rand.Rand) program {
 	g.block(root, e, 2, 2)
 	g.line(1, "}")
 	g.line(0, "}")
-	return program{source: g.out.String(), passing: witness}
+	return program{source: g.out.String(), passing: witness}, !g.wide
 }
