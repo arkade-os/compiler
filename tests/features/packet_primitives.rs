@@ -13,10 +13,10 @@
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_BIN2NUM, OP_CAT, OP_DROP, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
+    OP_BIN2NUM, OP_CAT, OP_DROP, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
     OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
-    OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN, OP_PUSHCURRENTINPUTINDEX, OP_REVERSEBYTES, OP_SHA256,
-    OP_SIZE, OP_SUBSTR, OP_TXID,
+    OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_REVERSEBYTES,
+    OP_SHA256, OP_SIZE, OP_SUBSTR, OP_TXID,
 };
 
 fn compile_first_function_asm(src: &str) -> Vec<String> {
@@ -311,8 +311,8 @@ contract Sha256Substr(bytes32 expected, int exit) {{
 
 #[test]
 fn test_active_input_index_eq_literal_has_correct_operand_order() {
-    // Regression: `this.activeInputIndex == N` must emit left, right, OP_EQUAL
-    // (OP_PUSHCURRENTINPUTINDEX, then the literal, then OP_EQUAL).
+    // Regression: `this.activeInputIndex == N` must emit left, right, OP_NUMEQUAL
+    // (OP_PUSHCURRENTINPUTINDEX, then the literal, then OP_NUMEQUAL).
     let src = format!(
         r#"{PROLOGUE}
 contract IndexCheck(int exit) {{
@@ -330,12 +330,12 @@ contract IndexCheck(int exit) {{
     assert_eq!(
         asm[idx + 1],
         "0",
-        "literal must be pushed before OP_EQUAL: {asm:?}"
+        "literal must be pushed before OP_NUMEQUAL: {asm:?}"
     );
     assert_eq!(
         asm[idx + 2],
-        OP_EQUAL,
-        "OP_EQUAL must follow operands: {asm:?}"
+        OP_NUMEQUAL,
+        "OP_NUMEQUAL must follow operands: {asm:?}"
     );
 }
 

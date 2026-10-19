@@ -42,7 +42,7 @@ contract WitnessVersion() {
 	}{
 		{"taproot output", group.pkScript, 1, ""},
 		{"segwit v0 output", p2wpkh, 0, ""},
-		{"wrong version", group.pkScript, 0, "OP_EQUALVERIFY failed"},
+		{"wrong version", group.pkScript, 0, "OP_NUMEQUALVERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, wire.TxWitness{scriptInt(t, tc.version)})

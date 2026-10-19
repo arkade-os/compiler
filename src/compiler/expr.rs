@@ -337,6 +337,23 @@ pub(crate) fn emit_binary_op_asm(
     if concat {
         asm.push(Cat.into());
     } else {
-        asm.extend(op.opcodes().iter().copied().map(Op::from));
+        asm.extend(
+            operator_opcodes(op, left, right)
+                .iter()
+                .copied()
+                .map(Op::from),
+        );
     }
+}
+
+/// The opcodes applying a non-logical `op` to `left` and `right`.
+pub(crate) fn operator_opcodes(
+    op: BinaryOperator,
+    left: &Expression,
+    right: &Expression,
+) -> &'static [crate::opcodes::Opcode] {
+    let numeric = [left, right]
+        .iter()
+        .all(|operand| crate::types::is_numeric(&operand.ty));
+    op.opcodes_for(numeric)
 }

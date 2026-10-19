@@ -1,8 +1,8 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_EQUAL,
-    OP_INSPECTLOCKTIME, OP_INSPECTNUMINPUTS, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SHA256,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_INSPECTLOCKTIME,
+    OP_INSPECTNUMINPUTS, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SHA256,
 };
 use std::path::Path;
 
@@ -73,7 +73,7 @@ fn test_payouts_are_pinned_to_committed_destinations() {
     let output = escrow();
 
     let complete = arkade_asm(&output, "complete");
-    let single_input = format!("{OP_INSPECTNUMINPUTS} 1 {OP_EQUAL}");
+    let single_input = format!("{OP_INSPECTNUMINPUTS} 1 OP_NUMEQUALVERIFY");
     assert!(
         complete.contains(&single_input),
         "complete must require exactly one input: {complete}"

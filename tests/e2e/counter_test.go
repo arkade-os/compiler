@@ -32,7 +32,7 @@ func TestCompiledCounterRecursion(t *testing.T) {
 		requireVMResult(t, first, emulatorKey.PubKey(), "")
 
 		skippedState := spendingPSBT(t, deployment, counter, 20_000, counter.pkScript, counterPacket(t, 3))
-		requireVMResult(t, skippedState, emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+		requireVMResult(t, skippedState, emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
 
 		second := spendingPSBT(
 			t, first.UnsignedTx, counter, 20_000, counter.pkScript, counterPacket(t, 3),

@@ -605,6 +605,11 @@ fn bytes_of_width(width: Option<usize>) -> ArkType {
     }
 }
 
+/// Whether values of the type are script numbers.
+pub(crate) fn is_numeric(t: &ArkType) -> bool {
+    t.encoding() == "scriptnum"
+}
+
 /// Returns true when the type widens to `bytes`: it can be concatenated with
 /// `+` and compared or bound to `bytes`, but never to another sized type.
 pub fn is_bytes_like(t: &ArkType) -> bool {
