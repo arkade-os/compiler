@@ -112,13 +112,8 @@ fn located(
         })
         .map(|(_, source)| source.as_str());
     let position = |offset: usize| {
-        let source = source?;
-        let before = source.get(..offset)?;
-        let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
-        Some(serde_json::json!({
-            "line": before.matches('\n').count() + 1,
-            "column": before[line_start..].encode_utf16().count() + 1,
-        }))
+        let (line, column) = crate::diagnostics::position(source?, offset)?;
+        Some(serde_json::json!({ "line": line, "column": column }))
     };
     let span = diagnostic.span;
     serde_json::json!({

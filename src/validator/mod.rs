@@ -758,6 +758,7 @@ contract Demo() {
 
     fn located(statement: Statement) -> LocatedStatement {
         LocatedStatement {
+            message: None,
             names: Vec::new(),
             span: crate::diagnostics::Span { start: 0, end: 0 },
             statement,

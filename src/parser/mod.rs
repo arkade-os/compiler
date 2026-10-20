@@ -415,6 +415,7 @@ fn parse_statement(
         end: pair.as_span().end(),
     };
     let mut names = Vec::new();
+    let mut message = None;
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
@@ -428,8 +429,8 @@ fn parse_statement(
             };
             let requirement = parse_complex_expression(expr)?;
 
-            if let Some(message) = inner.next() {
-                parse_string_literal(message.as_str())?;
+            if let Some(text) = inner.next() {
+                message = Some(parse_string_literal(text.as_str())?);
             }
 
             Statement::Require(requirement)
@@ -600,6 +601,7 @@ fn parse_statement(
     Ok(Some(LocatedStatement {
         span,
         names,
+        message,
         statement,
     }))
 }

@@ -56,6 +56,24 @@ pub struct ArkadeCovenant {
     pub inputs: Vec<FunctionInput>,
     /// Covenant assembly.
     pub asm: Vec<String>,
+    /// The entry-file statement each run of `asm` tokens was compiled from; tokens the
+    /// compiler adds itself, such as the final cleanup, are not covered.
+    #[serde(rename = "sourceMap", default, skip_serializing_if = "Vec::is_empty")]
+    pub source_map: Vec<SourceRange>,
+}
+
+/// A run of covenant tokens and the source statement they come from.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SourceRange {
+    /// Half-open range of indexes into `asm`.
+    pub asm: [usize; 2],
+    /// 1-based `[line, column]` of the statement's start and end, with columns in UTF-16
+    /// code units.
+    pub start: [usize; 2],
+    pub end: [usize; 2],
+    /// The statement's `require` message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// One L1 tapleaf within a spend group.

@@ -534,7 +534,8 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
-| `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
+| `arkade` | `{ inputs, asm, sourceMap }`; absent for groups made only of standalone leaves |
+| `arkade.sourceMap` | Runs of `asm` tokens and the entry-file statement each comes from: `{ asm: [from, to), start: [line, column], end: [line, column], message? }`, 1-based with columns in UTF-16 code units; `message` is a `require`'s message. Code inlined from an imported helper maps to its call; the prologue's input checks and the final stack cleanup are not mapped |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 | `compiler.options` | Effective compilation settings; `optimize` enables constant folding, static branch removal, and assembly optimization for Arkade covenants |

@@ -149,6 +149,8 @@ pub struct LocatedStatement {
     pub span: crate::diagnostics::Span,
     /// Byte ranges of the names the statement binds, in binding order.
     pub names: Vec<crate::diagnostics::Span>,
+    /// A `require`'s message.
+    pub message: Option<String>,
     pub statement: Statement,
 }
 

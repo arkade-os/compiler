@@ -4,10 +4,21 @@
 //! renders them the same way it always has.
 
 /// A byte-offset range into one file's source text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
+}
+
+/// The 1-based line and column of byte `offset` in `source`, counting columns in UTF-16 code
+/// units as editors do; `None` past the end or inside a character.
+pub fn position(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let before = source.get(..offset)?;
+    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    Some((
+        before.matches('\n').count() + 1,
+        before[line_start..].encode_utf16().count() + 1,
+    ))
 }
 
 impl From<pest::Span<'_>> for Span {

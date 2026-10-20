@@ -1,6 +1,7 @@
 //! Expression instructions: what an expression pushes, before the generator
 //! places it on its stack model and spells it as assembly.
 
+use crate::diagnostics::Span;
 use crate::models::Path;
 use crate::opcodes::Opcode;
 
@@ -21,6 +22,87 @@ pub(crate) enum Op {
     /// A child contract's witness program, resolved when it is instantiated; each
     /// argument is spelled from its own instructions.
     Contract { name: String, args: Vec<Vec<Op>> },
+}
+
+/// An instruction and the span of the statement it was emitted for.
+pub(crate) type Spanned = (Op, Option<Span>);
+
+/// Instructions, each with the span of the source statement it was emitted for.
+#[derive(Debug, Default)]
+pub(crate) struct Assembly {
+    ops: Vec<Op>,
+    spans: Vec<Option<Span>>,
+    /// The span of instructions pushed from now on.
+    span: Option<Span>,
+    /// While positive, `set_span` keeps the current span, as for an imported helper's body,
+    /// whose spans index another file.
+    pinned: usize,
+}
+
+impl Assembly {
+    pub(crate) fn push(&mut self, op: Op) {
+        self.ops.push(op);
+        self.spans.push(self.span);
+    }
+
+    pub(crate) fn extend(&mut self, ops: impl IntoIterator<Item = Op>) {
+        for op in ops {
+            self.push(op);
+        }
+    }
+
+    /// Append instructions split off earlier, keeping their spans.
+    pub(crate) fn append(&mut self, mut other: Assembly) {
+        self.ops.append(&mut other.ops);
+        self.spans.append(&mut other.spans);
+    }
+
+    pub(crate) fn split_off(&mut self, at: usize) -> Assembly {
+        Assembly {
+            ops: self.ops.split_off(at),
+            spans: self.spans.split_off(at),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.ops.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.ops.is_empty()
+    }
+
+    pub(crate) fn last(&self) -> Option<&Op> {
+        self.ops.last()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Op> {
+        self.ops.iter()
+    }
+
+    pub(crate) fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    pub(crate) fn set_span(&mut self, span: Option<Span>) {
+        if self.pinned == 0 {
+            self.span = span;
+        }
+    }
+
+    pub(crate) fn pin(&mut self) {
+        self.pinned += 1;
+    }
+
+    pub(crate) fn unpin(&mut self) {
+        self.pinned -= 1;
+    }
+
+    pub(crate) fn into_spanned(self) -> Vec<Spanned> {
+        self.ops.into_iter().zip(self.spans).collect()
+    }
 }
 
 impl From<Opcode> for Op {

@@ -71,6 +71,8 @@ mod imports;
 #[path = "features/struct_arrays.rs"]
 mod struct_arrays;
 
+#[path = "features/source_map.rs"]
+mod source_map;
 #[path = "features/staged_api.rs"]
 mod staged_api;
 #[path = "features/symbols.rs"]
