@@ -81,3 +81,5 @@ mod source_map;
 mod staged_api;
 #[path = "features/symbols.rs"]
 mod symbols;
+#[path = "features/vm_limits.rs"]
+mod vm_limits;
