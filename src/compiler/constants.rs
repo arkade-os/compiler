@@ -1,4 +1,4 @@
-use crate::diagnostics::Span;
+use crate::diagnostics::{CompileError, Span};
 use crate::models::{
     ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr,
     LocatedStatement, Path, Requirement, Statement, TapItem, TypeName,
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 /// Validate constant declarations and fold every reference to them into a literal, returning
 /// the name and span of each reference folded in an expression.
 /// Runs before validation so no later stage ever observes a constant identifier.
-pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, String> {
+pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, CompileError> {
     let values = collect(contract)?;
     let mut uses = Vec::new();
     for parameter in contract
@@ -17,20 +17,20 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, String>
         .iter_mut()
         .chain(contract.structs.iter_mut().flat_map(|s| &mut s.fields))
     {
-        fold_type(&mut parameter.param_type, &values)?;
+        fold_type(&mut parameter.param_type, &values).map_err(at(parameter.span))?;
     }
     for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
         for parameter in &mut function.parameters {
-            fold_type(&mut parameter.param_type, &values)?;
+            fold_type(&mut parameter.param_type, &values).map_err(at(parameter.span))?;
         }
         if let Some(return_type) = &mut function.return_type {
-            fold_type(return_type, &values)?;
+            fold_type(return_type, &values).map_err(at(function.span))?;
         }
         fold_statements(&mut function.statements, &values, &mut uses)?;
     }
     for tapscript in &mut contract.tapscripts {
         for input in &mut tapscript.inputs {
-            fold_type(&mut input.param_type, &values)?;
+            fold_type(&mut input.param_type, &values).map_err(at(input.span))?;
         }
         for item in &mut tapscript.items {
             match item {
@@ -59,33 +59,51 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, String>
     Ok(uses)
 }
 
-fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
+fn at(span: Span) -> impl Fn(String) -> CompileError {
+    move |message| CompileError::from(message).at(span)
+}
+
+/// An error about `constant`, located at it unless it was imported, which locates it in its
+/// own file.
+fn at_constant(constant: &Constant) -> impl Fn(String) -> CompileError + '_ {
+    move |message| match constant.name.contains('.') {
+        true => CompileError::from(message),
+        false => CompileError::from(message).at(constant.span),
+    }
+}
+
+fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError> {
     let mut declarations = HashMap::new();
     for constant in &contract.constants {
         let Constant {
             name, const_type, ..
         } = constant;
+        let error = at_constant(constant);
         if matches!(name.as_str(), "true" | "false")
             || crate::models::RESERVED_NAMES.contains(&name.as_str())
             || crate::models::RESERVED_PLACEHOLDERS.contains(&name.as_str())
         {
-            return Err(format!("constant name '{name}' is reserved"));
+            return Err(error(format!("constant name '{name}' is reserved")));
         }
         if declarations.contains_key(name) {
-            return Err(format!("duplicate constant '{name}'"));
+            return Err(error(format!("duplicate constant '{name}'")));
         }
         if contract.parameters.iter().any(|p| p.name == *name) {
-            return Err(format!(
+            return Err(error(format!(
                 "constant '{name}' collides with constructor parameter '{name}'"
-            ));
+            )));
         }
         if contract.functions.iter().any(|f| f.name == *name)
             || contract.tapscripts.iter().any(|t| t.name == *name)
         {
-            return Err(format!("constant '{name}' collides with function '{name}'"));
+            return Err(error(format!(
+                "constant '{name}' collides with function '{name}'"
+            )));
         }
         if !matches!(const_type.name(), Some("int" | "bool" | "bytes")) {
-            return Err(format!("constant '{name}' must be int, bool or bytes"));
+            return Err(error(format!(
+                "constant '{name}' must be int, bool or bytes"
+            )));
         }
         declarations.insert(name.clone(), constant);
     }
@@ -94,7 +112,8 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
     }
     let mut values = HashMap::new();
     for constant in &contract.constants {
-        resolve_value(&constant.name, &declarations, &mut values, &mut Vec::new())?;
+        resolve_value(&constant.name, &declarations, &mut values, &mut Vec::new())
+            .map_err(at_constant(constant))?;
     }
     for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
         values.insert(
@@ -106,7 +125,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
 }
 
 /// Threshold parsing and import exports need evaluated declarations.
-pub(crate) fn resolve(contract: &mut Contract) -> Result<(), String> {
+pub(crate) fn resolve(contract: &mut Contract) -> Result<(), CompileError> {
     let values = collect(contract)?;
     for constant in &mut contract.constants {
         constant.value.kind = ExprKind::Literal(values[&constant.name].clone());
@@ -357,20 +376,23 @@ fn fold_statements(
     statements: &mut [LocatedStatement],
     values: &HashMap<String, String>,
     uses: &mut Vec<(Path, Span)>,
-) -> Result<(), String> {
+) -> Result<(), CompileError> {
     for statement in statements {
+        let at = at(statement.span);
         match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
                 fold_expression(expression, values, uses)
             }
-            Statement::Declaration { declared_type, .. } => fold_type(declared_type, values)?,
+            Statement::Declaration { declared_type, .. } => {
+                fold_type(declared_type, values).map_err(at)?
+            }
             Statement::LetBinding {
                 declared_type,
                 value,
                 ..
             } => {
                 if let Some(declared_type) = declared_type {
-                    fold_type(declared_type, values)?;
+                    fold_type(declared_type, values).map_err(at)?;
                 }
                 fold_expression(value, values, uses);
             }

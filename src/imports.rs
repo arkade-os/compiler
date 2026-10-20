@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{CompileError, Diagnostic};
 use crate::models::{
     self, Contract, ContractJson, ExprKind, Expression, LocatedStatement, SourceBundle, Statement,
 };
@@ -15,19 +15,25 @@ struct Module {
     leaves: Vec<compiler::tapscript::CheckedLeaf>,
 }
 
-/// `load()`'s failure: either a single fail-fast message (I/O, cycle, unknown
-/// import, internal invariant) or the diagnostics `compiler::prepare`
-/// collected for one file, with that file's source.
+/// `load()`'s failure: one error, or the diagnostics `compiler::prepare` collected for one
+/// file, with that file's source.
 pub(crate) enum LoadError {
-    Message(String),
+    /// An error `load` has yet to tie to the file it was loading.
+    Message(crate::diagnostics::CompileError),
+    /// A diagnostic, and the string the `compile_*` functions return.
+    Located(Box<Diagnostic>, String),
     Diagnostics(Vec<Diagnostic>, String),
-    /// A syntax error, located and as the string the `compile_*` functions return.
-    Parse(Box<Diagnostic>, String),
 }
 
 impl From<String> for LoadError {
     fn from(message: String) -> Self {
-        LoadError::Message(message)
+        LoadError::Message(message.into())
+    }
+}
+
+impl From<crate::diagnostics::CompileError> for LoadError {
+    fn from(error: crate::diagnostics::CompileError) -> Self {
+        LoadError::Message(error)
     }
 }
 
@@ -106,13 +112,8 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
     };
     let loaded = Loaded::load(&entry, &mut read, &mut symbols).map_err(|error| match error {
         LoadError::Diagnostics(diagnostics, _) => diagnostics,
-        LoadError::Parse(diagnostic, _) => vec![*diagnostic],
-        LoadError::Message(message) => {
-            let message = message
-                .strip_prefix(&format!("{entry}: "))
-                .unwrap_or(&message);
-            vec![Diagnostic::error(&entry, message)]
-        }
+        LoadError::Located(diagnostic, _) => vec![*diagnostic],
+        LoadError::Message(error) => vec![error.diagnostic(&entry)],
     });
     Analysis {
         entry,
@@ -169,7 +170,7 @@ pub(crate) fn source_symbols(
         .ok_or_else(|| format!("source file '{entry}' not found"))?;
     let (mut symbols, mut structs) = parser::symbols(source)?;
     let mut members: BTreeMap<String, Vec<parser::Symbol>> = BTreeMap::new();
-    for import in parser::imports(&parser::parse_main(source)?)? {
+    for (import, _) in parser::imports(&parser::parse_main(source)?)? {
         // Imports that are rejected, missing or do not parse contribute nothing.
         let Ok(path) = import_path(&entry, &import) else {
             continue;
@@ -281,7 +282,8 @@ fn compile_with_loader(
     options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let loaded = Loaded::load(entry, &mut read, &mut Default::default()).map_err(|e| match e {
-        LoadError::Message(message) | LoadError::Parse(_, message) => message,
+        LoadError::Message(error) => error.to_string(),
+        LoadError::Located(_, message) => message,
         LoadError::Diagnostics(diagnostics, source) => format!(
             "{}: {}",
             diagnostics.first().map_or(entry, |d| d.file.as_str()),
@@ -415,31 +417,32 @@ fn load(
         return Ok(());
     }
     if active.iter().any(|p| p == path) {
-        return Err(LoadError::Message(format!(
-            "circular import: {} -> {path}",
-            active.join(" -> ")
-        )));
+        return Err(format!("circular import: {} -> {path}", active.join(" -> ")).into());
     }
     // Recursive loading is bounded; use an iterative traversal for deeper projects.
     if active.len() >= 128 {
-        return Err(LoadError::Message(
-            "import depth exceeds 128 files".to_string(),
-        ));
+        return Err("import depth exceeds 128 files".to_string().into());
     }
+    // An unreadable file is an error of the file importing it.
+    let source = read(path)?;
     active.push(path.to_string());
-    let result = (|| {
-        let source = read(path)?;
-        let pairs = parser::try_parse(&source).map_err(|error| {
-            let diagnostic = parser::parse_error_diagnostic(&error, path, &source);
-            LoadError::Parse(
+    let result = (|| -> Result<(), LoadError> {
+        let source = &source;
+        let pairs = parser::try_parse(source).map_err(|error| {
+            let diagnostic = parser::parse_error_diagnostic(&error, path, source);
+            LoadError::Located(
                 Box::new(diagnostic),
                 format!("{path}: Parse error: {error}"),
             )
         })?;
         let imports = parser::imports(&pairs)?;
         let mut dependencies = Vec::new();
-        for import in imports {
-            let dependency = import_path(path, &import)?;
+        for (import, span) in imports {
+            let at_import = |error: LoadError| match error {
+                LoadError::Message(error) => LoadError::Message(error.at(span)),
+                other => other,
+            };
+            let dependency = import_path(path, &import).map_err(|e| at_import(e.into()))?;
             load(
                 &dependency,
                 entry,
@@ -448,7 +451,8 @@ fn load(
                 active,
                 declarations,
                 symbols,
-            )?;
+            )
+            .map_err(at_import)?;
             if !dependencies.contains(&dependency) {
                 dependencies.push(dependency);
             }
@@ -468,21 +472,19 @@ fn load(
             || models::is_builtin_struct(&contract.name)
             || matches!(contract.name.as_str(), "tx" | "this")
         {
-            return Err(LoadError::Message(format!(
-                "contract name '{}' is reserved",
-                contract.name
-            )));
+            let message = format!("contract name '{}' is reserved", contract.name);
+            return Err(CompileError::from(message).at(contract.span).into());
         }
-        for name in contract
+        for (name, span) in contract
             .structs
             .iter()
-            .map(|s| &s.name)
-            .chain((!contract.name.is_empty()).then_some(&contract.name))
+            .map(|s| (&s.name, s.span))
+            .chain((!contract.name.is_empty()).then_some((&contract.name, contract.span)))
         {
             if let Some(previous) = declarations.insert(name.clone(), path.to_string()) {
-                return Err(LoadError::Message(format!(
-                    "duplicate declaration '{name}' in '{previous}' and '{path}'"
-                )));
+                let message =
+                    format!("duplicate declaration '{name}' in '{previous}' and '{path}'");
+                return Err(CompileError::from(message).at(span).into());
             }
         }
         let mut visible_structs = own_structs.clone();
@@ -575,7 +577,7 @@ fn load(
         let prepared = compiler::prepare(&mut contract, require_entrypoint, path);
         symbols.collect(
             path,
-            &source,
+            source,
             &contract,
             &own_structs,
             &dependencies,
@@ -583,7 +585,7 @@ fn load(
         );
         let prepared =
             prepared.map_err(|diagnostics| LoadError::Diagnostics(diagnostics, source.clone()))?;
-        loaded.files.insert(path.to_string(), source);
+        loaded.files.insert(path.to_string(), source.clone());
         loaded.modules.insert(
             path.to_string(),
             Module {
@@ -597,7 +599,17 @@ fn load(
     })();
     active.pop();
     result.map_err(|error| match error {
-        LoadError::Message(message) => LoadError::Message(format!("{path}: {message}")),
+        LoadError::Message(error) => {
+            let message = crate::diagnostics::located(&error.to_string(), error.span, &source);
+            let diagnostic = Diagnostic::error(path, error.to_string())
+                .with_code(if error.internal {
+                    "internal"
+                } else {
+                    "validation"
+                })
+                .with_span(error.span);
+            LoadError::Located(Box::new(diagnostic), format!("{path}: {message}"))
+        }
         other => other,
     })
 }
@@ -606,7 +618,10 @@ fn validate_scope(
     contract: &Contract,
     structs: &HashSet<String>,
     contracts: &HashMap<String, &Contract>,
-) -> Result<(), String> {
+) -> Result<(), CompileError> {
+    let at = |result: Result<(), String>, span| {
+        result.map_err(|error| CompileError::from(error).at(span))
+    };
     let check_binding = |name: &str| {
         if contracts.contains_key(name) {
             Err(format!("binding '{name}' shadows a contract namespace"))
@@ -615,7 +630,7 @@ fn validate_scope(
         }
     };
     for constant in &contract.constants {
-        check_binding(&constant.name)?;
+        at(check_binding(&constant.name), constant.span)?;
     }
     let check_type = |ty: &models::TypeName| {
         let base = ty.base_name();
@@ -635,7 +650,7 @@ fn validate_scope(
         .chain(contract.functions.iter().flat_map(|f| &f.parameters))
         .chain(contract.tapscripts.iter().flat_map(|t| &t.inputs))
     {
-        check_type(&parameter.param_type)?;
+        at(check_type(&parameter.param_type), parameter.span)?;
     }
     for parameter in contract
         .parameters
@@ -643,11 +658,11 @@ fn validate_scope(
         .chain(contract.functions.iter().flat_map(|f| &f.parameters))
         .chain(contract.tapscripts.iter().flat_map(|t| &t.inputs))
     {
-        check_binding(&parameter.name)?;
+        at(check_binding(&parameter.name), parameter.span)?;
     }
     for function in &contract.functions {
         if let Some(ty) = &function.return_type {
-            check_type(ty)?;
+            at(check_type(ty), function.span)?;
         }
         let mut scope = types::build_scope_with_structs(&contract.parameters, &contract.structs);
         scope.extend(types::build_scope_with_structs(
@@ -729,24 +744,27 @@ fn validate_local_types(
     statements: &[LocatedStatement],
     check: &impl Fn(&models::TypeName) -> Result<(), String>,
     binding: &impl Fn(&str) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<(), CompileError> {
     for statement in statements {
+        let at = |result: Result<(), String>| {
+            result.map_err(|error| CompileError::from(error).at(statement.span))
+        };
         match &statement.statement {
             Statement::Declaration {
                 name,
                 declared_type,
             } => {
-                binding(name)?;
-                check(declared_type)?;
+                at(binding(name))?;
+                at(check(declared_type))?;
             }
             Statement::LetBinding {
                 name,
                 declared_type,
                 ..
             } => {
-                binding(name)?;
+                at(binding(name))?;
                 if let Some(ty) = declared_type {
-                    check(ty)?;
+                    at(check(ty))?;
                 }
             }
             Statement::IfElse {
@@ -765,8 +783,8 @@ fn validate_local_types(
                 body,
                 ..
             } => {
-                binding(index_var)?;
-                binding(value_var)?;
+                at(binding(index_var))?;
+                at(binding(value_var))?;
                 validate_local_types(body, check, binding)?;
             }
             Statement::ForCount { body, .. } => {
@@ -781,7 +799,7 @@ fn validate_local_types(
 fn visit_statements(
     statements: &mut [LocatedStatement],
     visit: &mut impl FnMut(&mut Expression) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<(), CompileError> {
     for statement in statements {
         match &mut statement.statement {
             Statement::Call(expr)
@@ -830,11 +848,12 @@ fn visit_statements(
 fn visit_expression(
     expr: &mut Expression,
     visit: &mut impl FnMut(&mut Expression) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<(), CompileError> {
     for child in models::child_exprs_mut(expr) {
         visit_expression(child, visit)?;
     }
-    visit(expr)
+    let span = expr.span;
+    visit(expr).map_err(|error| CompileError::from(error).at(span))
 }
 
 #[cfg(test)]

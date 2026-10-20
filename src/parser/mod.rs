@@ -1,3 +1,4 @@
+use crate::diagnostics::CompileError;
 use crate::models::{
     ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, Function,
     LocatedStatement, Parameter, Statement, StructDefinition, TypeName,
@@ -33,17 +34,24 @@ pub(crate) use tapscript::*;
 
 #[cfg(test)]
 pub fn parse(source: &str) -> Result<Contract, String> {
-    build_ast(parse_main(source)?, &[])
+    build_ast(parse_main(source)?, &[]).map_err(|error| error.to_string())
 }
 
-pub(crate) fn imports(pairs: &Pairs<'_, Rule>) -> Result<Vec<String>, String> {
+/// Each import's path and the span of its statement.
+pub(crate) fn imports(
+    pairs: &Pairs<'_, Rule>,
+) -> Result<Vec<(String, crate::diagnostics::Span)>, String> {
     pairs
         .clone()
         .next()
         .expect("main")
         .into_inner()
         .filter(|p| p.as_rule() == Rule::import_stmt)
-        .map(|p| parse_string_literal(p.into_inner().next().expect("import path").as_str()))
+        .map(|p| {
+            let span = p.as_span().into();
+            let path = p.into_inner().next().expect("import path");
+            Ok((parse_string_literal(path.as_str())?, span))
+        })
         .collect()
 }
 
@@ -190,7 +198,10 @@ pub(crate) fn parse_error_diagnostic(
 }
 
 /// Build a Contract AST from parsed Pest pairs
-pub(crate) fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, String> {
+pub(crate) fn build_ast(
+    pairs: Pairs<Rule>,
+    constants: &[Constant],
+) -> Result<Contract, CompileError> {
     let mut contract = Contract {
         name: String::new(),
         span: Default::default(),
@@ -219,7 +230,10 @@ pub(crate) fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Co
                             parse_contract(&mut contract, inner_pair)?;
                         }
                         Rule::struct_definition => {
-                            contract.structs.push(parse_struct_definition(inner_pair)?);
+                            let span = inner_pair.as_span().into();
+                            let definition = parse_struct_definition(inner_pair)
+                                .map_err(|error| CompileError::from(error).at(span))?;
+                            contract.structs.push(definition);
                         }
                         _ => {}
                     }
@@ -264,7 +278,7 @@ fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String>
 }
 
 /// Parse a contract or library definition.
-fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), String> {
+fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), CompileError> {
     contract.is_library = pair.as_rule() == Rule::library;
     let mut inner_pairs = pair.into_inner().peekable();
 
@@ -283,7 +297,10 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
     let constants = inner_pairs
         .clone()
         .filter(|pair| pair.as_rule() == Rule::const_decl)
-        .map(parse_const_decl)
+        .map(|pair| {
+            let span = pair.as_span().into();
+            parse_const_decl(pair).map_err(|error| CompileError::from(error).at(span))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     contract.constants.extend(constants);
     crate::compiler::resolve_constants(contract)?;
@@ -307,10 +324,13 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
             continue;
         }
         if function_pair_is_tapscript(&func_pair) {
+            let span = func_pair.as_span().into();
             if contract.is_library {
-                return Err("libraries cannot declare tapscript functions".to_string());
+                let message = "libraries cannot declare tapscript functions";
+                return Err(CompileError::from(message).at(span));
             }
-            let ts = parse_named_tapscript(func_pair, &parsing_constants)?;
+            let ts = parse_named_tapscript(func_pair, &parsing_constants)
+                .map_err(|error| CompileError::from(error).at(span))?;
             contract.tapscripts.push(ts);
         } else {
             let func = parse_function(func_pair, &parsing_constants, contract.is_library)?;
@@ -340,7 +360,7 @@ fn parse_function(
     pair: Pair<Rule>,
     constants: &[Constant],
     is_library: bool,
-) -> Result<Function, String> {
+) -> Result<Function, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     let visibility = if inner
@@ -379,7 +399,7 @@ fn parse_function(
                     | "bool"
             ))
     {
-        return Err(format!("function name '{name}' is reserved"));
+        return Err(CompileError::from(format!("function name '{name}' is reserved")).at(span));
     }
     let parameters = parse_parameters(inner.next().ok_or("Missing parameter list")?)?;
     let return_type = if inner.peek().is_some_and(|p| p.as_rule() == Rule::data_type) {
@@ -389,7 +409,8 @@ fn parse_function(
     };
     let mut statements = Vec::new();
     for statement in inner {
-        statements.extend(parse_statement(&name, statement, constants)?);
+        let span = statement.as_span().into();
+        statements.extend(parse_statement(&name, statement, constants).map_err(|e| e.at(span))?);
     }
     Ok(Function {
         name,
@@ -409,7 +430,7 @@ fn parse_statement(
     function_name: &str,
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<Option<LocatedStatement>, String> {
+) -> Result<Option<LocatedStatement>, CompileError> {
     let span = crate::diagnostics::Span {
         start: pair.as_span().start(),
         end: pair.as_span().end(),
@@ -424,7 +445,8 @@ fn parse_statement(
                 None => {
                     return Err(format!(
                         "Parse error: Invalid arguments to function {function_name}"
-                    ))
+                    )
+                    .into())
                 }
             };
             let requirement = parse_complex_expression(expr)?;
@@ -546,7 +568,7 @@ fn parse_statement(
                     )?;
                     Statement::ForCount { count, body }
                 }
-                _ => return Err("Parse error: Invalid for loop".to_string()),
+                _ => return Err("Parse error: Invalid for loop".into()),
             }
         }
         Rule::function_call_stmt => {
@@ -556,10 +578,10 @@ fn parse_statement(
                     kind: ExprKind::Builtin { builtin, .. },
                     ..
                 } => {
-                    return Err(format!(
+                    return Err(CompileError::from(format!(
                         "`{}(...)` cannot be a statement; use it inside require()",
                         builtin.name
-                    ));
+                    )));
                 }
                 call => Statement::Call(call),
             }
@@ -627,10 +649,12 @@ fn parse_block(
     function_name: &str,
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<Vec<LocatedStatement>, String> {
+) -> Result<Vec<LocatedStatement>, CompileError> {
     let mut statements = Vec::new();
     for inner in pair.into_inner() {
-        statements.extend(parse_statement(function_name, inner, constants)?);
+        let span = inner.as_span().into();
+        statements
+            .extend(parse_statement(function_name, inner, constants).map_err(|e| e.at(span))?);
     }
     Ok(statements)
 }

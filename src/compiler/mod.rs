@@ -456,9 +456,11 @@ pub(crate) fn prepare(
     for ts in &contract.tapscripts {
         match tapscript::check_tapscript(contract, ts) {
             Ok(leaf) => leaves.push(leaf),
-            Err(message) => {
-                leaf_errors.push(Diagnostic::error(file, message).with_code("validation"))
-            }
+            Err(message) => leaf_errors.push(
+                Diagnostic::error(file, message)
+                    .with_code("validation")
+                    .with_span(ts.span),
+            ),
         }
     }
     if !leaf_errors.is_empty() {
