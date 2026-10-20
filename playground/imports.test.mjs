@@ -239,14 +239,17 @@ const mapped = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stri
 })));
 const covenant = JSON.parse(mapped.artifact).functions[0].arkade;
 context.covenant = covenant;
-const html = vm.runInContext('asmRuns = []; highlightAsm(covenant.asm, covenant.sourceMap)', context);
-assert.equal((html.match(/class="asm-run"/g) || []).length,
-    covenant.sourceMap.reduce((count, range) => count + range.asm[1] - range.asm[0], 0));
+const html = vm.runInContext('asmRuns = []; covenantListing(covenant.asm, covenant.sourceMap)', context);
+assert.equal((html.match(/class="asm-line asm-run"/g) || []).length, covenant.sourceMap.length);
+assert.equal((html.match(/class="asm-line"/g) || []).length > 0, true);
+for (const token of covenant.asm) assert.ok(html.includes(token.replace(/</g, '&lt;').replace(/>/g, '&gt;')), token);
 const runs = vm.runInContext('asmRuns', context);
 const innermost = line => [...vm.runInContext(`innermostRuns(asmRuns, ${line}, 9)`, context)].map(run => runs[run].start[0]);
 assert.deepEqual(innermost(3), [3]);
 assert.deepEqual(innermost(5), [5]);
 assert.ok(innermost(4).every(line => line === 4) && innermost(4).length > 0);
+// An `if` maps to its condition alone, so its tokens are not chosen inside its body.
+assert.ok(runs.filter(range => range.start[0] === 4).every(range => range.end[0] === 4));
 assert.deepEqual(innermost(8), []);
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);

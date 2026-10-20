@@ -21,7 +21,7 @@ The playground runs the real compiler as WebAssembly. Nothing is installed and n
 | Tab | What you get |
 |---|---|
 | JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
-| Assembly | Every spend group: the Arkade covenant ASM and each tapscript leaf, opcodes and `<placeholders>` highlighted. Hovering a covenant token highlights the statement it comes from, and the cursor's statement highlights its tokens |
+| Assembly | Every spend group: the Arkade covenant ASM, one source statement per line with its line number and `require` message, and each tapscript leaf. Hovering a covenant line highlights its statement in the editor, clicking it selects the statement, and moving the cursor highlights the cursor's statement |
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
 | Diagnostics | Every compiler error and warning with its location; errors are underlined in the editor and the first is selected |
 

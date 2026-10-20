@@ -118,6 +118,8 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
             else_body,
             ..
         } => {
+            // The branch opcodes map to the condition, not the whole statement.
+            generator.asm.set_span(Some(condition.span));
             generator.emit_expression(condition)?;
             generator.apply(If, 1, 0)?;
             generator.emit_branches(then_body, else_body.as_deref(), true)

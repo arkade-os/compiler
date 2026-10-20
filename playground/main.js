@@ -1410,7 +1410,7 @@ function displayAsm(jsonStr) {
             for (const group of data.functions) {
                 if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
                     html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += highlightAsm(group.arkade.asm, group.arkade.sourceMap) + '\n\n';
+                    html += covenantListing(group.arkade.asm, group.arkade.sourceMap) + '\n';
                 }
                 for (const leaf of (group.leaves || [])) {
                     const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
@@ -1485,26 +1485,41 @@ function escapeHtml(text) {
 let asmRuns = [];
 let sourceDecorations = [];
 
-function highlightAsm(asm, sourceMap = []) {
+function highlightToken(token) {
+    const text = escapeHtml(token);
+    if (token.startsWith('OP_')) return `<span class="asm-opcode">${text}</span>`;
+    if (token.startsWith('<') && token.endsWith('>')) return `<span class="asm-placeholder">${text}</span>`;
+    return text;
+}
+
+function highlightAsm(asm) {
     const tokens = Array.isArray(asm) ? asm : asm.split(' ');
-    const runAt = new Map();
+    return tokens.map(highlightToken).join(' ');
+}
+
+// The covenant one source statement per line: its line number, its tokens and its
+// `require` message. Tokens the compiler adds itself get a line without a number.
+function covenantListing(asm, sourceMap = []) {
+    const lines = [];
+    let next = 0;
+    const unmapped = end => {
+        if (next < end) lines.push({ tokens: [next, end] });
+    };
     for (const range of sourceMap) {
-        const run = asmRuns.push(range) - 1;
-        for (let index = range.asm[0]; index < range.asm[1]; index++) runAt.set(index, run);
+        unmapped(range.asm[0]);
+        lines.push({ tokens: range.asm, range, run: asmRuns.push(range) - 1 });
+        next = range.asm[1];
     }
-    return tokens
-        .map((token, index) => {
-            const text = escapeHtml(token);
-            let html = text;
-            if (token.startsWith('OP_')) {
-                html = `<span class="asm-opcode">${text}</span>`;
-            } else if (token.startsWith('<') && token.endsWith('>')) {
-                html = `<span class="asm-placeholder">${text}</span>`;
-            }
-            const run = runAt.get(index);
-            return run === undefined ? html : `<span class="asm-run" data-run="${run}">${html}</span>`;
-        })
-        .join(' ');
+    unmapped(asm.length);
+    return lines.map(({ tokens, range, run }) => {
+        const code = asm.slice(tokens[0], tokens[1]).map(highlightToken).join(' ');
+        const message = range?.message
+            ? ` <span class="asm-comment">; ${escapeHtml(range.message)}</span>`
+            : '';
+        const attributes = range ? ` class="asm-line asm-run" data-run="${run}"` : ' class="asm-line"';
+        return `<div${attributes}><span class="asm-line-number">${range ? range.start[0] : ''}</span>`
+            + `<span class="asm-code">${code}${message}</span></div>`;
+    }).join('');
 }
 
 const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
@@ -1528,6 +1543,11 @@ function markRuns(runs, className) {
     for (const run of runs) {
         container.querySelectorAll(`.asm-run[data-run="${run}"]`).forEach(el => el.classList.add(className));
     }
+    if (className === 'cursor') container.querySelector('.asm-run.cursor')?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function editorRange(range) {
+    return new monaco.Range(range.start[0], range.start[1], range.end[0], range.end[1]);
 }
 
 function linkAsmToSource(container) {
@@ -1538,14 +1558,22 @@ function linkAsmToSource(container) {
         const range = asmRuns[run];
         if (typeof monaco === 'undefined' || !editor?.deltaDecorations) return;
         const decorations = range ? [{
-            range: new monaco.Range(range.start[0], range.start[1], range.end[0], range.end[1]),
+            range: editorRange(range),
             options: { className: 'source-map-highlight' },
         }] : [];
         sourceDecorations = editor.deltaDecorations(sourceDecorations, decorations);
+        if (range) editor.revealRangeInCenterIfOutsideViewport(editorRange(range));
     };
     container.addEventListener('mouseover', event => {
         const run = event.target.closest('.asm-run')?.dataset.run;
         hover(run === undefined ? undefined : Number(run));
+    });
+    container.addEventListener('click', event => {
+        const range = asmRuns[event.target.closest('.asm-run')?.dataset.run];
+        if (!range || typeof monaco === 'undefined' || !editor) return;
+        editor.setSelection(editorRange(range));
+        editor.revealRangeInCenter(editorRange(range));
+        editor.focus();
     });
     container.addEventListener('mouseleave', () => hover(undefined));
 }

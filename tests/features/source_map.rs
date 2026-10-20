@@ -73,7 +73,8 @@ fn every_statement_maps_its_tokens_and_requires_carry_their_messages() {
         assert!(first.1.contains("OP_CHECKSIG"), "{lines:?}");
         assert_eq!(first.2.as_deref(), Some("not the owner"));
         for (statement, opcode) in [
-            ("if (amount > 10)", "OP_IF"),
+            // An `if` maps its branch opcodes to the condition alone.
+            ("amount > 10)", "OP_IF"),
             ("require(parts[0] == amount);", "OP_EQUAL"),
             ("require(part > i);", "OP_GREATERTHAN"),
             ("Fees.check(amount);", "OP_GREATERTHAN"),
