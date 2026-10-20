@@ -351,6 +351,59 @@ pub(super) fn validate_binding_expression(
                     );
                 }
             }
+            for &(_, index, operand_name, ranges) in operands::CONSTANT_DOMAINS
+                .iter()
+                .filter(|(builtin, ..)| *builtin == name)
+            {
+                let Some(operand) = operands.get(index) else {
+                    continue;
+                };
+                let Some((negative, magnitude)) = literal_index(operand) else {
+                    continue;
+                };
+                let value = format!("{}{magnitude}", if negative { "-" } else { "" });
+                let accepted = value.parse::<i128>().is_ok_and(|value| {
+                    ranges
+                        .iter()
+                        .any(|(low, high)| (*low..=*high).contains(&value))
+                });
+                if !accepted {
+                    let allowed = ranges
+                        .iter()
+                        .map(|(low, high)| match (*low, *high) {
+                            (low, i128::MAX) => format!("at least {low}"),
+                            (low, high) => format!("{low} to {high}"),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" or ");
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "function '{function_name}': {name} {operand_name} must be {allowed}, got {value}"
+                        ))
+                        .at(operand.span),
+                    );
+                }
+            }
+            let width = |index: usize| {
+                operands
+                    .get(index)
+                    .and_then(|o| crate::types::static_byte_width(o))
+            };
+            let byte_rule = match name {
+                "checkSigFromStack" | "checkSigFromStackVerify" => width(2)
+                    .filter(|&width| width != 32)
+                    .map(|width| format!("message must be 32 bytes, got {width}")),
+                "merkleRoot" => width(2)
+                    .filter(|width| width % 32 != 0)
+                    .map(|width| format!("proof must be a multiple of 32 bytes, got {width}")),
+                _ => None,
+            };
+            if let Some(rule) = byte_rule {
+                issues.push(
+                    ValidationIssue::error(format!("function '{function_name}': {name} {rule}"))
+                        .at(expression.span),
+                );
+            }
             // OP_ECPAIRING bounds its work at 16 pairs.
             if let Some(pairs) = length.filter(|&pairs| name == "ecPairing" && pairs > 16) {
                 issues.push(ValidationIssue::error(format!(

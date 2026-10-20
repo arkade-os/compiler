@@ -948,19 +948,25 @@ fn unary_negation_in_builtin_atom_arguments() {
             "OP_0 OP_ROLL OP_NEGATE OP_NEGATE 2 3 OP_MODEXP",
         ),
         (
-            "let result = ecAdd(point, point, -1);",
-            "1 OP_NEGATE OP_ECADD",
+            "let result = ecAdd(point, point, --1);",
+            "1 OP_NEGATE OP_NEGATE OP_ECADD",
         ),
         (
             "let result = ecMul(point, -3, 0);",
             "3 OP_NEGATE 0 OP_ECMUL",
         ),
         (
-            "let result = ecPairing(g1s, g2s, -2);",
-            "OP_1 2 OP_NEGATE OP_ECPAIRING",
+            "let result = ecPairing(g1s, g2s, --2);",
+            "OP_1 2 OP_NEGATE OP_NEGATE OP_ECPAIRING",
         ),
-        ("let result = sighash(-1);", "1 OP_NEGATE OP_SIGHASH"),
-        ("let result = digest(data, -1);", "1 OP_NEGATE OP_DIGEST"),
+        (
+            "let result = sighash(--1);",
+            "1 OP_NEGATE OP_NEGATE OP_SIGHASH",
+        ),
+        (
+            "let result = digest(data, --1);",
+            "1 OP_NEGATE OP_NEGATE OP_DIGEST",
+        ),
         (
             "let result = substr(data, -(value + 1), (2 * 3));",
             "1 OP_ADD OP_NEGATE 2 3 OP_MUL OP_SUBSTR",
@@ -1030,7 +1036,10 @@ fn logical_negation_preserves_nested_expressions() {
     "#,
     )
     .expect("nested logical operands compile");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("{:?}", output.warnings);
+    };
+    assert!(warning.contains("checkSig fails the spend on an invalid non-empty signature"));
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert!(asm.iter().any(|token| token == "OP_CAT"), "{asm:?}");
     assert!(

@@ -70,3 +70,5 @@ mod imports;
 
 #[path = "features/struct_arrays.rs"]
 mod struct_arrays;
+#[path = "features/vm_limits.rs"]
+mod vm_limits;
