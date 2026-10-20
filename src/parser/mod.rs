@@ -189,6 +189,7 @@ pub(crate) fn parse_error_diagnostic(
 fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
+        span: Default::default(),
         is_library: false,
         structs: Vec::new(),
         parameters: Vec::new(),
@@ -234,9 +235,9 @@ fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String>
     let mut inner = pair.into_inner();
     let name = inner
         .next()
-        .ok_or_else(|| "Missing struct name".to_string())?
-        .as_str()
-        .to_string();
+        .ok_or_else(|| "Missing struct name".to_string())?;
+    let span = name.as_span().into();
+    let name = name.as_str().to_string();
     let fields = inner
         .map(|field| {
             let mut field = field.into_inner();
@@ -247,13 +248,15 @@ fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String>
             );
             let name = field
                 .next()
-                .ok_or_else(|| format!("struct '{name}' field is missing a name"))?
-                .as_str()
-                .to_string();
-            Ok(Parameter { name, param_type })
+                .ok_or_else(|| format!("struct '{name}' field is missing a name"))?;
+            Ok(Parameter {
+                name: name.as_str().to_string(),
+                param_type,
+                span: name.as_span().into(),
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok(StructDefinition { name, fields })
+    Ok(StructDefinition { name, fields, span })
 }
 
 /// Parse a contract or library definition.
@@ -262,10 +265,9 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Strin
     let mut inner_pairs = pair.into_inner().peekable();
 
     // Contract name (required)
-    contract.name = match inner_pairs.next() {
-        Some(name) => name.as_str().to_string(),
-        None => return Err("Missing contract name".to_string()),
-    };
+    let name = inner_pairs.next().ok_or("Missing contract name")?;
+    contract.name = name.as_str().to_string();
+    contract.span = name.as_span().into();
 
     // Parameters (optional)
     if !contract.is_library {
@@ -319,16 +321,13 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
         .into_inner()
         .filter(|p| p.as_rule() != Rule::const_keyword);
     let const_type = parse_data_type(inner.next().ok_or("Missing constant type")?);
-    let name = inner
-        .next()
-        .ok_or("Missing constant name")?
-        .as_str()
-        .to_string();
+    let name = inner.next().ok_or("Missing constant name")?;
     let value = parse_general_expression(inner.next().ok_or("Missing constant value")?)?;
     Ok(Constant {
-        name,
+        name: name.as_str().to_string(),
         const_type,
         value,
+        span: name.as_span().into(),
     })
 }
 
@@ -338,6 +337,7 @@ fn parse_function(
     constants: &[Constant],
     is_library: bool,
 ) -> Result<Function, String> {
+    let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     let visibility = if inner
         .peek()
@@ -390,6 +390,7 @@ fn parse_function(
     Ok(Function {
         name,
         span,
+        declaration,
         parameters,
         statements,
         is_private,
@@ -409,6 +410,7 @@ fn parse_statement(
         start: pair.as_span().start(),
         end: pair.as_span().end(),
     };
+    let mut names = Vec::new();
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
@@ -432,9 +434,9 @@ fn parse_statement(
             let mut inner = pair.into_inner();
             let name = inner
                 .next()
-                .ok_or_else(|| "Parse error: Missing variable name in let binding".to_string())?
-                .as_str()
-                .to_string();
+                .ok_or_else(|| "Parse error: Missing variable name in let binding".to_string())?;
+            names.push(name.as_span().into());
+            let name = name.as_str().to_string();
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in let binding".to_string())?;
@@ -493,20 +495,20 @@ fn parse_statement(
             let mut inner = loop_statement.into_inner();
             match loop_rule {
                 Rule::for_in_stmt => {
-                    let index_var = inner
-                        .next()
-                        .ok_or_else(|| {
-                            "Parse error: Missing index variable in for loop".to_string()
-                        })?
-                        .as_str()
-                        .to_string();
-                    let value_var = inner
-                        .next()
-                        .ok_or_else(|| {
-                            "Parse error: Missing value variable in for loop".to_string()
-                        })?
-                        .as_str()
-                        .to_string();
+                    let index_var = inner.next().ok_or_else(|| {
+                        "Parse error: Missing index variable in for loop".to_string()
+                    })?;
+                    let value_var = inner.next().ok_or_else(|| {
+                        "Parse error: Missing value variable in for loop".to_string()
+                    })?;
+                    names.extend(
+                        [index_var.as_span(), value_var.as_span()]
+                            .map(crate::diagnostics::Span::from),
+                    );
+                    let (index_var, value_var) = (
+                        index_var.as_str().to_string(),
+                        value_var.as_str().to_string(),
+                    );
                     let iterable =
                         parse_general_expression(inner.next().ok_or_else(|| {
                             "Parse error: Missing iterable in for loop".to_string()
@@ -574,9 +576,9 @@ fn parse_statement(
             );
             let name = inner
                 .next()
-                .ok_or_else(|| "Parse error: Missing variable name".to_string())?
-                .as_str()
-                .to_string();
+                .ok_or_else(|| "Parse error: Missing variable name".to_string())?;
+            names.push(name.as_span().into());
+            let name = name.as_str().to_string();
             match inner.next() {
                 Some(value) => Statement::LetBinding {
                     name,
@@ -591,7 +593,11 @@ fn parse_statement(
         }
         _ => return Ok(None),
     };
-    Ok(Some(LocatedStatement { span, statement }))
+    Ok(Some(LocatedStatement {
+        span,
+        names,
+        statement,
+    }))
 }
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
@@ -646,14 +652,13 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
                 Some(type_pair) => parse_data_type(type_pair),
                 None => return Err("Parameter is missing data type".to_string()),
             };
-            let param_name = match param_inner.next() {
-                Some(param_name) => param_name.as_str().to_string(),
-                None => return Err("Missing parameter name after data type".to_string()),
+            let Some(name) = param_inner.next() else {
+                return Err("Missing parameter name after data type".to_string());
             };
-
             parameters.push(Parameter {
-                name: param_name,
+                name: name.as_str().to_string(),
                 param_type,
+                span: name.as_span().into(),
             });
         }
     }

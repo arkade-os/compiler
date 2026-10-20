@@ -163,6 +163,7 @@ impl Generator {
             fields
                 .iter()
                 .map(|(name, ty)| Parameter {
+                    span: Default::default(),
                     name: name.to_string(),
                     param_type: TypeName::parse(ty),
                 })

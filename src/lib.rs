@@ -9,6 +9,7 @@ pub mod opcodes;
 pub mod operators;
 mod parser;
 pub mod properties;
+pub mod symbols;
 mod types;
 mod validator;
 

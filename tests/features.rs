@@ -73,3 +73,5 @@ mod struct_arrays;
 
 #[path = "features/staged_api.rs"]
 mod staged_api;
+#[path = "features/symbols.rs"]
+mod symbols;

@@ -250,10 +250,12 @@ pub(super) fn validate_value(
         (ExprKind::StructLiteral(fields), _, ArkType::Struct(name)) => {
             let native =
                 crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
+                    span: Default::default(),
                     name: name.clone(),
                     fields: fields
                         .iter()
                         .map(|(name, ty)| crate::models::Parameter {
+                            span: Default::default(),
                             name: name.to_string(),
                             param_type: TypeName::parse(ty),
                         })

@@ -1,3 +1,4 @@
+use crate::diagnostics::Span;
 use crate::models::{
     ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr,
     LocatedStatement, Path, Requirement, Statement, TapItem, TypeName,
@@ -5,10 +6,12 @@ use crate::models::{
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
 
-/// Validate constant declarations and fold every reference to them into a literal.
+/// Validate constant declarations and fold every reference to them into a literal, returning
+/// the name and span of each reference folded in an expression.
 /// Runs before validation so no later stage ever observes a constant identifier.
-pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
+pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, String> {
     let values = collect(contract)?;
+    let mut uses = Vec::new();
     for parameter in contract
         .parameters
         .iter_mut()
@@ -23,7 +26,7 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
         if let Some(return_type) = &mut function.return_type {
             fold_type(return_type, &values)?;
         }
-        fold_statements(&mut function.statements, &values)?;
+        fold_statements(&mut function.statements, &values, &mut uses)?;
     }
     for tapscript in &mut contract.tapscripts {
         for input in &mut tapscript.inputs {
@@ -53,7 +56,7 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    Ok(uses)
 }
 
 fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
@@ -353,11 +356,12 @@ fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> 
 fn fold_statements(
     statements: &mut [LocatedStatement],
     values: &HashMap<String, String>,
+    uses: &mut Vec<(Path, Span)>,
 ) -> Result<(), String> {
     for statement in statements {
         match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
-                fold_expression(expression, values)
+                fold_expression(expression, values, uses)
             }
             Statement::Declaration { declared_type, .. } => fold_type(declared_type, values)?,
             Statement::LetBinding {
@@ -368,38 +372,38 @@ fn fold_statements(
                 if let Some(declared_type) = declared_type {
                     fold_type(declared_type, values)?;
                 }
-                fold_expression(value, values);
+                fold_expression(value, values, uses);
             }
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }
                 | AssignmentTarget::Access(index) = target
                 {
-                    fold_expression(index, values);
+                    fold_expression(index, values, uses);
                 }
-                fold_expression(value, values);
+                fold_expression(value, values, uses);
             }
-            Statement::Require(requirement) => fold_requirement(requirement, values),
+            Statement::Require(requirement) => fold_requirement(requirement, values, uses),
             Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
             } => {
-                fold_expression(condition, values);
-                fold_statements(then_body, values)?;
+                fold_expression(condition, values, uses);
+                fold_statements(then_body, values, uses)?;
                 if let Some(body) = else_body {
-                    fold_statements(body, values)?;
+                    fold_statements(body, values, uses)?;
                 }
             }
             Statement::ForIn { iterable, body, .. } => {
-                fold_expression(iterable, values);
-                fold_statements(body, values)?;
+                fold_expression(iterable, values, uses);
+                fold_statements(body, values, uses)?;
             }
             Statement::ForCount { count, body } => {
-                fold_expression(count, values);
+                fold_expression(count, values, uses);
                 if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
                     count.kind = ExprKind::Literal(value);
                 }
-                fold_statements(body, values)?;
+                fold_statements(body, values, uses)?;
             }
             Statement::Return(None) => {}
         }
@@ -407,19 +411,28 @@ fn fold_statements(
     Ok(())
 }
 
-fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, String>) {
+fn fold_requirement(
+    requirement: &mut Requirement,
+    values: &HashMap<String, String>,
+    uses: &mut Vec<(Path, Span)>,
+) {
     match requirement {
-        Requirement::Expression(expression) => fold_expression(expression, values),
+        Requirement::Expression(expression) => fold_expression(expression, values, uses),
         Requirement::Comparison { left, right, .. } => {
-            fold_expression(left, values);
-            fold_expression(right, values);
+            fold_expression(left, values, uses);
+            fold_expression(right, values, uses);
         }
     }
 }
 
-fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
+fn fold_expression(
+    expression: &mut Expression,
+    values: &HashMap<String, String>,
+    uses: &mut Vec<(Path, Span)>,
+) {
     if let ExprKind::Name(path) = &expression.kind {
         if let Some(value) = values.get(&path.key()) {
+            uses.push((path.clone(), expression.span));
             expression.kind = ExprKind::Literal(value.clone());
             return;
         }
@@ -437,7 +450,7 @@ fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>
         }
     }
     for child in crate::models::child_exprs_mut(expression) {
-        fold_expression(child, values);
+        fold_expression(child, values, uses);
     }
 }
 

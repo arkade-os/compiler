@@ -165,6 +165,9 @@ pub struct Parameter {
     /// Parameter type (pubkey, signature, bytes32, int, bool, asset, value)
     #[serde(rename = "type")]
     pub param_type: TypeName,
+    /// Byte range of the name; empty for parameters the compiler builds.
+    #[serde(skip)]
+    pub span: crate::diagnostics::Span,
 }
 
 /// A named, statically laid-out source type.
@@ -172,6 +175,8 @@ pub struct Parameter {
 pub struct StructDefinition {
     pub name: String,
     pub fields: Vec<Parameter>,
+    #[serde(skip)]
+    pub span: crate::diagnostics::Span,
 }
 
 /// One scalar leaf in a recursively flattened parameter layout.

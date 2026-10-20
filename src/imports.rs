@@ -33,6 +33,7 @@ impl From<String> for LoadError {
 pub struct Analysis {
     entry: String,
     loaded: Result<Loaded, Vec<Diagnostic>>,
+    symbols: crate::symbols::Symbols,
 }
 
 impl Analysis {
@@ -55,6 +56,12 @@ impl Analysis {
         Some(&loaded.modules[&self.entry].contract)
     }
 
+    /// The definitions and references of every file that parsed and typed, including files that
+    /// failed validation.
+    pub fn symbols(&self) -> &crate::symbols::Symbols {
+        &self.symbols
+    }
+
     /// Generate the artifact. Fails with the analysis errors, or with code generation's first.
     pub fn compile(&self, options: crate::CompileOptions) -> Result<ContractJson, Vec<Diagnostic>> {
         let loaded = self.loaded.as_ref().map_err(Clone::clone)?;
@@ -73,6 +80,7 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
     let failed = |entry: &str, message: String| Analysis {
         entry: entry.to_string(),
         loaded: Err(vec![Diagnostic::error(entry, message)]),
+        symbols: Default::default(),
     };
     let entry = match relative_path(entry) {
         Ok(entry) => entry,
@@ -93,14 +101,16 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
         return Analysis {
             entry,
             loaded: Err(vec![diagnostic]),
+            symbols: Default::default(),
         };
     }
-    let loaded = Loaded::load(&entry, &mut |path| {
+    let mut symbols = Default::default();
+    let mut read = |path: &str| {
         normalized.get(path).cloned().ok_or_else(|| {
             format!("source file '{path}' not found; imports require source files supplied through compile_sources or compile_file")
         })
-    })
-    .map_err(|error| match error {
+    };
+    let loaded = Loaded::load(&entry, &mut read, &mut symbols).map_err(|error| match error {
         LoadError::Diagnostics(diagnostics, _) => diagnostics,
         LoadError::Message(message) => {
             let message = message
@@ -109,7 +119,11 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
             vec![Diagnostic::error(&entry, message)]
         }
     });
-    Analysis { entry, loaded }
+    Analysis {
+        entry,
+        loaded,
+        symbols,
+    }
 }
 
 pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
@@ -271,7 +285,7 @@ fn compile_with_loader(
     filesystem: bool,
     options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
-    let loaded = Loaded::load(entry, &mut read).map_err(|e| match e {
+    let loaded = Loaded::load(entry, &mut read, &mut Default::default()).map_err(|e| match e {
         LoadError::Message(message) => message,
         LoadError::Diagnostics(diagnostics, source) => format!(
             "{}: {}",
@@ -306,6 +320,7 @@ impl Loaded {
     fn load(
         entry: &str,
         read: &mut impl FnMut(&str) -> Result<String, String>,
+        symbols: &mut crate::symbols::Symbols,
     ) -> Result<Self, LoadError> {
         let mut loaded = Loaded {
             modules: BTreeMap::new(),
@@ -315,10 +330,10 @@ impl Loaded {
             entry,
             entry,
             read,
-            &mut loaded.modules,
-            &mut loaded.files,
+            &mut loaded,
             &mut Vec::new(),
             &mut HashMap::new(),
+            symbols,
         )?;
         Ok(loaded)
     }
@@ -396,12 +411,12 @@ fn load(
     path: &str,
     entry: &str,
     read: &mut impl FnMut(&str) -> Result<String, String>,
-    modules: &mut BTreeMap<String, Module>,
-    files: &mut BTreeMap<String, String>,
+    loaded: &mut Loaded,
     active: &mut Vec<String>,
     declarations: &mut HashMap<String, String>,
+    symbols: &mut crate::symbols::Symbols,
 ) -> Result<(), LoadError> {
-    if modules.contains_key(path) {
+    if loaded.modules.contains_key(path) {
         return Ok(());
     }
     if active.iter().any(|p| p == path) {
@@ -427,10 +442,10 @@ fn load(
                 &dependency,
                 entry,
                 read,
-                modules,
-                files,
+                loaded,
                 active,
                 declarations,
+                symbols,
             )?;
             if !dependencies.contains(&dependency) {
                 dependencies.push(dependency);
@@ -438,7 +453,7 @@ fn load(
         }
         let mut constants = Vec::new();
         for dependency in &dependencies {
-            let contract = &modules[dependency].contract;
+            let contract = &loaded.modules[dependency].contract;
             for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
                 let mut constant = constant.clone();
                 constant.name = format!("{}.{}", contract.name, constant.name);
@@ -471,7 +486,7 @@ fn load(
         let mut visible_structs = own_structs.clone();
         let mut visible_contracts = HashMap::new();
         for dependency in &dependencies {
-            let module = &modules[dependency];
+            let module = &loaded.modules[dependency];
             visible_structs.extend(module.structs.clone());
             if !module.contract.name.is_empty() {
                 visible_contracts.insert(module.contract.name.clone(), &module.contract);
@@ -507,7 +522,7 @@ fn load(
                 Ok(())
             })?;
         }
-        compiler::fold_constants(&mut contract)?;
+        let constant_uses = compiler::fold_constants(&mut contract)?;
         visible_contracts.insert(contract.name.clone(), &contract);
         validate_scope(&contract, &visible_structs, &visible_contracts)?;
         let mut structs: BTreeMap<_, _> = contract
@@ -517,7 +532,7 @@ fn load(
             .collect();
         let mut helpers = BTreeMap::new();
         for dependency in &dependencies {
-            let imported = &modules[dependency].contract;
+            let imported = &loaded.modules[dependency].contract;
             structs.extend(imported.structs.iter().map(|s| (s.name.clone(), s.clone())));
             for function in imported.functions.iter().filter(|f| f.is_static) {
                 let mut function = function.clone();
@@ -555,10 +570,19 @@ fn load(
         }
         contract.functions.extend(helpers.into_values());
         let require_entrypoint = path == entry && !contract.is_library;
-        let prepared = compiler::prepare(&mut contract, require_entrypoint, path)
-            .map_err(|diagnostics| LoadError::Diagnostics(diagnostics, source.clone()))?;
-        files.insert(path.to_string(), source);
-        modules.insert(
+        let prepared = compiler::prepare(&mut contract, require_entrypoint, path);
+        symbols.collect(
+            path,
+            &source,
+            &contract,
+            &own_structs,
+            &dependencies,
+            &constant_uses,
+        );
+        let prepared =
+            prepared.map_err(|diagnostics| LoadError::Diagnostics(diagnostics, source.clone()))?;
+        loaded.files.insert(path.to_string(), source);
+        loaded.modules.insert(
             path.to_string(),
             Module {
                 contract,

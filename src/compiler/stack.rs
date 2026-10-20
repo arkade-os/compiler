@@ -446,6 +446,7 @@ mod symbolic_stack_tests {
         let inputs = ["a", "b", "c", "d"]
             .into_iter()
             .map(|name| Parameter {
+                span: Default::default(),
                 name: name.to_string(),
                 param_type: "int".into(),
             })
@@ -479,6 +480,7 @@ mod symbolic_stack_tests {
         let inputs = ["a", "b"]
             .into_iter()
             .map(|name| Parameter {
+                span: Default::default(),
                 name: name.to_string(),
                 param_type: "int".into(),
             })
@@ -511,10 +513,12 @@ mod symbolic_stack_tests {
     fn indexed_assignment_without_offset_preserves_bindings() {
         let inputs = [
             Parameter {
+                span: Default::default(),
                 name: "values".into(),
                 param_type: "int[3]".into(),
             },
             Parameter {
+                span: Default::default(),
                 name: "i".into(),
                 param_type: "int".into(),
             },
@@ -553,10 +557,12 @@ mod symbolic_stack_tests {
     fn expression_index_assignment_checks_bounds_and_uses_put() {
         let inputs = [
             Parameter {
+                span: Default::default(),
                 name: "values".to_string(),
                 param_type: "int[3]".into(),
             },
             Parameter {
+                span: Default::default(),
                 name: "i".to_string(),
                 param_type: "int".into(),
             },

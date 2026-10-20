@@ -4,7 +4,7 @@
 //! renders them the same way it always has.
 
 /// A byte-offset range into one file's source text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

@@ -560,7 +560,11 @@ pub(crate) fn expanded_placeholder_params(
     let mut result = Vec::new();
     for param in params {
         for_each_expanded_param(param, structs, |name, _, param_type| {
-            result.push(Parameter { name, param_type });
+            result.push(Parameter {
+                span: Default::default(),
+                name,
+                param_type,
+            });
         })?;
     }
     Ok(result)
