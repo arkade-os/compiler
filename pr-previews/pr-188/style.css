@@ -590,6 +590,22 @@ main {
     color: var(--error);
 }
 
+.diagnostic {
+    padding: 2px 0;
+}
+
+.diagnostic.warning {
+    color: var(--warning);
+}
+
+.diagnostic[data-line] {
+    cursor: pointer;
+}
+
+.diagnostic[data-line]:hover {
+    text-decoration: underline;
+}
+
 #errors-output.warning {
     color: var(--warning);
 }
