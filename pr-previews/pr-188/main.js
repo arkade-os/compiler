@@ -1532,6 +1532,7 @@ function innermostRuns(runs, line, column) {
     const containing = runs
         .map((range, run) => ({ range, run }))
         .filter(({ range }) => before(range.start, at) && before(at, range.end));
+    if (!containing.length) return [];
     const size = ({ range }) => (range.end[0] - range.start[0]) * 1e6 + range.end[1] - range.start[1];
     const smallest = Math.min(...containing.map(size));
     const innermost = containing.filter(entry => size(entry) === smallest);
