@@ -97,7 +97,7 @@ impl Assembly {
     }
 
     pub(crate) fn unpin(&mut self) {
-        self.pinned -= 1;
+        self.pinned = self.pinned.checked_sub(1).expect("unpin follows a pin");
     }
 
     pub(crate) fn into_spanned(self) -> Vec<Spanned> {

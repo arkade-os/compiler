@@ -707,6 +707,10 @@ pub(crate) fn build_function_groups(
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
 
+    // A shorter list would silently drop leaves from the artifact.
+    if leaves.len() != contract.tapscripts.len() {
+        return Err("internal compiler error: checked leaves do not match the tapscripts".into());
+    }
     for (ts, leaf) in contract.tapscripts.iter().zip(leaves) {
         let mut asm = emit_leaf_asm(&leaf.closure, &ts.name, &leaf.binding);
         resolve_constructor_field_placeholders(&mut asm, contract)?;
