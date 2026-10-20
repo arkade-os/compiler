@@ -569,6 +569,23 @@ main {
     white-space: pre-wrap;
 }
 
+.asm-line {
+    display: flex;
+    gap: 1ch;
+    padding: 1px 0;
+}
+
+.asm-line-number {
+    flex: 0 0 4ch;
+    text-align: right;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.asm-line.asm-run {
+    cursor: pointer;
+}
+
 #errors-output {
     color: var(--error);
 }
@@ -671,12 +688,12 @@ main {
 
 .asm-run.hover,
 .asm-run.cursor {
-    background: rgba(86, 156, 214, 0.25);
-    border-radius: 2px;
+    background: rgba(86, 156, 214, 0.3);
+    box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .source-map-highlight {
-    background: rgba(86, 156, 214, 0.25);
+    background: rgba(86, 156, 214, 0.35);
 }
 
 .asm-comment {
