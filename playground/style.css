@@ -669,6 +669,16 @@ main {
     color: #4ec9b0;
 }
 
+.asm-run.hover,
+.asm-run.cursor {
+    background: rgba(86, 156, 214, 0.25);
+    border-radius: 2px;
+}
+
+.source-map-highlight {
+    background: rgba(86, 156, 214, 0.25);
+}
+
 .asm-comment {
     color: #6a9955;
 }

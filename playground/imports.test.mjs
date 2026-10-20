@@ -233,4 +233,20 @@ assert.equal(elements['error-count'].textContent, String(errors.length));
 assert.equal(elements['compile-status'].className, 'compile-status error');
 assert.match(elements['errors-output'].textContent, /\(main\.ark:2:\d+\)/);
 
+// Assembly tokens link to the statement each comes from.
+const mapped = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({
+    'main.ark': 'contract M(pubkey k) {\n  function f(signature s, int n) {\n    require(n > 0);\n    if (n > 1) {\n      require(checkSig(s, k));\n    }\n  }\n}',
+})));
+const covenant = JSON.parse(mapped.artifact).functions[0].arkade;
+context.covenant = covenant;
+const html = vm.runInContext('asmRuns = []; highlightAsm(covenant.asm, covenant.sourceMap)', context);
+assert.equal((html.match(/class="asm-run"/g) || []).length,
+    covenant.sourceMap.reduce((count, range) => count + range.asm[1] - range.asm[0], 0));
+const runs = vm.runInContext('asmRuns', context);
+const innermost = line => [...vm.runInContext(`innermostRuns(asmRuns, ${line}, 9)`, context)].map(run => runs[run].start[0]);
+assert.deepEqual(innermost(3), [3]);
+assert.deepEqual(innermost(5), [5]);
+assert.ok(innermost(4).every(line => line === 4) && innermost(4).length > 0);
+assert.deepEqual(innermost(8), []);
+
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);

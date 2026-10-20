@@ -21,9 +21,9 @@ The playground runs the real compiler as WebAssembly. Nothing is installed and n
 | Tab | What you get |
 |---|---|
 | JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
-| Assembly | Every spend group: the Arkade covenant ASM and each tapscript leaf, opcodes and `<placeholders>` highlighted |
+| Assembly | Every spend group: the Arkade covenant ASM and each tapscript leaf, opcodes and `<placeholders>` highlighted. Hovering a covenant token highlights the statement it comes from, and the cursor's statement highlights its tokens |
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
-| Diagnostics | Compiler warnings and errors; an offending line is selected in the editor when available |
+| Diagnostics | Every compiler error and warning with its location; errors are underlined in the editor and the first is selected |
 
 The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 

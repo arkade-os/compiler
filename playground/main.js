@@ -1244,6 +1244,10 @@ function initMonaco() {
             doCompile();
         });
 
+        editor.onDidChangeCursorPosition(({ position }) => {
+            markRuns(innermostRuns(asmRuns, position.lineNumber, position.column), 'cursor');
+        });
+
         // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
             if (editor.getValue() !== lastCompiledSource) {
@@ -1395,16 +1399,18 @@ function syntaxHighlightJson(json) {
 // Display Assembly output
 function displayAsm(jsonStr) {
     const container = document.getElementById('asm-output');
+    linkAsmToSource(container);
 
     try {
         const data = JSON.parse(jsonStr);
         let html = '';
+        asmRuns = [];
 
         if (data.functions && data.functions.length > 0) {
             for (const group of data.functions) {
                 if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
                     html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += highlightAsm(group.arkade.asm) + '\n\n';
+                    html += highlightAsm(group.arkade.asm, group.arkade.sourceMap) + '\n\n';
                 }
                 for (const leaf of (group.leaves || [])) {
                     const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
@@ -1475,19 +1481,73 @@ function escapeHtml(text) {
 }
 
 // Highlight assembly code
-function highlightAsm(asm) {
+// The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
+let asmRuns = [];
+let sourceDecorations = [];
+
+function highlightAsm(asm, sourceMap = []) {
     const tokens = Array.isArray(asm) ? asm : asm.split(' ');
+    const runAt = new Map();
+    for (const range of sourceMap) {
+        const run = asmRuns.push(range) - 1;
+        for (let index = range.asm[0]; index < range.asm[1]; index++) runAt.set(index, run);
+    }
     return tokens
-        .map(token => {
+        .map((token, index) => {
             const text = escapeHtml(token);
+            let html = text;
             if (token.startsWith('OP_')) {
-                return `<span class="asm-opcode">${text}</span>`;
+                html = `<span class="asm-opcode">${text}</span>`;
             } else if (token.startsWith('<') && token.endsWith('>')) {
-                return `<span class="asm-placeholder">${text}</span>`;
+                html = `<span class="asm-placeholder">${text}</span>`;
             }
-            return text;
+            const run = runAt.get(index);
+            return run === undefined ? html : `<span class="asm-run" data-run="${run}">${html}</span>`;
         })
         .join(' ');
+}
+
+const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
+
+// The runs of the narrowest statement containing `line`:`column`.
+function innermostRuns(runs, line, column) {
+    const at = [line, column];
+    const containing = runs
+        .map((range, run) => ({ range, run }))
+        .filter(({ range }) => before(range.start, at) && before(at, range.end));
+    const size = ({ range }) => (range.end[0] - range.start[0]) * 1e6 + range.end[1] - range.start[1];
+    const smallest = Math.min(...containing.map(size));
+    const innermost = containing.filter(entry => size(entry) === smallest);
+    return innermost.filter(({ range }) => range.start.join() === innermost[0].range.start.join())
+        .map(({ run }) => run);
+}
+
+function markRuns(runs, className) {
+    const container = document.getElementById('asm-output');
+    container.querySelectorAll(`.asm-run.${className}`).forEach(el => el.classList.remove(className));
+    for (const run of runs) {
+        container.querySelectorAll(`.asm-run[data-run="${run}"]`).forEach(el => el.classList.add(className));
+    }
+}
+
+function linkAsmToSource(container) {
+    if (container.dataset.linked) return;
+    container.dataset.linked = 'true';
+    const hover = run => {
+        markRuns(run === undefined ? [] : [run], 'hover');
+        const range = asmRuns[run];
+        if (typeof monaco === 'undefined' || !editor?.deltaDecorations) return;
+        const decorations = range ? [{
+            range: new monaco.Range(range.start[0], range.start[1], range.end[0], range.end[1]),
+            options: { className: 'source-map-highlight' },
+        }] : [];
+        sourceDecorations = editor.deltaDecorations(sourceDecorations, decorations);
+    };
+    container.addEventListener('mouseover', event => {
+        const run = event.target.closest('.asm-run')?.dataset.run;
+        hover(run === undefined ? undefined : Number(run));
+    });
+    container.addEventListener('mouseleave', () => hover(undefined));
 }
 
 // Show compilation success
