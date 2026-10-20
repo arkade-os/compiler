@@ -177,9 +177,12 @@ const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-st
     const classes = new Set();
     return [id, {
         textContent: '',
+        innerHTML: '',
+        dataset: {},
         classList: {
             add: (...names) => names.forEach(name => classes.add(name)),
             remove: (...names) => names.forEach(name => classes.delete(name)),
+            toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
             contains: name => classes.has(name),
         },
     }];
@@ -199,13 +202,18 @@ vm.runInContext(`
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
-assert.equal(elements['errors-output'].textContent, detailed.warnings.join('\n'));
+const warningDiagnostics = detailed.diagnostics.filter(d => d.severity === 'warning');
+assert.equal(warningDiagnostics.length, detailed.warnings.length);
+for (const warning of warningDiagnostics) {
+    assert.ok(elements['errors-output'].innerHTML.includes('class="diagnostic warning"'));
+    assert.ok(elements['errors-output'].innerHTML.includes(warning.message), warning.message);
+}
 assert(elements['error-count'].classList.contains('warning'));
 assert.equal(elements['error-count'].textContent, String(detailed.warnings.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
 context.warningSource = 'contract Clean() { function spend() { require(true); } }';
 vm.runInContext('doCompile()', context);
-assert.equal(elements['errors-output'].textContent, '');
+assert.equal(elements['errors-output'].innerHTML, '');
 assert(!elements['error-count'].classList.contains('visible'));
 assert.equal(elements['compile-status'].className, 'compile-status success');
 
@@ -231,7 +239,8 @@ vm.runInContext(`
 assert.equal(context.selected.startColumn, errors[0].start.column);
 assert.equal(elements['error-count'].textContent, String(errors.length));
 assert.equal(elements['compile-status'].className, 'compile-status error');
-assert.match(elements['errors-output'].textContent, /\(main\.ark:2:\d+\)/);
+assert.match(elements['errors-output'].innerHTML, /data-line="2" data-column="\d+">error\[/);
+assert.match(elements['errors-output'].innerHTML, /\(main\.ark:2:\d+\)/);
 
 // Assembly tokens link to the statement each comes from.
 const mapped = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({

@@ -776,6 +776,7 @@ async function initCompiler() {
         await initWasm();
         initPanicHook();
         wasmReady = true;
+        lint();
 
         const ver = version();
         document.getElementById('compiler-version').textContent = `v${ver}`;
@@ -1253,6 +1254,7 @@ function initMonaco() {
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
             }
+            lint();
         });
 
         // Load shared contract from URL hash if present
@@ -1354,7 +1356,7 @@ function doCompile() {
         displayAsm(result);
         displayBindings(result);
         showSuccess(result, warnings.length);
-        showWarnings(warnings);
+        renderDiagnostics(diagnostics, entry);
         markCompiled();
     } catch (err) {
         showError(err.toString());
@@ -1480,11 +1482,11 @@ function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Highlight assembly code
 // The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
 let asmRuns = [];
 let sourceDecorations = [];
 
+// Highlight assembly code
 function highlightToken(token) {
     const text = escapeHtml(token);
     if (token.startsWith('OP_')) return `<span class="asm-opcode">${text}</span>`;
@@ -1592,14 +1594,50 @@ function showSuccess(jsonStr, warningCount = 0) {
     statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
 }
 
-function showWarnings(warnings) {
-    if (!warnings.length) return;
+// List `diagnostics` in the Diagnostics tab, one per line; those in the open file link to
+// their location. The badge counts errors, or warnings when there are none.
+function renderDiagnostics(diagnostics, entry) {
     const output = document.getElementById('errors-output');
     const count = document.getElementById('error-count');
-    output.textContent = warnings.join('\n');
-    output.classList.add('warning');
-    count.textContent = String(warnings.length);
-    count.classList.add('visible', 'warning');
+    const errors = diagnostics.filter(d => d.severity === 'error').length;
+    output.innerHTML = diagnostics.map(d => {
+        const location = d.file === entry && d.start
+            ? ` data-line="${d.start.line}" data-column="${d.start.column}"`
+            : '';
+        return `<div class="diagnostic ${d.severity}"${location}>${escapeHtml(formatDiagnostic(d))}</div>`;
+    }).join('');
+    output.classList.toggle('warning', errors === 0);
+    count.textContent = diagnostics.length ? String(errors || diagnostics.length) : '';
+    count.classList.toggle('visible', diagnostics.length > 0);
+    count.classList.toggle('warning', errors === 0);
+    if (!output.dataset.linked && output.addEventListener) {
+        output.dataset.linked = 'true';
+        output.addEventListener('click', event => {
+            const target = event.target.closest('.diagnostic[data-line]');
+            if (!target || !editor) return;
+            const position = { lineNumber: Number(target.dataset.line), column: Number(target.dataset.column) };
+            editor.setPosition(position);
+            editor.revealPositionInCenter(position);
+            editor.focus();
+        });
+    }
+}
+
+let lintTimer = null;
+
+// Diagnose the sources while typing, without touching the outputs of the last compile.
+function lint() {
+    clearTimeout(lintTimer);
+    lintTimer = setTimeout(() => {
+        if (!wasmReady || !editor) return;
+        try {
+            const { entry, files } = compilationSources();
+            const optimize = document.getElementById('optimize-toggle').checked;
+            const { diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+            markDiagnostics(diagnostics, entry);
+            renderDiagnostics(diagnostics, entry);
+        } catch {}
+    }, 300);
 }
 
 // Show error
@@ -1623,7 +1661,8 @@ function showError(message, count = 1) {
 
 function showErrors(diagnostics, entry) {
     const errors = diagnostics.filter(d => d.severity === 'error');
-    showError(errors.map(formatDiagnostic).join('\n'), errors.length);
+    showError('', errors.length);
+    renderDiagnostics(diagnostics, entry);
 
     // Select the first error in the entry, the file in the editor.
     const first = errors.find(d => d.file === entry && d.start);

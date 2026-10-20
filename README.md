@@ -16,14 +16,14 @@ The language covers signature and multisig checks, absolute and relative timeloc
 
 **[arkade-os.github.io/compiler](https://arkade-os.github.io/compiler)**
 
-The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. Pick a contract from the Explorer, edit it, and press **Ctrl+Enter** (or **Ctrl+S**). The right panel shows four tabs:
+The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. Pick a contract from the Explorer and edit it; errors and warnings appear as you type. Press **Ctrl+Enter** (or **Ctrl+S**) to compile. The right panel shows four tabs:
 
 | Tab | What you get |
 |---|---|
 | JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
 | Assembly | Every spend group: the Arkade covenant ASM, one source statement per line with its line number and `require` message, and each tapscript leaf. Hovering a covenant line highlights its statement in the editor, clicking it selects the statement, and moving the cursor highlights the cursor's statement |
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
-| Diagnostics | Every compiler error and warning with its location; errors are underlined in the editor and the first is selected |
+| Diagnostics | Every compiler error and warning with its location, updated as you type; they are underlined in the editor, and clicking one moves the cursor to it |
 
 The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 
