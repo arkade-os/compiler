@@ -293,7 +293,7 @@ pub(super) fn validate_binding_expression(
             }
         }
         _ if registered_builtin.is_some() => {
-            let (name, operands) = registered_builtin.unwrap();
+            let (name, operands) = registered_builtin.expect("guarded by the arm");
             let params = operands::find(name)
                 .unwrap_or_else(|| panic!("{name} has no registered signature"));
             assert!(

@@ -49,7 +49,7 @@ pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result
                     });
                     fold_expression(&mut access, scope)?;
                     let ExprKind::ArrayIndex { index: folded, .. } = access.kind else {
-                        unreachable!()
+                        unreachable!("folding never replaces an array read")
                     };
                     *index = folded;
                 }
