@@ -33,6 +33,13 @@ export function compile_sources_with_diagnostics(entry: string, files: string, o
 export function init(): void;
 
 /**
+ * The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
+ * and highlighting: `{ name, kind, type, at, definition, references }`, each location
+ * `{ file, start, end }`, or `null` when no name is there.
+ */
+export function symbol_at(entry: string, files: string, line: number, column: number): string;
+
+/**
  * Completion symbols for `entry` in a virtual project. `files` is a JSON object
  * mapping relative .ark paths to source text.
  */
@@ -61,6 +68,7 @@ export interface InitOutput {
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly symbol_at: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly symbols: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate: (a: number, b: number) => [number, number, number];
     readonly version: () => [number, number];
