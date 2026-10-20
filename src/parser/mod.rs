@@ -33,12 +33,12 @@ pub(crate) use tapscript::*;
 
 #[cfg(test)]
 pub fn parse(source: &str) -> Result<Contract, String> {
-    parse_with_constants(source, &[])
+    build_ast(parse_main(source)?, &[])
 }
 
-pub(crate) fn imports(source: &str) -> Result<Vec<String>, String> {
-    let mut pairs = parse_main(source)?;
+pub(crate) fn imports(pairs: &Pairs<'_, Rule>) -> Result<Vec<String>, String> {
     pairs
+        .clone()
         .next()
         .expect("main")
         .into_inner()
@@ -47,18 +47,10 @@ pub(crate) fn imports(source: &str) -> Result<Vec<String>, String> {
         .collect()
 }
 
-pub(crate) fn parse_with_constants(
-    source: &str,
-    constants: &[Constant],
-) -> Result<Contract, String> {
-    build_ast(parse_main(source)?, constants)
-}
-
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
+#[cfg(any(feature = "wasm", test))]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
-    pest::set_error_detail(true);
-    ArkadeParser::parse(Rule::main, source)
-        .map_err(|e| format!("Parse error: {}", readable_error(e, source)))
+    try_parse(source).map_err(|e| format!("Parse error: {e}"))
 }
 
 /// Rewrite a pest error in source-language terms: report the farthest position
@@ -158,8 +150,20 @@ fn rule_term(rule: &Rule) -> Option<String> {
 /// terms by `readable_error`. Used where the byte position of a failure
 /// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
 pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Error<Rule>> {
-    pest::set_error_detail(true);
-    ArkadeParser::parse(Rule::main, source).map_err(|e| readable_error(e, source))
+    // Tracking parse attempts, which only the error message needs, slows every parse, so a
+    // failed parse is repeated with it. The flag is global: only the lock holder turns it on.
+    static DETAILED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    ArkadeParser::parse(Rule::main, source)
+        .or_else(|_| {
+            let _detailed = DETAILED
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            pest::set_error_detail(true);
+            let detailed = ArkadeParser::parse(Rule::main, source);
+            pest::set_error_detail(false);
+            detailed
+        })
+        .map_err(|e| readable_error(e, source))
 }
 
 pub(crate) fn parse_error_diagnostic(
@@ -186,7 +190,7 @@ pub(crate) fn parse_error_diagnostic(
 }
 
 /// Build a Contract AST from parsed Pest pairs
-fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, String> {
+pub(crate) fn build_ast(pairs: Pairs<Rule>, constants: &[Constant]) -> Result<Contract, String> {
     let mut contract = Contract {
         name: String::new(),
         span: Default::default(),

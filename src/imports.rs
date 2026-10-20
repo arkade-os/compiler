@@ -21,6 +21,8 @@ struct Module {
 pub(crate) enum LoadError {
     Message(String),
     Diagnostics(Vec<Diagnostic>, String),
+    /// A syntax error, located and as the string the `compile_*` functions return.
+    Parse(Box<Diagnostic>, String),
 }
 
 impl From<String> for LoadError {
@@ -90,19 +92,11 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
         Ok(normalized) => normalized,
         Err(e) => return failed(&entry, e),
     };
-    let Some(source) = normalized.get(&entry) else {
+    if !normalized.contains_key(&entry) {
         let message = format!(
             "source file '{entry}' not found; imports require source files supplied through compile_sources or compile_file"
         );
         return failed(&entry, message);
-    };
-    if let Err(error) = parser::try_parse(source) {
-        let diagnostic = parser::parse_error_diagnostic(&error, &entry, source);
-        return Analysis {
-            entry,
-            loaded: Err(vec![diagnostic]),
-            symbols: Default::default(),
-        };
     }
     let mut symbols = Default::default();
     let mut read = |path: &str| {
@@ -112,6 +106,7 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
     };
     let loaded = Loaded::load(&entry, &mut read, &mut symbols).map_err(|error| match error {
         LoadError::Diagnostics(diagnostics, _) => diagnostics,
+        LoadError::Parse(diagnostic, _) => vec![*diagnostic],
         LoadError::Message(message) => {
             let message = message
                 .strip_prefix(&format!("{entry}: "))
@@ -174,7 +169,7 @@ pub(crate) fn source_symbols(
         .ok_or_else(|| format!("source file '{entry}' not found"))?;
     let (mut symbols, mut structs) = parser::symbols(source)?;
     let mut members: BTreeMap<String, Vec<parser::Symbol>> = BTreeMap::new();
-    for import in parser::imports(source)? {
+    for import in parser::imports(&parser::parse_main(source)?)? {
         // Imports that are rejected, missing or do not parse contribute nothing.
         let Ok(path) = import_path(&entry, &import) else {
             continue;
@@ -286,7 +281,7 @@ fn compile_with_loader(
     options: crate::CompileOptions,
 ) -> Result<ContractJson, String> {
     let loaded = Loaded::load(entry, &mut read, &mut Default::default()).map_err(|e| match e {
-        LoadError::Message(message) => message,
+        LoadError::Message(message) | LoadError::Parse(_, message) => message,
         LoadError::Diagnostics(diagnostics, source) => format!(
             "{}: {}",
             diagnostics.first().map_or(entry, |d| d.file.as_str()),
@@ -434,7 +429,14 @@ fn load(
     active.push(path.to_string());
     let result = (|| {
         let source = read(path)?;
-        let imports = parser::imports(&source)?;
+        let pairs = parser::try_parse(&source).map_err(|error| {
+            let diagnostic = parser::parse_error_diagnostic(&error, path, &source);
+            LoadError::Parse(
+                Box::new(diagnostic),
+                format!("{path}: Parse error: {error}"),
+            )
+        })?;
+        let imports = parser::imports(&pairs)?;
         let mut dependencies = Vec::new();
         for import in imports {
             let dependency = import_path(path, &import)?;
@@ -460,7 +462,7 @@ fn load(
                 constants.push(constant);
             }
         }
-        let mut contract = parser::parse_with_constants(&source, &constants)?;
+        let mut contract = parser::build_ast(pairs, &constants)?;
         let own_structs: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
         if models::is_builtin_type(&contract.name)
             || models::is_builtin_struct(&contract.name)
@@ -596,7 +598,7 @@ fn load(
     active.pop();
     result.map_err(|error| match error {
         LoadError::Message(message) => LoadError::Message(format!("{path}: {message}")),
-        diagnostics @ LoadError::Diagnostics(..) => diagnostics,
+        other => other,
     })
 }
 

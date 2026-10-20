@@ -79,3 +79,22 @@ fn a_library_analyzes_but_does_not_compile() {
         "{error:?}"
     );
 }
+
+#[test]
+fn a_syntax_error_in_an_import_is_located_in_that_file() {
+    let broken = "library Fees { function f() int { return 1 } }";
+    let mut project =
+        files("import \"fees.ark\"; contract C() { function spend() { require(Fees.f() == 1); } }");
+    project.insert("fees.ark".to_string(), broken.to_string());
+    let [error] = analyze("main.ark", &project)
+        .diagnostics()
+        .try_into()
+        .unwrap();
+    assert_eq!(error.file, "fees.ark");
+    let span = error.span.expect("located");
+    assert_eq!(&broken[span.start..span.end], "}");
+    let message = arkade_compiler::compile_sources("main.ark", &project)
+        .unwrap_err()
+        .to_string();
+    assert!(message.starts_with("fees.ark: Parse error:"), "{message}");
+}
