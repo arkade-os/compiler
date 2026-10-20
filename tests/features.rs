@@ -68,6 +68,8 @@ mod validation_error;
 #[path = "features/imports.rs"]
 mod imports;
 
+#[path = "features/cost_report.rs"]
+mod cost_report;
 #[path = "features/struct_arrays.rs"]
 mod struct_arrays;
 

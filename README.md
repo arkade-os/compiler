@@ -199,6 +199,7 @@ arkadec contract.ark --no-optimize       # skips constant folding, static branch
 arkadec contract.ark --check             # every error and warning as file:line:column, no artifact
 arkadec contract.ark --check --json      # the same diagnostics as a JSON array
 arkadec contract.ark --debug             # also writes contract.debug.json with covenant source maps
+arkadec contract.ark --report            # each covenant's script bytes, stack peak and heavy opcodes against the VM's limits
 ```
 
 Warnings go to stderr; type and validation errors abort with a non-zero exit. `--check` exits with status 1 when any diagnostic is an error. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.

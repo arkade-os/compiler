@@ -545,10 +545,11 @@ pub(crate) fn emit(
                 &contract.functions,
                 options.optimize,
             )
-            .map(|(inputs, ops)| ArkadeCovenant {
+            .map(|(inputs, ops, costs)| ArkadeCovenant {
                 inputs,
                 asm: ops.iter().map(|(op, _)| op.spell()).collect(),
                 source_map: source_map(&ops, &entry_source, &messages),
+                costs,
             })
             .map_err(|error| error.at(function.span))?,
         );
@@ -609,7 +610,7 @@ fn covenant_for(
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<(Vec<FunctionInput>, Vec<Spanned>)> {
+) -> Result<(Vec<FunctionInput>, Vec<Spanned>, Vec<crate::models::Cost>)> {
     let inputs = function_inputs(&function.parameters);
     let references =
         crate::validator::references::referenced_parameters(&function.statements, functions);
@@ -745,7 +746,21 @@ fn covenant_for(
             .into());
         }
     }
-    Ok((inputs, ops))
+    let cost = |name: &str, used, limit| crate::models::Cost {
+        name: name.to_string(),
+        used,
+        limit,
+    };
+    let mut costs = vec![
+        cost("script bytes (min)", size, MAX_SCRIPT_SIZE),
+        cost("stack items", peak, MAX_STACK_ITEMS),
+    ];
+    for (opcode, limit) in COMPUTE_LIMITS {
+        if let Some(&count) = executions.get(&opcode) {
+            costs.push(cost(opcode.name(), count, limit));
+        }
+    }
+    Ok((inputs, ops, costs))
 }
 
 /// Runs of `ops` from one statement, located in `source`.
