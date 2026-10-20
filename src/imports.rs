@@ -42,6 +42,8 @@ pub struct Analysis {
     entry: String,
     loaded: Result<Loaded, Vec<Diagnostic>>,
     symbols: crate::symbols::Symbols,
+    /// Whether `entry` is a filesystem path, whose bundle is rebased onto the files' common root.
+    filesystem: bool,
 }
 
 impl Analysis {
@@ -70,11 +72,23 @@ impl Analysis {
         &self.symbols
     }
 
+    /// The diagnostics, and for a contract code generation's first error, which finds some
+    /// problems alone, such as the VM's stack and script limits.
+    pub fn check(&self) -> Vec<Diagnostic> {
+        let mut diagnostics = self.diagnostics();
+        if self.contract().is_some_and(|contract| !contract.is_library) {
+            if let Err(errors) = self.compile(crate::CompileOptions::default()) {
+                diagnostics.extend(errors);
+            }
+        }
+        diagnostics
+    }
+
     /// Generate the artifact. Fails with the analysis errors, or with code generation's first.
     pub fn compile(&self, options: crate::CompileOptions) -> Result<ContractJson, Vec<Diagnostic>> {
         let loaded = self.loaded.as_ref().map_err(Clone::clone)?;
         loaded
-            .emit(&self.entry, false, options)
+            .emit(&self.entry, self.filesystem, options)
             .map_err(|error| match error {
                 EmitError::Library => vec![Diagnostic::error(&self.entry, LIBRARY_ENTRY)],
                 EmitError::Code(error, _) => vec![error.diagnostic(&self.entry)],
@@ -89,6 +103,7 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
         entry: entry.to_string(),
         loaded: Err(vec![Diagnostic::error(entry, message)]),
         symbols: Default::default(),
+        filesystem: false,
     };
     let entry = match relative_path(entry) {
         Ok(entry) => entry,
@@ -110,31 +125,56 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis
             format!("source file '{path}' not found; imports require source files supplied through compile_sources or compile_file")
         })
     };
-    let loaded = Loaded::load(&entry, &mut read, &mut symbols).map_err(|error| match error {
-        LoadError::Diagnostics(diagnostics, _) => diagnostics,
-        LoadError::Located(diagnostic, _) => vec![*diagnostic],
-        LoadError::Message(error) => vec![error.diagnostic(&entry)],
-    });
+    let loaded = Loaded::load(&entry, &mut read, &mut symbols).map_err(load_diagnostics(&entry));
     Analysis {
         entry,
         loaded,
         symbols,
+        filesystem: false,
+    }
+}
+
+/// Analyze the entry file at `path` and its imports, read from the filesystem.
+pub(crate) fn analyze_file(path: &Path) -> Analysis {
+    let entry = match std::path::absolute(path).map_err(|e| e.to_string()) {
+        Ok(absolute) => normalize(&absolute),
+        Err(e) => Err(e),
+    };
+    let entry = match entry {
+        Ok(entry) => entry,
+        Err(message) => {
+            let file = path.to_string_lossy();
+            return Analysis {
+                entry: file.to_string(),
+                loaded: Err(vec![Diagnostic::error(file, message)]),
+                symbols: Default::default(),
+                filesystem: true,
+            };
+        }
+    };
+    let mut symbols = Default::default();
+    let mut read = |path: &str| {
+        std::fs::read_to_string(path).map_err(|e| format!("cannot read '{path}': {e}"))
+    };
+    let loaded = Loaded::load(&entry, &mut read, &mut symbols).map_err(load_diagnostics(&entry));
+    Analysis {
+        entry,
+        loaded,
+        symbols,
+        filesystem: true,
+    }
+}
+
+fn load_diagnostics(entry: &str) -> impl Fn(LoadError) -> Vec<Diagnostic> + '_ {
+    move |error| match error {
+        LoadError::Diagnostics(diagnostics, _) => diagnostics,
+        LoadError::Located(diagnostic, _) => vec![*diagnostic],
+        LoadError::Message(error) => vec![error.diagnostic(entry)],
     }
 }
 
 pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
-    let analysis = analyze(entry, files);
-    let mut diagnostics = analysis.diagnostics();
-    // Code generation alone finds some errors, such as the VM's stack and script limits.
-    if analysis
-        .contract()
-        .is_some_and(|contract| !contract.is_library)
-    {
-        if let Err(errors) = analysis.compile(crate::CompileOptions::default()) {
-            diagnostics.extend(errors);
-        }
-    }
-    diagnostics
+    analyze(entry, files).check()
 }
 
 pub(crate) fn compile_sources(

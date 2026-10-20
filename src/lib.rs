@@ -135,6 +135,12 @@ pub fn analyze(entry: &str, files: &std::collections::BTreeMap<String, String>) 
     imports::analyze(entry, files)
 }
 
+/// [`analyze`] for an entry file and its relative imports on the filesystem; diagnostics name
+/// files by absolute path.
+pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
+    imports::analyze_file(path.as_ref())
+}
+
 /// Every parse, validation and type diagnostic for `entry`, without writing
 /// an artifact. Unlike the `compile_*` functions, this does not stop at the
 /// first error: independent problems in `entry` each get their own entry.

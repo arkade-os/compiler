@@ -2,7 +2,7 @@ use clap::Parser as ClapParser;
 use std::fs;
 use std::path::Path;
 
-use arkade_compiler::{compile_file_with_options, CompileOptions};
+use arkade_compiler::{analyze_file, compile_file_with_options, CompileOptions, Severity};
 
 /// Arkade Compiler CLI
 ///
@@ -33,6 +33,15 @@ struct Args {
     /// Disable constant folding, static branch removal, and assembly optimizations
     #[arg(long)]
     no_optimize: bool,
+
+    /// Report every error and warning, with its location, instead of writing an artifact;
+    /// exits with status 1 when there is an error
+    #[arg(long)]
+    check: bool,
+
+    /// With --check, print the diagnostics as a JSON array
+    #[arg(long, requires = "check")]
+    json: bool,
 }
 
 /// Main function for the Arkade Compiler CLI
@@ -51,6 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_path = Path::new(&args.file);
     if file_path.extension().unwrap_or_default() != "ark" {
         return Err("Input file must have .ark extension".into());
+    }
+
+    if args.check {
+        check(file_path, args.json)?;
+        return Ok(());
     }
 
     // Compile source code to JSON
@@ -87,5 +101,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Compilation successful. Output written to {output_path}");
 
+    Ok(())
+}
+
+/// Print every diagnostic of the file at `path`, and exit with status 1 if one is an error.
+fn check(path: &Path, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let diagnostics = analyze_file(path).check();
+    let source = |file: &str| fs::read_to_string(file).ok();
+    if json {
+        let diagnostics: Vec<_> = diagnostics
+            .iter()
+            .map(|d| arkade_compiler::diagnostics::to_json(d, source(&d.file).as_deref()))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&diagnostics)?);
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        for d in &diagnostics {
+            let file = Path::new(&d.file);
+            let mut location = file
+                .strip_prefix(&cwd)
+                .unwrap_or(file)
+                .display()
+                .to_string();
+            let start = d.span.zip(source(&d.file));
+            if let Some((line, column)) = start.and_then(|(span, source)| {
+                arkade_compiler::diagnostics::position(&source, span.start)
+            }) {
+                location.push_str(&format!(":{line}:{column}"));
+            }
+            let severity = match d.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            };
+            let code = d
+                .code
+                .as_deref()
+                .map(|code| format!("[{code}]"))
+                .unwrap_or_default();
+            println!("{location}: {severity}{code}: {}", d.message);
+        }
+    }
+    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        std::process::exit(1);
+    }
     Ok(())
 }

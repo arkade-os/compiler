@@ -21,6 +21,27 @@ pub fn position(source: &str, offset: usize) -> Option<(usize, usize)> {
     ))
 }
 
+/// `diagnostic` as JSON for tools: `severity`, `code`, `message`, `file`, and, when it is
+/// located and `source` is its file's text, `start` and `end` as `{ line, column }`.
+pub fn to_json(diagnostic: &Diagnostic, source: Option<&str>) -> serde_json::Value {
+    let at = |offset: usize| {
+        let (line, column) = position(source?, offset)?;
+        Some(serde_json::json!({ "line": line, "column": column }))
+    };
+    let span = diagnostic.span;
+    serde_json::json!({
+        "severity": match diagnostic.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        },
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "file": diagnostic.file,
+        "start": span.and_then(|span| at(span.start)),
+        "end": span.and_then(|span| at(span.end)),
+    })
+}
+
 impl From<pest::Span<'_>> for Span {
     fn from(span: pest::Span<'_>) -> Self {
         Self {

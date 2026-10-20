@@ -111,22 +111,7 @@ fn located(
             crate::imports::relative_path(path).is_ok_and(|path| path == diagnostic.file)
         })
         .map(|(_, source)| source.as_str());
-    let position = |offset: usize| {
-        let (line, column) = crate::diagnostics::position(source?, offset)?;
-        Some(serde_json::json!({ "line": line, "column": column }))
-    };
-    let span = diagnostic.span;
-    serde_json::json!({
-        "severity": match diagnostic.severity {
-            crate::Severity::Error => "error",
-            crate::Severity::Warning => "warning",
-        },
-        "code": diagnostic.code,
-        "message": diagnostic.message,
-        "file": diagnostic.file,
-        "start": span.and_then(|span| position(span.start)),
-        "end": span.and_then(|span| position(span.end)),
-    })
+    crate::diagnostics::to_json(diagnostic, source)
 }
 
 fn compile_project(
