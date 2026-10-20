@@ -19,8 +19,6 @@ mod checksig;
 mod crypto;
 mod expr;
 mod introspection;
-#[cfg(any(feature = "wasm", test))]
-mod symbols;
 mod tapscript;
 
 pub(crate) use asset::*;
@@ -28,8 +26,6 @@ pub(crate) use checksig::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
-#[cfg(any(feature = "wasm", test))]
-pub(crate) use symbols::{symbols, Symbol};
 pub(crate) use tapscript::*;
 
 #[cfg(test)]
@@ -56,7 +52,7 @@ pub(crate) fn imports(
 }
 
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
-#[cfg(any(feature = "wasm", test))]
+#[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
     try_parse(source).map_err(|e| format!("Parse error: {e}"))
 }
@@ -435,9 +431,10 @@ fn parse_statement(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<Option<LocatedStatement>, CompileError> {
+    // An `if` without `else` takes the whitespace before where an `else` would be.
     let span = crate::diagnostics::Span {
         start: pair.as_span().start(),
-        end: pair.as_span().end(),
+        end: pair.as_span().start() + pair.as_str().trim_end().len(),
     };
     let mut names = Vec::new();
     let mut branches = Vec::new();

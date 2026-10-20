@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at } from './pkg/arkade_compiler.js';
+import { initSync, check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at } from './pkg/arkade_compiler.js';
 
 initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
 const context = vm.createContext({
-    contracts, check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at,
+    contracts, check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at,
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
@@ -305,6 +305,19 @@ const feeDefinitionLine = () => vm.runInContext("symbolAt('model', { lineNumber:
 assert.deepEqual([feeDefinitionLine(), feeDefinitionLine()], [2, 2]);
 context.lookupFiles['fees.ark'] = `\n${context.lookupFiles['fees.ark']}`;
 assert.equal(feeDefinitionLine(), 3);
+
+// Completion offers the names the compiler sees at the cursor.
+const completionFiles = JSON.stringify({
+    'main.ark': 'import "fees.ark";\nstruct Point { int x; bytes32 y; }\ncontract V(Point p) {\n  function spend(int amount) {\n    if (amount > 1) {\n      int inner = amount;\n      require(inner > 0);\n    }\n    require(Fees.fee(amount) > p.x);\n  }\n}',
+    'fees.ark': 'library Fees {\n  const int BASE = 1;\n  function fee(int amount) int { return amount + BASE; }\n}',
+});
+const completionsAt = line => JSON.parse(completions_at('main.ark', completionFiles, line, 1));
+const names = table => table.symbols.map(symbol => symbol.name);
+assert.ok(names(completionsAt(7)).includes('inner'));
+assert.ok(!names(completionsAt(9)).includes('inner'));
+assert.deepEqual(completionsAt(9).symbols.find(symbol => symbol.name === 'amount'), { name: 'amount', kind: 'parameter', type: 'int' });
+assert.deepEqual(completionsAt(9).members.Fees.map(member => member.name).sort(), ['BASE', 'fee']);
+assert.deepEqual(completionsAt(9).structs, [{ name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] }]);
 
 function loadStored(saved) {
     const store = { 'arkade-playground': JSON.stringify(saved) };

@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1050,6 +1050,20 @@ function selectProjectFile(projectId, fileName) {
     markDirty();
 }
 
+// Open the playground file `sourceFiles()` names `path`; false when there is none.
+function openSourcePath(path) {
+    const slash = path.indexOf('/');
+    const [projectId, fileName] = [path.slice(0, slash), path.slice(slash + 1)];
+    if (slash > 0 && Object.hasOwn(projects[projectId]?.files || {}, fileName)) {
+        selectProjectFile(projectId, fileName);
+        return true;
+    }
+    const example = Object.keys(examples)
+        .find(id => (examplePaths[id] || `_examples/${id}.ark`) === path);
+    if (example) selectExample(example);
+    return Boolean(example);
+}
+
 // Select a single-file example
 function selectExample(exampleId) {
     // Save current file content
@@ -1230,7 +1244,7 @@ function initMonaco() {
                 const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
                 const table = symbolTable(position.lineNumber);
-                const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
+                const suggestions = window.arkadeComplete(before, table).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
@@ -1380,8 +1394,31 @@ function registerSymbolProviders() {
     monaco.languages.registerDefinitionProvider('arkade', {
         provideDefinition: (model, position) => {
             const symbol = symbolAt(model, position);
-            if (!symbol?.definition.start || symbol.definition.file !== symbol.at.file) return null;
-            return { uri: model.uri, range: range(symbol.definition) };
+            if (!symbol?.definition.start) return null;
+            const { file } = symbol.definition;
+            if (file === symbol.at.file) return { uri: model.uri, range: range(symbol.definition) };
+            // Another file opens through the editor opener below; Monaco needs its model.
+            const source = sourceFiles().files[file];
+            if (source === undefined) return null;
+            const uri = monaco.Uri.parse(`arkade:///${file}`);
+            const other = monaco.editor.getModel(uri);
+            if (other) other.setValue(source);
+            else monaco.editor.createModel(source, 'arkade', uri);
+            definitionRanges.set(uri.toString(), range(symbol.definition));
+            return { uri, range: range(symbol.definition) };
+        },
+    });
+    // Monaco passes the opener only a position, so the name is selected from the provider's range.
+    const definitionRanges = new Map();
+    monaco.editor.registerEditorOpener?.({
+        openCodeEditor: (source, resource) => {
+            if (resource.scheme !== 'arkade' || !openSourcePath(resource.path.slice(1))) return false;
+            const target = definitionRanges.get(resource.toString());
+            if (target) {
+                editor.setSelection(target);
+                editor.revealRangeInCenter(target);
+            }
+            return true;
         },
     });
     monaco.languages.registerDocumentHighlightProvider('arkade', {
@@ -1408,7 +1445,7 @@ function symbolTable(lineNumber) {
         const lines = sources.files[entry].split('\n');
         lines[lineNumber - 1] = '';
         sources.files[entry] = lines.join('\n');
-        lastSymbols[entry] = JSON.parse(symbols(entry, JSON.stringify(sources.files)));
+        lastSymbols[entry] = JSON.parse(completions_at(entry, JSON.stringify(sources.files), lineNumber, 1));
     } catch {}
     return lastSymbols[entry] || null;
 }

@@ -18,6 +18,8 @@ pub enum SymbolKind {
     Tapscript,
     Parameter,
     Variable,
+    /// A struct field, whose `owner` is the struct.
+    Field,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +33,8 @@ pub struct Definition {
     pub span: Span,
     /// Where a function parameter or local can be used; `None` for file-level names.
     pub visible: Option<Span>,
+    /// The struct a field belongs to.
+    pub owner: Option<String>,
 }
 
 /// A use of a name, which `definition` indexes in [`Symbols::definitions`].
@@ -50,6 +54,8 @@ pub struct Symbols {
     references: Vec<Reference>,
     /// Each file's names visible to a file importing it, such as `Fees` and `Fees.DELAY`.
     exports: HashMap<String, HashMap<String, usize>>,
+    /// Each file's file-level names, its own and those it imports.
+    globals: HashMap<String, HashMap<String, usize>>,
 }
 
 impl Symbols {
@@ -74,6 +80,31 @@ impl Symbols {
                     .iter()
                     .find(|definition| definition.file == file && at(definition.span))
             })
+    }
+
+    /// Every name usable at `offset` in `file`, as it is written there (such as `Fees.DELAY`),
+    /// with its definition: the file-level names, then the parameters and locals in scope.
+    pub fn visible_at(&self, file: &str, offset: usize) -> Vec<(&str, &Definition)> {
+        let mut visible: Vec<_> = self
+            .globals
+            .get(file)
+            .into_iter()
+            .flatten()
+            .map(|(name, &id)| (name.as_str(), &self.definitions[id]))
+            .collect();
+        visible
+            .sort_by(|(a, x), (b, y)| (&x.file, x.span.start, a).cmp(&(&y.file, y.span.start, b)));
+        visible.extend(
+            self.definitions
+                .iter()
+                .filter(|d| d.file == file)
+                .filter(|d| {
+                    d.visible
+                        .is_some_and(|v| v.start <= offset && offset <= v.end)
+                })
+                .map(|d| (d.name.as_str(), d)),
+        );
+        visible
     }
 
     /// Record `contract`, typed, as `file`; `constants` are the constant references folded away.
@@ -113,6 +144,11 @@ impl Symbols {
             let span = definition.span;
             let id = collector.define(&definition.name, SymbolKind::Struct, None, span, None);
             names.export(definition.name.clone(), id);
+            for field in &definition.fields {
+                let ty = Some(field.param_type.clone());
+                let id = collector.define(&field.name, SymbolKind::Field, ty, field.span, None);
+                collector.symbols.definitions[id].owner = Some(definition.name.clone());
+            }
         }
         for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
             let ty = Some(constant.const_type.clone());
@@ -152,6 +188,10 @@ impl Symbols {
             let id = collector.define(&parameter.name, SymbolKind::Parameter, ty, span, None);
             names.globals.insert(parameter.name.clone(), id);
         }
+        collector
+            .symbols
+            .globals
+            .insert(file.to_string(), names.globals.clone());
         collector.scopes.push(names.globals);
         for (path, span) in constants {
             let start = collector.token(span.start);
@@ -228,6 +268,7 @@ impl Collector<'_> {
             file: self.file.to_string(),
             span,
             visible,
+            owner: None,
         });
         self.symbols.definitions.len() - 1
     }

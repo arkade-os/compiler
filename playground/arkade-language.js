@@ -214,15 +214,11 @@ arkadeMembers['tx.outputs[].assets[]'] = arkadeMembers['tx.inputs[].assets[]'];
 const symbolKinds = { struct: 'Struct', contract: 'Class', library: 'Module', function: 'Function', constant: 'Constant', parameter: 'Variable', variable: 'Variable' };
 const symbolItem = s => S(s.name, symbolKinds[s.kind], s.kind === 'function' ? `${s.name}($1)` : s.name, s.type ? `${s.kind}: ${s.type}` : s.kind);
 
-// Completions for the cursor: `before` is the line up to the word being typed, `table` the
-// compiler's symbol table (or null before it is available) and `line` the 1-based cursor line.
-function arkadeComplete(before, table, line) {
+// Completions for the cursor: `before` is the line up to the word being typed, and `table` the
+// names the compiler sees at the cursor (or null before it is available).
+function arkadeComplete(before, table) {
     const { symbols = [], structs = [], members = {} } = table || {};
-    const visible = new Map();
-    for (const symbol of symbols) {
-        // Locals are visible from their declaration to the end of their function.
-        if (!symbol.scope || (symbol.position[0] <= line && line <= symbol.scope[1])) visible.set(symbol.name, symbol);
-    }
+    const visible = new Map(symbols.map(symbol => [symbol.name, symbol]));
     let flat = before;
     while (flat !== (flat = flat.replace(/\[[^\][]*\]/g, '<>')));
     const chain = flat.replaceAll('<>', '[]').match(/([A-Za-z]\w*(?:\[\])*(?:\s*\.\s*[A-Za-z]\w*(?:\[\])*)*)\s*\.\s*$/);
@@ -233,13 +229,18 @@ function arkadeComplete(before, table, line) {
     const path = chain[1].replace(/\s+/g, '');
     if (Object.hasOwn(arkadeMembers, path)) return arkadeMembers[path];
     if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
-    const [, name, indexed] = path.match(/^(\w+)(\[\])?$/) || [];
-    const type = visible.get(name)?.type || '';
     const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
-    if (type.endsWith(']') && !indexed) return [prop('length', 'Array length')];
-    const struct = structs.find(s => s.name === type.replace(/\[.*$/, ''));
-    return struct ? struct.fields.map(field => prop(field.name, field.type)) : [];
+    // The type the path names, such as `Signer` for `next.primary`, through struct fields.
+    const struct = type => structs.find(s => s.name === type.replace(/\[.*$/, ''));
+    let type = '';
+    path.split('.').forEach((segment, index) => {
+        const name = segment.replace(/\[\]$/, '');
+        type = index === 0 ? visible.get(name)?.type || '' : struct(type)?.fields.find(f => f.name === name)?.type || '';
+        if (segment.endsWith('[]')) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]$/, '') : '';
+    });
+    if (type.endsWith(']')) return [prop('length', 'Array length')];
+    return struct(type)?.fields.map(field => prop(field.name, field.type)) || [];
 }
 
 // Export all parts

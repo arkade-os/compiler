@@ -6,9 +6,9 @@ import vm from 'node:vm';
 const context = vm.createContext({ window: {} });
 vm.runInContext(fs.readFileSync(new URL('./arkade-language.js', import.meta.url), 'utf8'), context);
 const complete = context.window.arkadeComplete;
-const labels = (before, table = null, line = 1) => [...complete(before, table, line)].map(item => item.label);
+const labels = (before, table = null) => [...complete(before, table)].map(item => item.label);
 
-// Shape returned by the WASM `symbols` export.
+// Shape returned by the WASM `completions_at` export: the names visible at the cursor.
 const table = {
     symbols: [
         { name: 'Point', kind: 'struct' },
@@ -17,26 +17,23 @@ const table = {
         { name: 'points', kind: 'parameter', type: 'Point[2]' },
         { name: 'amounts', kind: 'parameter', type: 'int[3]' },
         { name: 'spend', kind: 'function' },
-        { name: 'sig', kind: 'parameter', type: 'signature', position: [4, 20], scope: [4, 9] },
-        { name: 'group', kind: 'variable', type: 'AssetGroup', position: [5, 9], scope: [4, 9] },
-        { name: 'point', kind: 'variable', type: 'Point', position: [5, 20], scope: [4, 9] },
-        { name: 'later', kind: 'variable', position: [7, 9], scope: [4, 9] },
-        { name: 'other', kind: 'variable', position: [11, 9], scope: [10, 12] },
+        { name: 'sig', kind: 'parameter', type: 'signature' },
+        { name: 'group', kind: 'variable', type: 'AssetGroup' },
+        { name: 'point', kind: 'variable', type: 'Point' },
+        { name: 'segment', kind: 'variable', type: 'Segment' },
         { name: 'Fees', kind: 'library' },
     ],
-    structs: [{ name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] }],
+    structs: [
+        { name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] },
+        { name: 'Segment', fields: [{ name: 'from', type: 'Point' }, { name: 'ends', type: 'Point[2]' }] },
+    ],
     members: { Fees: [{ name: 'DELAY', kind: 'constant', type: 'int' }, { name: 'calculate', kind: 'function', type: 'int' }] },
 };
 
-const top = labels('    require(', table, 5);
+const top = labels('    require(', table);
 for (const label of ['checkSig', 'substr', 'tx', 'owner', 'sig', 'group', 'spend', 'Point', 'Demo', 'Fees']) assert(top.includes(label), label);
-assert(!top.includes('other'));
-assert(!top.includes('later'));
-assert(labels('', table, 8).includes('later'));
-assert.deepEqual(labels('constructor.', table, 5), []);
-assert.deepEqual(labels('toString.', { members: {} }, 5), []);
-assert(labels('', table, 11).includes('other'));
-assert(!labels('', table, 11).includes('sig'));
+assert.deepEqual(labels('constructor.', table), []);
+assert.deepEqual(labels('toString.', { members: {} }), []);
 assert(!top.some(label => label.includes('.')));
 assert.equal(top.length, new Set(top).size);
 assert(labels('').includes('checkSig'));
@@ -52,13 +49,17 @@ assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['assetId', 'amount']);
 assert(labels('tx.assetGroups[k].').includes('sumOutputs'));
 assert(labels('tx.input.current.').includes('value'));
 assert(labels('this.').includes('activeInputIndex'));
-assert(labels('group.', table, 5).includes('controlIs'));
-assert.deepEqual(labels('group.inputs[j].', table, 5), ['amount', 'type', 'index', 'txid']);
+assert(labels('group.', table).includes('controlIs'));
+assert.deepEqual(labels('group.inputs[j].', table), ['amount', 'type', 'index', 'txid']);
 assert.deepEqual(labels('tx.assetGroups[k].outputs[0].'), ['amount', 'type', 'index']);
-assert.deepEqual(labels('group[0].', table, 5), []);
-assert.deepEqual(labels('points[1].', table, 5), ['x', 'y']);
-assert.deepEqual(labels('point.', table, 5), ['x', 'y']);
-assert.deepEqual(labels('amounts.', table, 5), ['length']);
-assert.deepEqual(labels('Fees.', table, 5), ['DELAY', 'calculate']);
-assert.deepEqual(labels('unknown.', table, 5), []);
+assert.deepEqual(labels('group[0].', table), []);
+assert.deepEqual(labels('points[1].', table), ['x', 'y']);
+assert.deepEqual(labels('point.', table), ['x', 'y']);
+assert.deepEqual(labels('amounts.', table), ['length']);
+assert.deepEqual(labels('segment.from.', table), ['x', 'y']);
+assert.deepEqual(labels('segment.ends.', table), ['length']);
+assert.deepEqual(labels('segment.ends[1].', table), ['x', 'y']);
+assert.deepEqual(labels('segment.missing.', table), []);
+assert.deepEqual(labels('Fees.', table), ['DELAY', 'calculate']);
+assert.deepEqual(labels('unknown.', table), []);
 assert(complete('tx.', null, 1).find(item => item.label === 'inputs').snippet);

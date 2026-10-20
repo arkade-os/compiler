@@ -136,14 +136,6 @@ fn compile_project(
     crate::imports::compile_sources(entry, &files, options)
 }
 
-/// Completion symbols for `entry` in a virtual project. `files` is a JSON object
-/// mapping relative .ark paths to source text.
-#[wasm_bindgen]
-pub fn symbols(entry: &str, files: &str) -> Result<String, String> {
-    let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
-    Ok(crate::imports::source_symbols(entry, &files)?.to_string())
-}
-
 /// The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
 /// and highlighting: `{ name, kind, type, at, definition, references }`, each location
 /// `{ file, start, end }`, or `null` when no name is there.
@@ -207,4 +199,57 @@ pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result
             .collect::<Vec<_>>(),
     })
     .to_string())
+}
+
+/// The names usable at 1-based `line` and UTF-16 `column` of `entry`, for completion:
+/// `{ symbols, structs, members }`, where `members` lists a library's or contract's names
+/// under its own, and `structs` gives each visible struct's fields.
+#[wasm_bindgen]
+pub fn completions_at(
+    entry: &str,
+    files: &str,
+    line: usize,
+    column: usize,
+) -> Result<String, String> {
+    use crate::symbols::SymbolKind;
+    let files: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    let entry = crate::imports::relative_path(entry)?;
+    let analysis = crate::analyze(&entry, &files);
+    let symbols = analysis.symbols();
+    let offset = files
+        .iter()
+        .find(|(path, _)| crate::imports::relative_path(path).is_ok_and(|path| path == entry))
+        .and_then(|(_, source)| crate::diagnostics::offset(source, line, column))
+        .unwrap_or_default();
+    let mut names = Vec::new();
+    let mut members: std::collections::BTreeMap<&str, Vec<serde_json::Value>> = Default::default();
+    let mut structs = Vec::new();
+    for (name, definition) in symbols.visible_at(&entry, offset) {
+        if matches!(definition.kind, SymbolKind::Tapscript | SymbolKind::Field) {
+            continue;
+        }
+        let item = serde_json::json!({
+            "name": definition.name,
+            "kind": format!("{:?}", definition.kind).to_lowercase(),
+            "type": definition.ty.as_ref().map(ToString::to_string),
+        });
+        match name.split_once('.') {
+            Some((owner, _)) => members.entry(owner).or_default().push(item),
+            None => names.push(item),
+        }
+        if definition.kind == SymbolKind::Struct {
+            let fields: Vec<_> = symbols
+                .definitions()
+                .iter()
+                .filter(|field| field.owner.as_deref() == Some(definition.name.as_str()))
+                .map(|field| {
+                    let ty = field.ty.as_ref().map(ToString::to_string);
+                    serde_json::json!({ "name": field.name, "type": ty })
+                })
+                .collect();
+            structs.push(serde_json::json!({ "name": definition.name, "fields": fields }));
+        }
+    }
+    Ok(serde_json::json!({ "symbols": names, "structs": structs, "members": members }).to_string())
 }

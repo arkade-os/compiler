@@ -97,6 +97,7 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "Parameter amount int fees.ark:3:28",
             "Contract Vault main.ark:3:10",
             "Struct Point main.ark:2:8",
+            "Field x int main.ark:2:20",
             "Constant LIMIT int main.ark:4:15",
             "Function spend main.ark:5:14",
             "Function helper int main.ark:15:22",
@@ -252,4 +253,53 @@ fn a_local_is_visible_to_the_end_of_its_branch() {
         let span = definition.visible.unwrap();
         assert_eq!(&source[span.start..span.end], visible);
     }
+}
+
+#[test]
+fn visible_names_follow_blocks_and_include_imports() {
+    let files = project(MAIN);
+    let analysis = analyze("main.ark", &files);
+    let visible = |needle: &str| {
+        let offset = MAIN.find(needle).unwrap();
+        let names: Vec<String> = analysis
+            .symbols()
+            .visible_at("main.ark", offset)
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect();
+        names
+    };
+    let in_loop = visible("require(doubled");
+    for name in [
+        "doubled",
+        "i",
+        "x",
+        "total",
+        "xs",
+        "sig",
+        "owner",
+        "LIMIT",
+        "Fees",
+        "Fees.calculate",
+        "Fees.DELAY",
+        "Point",
+        "helper",
+    ] {
+        assert!(in_loop.iter().any(|n| n == name), "{name}: {in_loop:?}");
+    }
+    let after_loop = visible("require(checkSig");
+    assert!(
+        !after_loop.iter().any(|n| n == "doubled" || n == "i"),
+        "{after_loop:?}"
+    );
+    let before_total = visible("let total");
+    assert!(
+        !before_total.iter().any(|n| n == "total"),
+        "{before_total:?}"
+    );
+    let in_helper = visible("return amount");
+    assert!(
+        in_helper.iter().any(|n| n == "amount") && !in_helper.iter().any(|n| n == "sig"),
+        "{in_helper:?}"
+    );
 }
