@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, compile_sources, compile_sources_with_diagnostics } from './pkg/arkade_compiler.js';
+import { initSync, compile_sources, compile_sources_with_diagnostics, symbol_at } from './pkg/arkade_compiler.js';
 
 initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
 const context = vm.createContext({
-    contracts, compile_sources, compile_sources_with_diagnostics,
+    contracts, compile_sources, compile_sources_with_diagnostics, symbol_at,
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
@@ -260,5 +260,26 @@ assert.ok(innermost(4).every(line => line === 4) && innermost(4).length > 0);
 // An `if` maps to its condition alone, so its tokens are not chosen inside its body.
 assert.ok(runs.filter(range => range.start[0] === 4).every(range => range.end[0] === 4));
 assert.deepEqual(innermost(8), []);
+
+// Hover and go to definition read the compiler's symbol table.
+const symbolFiles = JSON.stringify({
+    'main.ark': 'import "fees.ark";\ncontract V(pubkey owner) {\n  function spend(signature sig, int amount) {\n    require(checkSig(sig, owner));\n    require(Fees.fee(amount) > amount);\n  }\n}',
+    'fees.ark': 'library Fees {\n  function fee(int amount) int { return amount + 1; }\n}',
+});
+const symbolAtPosition = (line, column) => JSON.parse(symbol_at('main.ark', symbolFiles, line, column));
+const owner = symbolAtPosition(4, 28);
+assert.deepEqual([owner.name, owner.kind, owner.type], ['owner', 'parameter', 'pubkey']);
+assert.deepEqual(owner.definition.start, { line: 2, column: 19 });
+assert.deepEqual(owner.at.start, { line: 4, column: 27 });
+assert.equal(owner.references.length, 1);
+context.symbol = owner;
+assert.deepEqual([...vm.runInContext('describeSymbol(symbol)', context)], ['parameter owner: pubkey', 'Defined at line 2 · 1 reference']);
+const fee = symbolAtPosition(5, 18);
+assert.deepEqual([fee.name, fee.kind, fee.type, fee.definition.file], ['fee', 'function', 'int', 'fees.ark']);
+context.symbol = fee;
+assert.equal(vm.runInContext('describeSymbol(symbol)[1]', context), 'Defined at fees.ark:2 · 1 reference');
+const amount = symbolAtPosition(3, 37);
+assert.deepEqual([amount.name, amount.references.length], ['amount', 2]);
+assert.equal(symbolAtPosition(4, 1), null);
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);

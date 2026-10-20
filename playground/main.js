@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, compile_sources_with_diagnostics, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1218,6 +1218,8 @@ function initMonaco() {
             }
         });
 
+        registerSymbolProviders();
+
         // Define theme
         monaco.editor.defineTheme('arkade-dark', window.arkadeTheme);
 
@@ -1315,6 +1317,58 @@ function sourceFiles() {
         : examplePaths[currentFile] || `_examples/${currentFile || 'main'}.ark`;
     files[entry] = editor.getValue();
     return { entry, files };
+}
+
+// The compiler's symbol at `position` in the editor's file, or null.
+function symbolAt(model, position) {
+    if (!wasmReady || model !== editor?.getModel()) return null;
+    try {
+        const { entry, files } = sourceFiles();
+        return JSON.parse(symbol_at(entry, JSON.stringify(files), position.lineNumber, position.column));
+    } catch {
+        return null;
+    }
+}
+
+// The hover text for `symbol`: what it is, and where it is defined and used.
+function describeSymbol(symbol) {
+    const signature = `${symbol.kind} ${symbol.name}${symbol.type ? `: ${symbol.type}` : ''}`;
+    const { file, start } = symbol.definition;
+    const where = file === symbol.at.file ? `line ${start.line}` : `${file}:${start.line}`;
+    const uses = symbol.references.length;
+    return [signature, `Defined at ${where} · ${uses} reference${uses === 1 ? '' : 's'}`];
+}
+
+function registerSymbolProviders() {
+    const range = location => new monaco.Range(
+        location.start.line, location.start.column, location.end.line, location.end.column);
+    monaco.languages.registerHoverProvider('arkade', {
+        provideHover: (model, position) => {
+            const symbol = symbolAt(model, position);
+            if (!symbol?.at.start) return null;
+            const [signature, where] = describeSymbol(symbol);
+            return {
+                range: range(symbol.at),
+                contents: [{ value: '```arkade\n' + signature + '\n```' }, { value: where }],
+            };
+        },
+    });
+    monaco.languages.registerDefinitionProvider('arkade', {
+        provideDefinition: (model, position) => {
+            const symbol = symbolAt(model, position);
+            if (!symbol?.definition.start || symbol.definition.file !== symbol.at.file) return null;
+            return { uri: model.uri, range: range(symbol.definition) };
+        },
+    });
+    monaco.languages.registerDocumentHighlightProvider('arkade', {
+        provideDocumentHighlights: (model, position) => {
+            const symbol = symbolAt(model, position);
+            if (!symbol) return [];
+            return [symbol.definition, ...symbol.references]
+                .filter(location => location.file === symbol.at.file && location.start)
+                .map(location => ({ range: range(location) }));
+        },
+    });
 }
 
 // Symbols of the current file per entry path, from the last source that parsed.

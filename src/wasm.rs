@@ -133,3 +133,59 @@ pub fn symbols(entry: &str, files: &str) -> Result<String, String> {
     let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
     Ok(crate::imports::source_symbols(entry, &files)?.to_string())
 }
+
+/// The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
+/// and highlighting: `{ name, kind, type, at, definition, references }`, each location
+/// `{ file, start, end }`, or `null` when no name is there.
+#[wasm_bindgen]
+pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result<String, String> {
+    let files: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    let entry = crate::imports::relative_path(entry)?;
+    let source_of = |file: &str| {
+        files
+            .iter()
+            .find(|(path, _)| crate::imports::relative_path(path).is_ok_and(|path| path == file))
+            .map(|(_, source)| source.as_str())
+    };
+    let analysis = crate::analyze(&entry, &files);
+    let symbols = analysis.symbols();
+    let offset =
+        source_of(&entry).and_then(|source| crate::diagnostics::offset(source, line, column));
+    let Some(definition) = offset.and_then(|offset| symbols.definition_at(&entry, offset)) else {
+        return Ok("null".to_string());
+    };
+    let location = |file: &str, span: crate::diagnostics::Span| {
+        let position = |offset| {
+            let (line, column) = crate::diagnostics::position(source_of(file)?, offset)?;
+            Some(serde_json::json!({ "line": line, "column": column }))
+        };
+        serde_json::json!({ "file": file, "start": position(span.start), "end": position(span.end) })
+    };
+    let index = symbols
+        .definitions()
+        .iter()
+        .position(|candidate| std::ptr::eq(candidate, definition));
+    let references: Vec<_> = symbols
+        .references()
+        .iter()
+        .filter(|reference| Some(reference.definition) == index)
+        .collect();
+    let offset = offset.expect("a definition was found at it");
+    let at = references
+        .iter()
+        .find(|r| r.file == entry && r.span.start <= offset && offset <= r.span.end)
+        .map_or(definition.span, |reference| reference.span);
+    Ok(serde_json::json!({
+        "name": definition.name,
+        "kind": format!("{:?}", definition.kind).to_lowercase(),
+        "type": definition.ty.as_ref().map(ToString::to_string),
+        "at": location(&entry, at),
+        "definition": location(&definition.file, definition.span),
+        "references": references
+            .iter()
+            .map(|reference| location(&reference.file, reference.span))
+            .collect::<Vec<_>>(),
+    })
+    .to_string())
+}

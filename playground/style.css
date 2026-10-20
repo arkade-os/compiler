@@ -510,6 +510,11 @@ main {
     display: inline;
 }
 
+/* `.panel-header span` would otherwise show an empty badge. */
+.error-count:not(.visible) {
+    display: none;
+}
+
 .error-count.warning {
     background: var(--warning);
     color: var(--bg-primary);
