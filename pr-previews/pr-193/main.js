@@ -108,12 +108,16 @@ function loadFromStorage() {
         // entries take the current sources and the original snapshot is kept aside.
         if (!data.defaults) localStorage.setItem(`${STORAGE_KEY}-legacy`, raw);
         const base = data.defaults || data;
-        // Entries still equal to the bundled source they were saved with take the current one.
+        // Entries still equal to the bundled source they were saved with take the current one,
+        // or are dropped when the bundle no longer has them. Legacy snapshots only refresh.
         if (data.projects) {
             for (const [id, proj] of Object.entries(data.projects)) {
                 const was = base.projects?.[id]?.files || {};
-                for (const [name, source] of Object.entries(bundledSnapshot.projects[id]?.files || {})) {
-                    if (proj.files[name] === was[name]) proj.files[name] = source;
+                const now = bundledSnapshot.projects[id]?.files || {};
+                for (const name of Object.keys(data.defaults ? { ...was, ...now } : now)) {
+                    if (proj.files[name] !== was[name]) continue;
+                    if (Object.hasOwn(now, name)) proj.files[name] = now[name];
+                    else delete proj.files[name];
                 }
                 projects[id] = proj;
             }
@@ -121,10 +125,16 @@ function loadFromStorage() {
         if (data.examples) {
             for (const [id, ex] of Object.entries(data.examples)) {
                 const now = bundledSnapshot.examples[id]?.code;
-                if (now !== undefined && ex.code === base.examples?.[id]?.code) ex.code = now;
+                if (ex.code === base.examples?.[id]?.code) {
+                    if (now !== undefined) ex.code = now;
+                    else if (data.defaults) continue;
+                }
                 examples[id] = ex;
             }
         }
+        // Bundled entries the snapshot knew about but no longer holds were deleted by the user.
+        for (const id of Object.keys(data.defaults?.projects || {})) if (!Object.hasOwn(data.projects || {}, id)) delete projects[id];
+        for (const id of Object.keys(data.defaults?.examples || {})) if (!Object.hasOwn(data.examples || {}, id)) delete examples[id];
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
     }
