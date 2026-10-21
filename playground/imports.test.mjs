@@ -209,4 +209,42 @@ assert.equal(elements['errors-output'].textContent, '');
 assert(!elements['error-count'].classList.contains('visible'));
 assert.equal(elements['compile-status'].className, 'compile-status success');
 
-console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, and idempotent share links.`);
+function loadStored(saved) {
+    const store = { 'arkade-playground': JSON.stringify(saved) };
+    const storageContext = vm.createContext({
+        contracts, document: { addEventListener() {} }, location: { hash: '' }, console: { warn() {} },
+        localStorage: { getItem: key => store[key] ?? null, setItem: (key, value) => { store[key] = value; } },
+    });
+    vm.runInContext(source.replace(/^import .*;$/gm, ''), storageContext);
+    vm.runInContext('loadFromStorage()', storageContext);
+    return { store, read: expr => vm.runInContext(expr, storageContext) };
+}
+
+const legacy = loadStored({
+    projects: {
+        bonds: { name: 'Bonds', description: '', files: { 'bond_mint.ark': 'stale', 'mine.ark': 'own' } },
+        mine: { name: 'Mine', description: '', files: { 'a.ark': 'own' } },
+    },
+    examples: { htlc: { name: 'HTLC', code: 'stale' }, own: { name: 'Own', code: 'own' } },
+});
+assert.equal(legacy.read("projects.bonds.files['bond_mint.ark']"), contracts.bond_mint);
+assert.equal(legacy.read("projects.bonds.files['repayment_pool.ark']"), contracts.repayment_pool);
+assert.equal(legacy.read("projects.bonds.files['mine.ark']"), 'own');
+assert.equal(legacy.read("projects.mine.files['a.ark']"), 'own');
+assert.equal(legacy.read('examples.htlc.code'), contracts.htlc);
+assert.equal(legacy.read('examples.own.code'), 'own');
+assert.equal(JSON.parse(legacy.store['arkade-playground-legacy']).examples.htlc.code, 'stale');
+
+legacy.read('saveToStorage()');
+const saved = JSON.parse(legacy.store['arkade-playground']);
+saved.defaults.examples.htlc.code = saved.examples.htlc.code = 'previous release';
+saved.defaults.examples.escrow.code = 'previous release';
+saved.examples.escrow.code = 'edited';
+delete saved.projects.bonds.files['bond_mint.ark'];
+const upgraded = loadStored(saved);
+assert.equal(upgraded.read('examples.htlc.code'), contracts.htlc);
+assert.equal(upgraded.read('examples.escrow.code'), 'edited');
+assert(!upgraded.read("Object.hasOwn(projects.bonds.files, 'bond_mint.ark')"));
+assert(!Object.hasOwn(upgraded.store, 'arkade-playground-legacy'));
+
+console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, idempotent share links, and stored edits over bundled updates.`);
