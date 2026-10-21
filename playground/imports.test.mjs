@@ -241,10 +241,27 @@ saved.defaults.examples.htlc.code = saved.examples.htlc.code = 'previous release
 saved.defaults.examples.escrow.code = 'previous release';
 saved.examples.escrow.code = 'edited';
 delete saved.projects.bonds.files['bond_mint.ark'];
+saved.defaults.projects.bonds.files['retired.ark'] = saved.projects.bonds.files['retired.ark'] = 'retired';
+saved.defaults.projects.bonds.files['kept.ark'] = 'retired';
+saved.projects.bonds.files['kept.ark'] = 'edited';
+saved.defaults.examples.retired = saved.examples.retired = { name: 'Retired', code: 'retired' };
+saved.defaults.examples.kept = { name: 'Kept', code: 'retired' };
+saved.examples.kept = { name: 'Kept', code: 'edited' };
+delete saved.projects.option;
+delete saved.examples.single_sig;
+delete saved.defaults.examples.swap;
+delete saved.examples.swap;
 const upgraded = loadStored(saved);
+assert(!upgraded.read("Object.hasOwn(projects, 'option')"));
+assert(!upgraded.read("Object.hasOwn(examples, 'single_sig')"));
+assert.equal(upgraded.read('examples.swap.code'), contracts.non_interactive_swap);
 assert.equal(upgraded.read('examples.htlc.code'), contracts.htlc);
 assert.equal(upgraded.read('examples.escrow.code'), 'edited');
 assert(!upgraded.read("Object.hasOwn(projects.bonds.files, 'bond_mint.ark')"));
+assert(!upgraded.read("Object.hasOwn(projects.bonds.files, 'retired.ark')"));
+assert.equal(upgraded.read("projects.bonds.files['kept.ark']"), 'edited');
+assert(!upgraded.read("Object.hasOwn(examples, 'retired')"));
+assert.equal(upgraded.read('examples.kept.code'), 'edited');
 assert(!Object.hasOwn(upgraded.store, 'arkade-playground-legacy'));
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, idempotent share links, and stored edits over bundled updates.`);
