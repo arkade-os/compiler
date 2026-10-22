@@ -1,0 +1,35 @@
+name: Lint Example Contracts
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build arkadec
+        run: cargo build --bin arkadec
+      - name: Lint examples
+        # Security findings fail the job; every other finding is annotated on the PR.
+        shell: bash
+        run: |
+          (
+            status=0
+            for file in $(git ls-files 'examples/*.ark'); do
+              target/debug/arkadec "$file" --check --json --deny security > "$RUNNER_TEMP/diagnostics.json" || status=1
+              jq -r --arg root "$PWD/" '.[] | "::\(.severity) file=\(.file | ltrimstr($root)),line=\(.start.line // 1),col=\(.start.column // 1),title=\(.code // "arkadec")::\(.message)"' "$RUNNER_TEMP/diagnostics.json"
+            done
+            exit "$status"
+          ) | sort -u
