@@ -12,8 +12,8 @@ struct Policy {
 }
 
 contract StructVault(Policy policy) {
-  function update(Policy next, signature sig, bytes32 message) {
-    require(checkSigFromStack(sig, policy.primary.key, message));
+  function update(Policy next, signature sig) {
+    require(checkSig(sig, policy.primary.key));
 
     int total = 0;
     for (i, limit) in next.limits {

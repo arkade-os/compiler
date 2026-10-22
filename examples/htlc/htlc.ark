@@ -1,5 +1,7 @@
 pragma arkade ^0.1.0;
 
+import "../single_sig/single_sig.ark";
+
 contract HTLC(
   pubkey sender,
   pubkey receiver,
@@ -8,9 +10,11 @@ contract HTLC(
 ) {
   // Covenants (emulator): pin the payout to the right party for >= input value.
   function claim() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(receiver));
     require(tx.outputs[0].value >= tx.inputs[0].value);
   }
   function refund() {
+    require(tx.outputs[0].scriptPubKey == new SingleSig(sender));
     require(tx.outputs[0].value >= tx.inputs[0].value);
   }
 

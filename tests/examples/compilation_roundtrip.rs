@@ -327,3 +327,20 @@ fn all_examples_compile_and_satisfy_invariants() {
         "expected at least 14 example contracts, found {count}"
     );
 }
+
+#[test]
+fn no_example_has_a_security_finding() {
+    use arkade_compiler::lint::Category;
+    for path in collect_ark_files(&examples_dir()) {
+        let findings: Vec<_> = arkade_compiler::analyze_file(&path)
+            .diagnostics()
+            .into_iter()
+            .filter(|d| {
+                d.lint
+                    .is_some_and(|lint| lint.category() == Category::Security)
+            })
+            .map(|d| d.message)
+            .collect();
+        assert!(findings.is_empty(), "{}: {findings:?}", path.display());
+    }
+}

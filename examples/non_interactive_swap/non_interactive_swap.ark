@@ -4,7 +4,7 @@ pragma arkade ^0.1.0;
 // Allows users to exchange assets without requiring both parties to be online simultaneously.
 //
 // Paths:
-// - swap cooperative: takerSig + serverSig + OP_INSPECT* (trustless via introspection)
+// - swap cooperative: serverSig + OP_INSPECT* (trustless via introspection)
 // - cancel cooperative: makerSig + serverSig + checkTime(expirationTime)
 // - unilateral: makerSig + CSV (maker recovers if no taker)
 
@@ -27,10 +27,7 @@ contract NonInteractiveSwap(
   int expirationTime
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
-  function swap(pubkey takerPk, signature takerSig, bytes takerScriptPubKey) {
-    // Taker must sign to authorize spending their wantAsset
-    require(checkSig(takerSig, takerPk), "invalid taker signature");
-
+  function swap(bytes takerScriptPubKey) {
     // Introspection verifies the atomic exchange:
     // Output 0: maker receives wantAsset
     require(

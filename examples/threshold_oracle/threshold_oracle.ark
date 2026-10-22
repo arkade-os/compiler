@@ -22,15 +22,17 @@ contract ThresholdOracle(
 ) {
   function attest(
     int amount,
-    bytes32 messageHash,
     bytes recipientScriptPubKey,
     signature[3] oracleSigs
   ) {
     require(amount > 0, "zero");
 
+    // The oracles sign this spend: its input, amount and recipient.
+    let outpoint = tx.input.current.outpoint;
+    let message = sha256(outpoint.txid + num2bin(outpoint.vout, 4) + num2bin(amount, 8) + recipientScriptPubKey);
     int valid = 0;
     for (i, sig) in oracleSigs {
-      if (checkSigFromStack(sig, oracles[i], messageHash)) {
+      if (checkSigFromStack(sig, oracles[i], message)) {
         valid = valid + 1;
       }
     }
@@ -40,5 +42,6 @@ contract ThresholdOracle(
     require(tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "short");
     require(tx.outputs[1].scriptPubKey == recipientScriptPubKey, "wrong dest");
     require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetIdTxid, tokenAssetIdGidx, ctrlAssetIdTxid, ctrlAssetIdGidx, oracles, threshold), "broken");
+    require(tx.outputs[0].value >= tx.input.current.value, "value lost");
   }
 }

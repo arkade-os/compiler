@@ -1,4 +1,4 @@
-use arkade_compiler::compile;
+use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY,
     OP_GREATERTHANOREQUAL, OP_HASH160, OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTVALUE,
@@ -8,13 +8,13 @@ use std::fs;
 use tempfile::tempdir;
 
 // HTLC contract using the tapscript model.
-// Covenant functions enforce output-value preservation; tapscript leaves handle
+// Covenant functions pin the payout to the receiver or sender; tapscript leaves handle
 // the hash-preimage claim path, the timelock refund path, and a unilateral CSV exit.
-const HTLC_CODE: &str = include_str!("../../examples/htlc/htlc.ark");
+const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/htlc/htlc.ark");
 
 #[test]
 fn test_htlc_contract() {
-    let result = compile(HTLC_CODE);
+    let result = compile_file(PATH);
     assert!(result.is_ok(), "Compilation failed: {:?}", result.err());
 
     let output = result.unwrap();
@@ -48,6 +48,10 @@ fn test_htlc_contract() {
             "{OP_INSPECTOUTPUTVALUE} 0 {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
         "claim covenant should enforce output >= input value: {claim_cov}"
+    );
+    assert!(
+        claim_cov.contains("<CONTRACT:SingleSig(<receiver>)> OP_EQUALVERIFY"),
+        "claim covenant should pay the receiver: {claim_cov}"
     );
 
     // Leaf: hash-preimage check + server/emulator multisig
@@ -92,6 +96,10 @@ fn test_htlc_contract() {
             "{OP_INSPECTOUTPUTVALUE} 0 {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
         "refund covenant should enforce output >= input value: {refund_cov}"
+    );
+    assert!(
+        refund_cov.contains("<CONTRACT:SingleSig(<sender>)> OP_EQUALVERIFY"),
+        "refund covenant should pay the sender: {refund_cov}"
     );
 
     // Leaf: absolute timelock (CLTV) + server/emulator multisig
@@ -150,13 +158,11 @@ fn test_htlc_contract() {
 #[test]
 fn test_htlc_cli() {
     let temp_dir = tempdir().unwrap();
-    let input_path = temp_dir.path().join("htlc.ark");
+    let input_path = std::path::Path::new(PATH);
     let output_path = temp_dir.path().join("htlc.json");
 
-    fs::write(&input_path, HTLC_CODE).unwrap();
-
     // Compile via library
-    let result = arkade_compiler::compile_file(&input_path);
+    let result = compile_file(input_path);
     assert!(result.is_ok());
 
     // Run the CLI command
