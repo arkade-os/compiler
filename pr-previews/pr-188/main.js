@@ -68,6 +68,9 @@ const bundledExamples = Object.fromEntries(
     })
 );
 
+// Saved with each snapshot so a later load can tell edited entries from stale bundled copies.
+const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
+
 // Global state
 let editor = null;
 let wasmReady = false;
@@ -84,9 +87,9 @@ const STORAGE_KEY = 'arkade-playground';
 function saveToStorage() {
     const data = {
         projects: {},
-        examples: {}
+        examples: {},
+        defaults: bundledSnapshot
     };
-    // Only save user-created / modified entries
     for (const [id, proj] of Object.entries(projects)) {
         data.projects[id] = { name: proj.name, description: proj.description || '', files: proj.files };
     }
@@ -101,16 +104,37 @@ function loadFromStorage() {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const data = JSON.parse(raw);
+        // Snapshots without defaults cannot tell edits from stale copies, so their bundled
+        // entries take the current sources and the original snapshot is kept aside.
+        if (!data.defaults) localStorage.setItem(`${STORAGE_KEY}-legacy`, raw);
+        const base = data.defaults || data;
+        // Entries still equal to the bundled source they were saved with take the current one,
+        // or are dropped when the bundle no longer has them. Legacy snapshots only refresh.
         if (data.projects) {
             for (const [id, proj] of Object.entries(data.projects)) {
+                const was = base.projects?.[id]?.files || {};
+                const now = bundledSnapshot.projects[id]?.files || {};
+                for (const name of Object.keys(data.defaults ? { ...was, ...now } : now)) {
+                    if (proj.files[name] !== was[name]) continue;
+                    if (Object.hasOwn(now, name)) proj.files[name] = now[name];
+                    else delete proj.files[name];
+                }
                 projects[id] = proj;
             }
         }
         if (data.examples) {
             for (const [id, ex] of Object.entries(data.examples)) {
+                const now = bundledSnapshot.examples[id]?.code;
+                if (ex.code === base.examples?.[id]?.code) {
+                    if (now !== undefined) ex.code = now;
+                    else if (data.defaults) continue;
+                }
                 examples[id] = ex;
             }
         }
+        // Bundled entries the snapshot knew about but no longer holds were deleted by the user.
+        for (const id of Object.keys(data.defaults?.projects || {})) if (!Object.hasOwn(data.projects || {}, id)) delete projects[id];
+        for (const id of Object.keys(data.defaults?.examples || {})) if (!Object.hasOwn(data.examples || {}, id)) delete examples[id];
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
     }
@@ -1628,8 +1652,9 @@ function linkAsmToSource(container) {
     container.addEventListener('click', event => {
         const range = asmRuns[event.target.closest('.asm-run')?.dataset.run];
         if (!range || typeof monaco === 'undefined' || !editor) return;
-        editor.setSelection(editorRange(range));
-        editor.revealRangeInCenter(editorRange(range));
+        const selection = editorRange(range);
+        editor.setSelection(selection);
+        editor.revealRangeInCenter(selection);
         editor.focus();
     });
     container.addEventListener('mouseleave', () => hover(undefined));
@@ -1686,7 +1711,7 @@ function lint() {
     lintTimer = setTimeout(() => {
         if (!wasmReady || !editor) return;
         try {
-            const { entry, files } = compilationSources();
+            const { entry, files } = sourceFiles();
             const optimize = document.getElementById('optimize-toggle').checked;
             const { diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
             markDiagnostics(diagnostics, entry);
