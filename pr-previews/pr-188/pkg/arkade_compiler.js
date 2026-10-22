@@ -66,7 +66,8 @@ export function compile_sources(entry, files, optimize) {
 /**
  * Compile a virtual project and report every diagnostic with its position. Compilation
  * errors are diagnostics, not a thrown error: the result is
- * `{ artifact: string | null, warnings: string[], diagnostics: Diagnostic[] }`, where each
+ * `{ artifact: string | null, debug: string | null, warnings: string[], diagnostics: Diagnostic[] }`,
+ * where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
  * diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
  * `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
  * @param {string} entry
