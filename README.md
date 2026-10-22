@@ -198,6 +198,7 @@ arkadec contract.ark -o out.json
 arkadec contract.ark --no-optimize       # skips constant folding, static branch removal, and assembly optimization
 arkadec contract.ark --check             # every error and warning as file:line:column, no artifact
 arkadec contract.ark --check --json      # the same diagnostics as a JSON array
+arkadec contract.ark --debug             # also writes contract.debug.json with covenant source maps
 ```
 
 Warnings go to stderr; type and validation errors abort with a non-zero exit. `--check` exits with status 1 when any diagnostic is an error. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
@@ -536,8 +537,7 @@ Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or th
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
-| `arkade` | `{ inputs, asm, sourceMap }`; absent for groups made only of standalone leaves |
-| `arkade.sourceMap` | Runs of `asm` tokens and the entry-file statement each comes from: `{ asm: [from, to), start: [line, column], end: [line, column], message? }`, 1-based with columns in UTF-16 code units; `message` is a `require`'s message. Code inlined from an imported helper maps to its call; the prologue's input checks and the final stack cleanup are not mapped |
+| `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 | `compiler.options` | Effective compilation settings; `optimize` enables constant folding, static branch removal, and assembly optimization for Arkade covenants |
@@ -550,6 +550,22 @@ Covenant spend groups come first in function declaration order, followed by stan
 Witness `encoding` values: `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
+
+### Debug file
+
+`--debug` also writes a debug file next to the artifact, with the artifact's extension replaced (`-o out/htlc.json` writes `out/htlc.debug.json`). It is not part of the artifact, so the fingerprint does not cover it, and no consumer needs it to instantiate or spend a contract. The playground receives the same JSON as `debug` from `compile_sources_with_diagnostics`, and the Rust API keeps it on `ArkadeCovenant::source_map` (`ContractJson::debug_info` builds the file).
+
+```json
+{
+  "formatVersion": 1,
+  "artifactFingerprint": "sha256:...",
+  "functions": {
+    "claim": { "sourceMap": [{ "asm": [0, 5], "start": [11, 5], "end": [11, 56] }] }
+  }
+}
+```
+
+`artifactFingerprint` links the file to its artifact. `functions` is keyed by spend group name and lists only groups with an Arkade covenant. Each `sourceMap` entry gives a run of `arkade.asm` tokens and the entry-file statement it comes from, as `{ asm: [from, to), start: [line, column], end: [line, column], message? }`, 1-based with columns in UTF-16 code units; `message` is a `require`'s message. Code inlined from an imported helper maps to its call; the prologue's input checks and the final stack cleanup are not mapped. Positions point into the artifact's `source` bundle; the debug file holds no copy of the source.
 
 Type-check and validation warnings remain available on the Rust compilation result, are printed by the CLI, and appear in the playground's Diagnostics tab, but are not serialized into artifacts. They identify their source file relative to the bundle root, including warnings from dependencies.
 

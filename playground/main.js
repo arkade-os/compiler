@@ -1423,7 +1423,7 @@ function doCompile() {
     try {
         const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact: result, warnings, diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        const { artifact: result, debug, warnings, diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
         markDiagnostics(diagnostics, entry);
         if (result === null) {
             showErrors(diagnostics, entry);
@@ -1431,7 +1431,7 @@ function doCompile() {
         }
         lastCompiledSource = source;
         displayJson(result);
-        displayAsm(result);
+        displayAsm(result, debug);
         displayBindings(result);
         showSuccess(result, warnings.length);
         renderDiagnostics(diagnostics, entry);
@@ -1477,12 +1477,13 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr) {
+function displayAsm(jsonStr, debugStr) {
     const container = document.getElementById('asm-output');
     linkAsmToSource(container);
 
     try {
         const data = JSON.parse(jsonStr);
+        const debugFunctions = JSON.parse(debugStr).functions;
         let html = '';
         asmRuns = [];
 
@@ -1490,7 +1491,7 @@ function displayAsm(jsonStr) {
             for (const group of data.functions) {
                 if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
                     html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += covenantListing(group.arkade.asm, group.arkade.sourceMap) + '\n';
+                    html += covenantListing(group.arkade.asm, debugFunctions[group.name]?.sourceMap) + '\n';
                 }
                 for (const leaf of (group.leaves || [])) {
                     const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;

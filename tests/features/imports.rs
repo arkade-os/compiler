@@ -39,17 +39,9 @@ fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
         ],
     )
     .unwrap();
-    // The pragma lines move every statement, so only the scripts compare.
-    let scripts = |output: &arkade_compiler::models::ContractJson| {
-        let mut functions = output.functions.clone();
-        for covenant in functions.iter_mut().filter_map(|f| f.arkade.as_mut()) {
-            covenant.source_map.clear();
-        }
-        serde_json::to_value(functions).unwrap()
-    };
-    let expected = scripts(&compile(contract).unwrap());
+    let expected = serde_json::to_value(compile(contract).unwrap().functions).unwrap();
     for compiled in [&standalone, &output] {
-        assert_eq!(scripts(compiled), expected);
+        assert_eq!(serde_json::to_value(&compiled.functions).unwrap(), expected);
     }
     let bundle = output.source.as_ref().unwrap();
     assert_eq!(bundle.files["main.ark"], entry);

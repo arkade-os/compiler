@@ -109,3 +109,17 @@ fn rewritten_instructions_keep_their_statement() {
     let last = covenant.source_map.last().unwrap().asm[1];
     assert!(last <= covenant.asm.len());
 }
+
+#[test]
+fn the_artifact_leaves_the_map_to_the_debug_file() {
+    let output = compiled(true);
+    assert!(!serde_json::to_string(&output)
+        .unwrap()
+        .contains("sourceMap"));
+    let debug = output.debug_info();
+    assert_eq!(debug["artifactFingerprint"], output.fingerprint.unwrap());
+    assert_eq!(
+        debug["functions"]["spend"]["sourceMap"],
+        serde_json::to_value(&output.functions[0].arkade.as_ref().unwrap().source_map).unwrap()
+    );
+}

@@ -42,6 +42,11 @@ struct Args {
     /// With --check, print the diagnostics as a JSON array
     #[arg(long, requires = "check")]
     json: bool,
+
+    /// Also write the covenant source maps to a debug file next to the artifact
+    /// (`<name>.debug.json`)
+    #[arg(long, conflicts_with = "check")]
+    debug: bool,
 }
 
 /// Main function for the Arkade Compiler CLI
@@ -100,6 +105,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&output_path, json)?;
 
     println!("Compilation successful. Output written to {output_path}");
+
+    if args.debug {
+        let debug_path = Path::new(&output_path).with_extension("debug.json");
+        fs::write(
+            &debug_path,
+            serde_json::to_string_pretty(&output.debug_info())?,
+        )?;
+        println!("Debug information written to {}", debug_path.display());
+    }
 
     Ok(())
 }

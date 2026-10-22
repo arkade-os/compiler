@@ -70,3 +70,36 @@ fn check_json_lists_diagnostics_and_a_clean_file_passes() {
     let (status, stdout) = check(&["main.ark", "--check", "--json"], &[("main.ark", clean)]);
     assert_eq!((status, stdout.trim()), (0, "[]"));
 }
+
+#[test]
+fn debug_writes_the_source_maps_next_to_the_artifact() {
+    let dir = tempfile::tempdir().unwrap();
+    let clean = "contract C(pubkey k) { function f(signature s) { require(checkSig(s, k)); } }";
+    std::fs::write(dir.path().join("main.ark"), clean).unwrap();
+    let run = |args: &[&str]| {
+        let status = Command::new(env!("CARGO_BIN_EXE_arkadec"))
+            .current_dir(dir.path())
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    let read = |path: &str| -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join(path)).unwrap()).unwrap()
+    };
+
+    run(&["main.ark"]);
+    assert!(!dir.path().join("main.debug.json").exists());
+
+    std::fs::create_dir(dir.path().join("out")).unwrap();
+    run(&["main.ark", "-o", "out/c.json", "--debug"]);
+    let debug = read("out/c.debug.json");
+    assert_eq!(
+        debug["artifactFingerprint"],
+        read("out/c.json")["fingerprint"]
+    );
+    assert!(!debug["functions"]["f"]["sourceMap"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}

@@ -57,8 +57,9 @@ pub struct ArkadeCovenant {
     /// Covenant assembly.
     pub asm: Vec<String>,
     /// The entry-file statement each run of `asm` tokens was compiled from; tokens the
-    /// compiler adds itself, such as the final cleanup, are not covered.
-    #[serde(rename = "sourceMap", default, skip_serializing_if = "Vec::is_empty")]
+    /// compiler adds itself, such as the final cleanup, are not covered. Written to the
+    /// debug file (`ContractJson::debug_info`), not the artifact.
+    #[serde(skip_serializing, default)]
     pub source_map: Vec<SourceRange>,
 }
 
@@ -121,6 +122,29 @@ pub struct ContractJson {
     pub fingerprint: Option<String>,
     #[serde(skip_serializing, default)]
     pub warnings: Vec<String>,
+}
+
+impl ContractJson {
+    /// The debug file: each covenant's source map keyed by spend group name, linked to this
+    /// artifact by its fingerprint. Positions point into the artifact's `source` bundle.
+    pub fn debug_info(&self) -> serde_json::Value {
+        let functions: serde_json::Map<_, _> = self
+            .functions
+            .iter()
+            .filter_map(|group| {
+                let arkade = group.arkade.as_ref()?;
+                Some((
+                    group.name.clone(),
+                    serde_json::json!({ "sourceMap": arkade.source_map }),
+                ))
+            })
+            .collect();
+        serde_json::json!({
+            "formatVersion": 1,
+            "artifactFingerprint": self.fingerprint,
+            "functions": functions,
+        })
+    }
 }
 
 /// Original files needed to reproduce a compilation without filesystem access.

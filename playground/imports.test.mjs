@@ -247,9 +247,12 @@ const mapped = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stri
     'main.ark': 'contract M(pubkey k) {\n  function f(signature s, int n) {\n    require(n > 0);\n    if (n > 1) {\n      require(checkSig(s, k));\n    }\n  }\n}',
 })));
 const covenant = JSON.parse(mapped.artifact).functions[0].arkade;
+assert.equal(covenant.sourceMap, undefined);
+const sourceMap = JSON.parse(mapped.debug).functions.f.sourceMap;
 context.covenant = covenant;
-const html = vm.runInContext('asmRuns = []; covenantListing(covenant.asm, covenant.sourceMap)', context);
-assert.equal((html.match(/class="asm-line asm-run"/g) || []).length, covenant.sourceMap.length);
+context.sourceMap = sourceMap;
+const html = vm.runInContext('asmRuns = []; covenantListing(covenant.asm, sourceMap)', context);
+assert.equal((html.match(/class="asm-line asm-run"/g) || []).length, sourceMap.length);
 assert.equal((html.match(/class="asm-line"/g) || []).length > 0, true);
 for (const token of covenant.asm) assert.ok(html.includes(token.replace(/</g, '&lt;').replace(/>/g, '&gt;')), token);
 const runs = vm.runInContext('asmRuns', context);
