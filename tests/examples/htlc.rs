@@ -45,9 +45,9 @@ fn test_htlc_contract() {
     let claim_cov = crate::common::arkade_asm(&output, "claim");
     assert!(
         claim_cov.contains(&format!(
-            "{OP_INSPECTOUTPUTVALUE} 0 {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
+            "OP_PUSHCURRENTINPUTINDEX {OP_INSPECTOUTPUTVALUE} OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
-        "claim covenant should enforce output >= input value: {claim_cov}"
+        "claim covenant should keep its own input value in its own output: {claim_cov}"
     );
     assert!(
         claim_cov.contains("<CONTRACT:SingleSig(<receiver>)> OP_EQUALVERIFY"),
@@ -93,9 +93,9 @@ fn test_htlc_contract() {
     let refund_cov = crate::common::arkade_asm(&output, "refund");
     assert!(
         refund_cov.contains(&format!(
-            "{OP_INSPECTOUTPUTVALUE} 0 {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
+            "OP_PUSHCURRENTINPUTINDEX {OP_INSPECTOUTPUTVALUE} OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
-        "refund covenant should enforce output >= input value: {refund_cov}"
+        "refund covenant should keep its own input value in its own output: {refund_cov}"
     );
     assert!(
         refund_cov.contains("<CONTRACT:SingleSig(<sender>)> OP_EQUALVERIFY"),

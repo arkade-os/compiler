@@ -28,6 +28,8 @@ contract NonInteractiveSwap(
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
   function swap(bytes takerScriptPubKey) {
+    // One offer per transaction, so outputs 0 and 1 cannot settle two offers at once.
+    require(this.activeInputIndex == 0, "offer must be input 0");
     // Introspection verifies the atomic exchange:
     // Output 0: maker receives wantAsset
     require(
