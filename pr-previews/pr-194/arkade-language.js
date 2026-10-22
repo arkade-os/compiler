@@ -153,7 +153,7 @@ const arkadeMonarch = {
         root: [
             [/\/\/.*$/, 'comment'],
             [/\s+/, 'white'],
-            [/@(allow|expect)\b/, { token: 'annotation', next: '@lints' }],
+            [/@(allow|warn|deny|expect)\b/, { token: 'annotation', next: '@lints' }],
             [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
             [/\d+\.\d+\.\d+/, 'number'],
             [/0x[0-9a-fA-F]*/, 'number.hex'],
@@ -172,7 +172,7 @@ const arkadeMonarch = {
             [/[;,.:]/, 'delimiter'],
             [/[=<>!&|^~+\-*\/]+/, 'operator'],
         ],
-        // The parenthesized lint ids and reason of an annotation; ids contain hyphens.
+        // The parenthesized lint ids and reason of a lint attribute; ids contain hyphens.
         lints: [
             [/\s+/, 'white'],
             [/[a-z][a-z0-9-]*/, 'annotation.lint'],
