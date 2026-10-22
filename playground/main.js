@@ -1652,8 +1652,9 @@ function linkAsmToSource(container) {
     container.addEventListener('click', event => {
         const range = asmRuns[event.target.closest('.asm-run')?.dataset.run];
         if (!range || typeof monaco === 'undefined' || !editor) return;
-        editor.setSelection(editorRange(range));
-        editor.revealRangeInCenter(editorRange(range));
+        const selection = editorRange(range);
+        editor.setSelection(selection);
+        editor.revealRangeInCenter(selection);
         editor.focus();
     });
     container.addEventListener('mouseleave', () => hover(undefined));
@@ -1710,7 +1711,7 @@ function lint() {
     lintTimer = setTimeout(() => {
         if (!wasmReady || !editor) return;
         try {
-            const { entry, files } = compilationSources();
+            const { entry, files } = sourceFiles();
             const optimize = document.getElementById('optimize-toggle').checked;
             const { diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
             markDiagnostics(diagnostics, entry);
