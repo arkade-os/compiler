@@ -127,6 +127,7 @@ contract Endpoint(
   //   - One EndpointID asset is minted on output[1] (receive marker).
   //   - Output[1] uses the canonical ReceiveMarker pkScript.
   // -------------------------------------------------------------------------
+  @expect(outputs-shared-across-inputs, "output 0 carries the Endpoint control singleton, so only one input can be the Endpoint state")
   function receive(
     bytes32 attestedHash,
     signature dvn0Sig,
@@ -222,6 +223,7 @@ contract Endpoint(
   // Consume the OApp-emitted send-invocation marker and emit an outbound
   // LzSendPacket. Endpoint state continues; the OAppID marker is fully burned.
   // -------------------------------------------------------------------------
+  @expect(outputs-shared-across-inputs, "output 0 carries the Endpoint control singleton, so only one input can be the Endpoint state")
   function send() {
     require(size(tx.packet(16)) == 183, "endpoint state packet size");
     require(size(tx.packet(19)) == 181, "lz send packet size");

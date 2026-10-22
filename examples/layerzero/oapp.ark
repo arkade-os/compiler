@@ -62,6 +62,7 @@ contract OApp(
   // *previous* Arkade tx (the Endpoint receive); we access it through
   // tx.inputs[0].packet(LzReceive).
   // -------------------------------------------------------------------------
+  @expect(outputs-shared-across-inputs, "output 0 carries the OApp control singleton, so only one input can be the OApp state")
   function receive() {
     // The previous-tx LzReceive packet on the marker input must be v1 with
     // the credit-message shape (size 219).
@@ -166,6 +167,7 @@ contract OApp(
   //       collaborative tapleaf. No contract-level owner signature exists or
   //       is needed.
   // -------------------------------------------------------------------------
+  @expect(outputs-shared-across-inputs, "output 0 carries the OApp control singleton, so only one input can be the OApp state")
   function send() {
     // Current-tx OAppSendInvocation packet: v1, fixed size.
     require(size(tx.packet(20)) == 175, "send invocation packet size");

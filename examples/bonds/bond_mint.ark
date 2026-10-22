@@ -122,6 +122,9 @@ contract BondMint(
     require(!checkTime(maturity), "matured; use auction");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    // One vault per pool: the debit burn below is checked per asset group, so two vaults
+    // sharing one pool input could both be settled by a single burn.
+    require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
     let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
@@ -141,6 +144,7 @@ contract BondMint(
     require(!checkTime(windowEnd), "auction window closed");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
     let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
